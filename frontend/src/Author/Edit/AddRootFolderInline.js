@@ -77,8 +77,7 @@ class AddRootFolderInline extends Component {
       qualityProfileId
     } = this.state;
 
-    const mediaTypeName = folderType === 1 ? 'audiobook' : 'ebook';
-    const MediaTypeName = folderType === 1 ? 'Audiobook' : 'Ebook';
+    const isAudiobook = folderType === 1;
 
     if (!isExpanded) {
       return (
@@ -87,7 +86,7 @@ class AddRootFolderInline extends Component {
           onPress={this.onExpandPress}
         >
           <Icon name={icons.FOLDER_OPEN} />
-          {` Add ${mediaTypeName} root folder`}
+          {translate('AddRootFolder')}
         </Button>
       );
     }
@@ -97,20 +96,30 @@ class AddRootFolderInline extends Component {
         <div className={styles.header}>
           <Icon name={icons.INFO} className={styles.infoIcon} />
           <div className={styles.infoText}>
-            {translate('AddRootFolderInlineIntroPrefix')} <strong>{translate('AddRootFolderInlineIntroAllMediaType', { mediaTypeName })}</strong> {translate('AddRootFolderInlineIntroSuffix')}
+            <strong>
+              {isAudiobook ?
+                translate('AddRootFolderInlineIntroAudiobooks') :
+                translate('AddRootFolderInlineIntroEbooks')}
+            </strong>
           </div>
         </div>
 
         <Form>
           <FormGroup>
-            <FormLabel>{translate('AddRootFolderInlineRootFolderLabel', { mediaType: MediaTypeName })}</FormLabel>
+            <FormLabel>
+              {isAudiobook ?
+                translate('AudiobookRootFolder') :
+                translate('EbookRootFolder')}
+            </FormLabel>
             <FormInputGroup
               type={inputTypes.PATH}
               name="path"
               value={selectedPath}
               propagateValueOnChange={true}
               onChange={this.onPathChange}
-              helpText={`Path where all ${mediaTypeName}s will be stored`}
+              helpText={isAudiobook ?
+                translate('AudiobookPathHelpText') :
+                translate('EbookPathHelpText')}
             />
           </FormGroup>
 
@@ -122,7 +131,9 @@ class AddRootFolderInline extends Component {
               value={qualityProfileId}
               profileType={folderType === 1 ? 'audiobook' : 'ebook'}
               onChange={this.onQualityProfileChange}
-              helpText={`Quality profile for new ${mediaTypeName}s in this folder`}
+              helpText={isAudiobook ?
+                translate('AudiobookQualityProfileHelpText') :
+                translate('EbookQualityProfileHelpText')}
             />
           </FormGroup>
 

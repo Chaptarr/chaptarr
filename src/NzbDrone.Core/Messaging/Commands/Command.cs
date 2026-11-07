@@ -26,9 +26,14 @@ namespace NzbDrone.Core.Messaging.Commands
         public virtual string CompletionMessage => null;
         public virtual bool RequiresDiskAccess => false;
         public virtual string DiskAccessGroup => RequiresDiskAccess ? "default" : null;
+        public virtual bool RequiresLibraryState => false;
         public virtual bool IsExclusive => false;
         public virtual bool IsTypeExclusive => false;
         public virtual bool IsLongRunning => false;
+
+        // When true, commands of this type never occupy every command thread at once, so at least one
+        // thread stays available for other work.
+        public virtual bool LeavesThreadForOtherCommands => false;
 
         public string Name { get; private set; }
         public DateTime? LastExecutionTime { get; set; }

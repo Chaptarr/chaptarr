@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Chaptarr.Http.ClientSchema;
+using Chaptarr.Http.Middleware;
 using Chaptarr.Http.REST;
 using FluentValidation;
 using FluentValidation.Results;
@@ -48,7 +49,19 @@ namespace Chaptarr.Api.V1
             var definition = _providerFactory.Get(id);
             _providerFactory.SetProviderCharacteristics(definition);
 
-            return _resourceMapper.ToResource(definition);
+            return ToResource(definition);
+        }
+
+        protected virtual TProviderResource ToResource(TProviderDefinition definition)
+        {
+            var resource = _resourceMapper.ToResource(definition);
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+            {
+                ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyProviderIdentity(resource);
+                ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyFields(resource, definition.Settings);
+            }
+
+            return resource;
         }
 
         [HttpGet]
@@ -63,7 +76,7 @@ namespace Chaptarr.Api.V1
             {
                 _providerFactory.SetProviderCharacteristics(definition);
 
-                result.Add(_resourceMapper.ToResource(definition));
+                result.Add(ToResource(definition));
             }
 
             return result.OrderBy(p => p.Name).ToList();
@@ -145,11 +158,16 @@ namespace Chaptarr.Api.V1
 
             _bulkResourceMapper.UpdateModel(providerResource, definitionsToUpdate);
 
-            return Accepted(_providerFactory.Update(definitionsToUpdate).Select(x => _resourceMapper.ToResource(x)));
+            return Accepted(_providerFactory.Update(definitionsToUpdate).Select(ToResource));
         }
 
         private TProviderDefinition GetDefinition(TProviderResource providerResource, bool validate, bool includeWarnings, bool forceValidate)
         {
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+            {
+                ProviderResourceCompatibilityProjection.ProjectBookshelfNativeProviderIdentity(providerResource);
+            }
+
             var definition = _resourceMapper.ToModel(providerResource);
 
             if (providerResource.Id != 0)
@@ -173,12 +191,22 @@ namespace Chaptarr.Api.V1
                 }
             }
 
+            ApplyResourceSettings(providerResource, definition);
+
             if (validate && (definition.Enable || forceValidate))
             {
                 Validate(definition, includeWarnings);
             }
 
             return definition;
+        }
+
+        protected virtual void ApplyResourceSettings(TProviderResource resource, TProviderDefinition definition)
+        {
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+            {
+                ProviderResourceCompatibilityProjection.ApplyBookshelfLegacySettings(resource, definition.Settings);
+            }
         }
 
         [RestDeleteById]
@@ -208,12 +236,21 @@ namespace Chaptarr.Api.V1
 
             foreach (var providerDefinition in defaultDefinitions)
             {
-                var providerResource = _resourceMapper.ToResource(providerDefinition);
+                var providerResource = ToResource(providerDefinition);
                 var presetDefinitions = _providerFactory.GetPresetDefinitions(providerDefinition);
 
                 providerResource.Presets = presetDefinitions
-                    .Select(v => _resourceMapper.ToResource(v))
+                    .Select(ToResource)
                     .ToList();
+
+                if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+                {
+                    ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyTemplateDefaults(providerResource);
+                    foreach (var preset in providerResource.Presets)
+                    {
+                        ProviderResourceCompatibilityProjection.ProjectBookshelfLegacyTemplateDefaults(preset);
+                    }
+                }
 
                 result.Add(providerResource);
             }

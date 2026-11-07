@@ -42,3 +42,7 @@
   flex-wrap: wrap;
   min-width: 400px;
 }
+
+.booksLoading {
+  margin: 0;
+}

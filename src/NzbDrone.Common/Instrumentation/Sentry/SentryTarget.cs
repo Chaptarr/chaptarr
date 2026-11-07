@@ -8,6 +8,7 @@ using System.Threading;
 using NLog;
 using NLog.Common;
 using NLog.Targets;
+using NzbDrone.Common.Instrumentation;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using Sentry;
@@ -305,7 +306,8 @@ namespace NzbDrone.Common.Instrumentation.Sentry
 
             try
             {
-                SentrySdk.AddBreadcrumb(logEvent.FormattedMessage, logEvent.LoggerName, level: BreadcrumbLevelMap[logEvent.Level]);
+                var sanitizedMessage = CleanseLogMessage.Cleanse(logEvent.FormattedMessage);
+                SentrySdk.AddBreadcrumb(sanitizedMessage, logEvent.LoggerName, level: BreadcrumbLevelMap[logEvent.Level]);
 
                 // don't report non-critical events without exceptions
                 if (!IsSentryMessage(logEvent))
@@ -350,7 +352,7 @@ namespace NzbDrone.Common.Instrumentation.Sentry
                 {
                     Level = level,
                     Logger = logEvent.LoggerName,
-                    Message = logEvent.FormattedMessage
+                    Message = sanitizedMessage
                 };
 
                 if (level is SentryLevel.Fatal && logEvent.Exception is not null)

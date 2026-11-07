@@ -58,7 +58,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public Book AddWantedEdition(int bookId, int editionId, bool asNewVariant = false) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -461,18 +461,19 @@ namespace Chaptarr.Core.Test.Books
             var refreshBookService = new StubRefreshBookService();
             var service = new TestableRefreshAuthorService(bookService, mediaFileService, refreshBookService, LogManager.GetCurrentClassLogger());
 
-            Book Local(int id, string unitKeyHash = null) => new()
+            Book Local(int id, string unitKeyHash = null, DateTime? added = null) => new()
             {
                 Id = id,
                 MediaType = BookMediaType.Audiobook,
                 BaseBookId = "az:B09FBT3T7G",
                 UnitKeyHash = unitKeyHash,
+                Added = added ?? DateTime.UtcNow.AddDays(-2),
                 AnyEditionOk = true,
                 Editions = new List<Edition> { new() { Asin = "B09FC52TN9" } }
             };
 
             var original = Local(1);
-            var explicitCopy = Local(2, "copy-unit");
+            var explicitCopy = Local(2, "copy-unit", DateTime.UtcNow);
             var refreshManufactured = Local(3);
             var remote = new Book
             {

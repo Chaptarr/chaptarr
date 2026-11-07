@@ -122,6 +122,20 @@ namespace NzbDrone.Core.MediaFiles
 
         public string GetFFmpegPath()
         {
+            var configuredPath = BookshelfM4bCompatibility.ConfiguredFfmpegPath;
+            if (!string.IsNullOrWhiteSpace(configuredPath))
+            {
+                if (BookshelfM4bCompatibility.IsExpectedFfmpegExecutableName(configuredPath) &&
+                    (_diskProvider.FileExists(configuredPath) || string.IsNullOrWhiteSpace(Path.GetDirectoryName(configuredPath))))
+                {
+                    return configuredPath;
+                }
+
+                _logger.Warn("Ignoring {0}: it must point to an existing ffmpeg executable named ffmpeg{1}",
+                    BookshelfM4bCompatibility.FfmpegPathEnvironmentVariable,
+                    RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : string.Empty);
+            }
+
             // TODO: Add custom path support when config service supports it
 
             // Check bundled path
@@ -316,7 +330,14 @@ namespace NzbDrone.Core.MediaFiles
                 args.AddRange(arguments);
             }
 
-            return ExecuteCommandDetailed("php", args, timeoutMs: timeoutMs, outputHandler: outputHandler, cancellationToken: cancellationToken);
+            var childPath = GetLegacyM4bFfmpegSearchPath();
+            return ExecuteCommandDetailed(
+                "php",
+                args,
+                timeoutMs: timeoutMs,
+                outputHandler: outputHandler,
+                cancellationToken: cancellationToken,
+                pathEnvironment: childPath);
         }
 
         private string GetBundledToolPath(string toolName)
@@ -449,7 +470,13 @@ namespace NzbDrone.Core.MediaFiles
             return ExecuteCommandDetailed(fileName, arguments, timeoutMs, outputHandler).GetPreferredOutput(preferStderrOnEmpty);
         }
 
-        private ExternalToolResult ExecuteCommandDetailed(string fileName, IReadOnlyList<string> arguments, int timeoutMs = 10000, Action<string> outputHandler = null, CancellationToken cancellationToken = default)
+        private ExternalToolResult ExecuteCommandDetailed(
+            string fileName,
+            IReadOnlyList<string> arguments,
+            int timeoutMs = 10000,
+            Action<string> outputHandler = null,
+            CancellationToken cancellationToken = default,
+            string pathEnvironment = null)
         {
             try
             {
@@ -473,6 +500,11 @@ namespace NzbDrone.Core.MediaFiles
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
+
+                if (!string.IsNullOrWhiteSpace(pathEnvironment))
+                {
+                    startInfo.Environment["PATH"] = pathEnvironment;
+                }
 
                 foreach (var arg in arguments)
                 {
@@ -578,6 +610,29 @@ namespace NzbDrone.Core.MediaFiles
                     StandardError = ex.ToString()
                 };
             }
+        }
+
+        private string GetLegacyM4bFfmpegSearchPath()
+        {
+            var configuredPath = BookshelfM4bCompatibility.ConfiguredFfmpegPath;
+            if (string.IsNullOrWhiteSpace(configuredPath))
+            {
+                return null;
+            }
+
+            if ((!_diskProvider.FileExists(configuredPath) && !string.IsNullOrWhiteSpace(Path.GetDirectoryName(configuredPath))) ||
+                !BookshelfM4bCompatibility.TryBuildFfmpegSearchPath(
+                    configuredPath,
+                    Environment.GetEnvironmentVariable("PATH"),
+                    out var searchPath))
+            {
+                _logger.Warn("{0} could not be passed to m4b-tool; m4b-tool resolves ffmpeg from PATH and the configured executable must be named ffmpeg{1}",
+                    BookshelfM4bCompatibility.FfmpegPathEnvironmentVariable,
+                    RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : string.Empty);
+                return null;
+            }
+
+            return searchPath;
         }
 
         private void KillProcessTree(Process process, string commandForLog, string reason)

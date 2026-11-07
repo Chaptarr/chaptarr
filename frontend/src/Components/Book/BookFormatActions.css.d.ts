@@ -6,9 +6,12 @@ interface CssExports {
   'badge': string;
   'existingFormat': string;
   'formatActions': string;
+  'formatLabel': string;
+  'iconContainer': string;
   'instanceLink': string;
   'instanceList': string;
   'unavailableFormat': string;
+  'withLabel': string;
 }
 export const cssExports: CssExports;
 export default cssExports;

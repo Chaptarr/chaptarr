@@ -5,27 +5,27 @@ import getDisplayName from 'Helpers/getDisplayName';
 export const shortcuts = {
   OPEN_KEYBOARD_SHORTCUTS_MODAL: {
     key: '?',
-    name: 'Open This Modal'
+    name: 'KeyboardShortcutOpenModal'
   },
 
   CLOSE_MODAL: {
     key: 'Esc',
-    name: 'Close Current Modal'
+    name: 'KeyboardShortcutCloseModal'
   },
 
   ACCEPT_CONFIRM_MODAL: {
     key: 'Enter',
-    name: 'Accept Confirmation Modal'
+    name: 'KeyboardShortcutAcceptConfirmation'
   },
 
   AUTHOR_SEARCH_INPUT: {
     key: 's',
-    name: 'Focus Search Box'
+    name: 'KeyboardShortcutFocusSearch'
   },
 
   SAVE_SETTINGS: {
     key: 'mod+s',
-    name: 'Save Settings'
+    name: 'KeyboardShortcutSaveSettings'
   }
 };
 

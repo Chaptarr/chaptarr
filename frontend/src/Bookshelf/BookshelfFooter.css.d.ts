@@ -4,6 +4,8 @@ interface CssExports {
   'inputContainer': string;
   'label': string;
   'labelIcon': string;
+  'pageContentFooter': string;
+  'saveErrorContainer': string;
   'updateSelectedButton': string;
 }
 export const cssExports: CssExports;

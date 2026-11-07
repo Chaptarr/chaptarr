@@ -1,16 +1,21 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import Label from 'Components/Label';
 import PageContent from 'Components/Page/PageContent';
 import PageContentBody from 'Components/Page/PageContentBody';
 import PageToolbar from 'Components/Page/Toolbar/PageToolbar';
-import PageToolbarSection from 'Components/Page/Toolbar/PageToolbarSection';
 import PageToolbarButton from 'Components/Page/Toolbar/PageToolbarButton';
-import Label from 'Components/Label';
+import PageToolbarSection from 'Components/Page/Toolbar/PageToolbarSection';
 import { icons } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
+import SeriesNarratorMatrix from './SeriesNarratorMatrix';
 import styles from './SeriesDetails.css';
 
 class SeriesDetails extends Component {
+  onRefreshPress = () => {
+    // Implement refresh logic
+  };
+
   render() {
     const {
       title,
@@ -59,15 +64,14 @@ class SeriesDetails extends Component {
               <h3>{translate('BooksInSeries')}</h3>
               {/* Book list will be implemented here */}
             </div>
+
+            <SeriesNarratorMatrix title={title} />
           </div>
         </PageContentBody>
       </PageContent>
     );
   }
 
-  onRefreshPress = () => {
-    // Implement refresh logic
-  };
 }
 
 SeriesDetails.propTypes = {

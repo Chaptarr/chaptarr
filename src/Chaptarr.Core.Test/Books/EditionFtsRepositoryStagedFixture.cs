@@ -246,6 +246,7 @@ namespace Chaptarr.Core.Test.Books
                     Monitored INTEGER NOT NULL DEFAULT 0,
                     Language TEXT,
                     Title TEXT,
+                    EditionFormat TEXT,
                     Subtitle TEXT,
                     MatchingTitle TEXT,
                     NarratorNames TEXT,

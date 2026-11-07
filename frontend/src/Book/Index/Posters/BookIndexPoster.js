@@ -4,7 +4,9 @@ import React, { Component } from 'react';
 import DeleteAuthorModal from 'Author/Delete/DeleteAuthorModal';
 import EditAuthorModalConnector from 'Author/Edit/EditAuthorModalConnector';
 import BookCover from 'Book/BookCover';
+import BookMediaTypeBadge from 'Book/BookMediaTypeBadge';
 import EditBookModalConnector from 'Book/Edit/EditBookModalConnector';
+import getBookIndexItemMediaType from 'Book/Index/getBookIndexItemMediaType';
 import BookIndexProgressBar from 'Book/Index/ProgressBar/BookIndexProgressBar';
 import Icon from 'Components/Icon';
 import Label from 'Components/Label';
@@ -121,6 +123,8 @@ class BookIndexPoster extends Component {
     const {
       id,
       title,
+      mediaType,
+      selectedMediaType,
       authorId,
       author,
       audiobookMonitored,
@@ -165,6 +169,9 @@ class BookIndexPoster extends Component {
       isEditBookModalOpen
     } = this.state;
 
+    const rowMediaType = getBookIndexItemMediaType(selectedMediaType, mediaType);
+    const isMonitored = rowMediaType === 'ebook' ? ebookMonitored : audiobookMonitored;
+
     const link = `/book/${id}`;
     const contentClassName = classNames(
       styles.content,
@@ -192,6 +199,13 @@ class BookIndexPoster extends Component {
           {...editorInteractionProps}
         >
           <div className={styles.posterContainer}>
+            {selectedMediaType === 'both' ? (
+              <BookMediaTypeBadge
+                className={styles.mediaTypeBadge}
+                mediaType={mediaType}
+              />
+            ) : null}
+
             {
               isEditorActive &&
                 <div className={styles.editorSelect}>
@@ -270,7 +284,7 @@ class BookIndexPoster extends Component {
           </div>
 
           <BookIndexProgressBar
-            monitored={audiobookMonitored || ebookMonitored}
+            monitored={isMonitored}
             bookCount={bookCount}
             bookFileCount={bookFileCount}
             totalBookCount={totalBookCount}
@@ -295,7 +309,7 @@ class BookIndexPoster extends Component {
           {
             showMonitored &&
               <div className={styles.title}>
-                {translate((audiobookMonitored || ebookMonitored) ? 'Monitored' : 'Unmonitored')}
+                {translate(isMonitored ? 'Monitored' : 'Unmonitored')}
               </div>
           }
 
@@ -330,12 +344,14 @@ class BookIndexPoster extends Component {
             showRelativeDates={showRelativeDates}
             shortDateFormat={shortDateFormat}
             timeFormat={timeFormat}
+            mediaType={rowMediaType}
             {...otherProps}
           />
 
           <EditAuthorModalConnector
             isOpen={isEditAuthorModalOpen}
             authorId={authorId}
+            initialMediaType={rowMediaType}
             onModalClose={this.onEditAuthorModalClose}
             onDeleteAuthorPress={this.onDeleteAuthorPress}
           />
@@ -361,6 +377,8 @@ class BookIndexPoster extends Component {
 BookIndexPoster.propTypes = {
   id: PropTypes.number.isRequired,
   title: PropTypes.string.isRequired,
+  mediaType: PropTypes.oneOf(['audiobook', 'ebook']),
+  selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook', 'both']),
   authorId: PropTypes.number.isRequired,
   author: PropTypes.object.isRequired,
   audiobookMonitored: PropTypes.bool,

@@ -2,6 +2,7 @@ import PropTypes from 'prop-types';
 import React from 'react';
 import Icon from 'Components/Icon';
 import { icons } from 'Helpers/Props';
+import translate from 'Utilities/String/translate';
 import styles from './StarRating.css';
 
 function StarRating({ rating, votes, iconSize }) {
@@ -13,7 +14,9 @@ function StarRating({ rating, votes, iconSize }) {
     width: `${safeRating * 20}%`
   };
 
-  const helpText = hasRating ? `${safeRating.toFixed(1)} (${safeVotes} Votes)` : 'No rating';
+  const helpText = hasRating ?
+    translate('RatingValueAndVotes', { value: safeRating.toFixed(1), votes: safeVotes }) :
+    translate('NoRating');
 
   return (
     <span className={styles.starRating} title={helpText}>

@@ -69,34 +69,25 @@ function createMapStateToProps() {
     createBookSelector(),
     (state) => state.bookIndex,
     (state) => state.bookInfiniteScroll,
-    (state) => state.app.selectedMediaType,
+    (state) => state.bookIndex.selectedMediaType,
     (book, bookIndex, bookInfiniteScroll, selectedMediaType) => {
-      const view = bookIndex.view || 'posters';
+      const { queryKey, useClientSideBooks } = getBookIndexQuery(bookIndex, selectedMediaType);
 
-      if (view === 'posters') {
-        const { queryKey, useClientSidePosters } = getBookIndexQuery(bookIndex, selectedMediaType);
-
-        if (useClientSidePosters) {
-          return {
-            statistics: buildClientSideFooterStatistics(book),
-            isFetchingStatistics: false
-          };
-        }
-
-        const query = bookInfiniteScroll?.queries?.[queryKey];
-        const hasLoadingPage = Object.values(query?.pages || {}).some((page) => page.status === 'loading');
-        const isFetchingStatistics = !query?.footerStatistics &&
-          (!query || query?.buckets?.status === 'loading' || hasLoadingPage || query?.totalCount == null);
-
+      if (useClientSideBooks) {
         return {
-          statistics: query?.footerStatistics || {},
-          isFetchingStatistics
+          statistics: buildClientSideFooterStatistics(book),
+          isFetchingStatistics: false
         };
       }
 
+      const query = bookInfiniteScroll?.queries?.[queryKey];
+      const hasLoadingPage = Object.values(query?.pages || {}).some((page) => page.status === 'loading');
+      const isFetchingStatistics = !query?.footerStatistics &&
+        (!query || query?.buckets?.status === 'loading' || hasLoadingPage || query?.totalCount == null);
+
       return {
-        statistics: buildClientSideFooterStatistics(book),
-        isFetchingStatistics: false
+        statistics: query?.footerStatistics || {},
+        isFetchingStatistics
       };
     }
   );

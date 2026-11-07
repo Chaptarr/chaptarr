@@ -38,12 +38,20 @@ class LogsNavMenu extends Component {
       current
     } = this.props;
 
+    let currentLabel = current;
+
+    if (current === 'Log Files') {
+      currentLabel = translate('LogFiles');
+    } else if (current === 'Updater Log Files') {
+      currentLabel = translate('UpdaterLogFiles');
+    }
+
     return (
       <Menu>
         <MenuButton
           onPress={this.onMenuButtonPress}
         >
-          {current}
+          {currentLabel}
         </MenuButton>
         <MenuContent
           isOpen={this.state.isMenuOpen}

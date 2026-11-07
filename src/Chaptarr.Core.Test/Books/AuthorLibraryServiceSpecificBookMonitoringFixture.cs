@@ -174,7 +174,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public Book AddWantedEdition(int bookId, int editionId, bool asNewVariant = false) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -215,7 +215,7 @@ namespace Chaptarr.Core.Test.Books
             public Edition GetEditionByGoogleBooksEditionId(string googleBooksEditionId) => throw new NotImplementedException();
             public Edition GetEditionByProviderAndId(string providerPrefix, string providerId) => throw new NotImplementedException();
             public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
-            public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
+            public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
             public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
@@ -669,6 +669,66 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(otherBook.AudiobookMonitored, Is.False);
                 Assert.That(selectedBook.EbookMonitored, Is.False);
                 Assert.That(otherBook.EbookMonitored, Is.False);
+            });
+        }
+
+        [Test]
+        public async Task specific_book_import_with_search_should_not_leave_an_all_books_fallback_for_the_scan()
+        {
+            var remoteAuthor = new Author
+            {
+                Name = "Shelf Author",
+                Books = new List<Book>
+                {
+                    BuildAudiobook("Selected Book", "hc:1001"),
+                    BuildAudiobook("Other Book", "hc:1002")
+                },
+                Series = new List<Series>()
+            };
+
+            var service = new AuthorLibraryService(
+                authorService: new StubAuthorService(),
+                authorInfo: new StubAuthorInfo(remoteAuthor),
+                bookService: new StubBookService(),
+                refreshSeriesService: null,
+                editionService: new StubEditionService(),
+                narratorLinkService: null,
+                metadataProfileService: new StubMetadataProfileService(),
+                qualityProfileService: new TestQualityProfileService(),
+                authorPathBuilder: new StubAuthorPathBuilder(),
+                rootFolderService: new StubRootFolderService(BuildAudiobookRoot("/audiobooks")),
+                commandQueueManager: null,
+                eventAggregator: new StubEventAggregator(),
+                pendingImportService: null,
+                mainDatabase: null,
+                importListExclusionService: null,
+                editionMetadataProfileFilter: new EditionMetadataProfileFilter(new TestTermMatcherService()),
+                syncMetadataService: null,
+                logger: LogManager.GetCurrentClassLogger(),
+                editionSelector: new EditionSelector(LogManager.GetCurrentClassLogger()));
+
+            var addedAuthor = await service.AddAuthorAsync("hc:author-1", new MonitoringConfig
+            {
+                AuthorName = remoteAuthor.Name,
+                CreateAudiobook = true,
+                CreateEbook = false,
+                AudiobookQualityProfileId = 2,
+                AudiobookMetadataProfileId = 1,
+                AudiobookRootFolderPath = "/audiobooks",
+                AudiobookMonitored = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.All,
+                AudiobookMonitorExistingMode = MonitorTypes.SpecificBook,
+                AudiobookBooksToMonitor = new List<string> { "hc:1001" },
+                SearchForMissingBooks = true
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(addedAuthor.AddOptions, Is.Not.Null);
+                Assert.That(addedAuthor.AddOptions.SearchForMissingBooks, Is.True);
+                Assert.That(addedAuthor.AddOptions.AudiobookMonitor, Is.Null);
+                Assert.That(addedAuthor.AddOptions.EbookMonitor, Is.Null);
+                Assert.That(addedAuthor.AddOptions.Monitor, Is.EqualTo(MonitorTypes.SpecificBook));
             });
         }
 

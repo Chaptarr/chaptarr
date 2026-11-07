@@ -61,18 +61,26 @@ namespace Chaptarr.Core.Test.MediaFiles
                         { "TITLE", new List<string> { "Dune" } },
                         { "COMMENT", new List<string> { "legacy plot summary" } },
                         { "ENCODEDBY", new List<string> { "qaac" } },
+                        { BookshelfAudioTagFields.Book, new List<string> { "Dune" } },
+                        { BookshelfAudioTagFields.Title, new List<string> { "Track 1" } },
                         { "__hidden", new List<string> { "internal" } }
                     }
                 };
 
                 var ebookTagService = new StubEBookTagService();
                 var sut = new MetadataTagService(audioTagService, ebookTagService, LogManager.GetLogger("test"));
-                var tags = sut.ReadAllTags(new FileSystem().FileInfo.FromFileName(path));
+                var tags = sut.ReadAllTags(new FileSystem().FileInfo.New(path));
 
                 Assert.That(tags.ContainsKey("TITLE"), Is.True);
                 Assert.That(tags.ContainsKey("COMMENT"), Is.True);
                 Assert.That(tags.ContainsKey("ENCODEDBY"), Is.False);
+                Assert.That(tags[BookshelfAudioTagFields.Book], Is.EqualTo(new[] { "Dune" }));
+                Assert.That(TagExclusionPolicy.IsExcludedFromMatching(BookshelfAudioTagFields.Book), Is.True);
                 Assert.That(tags.ContainsKey("__hidden"), Is.False);
+
+                var json = sut.ReadAllTagsAsJson(new FileSystem().FileInfo.New(path));
+                Assert.That(json, Does.Not.Contain(BookshelfAudioTagFields.Book));
+                Assert.That(json, Does.Not.Contain(BookshelfAudioTagFields.Title));
             }
             finally
             {

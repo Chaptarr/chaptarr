@@ -57,7 +57,7 @@ function NotificationEventItems(props) {
       </FormLabel>
       <div>
         <FormInputHelpText
-          text="Select which events should trigger this notification"
+          text={translate('NotificationEventTriggersHelpText')}
           link="https://discord.gg/nqFGsGUug2"
         />
         <div className={styles.events}>

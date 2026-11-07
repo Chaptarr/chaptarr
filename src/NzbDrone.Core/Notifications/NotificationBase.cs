@@ -3,40 +3,55 @@ using System.Collections.Generic;
 using FluentValidation.Results;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.Localization;
 using NzbDrone.Core.ThingiProvider;
 
 namespace NzbDrone.Core.Notifications
 {
-    public abstract class NotificationBase<TSettings> : INotification
+    public abstract class NotificationBase<TSettings> : INotification, ILocalizedNotification
         where TSettings : IProviderConfig, new()
     {
-        protected const string BOOK_GRABBED_TITLE = "Book Grabbed";
-        protected const string BOOK_DOWNLOADED_TITLE = "Book Downloaded";
-        protected const string AUTHOR_ADDED_TITLE = "Author Added";
-        protected const string BOOK_ADDED_TITLE = "Book Added";
-        protected const string AUTHOR_DELETED_TITLE = "Author Deleted";
-        protected const string BOOK_DELETED_TITLE = "Book Deleted";
-        protected const string BOOK_FILE_DELETED_TITLE = "Book File Deleted";
-        protected const string HEALTH_ISSUE_TITLE = "Health Check Failure";
-        protected const string DOWNLOAD_FAILURE_TITLE = "Download Failed";
-        protected const string IMPORT_FAILURE_TITLE = "Import Failed";
-        protected const string BOOK_RETAGGED_TITLE = "Book File Tags Updated";
-        protected const string APPLICATION_UPDATE_TITLE = "Application Updated";
+        protected string BOOK_GRABBED_TITLE => Localize("notification.heading.bookGrabbed", "Book Grabbed");
+        protected string BOOK_DOWNLOADED_TITLE => Localize("notification.heading.bookDownloaded", "Book Downloaded");
+        protected string AUTHOR_ADDED_TITLE => Localize("notification.heading.authorAdded", "Author Added");
+        protected string BOOK_ADDED_TITLE => Localize("notification.heading.bookAdded", "Book Added");
+        protected string AUTHOR_DELETED_TITLE => Localize("notification.heading.authorDeleted", "Author Deleted");
+        protected string BOOK_DELETED_TITLE => Localize("notification.heading.bookDeleted", "Book Deleted");
+        protected string BOOK_FILE_DELETED_TITLE => Localize("notification.heading.bookFileDeleted", "Book File Deleted");
+        protected string HEALTH_ISSUE_TITLE => Localize("notification.heading.healthIssue", "Health Check Failure");
+        protected string DOWNLOAD_FAILURE_TITLE => Localize("notification.heading.downloadFailure", "Download Failed");
+        protected string IMPORT_FAILURE_TITLE => Localize("notification.heading.importFailure", "Import Failed");
+        protected string BOOK_RETAGGED_TITLE => Localize("notification.heading.bookRetagged", "Book File Tags Updated");
+        protected string APPLICATION_UPDATE_TITLE => Localize("notification.heading.applicationUpdate", "Application Updated");
 
-        protected const string BOOK_GRABBED_TITLE_BRANDED = "Chaptarr - " + BOOK_GRABBED_TITLE;
-        protected const string BOOK_DOWNLOADED_TITLE_BRANDED = "Chaptarr - " + BOOK_DOWNLOADED_TITLE;
-        protected const string AUTHOR_ADDED_TITLE_BRANDED = "Chaptarr - " + AUTHOR_ADDED_TITLE;
-        protected const string BOOK_ADDED_TITLE_BRANDED = "Chaptarr - " + BOOK_ADDED_TITLE;
-        protected const string AUTHOR_DELETED_TITlE_BRANDED = "Chaptarr - " + AUTHOR_DELETED_TITLE;
-        protected const string BOOK_DELETED_TITLE_BRANDED = "Chaptarr - " + BOOK_DELETED_TITLE;
-        protected const string BOOK_FILE_DELETED_TITLE_BRANDED = "Chaptarr - " + BOOK_FILE_DELETED_TITLE;
-        protected const string HEALTH_ISSUE_TITLE_BRANDED = "Chaptarr - " + HEALTH_ISSUE_TITLE;
-        protected const string DOWNLOAD_FAILURE_TITLE_BRANDED = "Chaptarr - " + DOWNLOAD_FAILURE_TITLE;
-        protected const string IMPORT_FAILURE_TITLE_BRANDED = "Chaptarr - " + IMPORT_FAILURE_TITLE;
-        protected const string BOOK_RETAGGED_TITLE_BRANDED = "Chaptarr - " + BOOK_RETAGGED_TITLE;
-        protected const string APPLICATION_UPDATE_TITLE_BRANDED = "Chaptarr - " + APPLICATION_UPDATE_TITLE;
+        protected string BOOK_GRABBED_TITLE_BRANDED => "Chaptarr - " + BOOK_GRABBED_TITLE;
+        protected string BOOK_DOWNLOADED_TITLE_BRANDED => "Chaptarr - " + BOOK_DOWNLOADED_TITLE;
+        protected string AUTHOR_ADDED_TITLE_BRANDED => "Chaptarr - " + AUTHOR_ADDED_TITLE;
+        protected string BOOK_ADDED_TITLE_BRANDED => "Chaptarr - " + BOOK_ADDED_TITLE;
+        protected string AUTHOR_DELETED_TITlE_BRANDED => "Chaptarr - " + AUTHOR_DELETED_TITLE;
+        protected string BOOK_DELETED_TITLE_BRANDED => "Chaptarr - " + BOOK_DELETED_TITLE;
+        protected string BOOK_FILE_DELETED_TITLE_BRANDED => "Chaptarr - " + BOOK_FILE_DELETED_TITLE;
+        protected string HEALTH_ISSUE_TITLE_BRANDED => "Chaptarr - " + HEALTH_ISSUE_TITLE;
+        protected string DOWNLOAD_FAILURE_TITLE_BRANDED => "Chaptarr - " + DOWNLOAD_FAILURE_TITLE;
+        protected string IMPORT_FAILURE_TITLE_BRANDED => "Chaptarr - " + IMPORT_FAILURE_TITLE;
+        protected string BOOK_RETAGGED_TITLE_BRANDED => "Chaptarr - " + BOOK_RETAGGED_TITLE;
+        protected string APPLICATION_UPDATE_TITLE_BRANDED => "Chaptarr - " + APPLICATION_UPDATE_TITLE;
+
+        private NotificationText _notificationText = new NotificationText(null);
+
+        public void ConfigureLocalization(ILocalizationService localizationService)
+        {
+            _notificationText = new NotificationText(localizationService);
+        }
+
+        protected string Localize(string id, string source, Dictionary<string, object> tokens = null)
+        {
+            return _notificationText.Get(id, source, tokens);
+        }
 
         public abstract string Name { get; }
+
+        public virtual bool NotifyOnLibraryImports => false;
 
         public Type ConfigContract => typeof(TSettings);
 
@@ -93,6 +108,10 @@ namespace NzbDrone.Core.Notifications
         {
         }
 
+        public virtual void OnLibraryFileAdded(BookFile bookFile, Book book)
+        {
+        }
+
         public virtual void OnBookRetag(BookRetagMessage message)
         {
         }
@@ -121,6 +140,7 @@ namespace NzbDrone.Core.Notifications
         public bool SupportsOnDownloadFailure => HasConcreteImplementation("OnDownloadFailure");
         public bool SupportsOnImportFailure => HasConcreteImplementation("OnImportFailure");
         public bool SupportsOnBookRetag => HasConcreteImplementation("OnBookRetag");
+        public bool SupportsOnLibraryFileAdded => HasConcreteImplementation("OnLibraryFileAdded");
         public bool SupportsOnApplicationUpdate => HasConcreteImplementation("OnApplicationUpdate");
 
         protected TSettings Settings => (TSettings)Definition.Settings;

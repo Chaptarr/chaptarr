@@ -85,20 +85,34 @@ namespace NzbDrone.Core.MediaCover
 
         public void Execute(DownloadBookMediaCommand message)
         {
+            var bookIds = message.BookIds?.Where(id => id > 0).Distinct().ToList();
+            if (bookIds == null || bookIds.Count == 0)
+            {
+                bookIds = new[] { message.BookId }.Where(id => id > 0).ToList();
+            }
+
+            foreach (var bookId in bookIds)
+            {
+                DownloadBookMedia(bookId, message.ForceDownload);
+            }
+        }
+
+        private void DownloadBookMedia(int bookId, bool forceDownload)
+        {
             Book book;
             try
             {
-                book = _bookService.GetBook(message.BookId);
+                book = _bookService.GetBook(bookId);
             }
             catch (ModelNotFoundException)
             {
-                _logger.Warn("Book {0} not found", message.BookId);
+                _logger.Warn("Book {0} not found", bookId);
                 return;
             }
 
             _logger.Debug("Downloading media for book {0}: {1}", book.Id, book.Title);
 
-            if (message.ForceDownload)
+            if (forceDownload)
             {
                 // Delete existing covers to force re-download
                 var bookCoverPath = Path.Combine(_diskProvider.GetParentFolder(_mediaCoverService.GetCoverPath(book.Id, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".jpg")));

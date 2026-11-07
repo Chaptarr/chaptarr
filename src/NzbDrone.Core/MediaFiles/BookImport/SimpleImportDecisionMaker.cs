@@ -4,8 +4,10 @@ using System.IO;
 using System.IO.Abstractions;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport.Identification;
@@ -27,6 +29,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         private readonly IBookService _bookService;
         private readonly IEditionService _editionService;
         private readonly IMediaFileService _mediaFileService;
+        private readonly IConfigService _configService;
         private readonly Logger _logger;
 
         private sealed class ManualPreviewCandidate
@@ -42,7 +45,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                          IBookService bookService,
                                          IEditionService editionService,
                                          IMediaFileService mediaFileService,
-                                         Logger logger)
+                                         Logger logger,
+                                         IConfigService configService = null)
         {
             _metadataTagService = metadataTagService;
             _fileMatchingService = fileMatchingService;
@@ -50,7 +54,43 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             _bookService = bookService;
             _editionService = editionService;
             _mediaFileService = mediaFileService;
+            _configService = configService;
             _logger = logger;
+        }
+
+        private const int TagPrefetchParallelism = 4;
+        internal const int TagPrefetchMaxFiles = 800;
+
+        // Tag/duration extraction (ffprobe or TagLib on network storage) is the dominant cost of a multi-file
+        // preview and ran strictly one file at a time. Warm the tag cache with bounded parallelism; the loop
+        // below then reads every file from the cache. Failures are ignored here and surface, as before, when
+        // the loop reads the same file.
+        private void PrefetchTags(List<IFileInfo> files, CancellationToken cancellationToken)
+        {
+            if (files == null || files.Count < 2)
+            {
+                return;
+            }
+
+            // The tag cache clears itself entirely once it passes 1,000 entries, so warming more files than it can
+            // hold wipes its own work mid-prefetch and the loop re-reads everything. Warm at most
+            // TagPrefetchMaxFiles; the rest are read by the loop as before.
+            var toPrefetch = files.Count > TagPrefetchMaxFiles ? files.Take(TagPrefetchMaxFiles).ToList() : files;
+
+            Parallel.ForEach(
+                toPrefetch,
+                new ParallelOptions { MaxDegreeOfParallelism = TagPrefetchParallelism, CancellationToken = cancellationToken },
+                file =>
+                {
+                    try
+                    {
+                        _metadataTagService.ReadAllTagsAndDuration(file);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException)
+                    {
+                        _logger.Trace(ex, "Tag prefetch failed for '{0}'", file?.FullName);
+                    }
+                });
         }
 
         public List<ImportDecision<LocalBook>> GetImportDecisions(
@@ -75,6 +115,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             var manualPreviewCandidates = new List<ManualPreviewCandidate>();
             
             _logger.Debug("SimpleImportDecisionMaker processing {0} files", musicFiles.Count);
+
+            PrefetchTags(musicFiles, cancellationToken);
 
             foreach (var file in musicFiles)
             {
@@ -172,10 +214,21 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 {
                     throw;
                 }
+                catch (Exception ex) when (ex is FileNotFoundException || ex is DirectoryNotFoundException || ex is IOException)
+                {
+                    // A file that vanished or cannot be read is an expected condition, not a defect.
+                    _logger.Warn("Unable to read file {0}: {1}", file.FullName, ex.Message);
+                    _logger.Debug(ex, "Read failure details for {0}", file.FullName);
+
+                    var unreadableBook = new LocalBook { Path = file.FullName };
+                    var unreadableRejection = new Rejection("Failed to process file: " + ex.Message);
+                    decisions.Add(new ImportDecision<LocalBook>(unreadableBook, unreadableRejection));
+                }
                 catch (Exception ex)
                 {
-                    _logger.Error(ex, "Error processing file {0}", file.FullName);
-                    
+                    _logger.Warn("Error processing file {0}: {1}", file.FullName, ex.Message);
+                    _logger.Debug(ex, "Processing failure details for {0}", file.FullName);
+
                     // Create a rejected decision for files we can't process
                     var failedBook = new LocalBook { Path = file.FullName };
                     var rejection = new Rejection("Failed to process file: " + ex.Message);
@@ -197,8 +250,39 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
             }
 
+            ApplyBookshelfSameFileRejections(decisions);
+
             _logger.Debug("SimpleImportDecisionMaker created {0} decisions", decisions.Count);
             return decisions;
+        }
+
+        private void ApplyBookshelfSameFileRejections(IEnumerable<ImportDecision<LocalBook>> decisions)
+        {
+            if (_configService?.BookshelfMatchCompatibility != true)
+            {
+                return;
+            }
+
+            var existingFilesByBookId = new Dictionary<int, List<BookFile>>();
+            foreach (var decision in decisions)
+            {
+                var localBook = decision?.Item;
+                if (localBook?.Book?.Id <= 0 || string.IsNullOrWhiteSpace(localBook.Path))
+                {
+                    continue;
+                }
+
+                if (!existingFilesByBookId.TryGetValue(localBook.Book.Id, out var existingFiles))
+                {
+                    existingFiles = _mediaFileService.GetFilesByBook(localBook.Book.Id) ?? new List<BookFile>();
+                    existingFilesByBookId[localBook.Book.Id] = existingFiles;
+                }
+
+                if (BookshelfSameFileCompatibility.HasSameSizeCompatibleFile(localBook, existingFiles))
+                {
+                    decision.Reject(new Rejection(BookshelfSameFileCompatibility.RejectionReason));
+                }
+            }
         }
 
         private void ApplyManualPreviewMatches(

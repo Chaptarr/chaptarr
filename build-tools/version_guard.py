@@ -310,7 +310,7 @@ def guard_commit_hygiene(repo_root: Path, compare_ref: str) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Validate Chaptarr version invariants.")
+    parser = argparse.ArgumentParser(description="Validate ChaptarrNG version invariants.")
     parser.add_argument("--repo-root", default=str(repo_root_from_script()), help="Repository root (defaults to script parent)")
 
     subparsers = parser.add_subparsers(dest="command", required=True)

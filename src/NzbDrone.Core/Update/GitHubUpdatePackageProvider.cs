@@ -9,6 +9,7 @@ using NzbDrone.Common.Cloud;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
+using NzbDrone.Core.Configuration;
 
 namespace NzbDrone.Core.Update
 {
@@ -20,30 +21,38 @@ namespace NzbDrone.Core.Update
 
     public class GitHubUpdatePackageProvider : IGitHubUpdatePackageProvider
     {
-        // Default to the Chaptarr repository
-        private const string DefaultOwner = "chaptarr";
-        private const string DefaultRepo = "chaptarr";
+        // Default to the Snapetech-maintained ChaptarrNG repository
+        private const string DefaultOwner = "snapetech-org";
+        private const string DefaultRepo = "chaptarrng";
         private static readonly string[] Sha256AssetSuffixes = { ".sha256", ".sha256sum", ".sha256.txt", ".sha256sums", ".sha256sums.txt" };
 
         private readonly IHttpClient _httpClient;
         private readonly IHttpRequestBuilderFactory _gitHubRequestBuilder;
         private readonly IPlatformInfo _platformInfo;
+        private readonly IConfigService _configService;
         private readonly Logger _logger;
 
         public GitHubUpdatePackageProvider(
             IHttpClient httpClient,
             IChaptarrCloudRequestBuilder requestBuilder,
             IPlatformInfo platformInfo,
+            IConfigService configService,
             Logger logger)
         {
             _httpClient = httpClient;
             _gitHubRequestBuilder = requestBuilder.GitHubApi;
             _platformInfo = platformInfo;
+            _configService = configService;
             _logger = logger;
         }
 
         public UpdatePackage GetLatestUpdate(string branch, Version currentVersion)
         {
+            if (!string.Equals(branch, "main", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
             try
             {
                 var releases = GetReleases();
@@ -54,7 +63,7 @@ namespace NzbDrone.Core.Update
 
                 // Filter by branch if specified
                 var latestRelease = releases
-                    .Where(r => !r.Prerelease || branch == "develop")
+                    .Where(r => !r.Prerelease)
                     .FirstOrDefault(r => IsNewerVersion(r.TagName, currentVersion));
 
                 if (latestRelease == null)
@@ -73,6 +82,11 @@ namespace NzbDrone.Core.Update
 
         public List<UpdatePackage> GetRecentUpdates(string branch, Version currentVersion, Version previousVersion = null)
         {
+            if (!string.Equals(branch, "main", StringComparison.OrdinalIgnoreCase))
+            {
+                return new List<UpdatePackage>();
+            }
+
             try
             {
                 var releases = GetReleases();
@@ -82,7 +96,7 @@ namespace NzbDrone.Core.Update
                 }
 
                 var updates = releases
-                    .Where(r => !r.Prerelease || branch == "develop")
+                    .Where(r => !r.Prerelease)
                     .Where(r => IsNewerVersion(r.TagName, previousVersion ?? new Version(0, 0, 0)))
                     .Where(r => !IsNewerVersion(r.TagName, currentVersion))
                     .Select(ConvertToUpdatePackage)
@@ -100,21 +114,26 @@ namespace NzbDrone.Core.Update
 
         private List<GitHubRelease> GetReleases()
         {
-            var owner = DefaultOwner;
-            var repo = DefaultRepo;
-
             var request = _gitHubRequestBuilder.Create()
-                .Resource($"repos/{owner}/{repo}/releases")
+                .Resource(BuildReleasesResource(_configService.GitHubOwner, _configService.GitHubRepo))
                 .Build();
 
             var response = _httpClient.Get<List<GitHubRelease>>(request);
             return response.Resource;
         }
 
+        internal static string BuildReleasesResource(string owner, string repo)
+        {
+            owner = string.IsNullOrWhiteSpace(owner) ? DefaultOwner : owner.Trim();
+            repo = string.IsNullOrWhiteSpace(repo) ? DefaultRepo : repo.Trim();
+
+            return $"repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/releases";
+        }
+
         private UpdatePackage ConvertToUpdatePackage(GitHubRelease release)
         {
             var version = ParseVersion(release.TagName);
-            var asset = SelectAssetForPlatform(release.Assets);
+            var asset = SelectAssetForPlatform(release, version);
             if (asset == null)
             {
                 _logger.Warn("GitHub release {0} has no compatible assets for the current platform.", release.TagName);
@@ -134,7 +153,7 @@ namespace NzbDrone.Core.Update
                 ReleaseDate = release.PublishedAt ?? release.CreatedAt,
                 FileName = asset.Name,
                 Url = asset.BrowserDownloadUrl,
-                Branch = release.Prerelease ? "develop" : "main",
+                Branch = "main",
                 Changes = ParseReleaseNotes(release.Body),
                 Hash = hash
             };
@@ -272,38 +291,50 @@ namespace NzbDrone.Core.Update
             return false;
         }
 
-        private GitHubAsset SelectAssetForPlatform(List<GitHubAsset> assets)
+        private GitHubAsset SelectAssetForPlatform(GitHubRelease release, Version version)
         {
-            if (assets == null || !assets.Any())
+            if (release?.Assets == null || !release.Assets.Any())
             {
                 return null;
             }
 
-            var osName = OsInfo.Os.ToString().ToLowerInvariant();
-            var arch = RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant();
-
-            // Try to find a matching asset for the current platform
-            var patterns = new[]
+            var platform = OsInfo.Os switch
             {
-                $"{osName}-{arch}",
-                $"{osName}.{arch}",
-                osName,
-                "core" // fallback to .NET Core builds
+                Os.Windows => "win",
+                Os.Linux => "linux",
+                Os.LinuxMusl => "linux-musl",
+                Os.Osx => "osx",
+                Os.Bsd => "freebsd",
+                _ => null
             };
 
-            foreach (var pattern in patterns)
+            var architecture = RuntimeInformation.ProcessArchitecture switch
             {
-                var asset = assets.FirstOrDefault(a =>
-                    a.Name.IndexOf(pattern, StringComparison.OrdinalIgnoreCase) >= 0);
+                Architecture.X64 => "x64",
+                Architecture.X86 => "x86",
+                Architecture.Arm64 => "arm64",
+                _ => null
+            };
 
-                if (asset != null)
-                {
-                    return asset;
-                }
+            if (platform.IsNullOrWhiteSpace() || architecture.IsNullOrWhiteSpace())
+            {
+                _logger.Warn("GitHub release {0} has no supported standalone package for OS {1} and architecture {2}.",
+                    release.TagName,
+                    OsInfo.Os,
+                    RuntimeInformation.ProcessArchitecture);
+                return null;
             }
 
-            // Return the first asset as a fallback
-            return assets.FirstOrDefault();
+            var runtimeIdentifier = $"{platform}-{architecture}";
+            var extension = OsInfo.Os == Os.Windows ? ".zip" : ".tar.gz";
+            var expectedName = $"ChaptarrNG-{version}-{runtimeIdentifier}{extension}";
+
+            // Release assets include checksum sidecars and platform-specific
+            // packages. Only select the versioned standalone archive whose RID
+            // exactly matches this process; a first-asset fallback can install
+            // an archive for a different OS or architecture.
+            return release.Assets.FirstOrDefault(asset =>
+                string.Equals(asset.Name, expectedName, StringComparison.OrdinalIgnoreCase));
         }
 
         private Version ParseVersion(string tagName)

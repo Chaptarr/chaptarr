@@ -16,6 +16,7 @@ using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Parser;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.Books
 {
@@ -27,6 +28,9 @@ namespace Chaptarr.Api.V1.Books
         public string Disambiguation { get; set; }
         public string Overview { get; set; }
         public int AuthorId { get; set; }
+        // BookshelfNG exposed a separate author metadata row ID in its embedded Book model.
+        // ChaptarrNG uses one author identity; migrated responses can project the original ID.
+        public int AuthorMetadataId { get; set; }
         public string ForeignBookId { get; set; }  // Chaptarr-native IDs are prefixed; Readarr facades emit bare IDs in the requested dialect.
         public string LocalBookId { get; set; }
         public string ForeignEditionId { get; set; }
@@ -37,7 +41,10 @@ namespace Chaptarr.Api.V1.Books
         public string GoodreadsBookId { get; set; }
         public string GoodreadsWorkId { get; set; }
         public string OpenLibraryWorkId { get; set; }
+        public List<string> WorkProviderIds { get; set; }
+        public string RanobeDbBookId { get; set; }
         public string GoogleBooksId { get; set; }
+        public string AdditionalMetadataProviderId { get; set; }
         public string ASIN { get; set; }
         public string AudibleASIN { get; set; }
         public string TitleSlug { get; set; }
@@ -48,6 +55,7 @@ namespace Chaptarr.Api.V1.Books
         public Ratings Ratings { get; set; }
         public DateTime? ReleaseDate { get; set; }
         public DateTime Added { get; set; }
+        public DateTime? LastSearchTime { get; set; }
         public int PageCount { get; set; }
         public List<string> Genres { get; set; }
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -84,8 +92,8 @@ namespace Chaptarr.Api.V1.Books
         public string FileSizeOnDisk { get; set; }
 
         //Hiding this so people don't think its usable (only used to set the initial state)
-        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-        public bool Grabbed { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public bool? Grabbed { get; set; }
     }
 
     public class BookLocalInstanceResource
@@ -148,22 +156,30 @@ namespace Chaptarr.Api.V1.Books
 
             options ??= BookResourceMappingOptions.Rich();
 
+            var legacy = options.FacadeContext?.IsBookshelfCompatibility == true;
             var selectedEdition = SelectMonitoredEdition(model.Editions);
             var title = (selectedEdition?.Title ?? model.Title) ?? string.Empty;
 
-            // Use SeriesName and SeriesPosition from Book model until SeriesBookLink is properly populated
-            var seriesTitle = !string.IsNullOrWhiteSpace(model.SeriesName)
-                ? model.SeriesName + (!string.IsNullOrWhiteSpace(model.SeriesPosition) ? $" #{model.SeriesPosition}" : string.Empty)
-                : null;
+            var seriesTitle = legacy
+                ? model.SeriesLinks?.OrderBy(link => link.SeriesPosition).ThenBy(link => link.Id)
+                    .Select(link => link?.Series?.Value?.Title +
+                        (link?.Position.IsNotNullOrWhiteSpace() == true ? $" #{link.Position}" : string.Empty))
+                    .ConcatToString("; ")
+                : BookSeriesLabel.Build(model.SeriesLinks);
 
-            // Fallback to SeriesLinks if available (for future when SeriesBookLink is populated)
-            if (string.IsNullOrWhiteSpace(seriesTitle) && model.SeriesLinks?.Any() == true)
+            // Lookup and search results are not persisted and therefore never carry links, so the
+            // denormalized pair from the metadata server is all they have. For a library book the
+            // links are the truth, including when there are none.
+            if (!legacy && seriesTitle.IsNullOrWhiteSpace() &&
+                (model.Id <= 0 || !string.IsNullOrWhiteSpace(model.RanobeDbBookId)))
             {
-                var seriesLinks = model.SeriesLinks.OrderBy(x => x.SeriesPosition);
-                seriesTitle = seriesLinks.Select(x => x?.Series?.Value?.Title + (x?.Position.IsNotNullOrWhiteSpace() ?? false ? $" #{x.Position}" : string.Empty)).ConcatToString("; ");
+                seriesTitle = BookSeriesLabel.Format(model.SeriesName, model.SeriesPosition);
             }
 
-            title = StripDuplicatedSeriesSuffix(title, seriesTitle);
+            if (!legacy)
+            {
+                title = StripDuplicatedSeriesSuffix(title, BuildSuffixCandidates(model, seriesTitle));
+            }
 
             var authorTitle = $"{model.Author?.SortNameLastFirst} {title}";
             var hasFiles = options.Statistics != null
@@ -175,9 +191,9 @@ namespace Chaptarr.Api.V1.Books
             string foreignBookId = BuildForeignBookId(model, options.FacadeContext);
 
             var links = options.IncludeLinks
-                ? ((model.Links != null && model.Links.Any())
-                    ? model.Links
-                    : BuildFallbackLinks(model, selectedEdition))
+                ? (model.Links ?? new List<Links>())
+                    .Concat(selectedEdition?.Links ?? new List<Links>())
+                    .ToList()
                 : null;
 
             if (options.IncludeLinks)
@@ -189,6 +205,7 @@ namespace Chaptarr.Api.V1.Books
             {
                 Id = model.Id,
                 AuthorId = model.AuthorId,
+                AuthorMetadataId = model.AuthorId,
                 Author = options.IncludeAuthor ? model.Author?.ToResource(options.FacadeContext) : null,
                 ForeignBookId = foreignBookId,
                 LocalBookId = model.Id.ToString(),
@@ -200,7 +217,10 @@ namespace Chaptarr.Api.V1.Books
                 GoodreadsBookId = BookEditionIdentity.GetGoodreadsEditionProviderId(model),
                 GoodreadsWorkId = model.GoodreadsWorkId,
                 OpenLibraryWorkId = model.OpenLibraryWorkId,
+                WorkProviderIds = WorkIdMatcher.GetWorkProviderIds(model).ToList(),
+                RanobeDbBookId = model.RanobeDbBookId,
                 GoogleBooksId = BookEditionIdentity.GetGoogleBooksEditionId(model),
+                AdditionalMetadataProviderId = model.AdditionalMetadataProviderId,
                 ASIN = BookEditionIdentity.GetAsin(model),
                 AudibleASIN = BookEditionIdentity.GetAudibleAsin(model),
 
@@ -211,30 +231,35 @@ namespace Chaptarr.Api.V1.Books
                 AnyEditionOk = model.AnyEditionOk,
                 Ratings = selectedEdition != null
                     ? (selectedEdition.Ratings ?? new Ratings())
-                    : (model.Ratings ?? new Ratings()),
-                ReleaseDate = selectedEdition?.ReleaseDate ?? model.ReleaseDate,
+                    : (legacy ? new Ratings() : model.Ratings ?? new Ratings()),
+                ReleaseDate = options.FacadeContext?.IsBookshelfCompatibility == true
+                    ? model.ReleaseDate
+                    : selectedEdition?.ReleaseDate ?? model.ReleaseDate,
                 Added = model.Added,
+                LastSearchTime = model.LastSearchTime,
                 // Don't show page count for audiobooks
-                PageCount = model.MediaType == BookMediaType.Audiobook
+                PageCount = model.MediaType == BookMediaType.Audiobook && options.FacadeContext?.IsBookshelfCompatibility != true
                     ? 0
                     : (selectedEdition?.PageCount ?? 0),
                 Genres = (model.Genres ?? new List<string>()).ToList(),
                 Title = title,
                 AuthorTitle = authorTitle,
-                SeriesTitle = seriesTitle,
+                SeriesTitle = options.FacadeContext?.IsBookshelfCompatibility == true
+                    ? seriesTitle ?? string.Empty
+                    : seriesTitle,
                 Disambiguation = selectedEdition?.Disambiguation,
                 Overview = options.IncludeOverview && !string.IsNullOrWhiteSpace(selectedEdition?.Overview)
                     ? selectedEdition.Overview
                     : (options.IncludeOverview ? (model.Overview ?? string.Empty) : null),
                 Images = selectedEdition != null
                     ? (selectedEdition.Images ?? new List<MediaCover>()).Where(i => !string.IsNullOrWhiteSpace(i?.Url)).ToList()
-                    : (model.Images ?? new List<MediaCover>()).Where(i => !string.IsNullOrWhiteSpace(i?.Url)).ToList(),
+                    : (legacy ? new List<MediaCover>() : model.Images ?? new List<MediaCover>()).Where(i => !string.IsNullOrWhiteSpace(i?.Url)).ToList(),
                 Links = links,
-                Statistics = options.Statistics?.ToResource(),
+                Statistics = options.Statistics?.ToResource(options.FacadeContext?.IsBookshelfCompatibility == true),
                 AddOptions = model.AddOptions,
                 RemoteCover = string.Empty,
-                Grabbed = false,
-                Narrator = GetNarratorDisplay(model, selectedEdition),
+                Grabbed = options.FacadeContext?.IsBookshelfCompatibility == true ? false : null,
+                Narrator = legacy ? selectedEdition?.Narrator : GetNarratorDisplay(model, selectedEdition),
                 AvailableNarrators = GetAvailableNarrators(model),
                 NarratorNames = GetNarratorNamesForDisplay(model, selectedEdition),
                 Duration = GetDuration(model, selectedEdition),
@@ -244,11 +269,16 @@ namespace Chaptarr.Api.V1.Books
                 IsOmnibus = model.IsOmnibus
             };
 
+            if (legacy)
+            {
+                resource.Images = resource.Images.JsonClone();
+            }
+
             // Gate narrator display for V1 (audiobooks only): show names only when they come from files
             // or an explicitly pinned edition selection. Narrator is edition metadata, not an API identity.
             var hasPinnedEdition = !model.AnyEditionOk;
 
-            if (model.MediaType == BookMediaType.Audiobook && !(hasFiles || hasPinnedEdition))
+            if (!legacy && model.MediaType == BookMediaType.Audiobook && !(hasFiles || hasPinnedEdition))
             {
                 // Hide narrator fields when not eligible
                 resource.Narrator = null;
@@ -258,12 +288,36 @@ namespace Chaptarr.Api.V1.Books
             return resource;
         }
 
-            private static string StripDuplicatedSeriesSuffix(string title, string seriesTitle)
+            private static List<string> BuildSuffixCandidates(Book model, string seriesTitle)
+            {
+                var candidates = new List<string>();
+
+                if (seriesTitle.IsNotNullOrWhiteSpace())
+                {
+                    candidates.Add(seriesTitle);
+                }
+
+                candidates.AddRange(BookSeriesLabel.BuildAll(model.SeriesLinks));
+
+                var denormalized = BookSeriesLabel.Format(model.SeriesName, model.SeriesPosition);
+                if (denormalized.IsNotNullOrWhiteSpace())
+                {
+                    candidates.Add(denormalized);
+                }
+
+                return candidates;
+            }
+
+            private static string StripDuplicatedSeriesSuffix(string title, IEnumerable<string> seriesTitles)
             {
                 title ??= string.Empty;
                 title = title.Trim();
 
-                if (title.Length == 0 || string.IsNullOrWhiteSpace(seriesTitle))
+                var candidates = (seriesTitles ?? Enumerable.Empty<string>())
+                    .Where(x => x.IsNotNullOrWhiteSpace())
+                    .ToList();
+
+                if (title.Length == 0 || candidates.Count == 0)
                 {
                     return title;
                 }
@@ -275,7 +329,7 @@ namespace Chaptarr.Api.V1.Books
                 }
 
                 var suffix = match.Groups["suffix"].Value;
-                if (!SuffixMatchesSeriesTitle(suffix, seriesTitle))
+                if (!candidates.Any(candidate => SuffixMatchesSeriesTitle(suffix, candidate)))
                 {
                     return title;
                 }
@@ -305,13 +359,6 @@ namespace Chaptarr.Api.V1.Books
                 normalized = Regex.Replace(normalized, @"\s+", " ").Trim();
                 normalized = Regex.Replace(normalized, @"\s+#", " #");
                 return normalized;
-            }
-
-            private static List<Links> BuildFallbackLinks(Book book, Edition selectedEdition)
-            {
-                // No client-side URL fabrication. All provider links must come from
-                // the metadata server via Book.ProviderUrls / Edition.ProviderUrls.
-                return new List<Links>();
             }
 
             private static List<Links> NormalizeLinks(Book book, Edition selectedEdition, string displayTitle, List<Links> links)
@@ -662,6 +709,8 @@ namespace Chaptarr.Api.V1.Books
             string goodreadsBookId = resource.GoodreadsBookId;
             string goodreadsWorkId = resource.GoodreadsWorkId;
             string openLibraryWorkId = resource.OpenLibraryWorkId;
+            string ranobeDbBookId = resource.RanobeDbBookId;
+            string additionalMetadataProviderId = resource.AdditionalMetadataProviderId;
             string googleBooksId = resource.GoogleBooksId;
             string audibleAsin = null;
 
@@ -692,6 +741,14 @@ namespace Chaptarr.Api.V1.Books
                             else if (foreignBookId.StartsWith("ol:", StringComparison.OrdinalIgnoreCase))
                             {
                                 openLibraryWorkId = TryCanonicalizeWorkId(foreignBookId, "ol");
+                            }
+                            else if (foreignBookId.StartsWith("rn:", StringComparison.OrdinalIgnoreCase))
+                            {
+                                ranobeDbBookId ??= TryCanonicalizeWorkId(foreignBookId, "rn");
+                            }
+                            else if (foreignBookId.StartsWith("meta:", StringComparison.OrdinalIgnoreCase))
+                            {
+                                additionalMetadataProviderId ??= TryCanonicalizeWorkId(foreignBookId, "meta");
                             }
                             else if (foreignBookId.StartsWith("az:", StringComparison.OrdinalIgnoreCase))
                             {
@@ -738,9 +795,11 @@ namespace Chaptarr.Api.V1.Books
                 HardcoverBookId = hardcoverBookId,
                 GoodreadsWorkId = goodreadsWorkId,
                 OpenLibraryWorkId = openLibraryWorkId,
+                RanobeDbBookId = ranobeDbBookId,
+                AdditionalMetadataProviderId = additionalMetadataProviderId,
                 GoogleBooksId = null,
                 ASIN = null,
-                RemoteProviderIds = BuildRemoteProviderIds(hardcoverBookId, goodreadsWorkId, openLibraryWorkId)
+                RemoteProviderIds = BuildRemoteProviderIds(hardcoverBookId, goodreadsWorkId, openLibraryWorkId, ranobeDbBookId)
             };
 
             if (goodreadsBookId.IsNotNullOrWhiteSpace() || googleBooksId.IsNotNullOrWhiteSpace() || audibleAsin.IsNotNullOrWhiteSpace())
@@ -795,7 +854,7 @@ namespace Chaptarr.Api.V1.Books
             return idx > 0 ? value.Substring(idx + 1) : value;
         }
 
-        private static string BuildForeignBookId(Book model, ReadarrFacadeContext facadeContext)
+        internal static string BuildForeignBookId(Book model, ReadarrFacadeContext facadeContext)
         {
             if (facadeContext?.IsHardcover == true)
             {
@@ -851,6 +910,18 @@ namespace Chaptarr.Api.V1.Books
                 return remoteOpenLibraryWorkId;
             }
 
+            var ranobeDbBookId = TryCanonicalizeWorkId(model?.RanobeDbBookId, "rn") ?? GetCanonicalRemoteWorkId(model, "rn");
+            if (!string.IsNullOrWhiteSpace(ranobeDbBookId))
+            {
+                return ranobeDbBookId;
+            }
+
+            var additionalMetadataProviderId = TryCanonicalizeWorkId(model?.AdditionalMetadataProviderId, "meta");
+            if (!string.IsNullOrWhiteSpace(additionalMetadataProviderId))
+            {
+                return additionalMetadataProviderId;
+            }
+
             if (BookIdentity.GetStableWorkProviderIdentityTokens(model).Count > 0)
             {
                 return string.Empty;
@@ -873,7 +944,7 @@ namespace Chaptarr.Api.V1.Books
 
         private static void WarnMissingFacadeId(string entityType, string dialect, int? localId, string title)
         {
-            Logger.Debug("[ReadarrFacade] Cannot emit {0} identity in {1} dialect for localId={2} title='{3}'. Omitting compatibility ID instead of falling back across providers.",
+            Logger.DebugSafe("[ReadarrFacade] Cannot emit {0} identity in {1} dialect for localId={2} title='{3}'. Omitting compatibility ID instead of falling back across providers.",
                 entityType,
                 dialect,
                 localId?.ToString() ?? "none",
@@ -914,7 +985,7 @@ namespace Chaptarr.Api.V1.Books
             return null;
         }
 
-        private static HashSet<string> BuildRemoteProviderIds(string hardcoverBookId, string goodreadsWorkId, string openLibraryWorkId)
+        private static HashSet<string> BuildRemoteProviderIds(string hardcoverBookId, string goodreadsWorkId, string openLibraryWorkId, string ranobeDbBookId)
         {
             var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -930,6 +1001,7 @@ namespace Chaptarr.Api.V1.Books
             Add(hardcoverBookId, "hc");
             Add(goodreadsWorkId, "gr");
             Add(openLibraryWorkId, "ol");
+            Add(ranobeDbBookId, "rn");
 
             return ids.Count > 0 ? ids : null;
         }

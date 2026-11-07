@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using TagLib;
 using TagLib.Id3v2;
+using NzbDrone.Core.MediaFiles;
 
 namespace NzbDrone.Core.MediaFiles.TagExtraction
 {
@@ -42,6 +44,11 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 {
                     ExtractAppleTags(file, result);
                 }
+                if (file.TagTypesOnDisk.HasFlag(TagTypes.AudibleMetadata))
+                {
+                    ExtractAudibleTags(file, result);
+                }
+                AddBookshelfAudioTagFields(path, file, result);
             }
             finally
             {
@@ -87,6 +94,11 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 {
                     ExtractAppleTags(file, result);
                 }
+                if (file.TagTypesOnDisk.HasFlag(TagTypes.AudibleMetadata))
+                {
+                    ExtractAudibleTags(file, result);
+                }
+                AddBookshelfAudioTagFields(path, file, result);
             }
             finally
             {
@@ -210,7 +222,7 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             try
             {
                 var ape = (TagLib.Ape.Tag)file.GetTag(TagTypes.Ape);
-                var keys = new[] { "Title","Artist","Album","Comment","Year","Track","Genre","AlbumArtist","Composer","Disc","Compilation","Lyrics","Media","Publisher","Mood","Narrator","Language","ISBN","ASIN" };
+                var keys = new[] { "Title","TitleSort","Artist","ArtistSort","Album","AlbumSort","AlbumArtist","AlbumArtistSort","Comment","Year","Track","Genre","Composer","Disc","Compilation","Lyrics","Media","Publisher","Label","Mood","Narrator","Language","ISBN","ASIN" };
                 foreach (var key in keys)
                 {
                     var item = ape.GetItem(key);
@@ -230,7 +242,7 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 var asf = (TagLib.Asf.Tag)file.GetTag(TagTypes.Asf);
                 var descriptors = new[]
                 {
-                    "WM/AlbumTitle","WM/AlbumArtist","WM/Composer","WM/Conductor","WM/ContentDistributor","WM/Publisher","WM/Media","WM/Narrator","WM/Language","WM/PartOfSet","WM/TrackNumber","WM/SharedUserRating","WM/SubTitle","WM/Writer","WM/ISBN","WM/ASIN","WM/OriginalReleaseTime","WM/OriginalReleaseYear"
+                    "WM/AlbumTitle","WM/AlbumTitleSort","WM/AlbumArtist","WM/AlbumArtistSort","WM/ArtistSort","WM/TitleSort","WM/Composer","WM/Conductor","WM/ContentDistributor","WM/Publisher","WM/Media","WM/Narrator","WM/Language","WM/Year","WM/PartOfSet","WM/TrackNumber","WM/SharedUserRating","WM/SubTitle","WM/Writer","WM/ISBN","WM/ASIN","WM/OriginalReleaseTime","WM/OriginalReleaseYear"
                 };
                 foreach (var d in descriptors)
                 {
@@ -246,7 +258,7 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             {
                 var tag = (TagLib.Mpeg4.AppleTag)file.GetTag(TagTypes.Apple);
                 // A limited set of common boxes (field-agnostic enumeration is not available in TagLib#)
-                var boxes = new[] { "©nam","©ART","©alb","©day","©cmt","©gen","©wrt","©too","©cpy","aART","©grp","©lyr","©dir","©pub","©wrk" };
+                var boxes = new[] { "©nam","sonm","©ART","soar","©alb","soal","©day","©cmt","©gen","©wrt","©too","©cpy","aART","soaa","©grp","©lyr","©dir","©pub","©wrk" };
                 foreach (var b in boxes)
                 {
                     try
@@ -330,6 +342,41 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 catch { /* ignore reflection errors */ }
             }
             catch { /* ignore */ }
+        }
+
+        private static void ExtractAudibleTags(TagLib.File file, Dictionary<string, List<string>> result)
+        {
+            try
+            {
+                var audible = (TagLib.Audible.Tag)file.GetTag(TagTypes.AudibleMetadata);
+                Add(result, "AUDIBLE:NARRATOR", audible.Narrator);
+            }
+            catch { /* ignore */ }
+        }
+
+        private static void AddBookshelfAudioTagFields(string path, TagLib.File file, Dictionary<string, List<string>> result)
+        {
+            if (!MediaFileExtensions.AudioExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            try
+            {
+                var tag = file?.Tag;
+                if (tag == null)
+                {
+                    return;
+                }
+
+                result[BookshelfAudioTagFields.Book] = new List<string> { tag?.Album ?? tag?.AlbumSort ?? string.Empty };
+                result[BookshelfAudioTagFields.Title] = new List<string> { tag?.Title ?? tag?.TitleSort ?? string.Empty };
+            }
+            catch
+            {
+                // The raw container-specific tags above remain available if TagLib
+                // cannot produce its generic BookshelfNG-compatible audio projection.
+            }
         }
 
         private static ReadOnlyByteVector FixAppleId(string id)

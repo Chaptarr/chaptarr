@@ -145,6 +145,7 @@ namespace NzbDrone.Core.Books
                 GoogleBooksId = source.GoogleBooksId,
                 ASIN = source.ASIN,
                 AudibleASIN = source.AudibleASIN,
+                RanobeDbBookId = source.RanobeDbBookId,
                 RemoteProviderIds = CloneProviderIds(source.RemoteProviderIds),
 
                 // Grouping
@@ -205,6 +206,7 @@ namespace NzbDrone.Core.Books
                     OpenLibraryAuthorId = source.Author.OpenLibraryAuthorId,
                     GoogleBooksAuthorId = source.Author.GoogleBooksAuthorId,
                     AudnexusAuthorId = source.Author.AudnexusAuthorId,
+                    RanobeDbAuthorId = source.Author.RanobeDbAuthorId,
                     RemoteProviderIds = CloneProviderIds(source.Author.RemoteProviderIds)
                 },
                 SeriesLinks = source.SeriesLinks

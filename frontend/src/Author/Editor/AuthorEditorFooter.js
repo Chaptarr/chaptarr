@@ -3,6 +3,7 @@ import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import AuthorMonitoringGatePopoverContent from 'AddAuthor/AuthorMonitoringGatePopoverContent';
 import AuthorMonitorNewItemsOptionsPopoverContent from 'AddAuthor/AuthorMonitorNewItemsOptionsPopoverContent';
+import BulkAuthorMediaMoveModal from 'Author/Editor/BulkAuthorMediaMoveModal';
 import MoveAuthorModal from 'Author/MoveAuthor/MoveAuthorModal';
 import MetadataProfileSelectInputConnector from 'Components/Form/MetadataProfileSelectInputConnector';
 import QualityProfileSelectInputConnector from 'Components/Form/QualityProfileSelectInputConnector';
@@ -12,7 +13,7 @@ import SpinnerButton from 'Components/Link/SpinnerButton';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
 import PageContentFooter from 'Components/Page/PageContentFooter';
 import Tooltip from 'Components/Tooltip/Tooltip';
-import { kinds } from 'Helpers/Props';
+import { kinds, tooltipPositions } from 'Helpers/Props';
 import { FolderType } from 'Helpers/Props/folderTypes';
 import { fetchRootFolders } from 'Store/Actions/Settings/rootFolders';
 import authorMonitorNewItemsOptions from 'Utilities/Author/monitorNewItemsOptions';
@@ -47,6 +48,7 @@ class AuthorEditorFooter extends Component {
       isDeleteAuthorModalOpen: false,
       isTagsModalOpen: false,
       isConfirmMoveModalOpen: false,
+      isMediaMoveModalOpen: false,
       isMonitoringConfirmModalOpen: false,
       pendingMonitoringChange: null,
       destinationRootFolder: null,
@@ -165,6 +167,14 @@ class AuthorEditorFooter extends Component {
 
   onTagsModalClose = () => {
     this.setState({ isTagsModalOpen: false });
+  };
+
+  onMediaMovePress = () => {
+    this.setState({ isMediaMoveModalOpen: true });
+  };
+
+  onMediaMoveModalClose = () => {
+    this.setState({ isMediaMoveModalOpen: false });
   };
 
   onSaveRootFolderPress = () => {
@@ -321,6 +331,7 @@ class AuthorEditorFooter extends Component {
       isTagsModalOpen,
       isDeleteAuthorModalOpen,
       isConfirmMoveModalOpen,
+      isMediaMoveModalOpen,
       isMonitoringConfirmModalOpen,
       pendingMonitoringChange,
       destinationRootFolder
@@ -551,6 +562,23 @@ class AuthorEditorFooter extends Component {
                   {translate('WriteMetadataTags')}
                 </SpinnerButton>
 
+                <Tooltip
+                  anchor={
+                    <SpinnerButton
+                      className={styles.organizeSelectedButton}
+                      kind={kinds.WARNING}
+                      title={translate('BulkMediaMoveButtonTooltip')}
+                      isDisabled={!selectedCount || isOrganizingAuthor || isRetaggingAuthor}
+                      onPress={this.onMediaMovePress}
+                    >
+                      {translate('BulkMediaMove')}
+                    </SpinnerButton>
+                  }
+                  tooltip={translate('BulkMediaMoveButtonTooltip')}
+                  kind={kinds.INVERSE}
+                  position={tooltipPositions.TOP}
+                />
+
                 <SpinnerButton
                   className={styles.tagsButton}
                   isSpinning={isSaving && savingTags}
@@ -593,6 +621,12 @@ class AuthorEditorFooter extends Component {
           isOpen={isConfirmMoveModalOpen}
           onSavePress={this.onSaveRootFolderPress}
           onMoveAuthorPress={this.onMoveAuthorPress}
+        />
+
+        <BulkAuthorMediaMoveModal
+          isOpen={isMediaMoveModalOpen}
+          authorIds={authorIds}
+          onModalClose={this.onMediaMoveModalClose}
         />
 
         <ConfirmModal

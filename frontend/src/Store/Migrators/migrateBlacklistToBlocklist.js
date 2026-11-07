@@ -1,4 +1,5 @@
-import _, { get } from 'lodash';
+import get from 'lodash/get';
+import remove from 'lodash/remove';
 
 export default function migrateBlacklistToBlocklist(persistedState) {
   const blocklist = get(persistedState, 'blacklist');
@@ -8,5 +9,5 @@ export default function migrateBlacklistToBlocklist(persistedState) {
   }
 
   persistedState.blocklist = blocklist;
-  _.remove(persistedState, 'blacklist');
+  remove(persistedState, 'blacklist');
 }

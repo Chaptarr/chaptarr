@@ -15,9 +15,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             IDiskProvider diskProvider,
             string filePath,
             Logger logger,
-            string logPrefix)
+            string logPrefix,
+            DateTime? lastRemoteSearchTime = null,
+            bool updateRemoteSearchTime = false)
         {
-            TryEnsureUnmapped(mediaFileService, diskProvider, filePath, logger, logPrefix);
+            TryEnsureUnmapped(mediaFileService, diskProvider, filePath, logger, logPrefix,
+                lastRemoteSearchTime: lastRemoteSearchTime,
+                updateRemoteSearchTime: updateRemoteSearchTime);
         }
 
         internal static bool TryEnsureUnmapped(
@@ -27,7 +31,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             Logger logger,
             string logPrefix,
             Dictionary<string, List<string>> tags = null,
-            int? durationSeconds = null)
+            int? durationSeconds = null,
+            DateTime? lastRemoteSearchTime = null,
+            bool updateRemoteSearchTime = false)
         {
             try
             {
@@ -42,6 +48,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             filePath);
 
                         return false;
+                    }
+
+                    if (updateRemoteSearchTime && existing.LastRemoteSearchTime != lastRemoteSearchTime)
+                    {
+                        existing.LastRemoteSearchTime = lastRemoteSearchTime;
+                        mediaFileService.Update(existing);
                     }
 
                     return true;
@@ -68,7 +80,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     MediaInfo = new MediaInfoModel(),
                     MediaType = BookFile.DetermineMediaType(qualityModel),
                     AllTags = tags,
-                    DurationSeconds = durationSeconds
+                    DurationSeconds = durationSeconds,
+                    LastRemoteSearchTime = lastRemoteSearchTime
                 };
 
                 mediaFileService.Add(bookFile);

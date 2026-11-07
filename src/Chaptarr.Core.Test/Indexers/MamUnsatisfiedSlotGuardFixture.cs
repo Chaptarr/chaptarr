@@ -310,6 +310,71 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(repositoryState.Rows, Is.Empty);
         }
 
+        [Test]
+        public void reservation_should_retire_after_maximum_lifetime_despite_retries()
+        {
+            var settings = FreshSettings(count: 1, limit: 50, safetyReserve: 5);
+            var repository = CreateRepository(out var repositoryState);
+            repositoryState.Rows.Add(new MamUnsatisfiedSlotReservation
+            {
+                Id = 1,
+                IndexerId = 9,
+                TorrentId = "659145",
+                ReservedUtc = DateTime.UtcNow,
+                FirstReservedUtc = DateTime.UtcNow.Add(-MamUnsatisfiedSlotGuard.MaximumReservationLifetime).AddMinutes(-5)
+            });
+
+            var indexer = CreateMamIndexer(settings, repository);
+            var guard = CreateGuard(CreateFactory((IndexerDefinition)indexer.Definition), repository);
+
+            guard.Reconcile(indexer, new MyAnonaMouseAccountStatus { SnapshotCreatedUtc = DateTime.UtcNow.AddHours(-1) });
+
+            Assert.That(repositoryState.Rows, Is.Empty);
+        }
+
+        [Test]
+        public void reservation_within_maximum_lifetime_should_survive_a_stale_snapshot()
+        {
+            var settings = FreshSettings(count: 1, limit: 50, safetyReserve: 5);
+            var repository = CreateRepository(out var repositoryState);
+            repositoryState.Rows.Add(new MamUnsatisfiedSlotReservation
+            {
+                Id = 1,
+                IndexerId = 9,
+                TorrentId = "659145",
+                ReservedUtc = DateTime.UtcNow,
+                FirstReservedUtc = DateTime.UtcNow.AddHours(-1)
+            });
+
+            var indexer = CreateMamIndexer(settings, repository);
+            var guard = CreateGuard(CreateFactory((IndexerDefinition)indexer.Definition), repository);
+
+            guard.Reconcile(indexer, new MyAnonaMouseAccountStatus { SnapshotCreatedUtc = DateTime.UtcNow.AddHours(-1) });
+
+            Assert.That(repositoryState.Rows, Has.Count.EqualTo(1));
+        }
+
+        [Test]
+        public void retry_should_preserve_the_first_reserved_anchor()
+        {
+            var settings = FreshSettings(count: 0, limit: 50, safetyReserve: 5);
+            var repository = CreateRepository(out var repositoryState);
+            var originalAttempt = DateTime.UtcNow.AddHours(-1);
+            repositoryState.Rows.Add(new MamUnsatisfiedSlotReservation
+            {
+                Id = 1,
+                IndexerId = 9,
+                TorrentId = "100",
+                ReservedUtc = originalAttempt
+            });
+
+            var guard = CreateGuard(CreateFactory(Definition(settings)), repository);
+
+            Assert.That(guard.TryReserve(Release("100")).Accepted, Is.True);
+            Assert.That(repositoryState.Rows.Single().ReservedUtc, Is.GreaterThan(originalAttempt));
+            Assert.That(repositoryState.Rows.Single().FirstReservedUtc, Is.EqualTo(originalAttempt));
+        }
+
         private static MyAnonaMouseSettings FreshSettings(int count, int limit, int safetyReserve, int manualGrabBuffer = 0)
         {
             return new MyAnonaMouseSettings

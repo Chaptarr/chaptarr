@@ -1,0 +1,82 @@
+services:
+  bookshelfng:
+    image: ${BOOKSHELFNG_SOURCE_IMAGE:?Set the digest-pinned BookshelfNG source image}
+    platform: linux/amd64
+    environment:
+      READARR__AUTH__APIKEY: ${BOOKSHELFNG_API_KEY:?Set a disposable BookshelfNG API key}
+      READARR__SERVER__PORT: "8787"
+      PUID: ${TEST_PUID:?Set the host UID for disposable bind mounts}
+      PGID: ${TEST_PGID:?Set the host GID for disposable bind mounts}
+    volumes:
+      - type: bind
+        source: ${BOOKSHELFNG_SOURCE_CONFIG:?Set a disposable BookshelfNG config directory}
+        target: /config
+      - type: bind
+        source: ${BOOKSHELFNG_SOURCE_LIBRARY:?Set a disposable BookshelfNG library directory}
+        target: /library
+    networks:
+      - isolated
+
+  chaptarrng:
+    image: chaptarrng-bookshelfng-differential:local
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: Dockerfile.build
+    env_file:
+      - ${CHAPTARRNG_SOURCE_METADATA_ENV:?Set the captured source metadata environment file}
+    environment:
+      CHAPTARR__AUTH__APIKEY: ${CHAPTARRNG_API_KEY:?Set a disposable ChaptarrNG API key}
+      CHAPTARR__SERVER__PORT: "8787"
+      HARDCOVER: "true"
+      HARDCOVER_NATIVE: "true"
+      PUID: ${TEST_PUID:?Set the host UID for disposable bind mounts}
+      PGID: ${TEST_PGID:?Set the host GID for disposable bind mounts}
+    volumes:
+      - type: bind
+        source: ${CHAPTARRNG_TARGET_CONFIG:?Set a disposable ChaptarrNG config directory}
+        target: /config
+      - type: bind
+        source: ${CHAPTARRNG_TARGET_LIBRARY:?Set a disposable ChaptarrNG library directory}
+        target: /library
+    networks:
+      - isolated
+
+  differential:
+    image: node:26.12.1-bookworm-slim@sha256:28147155d47dc31abe0a46e0d12b59b2fb3d0a2dcc5dc65fce76a074180b16fe
+    user: "${TEST_PUID:?Set the host UID for disposable bind mounts}:${TEST_PGID:?Set the host GID for disposable bind mounts}"
+    command: ["node", "/harness/bookshelfng-api-differential.mjs"]
+    environment:
+      BOOKSHELFNG_API_URL: http://bookshelfng:8787/api/v1
+      CHAPTARRNG_API_URL: http://chaptarrng:8787/api/v1
+      BOOKSHELFNG_API_KEY: ${BOOKSHELFNG_API_KEY:?Set a disposable BookshelfNG API key}
+      CHAPTARRNG_API_KEY: ${CHAPTARRNG_API_KEY:?Set a disposable ChaptarrNG API key}
+      BOOKSHELFNG_SOURCE_IMAGE: ${BOOKSHELFNG_SOURCE_IMAGE:?Set the digest-pinned BookshelfNG source image}
+      BOOKSHELFNG_SOURCE_IMAGE_ID: ${BOOKSHELFNG_SOURCE_IMAGE_ID:?Pull the pinned BookshelfNG source image first}
+      CHAPTARRNG_TARGET_COMMIT: ${CHAPTARRNG_TARGET_COMMIT:?Set the exact ChaptarrNG commit}
+      CHAPTARRNG_TARGET_IMAGE_ID: ${CHAPTARRNG_TARGET_IMAGE_ID:-target-image-id-not-set}
+      BOOKSHELFNG_FIXTURE_SHA256: ${BOOKSHELFNG_FIXTURE_SHA256:?Seed identical migration fixtures first}
+      BOOKSHELFNG_DIFFERENTIAL_REPORT: /evidence/api-differential.json
+      BOOKSHELFNG_DIFFERENTIAL_DEBUG_VALUES: ${BOOKSHELFNG_DIFFERENTIAL_DEBUG_VALUES:-false}
+    volumes:
+      - type: bind
+        source: ${BOOKSHELFNG_API_DIFFERENTIAL_SCRIPT:?Set the read-only differential script path}
+        target: /harness/bookshelfng-api-differential.mjs
+        read_only: true
+      - type: bind
+        source: ${BOOKSHELFNG_API_CONTRACT_SCRIPT:?Set the read-only contract comparator path}
+        target: /harness/bookshelfng-api-contract.mjs
+        read_only: true
+      - type: bind
+        source: ${BOOKSHELFNG_QUALITY_PROFILE_LIFECYCLE_SCRIPT:?Set the read-only profile lifecycle script path}
+        target: /harness/bookshelfng-quality-profile-lifecycle.mjs
+        read_only: true
+      - type: bind
+        source: ${BOOKSHELFNG_DIFFERENTIAL_EVIDENCE:?Set the differential evidence directory}
+        target: /evidence
+    networks:
+      - isolated
+
+networks:
+  isolated:
+    internal: true

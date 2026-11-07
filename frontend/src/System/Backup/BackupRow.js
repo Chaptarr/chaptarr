@@ -80,10 +80,10 @@ class BackupRow extends Component {
 
     if (type === 'manual') {
       iconClassName = icons.INTERACTIVE;
-      iconTooltip = 'Manual';
+      iconTooltip = translate('BackupTypeManual');
     } else if (type === 'update') {
       iconClassName = icons.UPDATE;
-      iconTooltip = 'Before update';
+      iconTooltip = translate('BackupTypeBeforeUpdate');
     }
 
     return (

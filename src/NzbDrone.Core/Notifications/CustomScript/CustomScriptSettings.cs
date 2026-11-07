@@ -23,7 +23,7 @@ namespace NzbDrone.Core.Notifications.CustomScript
         [FieldDefinition(0, Label = "Path", Type = FieldType.FilePath)]
         public string Path { get; set; }
 
-        [FieldDefinition(1, Label = "Arguments", HelpText = "Arguments to pass to the script", Hidden = HiddenType.HiddenIfNotSet)]
+        [FieldDefinition(1, Label = "provider.field.f7f816072c1c6", HelpText = "provider.field.fd35c546d4b1a", Hidden = HiddenType.HiddenIfNotSet)]
         public string Arguments { get; set; }
 
         public NzbDroneValidationResult Validate()

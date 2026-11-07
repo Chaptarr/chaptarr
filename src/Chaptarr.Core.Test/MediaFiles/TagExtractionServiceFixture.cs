@@ -2,6 +2,9 @@ using System;
 using System.Collections.Generic;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.MediaFiles.TagExtraction;
 
 namespace Chaptarr.Core.Test.MediaFiles
@@ -164,6 +167,57 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(result.Disposition, Is.EqualTo(TagExtractionDisposition.Evidence));
             Assert.That(result.Extractor, Is.EqualTo("FFprobe"));
             Assert.That(result.DurationSeconds, Is.EqualTo(40000));
+        }
+
+        [Test]
+        public void should_preserve_bookshelf_empty_album_semantics_when_ffprobe_wins_extraction()
+        {
+            var result = Subject(
+                    new StubExtractor(
+                        "TagLibSharp",
+                        2,
+                        Tags(
+                            (BookshelfAudioTagFields.Book, string.Empty),
+                            (BookshelfAudioTagFields.Title, string.Empty))),
+                    new StubExtractor(
+                        "FFprobe",
+                        3,
+                        Tags(("album_sort", "Wrong Sorted Album"), ("title", "Fallback Title"))))
+                .ExtractTagsWithResult("book.m4b");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Extractor, Is.EqualTo("FFprobe"));
+                Assert.That(result.Tags[BookshelfAudioTagFields.Book], Is.EqualTo(new[] { string.Empty }));
+                Assert.That(result.Tags[BookshelfAudioTagFields.Title], Is.EqualTo(new[] { string.Empty }));
+                Assert.That(
+                    BookshelfMatchCompatibilityScorer.GetBookshelfBookTitle(
+                        new[] { result.Tags },
+                        BookMediaType.Audiobook),
+                    Is.Empty);
+            });
+        }
+
+        [Test]
+        public void bookshelf_audio_projection_should_count_as_metadata_evidence()
+        {
+            var tags = Tags((BookshelfAudioTagFields.Book, "A Wizard of Earthsea"));
+
+            Assert.That(TagExtractionResult.Classify(tags), Is.EqualTo(TagExtractionDisposition.Evidence));
+        }
+
+        [Test]
+        public void should_derive_bookshelf_audio_projection_when_taglib_fields_are_unavailable()
+        {
+            var result = Subject(
+                    new StubExtractor("FFprobe", 3, Tags(("album_sort", "Sorted Book"), ("title_sort", "Sorted Track"))))
+                .ExtractTagsWithResult("book.m4b");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Tags[BookshelfAudioTagFields.Book], Is.EqualTo(new[] { "Sorted Book" }));
+                Assert.That(result.Tags[BookshelfAudioTagFields.Title], Is.EqualTo(new[] { "Sorted Track" }));
+            });
         }
 
         private static TagExtractionService Subject(params ITagExtractor[] extractors)

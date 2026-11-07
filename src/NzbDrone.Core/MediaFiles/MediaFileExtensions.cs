@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using NzbDrone.Core.Books;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
 
@@ -16,6 +18,11 @@ namespace NzbDrone.Core.MediaFiles
         private static readonly HashSet<string> _audioExtensionSet;
         private static readonly HashSet<string> _allExtensionSet;
         private static readonly HashSet<string> _singleFileBookContainerSet;
+
+        // Formats Chaptarr can write series metadata into without help from Calibre. Both are
+        // OPF-in-a-zip; the Mobi-derived formats and PDF have no writer.
+        private static readonly HashSet<string> _seriesTagWritableExtensionSet =
+            new HashSet<string>(new[] { ".epub", ".kepub" }, StringComparer.OrdinalIgnoreCase);
 
         static MediaFileExtensions()
         {
@@ -87,6 +94,21 @@ namespace NzbDrone.Core.MediaFiles
             return GetQualityForExtension(extension);
         }
 
+        public static bool AreCompatibleQualities(Quality existing, Quality incoming)
+        {
+            var existingIsAudio = QualityMediaTypeHelper.IsAudiobookQuality(existing);
+            var incomingIsAudio = QualityMediaTypeHelper.IsAudiobookQuality(incoming);
+
+            if (existingIsAudio || incomingIsAudio)
+            {
+                return existingIsAudio && incomingIsAudio;
+            }
+
+            // Ebook quality IDs identify formats. An EPUB should neither block nor replace
+            // a MOBI/AZW3/PDF file, while an EPUB can still be upgraded by another EPUB.
+            return existing == incoming;
+        }
+
         public static bool IsMatroskaAudioExtension(string extension)
         {
             return string.Equals(extension, MatroskaAudioExtension, StringComparison.OrdinalIgnoreCase);
@@ -97,9 +119,38 @@ namespace NzbDrone.Core.MediaFiles
             return AudioExtensions.Contains(extension) && !IsMatroskaAudioExtension(extension);
         }
 
+        public static bool CanWriteEbookSeriesTags(string extension)
+        {
+            return extension != null && _seriesTagWritableExtensionSet.Contains(extension);
+        }
+
         public static bool IsSingleFileBookContainer(string extension)
         {
             return _singleFileBookContainerSet.Contains(extension);
+        }
+
+        public static bool AreCompatibleFormats(Quality existingQuality,
+                                                string existingPath,
+                                                Quality incomingQuality,
+                                                string incomingPath)
+        {
+            var existingIsAudio = IsAudioFormat(existingQuality, existingPath);
+            var incomingIsAudio = IsAudioFormat(incomingQuality, incomingPath);
+
+            if (existingIsAudio || incomingIsAudio)
+            {
+                return existingIsAudio && incomingIsAudio;
+            }
+
+            return string.Equals(Path.GetExtension(existingPath),
+                                 Path.GetExtension(incomingPath),
+                                 StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsAudioFormat(Quality quality, string path)
+        {
+            return QualityMediaTypeHelper.IsAudiobookQuality(quality) ||
+                   QualityMediaTypeHelper.GetMediaTypeFromPath(path) == BookMediaType.Audiobook;
         }
 
         private static Quality GetMatroskaAudioQuality(MediaInfoModel mediaInfo)

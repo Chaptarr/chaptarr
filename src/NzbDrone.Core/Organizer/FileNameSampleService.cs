@@ -59,6 +59,7 @@ namespace NzbDrone.Core.Organizer
             _standardEdition = new Edition
             {
                 Title = "The Edition Title",
+                AudibleASIN = "B0ABCDEFGH",
                 Book = _standardBook,
                 NarratorNames = new List<string> { "Alice Reader", "Bob Voice" }
             };

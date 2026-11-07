@@ -1,10 +1,11 @@
-import _ from 'lodash';
+import find from 'lodash/find';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import { saveDelayProfile, setDelayProfileValue } from 'Store/Actions/settingsActions';
 import selectSettings from 'Store/Selectors/selectSettings';
+import translate from 'Utilities/String/translate';
 import EditDelayProfileModalContent from './EditDelayProfileModalContent';
 
 const newDelayProfile = {
@@ -19,12 +20,14 @@ const newDelayProfile = {
   tags: []
 };
 
-const protocolOptions = [
-  { key: 'preferUsenet', value: 'Prefer Usenet' },
-  { key: 'preferTorrent', value: 'Prefer Torrent' },
-  { key: 'onlyUsenet', value: 'Only Usenet' },
-  { key: 'onlyTorrent', value: 'Only Torrent' }
-];
+function getProtocolOptions() {
+  return [
+    { key: 'preferUsenet', value: translate('PreferUsenet') },
+    { key: 'preferTorrent', value: translate('PreferTorrent') },
+    { key: 'onlyUsenet', value: translate('OnlyUsenet') },
+    { key: 'onlyTorrent', value: translate('OnlyTorrent') }
+  ];
+}
 
 function createDelayProfileSelector() {
   return createSelector(
@@ -40,7 +43,7 @@ function createDelayProfileSelector() {
         items
       } = delayProfiles;
 
-      const profile = id ? _.find(items, { id }) : newDelayProfile;
+      const profile = id ? find(items, { id }) : newDelayProfile;
       const settings = selectSettings(profile, pendingChanges, saveError);
 
       return {
@@ -81,7 +84,7 @@ function createMapStateToProps() {
 
       return {
         protocol,
-        protocolOptions,
+        protocolOptions: getProtocolOptions(),
         ...delayProfile
       };
     }
@@ -145,7 +148,7 @@ class EditDelayProfileModalContentConnector extends Component {
         this.props.setDelayProfileValue({ name: 'preferredProtocol', value: 'torrent' });
         break;
       default:
-        throw Error(`Unknown protocol option: ${value}`);
+        throw Error(translate('UnknownDelayProfileProtocolOption', { option: value }));
     }
   };
 

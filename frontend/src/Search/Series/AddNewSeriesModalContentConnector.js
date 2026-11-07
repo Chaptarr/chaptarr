@@ -13,8 +13,12 @@ import createRootFolderDefaultsSelector from 'Store/Selectors/createRootFolderDe
 import createSystemStatusSelector from 'Store/Selectors/createSystemStatusSelector';
 import selectSettings from 'Store/Selectors/selectSettings';
 import { normalizeMonitorNewItemsOption } from 'Utilities/Author/monitorNewItemsOptions';
-import { normalizeMonitorOption, resolveMonitorOption } from 'Utilities/Author/monitorOptions';
+import {
+  normalizeMonitorOption,
+  resolveMonitorOption
+} from 'Utilities/Author/monitorOptions';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
+import translate from 'Utilities/String/translate';
 import AddNewSeriesModalContent from './AddNewSeriesModalContent';
 
 function createMapStateToProps() {
@@ -27,18 +31,23 @@ function createMapStateToProps() {
     (state) => state.settings.ui,
     createRootFolderDefaultsSelector(),
     createSystemStatusSelector(),
-    (dimensions, search, rootFoldersState, qualityProfiles, metadataProfiles, uiState, rootFolderDefaults, systemStatus) => {
-      const {
-        isAdding,
-        addError,
-        authorDefaults
-      } = search;
+    (
+      dimensions,
+      search,
+      rootFoldersState,
+      qualityProfiles,
+      metadataProfiles,
+      uiState,
+      rootFolderDefaults,
+      systemStatus
+    ) => {
+      const { isAdding, addError, authorDefaults } = search;
 
-      const {
-        settings,
-        validationErrors,
-        validationWarnings
-      } = selectSettings(authorDefaults, {}, addError);
+      const { settings, validationErrors, validationWarnings } = selectSettings(
+        authorDefaults,
+        {},
+        addError
+      );
 
       // Defensive defaults for legacy/empty persisted state
       if (!settings.monitor) {
@@ -66,14 +75,20 @@ function createMapStateToProps() {
       }
 
       if (rootFoldersState.isPopulated) {
-        if (!settings.audiobookRootFolderPath || !settings.audiobookRootFolderPath.value) {
+        if (
+          !settings.audiobookRootFolderPath ||
+          !settings.audiobookRootFolderPath.value
+        ) {
           settings.audiobookRootFolderPath = {
             ...(settings.audiobookRootFolderPath || {}),
             value: rootFolderDefaults.audiobookRootFolderPath
           };
         }
 
-        if (!settings.ebookRootFolderPath || !settings.ebookRootFolderPath.value) {
+        if (
+          !settings.ebookRootFolderPath ||
+          !settings.ebookRootFolderPath.value
+        ) {
           settings.ebookRootFolderPath = {
             ...(settings.ebookRootFolderPath || {}),
             value: rootFolderDefaults.ebookRootFolderPath
@@ -85,7 +100,9 @@ function createMapStateToProps() {
         const audiobookRoot = settings.audiobookRootFolderPath?.value;
         const ebookRoot = settings.ebookRootFolderPath?.value;
 
-        const audiobookRootFolder = rootFolders.find((f) => f.path === audiobookRoot);
+        const audiobookRootFolder = rootFolders.find(
+          (f) => f.path === audiobookRoot
+        );
         const ebookRootFolder = rootFolders.find((f) => f.path === ebookRoot);
 
         if (!settings.audiobookMonitor && audiobookRootFolder) {
@@ -107,7 +124,9 @@ function createMapStateToProps() {
         if (!settings.audiobookMonitorNewItems && audiobookRootFolder) {
           settings.audiobookMonitorNewItems = {
             ...(settings.audiobookMonitorNewItems || {}),
-            value: normalizeMonitorNewItemsOption(audiobookRootFolder.audiobookMonitorNewItems)
+            value: normalizeMonitorNewItemsOption(
+              audiobookRootFolder.audiobookMonitorNewItems
+            )
           };
         }
 
@@ -130,77 +149,152 @@ function createMapStateToProps() {
         if (!settings.ebookMonitorNewItems && ebookRootFolder) {
           settings.ebookMonitorNewItems = {
             ...(settings.ebookMonitorNewItems || {}),
-            value: normalizeMonitorNewItemsOption(ebookRootFolder.ebookMonitorNewItems)
+            value: normalizeMonitorNewItemsOption(
+              ebookRootFolder.ebookMonitorNewItems
+            )
           };
         }
 
-        const audiobookQualityFromRootFolder = audiobookRootFolder?.audiobookQualityProfileId || audiobookRootFolder?.audiobook?.qualityProfileId;
-        const audiobookMetadataFromRootFolder = audiobookRootFolder?.audiobookMetadataProfileId || audiobookRootFolder?.audiobook?.metadataProfileId;
-        const ebookQualityFromRootFolder = ebookRootFolder?.ebookQualityProfileId || ebookRootFolder?.ebook?.qualityProfileId;
-        const ebookMetadataFromRootFolder = ebookRootFolder?.ebookMetadataProfileId || ebookRootFolder?.ebook?.metadataProfileId;
-        const audiobookTagsFromRootFolder = audiobookRootFolder?.audiobookTags || audiobookRootFolder?.audiobook?.tags;
-        const ebookTagsFromRootFolder = ebookRootFolder?.ebookTags || ebookRootFolder?.ebook?.tags;
+        const audiobookQualityFromRootFolder =
+          audiobookRootFolder?.audiobookQualityProfileId ||
+          audiobookRootFolder?.audiobook?.qualityProfileId;
+        const audiobookMetadataFromRootFolder =
+          audiobookRootFolder?.audiobookMetadataProfileId ||
+          audiobookRootFolder?.audiobook?.metadataProfileId;
+        const ebookQualityFromRootFolder =
+          ebookRootFolder?.ebookQualityProfileId ||
+          ebookRootFolder?.ebook?.qualityProfileId;
+        const ebookMetadataFromRootFolder =
+          ebookRootFolder?.ebookMetadataProfileId ||
+          ebookRootFolder?.ebook?.metadataProfileId;
+        const audiobookTagsFromRootFolder =
+          audiobookRootFolder?.audiobookTags ||
+          audiobookRootFolder?.audiobook?.tags;
+        const ebookTagsFromRootFolder =
+          ebookRootFolder?.ebookTags || ebookRootFolder?.ebook?.tags;
 
         // Inherit profile defaults from the selected root folder when unset.
-        if ((!settings.audiobookQualityProfileId || settings.audiobookQualityProfileId.value === 0) && audiobookQualityFromRootFolder) {
-          settings.audiobookQualityProfileId = { ...(settings.audiobookQualityProfileId || {}), value: audiobookQualityFromRootFolder };
+        if (
+          (!settings.audiobookQualityProfileId ||
+            settings.audiobookQualityProfileId.value === 0) &&
+          audiobookQualityFromRootFolder
+        ) {
+          settings.audiobookQualityProfileId = {
+            ...(settings.audiobookQualityProfileId || {}),
+            value: audiobookQualityFromRootFolder
+          };
         }
 
-        if ((!settings.audiobookMetadataProfileId || settings.audiobookMetadataProfileId.value === 0) && audiobookMetadataFromRootFolder) {
-          settings.audiobookMetadataProfileId = { ...(settings.audiobookMetadataProfileId || {}), value: audiobookMetadataFromRootFolder };
+        if (
+          (!settings.audiobookMetadataProfileId ||
+            settings.audiobookMetadataProfileId.value === 0) &&
+          audiobookMetadataFromRootFolder
+        ) {
+          settings.audiobookMetadataProfileId = {
+            ...(settings.audiobookMetadataProfileId || {}),
+            value: audiobookMetadataFromRootFolder
+          };
         }
 
-        if ((!settings.ebookQualityProfileId || settings.ebookQualityProfileId.value === 0) && ebookQualityFromRootFolder) {
-          settings.ebookQualityProfileId = { ...(settings.ebookQualityProfileId || {}), value: ebookQualityFromRootFolder };
+        if (
+          (!settings.ebookQualityProfileId ||
+            settings.ebookQualityProfileId.value === 0) &&
+          ebookQualityFromRootFolder
+        ) {
+          settings.ebookQualityProfileId = {
+            ...(settings.ebookQualityProfileId || {}),
+            value: ebookQualityFromRootFolder
+          };
         }
 
-        if ((!settings.ebookMetadataProfileId || settings.ebookMetadataProfileId.value === 0) && ebookMetadataFromRootFolder) {
-          settings.ebookMetadataProfileId = { ...(settings.ebookMetadataProfileId || {}), value: ebookMetadataFromRootFolder };
+        if (
+          (!settings.ebookMetadataProfileId ||
+            settings.ebookMetadataProfileId.value === 0) &&
+          ebookMetadataFromRootFolder
+        ) {
+          settings.ebookMetadataProfileId = {
+            ...(settings.ebookMetadataProfileId || {}),
+            value: ebookMetadataFromRootFolder
+          };
         }
 
         // Inherit tag defaults from the selected root folder when unset.
         if (!settings.audiobookTags && audiobookTagsFromRootFolder != null) {
-          settings.audiobookTags = { ...(settings.audiobookTags || {}), value: audiobookTagsFromRootFolder };
+          settings.audiobookTags = {
+            ...(settings.audiobookTags || {}),
+            value: audiobookTagsFromRootFolder
+          };
         }
 
         if (!settings.ebookTags && ebookTagsFromRootFolder != null) {
-          settings.ebookTags = { ...(settings.ebookTags || {}), value: ebookTagsFromRootFolder };
+          settings.ebookTags = {
+            ...(settings.ebookTags || {}),
+            value: ebookTagsFromRootFolder
+          };
         }
       }
 
       // Set quality profile defaults to first available instead of "None"
       if (qualityProfiles.isPopulated && qualityProfiles.items.length > 0) {
-        const audiobookProfiles = qualityProfiles.items.filter((p) =>
-          p.profileType === 1 || p.profileType === 'audiobook'
+        const audiobookProfiles = qualityProfiles.items.filter(
+          (p) => p.profileType === 1 || p.profileType === 'audiobook'
         );
-        const ebookProfiles = qualityProfiles.items.filter((p) =>
-          p.profileType === 2 || p.profileType === 'ebook'
+        const ebookProfiles = qualityProfiles.items.filter(
+          (p) => p.profileType === 2 || p.profileType === 'ebook'
         );
 
-        if ((!settings.audiobookQualityProfileId || settings.audiobookQualityProfileId.value === 0) && audiobookProfiles.length > 0) {
-          settings.audiobookQualityProfileId = { ...(settings.audiobookQualityProfileId || {}), value: audiobookProfiles[0].id };
+        if (
+          (!settings.audiobookQualityProfileId ||
+            settings.audiobookQualityProfileId.value === 0) &&
+          audiobookProfiles.length > 0
+        ) {
+          settings.audiobookQualityProfileId = {
+            ...(settings.audiobookQualityProfileId || {}),
+            value: audiobookProfiles[0].id
+          };
         }
 
-        if ((!settings.ebookQualityProfileId || settings.ebookQualityProfileId.value === 0) && ebookProfiles.length > 0) {
-          settings.ebookQualityProfileId = { ...(settings.ebookQualityProfileId || {}), value: ebookProfiles[0].id };
+        if (
+          (!settings.ebookQualityProfileId ||
+            settings.ebookQualityProfileId.value === 0) &&
+          ebookProfiles.length > 0
+        ) {
+          settings.ebookQualityProfileId = {
+            ...(settings.ebookQualityProfileId || {}),
+            value: ebookProfiles[0].id
+          };
         }
       }
 
       // Set metadata profile defaults to first available instead of "None"
       if (metadataProfiles.isPopulated && metadataProfiles.items.length > 0) {
-        const audiobookMetaProfiles = metadataProfiles.items.filter((p) =>
-          p.profileType === 1 || p.profileType === 'audiobook'
+        const audiobookMetaProfiles = metadataProfiles.items.filter(
+          (p) => p.profileType === 1 || p.profileType === 'audiobook'
         );
-        const ebookMetaProfiles = metadataProfiles.items.filter((p) =>
-          p.profileType === 2 || p.profileType === 'ebook'
+        const ebookMetaProfiles = metadataProfiles.items.filter(
+          (p) => p.profileType === 2 || p.profileType === 'ebook'
         );
 
-        if ((!settings.audiobookMetadataProfileId || settings.audiobookMetadataProfileId.value === 0) && audiobookMetaProfiles.length > 0) {
-          settings.audiobookMetadataProfileId = { ...(settings.audiobookMetadataProfileId || {}), value: audiobookMetaProfiles[0].id };
+        if (
+          (!settings.audiobookMetadataProfileId ||
+            settings.audiobookMetadataProfileId.value === 0) &&
+          audiobookMetaProfiles.length > 0
+        ) {
+          settings.audiobookMetadataProfileId = {
+            ...(settings.audiobookMetadataProfileId || {}),
+            value: audiobookMetaProfiles[0].id
+          };
         }
 
-        if ((!settings.ebookMetadataProfileId || settings.ebookMetadataProfileId.value === 0) && ebookMetaProfiles.length > 0) {
-          settings.ebookMetadataProfileId = { ...(settings.ebookMetadataProfileId || {}), value: ebookMetaProfiles[0].id };
+        if (
+          (!settings.ebookMetadataProfileId ||
+            settings.ebookMetadataProfileId.value === 0) &&
+          ebookMetaProfiles.length > 0
+        ) {
+          settings.ebookMetadataProfileId = {
+            ...(settings.ebookMetadataProfileId || {}),
+            value: ebookMetaProfiles[0].id
+          };
         }
       }
 
@@ -214,6 +308,8 @@ function createMapStateToProps() {
         isSavingDefaultMediaType: uiState.isSaving,
         uiSaveError: uiState.saveError,
         rootFoldersPopulated: rootFoldersState.isPopulated,
+        rootFoldersFetching: rootFoldersState.isFetching,
+        rootFoldersError: rootFoldersState.error,
         showMetadataProfile: metadataProfiles.items.length > 2, // NONE and one other
         isWindows: systemStatus.isWindows,
         validationErrors,
@@ -236,7 +332,6 @@ function mapDispatchToProps(dispatch, props) {
 }
 
 class AddNewSeriesModalContentConnector extends Component {
-
   constructor(props, context) {
     super(props, context);
 
@@ -252,12 +347,16 @@ class AddNewSeriesModalContentConnector extends Component {
   }
 
   componentDidUpdate(prevProps) {
-    if (this._pendingDefaultSave && prevProps.isSavingDefaultMediaType && !this.props.isSavingDefaultMediaType) {
+    if (
+      this._pendingDefaultSave &&
+      prevProps.isSavingDefaultMediaType &&
+      !this.props.isSavingDefaultMediaType
+    ) {
       if (!this.props.uiSaveError) {
         this.props.dispatchShowMessage({
           id: `add-new-default-media-type-saved-${Date.now()}`,
           name: 'AddNewDefaultMediaTypeSaved',
-          message: 'Saved default media type',
+          message: translate('DefaultMediaTypeSaved'),
           type: 'success',
           hideAfter: 5
         });
@@ -265,7 +364,9 @@ class AddNewSeriesModalContentConnector extends Component {
         this.props.dispatchShowMessage({
           id: `add-new-default-media-type-save-failed-${Date.now()}`,
           name: 'AddNewDefaultMediaTypeSaveFailed',
-          message: this.props.uiSaveError?.responseJSON?.message || 'Unable to save default media type',
+          message:
+            this.props.uiSaveError?.responseJSON?.message ||
+            translate('UnableToSaveDefaultMediaType'),
           type: 'error',
           hideAfter: 8
         });
@@ -276,11 +377,8 @@ class AddNewSeriesModalContentConnector extends Component {
   }
 
   componentDidMount() {
-    const {
-      rootFoldersPopulated,
-      isFetchingSettings,
-      fetchRootFolders
-    } = this.props;
+    const { rootFoldersPopulated, isFetchingSettings, fetchRootFolders } =
+      this.props;
 
     if (!rootFoldersPopulated && !isFetchingSettings) {
       fetchRootFolders();
@@ -296,7 +394,9 @@ class AddNewSeriesModalContentConnector extends Component {
       return;
     }
 
-    const providerPrefix = foreignSeriesId.includes(':') ? foreignSeriesId.split(':')[0]?.toLowerCase() : '';
+    const providerPrefix = foreignSeriesId.includes(':') ?
+      foreignSeriesId.split(':')[0]?.toLowerCase() :
+      '';
     const providerMap = {
       hc: 'hardcover',
       hardcover: 'hardcover',
@@ -310,11 +410,14 @@ class AddNewSeriesModalContentConnector extends Component {
       an: 'audible',
       audible: 'audible'
     };
-    const provider = providerMap[providerPrefix] || providerPrefix || 'hardcover';
+    const provider =
+      providerMap[providerPrefix] || providerPrefix || 'hardcover';
 
     this.setState({ isFetchingSeries: true, fetchError: null });
 
-    let lookupUrl = `/series/lookup?foreignSeriesId=${encodeURIComponent(foreignSeriesId)}&provider=${encodeURIComponent(provider)}`;
+    let lookupUrl = `/series/lookup?foreignSeriesId=${encodeURIComponent(
+      foreignSeriesId
+    )}&provider=${encodeURIComponent(provider)}`;
 
     if (Number.isFinite(primaryWorkCount) && primaryWorkCount > 0) {
       lookupUrl += `&primaryWorkCount=${encodeURIComponent(primaryWorkCount)}`;
@@ -336,7 +439,10 @@ class AddNewSeriesModalContentConnector extends Component {
     });
 
     request.fail((xhr) => {
-      const error = xhr.responseJSON?.error || xhr.responseJSON?.message || 'Failed to load series details';
+      const error =
+        xhr.responseJSON?.error ||
+        xhr.responseJSON?.message ||
+        translate('SeriesDetailsLoadFailed');
       this.setState({
         isFetchingSeries: false,
         seriesDetails: null,
@@ -351,13 +457,16 @@ class AddNewSeriesModalContentConnector extends Component {
 
   onSetDefaultMediaType = (mediaType) => {
     this._pendingDefaultSave = true;
-    this.props.setUISettingsValue({ name: 'addNewDefaultMediaType', value: mediaType });
+    this.props.setUISettingsValue({
+      name: 'addNewDefaultMediaType',
+      value: mediaType
+    });
     this.props.saveUISettings();
   };
 
   getApiErrorMessage = (xhr) => {
     if (!xhr) {
-      return 'Failed to add series';
+      return translate('SeriesAddError');
     }
 
     const responseJson = xhr.responseJSON;
@@ -366,7 +475,8 @@ class AddNewSeriesModalContentConnector extends Component {
         return responseJson;
       }
 
-      const errorMessage = responseJson.errorMessage || responseJson.error || responseJson.message;
+      const errorMessage =
+        responseJson.errorMessage || responseJson.error || responseJson.message;
       if (errorMessage) {
         return errorMessage;
       }
@@ -374,8 +484,13 @@ class AddNewSeriesModalContentConnector extends Component {
       // ASP.NET validation problem details
       if (responseJson.title && responseJson.errors) {
         const firstKey = Object.keys(responseJson.errors)[0];
-        const firstError = firstKey && Array.isArray(responseJson.errors[firstKey]) ? responseJson.errors[firstKey][0] : null;
-        return firstError ? `${responseJson.title}: ${firstError}` : responseJson.title;
+        const firstError =
+          firstKey && Array.isArray(responseJson.errors[firstKey]) ?
+            responseJson.errors[firstKey][0] :
+            null;
+        return firstError ?
+          `${responseJson.title}: ${firstError}` :
+          responseJson.title;
       }
 
       if (responseJson.title) {
@@ -387,13 +502,10 @@ class AddNewSeriesModalContentConnector extends Component {
       return xhr.responseText;
     }
 
-    return 'Failed to add series';
+    return translate('SeriesAddError');
   };
 
-  onAddSeriesPress = ({
-    selectedMediaType,
-    selectedBooks
-  }) => {
+  onAddSeriesPress = ({ selectedMediaType, selectedBooks }) => {
     this.setState({ isAddingSeries: true, addError: null });
 
     const {
@@ -432,18 +544,27 @@ class AddNewSeriesModalContentConnector extends Component {
 
     const buildPayloadForMediaType = (mediaType) => {
       const isAudiobook = mediaType === 'audiobook';
-      const monitorExistingUi = isAudiobook ? (audiobookMonitor?.value || monitor?.value) : (ebookMonitor?.value || monitor?.value);
-      const normalizedMonitorExistingUi = (monitorExistingUi ?? '').toString().trim().toLowerCase();
-      const monitorExisting = normalizedMonitorExistingUi === 'specificbook' ?
-        'specificbook' : normalizeMonitorOption(normalizedMonitorExistingUi);
+      const monitorExistingUi = isAudiobook ?
+        audiobookMonitor?.value || monitor?.value :
+        ebookMonitor?.value || monitor?.value;
+      const normalizedMonitorExistingUi = (monitorExistingUi ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+      const monitorExisting =
+        normalizedMonitorExistingUi === 'specificbook' ?
+          'specificbook' :
+          normalizeMonitorOption(normalizedMonitorExistingUi);
 
-      const monitorNewItemsUi = normalizeMonitorNewItemsOption(isAudiobook ?
-        (audiobookMonitorNewItems?.value || monitorNewItems?.value) :
-        (ebookMonitorNewItems?.value || monitorNewItems?.value));
+      const monitorNewItemsUi = normalizeMonitorNewItemsOption(
+        isAudiobook ?
+          audiobookMonitorNewItems?.value || monitorNewItems?.value :
+          ebookMonitorNewItems?.value || monitorNewItems?.value
+      );
 
       const selectedTags = isAudiobook ?
-        (audiobookTags?.value || tags?.value) :
-        (ebookTags?.value || tags?.value);
+        audiobookTags?.value || tags?.value :
+        ebookTags?.value || tags?.value;
 
       const payload = {
         foreignSeriesId,
@@ -514,9 +635,24 @@ class AddNewSeriesModalContentConnector extends Component {
       const authorsCount = data.addedAuthors?.length || 0;
       const booksCount = data.monitoredBooks?.length || 0;
       const pendingCount = data.pendingAuthorImportIds?.length || 0;
-      const labelSuffix = mediaTypeLabel ? ` (${mediaTypeLabel})` : '';
-      const queueSuffix = pendingCount > 0 ? `, queued ${pendingCount} author(s) for import` : '';
-      const message = `Added series "${this.props.title}"${labelSuffix} — ${authorsCount} author(s) added${queueSuffix}, monitoring ${booksCount} book(s)`;
+      const localizedMediaTypeLabel =
+        mediaTypeLabel === 'Audiobooks' ?
+          translate('Audiobooks') :
+          translate('Ebooks');
+      const mediaTypeSuffix = mediaTypeLabel ?
+        ` (${localizedMediaTypeLabel})` :
+        '';
+      const queueSuffix =
+        pendingCount > 0 ?
+          translate('SeriesAddQueuedAuthorsSuffix', { pendingCount }) :
+          '';
+      const message = translate('SeriesAddedMessage', {
+        seriesTitle: this.props.title,
+        mediaTypeSuffix,
+        authorsCount,
+        booksCount,
+        queueSuffix
+      });
 
       this.setState({ isAddingSeries: false, addError: null });
 
@@ -550,7 +686,7 @@ class AddNewSeriesModalContentConnector extends Component {
 
     const validateResultOrThrow = (data) => {
       if (!data || !data.success) {
-        const error = data?.errorMessage || 'Failed to add series';
+        const error = data?.errorMessage || translate('SeriesAddError');
         throw new Error(error);
       }
 
@@ -569,7 +705,7 @@ class AddNewSeriesModalContentConnector extends Component {
         try {
           validateResultOrThrow(data1);
         } catch (e) {
-          handleFailure(e.message || 'Failed to add series');
+          handleFailure(e.message || translate('SeriesAddError'));
           return;
         }
 
@@ -579,12 +715,26 @@ class AddNewSeriesModalContentConnector extends Component {
           try {
             validateResultOrThrow(data2);
           } catch (e) {
-            const partialError = e.message || 'Failed to add series';
+            const partialError = e.message || translate('SeriesAddError');
             const authorsCount = data1?.addedAuthors?.length || 0;
             const booksCount = data1?.monitoredBooks?.length || 0;
             const pendingCount = data1?.pendingAuthorImportIds?.length || 0;
-            const queueSuffix = pendingCount > 0 ? `, queued ${pendingCount} author(s) for import` : '';
-            const message = `Added series "${this.props.title}" (Audiobooks) — ${authorsCount} author(s) added${queueSuffix}, monitoring ${booksCount} book(s). Failed to add eBooks: ${partialError}`;
+            const queueSuffix =
+              pendingCount > 0 ?
+                translate('SeriesAddQueuedAuthorsSuffix', { pendingCount }) :
+                '';
+            const message = translate(
+              'SeriesAddedAudiobooksPartialFailureMessage',
+              {
+                seriesTitle: this.props.title,
+                audiobooksLabel: translate('Audiobooks'),
+                authorsCount,
+                booksCount,
+                queueSuffix,
+                ebooksLabel: translate('Ebooks'),
+                error: partialError
+              }
+            );
             handleFailure(message);
             return;
           }
@@ -598,8 +748,20 @@ class AddNewSeriesModalContentConnector extends Component {
             ...(data2?.pendingAuthorImportIds || [])
           ]);
           const pendingCount = pendingIds.size;
-          const queueSuffix = pendingCount > 0 ? `; queued ${pendingCount} author(s) for import` : '';
-          const message = `Added series "${this.props.title}" — Audiobooks: ${audiobookAuthors} author(s), ${audiobookBooks} book(s); eBooks: ${ebookAuthors} author(s), ${ebookBooks} book(s)${queueSuffix}`;
+          const queueSuffix =
+            pendingCount > 0 ?
+              translate('SeriesAddQueuedAuthorsSuffix', { pendingCount }) :
+              '';
+          const message = translate('SeriesAddedBothMediaTypesMessage', {
+            seriesTitle: this.props.title,
+            audiobooksLabel: translate('Audiobooks'),
+            audiobookAuthors,
+            audiobookBooks,
+            ebooksLabel: translate('Ebooks'),
+            ebookAuthors,
+            ebookBooks,
+            queueSuffix
+          });
 
           this.setState({ isAddingSeries: false, addError: null });
 
@@ -623,8 +785,22 @@ class AddNewSeriesModalContentConnector extends Component {
           const authorsCount = data1?.addedAuthors?.length || 0;
           const booksCount = data1?.monitoredBooks?.length || 0;
           const pendingCount = data1?.pendingAuthorImportIds?.length || 0;
-          const queueSuffix = pendingCount > 0 ? `, queued ${pendingCount} author(s) for import` : '';
-          const message = `Added series "${this.props.title}" (Audiobooks) — ${authorsCount} author(s) added${queueSuffix}, monitoring ${booksCount} book(s). Failed to add eBooks: ${partialError}`;
+          const queueSuffix =
+            pendingCount > 0 ?
+              translate('SeriesAddQueuedAuthorsSuffix', { pendingCount }) :
+              '';
+          const message = translate(
+            'SeriesAddedAudiobooksPartialFailureMessage',
+            {
+              seriesTitle: this.props.title,
+              audiobooksLabel: translate('Audiobooks'),
+              authorsCount,
+              booksCount,
+              queueSuffix,
+              ebooksLabel: translate('Ebooks'),
+              error: partialError
+            }
+          );
           handleFailure(message);
         });
       });
@@ -643,11 +819,16 @@ class AddNewSeriesModalContentConnector extends Component {
       try {
         validateResultOrThrow(data);
       } catch (e) {
-        handleFailure(e.message || 'Failed to add series');
+        handleFailure(e.message || translate('SeriesAddError'));
         return;
       }
 
-      const label = selectedMediaType === 'audiobook' ? 'Audiobooks' : (selectedMediaType === 'ebook' ? 'eBooks' : null);
+      const label =
+        selectedMediaType === 'audiobook' ?
+          'Audiobooks' :
+          selectedMediaType === 'ebook' ?
+            'eBooks' :
+            null;
       handleSuccess(data, label);
     });
 
@@ -677,6 +858,9 @@ class AddNewSeriesModalContentConnector extends Component {
   }
 }
 
-const connectedComponent = connect(createMapStateToProps, mapDispatchToProps)(AddNewSeriesModalContentConnector);
+const connectedComponent = connect(
+  createMapStateToProps,
+  mapDispatchToProps
+)(AddNewSeriesModalContentConnector);
 
 export default connectedComponent;

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
@@ -140,6 +141,23 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(aliases, Does.Contain(("gr", "123")));
                 Assert.That(aliases, Does.Contain(("hc", "edition:456")));
                 Assert.That(aliases.Any(a => a.NormalizedProviderId.Contains("System.Collections")), Is.False);
+            });
+        }
+
+        [Test]
+        public void provider_alias_service_should_bound_opaque_metadata_aliases_to_the_index_column()
+        {
+            var providerId = NzbDrone.Core.MetadataSource.BookInfo.AdditionalMetadataSources.CreateProviderId(
+                "internetarchive",
+                new string('x', 300));
+            var aliases = new ProviderAliasService(null).NormalizeProviderIds(new[] { providerId });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(aliases, Has.Count.EqualTo(1));
+                Assert.That(aliases[0].Provider, Is.EqualTo("meta"));
+                Assert.That(aliases[0].NormalizedProviderId, Does.StartWith("sha256-"));
+                Assert.That(Encoding.UTF8.GetByteCount(aliases[0].NormalizedProviderId), Is.LessThanOrEqualTo(128));
             });
         }
     }

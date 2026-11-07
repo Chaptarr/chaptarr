@@ -51,7 +51,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     case nameof(IDiskProvider.ReadAllText):
                         return File.ReadAllText((string)args[0]);
                     case nameof(IDiskProvider.GetFileInfo):
-                        return _fileSystem.FileInfo.FromFileName((string)args[0]);
+                        return _fileSystem.FileInfo.New((string)args[0]);
                     default:
                         throw new NotImplementedException($"Test proxy does not implement {typeof(IDiskProvider).Name}.{targetMethod?.Name}");
                 }

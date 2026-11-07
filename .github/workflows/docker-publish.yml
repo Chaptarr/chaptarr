@@ -1,6 +1,6 @@
 name: Docker Build and Publish
 
-# Never fires on its own. Only release.yml can call it after manual CI succeeds.
+# Never fires on its own. release.yml calls it after a version bump and CI pass.
 on:
   workflow_call:
     inputs:
@@ -10,63 +10,133 @@ on:
       branch:
         required: true
         type: string
+      legacy_bridge_enabled:
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      image_digest:
+        description: Digest of the single standard ChaptarrNG image built and pushed by this workflow.
+        value: ${{ jobs.build-and-push.outputs.image_digest }}
     secrets:
-      DOCKER_USERNAME:
+      DOCKERHUB_USERNAME:
         required: true
-      DOCKER_PASSWORD:
+      DOCKERHUB_TOKEN:
         required: true
 
 env:
-  REGISTRY: docker.io
-  IMAGE_NAMES: robertlordhood/chaptarr chaptarr/chaptarr
+  # The standard image is published under the organization that owns the
+  # repository so the workflow token can push to it.
+  STANDARD_IMAGE: ghcr.io/snapetech-org/chaptarrng
+  REGISTRY: ghcr.io
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
+  require-release-readiness:
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-require-release-readiness"]}}', github.run_id)) }}
     permissions:
       contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: main
+        persist-credentials: false
+
+    - name: Require retirement release readiness
+      env:
+        CHAPTARRNG_RELEASE_READY: ${{ vars.CHAPTARRNG_RELEASE_READY }}
+        BOOKSHELFNG_RELEASE_READY: ${{ vars.BOOKSHELFNG_RELEASE_READY }}
+      run: ./packaging/scripts/require-release-readiness.sh
+
+  build-and-push:
+    needs: require-release-readiness
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-build-and-push"]}}', github.run_id)) }}
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: ${{ inputs.sha }}
         fetch-depth: 0
 
+    - name: Test legacy aliases use the single standard image digest
+      run: bash packaging/scripts/test-publish-image-aliases.sh
+
+    - name: Set up QEMU for target-platform runtime steps
+      uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      with:
+        image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+        platforms: arm,arm64
+
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
 
     - name: Validate release inputs
       shell: bash
+      env:
+        RELEASE_BRANCH: ${{ inputs.branch }}
+        RELEASE_SHA: ${{ inputs.sha }}
       run: |
         set -euo pipefail
-        if [[ "${{ inputs.branch }}" != "develop" && "${{ inputs.branch }}" != "main" ]]; then
-          echo "Docker publication requires branch=develop or branch=main."
+        if [[ "$RELEASE_BRANCH" != "main" ]]; then
+          echo "Docker publication requires branch=main."
           exit 1
         fi
 
-        if [[ "$(git rev-parse HEAD)" != "${{ inputs.sha }}" ]]; then
+        if [[ "$(git rev-parse HEAD)" != "$RELEASE_SHA" ]]; then
           echo "Checked-out commit does not match the release commit."
           exit 1
         fi
 
-    - name: Log in to Docker Hub
-      uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
       with:
         registry: ${{ env.REGISTRY }}
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+
+    - name: Require Docker Hub publisher credentials
+      id: dockerhub-credentials
+      shell: bash
+      env:
+        DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      run: |
+        set -euo pipefail
+        if [[ -n "$DOCKERHUB_USERNAME" && -n "$DOCKERHUB_TOKEN" ]]; then
+          echo 'configured=true' >> "$GITHUB_OUTPUT"
+          echo '- Docker Hub image publication: credentials configured; tags will mirror the standard GHCR image digest after the build.' >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo 'Docker Hub publisher credentials are required for stable image publication.' >&2
+          exit 1
+        fi
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+      with:
+        registry: docker.io
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
 
     - name: Generate Docker tags
       id: docker-tags
       shell: bash
+      env:
+        RELEASE_BRANCH: ${{ inputs.branch }}
       run: |
         set -euo pipefail
 
         sha="$(git rev-parse HEAD)"
-        branch="${{ inputs.branch }}"
+        branch="$RELEASE_BRANCH"
         version="$(python3 -c "import json; print(json.load(open('package.json', encoding='utf-8'))['version'])")"
         release_tag="v${version}"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
 
         if [[ "$(git tag --points-at "$sha" --list "$release_tag")" != "$release_tag" ]]; then
           echo "Release tag $release_tag does not point to $sha; refusing to publish Docker images."
@@ -74,25 +144,19 @@ jobs:
         fi
 
         tags=()
+        image="${STANDARD_IMAGE}"
 
-        for name in ${IMAGE_NAMES}; do
-          image="${REGISTRY}/${name}"
+        if [[ "$branch" == "main" ]]; then
+          tags+=("$image:$branch")
+          tags+=("$image:master")
+          tags+=("$image:latest")
+          tags+=("$image:stable")
+        fi
 
-          if [[ "$branch" == "main" || "$branch" == "develop" ]]; then
-            tags+=("$image:$branch")
-          fi
-
-          if [[ "$branch" == "main" ]]; then
-            tags+=("$image:latest")
-          fi
-
-          # Exact versions only. No rolling major/minor tags: every Chaptarr release
-          # so far is 0.9.x, so a ":0.9" tag would just be a second "latest" that
-          # also tracks develop. Users pin main, develop, or an exact version.
-          while IFS= read -r tag; do
-            tags+=("$image:${tag#v}")
-          done < <(git tag --points-at "$sha" 'v*' | sort -V)
-        done
+        # Exact version tags keep stable releases immutable and distinct from latest.
+        while IFS= read -r tag; do
+          tags+=("$image:${tag#v}")
+        done < <(git tag --points-at "$sha" 'v*' | sort -V)
 
         if [[ "${#tags[@]}" -eq 0 ]]; then
           echo "No Docker tags generated for $sha; skipping publish."
@@ -109,10 +173,12 @@ jobs:
 
     - name: Build and push Docker image
       if: steps.docker-tags.outputs.has_tags == 'true'
-      uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
+      id: build
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
       with:
         context: .
         file: ./Dockerfile.cross
+        target: chaptarrng-standard
         platforms: linux/amd64,linux/arm64,linux/arm/v7
         push: true
         tags: ${{ steps.docker-tags.outputs.tags }}
@@ -121,3 +187,39 @@ jobs:
           org.opencontainers.image.revision=${{ inputs.sha }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        sbom: true
+        provenance: mode=max
+
+    - name: Verify Skopeo was installed by the private JIT broker
+      if: steps.docker-tags.outputs.has_tags == 'true' && steps.dockerhub-credentials.outputs.configured == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        command -v skopeo >/dev/null 2>&1 || {
+          echo 'Skopeo must be installed by the private JIT broker before this job starts.' >&2
+          exit 1
+        }
+
+    - name: Publish legacy aliases from the single standard image digest
+      id: legacy-image-aliases
+      if: steps.docker-tags.outputs.has_tags == 'true'
+      shell: bash
+      env:
+        SOURCE_IMAGE: ${{ env.STANDARD_IMAGE }}@${{ steps.build.outputs.digest }}
+        EXPECTED_DIGEST: ${{ steps.build.outputs.digest }}
+        VERSION: ${{ steps.docker-tags.outputs.version }}
+        DOCKERHUB_CONFIGURED: ${{ steps.dockerhub-credentials.outputs.configured }}
+        PUBLISH_LEGACY_ALIASES: ${{ inputs.legacy_bridge_enabled && vars.CHAPTARRNG_MIGRATION_BRIDGE_ENABLED == 'true' && vars.CHAPTARRNG_RELEASE_READY == 'true' && vars.BOOKSHELFNG_RELEASE_READY == 'true' }}
+        # GHCR legacy aliases are written by the personal-account bridge
+        # repository because this source repository belongs to the org.
+        PUBLISH_GHCR_ALIASES: false
+        RUNNER_TEMP: ${{ runner.temp }}
+      run: packaging/scripts/publish-image-aliases.sh
+
+    - name: Attest published image provenance
+      if: steps.docker-tags.outputs.has_tags == 'true'
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+      with:
+        subject-name: ${{ env.STANDARD_IMAGE }}
+        subject-digest: ${{ steps.build.outputs.digest }}
+        push-to-registry: true

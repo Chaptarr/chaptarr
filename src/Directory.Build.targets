@@ -1,3 +1,4 @@
 <Project>
   <Import Project="Targets/PublishAllRids.targets" />
+  <Import Project="Targets/ExtraPlatformRuntimePacks.targets" />
 </Project>

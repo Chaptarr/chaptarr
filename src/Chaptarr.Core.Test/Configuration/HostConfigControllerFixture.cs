@@ -3,6 +3,11 @@ using System.Reflection;
 using System.Threading.Tasks;
 using Chaptarr.Api.V1.Config;
 using Chaptarr.Http.REST;
+using Chaptarr.Http.Middleware;
+using Microsoft.AspNetCore.Http;
+using Moq;
+using FluentValidation;
+using System.Linq;
 using Microsoft.AspNetCore.Mvc;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
@@ -33,6 +38,47 @@ namespace Chaptarr.Core.Test.Configuration
                 WasCalled = true;
                 return Task.FromResult(new ProxyTestResult { IsValid = true, Message = "OK" });
             }
+        }
+
+        [TestCase(true, "Readarr", true)]
+        [TestCase(true, "Readarr Audiobooks", true)]
+        [TestCase(false, "Readarr", false)]
+        [TestCase(false, "Chaptarr Audiobooks", true)]
+        [TestCase(true, "Unrelated", false)]
+        public void should_validate_source_names_in_legacy_settings_roundtrip(bool legacy, string name, bool expected)
+        {
+            var controller = CreateController();
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+            controller.HttpContext.Items[ReadarrFacadeContext.ItemKey] = new ReadarrFacadeContext("hc", null, "/api", isBookshelfCompatibility: legacy);
+            var validator = (IValidator<HostConfigResource>)typeof(RestController<HostConfigResource>)
+                .GetProperty("SharedValidator", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(controller);
+            var resource = CreateResource();
+            resource.InstanceName = name;
+            var nameErrors = validator.Validate(resource).Errors.Where(error => error.PropertyName == nameof(HostConfigResource.InstanceName)).ToList();
+            Assert.That(nameErrors.Count == 0, Is.EqualTo(expected));
+        }
+
+        [TestCase(true, "Readarr Audiobooks")]
+        [TestCase(false, "Chaptarr")]
+        public void host_config_should_preserve_route_identity_and_hide_stored_password(bool legacy, string expected)
+        {
+            var config = new Mock<IConfigFileProvider>();
+            config.SetupGet(value => value.InstanceName).Returns("Chaptarr");
+            config.Setup(value => value.GetBookshelfInstanceName()).Returns("Readarr Audiobooks");
+            var account = new User { Username = "fixture", Password = "fixture-stored-hash", Salt = "fixture-salt", Iterations = 10000 };
+            var users = new Mock<IUserService>();
+            users.Setup(value => value.FindUser()).Returns(account);
+            var controller = new HostConfigController(config.Object, Mock.Of<IConfigService>(), users.Object,
+                new StubProxyTestService(), Mock.Of<IProxyService>(), new FileExistsValidator(Mock.Of<IDiskProvider>()));
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+            controller.HttpContext.Items[ReadarrFacadeContext.ItemKey] = new ReadarrFacadeContext("hc", null, "/api", isBookshelfCompatibility: legacy);
+            var result = controller.GetHostConfig();
+            Assert.That(result.InstanceName, Is.EqualTo(expected));
+            Assert.That(result.Username, Is.EqualTo("fixture"));
+            Assert.That(result.Password, Is.Empty);
+            Assert.That(result.PasswordConfirmation, Is.Empty);
+            Assert.That(account.Password, Is.EqualTo("fixture-stored-hash"));
+            users.Verify(value => value.Upsert(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         }
 
         [Test]
@@ -133,7 +179,7 @@ namespace Chaptarr.Core.Test.Configuration
                 AuthenticationMethod = AuthenticationType.None,
                 ProxyMode = ProxyMode.Disabled,
                 ProxyType = ProxyType.Http,
-                Branch = "master",
+                Branch = "main",
                 BackupFolder = string.Empty,
                 BackupInterval = 7,
                 BackupRetention = 28

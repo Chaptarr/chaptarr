@@ -30,6 +30,11 @@ namespace NzbDrone.Common.Composition
                 AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(startupPath, $"{x}.dll")));
         }
 
+        public static Assembly LoadOptional(string assemblyPath)
+        {
+            return AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.GetFullPath(assemblyPath));
+        }
+
         private static Assembly ContainerResolveEventHandler(object sender, ResolveEventArgs args)
         {
             var resolver = new AssemblyDependencyResolver(args.RequestingAssembly.Location);

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+while IFS= read -r git_environment_variable; do
+	unset "$git_environment_variable"
+done < <(git -C "$repo_root" rev-parse --local-env-vars)
+exec bash "$repo_root/scripts/sync-unraid-package.sh"

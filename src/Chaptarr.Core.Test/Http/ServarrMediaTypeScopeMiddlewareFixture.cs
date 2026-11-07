@@ -1,4 +1,5 @@
 using System.Threading.Tasks;
+using Chaptarr.Core.Test;
 using Chaptarr.Http.Middleware;
 using Microsoft.AspNetCore.Http;
 using NUnit.Framework;
@@ -8,6 +9,31 @@ namespace Chaptarr.Core.Test.Http
     [TestFixture]
     public class ServarrMediaTypeScopeMiddlewareFixture
     {
+        [TestCase("")]
+        [TestCase("/library")]
+        public async Task should_preserve_the_original_base_path_for_migrated_api_clients(string basePath)
+        {
+            ReadarrFacadeContext facade = null;
+            var middleware = new ServarrMediaTypeScopeMiddleware(context =>
+            {
+                facade = context.GetReadarrFacadeContext();
+                return Task.CompletedTask;
+            });
+            var context = new DefaultHttpContext();
+            context.Request.PathBase = basePath;
+            context.Request.Path = "/api/v1/system/status";
+            var config = (ConfigServiceTestProxy)ConfigServiceTestProxy.Create();
+            config.BookshelfNGDatabaseMigrated = true;
+
+            await middleware.InvokeAsync(context, (NzbDrone.Core.Configuration.IConfigService)config);
+
+            Assert.That(facade?.IsBookshelfCompatibility, Is.True);
+            Assert.That(facade?.AcceptsBookshelfLegacyBookIds, Is.True);
+            Assert.That(facade?.Prefix, Is.Empty);
+            Assert.That(context.Request.PathBase.Value ?? string.Empty, Is.EqualTo(basePath));
+            Assert.That(context.Request.Path.Value, Is.EqualTo("/api/v1/system/status"));
+        }
+
         [TestCase("/ebook/api/v1/book/lookup", "ebook")]
         [TestCase("/ebooks/api/v1/book/lookup", "ebook")]
         [TestCase("/audiobook/api/v1/book/lookup", "audiobook")]
@@ -31,7 +57,7 @@ namespace Chaptarr.Core.Test.Http
             context.Request.Path = path;
             context.Request.QueryString = new QueryString("?apikey=abc&term=work:123");
 
-            await middleware.InvokeAsync(context);
+            await middleware.InvokeAsync(context, ConfigServiceTestProxy.Create());
 
             Assert.That(sawPath, Is.EqualTo("/api/v1/book/lookup"));
             Assert.That(sawMediaType, Is.EqualTo(expectedMediaType));
@@ -59,13 +85,45 @@ namespace Chaptarr.Core.Test.Http
             context.Request.Path = path;
             context.Request.QueryString = new QueryString("?apikey=abc&term=work:123");
 
-            await middleware.InvokeAsync(context);
+            await middleware.InvokeAsync(context, ConfigServiceTestProxy.Create());
 
             Assert.That(sawPath, Is.EqualTo("/api/v1/book/lookup"));
             Assert.That(sawMediaType, Is.EqualTo(expectedMediaType));
             Assert.That(sawFacade?.Dialect, Is.EqualTo(dialect));
             Assert.That(sawFacade?.MediaType, Is.EqualTo(expectedMediaType));
             Assert.That(sawFacade?.Prefix, Is.EqualTo(expectedPrefix));
+            Assert.That(sawFacade?.AcceptsBookshelfLegacyBookIds, Is.False);
+        }
+
+        [TestCase(false, false, false)]
+        [TestCase(true, false, true)]
+        [TestCase(true, true, false)]
+        public async Task should_accept_legacy_book_ids_on_scoped_routes_only_for_migrated_non_native_clients(
+            bool migratedBookshelfDatabase,
+            bool nativeClient,
+            bool expectedLegacyBookIdSupport)
+        {
+            ReadarrFacadeContext sawFacade = null;
+            var middleware = new ServarrMediaTypeScopeMiddleware(context =>
+            {
+                sawFacade = context.GetReadarrFacadeContext();
+                return Task.CompletedTask;
+            });
+
+            var context = new DefaultHttpContext();
+            context.Request.Path = "/readarr/hc/ebook/api/v1/book/30";
+            if (nativeClient)
+            {
+                context.Request.Headers["X-ChaptarrNG-Client"] = "native";
+            }
+
+            var config = (ConfigServiceTestProxy)ConfigServiceTestProxy.Create();
+            config.BookshelfNGDatabaseMigrated = migratedBookshelfDatabase;
+
+            await middleware.InvokeAsync(context, (NzbDrone.Core.Configuration.IConfigService)config);
+
+            Assert.That(sawFacade?.IsBookshelfCompatibility, Is.False);
+            Assert.That(sawFacade?.AcceptsBookshelfLegacyBookIds, Is.EqualTo(expectedLegacyBookIdSupport));
         }
 
         [Test]
@@ -82,7 +140,7 @@ namespace Chaptarr.Core.Test.Http
             var context = new DefaultHttpContext();
             context.Request.Path = "/ebook";
 
-            await middleware.InvokeAsync(context);
+            await middleware.InvokeAsync(context, ConfigServiceTestProxy.Create());
 
             Assert.That(sawPath, Is.EqualTo("/ebook"));
         }
@@ -102,7 +160,7 @@ namespace Chaptarr.Core.Test.Http
             context.Request.Path = "/ebook/api/v1/book/lookup";
             context.Request.QueryString = new QueryString("?mediaType=audiobook&apikey=abc");
 
-            await middleware.InvokeAsync(context);
+            await middleware.InvokeAsync(context, ConfigServiceTestProxy.Create());
 
             Assert.That(sawQuery, Does.Contain("mediaType=audiobook"));
             Assert.That(sawQuery, Does.Not.Contain("mediaType=ebook"));

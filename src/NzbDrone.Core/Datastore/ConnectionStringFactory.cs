@@ -1,7 +1,9 @@
 using System;
+using System.IO;
 using Microsoft.Data.Sqlite;
 using Npgsql;
 using NzbDrone.Common.EnvironmentInfo;
+using NzbDrone.Common.Exceptions;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Configuration;
 
@@ -18,19 +20,37 @@ namespace NzbDrone.Core.Datastore
     public class ConnectionStringFactory : IConnectionStringFactory
     {
         private readonly IConfigFileProvider _configFileProvider;
+        private readonly IPostgresDatabaseInspector _postgresDatabaseInspector;
 
-        public ConnectionStringFactory(IAppFolderInfo appFolderInfo, IConfigFileProvider configFileProvider)
+        public ConnectionStringFactory(
+            IAppFolderInfo appFolderInfo,
+            IConfigFileProvider configFileProvider,
+            IPostgresDatabaseInspector postgresDatabaseInspector)
         {
             _configFileProvider = configFileProvider;
+            _postgresDatabaseInspector = postgresDatabaseInspector;
 
-            MainDbConnection = _configFileProvider.PostgresHost.IsNotNullOrWhiteSpace() ? GetPostgresConnectionString(_configFileProvider.PostgresMainDb) :
-                GetConnectionString(appFolderInfo.GetDatabase());
+            if (_configFileProvider.PostgresHost.IsNotNullOrWhiteSpace())
+            {
+                var selection = BookshelfPostgresDatabaseSelector.Resolve(
+                    _configFileProvider.PostgresMainDb,
+                    _configFileProvider.PostgresLogDb,
+                    _configFileProvider.PostgresCacheDb,
+                    _configFileProvider.IsPostgresMainDbExplicitlyConfigured(),
+                    _configFileProvider.IsPostgresLogDbExplicitlyConfigured(),
+                    _configFileProvider.IsPostgresCacheDbExplicitlyConfigured(),
+                    InspectPostgresDatabase);
 
-            LogDbConnection = _configFileProvider.PostgresHost.IsNotNullOrWhiteSpace() ? GetPostgresConnectionString(_configFileProvider.PostgresLogDb) :
-                GetConnectionString(appFolderInfo.GetLogDatabase());
-
-            CacheDbConnection = _configFileProvider.PostgresHost.IsNotNullOrWhiteSpace() ? GetPostgresConnectionString(_configFileProvider.PostgresCacheDb) :
-                GetConnectionString(appFolderInfo.GetCacheDatabase());
+                MainDbConnection = GetPostgresConnectionString(selection.MainDb);
+                LogDbConnection = GetPostgresConnectionString(selection.LogDb);
+                CacheDbConnection = GetPostgresConnectionString(selection.CacheDb);
+            }
+            else
+            {
+                MainDbConnection = GetConnectionString(appFolderInfo.GetDatabase());
+                LogDbConnection = GetConnectionString(appFolderInfo.GetLogDatabase());
+                CacheDbConnection = GetConnectionString(appFolderInfo.GetCacheDatabase());
+            }
         }
 
         public DatabaseConnectionInfo MainDbConnection { get; private set; }
@@ -69,10 +89,59 @@ namespace NzbDrone.Core.Datastore
                 Username = _configFileProvider.PostgresUser,
                 Password = _configFileProvider.PostgresPassword,
                 Port = _configFileProvider.PostgresPort,
-                Enlist = false
+                Enlist = false,
+
+                // Nothing in the application relies on per-session state, so skip the
+                // reset round-trip every time a pooled connection is returned.
+                NoResetOnClose = _configFileProvider.PostgresNoResetOnClose
             };
 
+            ApplyPostgresTls(connectionBuilder);
+
             return new DatabaseConnectionInfo(DatabaseType.PostgreSQL, connectionBuilder.ConnectionString);
+        }
+
+        private PostgresDatabaseState InspectPostgresDatabase(string dbName)
+        {
+            if (string.IsNullOrWhiteSpace(dbName))
+            {
+                return new PostgresDatabaseState(false, DatabaseLineage.Empty, false);
+            }
+
+            return _postgresDatabaseInspector.Inspect(GetPostgresConnectionString(dbName).ConnectionString);
+        }
+
+        private void ApplyPostgresTls(NpgsqlConnectionStringBuilder connectionBuilder)
+        {
+            var sslMode = _configFileProvider.PostgresSslMode;
+            var rootCert = _configFileProvider.PostgresRootCert;
+
+            if (sslMode.IsNotNullOrWhiteSpace())
+            {
+                connectionBuilder.SslMode = ParseSslMode(sslMode);
+            }
+
+            if (rootCert.IsNotNullOrWhiteSpace())
+            {
+                if (!File.Exists(rootCert))
+                {
+                    throw new ChaptarrStartupException("The configured PostgreSQL root certificate file was not found: {0}", rootCert);
+                }
+
+                connectionBuilder.RootCertificate = rootCert;
+            }
+        }
+
+        private static SslMode ParseSslMode(string value)
+        {
+            var normalized = value.Trim().Replace("-", string.Empty).Replace("_", string.Empty);
+
+            if (Enum.TryParse<SslMode>(normalized, true, out var mode) && Enum.IsDefined(typeof(SslMode), mode))
+            {
+                return mode;
+            }
+
+            throw new ChaptarrStartupException("Unsupported PostgreSQL SSL mode '{0}'. Use one of: disable, allow, prefer, require, verify-ca, verify-full.", value);
         }
     }
 }

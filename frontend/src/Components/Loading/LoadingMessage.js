@@ -1,25 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import translate, { translateWithFallback } from 'Utilities/String/translate';
+import messages from './loading-messages.json';
 import styles from './LoadingMessage.css';
-
-const messages = [
-  'Organizing your bookshelf...',
-  'Turning to the next chaptarr...',
-  'Shh! Library voices, please...',
-  'Checking for overdue books...',
-  'There\'s just nothing quite like the smell of opening a new... eBook?',
-  'Finding your place in the story...',
-  'Be Kind: Rewind your audiobooks',
-  'Loading your next adventure...',
-  'I blame Cody...',
-  'Sorry Gomeyy...this isn\'t the API you\'re looking for',
-  'Shane.......our King',
-  'Dodge-ing these piles of books',
-  'Solid. Goldan. Dragon.',
-  'Have you ever seen DefinitelyNotRLH and RLH in the same room?',
-  'A Black Swan and a Goldan Dragon walk into a library...',
-  'These old books always get skipped',
-  'Something Something Skels'
-];
 
 // Maintain a module-level pool to avoid duplicates until all have been shown
 let messagePool = [];
@@ -41,7 +23,7 @@ function nextMessage() {
 }
 
 function LoadingMessage() {
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState(null);
 
   // On mount (each loading event), pick the next message without repeats
   useEffect(() => {
@@ -50,7 +32,7 @@ function LoadingMessage() {
 
   return (
     <div className={styles.loadingMessage}>
-      {message}
+      {message ? translateWithFallback(message.id, message.source) : translate('Loading')}
     </div>
   );
 }

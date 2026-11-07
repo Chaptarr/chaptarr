@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Core.Profiles.Delay;
 using NzbDrone.Http.REST.Attributes;
 
+using NzbDrone.Core.Validation;
+
 namespace Chaptarr.Api.V1.Profiles.Delay
 {
     [V1ApiController]

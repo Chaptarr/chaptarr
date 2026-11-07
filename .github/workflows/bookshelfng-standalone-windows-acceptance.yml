@@ -1,0 +1,212 @@
+# ng-runner-policy: trusted-hosted-or-private-jit-v1
+name: BookshelfNG retained standalone archive acceptance
+run-name: action:${{ inputs.action }}:pool:${{ inputs.runner_pool }}:archives:${{ inputs.candidate_run_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Trusted acceptance action
+        type: choice
+        options: [ci]
+        required: true
+      runner_pool:
+        description: Explicit native Windows runner pool
+        type: choice
+        options: [public, private]
+        default: public
+        required: true
+      platforms:
+        description: Native retained-archive acceptance platforms
+        type: choice
+        options: [windows, macos, all]
+        default: all
+        required: true
+      candidate_run_id:
+        description: Trusted standalone validation run retaining the checked archive payloads
+        type: string
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: standalone-windows-${{ github.run_id }}
+  cancel-in-progress: false
+jobs:
+  installed-windows:
+    name: Installed ${{ matrix.rid }} migration and explicit rollback
+    if: github.ref == 'refs/heads/main' && inputs.action == 'ci' && inputs.platforms != 'macos' && (inputs.runner_pool == 'public' || inputs.runner_pool == 'private')
+    timeout-minutes: 30
+    runs-on: ${{ inputs.runner_pool == 'public' && 'windows-2022' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","windows","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-standalone-windows-{1}"]}}', github.run_id, strategy.job-index)) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            predecessor_sha256: d31cc96dddffad5cc9b20e68f55862cb7107033aedae733f185aa73f50a6d67d
+          - rid: win-x86
+            predecessor_sha256: b80df3211eecb208c54645a9fda17019a5322764a91b2abb5d177cc67beb7be8
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        fetch-depth: 0
+    - name: Verify successful trusted producer job and unchanged application source
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        RID: ${{ matrix.rid }}
+      run: |
+        set -euo pipefail
+        [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]+$ ]]
+        python -m unittest discover -s integration/standalone-handoff -p test_verify_producer.py
+        gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" > "$RUNNER_TEMP/producer-run.json"
+        gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/jobs?per_page=100" > "$RUNNER_TEMP/producer-jobs.json"
+        candidate_revision="$(python integration/standalone-handoff/verify-producer.py \
+          --run "$RUNNER_TEMP/producer-run.json" --jobs "$RUNNER_TEMP/producer-jobs.json" \
+          --repository "$GITHUB_REPOSITORY" --runtime-id "$RID")"
+        printf 'CANDIDATE_REVISION=%s\n' "$candidate_revision" >> "$GITHUB_ENV"
+        git merge-base --is-ancestor "$candidate_revision" "$GITHUB_SHA"
+        if ! git diff --quiet "$candidate_revision" "$GITHUB_SHA" -- src frontend package.json yarn.lock global.json Directory.Build.props Directory.Build.targets Directory.Packages.props NuGet.Config packaging/scripts/build-standalone.sh packaging/legacy/desktop scripts/bookshelfng-standalone-launch.sh; then
+          echo 'Candidate application source changed; build a fresh retained archive.' >&2
+          exit 1
+        fi
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        github-token: ${{ github.token }}
+        run-id: ${{ inputs.candidate_run_id }}
+        name: standalone-candidate-${{ matrix.rid }}
+        path: ${{ runner.temp }}/standalone-candidate
+    - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+      with:
+        python-version: '3.13'
+    - name: Verify candidate and pinned public predecessor
+      shell: bash
+      env:
+        RID: ${{ matrix.rid }}
+        PREDECESSOR_SHA256: ${{ matrix.predecessor_sha256 }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/standalone-predecessor"
+        predecessor="BookshelfNG-v0.4.21.76-${RID}.zip"
+        curl --fail --location --retry 3 --retry-all-errors \
+          "https://github.com/snapetech-org/bookshelfng/releases/download/v0.4.21.76/$predecessor" \
+          --output "$RUNNER_TEMP/standalone-predecessor/$predecessor"
+        printf '%s  %s\n' "$PREDECESSOR_SHA256" "$RUNNER_TEMP/standalone-predecessor/$predecessor" | sha256sum --check -
+        (cd "$RUNNER_TEMP/standalone-candidate" && sha256sum --check "ChaptarrNG-0.0.0-${RID}.zip.sha256")
+    - name: Exercise native Windows archive migration and explicit recovery
+      shell: bash
+      env:
+        RID: ${{ matrix.rid }}
+        HARDCOVER: 'false'
+        HARDCOVER_NATIVE: 'false'
+      run: |
+        set -euo pipefail
+        python integration/standalone-handoff/windows.py \
+          "$RUNNER_TEMP/standalone-predecessor/BookshelfNG-v0.4.21.76-${RID}.zip" \
+          "$RUNNER_TEMP/standalone-candidate/ChaptarrNG-0.0.0-${RID}.zip" \
+          --output "$RUNNER_TEMP/standalone-windows-evidence" \
+          --runtime-id "$RID" --candidate-revision "$CANDIDATE_REVISION"
+    - name: Retain acceptance evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: standalone-installed-${{ matrix.rid }}
+        path: |
+          ${{ runner.temp }}/standalone-windows-evidence/
+          ${{ runner.temp }}/producer-run.json
+          ${{ runner.temp }}/producer-jobs.json
+        retention-days: 7
+        if-no-files-found: warn
+
+  installed-macos:
+    name: Installed ${{ matrix.rid }} retained archive handoff
+    if: github.ref == 'refs/heads/main' && inputs.action == 'ci' && inputs.platforms != 'windows' && (inputs.runner_pool == 'public' || inputs.runner_pool == 'private')
+    timeout-minutes: 30
+    runs-on: ${{ inputs.runner_pool == 'public' && matrix.runner || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","macos","{0}","ng-shared-main-chaptarrng","ng-main-run-{1}","gha-{1}-standalone-macos-{2}"]}}',
+      matrix.arch, github.run_id, strategy.job-index)) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: osx-x64
+            runner: macos-15-intel
+            arch: x64
+            predecessor_sha256: 4f660a1367e28c01660c2e082c4f1778f652cca34affc0dba55d3f47ef67f747
+          - rid: osx-arm64
+            runner: macos-15
+            arch: arm64
+            predecessor_sha256: d964bb1146b6c9e313758a967815f53f8d9aa45314bc30cfa55e96bb299433ce
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify successful trusted producer job and unchanged application source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          RID: ${{ matrix.rid }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_RUN_ID" =~ ^[1-9][0-9]+$ ]]
+          python -m unittest discover -s integration/standalone-handoff -p test_verify_producer.py
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID" > "$RUNNER_TEMP/producer-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CANDIDATE_RUN_ID/jobs?per_page=100" > "$RUNNER_TEMP/producer-jobs.json"
+          candidate_revision="$(python integration/standalone-handoff/verify-producer.py \
+            --run "$RUNNER_TEMP/producer-run.json" --jobs "$RUNNER_TEMP/producer-jobs.json" \
+            --repository "$GITHUB_REPOSITORY" --runtime-id "$RID")"
+          printf 'CANDIDATE_REVISION=%s\n' "$candidate_revision" >> "$GITHUB_ENV"
+          git merge-base --is-ancestor "$candidate_revision" "$GITHUB_SHA"
+          if ! git diff --quiet "$candidate_revision" "$GITHUB_SHA" -- src frontend package.json yarn.lock global.json Directory.Build.props Directory.Build.targets Directory.Packages.props NuGet.Config packaging/scripts/build-standalone.sh packaging/legacy/desktop scripts/bookshelfng-standalone-launch.sh; then
+            echo 'Candidate application source changed; build a fresh retained archive.' >&2
+            exit 1
+          fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.candidate_run_id }}
+          name: standalone-candidate-${{ matrix.rid }}
+          path: ${{ runner.temp }}/standalone-candidate
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.13'
+      - name: Verify candidate and pinned public predecessor
+        shell: bash
+        env:
+          RID: ${{ matrix.rid }}
+          PREDECESSOR_SHA256: ${{ matrix.predecessor_sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/standalone-predecessor"
+          predecessor="BookshelfNG-v0.4.21.76-${RID}.tar.gz"
+          curl --fail --location --retry 3 --retry-all-errors \
+            "https://github.com/snapetech-org/bookshelfng/releases/download/v0.4.21.76/$predecessor" \
+            --output "$RUNNER_TEMP/standalone-predecessor/$predecessor"
+          printf '%s  %s\n' "$PREDECESSOR_SHA256" "$RUNNER_TEMP/standalone-predecessor/$predecessor" | shasum -a 256 --check -
+          (cd "$RUNNER_TEMP/standalone-candidate" && shasum -a 256 --check "ChaptarrNG-0.0.0-${RID}.tar.gz.sha256")
+      - name: Exercise actual retained archive No/Manual/Yes and recovery
+        shell: bash
+        env:
+          RID: ${{ matrix.rid }}
+          HARDCOVER: 'false'
+          HARDCOVER_NATIVE: 'false'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/standalone-macos-work"
+          TMPDIR="$RUNNER_TEMP/standalone-macos-work" python packaging/scripts/test-bookshelf-standalone-handoff.py \
+            "$RUNNER_TEMP/standalone-predecessor/BookshelfNG-v0.4.21.76-${RID}.tar.gz" \
+            "$RUNNER_TEMP/standalone-candidate/ChaptarrNG-0.0.0-${RID}.tar.gz" \
+            --output "$RUNNER_TEMP/standalone-macos-evidence" --candidate-revision "$CANDIDATE_REVISION"
+      - name: Retain acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: standalone-installed-${{ matrix.rid }}
+          path: |
+            ${{ runner.temp }}/standalone-macos-evidence/
+            ${{ runner.temp }}/producer-run.json
+            ${{ runner.temp }}/producer-jobs.json
+          retention-days: 7
+          if-no-files-found: warn

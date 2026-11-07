@@ -1,0 +1,68 @@
+# ng-runner-policy: trusted-hosted-or-private-jit-v1
+name: Security analysis
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' &&
+      format('action:{0}:pool:{1}', inputs.action, inputs.runner_pool) || github.workflow }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Run trusted source security scanning
+        required: true
+        type: choice
+        options:
+          - scan
+      runner_pool:
+        description: Select compatible GitHub-hosted or private JIT runners
+        required: true
+        type: choice
+        default: public
+        options:
+          - public
+          - private
+permissions:
+  contents: read
+
+concurrency:
+  group: ng-scan-security-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  trivy:
+    name: Dependency and secret scan
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.action == 'scan' && (inputs.runner_pool == 'public' || inputs.runner_pool == 'private') && github.ref == 'refs/heads/main'
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-trivy"]}}', github.run_id)) }}
+    env:
+      TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Scan repository files
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: sarif
+          output: trivy-results.sarif
+          skip-dirs: .git,_output,_tests,frontend/node_modules
+
+      - name: Retain Trivy report for review
+        if: always() && hashFiles('trivy-results.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: trivy-filesystem-reports
+          path: trivy-results.sarif
+          if-no-files-found: warn
+          retention-days: 7
+

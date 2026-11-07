@@ -41,7 +41,9 @@ function EditSpecificationModalContent(props) {
   return (
     <ModalContent onModalClose={onCancelPress}>
       <ModalHeader>
-        {`${id ? 'Edit' : 'Add'} Condition - ${implementationName}`}
+        {id ?
+          translate('EditMetadataHeader', { name: `${translate('Condition')} - ${implementationName}` }) :
+          translate('AddName', { name: `${translate('Condition')} - ${implementationName}` })}
       </ModalHeader>
 
       <ModalBody>

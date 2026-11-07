@@ -63,7 +63,9 @@ namespace NzbDrone.Core.Books
                 GoodreadsAuthorId = book.Author?.GoodreadsAuthorId,
                 OpenLibraryAuthorId = book.Author?.OpenLibraryAuthorId,
                 GoogleBooksAuthorId = book.Author?.GoogleBooksAuthorId,
+                RanobeDbAuthorId = book.Author?.RanobeDbAuthorId,
                 HardcoverBookId = book.HardcoverBookId,
+                RanobeDbBookId = book.RanobeDbBookId,
                 GoodreadsBookId = book.GoodreadsWorkId ?? BookEditionIdentity.GetGoodreadsEditionProviderId(book, _logger, "PendingImportService.QueueBookImport"),
                 OpenLibraryWorkId = book.OpenLibraryWorkId,
                 GoogleBooksId = BookEditionIdentity.GetGoogleBooksEditionId(book, _logger, "PendingImportService.QueueBookImport"),
@@ -87,6 +89,8 @@ namespace NzbDrone.Core.Books
                 monitoringIds.Add(ProviderIdHelper.Canonicalize(book.HardcoverBookId, "hc"));
             if (!string.IsNullOrEmpty(book.GoodreadsWorkId))
                 monitoringIds.Add(ProviderIdHelper.Canonicalize(book.GoodreadsWorkId, "gr"));
+            if (!string.IsNullOrEmpty(book.RanobeDbBookId))
+                monitoringIds.Add(ProviderIdHelper.Canonicalize(book.RanobeDbBookId, "rn"));
 
             var pendingImport = new PendingImport
             {
@@ -131,6 +135,7 @@ namespace NzbDrone.Core.Books
                     GoodreadsAuthorId = firstAuthor.GoodreadsAuthorId,
                     OpenLibraryAuthorId = firstAuthor.OpenLibraryAuthorId,
                     GoogleBooksAuthorId = firstAuthor.GoogleBooksAuthorId,
+                    RanobeDbAuthorId = firstAuthor.RanobeDbAuthorId,
                     HardcoverSeriesId = series.HardcoverSeriesId,
                     GoodreadsSeriesId = series.GoodreadsSeriesId,
                     AuthorName = firstAuthor.Name,
@@ -147,6 +152,8 @@ namespace NzbDrone.Core.Books
                         monitoringIds.Add(ProviderIdHelper.Canonicalize(book.HardcoverBookId, "hc"));
                     if (!string.IsNullOrEmpty(book.GoodreadsWorkId))
                         monitoringIds.Add(ProviderIdHelper.Canonicalize(book.GoodreadsWorkId, "gr"));
+                    if (!string.IsNullOrEmpty(book.RanobeDbBookId))
+                        monitoringIds.Add(ProviderIdHelper.Canonicalize(book.RanobeDbBookId, "rn"));
                 }
 
                 // Series should create separate pending imports for each media type
@@ -219,12 +226,17 @@ namespace NzbDrone.Core.Books
             {
                 author = _authorService.FindByProviderId("gr", providerIds.GoodreadsAuthorId);
             }
+            if (author == null && !string.IsNullOrEmpty(providerIds.RanobeDbAuthorId))
+            {
+                author = _authorService.FindByProviderId("rn", providerIds.RanobeDbAuthorId);
+            }
 
             if (author == null)
             {
                 // Try to import from the configured metadata server
                 var authorIdToImport = providerIds.HardcoverAuthorId ??
                                       providerIds.GoodreadsAuthorId ??
+                                      providerIds.RanobeDbAuthorId ??
                                       providerIds.OpenLibraryAuthorId;
 
                 if (string.IsNullOrEmpty(authorIdToImport))
@@ -355,6 +367,8 @@ namespace NzbDrone.Core.Books
                         else if (provider == "gr" && ProviderIdHelper.StripPrefix(book.GoodreadsWorkId) == id)
                             shouldMonitor = true;
                         else if (provider == "ol" && book.OpenLibraryWorkId == id)
+                            shouldMonitor = true;
+                        else if (provider == "rn" && ProviderIdHelper.StripPrefix(book.RanobeDbBookId) == id)
                             shouldMonitor = true;
                     }
                 }

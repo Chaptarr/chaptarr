@@ -1,5 +1,7 @@
 /* eslint max-params: 0 */
-import _ from 'lodash';
+import filter from 'lodash/filter';
+import find from 'lodash/find';
+import orderBy from 'lodash/orderBy';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -11,8 +13,9 @@ import createAuthorSelector from 'Store/Selectors/createAuthorSelector';
 import createCommandsSelector from 'Store/Selectors/createCommandsSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
-import AuthorDetailsSeries from './AuthorDetailsSeries';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
+import translate from 'Utilities/String/translate';
+import AuthorDetailsSeries from './AuthorDetailsSeries';
 
 function createMapStateToProps() {
   return createSelector(
@@ -28,7 +31,7 @@ function createMapStateToProps() {
     (state, props) => props.selectedMediaType,
     (seriesId, books, author, series, commands, dimensions, uiSettings, hideUnmonitoredMissing, filterValue, selectedMediaType) => {
 
-      const currentSeries = _.find(series.items, { id: seriesId });
+      const currentSeries = find(series.items, { id: seriesId });
       const rootFolderStatus = getAuthorMediaTypeRootFolderStatus(author, selectedMediaType);
       const effectiveMediaType = rootFolderStatus.mediaType;
       const hasRootFolder = rootFolderStatus.hasRootFolder;
@@ -36,7 +39,7 @@ function createMapStateToProps() {
       if (!currentSeries) {
         return {
           id: seriesId,
-          label: 'Unknown Series',
+          label: translate('UnknownSeries'),
           items: [],
           positionMap: {},
           columns: series.columns,
@@ -45,7 +48,9 @@ function createMapStateToProps() {
           isSmallScreen: dimensions.isSmallScreen,
           uiSettings,
           hideSeries: true,
-          hasRootFolder
+          hasRootFolder,
+          authorId: author?.id || 0,
+          authorName: author?.authorName || ''
         };
       }
 
@@ -55,7 +60,7 @@ function createMapStateToProps() {
         return acc;
       }, {});
 
-      let booksInSeries = _.filter(books.items, (book) => bookIds.includes(book.id));
+      let booksInSeries = filter(books.items, (book) => bookIds.includes(book.id));
 
       // If the author has no root folder configured for this media type, hide series content on this tab.
       if (!hasRootFolder) {
@@ -70,10 +75,12 @@ function createMapStateToProps() {
           isSmallScreen: dimensions.isSmallScreen,
           uiSettings,
           hideSeries: true,
-          hasRootFolder
+          hasRootFolder,
+          authorId: author?.id || 0,
+          authorName: author?.authorName || ''
         };
       }
-      
+
       // Apply search filter first if there's a value
       if (typeof filterValue === 'string' && filterValue.trim()) {
         const searchTerm = filterValue.toLowerCase().trim();
@@ -114,19 +121,18 @@ function createMapStateToProps() {
           return false;
         });
       }
-      
+
       // Apply hide unmonitored/missing filter ONLY if not searching
       // When searching, show all results regardless of monitored/missing status
       if (hideUnmonitoredMissing && !filterValue && booksInSeries.length > 0) {
-        const selectedMediaType = effectiveMediaType;
-        booksInSeries = booksInSeries.filter(book => {
+        booksInSeries = booksInSeries.filter((book) => {
           // Show the book if:
           // 1. It's monitored for the current media type, OR
           // 2. It has files (not missing)
           // Hide only if: unmonitored AND missing
-          const isMonitored = selectedMediaType === 'audiobook' 
-            ? book.audiobookMonitored 
-            : book.ebookMonitored;
+          const isMonitored = effectiveMediaType === 'audiobook' ?
+            book.audiobookMonitored :
+            book.ebookMonitored;
           const hasFiles = book.statistics && book.statistics.bookFileCount > 0;
           return isMonitored || hasFiles;
         });
@@ -151,7 +157,7 @@ function createMapStateToProps() {
           return apos.localeCompare(bpos, undefined, { numeric: true, sensitivity: 'base' });
         });
       } else {
-        sortedBooks = _.orderBy(booksInSeries, series.sortKey, sortDir);
+        sortedBooks = orderBy(booksInSeries, series.sortKey, sortDir);
       }
 
       return {
@@ -165,7 +171,9 @@ function createMapStateToProps() {
         isSmallScreen: dimensions.isSmallScreen,
         uiSettings,
         hideSeries,
-        hasRootFolder
+        hasRootFolder,
+        authorId: author?.id || 0,
+        authorName: author?.authorName || ''
       };
     }
   );
@@ -221,6 +229,7 @@ class AuthorDetailsSeriesConnector extends Component {
 
 AuthorDetailsSeriesConnector.propTypes = {
   authorId: PropTypes.number.isRequired,
+  authorName: PropTypes.string,
   toggleBooksMonitored: PropTypes.func.isRequired,
   setSeriesTableOption: PropTypes.func.isRequired,
   dispatchSetSeriesSort: PropTypes.func.isRequired,

@@ -8,6 +8,7 @@ namespace NzbDrone.Core.IndexerSearch
         public string MediaType { get; set; }
 
         public override bool SendUpdatesToClient => true;
+        public override bool RequiresLibraryState => true;
         public override bool IsTypeExclusive => !AuthorId.HasValue;
 
         public CutoffUnmetBookSearchCommand()

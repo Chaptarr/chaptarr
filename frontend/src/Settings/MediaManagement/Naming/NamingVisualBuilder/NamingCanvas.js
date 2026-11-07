@@ -88,7 +88,7 @@ function SortableChip({ node, ast, onDelete, color }) {
         className={styles.deleteButton}
         onClick={handleDelete}
         type="button"
-        title="Remove"
+        title={translate('Remove')}
       >
         <Icon name={icons.REMOVE} size={12} />
       </button>
@@ -97,36 +97,47 @@ function SortableChip({ node, ast, onDelete, color }) {
 }
 
 function getTokenLabel(node) {
-  const labels = {
-    AuthorName: 'First Last',
-    AuthorSortName: 'Last First',
-    AuthorCleanName: 'firstlast',
-    AuthorNameFirstCharacter: 'F Last',
-    BookTitle: 'Title',
-    BookSubtitle: 'Subtitle',
-    ReleaseYear: 'Published Year',
-    PartNumber: 'Part Number',
-    BookSeriesTitle: 'Series title - book position',
-    BookSeries: 'Series name',
-    BookSeriesPosition: 'Series Position',
-    NarratorName: 'First Last',
-    NarratorNameMultiple: 'Single Narrator Name, Full cast if multiple'
+  const translationKeys = {
+    AuthorName: 'NamingTokenAuthorName',
+    AuthorSortName: 'NamingTokenAuthorSortName',
+    AuthorCleanName: 'NamingTokenAuthorCleanName',
+    AuthorNameFirstCharacter: 'NamingTokenAuthorNameFirstCharacter',
+    BookTitle: 'NamingTokenBookTitle',
+    BookSubtitle: 'NamingTokenBookSubtitle',
+    ReleaseYear: 'NamingTokenReleaseYear',
+    PartNumber: 'NamingTokenPartNumber',
+    BookSeriesTitle: 'NamingTokenBookSeriesTitle',
+    BookSeries: 'NamingTokenBookSeries',
+    BookSeriesPosition: 'NamingTokenBookSeriesPosition',
+    NarratorName: 'NamingTokenNarratorName',
+    NarratorCleanName: 'NamingTokenNarratorCleanName',
+    NarratorFirst: 'NamingTokenNarratorFirst',
+    NarratorLast: 'NamingTokenNarratorLast',
+    NarratorInitials: 'NamingTokenNarratorInitials',
+    Narrators: 'NamingTokenNarrators'
   };
 
-  return labels[node.tokenKey] || node.tokenKey;
+  const translationKey = translationKeys[node.tokenKey];
+  return translationKey ? translate(translationKey) : node.tokenKey;
 }
 
 function getSeparatorLabel(node) {
   const labels = {
     '/': '(/)',
     '-': '-',
-    ' ': 'Space',
+    ' ': translate('NamingTokenSpace'),
     '.': '.',
     _: '_',
     '()': '( )'
   };
 
   return labels[node.value] || node.value;
+}
+
+function getGroupItemCountLabel(count) {
+  const translationKey = count === 1 ? 'NamingBuilderGroupItem' : 'NamingBuilderGroupItems';
+  const label = translate(translationKey, { count });
+  return `(${label})`;
 }
 
 function getNodeLabel(node) {
@@ -136,7 +147,7 @@ function getNodeLabel(node) {
     case 'separator':
       return getSeparatorLabel(node);
     case 'group':
-      return `(${node.children.length} items)`;
+      return getGroupItemCountLabel(node.children.length);
     default:
       return '';
   }
@@ -153,7 +164,7 @@ function getNodeColor(node) {
   const authorTokens = ['AuthorName', 'AuthorSortName', 'AuthorCleanName', 'AuthorNameFirstCharacter', 'AuthorNameThe', 'AuthorDisambiguation'];
   const bookTokens = ['BookTitle', 'BookTitleNoSub', 'BookSubtitle', 'BookCleanTitle', 'ReleaseYear', 'PartNumber'];
   const seriesTokens = ['BookSeries', 'BookSeriesPosition', 'BookSeriesTitle'];
-  const narratorTokens = ['NarratorName', 'NarratorNameMultiple'];
+  const narratorTokens = ['NarratorName', 'NarratorCleanName', 'NarratorFirst', 'NarratorLast', 'NarratorInitials', 'Narrators'];
 
   if (authorTokens.includes(node.tokenKey)) {
     return 'blue';

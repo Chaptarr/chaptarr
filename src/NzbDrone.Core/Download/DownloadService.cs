@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Common.EnsureThat;
@@ -6,6 +8,8 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Common.TPL;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.Exceptions;
@@ -19,6 +23,7 @@ namespace NzbDrone.Core.Download
     public interface IDownloadService
     {
         Task DownloadReport(RemoteBook remoteBook, int? downloadClientId);
+        Task AdoptExistingTorrent(RemoteBook remoteBook, int? downloadClientId);
     }
 
     public class DownloadService : IDownloadService
@@ -31,6 +36,7 @@ namespace NzbDrone.Core.Download
         private readonly IEventAggregator _eventAggregator;
         private readonly ISeedConfigProvider _seedConfigProvider;
         private readonly IMamUnsatisfiedSlotGuard _mamUnsatisfiedSlotGuard;
+        private readonly IConfigService _configService;
         private readonly Logger _logger;
 
         public DownloadService(IProvideDownloadClient downloadClientProvider,
@@ -41,6 +47,7 @@ namespace NzbDrone.Core.Download
                                IEventAggregator eventAggregator,
                                ISeedConfigProvider seedConfigProvider,
                                IMamUnsatisfiedSlotGuard mamUnsatisfiedSlotGuard,
+                               IConfigService configService,
                                Logger logger)
         {
             _downloadClientProvider = downloadClientProvider;
@@ -51,6 +58,7 @@ namespace NzbDrone.Core.Download
             _eventAggregator = eventAggregator;
             _seedConfigProvider = seedConfigProvider;
             _mamUnsatisfiedSlotGuard = mamUnsatisfiedSlotGuard;
+            _configService = configService;
             _logger = logger;
         }
 
@@ -59,16 +67,40 @@ namespace NzbDrone.Core.Download
             var filterBlockedClients = remoteBook.Release.PendingReleaseReason == PendingReleaseReason.DownloadClientUnavailable;
 
             var mediaType = remoteBook.GetPreferredMediaType();
-            var tags = remoteBook.Author?.GetTagsForMediaType(mediaType);
+            var tags = GetDownloadClientTags(remoteBook, mediaType);
 
             var downloadClient = downloadClientId.HasValue
                 ? _downloadClientProvider.Get(downloadClientId.Value)
                 : _downloadClientProvider.GetDownloadClient(remoteBook.Release.DownloadProtocol, mediaType, remoteBook.Release.IndexerId, filterBlockedClients, tags);
 
-            await DownloadReport(remoteBook, downloadClient);
+            await DownloadReport(remoteBook, downloadClient, false);
         }
 
-        private async Task DownloadReport(RemoteBook remoteBook, IDownloadClient downloadClient)
+        public async Task AdoptExistingTorrent(RemoteBook remoteBook, int? downloadClientId)
+        {
+            var filterBlockedClients = remoteBook.Release.PendingReleaseReason == PendingReleaseReason.DownloadClientUnavailable;
+
+            var mediaType = remoteBook.GetPreferredMediaType();
+            var tags = GetDownloadClientTags(remoteBook, mediaType);
+
+            var downloadClient = downloadClientId.HasValue
+                ? _downloadClientProvider.Get(downloadClientId.Value)
+                : _downloadClientProvider.GetDownloadClient(remoteBook.Release.DownloadProtocol, mediaType, remoteBook.Release.IndexerId, filterBlockedClients, tags);
+
+            await DownloadReport(remoteBook, downloadClient, true);
+        }
+
+        private HashSet<int> GetDownloadClientTags(RemoteBook remoteBook, BookMediaType mediaType)
+        {
+            // BookshelfNG used one author tag set to select the download client for
+            // every release. Keep that behavior for imported profiles while native
+            // ChaptarrNG authors continue to use per-format tags.
+            return _configService?.BookshelfMatchCompatibility == true
+                ? remoteBook.Author?.Tags
+                : remoteBook.Author?.GetTagsForMediaType(mediaType);
+        }
+
+        private async Task DownloadReport(RemoteBook remoteBook, IDownloadClient downloadClient, bool adoptExistingTorrent)
         {
             Ensure.That(remoteBook.Author, () => remoteBook.Author).IsNotNull();
             Ensure.That(remoteBook.Books, () => remoteBook.Books).HasItems();
@@ -81,10 +113,22 @@ namespace NzbDrone.Core.Download
                 throw new DownloadClientUnavailableException($"No enabled {requestedProtocol} download client is configured. Add and enable a {requestedProtocol}-capable download client, then retry.");
             }
 
+            var existingTorrent = FindExistingTorrent(remoteBook, downloadClient, adoptExistingTorrent);
+
+            if (existingTorrent != null && !adoptExistingTorrent)
+            {
+                throw new ExistingTorrentFoundException(downloadClient.Definition.Name, existingTorrent);
+            }
+
+            if (existingTorrent == null && adoptExistingTorrent)
+            {
+                throw new ExistingTorrentNotFoundException("The matching torrent is no longer available in the selected download client. Search again before grabbing it.");
+            }
+
             remoteBook.SeedConfiguration = _seedConfigProvider.GetSeedConfiguration(remoteBook);
 
             // Limit grabs to 2 per second.
-            if (remoteBook.Release.DownloadUrl.IsNotNullOrWhiteSpace() && !remoteBook.Release.DownloadUrl.StartsWith("magnet:"))
+            if (existingTorrent == null && remoteBook.Release.DownloadUrl.IsNotNullOrWhiteSpace() && !remoteBook.Release.DownloadUrl.StartsWith("magnet:"))
             {
                 var url = new HttpUri(remoteBook.Release.DownloadUrl);
                 await _rateLimitService.WaitAndPulseAsync(url.Host, TimeSpan.FromSeconds(2));
@@ -92,13 +136,13 @@ namespace NzbDrone.Core.Download
 
             IIndexer indexer = null;
 
-            if (remoteBook.Release.IndexerId > 0)
+            if (!adoptExistingTorrent && remoteBook.Release.IndexerId > 0)
             {
                 indexer = _indexerFactory.GetInstance(_indexerFactory.Get(remoteBook.Release.IndexerId));
             }
 
-            var mamAvailability = _mamUnsatisfiedSlotGuard.TryReserve(remoteBook);
-            if (!mamAvailability.Accepted)
+            var mamAvailability = adoptExistingTorrent ? null : _mamUnsatisfiedSlotGuard.TryReserve(remoteBook);
+            if (mamAvailability != null && !mamAvailability.Accepted)
             {
                 throw new MamUnsatisfiedSlotsUnavailableException(mamAvailability.Reason);
             }
@@ -106,9 +150,21 @@ namespace NzbDrone.Core.Download
             string downloadClientId;
             try
             {
-                downloadClientId = await downloadClient.Download(remoteBook, indexer);
+                if (existingTorrent != null)
+                {
+                    downloadClientId = existingTorrent.DownloadId;
+                    _logger.Info("Adopting existing torrent {0} from {1} for {2}", existingTorrent.DownloadId, downloadClient.Definition.Name, remoteBook);
+                }
+                else
+                {
+                    downloadClientId = await downloadClient.Download(remoteBook, indexer);
+                }
+
                 _downloadClientStatusService.RecordSuccess(downloadClient.Definition.Id);
-                _indexerStatusService.RecordSuccess(remoteBook.Release.IndexerId);
+                if (existingTorrent == null)
+                {
+                    _indexerStatusService.RecordSuccess(remoteBook.Release.IndexerId);
+                }
             }
             catch (ReleaseUnavailableException)
             {
@@ -149,8 +205,47 @@ namespace NzbDrone.Core.Download
                 bookGrabbedEvent.DownloadId = downloadClientId;
             }
 
-            _logger.ProgressInfo("Report sent to {0} from indexer {1}. {2}", downloadClient.Definition.Name, remoteBook.Release.Indexer, downloadTitle);
+            if (existingTorrent != null)
+            {
+                _logger.ProgressInfo("Adopted existing torrent from {0}. {1}", downloadClient.Definition.Name, downloadTitle);
+            }
+            else
+            {
+                _logger.ProgressInfo("Report sent to {0} from indexer {1}. {2}", downloadClient.Definition.Name, remoteBook.Release.Indexer, downloadTitle);
+            }
+
             _eventAggregator.PublishEvent(bookGrabbedEvent);
+        }
+
+        private DownloadClientItem FindExistingTorrent(RemoteBook remoteBook, IDownloadClient downloadClient, bool required)
+        {
+            if (downloadClient.Protocol != DownloadProtocol.Torrent ||
+                remoteBook.Release is not TorrentInfo torrentInfo ||
+                torrentInfo.InfoHash.IsNullOrWhiteSpace())
+            {
+                return null;
+            }
+
+            if (required)
+            {
+                return FindTorrent(downloadClient, torrentInfo.InfoHash);
+            }
+
+            try
+            {
+                return FindTorrent(downloadClient, torrentInfo.InfoHash);
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Unable to check {0} for an existing torrent before grabbing {1}", downloadClient.Definition.Name, remoteBook);
+                return null;
+            }
+        }
+
+        private static DownloadClientItem FindTorrent(IDownloadClient downloadClient, string infoHash)
+        {
+            return downloadClient.GetItems()?.FirstOrDefault(item =>
+                item != null && string.Equals(item.DownloadId, infoHash, StringComparison.OrdinalIgnoreCase));
         }
     }
 }

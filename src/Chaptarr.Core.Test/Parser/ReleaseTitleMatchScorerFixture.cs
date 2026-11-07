@@ -10,6 +10,60 @@ namespace Chaptarr.Core.Test.Parser
     [TestFixture]
     public class ReleaseTitleMatchScorerFixture
     {
+        [TestCase("Galactic Empire series by Isaac Asimov EPUB", true)]
+        [TestCase("Isaac Asimov Galactic Empire Series M4B", true)]
+        [TestCase("Isaac Asimov Galactic Empire Series 3 Books Set EPUB", true)]
+        [TestCase("Isaac Asimov Galactic Empire Series 2 Books Set EPUB", false)]
+        [TestCase("Isaac Asimov Galactic Empire Series Book 1 EPUB", false)]
+        [TestCase("Isaac Asimov Galactic Empire EPUB", false)]
+        [TestCase("Isaac Asimov Galactic Empire Series Pebble in the Sky EPUB", false)]
+        public void should_match_series_set_without_retail_book_count_but_reject_explicit_partial_sets(string releaseTitle, bool accepted)
+        {
+            var author = new Author { Name = "Isaac Asimov" };
+            var target = new Book { Id = 1, Title = "Galactic Empire Series 3 Books Set", Author = author };
+            var namesake = new Book { Id = 2, Title = "Isaac Asimov", Author = author };
+
+            var result = ReleaseTitleMatchScorer.FindBestMatch(
+                releaseTitle, author.Name, new[] { target }, null, new[] { target, namesake });
+
+            Assert.That(result?.IsMatch == true, Is.EqualTo(accepted));
+        }
+
+        [TestCase("The Naked Sun", "Isaac Asimov The Naked Sun 2011 RETAiL EPUB eBook-NODE")]
+        [TestCase("Foundation", "Isaac Asimov Foundation EPUB")]
+        [TestCase("Foundation", "Foundation Isaac Asimov M4B")]
+        public void should_not_treat_author_credit_as_a_conflicting_book_title(string title, string releaseTitle)
+        {
+            var author = new Author { Name = "Isaac Asimov" };
+            var target = new Book { Id = 1, Title = title, Author = author };
+            var namesake = new Book { Id = 2, Title = "Isaac Asimov", Author = author };
+
+            var result = ReleaseTitleMatchScorer.FindBestMatch(
+                releaseTitle, author.Name, new[] { target }, null, new[] { target, namesake });
+
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.IsMatch, Is.True);
+            Assert.That(result.Problems, Is.Empty);
+        }
+
+        [Test]
+        public void should_still_reject_a_different_book_when_catalog_contains_author_namesake()
+        {
+            var author = new Author { Name = "Isaac Asimov" };
+            var target = new Book { Id = 1, Title = "Foundation", Author = author };
+            var namesake = new Book { Id = 2, Title = "Isaac Asimov", Author = author };
+            var sequel = new Book { Id = 3, Title = "Foundation and Empire", Author = author };
+
+            var result = ReleaseTitleMatchScorer.FindBestMatch(
+                "Isaac Asimov Foundation and Empire EPUB", author.Name, new[] { target }, null,
+                new[] { target, namesake, sequel });
+
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.IsMatch, Is.False);
+            Assert.That(result.ProblemCode, Is.EqualTo(TitleMatchProblemCode.SiblingTitleContradiction));
+            Assert.That(result.MeaningfulLeftovers, Does.Contain("Foundation and Empire"));
+        }
+
         [Test]
         public void should_return_source_spans_for_backend_title_tokens()
         {
@@ -26,6 +80,17 @@ namespace Chaptarr.Core.Test.Parser
             var expectedTokens = UnicodeComparisonNormalizer.NormalizeWords(title).Split(' ');
 
             Assert.That(ReleaseTitleMatchScorer.Tokenize(title), Is.EqualTo(expectedTokens));
+        }
+
+        [Test]
+        public void should_not_throw_on_release_titles_containing_supplementary_plane_characters()
+        {
+            // A release title carrying an emoji or other astral-plane character (a surrogate pair
+            // in .NET's UTF-16 strings) used to crash TokenizeWithSpans with
+            // "String contains invalid Unicode code points" - see Chaptarr/chaptarr#116.
+            var tokens = ReleaseTitleMatchScorer.Tokenize("Fourth Wing 🔥 Rebecca Yarros");
+
+            Assert.That(tokens, Is.EqualTo(new[] { "fourth", "wing", "rebecca", "yarros" }));
         }
 
         [Test]
@@ -57,6 +122,31 @@ namespace Chaptarr.Core.Test.Parser
             Assert.That(result.PrimaryTitle, Is.EqualTo("The Final Empire"));
             Assert.That(result.MatchedVariant, Is.EqualTo("The Final Empire"));
             Assert.That(result.MeaningfulLeftovers, Is.Empty);
+        }
+
+        [Test]
+        public void should_match_a_known_alternate_edition_title_while_preserving_the_monitored_title()
+        {
+            var author = new Author { Name = "Karin Slaughter" };
+            var book = new Book
+            {
+                Title = "Mooie Meisjes",
+                OriginalTitle = "Pretty Girls",
+                Author = author,
+                Editions = new List<Edition>
+                {
+                    new Edition { Id = 1, Title = "Mooie Meisjes", Language = "nld", Monitored = true },
+                    new Edition { Id = 2, Title = "Pretty Girls", Language = "eng" }
+                }
+            };
+
+            var result = ReleaseTitleMatchScorer.FindBestMatch(
+                "Karin Slaughter - Pretty Girls - M4B", author.Name, new[] { book }, null, new[] { book });
+
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.IsMatch, Is.True);
+            Assert.That(result.PrimaryTitle, Is.EqualTo("Mooie Meisjes"));
+            Assert.That(result.MatchedVariant, Is.EqualTo("Pretty Girls"));
         }
 
         [Test]

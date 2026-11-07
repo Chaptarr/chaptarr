@@ -4,6 +4,7 @@ import keyboardShortcuts, { shortcuts } from 'Components/keyboardShortcuts';
 import IconButton from 'Components/Link/IconButton';
 import Link from 'Components/Link/Link';
 import { icons } from 'Helpers/Props';
+import translate from 'Utilities/String/translate';
 import AuthorSearchInputConnector from './AuthorSearchInputConnector';
 import ImportProgressIndicatorConnector from './ImportProgressIndicatorConnector';
 import KeyboardShortcutsModal from './KeyboardShortcutsModal';
@@ -46,7 +47,9 @@ class PageHeader extends Component {
 
   render() {
     const {
-      onSidebarToggle
+      onSidebarToggle,
+      isSidebarVisible,
+      experienceMode
     } = this.props;
 
     return (
@@ -54,13 +57,18 @@ class PageHeader extends Component {
         <div className={styles.logoContainer}>
           <Link
             className={styles.logoLink}
+            aria-label={translate('ChaptarrLogoAlt')}
             to={'/'}
           >
             <img
               className={styles.logo}
               src={`${window.Chaptarr.urlBase}/Content/Images/chaptarr-logo.svg`}
-              alt="Chaptarr Logo"
+              alt=""
+              aria-hidden="true"
             />
+            <span className={styles.brandName}>
+              {'Chaptarr'}<span className={styles.brandMark}>{'NG'}</span>
+            </span>
           </Link>
         </div>
 
@@ -68,6 +76,9 @@ class PageHeader extends Component {
           <IconButton
             id="sidebar-toggle-button"
             name={icons.NAVBAR_COLLAPSE}
+            aria-label={translate('ToggleNavigation')}
+            aria-expanded={isSidebarVisible}
+            aria-controls="primary-navigation"
             onPress={onSidebarToggle}
           />
         </div>
@@ -79,12 +90,13 @@ class PageHeader extends Component {
           <IconButton
             className={styles.donate}
             name={icons.HEART}
-            aria-label="Donate"
+            aria-label={translate('Donate')}
             to="/system/status#donations"
             size={14}
           />
           <PageHeaderActionsMenuConnector
             onKeyboardShortcutsPress={this.onOpenKeyboardShortcutsModal}
+            experienceMode={experienceMode}
           />
         </div>
 
@@ -99,6 +111,8 @@ class PageHeader extends Component {
 
 PageHeader.propTypes = {
   onSidebarToggle: PropTypes.func.isRequired,
+  isSidebarVisible: PropTypes.bool.isRequired,
+  experienceMode: PropTypes.oneOf(['simple', 'advanced']).isRequired,
   bindShortcut: PropTypes.func.isRequired
 };
 

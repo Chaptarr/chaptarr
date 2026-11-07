@@ -193,7 +193,10 @@ function ManageImportListsModalContent(
     [items, setSelectState]
   );
 
-  const errorMessage = getErrorMessage(error, 'Unable to load import lists.');
+  const errorMessage = getErrorMessage(
+    error,
+    translate('UnableToLoadImportLists')
+  );
   const anySelected = selectedCount > 0;
 
   return (

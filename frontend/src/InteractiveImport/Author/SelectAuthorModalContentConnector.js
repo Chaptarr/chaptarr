@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import find from 'lodash/find';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -39,7 +39,7 @@ class SelectAuthorModalContentConnector extends Component {
   // Listeners
 
   onAuthorSelect = (authorId) => {
-    const author = _.find(this.props.items, { id: authorId });
+    const author = find(this.props.items, { id: authorId });
 
     const ids = this.props.ids;
 

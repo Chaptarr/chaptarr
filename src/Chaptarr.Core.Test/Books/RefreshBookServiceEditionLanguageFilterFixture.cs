@@ -109,6 +109,7 @@ namespace Chaptarr.Core.Test.Books
         {
             Assert.That("eng".CanonicalizeLanguage(), Is.EqualTo("eng"));
             Assert.That("deu".CanonicalizeLanguage(), Is.EqualTo("deu"));
+            Assert.That("e".CanonicalizeLanguage(), Is.EqualTo("eng"));
 
             var profile = new MetadataProfile { AllowedLanguages = "eng" };
             var author = new Author

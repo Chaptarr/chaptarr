@@ -120,6 +120,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     CalibreId = file.CalibreId,
                     Author = file.Author,
                     LastMatchAttempt = file.LastMatchAttempt,
+                    LastRemoteSearchTime = file.LastRemoteSearchTime,
                     MatchDetails = file.MatchDetails,
                     MatchProvenance = file.MatchProvenance
                 };
@@ -413,6 +414,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Path = path,
                 EditionId = 0,
                 Part = 1,
+                LastRemoteSearchTime = DateTime.UtcNow.AddDays(-1),
                 LastMatchAttempt = DateTime.UtcNow,
                 MatchDetails = "NO_MATCH"
             });
@@ -428,6 +430,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(results.Single().Outcome, Is.EqualTo(ImportOutcome.Imported));
             Assert.That(stored.MatchDetails, Is.Null);
             Assert.That(stored.LastMatchAttempt, Is.Null);
+            Assert.That(stored.LastRemoteSearchTime, Is.Null);
             Assert.That(stored.MatchProvenance.DecisionId, Is.EqualTo("decision-apply"));
             Assert.That(stored.MatchProvenance.AuthorProviderIds, Does.Contain("hc:101"));
             Assert.That(stored.MatchProvenance.BookProviderIds, Does.Contain("hc:201"));

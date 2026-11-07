@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using FluentValidation;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Annotations;
+using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.ThingiProvider;
 using NzbDrone.Core.Validation;
 
@@ -59,7 +60,7 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
         }
     }
 
-    public class DownloadStationSettings : IProviderConfig
+    public class DownloadStationSettings : IProviderConfig, IBookDownloadCategorySettings
     {
         private static readonly DownloadStationSettingsValidator Validator = new DownloadStationSettingsValidator();
 
@@ -72,7 +73,7 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
         [FieldDefinition(1, Label = "Port", Type = FieldType.Textbox)]
         public int Port { get; set; }
 
-        [FieldDefinition(2, Label = "Use SSL", Type = FieldType.Checkbox, HelpText = "Use secure connection when connecting to Download Station")]
+        [FieldDefinition(2, Label = "UseSSL", Type = FieldType.Checkbox, HelpText = "provider.field.ff03109a92f8c")]
         public bool UseSsl { get; set; }
 
         [FieldDefinition(3, Label = "Username", Type = FieldType.Textbox, Privacy = PrivacyLevel.UserName)]
@@ -81,24 +82,24 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
         [FieldDefinition(4, Label = "Password", Type = FieldType.Password, Privacy = PrivacyLevel.Password)]
         public string Password { get; set; }
 
-        [FieldDefinition(5, Label = "Audiobook Category", Type = FieldType.Textbox, HelpText = "Adding a category specific to Chaptarr avoids conflicts with unrelated non-Chaptarr downloads. Using a category is optional, but strongly recommended. Creates a [category] subdirectory in the output directory.")]
+        [FieldDefinition(5, Label = "provider.field.fb7445013fe90", Type = FieldType.Textbox, HelpText = "provider.field.f242bd077cedf")]
         public string AudiobookCategory
         {
             get => _audiobookCategory ?? MusicCategory;
             set => _audiobookCategory = value;
         }
 
-        [FieldDefinition(6, Label = "Ebook Category", Type = FieldType.Textbox, HelpText = "Adding a category specific to Chaptarr avoids conflicts with unrelated non-Chaptarr downloads. Using a category is optional, but strongly recommended. Creates a [category] subdirectory in the output directory.")]
+        [FieldDefinition(6, Label = "provider.field.f007be7ed5f4e", Type = FieldType.Textbox, HelpText = "provider.field.f242bd077cedf")]
         public string EbookCategory
         {
             get => _ebookCategory ?? MusicCategory;
             set => _ebookCategory = value;
         }
 
-        [FieldDefinition(100, Label = "Category", Type = FieldType.Textbox, Hidden = HiddenType.Hidden)]
+        [FieldDefinition(100, Label = "provider.field.f292c06f0045a", Type = FieldType.Textbox, Hidden = HiddenType.Hidden)]
         public string MusicCategory { get; set; }
 
-        [FieldDefinition(7, Label = "Directory", Type = FieldType.Textbox, HelpText = "Optional shared folder to put downloads into, leave blank to use the default Download Station location")]
+        [FieldDefinition(7, Label = "provider.field.fc8f84c3c5378", Type = FieldType.Textbox, HelpText = "provider.field.f278b35c4c5f4")]
         public string TvDirectory { get; set; }
 
         public DownloadStationSettings()

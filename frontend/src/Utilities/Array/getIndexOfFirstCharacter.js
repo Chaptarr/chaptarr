@@ -1,7 +1,7 @@
-import _ from 'lodash';
+import findIndex from 'lodash/findIndex';
 
 export default function getIndexOfFirstCharacter(items, sortKey, character) {
-  return _.findIndex(items, (item) => {
+  return findIndex(items, (item) => {
     const firstCharacter = item[sortKey].charAt(0);
 
     if (character === '#') {

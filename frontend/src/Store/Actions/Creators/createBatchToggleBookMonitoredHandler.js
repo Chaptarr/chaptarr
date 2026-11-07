@@ -7,20 +7,29 @@ function createBatchToggleBookMonitoredHandler(section, fetchHandler) {
   return function(getState, payload, dispatch) {
     const {
       bookIds,
-      monitored
+      monitored,
+      mediaType
     } = payload;
-    
+
     // Defensive: API expects a boolean, but UI can sometimes pass 0/1/2
     const monitoredBool = coerceMonitoredBoolean(monitored);
 
     const state = getSectionState(getState(), section, true);
+    const selectedIds = new Set(bookIds);
+    const selectedMediaTypes = new Set(
+      (state?.items || [])
+        .filter((book) => selectedIds.has(book.id))
+        .map((book) => book.mediaType)
+        .filter((value) => value === 'audiobook' || value === 'ebook')
+    );
+    const effectiveMediaType = mediaType || (selectedMediaTypes.size === 1 ? Array.from(selectedMediaTypes)[0] : null);
 
     dispatch(updateBooks(section, state.items, bookIds, {
       isSaving: true
     }));
 
     const promise = createAjaxRequest({
-      url: '/book/monitor',
+      url: effectiveMediaType ? `/book/monitor?mediaType=${encodeURIComponent(effectiveMediaType)}` : '/book/monitor',
       method: 'PUT',
       data: JSON.stringify({ bookIds, monitored: monitoredBool }),
       dataType: 'json'

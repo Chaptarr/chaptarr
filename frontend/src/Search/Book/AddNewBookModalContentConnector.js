@@ -3,11 +3,20 @@ import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import { showMessage } from 'Store/Actions/appActions';
-import { addBook, resetAddState, setBookAddDefault } from 'Store/Actions/searchActions';
-import { saveUISettings, setUISettingsValue } from 'Store/Actions/settingsActions';
+import {
+  addBook,
+  resetAddState,
+  setBookAddDefault
+} from 'Store/Actions/searchActions';
+import { fetchRootFolders } from 'Store/Actions/Settings/rootFolders';
+import {
+  saveUISettings,
+  setUISettingsValue
+} from 'Store/Actions/settingsActions';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createSystemStatusSelector from 'Store/Selectors/createSystemStatusSelector';
 import selectSettings from 'Store/Selectors/selectSettings';
+import translate from 'Utilities/String/translate';
 import AddNewBookModalContent from './AddNewBookModalContent';
 
 function createMapStateToProps() {
@@ -16,9 +25,18 @@ function createMapStateToProps() {
     (state) => state.search,
     (state) => state.settings.metadataProfiles,
     (state) => state.settings.ui,
+    (state) => state.settings.rootFolders,
     createDimensionsSelector(),
     createSystemStatusSelector(),
-    (isExistingAuthor, searchState, metadataProfiles, uiState, dimensions, systemStatus) => {
+    (
+      isExistingAuthor,
+      searchState,
+      metadataProfiles,
+      uiState,
+      rootFoldersState,
+      dimensions,
+      systemStatus
+    ) => {
       const {
         isAdding,
         isQueued,
@@ -29,11 +47,11 @@ function createMapStateToProps() {
         bookDefaults
       } = searchState;
 
-      const {
-        settings,
-        validationErrors,
-        validationWarnings
-      } = selectSettings(bookDefaults, {}, addError);
+      const { settings, validationErrors, validationWarnings } = selectSettings(
+        bookDefaults,
+        {},
+        addError
+      );
 
       return {
         isAdding,
@@ -47,6 +65,9 @@ function createMapStateToProps() {
         uiSaveError: uiState.saveError,
         showMetadataProfile: true,
         isSmallScreen: dimensions.isSmallScreen,
+        rootFoldersPopulated: rootFoldersState.isPopulated,
+        rootFoldersFetching: rootFoldersState.isFetching,
+        rootFoldersError: rootFoldersState.error,
         validationErrors,
         validationWarnings,
         isWindows: systemStatus.isWindows,
@@ -60,13 +81,13 @@ const mapDispatchToProps = {
   setBookAddDefault,
   addBook,
   resetAddState,
+  fetchRootFolders,
   setUISettingsValue,
   saveUISettings,
   showMessage
 };
 
 class AddNewBookModalContentConnector extends Component {
-
   constructor(props, context) {
     super(props, context);
 
@@ -75,15 +96,25 @@ class AddNewBookModalContentConnector extends Component {
 
   componentDidMount() {
     this.props.resetAddState();
+
+    if (!this.props.rootFoldersPopulated && !this.props.rootFoldersFetching) {
+      this.props.fetchRootFolders();
+    }
   }
 
   componentDidUpdate(prevProps) {
-    if (this._pendingDefaultSave && prevProps.isSavingDefaultMediaType && !this.props.isSavingDefaultMediaType) {
+    if (
+      this._pendingDefaultSave &&
+      prevProps.isSavingDefaultMediaType &&
+      !this.props.isSavingDefaultMediaType
+    ) {
       if (this.props.uiSaveError) {
         this.props.showMessage({
           id: `add-new-default-media-type-save-failed-${Date.now()}`,
           name: 'AddNewDefaultMediaTypeSaveFailed',
-          message: this.props.uiSaveError?.responseJSON?.message || 'Unable to save default media type',
+          message:
+            this.props.uiSaveError?.responseJSON?.message ||
+            translate('UnableToSaveDefaultMediaType'),
           type: 'error',
           hideAfter: 8
         });
@@ -91,7 +122,7 @@ class AddNewBookModalContentConnector extends Component {
         this.props.showMessage({
           id: `add-new-default-media-type-saved-${Date.now()}`,
           name: 'AddNewDefaultMediaTypeSaved',
-          message: 'Saved default media type',
+          message: translate('DefaultMediaTypeSaved'),
           type: 'success',
           hideAfter: 5
         });
@@ -110,7 +141,10 @@ class AddNewBookModalContentConnector extends Component {
 
   onSetDefaultMediaType = (mediaType) => {
     this._pendingDefaultSave = true;
-    this.props.setUISettingsValue({ name: 'addNewDefaultMediaType', value: mediaType });
+    this.props.setUISettingsValue({
+      name: 'addNewDefaultMediaType',
+      value: mediaType
+    });
     this.props.saveUISettings();
   };
 
@@ -143,7 +177,7 @@ class AddNewBookModalContentConnector extends Component {
       this.props.showMessage({
         id: `add-book-missing-foreign-book-id-${Date.now()}`,
         name: 'AddBookMissingForeignBookId',
-        message: 'Cannot add this book: missing upstream provider book/work ID',
+        message: translate('BookAddMissingProviderBookWorkId'),
         type: 'error',
         hideAfter: 10
       });
@@ -154,7 +188,7 @@ class AddNewBookModalContentConnector extends Component {
       this.props.showMessage({
         id: `add-book-missing-foreign-author-id-${Date.now()}`,
         name: 'AddBookMissingForeignAuthorId',
-        message: 'Cannot add this book: missing upstream provider author ID',
+        message: translate('BookAddMissingProviderAuthorId'),
         type: 'error',
         hideAfter: 10
       });
@@ -171,16 +205,26 @@ class AddNewBookModalContentConnector extends Component {
 
     const audiobookMonitorValue = audiobookMonitor?.value || monitor?.value;
     const ebookMonitorValue = ebookMonitor?.value || monitor?.value;
-    const audiobookMonitorNewItemsValue = audiobookMonitorNewItems?.value || monitorNewItems?.value;
-    const ebookMonitorNewItemsValue = ebookMonitorNewItems?.value || monitorNewItems?.value;
-    const audiobookMetaId = audiobookMetadataProfileId?.value || metadataProfileId?.value || 1;
-    const ebookMetaId = ebookMetadataProfileId?.value || metadataProfileId?.value || 2;
+    const audiobookMonitorNewItemsValue =
+      audiobookMonitorNewItems?.value || monitorNewItems?.value;
+    const ebookMonitorNewItemsValue =
+      ebookMonitorNewItems?.value || monitorNewItems?.value;
+    const audiobookMetaId =
+      audiobookMetadataProfileId?.value || metadataProfileId?.value || 1;
+    const ebookMetaId =
+      ebookMetadataProfileId?.value || metadataProfileId?.value || 2;
     const audiobookTagsValue = audiobookTags?.value || tags?.value;
     const ebookTagsValue = ebookTags?.value || tags?.value;
-    const selectedMonitor = selectedMediaType === 'ebook' ? ebookMonitorValue : audiobookMonitorValue;
-    const selectedMonitorNewItems = selectedMediaType === 'ebook' ? ebookMonitorNewItemsValue : audiobookMonitorNewItemsValue;
-    const selectedMetadataProfileId = selectedMediaType === 'ebook' ? ebookMetaId : audiobookMetaId;
-    const selectedTags = selectedMediaType === 'ebook' ? ebookTagsValue : audiobookTagsValue;
+    const selectedMonitor =
+      selectedMediaType === 'ebook' ? ebookMonitorValue : audiobookMonitorValue;
+    const selectedMonitorNewItems =
+      selectedMediaType === 'ebook' ?
+        ebookMonitorNewItemsValue :
+        audiobookMonitorNewItemsValue;
+    const selectedMetadataProfileId =
+      selectedMediaType === 'ebook' ? ebookMetaId : audiobookMetaId;
+    const selectedTags =
+      selectedMediaType === 'ebook' ? ebookTagsValue : audiobookTagsValue;
 
     const payload = {
       foreignBookId, // The search action expects this field name (e.g., "hc:495645")
@@ -265,9 +309,16 @@ AddNewBookModalContentConnector.propTypes = {
   setBookAddDefault: PropTypes.func.isRequired,
   addBook: PropTypes.func.isRequired,
   resetAddState: PropTypes.func.isRequired,
+  fetchRootFolders: PropTypes.func.isRequired,
+  rootFoldersPopulated: PropTypes.bool.isRequired,
+  rootFoldersFetching: PropTypes.bool.isRequired,
+  rootFoldersError: PropTypes.object,
   setUISettingsValue: PropTypes.func.isRequired,
   saveUISettings: PropTypes.func.isRequired,
   showMessage: PropTypes.func.isRequired
 };
 
-export default connect(createMapStateToProps, mapDispatchToProps)(AddNewBookModalContentConnector);
+export default connect(
+  createMapStateToProps,
+  mapDispatchToProps
+)(AddNewBookModalContentConnector);

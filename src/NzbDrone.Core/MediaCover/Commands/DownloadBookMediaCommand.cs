@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using NzbDrone.Core.Messaging.Commands;
 
 namespace NzbDrone.Core.MediaCover.Commands
@@ -5,6 +6,7 @@ namespace NzbDrone.Core.MediaCover.Commands
     public class DownloadBookMediaCommand : Command
     {
         public int BookId { get; set; }
+        public List<int> BookIds { get; set; }
         public bool ForceDownload { get; set; }
 
         public DownloadBookMediaCommand()

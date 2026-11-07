@@ -1,5 +1,6 @@
 using System.Linq;
 using NLog;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.IndexerSearch.Definitions;
@@ -16,18 +17,21 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
         private readonly IUpgradableSpecification _upgradableSpecification;
         private readonly IDelayProfileService _delayProfileService;
         private readonly IMediaFileService _mediaFileService;
+        private readonly IConfigService _configService;
         private readonly Logger _logger;
 
         public DelaySpecification(IPendingReleaseService pendingReleaseService,
                                   IUpgradableSpecification qualityUpgradableSpecification,
                                   IDelayProfileService delayProfileService,
                                   IMediaFileService mediaFileService,
+                                  IConfigService configService,
                                   Logger logger)
         {
             _pendingReleaseService = pendingReleaseService;
             _upgradableSpecification = qualityUpgradableSpecification;
             _delayProfileService = delayProfileService;
             _mediaFileService = mediaFileService;
+            _configService = configService;
             _logger = logger;
         }
 
@@ -49,7 +53,9 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
             }
 
             var mediaType = subject.GetPreferredMediaType();
-            var tags = subject.Author.GetTagsForMediaType(mediaType);
+            var tags = _configService?.BookshelfMatchCompatibility == true
+                ? subject.Author.Tags
+                : subject.Author.GetTagsForMediaType(mediaType);
             var delayProfile = _delayProfileService.BestForTags(tags);
             var delay = delayProfile.GetProtocolDelay(subject.Release.DownloadProtocol);
             var isPreferredProtocol = subject.Release.DownloadProtocol == delayProfile.PreferredProtocol;

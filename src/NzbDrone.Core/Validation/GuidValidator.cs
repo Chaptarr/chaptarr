@@ -3,11 +3,11 @@ using FluentValidation.Validators;
 
 namespace NzbDrone.Core.Validation
 {
-    public class GuidValidator : PropertyValidator
+    public class GuidValidator : NzbDronePropertyValidator
     {
         protected override string GetDefaultMessageTemplate() => "String is not a valid Guid";
 
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue == null)
             {

@@ -1,4 +1,5 @@
 import { filesize } from 'filesize';
+import { getLocale } from 'Utilities/Localization/locale';
 
 function formatBytes(input, showBits = false) {
   const size = Number(input);
@@ -10,7 +11,8 @@ function formatBytes(input, showBits = false) {
   return `${filesize(size, {
     base: 2,
     round: 1,
-    bits: showBits
+    bits: showBits,
+    locale: getLocale()
   })}`;
 }
 

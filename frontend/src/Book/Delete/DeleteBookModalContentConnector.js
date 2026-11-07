@@ -30,9 +30,11 @@ class DeleteBookModalContentConnector extends Component {
 
     this.state = {
       siblingBook: null,
-      currentBookDeleteInfo: null
+      currentBookDeleteInfo: null,
+      siblingInfoBookId: props.bookId
     };
 
+    this._siblingRequestGeneration = 0;
     this._abortSiblingRequest = null;
   }
 
@@ -47,6 +49,8 @@ class DeleteBookModalContentConnector extends Component {
   }
 
   componentWillUnmount() {
+    this._siblingRequestGeneration++;
+
     if (this._abortSiblingRequest) {
       this._abortSiblingRequest();
       this._abortSiblingRequest = null;
@@ -55,13 +59,18 @@ class DeleteBookModalContentConnector extends Component {
 
   _fetchSiblingDeleteInfo = () => {
     const { bookId } = this.props;
+    const generation = ++this._siblingRequestGeneration;
 
     if (this._abortSiblingRequest) {
       this._abortSiblingRequest();
       this._abortSiblingRequest = null;
     }
 
-    this.setState({ siblingBook: null, currentBookDeleteInfo: null });
+    this.setState({
+      siblingBook: null,
+      currentBookDeleteInfo: null,
+      siblingInfoBookId: bookId
+    });
 
     if (!bookId) {
       return;
@@ -74,10 +83,16 @@ class DeleteBookModalContentConnector extends Component {
     this._abortSiblingRequest = abortRequest;
 
     request.done((data) => {
+      if (generation !== this._siblingRequestGeneration) {
+        return;
+      }
+
+      this._abortSiblingRequest = null;
       const siblings = Array.isArray(data?.siblings) ? data.siblings : [];
       const hasSibling = siblings.length > 0;
 
       this.setState({
+        siblingInfoBookId: bookId,
         currentBookDeleteInfo: data?.currentBook ?? null,
         siblingBook: hasSibling ? {
           mediaType: data?.siblingMediaType,
@@ -91,12 +106,17 @@ class DeleteBookModalContentConnector extends Component {
     });
 
     request.fail((xhr) => {
-      if (xhr?.aborted) {
+      if (generation !== this._siblingRequestGeneration || xhr?.aborted) {
         return;
       }
 
+      this._abortSiblingRequest = null;
       // Best-effort only: modal still works without sibling info.
-      this.setState({ siblingBook: null, currentBookDeleteInfo: null });
+      this.setState({
+        siblingBook: null,
+        currentBookDeleteInfo: null,
+        siblingInfoBookId: bookId
+      });
     });
   };
 
@@ -106,6 +126,7 @@ class DeleteBookModalContentConnector extends Component {
   onDeletePress = (deleteFiles, addImportListExclusion, applyToBothFormats) => {
     this.props.deleteBook({
       id: this.props.bookId,
+      mediaType: this.props.mediaType,
       deleteFiles,
       addImportListExclusion,
       applyToBothFormats
@@ -120,11 +141,13 @@ class DeleteBookModalContentConnector extends Component {
   // Render
 
   render() {
+    const hasCurrentSiblingInfo = this.state.siblingInfoBookId === this.props.bookId;
+
     return (
       <DeleteBookModalContent
         {...this.props}
-        siblingBook={this.state.siblingBook}
-        currentBookDeleteInfo={this.state.currentBookDeleteInfo}
+        siblingBook={hasCurrentSiblingInfo ? this.state.siblingBook : null}
+        currentBookDeleteInfo={hasCurrentSiblingInfo ? this.state.currentBookDeleteInfo : null}
         onDeletePress={this.onDeletePress}
       />
     );
@@ -133,6 +156,7 @@ class DeleteBookModalContentConnector extends Component {
 
 DeleteBookModalContentConnector.propTypes = {
   bookId: PropTypes.number.isRequired,
+  mediaType: PropTypes.oneOf(['audiobook', 'ebook']),
   authorId: PropTypes.number.isRequired,
   push: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired,

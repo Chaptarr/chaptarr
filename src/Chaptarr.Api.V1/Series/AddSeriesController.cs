@@ -15,6 +15,7 @@ using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.MetadataSource;
+using NzbDrone.Common.Instrumentation;
 // using NzbDrone.Core.MetadataSource.Hardcover; // Removed - using V5 API via BookInfoProxy
 
 namespace Chaptarr.Api.V1.Series
@@ -71,7 +72,7 @@ namespace Chaptarr.Api.V1.Series
             {
                 if (string.IsNullOrWhiteSpace(request.SelectedMediaType))
                 {
-                    _logger.Warn("AddSeries: missing selectedMediaType for series {0}", request.ForeignSeriesId);
+                    _logger.WarnSafe("AddSeries: missing selectedMediaType for series {0}", request.ForeignSeriesId);
                     return BadRequest(new AddSeriesResult
                     {
                         Success = false,
@@ -81,7 +82,7 @@ namespace Chaptarr.Api.V1.Series
 
                 if (request.SelectedBooks == null || request.SelectedBooks.Count == 0)
                 {
-                    _logger.Warn("AddSeries: missing selectedBooks for series {0}", request.ForeignSeriesId);
+                    _logger.WarnSafe("AddSeries: missing selectedBooks for series {0}", request.ForeignSeriesId);
                     return BadRequest(new AddSeriesResult
                     {
                         Success = false,
@@ -96,7 +97,7 @@ namespace Chaptarr.Api.V1.Series
                 }
                 catch (BadRequestException)
                 {
-                    _logger.Warn("AddSeries: invalid selectedMediaType '{0}' for series {1}", request.SelectedMediaType, request.ForeignSeriesId);
+                    _logger.WarnSafe("AddSeries: invalid selectedMediaType '{0}' for series {1}", request.SelectedMediaType, request.ForeignSeriesId);
                     return BadRequest(new AddSeriesResult
                     {
                         Success = false,
@@ -118,7 +119,7 @@ namespace Chaptarr.Api.V1.Series
 
                 if (authorProviderIds.Count == 0)
                 {
-                    _logger.Warn("AddSeries: no foreignAuthorId values for series {0}", request.ForeignSeriesId);
+                    _logger.WarnSafe("AddSeries: no foreignAuthorId values for series {0}", request.ForeignSeriesId);
                     return BadRequest(new AddSeriesResult
                     {
                         Success = false,
@@ -161,12 +162,15 @@ namespace Chaptarr.Api.V1.Series
                     }
                 }
 
-                _logger.Info("Adding series {0}: {1} selected books, {2} authors, mediaType={3}, monitor={4}",
+                var monitorFuture = request.MonitorFuture == true;
+
+                _logger.InfoSafe("Adding series {0}: {1} selected books, {2} authors, mediaType={3}, monitor={4}, monitorFuture={5}",
                     request.ForeignSeriesId,
                     selectedBookIds.Count,
                     authorProviderIds.Count,
                     selectedMediaType,
-                    monitorMode);
+                    monitorMode,
+                    monitorFuture);
 
                 var monitoringConfig = BuildMonitoringConfig(request, selectedMediaType, monitorMode, selectedBookIds);
 
@@ -179,7 +183,7 @@ namespace Chaptarr.Api.V1.Series
                     var dbAuthor = await EnsureAuthorExistsAsync(authorProviderId, monitoringConfig, selectedMediaType);
                     if (dbAuthor == null)
                     {
-                        _logger.Warn("Failed to add/resolve author {0} while adding series {1}", authorProviderId, request.ForeignSeriesId);
+                        _logger.WarnSafe("Failed to add/resolve author {0} while adding series {1}", authorProviderId, request.ForeignSeriesId);
                         continue;
                     }
 
@@ -189,7 +193,7 @@ namespace Chaptarr.Api.V1.Series
                     {
                         var pendingId = -dbAuthor.Id;
                         pendingAuthorImportIds.Add(pendingId);
-                        _logger.Info("AddSeries: queued pending author import {0} (pendingId={1}) for series {2}", authorProviderId, pendingId, request.ForeignSeriesId);
+                        _logger.InfoSafe("AddSeries: queued pending author import {0} (pendingId={1}) for series {2}", authorProviderId, pendingId, request.ForeignSeriesId);
                         continue;
                     }
 
@@ -218,7 +222,7 @@ namespace Chaptarr.Api.V1.Series
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, $"Error adding series {request.ForeignSeriesId}");
+                _logger.ErrorSafe(ex, $"Error adding series {request.ForeignSeriesId}");
                 return StatusCode(500, new AddSeriesResult
                 {
                     Success = false,
@@ -237,9 +241,14 @@ namespace Chaptarr.Api.V1.Series
                 return perMediaMode.Value;
             }
 
-            var normalized = (request?.Monitor ?? string.Empty).Trim().ToLowerInvariant();
+            var normalized = (request?.Monitor ?? request?.MonitorExisting ?? string.Empty).Trim().ToLowerInvariant();
             if (string.IsNullOrWhiteSpace(normalized))
             {
+                if (request?.MonitorAllBooksByAllAuthors == true)
+                {
+                    return MonitorTypes.All;
+                }
+
                 // The selected books are the natural one-time target when no
                 // explicit current-catalog action is supplied.
                 return MonitorTypes.SpecificBook;
@@ -254,6 +263,7 @@ namespace Chaptarr.Api.V1.Series
                 "first" => MonitorTypes.First,
                 "latest" => MonitorTypes.Latest,
                 "none" => MonitorTypes.None,
+                "select" => MonitorTypes.SpecificBook,
                 "specificbook" => MonitorTypes.SpecificBook,
                 _ => throw new ArgumentException("Invalid monitor value. Expected all, future, missing, existing, first, latest, none, or specificBook.")
             };
@@ -282,12 +292,16 @@ namespace Chaptarr.Api.V1.Series
                 AudiobookMonitored = selectedMediaType == BookMediaType.Audiobook
                     ? monitorMode == MonitorTypes.SpecificBook ? true : request.AudiobookMonitored
                     : null,
-                AudiobookMonitorNewItems = selectedMediaType == BookMediaType.Audiobook ? request.AudiobookMonitorNewItems : null,
+                AudiobookMonitorNewItems = selectedMediaType == BookMediaType.Audiobook
+                    ? request.AudiobookMonitorNewItems ?? (request.MonitorFuture == true ? NewItemMonitorTypes.All : NewItemMonitorTypes.None)
+                    : null,
                 AudiobookMonitorExistingMode = selectedMediaType == BookMediaType.Audiobook ? monitorMode : null,
                 EbookMonitored = selectedMediaType == BookMediaType.Ebook
                     ? monitorMode == MonitorTypes.SpecificBook ? true : request.EbookMonitored
                     : null,
-                EbookMonitorNewItems = selectedMediaType == BookMediaType.Ebook ? request.EbookMonitorNewItems : null,
+                EbookMonitorNewItems = selectedMediaType == BookMediaType.Ebook
+                    ? request.EbookMonitorNewItems ?? (request.MonitorFuture == true ? NewItemMonitorTypes.All : NewItemMonitorTypes.None)
+                    : null,
                 EbookMonitorExistingMode = selectedMediaType == BookMediaType.Ebook ? monitorMode : null,
                 Tags = tags,
                 RequestedBy = "ApiV1SeriesAdd",
@@ -377,7 +391,7 @@ namespace Chaptarr.Api.V1.Series
             var (provider, rawId) = SplitProviderId(authorProviderId);
             if (string.IsNullOrWhiteSpace(provider) || string.IsNullOrWhiteSpace(rawId))
             {
-                _logger.Warn("Invalid author provider ID: {0}", authorProviderId);
+                _logger.WarnSafe("Invalid author provider ID: {0}", authorProviderId);
                 return null;
             }
 
@@ -395,7 +409,7 @@ namespace Chaptarr.Api.V1.Series
 
                     if (!hasRequestedMediaType)
                     {
-                        _logger.Info("AddSeries: existing author {0} missing {1} catalog; hydrating from provider", authorProviderId, requestedMediaType);
+                        _logger.InfoSafe("AddSeries: existing author {0} missing {1} catalog; hydrating from provider", authorProviderId, requestedMediaType);
 
                         var hydrated = await _authorLibraryService.AddAuthorAsync(authorProviderId, config);
                         if (hydrated != null)
@@ -422,11 +436,11 @@ namespace Chaptarr.Api.V1.Series
                 }
                 catch (AuthorNotFoundException ex)
                 {
-                    _logger.Warn(ex, "AddSeries: unable to hydrate missing {0} catalog for existing author {1}", requestedMediaType, authorProviderId);
+                    _logger.WarnSafe(ex, "AddSeries: unable to hydrate missing {0} catalog for existing author {1}", requestedMediaType, authorProviderId);
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warn(ex, "AddSeries: unexpected error hydrating missing {0} catalog for existing author {1}", requestedMediaType, authorProviderId);
+                    _logger.WarnSafe(ex, "AddSeries: unexpected error hydrating missing {0} catalog for existing author {1}", requestedMediaType, authorProviderId);
                 }
 
                 return ApplyRequestedAuthorMonitoring(existing, config, requestedMediaType);
@@ -535,6 +549,9 @@ namespace Chaptarr.Api.V1.Series
         public string ForeignSeriesId { get; set; }
         public string SelectedMediaType { get; set; }
         public List<SelectedSeriesBook> SelectedBooks { get; set; }
+        public bool MonitorAllBooksByAllAuthors { get; set; }
+        public string MonitorExisting { get; set; }
+        public bool? MonitorFuture { get; set; }
         // One-time action for current catalog rows. It is not persisted as an
         // author monitoring policy.
         public string Monitor { get; set; }

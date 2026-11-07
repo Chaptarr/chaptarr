@@ -1,10 +1,25 @@
-import _ from 'lodash';
+import cloneDeep from 'lodash/cloneDeep';
+import filter from 'lodash/filter';
+import isEmpty from 'lodash/isEmpty';
+import map from 'lodash/map';
+import reduce from 'lodash/reduce';
+import remove from 'lodash/remove';
 
 // Helper to normalize field values to the expected wrapped shape
 function normalizeFieldValue(raw) {
   // Helper to convert any value to array (handles string, null, undefined)
-  const toArray = (v) => v == null ? [] : Array.isArray(v) ? v : [v];
-  
+  const toArray = (value) => {
+    if (value == null) {
+      return [];
+    }
+
+    if (Array.isArray(value)) {
+      return value;
+    }
+
+    return [value];
+  };
+
   // Already wrapped with value/errors/warnings structure
   if (raw && typeof raw === 'object' && Object.prototype.hasOwnProperty.call(raw, 'value')) {
     // Normalize undefined to null for controlled components
@@ -29,7 +44,7 @@ function getValidationFailures(saveError) {
     return [];
   }
 
-  return _.cloneDeep(saveError.responseJSON);
+  return cloneDeep(saveError.responseJSON);
 }
 
 function mapFailure(failure) {
@@ -42,22 +57,22 @@ function mapFailure(failure) {
 
 function selectSettings(item, pendingChanges, saveError) {
   const validationFailures = getValidationFailures(saveError);
-  
+
   // Ensure item and pendingChanges are objects
   const safeItem = item || {};
   const safePendingChanges = pendingChanges || {};
 
   // First, get all properties from the item to ensure we don't miss any
   const allProperties = Object.keys(safeItem);
-  
+
   // Then add any properties from pending changes that aren't in the item
-  Object.keys(safePendingChanges).forEach(key => {
+  Object.keys(safePendingChanges).forEach((key) => {
     if (!allProperties.includes(key)) {
       allProperties.push(key);
     }
   });
 
-  const settings = _.reduce(allProperties, (result, key) => {
+  const settings = reduce(allProperties, (result, key) => {
     if (key === 'fields') {
       return result;
     }
@@ -71,18 +86,18 @@ function selectSettings(item, pendingChanges, saveError) {
 
     // Normalize the field value to ensure consistent shape
     const normalizedField = normalizeFieldValue(safeItem[key]);
-    
+
     // Extract server validation messages for this field
     // Note: _.remove mutates the array and returns removed elements - this is intentional
     // to prevent the same validation from being matched by multiple fields
-    const serverErrors = _.map(_.remove(validationFailures, (failure) => {
+    const serverErrors = map(remove(validationFailures, (failure) => {
       return (failure.propertyName || '').toLowerCase() === key.toLowerCase() && !failure.isWarning;
     }), mapFailure);
-    
-    const serverWarnings = _.map(_.remove(validationFailures, (failure) => {
+
+    const serverWarnings = map(remove(validationFailures, (failure) => {
       return (failure.propertyName || '').toLowerCase() === key.toLowerCase() && failure.isWarning;
     }), mapFailure);
-    
+
     const setting = {
       value: normalizedField.value,
       errors: serverErrors.concat(normalizedField.errors),
@@ -101,7 +116,7 @@ function selectSettings(item, pendingChanges, saveError) {
     return result;
   }, {});
 
-  const fields = _.reduce(safeItem.fields || [], (result, f) => {
+  const fields = reduce(safeItem.fields || [], (result, f) => {
     const field = Object.assign({ pending: false }, f);
     const hasPendingFieldChange = safePendingChanges.fields && safePendingChanges.fields.hasOwnProperty(field.name);
 
@@ -111,11 +126,11 @@ function selectSettings(item, pendingChanges, saveError) {
       field.pending = true;
     }
 
-    field.errors = _.map(_.remove(validationFailures, (failure) => {
+    field.errors = map(remove(validationFailures, (failure) => {
       return failure.propertyName.toLowerCase() === field.name.toLowerCase() && !failure.isWarning;
     }), mapFailure);
 
-    field.warnings = _.map(_.remove(validationFailures, (failure) => {
+    field.warnings = map(remove(validationFailures, (failure) => {
       return failure.propertyName.toLowerCase() === field.name.toLowerCase() && failure.isWarning;
     }), mapFailure);
 
@@ -127,11 +142,11 @@ function selectSettings(item, pendingChanges, saveError) {
     settings.fields = fields;
   }
 
-  const validationErrors = _.filter(validationFailures, (failure) => {
+  const validationErrors = filter(validationFailures, (failure) => {
     return !failure.isWarning;
   });
 
-  const validationWarnings = _.filter(validationFailures, (failure) => {
+  const validationWarnings = filter(validationFailures, (failure) => {
     return failure.isWarning;
   });
 
@@ -139,8 +154,8 @@ function selectSettings(item, pendingChanges, saveError) {
     settings,
     validationErrors,
     validationWarnings,
-    hasPendingChanges: !_.isEmpty(safePendingChanges),
-    hasSettings: !_.isEmpty(settings),
+    hasPendingChanges: !isEmpty(safePendingChanges),
+    hasSettings: !isEmpty(settings),
     pendingChanges: safePendingChanges
   };
 }

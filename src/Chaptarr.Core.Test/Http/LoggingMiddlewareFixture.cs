@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
+using Chaptarr.Core.Test;
 using Chaptarr.Http.Middleware;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -73,7 +74,9 @@ namespace Chaptarr.Core.Test.Http
         public async Task should_classify_normalized_api_requests_and_log_the_original_target(string rawTarget, string urlBase, bool isFacade)
         {
             var memoryTarget = ConfigureLogging();
-            var services = new ServiceCollection().BuildServiceProvider();
+            var services = new ServiceCollection()
+                .AddSingleton<NzbDrone.Core.Configuration.IConfigService>(ConfigServiceTestProxy.Create())
+                .BuildServiceProvider();
             var app = new ApplicationBuilder(services);
             var normalizedPath = string.Empty;
             var normalizedQuery = string.Empty;

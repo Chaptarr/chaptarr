@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.IO;
@@ -30,12 +31,13 @@ namespace NzbDrone.Core.Queue
                                 IHandle<TrackedDownloadUpdatedEvent>
     {
         private readonly IEventAggregator _eventAggregator;
-        private static List<Queue> _queue = new();
+        private volatile List<Queue> _queue = new();
+        private readonly object _queueUpdateLock = new();
         private readonly IHistoryService _historyService;
         private readonly IConversionTrackingService _conversionTrackingService;
         private readonly IConversionJobService _conversionJobService;
         private readonly IDiskProvider _diskProvider;
-        private readonly Dictionary<string, QualityModel> _inferredQualityCache = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, QualityModel> _inferredQualityCache = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
         public QueueService(IEventAggregator eventAggregator,
@@ -68,9 +70,10 @@ namespace NzbDrone.Core.Queue
 
         public void Remove(int id)
         {
-            _queue = _queue
-                .Where(q => q.Id != id)
-                .ToList();
+            lock (_queueUpdateLock)
+            {
+                _queue = _queue.Where(q => q.Id != id).ToList();
+            }
         }
 
         private IEnumerable<Queue> MapQueue(TrackedDownload trackedDownload, IReadOnlyDictionary<string, List<EntityHistory>> grabbedHistoryByDownloadId)
@@ -283,14 +286,17 @@ namespace NzbDrone.Core.Queue
         private QualityModel InferCompletedDownloadQuality(TrackedDownload trackedDownload, Book book, List<EntityHistory> grabHistory)
         {
             var downloadId = trackedDownload?.DownloadItem?.DownloadId;
-            if (!string.IsNullOrWhiteSpace(downloadId) &&
-                _inferredQualityCache.TryGetValue(downloadId, out var cached) &&
+            var targetMediaType = GetTargetMediaType(book, trackedDownload?.RemoteBook, grabHistory);
+
+            // One download can map to books of different media types (an audiobook and its ebook sibling), and the
+            // inferred quality depends on the media type, so the media type is part of the cache key.
+            var cacheKey = string.IsNullOrWhiteSpace(downloadId) ? null : BuildInferredQualityCacheKey(downloadId, targetMediaType);
+            if (cacheKey != null &&
+                _inferredQualityCache.TryGetValue(cacheKey, out var cached) &&
                 IsSpecificQuality(cached))
             {
                 return cached;
             }
-
-            var targetMediaType = GetTargetMediaType(book, trackedDownload?.RemoteBook, grabHistory);
             var fileCandidates = new List<string>();
 
             fileCandidates.AddRange(trackedDownload?.DownloadItem?.FilePaths ?? Enumerable.Empty<string>());
@@ -304,9 +310,9 @@ namespace NzbDrone.Core.Queue
                 inferred = InferQualityFromOutputFolder(trackedDownload, targetMediaType);
             }
 
-            if (!string.IsNullOrWhiteSpace(downloadId) && IsSpecificQuality(inferred))
+            if (cacheKey != null && IsSpecificQuality(inferred))
             {
-                _inferredQualityCache[downloadId] = inferred;
+                _inferredQualityCache[cacheKey] = inferred;
             }
 
             return inferred;
@@ -522,9 +528,13 @@ namespace NzbDrone.Core.Queue
                 return;
             }
 
+            var durableJobsByDownloadId = BuildNonCompletedConversionJobs();
+
             foreach (var item in queue)
             {
-                var durableJob = _conversionJobService?.Get(item.DownloadId);
+                var durableJob = item.DownloadId != null
+                    ? durableJobsByDownloadId.GetValueOrDefault(item.DownloadId)
+                    : null;
                 if (durableJob != null && durableJob.Status != ConversionJobStatus.Completed)
                 {
                     item.ConversionStatus = GetConversionJobStatus(durableJob.Status);
@@ -558,6 +568,28 @@ namespace NzbDrone.Core.Queue
                 item.ConversionMessage = conversion.Message;
                 item.CanCancelConversion = IsCancellableConversion(conversion);
             }
+        }
+
+        private Dictionary<string, ConversionJob> BuildNonCompletedConversionJobs()
+        {
+            // One query per queue build instead of one per queue item: the per-item lookup was only
+            // ever used when the job was not Completed, which is exactly what NonCompleted returns.
+            var result = new Dictionary<string, ConversionJob>(StringComparer.Ordinal);
+
+            if (_conversionJobService == null)
+            {
+                return result;
+            }
+
+            foreach (var job in _conversionJobService.GetNonCompleted() ?? new List<ConversionJob>())
+            {
+                if (job != null && !string.IsNullOrWhiteSpace(job.DownloadId))
+                {
+                    result.TryAdd(job.DownloadId, job);
+                }
+            }
+
+            return result;
         }
 
         private static string GetConversionJobStatus(ConversionJobStatus status)
@@ -651,6 +683,16 @@ namespace NzbDrone.Core.Queue
 
         public void Handle(TrackedDownloadRefreshedEvent message)
         {
+            // Serialize writers from mapping through publication so a slow refresh cannot
+            // replace a more recent incremental update with its older snapshot.
+            lock (_queueUpdateLock)
+            {
+                RefreshQueue(message);
+            }
+        }
+
+        private void RefreshQueue(TrackedDownloadRefreshedEvent message)
+        {
             var trackedCount = message.TrackedDownloads?.Count ?? 0;
             if (Logger.IsDebugEnabled)
             {
@@ -679,6 +721,16 @@ namespace NzbDrone.Core.Queue
         }
 
         public void Handle(TrackedDownloadUpdatedEvent message)
+        {
+            // Serialize writers from mapping through publication so a slow refresh cannot
+            // replace a more recent incremental update with its older snapshot.
+            lock (_queueUpdateLock)
+            {
+                UpdateQueue(message);
+            }
+        }
+
+        private void UpdateQueue(TrackedDownloadUpdatedEvent message)
         {
             var trackedDownload = message.TrackedDownload;
             var downloadId = trackedDownload?.DownloadItem?.DownloadId;
@@ -727,13 +779,25 @@ namespace NzbDrone.Core.Queue
                 .Where(downloadId => !string.IsNullOrWhiteSpace(downloadId))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var cachedDownloadId in _inferredQualityCache.Keys.ToList())
+            foreach (var cacheKey in _inferredQualityCache.Keys.ToList())
             {
-                if (!activeDownloadIds.Contains(cachedDownloadId))
+                if (!activeDownloadIds.Contains(GetDownloadIdFromCacheKey(cacheKey)))
                 {
-                    _inferredQualityCache.Remove(cachedDownloadId);
+                    _inferredQualityCache.TryRemove(cacheKey, out _);
                 }
             }
+        }
+
+        private static string BuildInferredQualityCacheKey(string downloadId, BookMediaType? mediaType)
+        {
+            return $"{downloadId}|{(mediaType.HasValue ? ((int)mediaType.Value).ToString() : "-")}";
+        }
+
+        private static string GetDownloadIdFromCacheKey(string cacheKey)
+        {
+            // The media type suffix never contains the separator, so the last one splits the key.
+            var separator = cacheKey.LastIndexOf('|');
+            return separator < 0 ? cacheKey : cacheKey.Substring(0, separator);
         }
     }
 }

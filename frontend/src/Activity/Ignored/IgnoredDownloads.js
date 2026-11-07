@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
+import Button from 'Components/Link/Button';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
 import PageContent from 'Components/Page/PageContent';
@@ -13,6 +14,7 @@ import TableBody from 'Components/Table/TableBody';
 import TableOptionsModalWrapper from 'Components/Table/TableOptions/TableOptionsModalWrapper';
 import TablePager from 'Components/Table/TablePager';
 import { align, icons, kinds } from 'Helpers/Props';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import getRemovedItems from 'Utilities/Object/getRemovedItems';
 import hasDifferentItems from 'Utilities/Object/hasDifferentItems';
 import translate from 'Utilities/String/translate';
@@ -100,6 +102,7 @@ class IgnoredDownloads extends Component {
       columns,
       totalRecords,
       isRemoving,
+      onRetryPress,
       ...otherProps
     } = this.props;
 
@@ -146,8 +149,11 @@ class IgnoredDownloads extends Component {
 
           {
             !isFetching && !!error &&
-              <Alert kind={kinds.DANGER}>
-                {translate('UnableToLoadIgnoredDownloads')}
+              <Alert kind={kinds.DANGER} role="alert">
+                <div>{getErrorMessage(error, translate('UnableToLoadIgnoredDownloads'))}</div>
+                <Button size="small" onPress={onRetryPress}>
+                  {translate('Retry')}
+                </Button>
               </Alert>
           }
 
@@ -217,7 +223,8 @@ IgnoredDownloads.propTypes = {
   columns: PropTypes.arrayOf(PropTypes.object).isRequired,
   totalRecords: PropTypes.number,
   isRemoving: PropTypes.bool.isRequired,
-  onRemoveSelected: PropTypes.func.isRequired
+  onRemoveSelected: PropTypes.func.isRequired,
+  onRetryPress: PropTypes.func.isRequired
 };
 
 export default IgnoredDownloads;

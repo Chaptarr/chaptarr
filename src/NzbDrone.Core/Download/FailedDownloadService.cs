@@ -40,12 +40,12 @@ namespace NzbDrone.Core.Download
             var downloadId = history.DownloadId;
             if (downloadId.IsNullOrWhiteSpace())
             {
-                PublishDownloadFailedEvent(new List<EntityHistory> { history }, "Manually marked as failed", skipRedownload: skipRedownload);
+                PublishDownloadFailedEvent(new List<EntityHistory> { history }, "Manually marked as failed", skipRedownload: skipRedownload, messageId: "notification.failure.manuallyFailed");
             }
             else
             {
                 var grabbedHistory = _historyService.Find(downloadId, EntityHistoryEventType.Grabbed).ToList();
-                PublishDownloadFailedEvent(grabbedHistory, "Manually marked as failed");
+                PublishDownloadFailedEvent(grabbedHistory, "Manually marked as failed", messageId: "notification.failure.manuallyFailed");
             }
         }
 
@@ -57,7 +57,7 @@ namespace NzbDrone.Core.Download
             {
                 var trackedDownload = _trackedDownloadService.Find(downloadId);
 
-                PublishDownloadFailedEvent(history, "Manually marked as failed", trackedDownload, skipRedownload);
+                PublishDownloadFailedEvent(history, "Manually marked as failed", trackedDownload, skipRedownload, "notification.failure.manuallyFailed");
             }
         }
 
@@ -87,7 +87,12 @@ namespace NzbDrone.Core.Download
             }
 
             trackedDownload.State = TrackedDownloadState.DownloadFailed;
-            PublishDownloadFailedEvent(grabbedItems, reason, trackedDownload, skipRedownload);
+            // This overload accepts project-determined failures. Only this audited source template has a key.
+            const string prefix = "No file in this download is in a format allowed by the quality profile (";
+            var hasProfileReason = reason != null && reason.Length <= 8192 && reason.StartsWith(prefix, StringComparison.Ordinal) && reason.EndsWith(")", StringComparison.Ordinal);
+            PublishDownloadFailedEvent(grabbedItems, reason, trackedDownload, skipRedownload,
+                hasProfileReason ? "notification.failure.profileDisallowed" : null,
+                hasProfileReason ? new Dictionary<string, object> { ["value0"] = reason.Substring(prefix.Length, reason.Length - prefix.Length - 1) } : null);
         }
 
         public void Check(TrackedDownload trackedDownload)
@@ -132,21 +137,24 @@ namespace NzbDrone.Core.Download
             }
 
             var failure = "Failed download detected";
+            var messageId = "notification.failure.detected";
 
             if (trackedDownload.DownloadItem.IsEncrypted)
             {
                 failure = "Encrypted download detected";
+                messageId = "notification.failure.encrypted";
             }
             else if (trackedDownload.DownloadItem.Status == DownloadItemStatus.Failed && trackedDownload.DownloadItem.Message.IsNotNullOrWhiteSpace())
             {
                 failure = trackedDownload.DownloadItem.Message;
+                messageId = null; // Provider-authored text remains data, even if it resembles a known source.
             }
 
             trackedDownload.State = TrackedDownloadState.DownloadFailed;
-            PublishDownloadFailedEvent(grabbedItems, failure, trackedDownload);
+            PublishDownloadFailedEvent(grabbedItems, failure, trackedDownload, messageId: messageId);
         }
 
-        private void PublishDownloadFailedEvent(List<EntityHistory> historyItems, string message, TrackedDownload trackedDownload = null, bool skipRedownload = false)
+        private void PublishDownloadFailedEvent(List<EntityHistory> historyItems, string message, TrackedDownload trackedDownload = null, bool skipRedownload = false, string messageId = null, Dictionary<string, object> messageTokens = null)
         {
             var historyItem = historyItems.Last();
             Enum.TryParse(historyItem.Data.GetValueOrDefault(EntityHistory.RELEASE_SOURCE, ReleaseSourceType.Unknown.ToString()), out ReleaseSourceType releaseSource);
@@ -160,6 +168,8 @@ namespace NzbDrone.Core.Download
                 DownloadClient = historyItem.Data.GetValueOrDefault(EntityHistory.DOWNLOAD_CLIENT),
                 DownloadId = historyItem.DownloadId,
                 Message = message,
+                MessageId = messageId,
+                MessageTokens = messageTokens,
                 Data = historyItem.Data,
                 TrackedDownload = trackedDownload,
                 SkipRedownload = skipRedownload,

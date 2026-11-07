@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <UseWPF>true</UseWPF>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../installer-net/ChaptarrNG.Installer.csproj" />
+    <ProjectReference Include="../installer-net-core/ChaptarrNG.Installer.Core.csproj" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="../../../src/Chaptarr.Core.Test/Datastore/Fixtures/BookshelfNG.Schema.158.sql"
+             Link="Fixtures/BookshelfNG.Schema.158.sql"
+             CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../../src/Chaptarr.Core.Test/Datastore/Fixtures/BookshelfNG.PopulatedMigration158.sql"
+             Link="Fixtures/BookshelfNG.PopulatedMigration158.sql"
+             CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

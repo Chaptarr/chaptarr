@@ -1,8 +1,10 @@
+using System.Collections.Generic;
 using System;
 using System.IO;
 using System.Net;
 using FluentValidation.Results;
 using NLog;
+using NzbDrone.Core.Localization;
 using NzbDrone.Common.Extensions;
 
 namespace NzbDrone.Core.Notifications.Twitter
@@ -19,11 +21,13 @@ namespace NzbDrone.Core.Notifications.Twitter
     {
         private readonly ITwitterProxy _twitterProxy;
         private readonly Logger _logger;
+        private readonly NotificationText _notificationText;
 
-        public TwitterService(ITwitterProxy twitterProxy, Logger logger)
+        public TwitterService(ITwitterProxy twitterProxy, ILocalizationService localizationService, Logger logger)
         {
             _twitterProxy = twitterProxy;
             _logger = logger;
+            _notificationText = new NotificationText(localizationService);
         }
 
         public OAuthToken GetOAuthToken(string consumerKey, string consumerSecret, string oauthToken, string oauthVerifier)
@@ -89,7 +93,8 @@ namespace NzbDrone.Core.Notifications.Twitter
         {
             try
             {
-                var body = "Chaptarr: Test Message @ " + DateTime.Now;
+                var body = _notificationText.Get("notification.test.timestampedBody", "Test message from Chaptarr posted at {timestamp}",
+                    new Dictionary<string, object> { ["timestamp"] = DateTime.Now });
 
                 SendNotification(body, settings);
             }

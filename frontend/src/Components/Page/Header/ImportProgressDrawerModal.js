@@ -9,6 +9,7 @@ import ModalContent from 'Components/Modal/ModalContent';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { icons, kinds, sizes } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import styles from './ImportProgressDrawerModal.css';
 
 function percent(processed, total) {
@@ -59,7 +60,7 @@ function ImportProgressDrawerModal(props) {
   const booksImported = counters.matchedBooks || 0;
   const filesImported = counters.filesImported || 0;
 
-  const stageText = importTracker?.message || formatStage(importTracker?.stage);
+  const stageText = translateServerMessage(importTracker?.message) || formatStage(importTracker?.stage);
   const currentItemName = importTracker?.currentItemName;
   const showAuthorProgress = totalAuthors > 0 || processedAuthors > 0;
   const progressTitle = getProgressTitle(importTracker?.operation);

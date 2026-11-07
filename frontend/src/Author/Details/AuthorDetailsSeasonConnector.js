@@ -1,5 +1,5 @@
 /* eslint max-params: 0 */
-import _ from 'lodash';
+import orderBy from 'lodash/orderBy';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -31,7 +31,7 @@ function createMapStateToProps() {
       const effectiveMediaType = rootFolderStatus.mediaType;
       const hasRootFolder = rootFolderStatus.hasRootFolder;
       const isAuthorDataLoading = rootFolderStatus.isDataLoading;
-      
+
       // Books are now filtered by media type from the backend
       // Show only books that match the selected media type
       let booksInGroup = hasRootFolder ? books.items : [];
@@ -42,7 +42,7 @@ function createMapStateToProps() {
         const mediaType = effectiveMediaType.toLowerCase();
         booksInGroup = booksInGroup.filter((book) => (book?.mediaType || '').toString().toLowerCase() === mediaType);
       }
-      
+
       // Apply search filter first if there's a value
       if (filterValue && typeof filterValue === 'string' && filterValue.trim()) {
         const searchTerm = filterValue.toLowerCase().trim();
@@ -90,50 +90,50 @@ function createMapStateToProps() {
           return false;
         });
       }
-      
+
       // Apply hide unmonitored/missing filter ONLY if not searching
       // When searching, show all results regardless of monitored/missing status
       if (hideUnmonitoredMissing && (!filterValue || typeof filterValue !== 'string' || !filterValue.trim()) && booksInGroup.length > 0) {
-        booksInGroup = booksInGroup.filter(book => {
+        booksInGroup = booksInGroup.filter((book) => {
           // Show the book if:
           // 1. It's monitored for the current media type, OR
           // 2. It has files (not missing)
           // Hide only if: unmonitored AND missing
-          const isMonitored = effectiveMediaType === 'audiobook' 
-            ? book.audiobookMonitored 
-            : book.ebookMonitored;
+          const isMonitored = effectiveMediaType === 'audiobook' ?
+            book.audiobookMonitored :
+            book.ebookMonitored;
           const hasFiles = book.statistics && book.statistics.bookFileCount > 0;
           return isMonitored || hasFiles;
         });
       }
 
       // Apply sorting to the filtered books using the sort predicates
-      const predicateFn = (books.sortPredicates && books.sortPredicates[books.sortKey])
-        || (globalBookSortPredicates && globalBookSortPredicates[books.sortKey]);
+      const predicateFn = (books.sortPredicates && books.sortPredicates[books.sortKey]) ||
+        (globalBookSortPredicates && globalBookSortPredicates[books.sortKey]);
 
       // Improve stability for Status sorting: use a deterministic tie-breaker (title)
-      let sortedBooks;
+      let sortedBooks = [];
       if (books.sortKey === 'status') {
-        const statusClause = predicateFn
-          ? (item) => predicateFn(item, books.sortDirection, effectiveMediaType)
-          : (item) => '';
-        const titleClause = (item) => (globalBookSortPredicates && globalBookSortPredicates.title)
-          ? globalBookSortPredicates.title(item)
-          : (item.title || '').toLowerCase();
+        const statusClause = predicateFn ?
+          (item) => predicateFn(item, books.sortDirection, effectiveMediaType) :
+          (item) => '';
+        const titleClause = (item) => ((globalBookSortPredicates && globalBookSortPredicates.title) ?
+          globalBookSortPredicates.title(item) :
+          (item.title || '').toLowerCase());
 
         const primaryOrder = books.sortDirection === 'ascending' ? 'asc' : 'desc';
         // Always sort title ascending for readability as a tie-breaker
-        sortedBooks = _.orderBy(booksInGroup, [statusClause, titleClause], [primaryOrder, 'asc']);
+        sortedBooks = orderBy(booksInGroup, [statusClause, titleClause], [primaryOrder, 'asc']);
       } else {
-        const sortClause = predicateFn
-          ? (item) => predicateFn(item, books.sortDirection, effectiveMediaType)
-          : (item) => (item && item[books.sortKey] !== undefined ? item[books.sortKey] : '');
+        const sortClause = predicateFn ?
+          (item) => predicateFn(item, books.sortDirection, effectiveMediaType) :
+          (item) => (item && item[books.sortKey] !== undefined ? item[books.sortKey] : '');
         const primaryOrder = books.sortDirection === 'ascending' ? 'asc' : 'desc';
-        sortedBooks = _.orderBy(booksInGroup, [sortClause], [primaryOrder]);
+        sortedBooks = orderBy(booksInGroup, [sortClause], [primaryOrder]);
       }
 
       // Select appropriate columns based on media type
-      let columns;
+      let columns = books.columns;
       if (effectiveMediaType === 'audiobook' && books.audiobookColumns) {
         columns = books.audiobookColumns;
       } else if (effectiveMediaType === 'ebook' && books.ebookColumns) {

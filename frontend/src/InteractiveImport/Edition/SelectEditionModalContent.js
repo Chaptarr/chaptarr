@@ -9,7 +9,8 @@ import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import Table from 'Components/Table/Table';
 import TableBody from 'Components/Table/TableBody';
-import { scrollDirections } from 'Helpers/Props';
+import { kinds, scrollDirections } from 'Helpers/Props';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import SelectEditionRowConnector from './SelectEditionRowConnector';
 import styles from './SelectEditionModalContent.css';
@@ -17,12 +18,12 @@ import styles from './SelectEditionModalContent.css';
 const columns = [
   {
     name: 'book',
-    label: 'Book',
+    label: () => translate('Book'),
     isVisible: true
   },
   {
     name: 'edition',
-    label: 'Edition',
+    label: () => translate('Edition'),
     isVisible: true
   }
 ];
@@ -40,21 +41,13 @@ class SelectEditionModalContent extends Component {
       isFetching,
       error,
       onEditionSelect,
+      onRetryPress,
       onModalClose,
       ...otherProps
     } = this.props;
 
-    if (!isPopulated && !error) {
-      return (<LoadingIndicator />);
-    }
-
-    if (!isFetching && error) {
-      return (
-        <div>
-          {translate('LoadingEditionsFailed')}
-        </div>
-      );
-    }
+    const isLoading = isFetching || (!isPopulated && !error);
+    const isReady = isPopulated && !isFetching && !error;
 
     const appliesToMultipleFiles = Object.values(importIdsByBook).some((ids) => ids.length > 1);
 
@@ -68,37 +61,62 @@ class SelectEditionModalContent extends Component {
           className={styles.modalBody}
           scrollDirection={scrollDirections.VERTICAL}
         >
-          <Alert>
-            {translate('SelectEditionOverridePrefix')} <b>{translate('SelectEditionDisableAutoBold')}</b> {translate('SelectEditionOverrideSuffix')}
-            {
-              appliesToMultipleFiles &&
-                <>
-                  <br />
-                  {translate('SelectEditionBulkScope')}
-                </>
-            }
-          </Alert>
+          {
+            isLoading &&
+              <LoadingIndicator />
+          }
 
-          <Table
-            columns={columns}
-            {...otherProps}
-          >
-            <TableBody>
-              {
-                books.map((item) => {
-                  return (
-                    <SelectEditionRowConnector
-                      key={item.book.id}
-                      matchedEditionId={item.matchedEditionId}
-                      columns={columns}
-                      onEditionSelect={onEditionSelect}
-                      {...item.book}
-                    />
-                  );
-                })
-              }
-            </TableBody>
-          </Table>
+          {
+            !isLoading && error &&
+              <Alert kind={kinds.DANGER} role="alert">
+                <div>{getErrorMessage(error, translate('LoadingEditionsFailed'))}</div>
+                <Button size="small" onPress={onRetryPress}>
+                  {translate('Retry')}
+                </Button>
+              </Alert>
+          }
+
+          {
+            isReady && !books.length &&
+              <Alert kind={kinds.INFO} role="status">
+                {translate('ManualImportNoBooksForEditionSelection')}
+              </Alert>
+          }
+
+          {
+            isReady && !!books.length &&
+              <>
+                <Alert>
+                  {translate('SelectEditionOverridePrefix')} <b>{translate('SelectEditionDisableAutoBold')}</b> {translate('SelectEditionOverrideSuffix')}
+                  {
+                    appliesToMultipleFiles &&
+                      <>
+                        <br />
+                        {translate('SelectEditionBulkScope')}
+                      </>
+                  }
+                </Alert>
+
+                <Table
+                  columns={columns}
+                  {...otherProps}
+                >
+                  <TableBody>
+                    {
+                      books.map((item) => (
+                        <SelectEditionRowConnector
+                          key={item.book.id}
+                          matchedEditionId={item.matchedEditionId}
+                          columns={columns}
+                          onEditionSelect={onEditionSelect}
+                          {...item.book}
+                        />
+                      ))
+                    }
+                  </TableBody>
+                </Table>
+              </>
+          }
         </ModalBody>
 
         <ModalFooter>
@@ -118,6 +136,7 @@ SelectEditionModalContent.propTypes = {
   isPopulated: PropTypes.bool,
   error: PropTypes.object,
   onEditionSelect: PropTypes.func.isRequired,
+  onRetryPress: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired
 };
 

@@ -21,6 +21,7 @@ import formatAge from 'Utilities/Number/formatAge';
 import formatBytes from 'Utilities/Number/formatBytes';
 import formatCustomFormatScore from 'Utilities/Number/formatCustomFormatScore';
 import translate from 'Utilities/String/translate';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import Peers from './Peers';
 import styles from './InteractiveSearchRow.css';
 
@@ -36,9 +37,13 @@ function getDownloadIcon(isGrabbing, isGrabbed, grabError) {
   return icons.DOWNLOAD;
 }
 
-function getDownloadKind(isGrabbed, grabError, downloadAllowed) {
+function getDownloadKind(isGrabbed, grabError, downloadAllowed, existingTorrentAvailable) {
   if (isGrabbed) {
     return kinds.SUCCESS;
+  }
+
+  if (existingTorrentAvailable) {
+    return kinds.INFO;
   }
 
   if (grabError || !downloadAllowed) {
@@ -48,13 +53,15 @@ function getDownloadKind(isGrabbed, grabError, downloadAllowed) {
   return kinds.DEFAULT;
 }
 
-function getDownloadTooltip(isGrabbing, isGrabbed, grabError) {
+function getDownloadTooltip(isGrabbing, isGrabbed, grabError, existingTorrentAvailable) {
   if (isGrabbing) {
     return '';
   } else if (isGrabbed) {
     return translate('AddedToDownloadedQueue');
+  } else if (existingTorrentAvailable) {
+    return translate('AdoptExistingTorrent');
   } else if (grabError) {
-    return grabError;
+    return translateServerMessage(grabError);
   }
 
   return translate('AddToDownloadedQueue');
@@ -169,8 +176,15 @@ class InteractiveSearchRow extends Component {
     super(props, context);
 
     this.state = {
-      isConfirmGrabModalOpen: false
+      isConfirmGrabModalOpen: false,
+      isAdoptExistingTorrentModalOpen: false
     };
+  }
+
+  componentDidUpdate(prevProps) {
+    if (!prevProps.existingTorrentAvailable && this.props.existingTorrentAvailable) {
+      this.setState({ isAdoptExistingTorrentModalOpen: true });
+    }
   }
 
   //
@@ -218,6 +232,32 @@ class InteractiveSearchRow extends Component {
     this.setState({ isConfirmGrabModalOpen: false });
   };
 
+  onAdoptExistingTorrentConfirm = () => {
+    this.setState({ isAdoptExistingTorrentModalOpen: false });
+
+    const {
+      guid,
+      indexerId,
+      searchPayload,
+      onGrabPress
+    } = this.props;
+
+    onGrabPress({
+      guid,
+      indexerId,
+      ...searchPayload,
+      adoptExistingTorrent: true
+    });
+  };
+
+  onAdoptExistingTorrentPress = () => {
+    this.setState({ isAdoptExistingTorrentModalOpen: true });
+  };
+
+  onAdoptExistingTorrentCancel = () => {
+    this.setState({ isAdoptExistingTorrentModalOpen: false });
+  };
+
   //
   // Render
 
@@ -249,6 +289,7 @@ class InteractiveSearchRow extends Component {
       downloadAllowed,
       isGrabbing,
       isGrabbed,
+      existingTorrentAvailable,
       isPreferredChoice,
       longDateFormat,
       timeFormat,
@@ -258,6 +299,14 @@ class InteractiveSearchRow extends Component {
     const titleText = renderTitleWithMatch(displayTitle || title, matchedTitleCharStart, matchedTitleCharEnd);
     const narratorDisplay = renderNarratorDisplay(this.props.narrator);
     const resolvedGrabTarget = hasResolvedGrabTarget(authorId, bookId);
+    let onDownloadPress = this.onConfirmGrabPress;
+
+    if (existingTorrentAvailable) {
+      onDownloadPress = this.onAdoptExistingTorrentPress;
+    } else if (downloadAllowed || resolvedGrabTarget) {
+      onDownloadPress = this.onGrabPress;
+    }
+
     const rowClassName = classNames(
       tableRowStyles.row,
       isPreferredChoice && styles.preferredRow
@@ -294,7 +343,7 @@ class InteractiveSearchRow extends Component {
               </Link>
               {grabError ? (
                 <div className={styles.grabError}>
-                  {grabError}
+                  {translateServerMessage(grabError)}
                 </div>
               ) : null}
             </div>
@@ -304,7 +353,10 @@ class InteractiveSearchRow extends Component {
           </div>
         </TableRowCell>
 
-        <TableRowCell className={styles.indexer}>
+        <TableRowCell
+          className={styles.indexer}
+          title={indexer}
+        >
           {indexer}
         </TableRowCell>
 
@@ -398,10 +450,10 @@ class InteractiveSearchRow extends Component {
           {
             <SpinnerIconButton
               name={getDownloadIcon(isGrabbing, isGrabbed, grabError)}
-              kind={getDownloadKind(isGrabbed, grabError, downloadAllowed)}
-              title={getDownloadTooltip(isGrabbing, isGrabbed, grabError)}
+              kind={getDownloadKind(isGrabbed, grabError, downloadAllowed, existingTorrentAvailable)}
+              title={getDownloadTooltip(isGrabbing, isGrabbed, grabError, existingTorrentAvailable)}
               isSpinning={isGrabbing}
-              onPress={downloadAllowed || resolvedGrabTarget ? this.onGrabPress : this.onConfirmGrabPress}
+              onPress={onDownloadPress}
             />
           }
         </TableRowCell>
@@ -414,6 +466,16 @@ class InteractiveSearchRow extends Component {
           confirmLabel={translate('Grab')}
           onConfirm={this.onGrabConfirm}
           onCancel={this.onGrabCancel}
+        />
+
+        <ConfirmModal
+          isOpen={this.state.isAdoptExistingTorrentModalOpen}
+          kind={kinds.WARNING}
+          title={translate('AdoptExistingTorrent')}
+          message={translate('AdoptExistingTorrentMessageText', [this.props.existingTorrentMessage])}
+          confirmLabel={translate('Adopt')}
+          onConfirm={this.onAdoptExistingTorrentConfirm}
+          onCancel={this.onAdoptExistingTorrentCancel}
         />
       </TableRow>
     );
@@ -454,6 +516,8 @@ InteractiveSearchRow.propTypes = {
   isGrabbed: PropTypes.bool.isRequired,
   isPreferredChoice: PropTypes.bool,
   grabError: PropTypes.string,
+  existingTorrentAvailable: PropTypes.bool,
+  existingTorrentMessage: PropTypes.string,
   longDateFormat: PropTypes.string.isRequired,
   timeFormat: PropTypes.string.isRequired,
   searchPayload: PropTypes.object.isRequired,
@@ -467,6 +531,7 @@ InteractiveSearchRow.defaultProps = {
   isGrabbing: false,
   isGrabbed: false,
   isPreferredChoice: false,
+  existingTorrentAvailable: false,
   duration: null,
   narrator: null,
   isGraphicAudio: false

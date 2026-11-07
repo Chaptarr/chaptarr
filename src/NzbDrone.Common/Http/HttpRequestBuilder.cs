@@ -151,7 +151,7 @@ namespace NzbDrone.Common.Http
                 return;
             }
 
-            if (request.ContentData != null)
+            if (request.ContentData != null || request.Content != null)
             {
                 throw new ApplicationException("Cannot send HttpRequest Body and FormData simultaneously.");
             }

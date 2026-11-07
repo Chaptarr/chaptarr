@@ -11,6 +11,7 @@ import { testProxySettings } from 'Store/Actions/systemActions';
 import createCommandExecutingSelector from 'Store/Selectors/createCommandExecutingSelector';
 import createSettingsSectionSelector from 'Store/Selectors/createSettingsSectionSelector';
 import createSystemStatusSelector from 'Store/Selectors/createSystemStatusSelector';
+import translate from 'Utilities/String/translate';
 import GeneralSettings from './GeneralSettings';
 
 const SECTION = 'general';
@@ -113,7 +114,7 @@ class GeneralSettingsConnector extends Component {
         proxyTestError: null 
       });
     }).catch((error) => {
-      const errorMessage = error.message || 'Proxy test failed';
+      const errorMessage = error.message || translate('ProxyTestFailed');
       this.setState({ 
         isTestingProxy: false,
         proxyTestError: {

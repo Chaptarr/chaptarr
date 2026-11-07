@@ -172,12 +172,12 @@ namespace NzbDrone.Core.Extras
         public void Handle(AuthorRenamedEvent message)
         {
             var author = message.Author;
-            var bookFiles = message.RenamedFiles?
+            var renamedFiles = message.RenamedFiles ?? new List<RenamedBookFile>();
+            var bookFiles = renamedFiles
                 .Select(r => r.BookFile)
                 .Where(bf => bf != null)
                 .DistinctBy(bf => bf.Id)
-                .ToList()
-                ?? new List<BookFile>();
+                .ToList();
 
             if (bookFiles.Count == 0)
             {
@@ -186,7 +186,7 @@ namespace NzbDrone.Core.Extras
 
             foreach (var extraFileManager in _extraFileManagers)
             {
-                extraFileManager.MoveFilesAfterRename(author, bookFiles);
+                extraFileManager.MoveFilesAfterRename(author, bookFiles, renamedFiles);
             }
         }
 

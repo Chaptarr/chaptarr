@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using Chaptarr.Api.V1.ManualImport;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport.Manual;
 using NUnit.Framework;
 
@@ -168,6 +169,70 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(resource.Tags["TITLE"], Is.EqualTo(new[] { "The Test Book" }));
                 Assert.That(resource.Tags["ARTIST"], Is.EqualTo(new[] { "Test Author" }));
             });
+        }
+
+        [Test]
+        public void should_not_expose_bookshelf_compatibility_projection_in_manual_import_tags()
+        {
+            var item = new ManualImportItem
+            {
+                Id = 1,
+                Tags = new Dictionary<string, List<string>>
+                {
+                    ["TITLE"] = new List<string> { "Dune" },
+                    [BookshelfAudioTagFields.Book] = new List<string> { "Dune" }
+                }
+            };
+
+            var resource = item.ToResource();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.Tags.ContainsKey("TITLE"), Is.True);
+                Assert.That(resource.Tags.ContainsKey(BookshelfAudioTagFields.Book), Is.False);
+            });
+        }
+
+        [Test]
+        public void should_map_bookshelf_audio_album_sort_fallback_and_track_title()
+        {
+            var item = new ManualImportItem
+            {
+                Id = 1,
+                Tags = new Dictionary<string, List<string>>
+                {
+                    ["TITLE"] = new List<string> { "Canonical title" },
+                    ["ALBUMSORT"] = new List<string> { "Sorted book title" },
+                    [BookshelfAudioTagFields.Book] = new List<string> { "Sorted book title" },
+                    [BookshelfAudioTagFields.Title] = new List<string> { "Selected track title" }
+                }
+            };
+
+            var resource = item.ToResource();
+
+            Assert.That(resource.AudioTags.BookTitle, Is.EqualTo("Sorted book title"));
+            Assert.That(resource.AudioTags.Title, Is.EqualTo("Selected track title"));
+        }
+
+        [Test]
+        public void should_fall_back_to_selected_track_title_when_album_is_explicitly_empty()
+        {
+            var item = new ManualImportItem
+            {
+                Id = 1,
+                Tags = new Dictionary<string, List<string>>
+                {
+                    ["TITLE"] = new List<string> { "Other track title" },
+                    ["ALBUMSORT"] = new List<string> { "Must not win" },
+                    [BookshelfAudioTagFields.Book] = new List<string> { string.Empty },
+                    [BookshelfAudioTagFields.Title] = new List<string> { "Selected fallback title" }
+                }
+            };
+
+            var resource = item.ToResource();
+
+            Assert.That(resource.AudioTags.BookTitle, Is.EqualTo("Selected fallback title"));
+            Assert.That(resource.AudioTags.Title, Is.EqualTo("Selected fallback title"));
         }
 
         [Test]

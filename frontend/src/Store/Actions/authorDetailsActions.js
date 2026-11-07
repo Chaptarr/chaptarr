@@ -1,11 +1,11 @@
 import { createAction } from 'redux-actions';
 import { sortDirections } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
+import translate from 'Utilities/String/translate';
 import { set } from './baseActions';
 import { filterPredicates, sortPredicates } from './bookActions';
 import createHandleActions from './Creators/createHandleActions';
 import createSetClientSideCollectionSortReducer from './Creators/Reducers/createSetClientSideCollectionSortReducer';
-
 //
 // Variables
 
@@ -30,7 +30,7 @@ export const defaultState = {
   filters: [
     {
       key: 'authorId',
-      label: 'Author',
+      label: () => translate('Author'),
       filters: [
         {
           key: 'authorId',
@@ -77,7 +77,7 @@ export const actionHandlers = handleThunks({
       filters: [
         {
           key: 'authorId',
-          label: 'Author',
+          label: () => translate('Author'),
           filters: [
             {
               key: 'authorId',

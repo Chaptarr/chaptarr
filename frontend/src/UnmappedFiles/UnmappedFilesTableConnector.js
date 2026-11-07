@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import filter from 'lodash/filter';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -14,6 +14,7 @@ import createCommandExecutingSelector from 'Store/Selectors/createCommandExecuti
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import { registerPagePopulator, unregisterPagePopulator } from 'Utilities/pagePopulator';
+import translate from 'Utilities/String/translate';
 import UnmappedFilesTable from './UnmappedFilesTable';
 
 function createMapStateToProps() {
@@ -36,7 +37,7 @@ function createMapStateToProps() {
         ...otherProps
       } = bookFiles;
 
-      const unmappedFiles = _.filter(items, { bookId: 0 });
+      const unmappedFiles = filter(items, { bookId: 0 });
 
       return {
         items: unmappedFiles,
@@ -123,9 +124,10 @@ function createMapDispatchToProps(dispatch, props) {
         commandFinished: (command) => {
           const isFailure = command.status === 'failed';
           const progressMessage = command.body?.progressMessage;
-          const message = isFailure ?
-            (progressMessage || command.message || 'Failed to send matching logs for review') :
-            (progressMessage || command.message || 'Matching logs sent for review');
+          const fallbackMessage = translate(isFailure ?
+            'UnmappedFilesSendLogsFailureMessage' :
+            'UnmappedFilesSendLogsSuccessMessage');
+          const message = progressMessage || command.message || fallbackMessage;
 
           dispatch(showMessage({
             id: `send-matching-logs-${command.id}`,

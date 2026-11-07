@@ -13,8 +13,11 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Hosting.WindowsServices;
+using Microsoft.Extensions.Logging;
 using NLog;
+using NLog.Extensions.Logging;
 using Npgsql;
+using PdfSharp;
 using NzbDrone.Common.Composition.Extensions;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
@@ -52,6 +55,8 @@ namespace NzbDrone.Host
         {
             try
             {
+                PdfSharpLicense.SetAgplLicense();
+
                 Logger.Info("Starting Chaptarr - {0} - Version {1}",
                             Environment.ProcessPath,
                             BuildInfo.Release);
@@ -91,41 +96,36 @@ namespace NzbDrone.Host
                     // Utility mode
                     default:
                         {
-                            new HostBuilder()
-                                .UseServiceProviderFactory(new DryIocServiceProviderFactory(new Container(rules => rules.WithNzbDroneRules())))
-                                .ConfigureContainer<IContainer>(c =>
-                                {
-                                    c.AutoAddServices(Bootstrap.ASSEMBLIES)
-                                        .RegisterHttpClients()
-                                        .AddIndexerProxyProvider()
-                                        .AddNzbDroneLogger()
-                                        .AddDatabase()
-                                        .AddFuzzyMatchingServices()
-                                        .AddImportServices()
-                                        .AddNamingPatternServices()
-                                        // .AddHardcoverServices() // Removed - using V5 API via BookInfoProxy
-                                        .AddStartupContext(startupContext)
-                                        .Resolve<UtilityModeRouter>()
-                                        .Route(appMode);
-                                })
-                                .ConfigureServices(services =>
-                                {
-                                    services.Configure<PostgresOptions>(config.GetSection("Chaptarr:Postgres"));
-                                    services.PostConfigure<PostgresOptions>(o =>
-                                    {
-                                        if (string.IsNullOrWhiteSpace(o.Host))
-                                        {
-                                            // Rebrand compatibility (Readarr/AudioArr → Chaptarr): accept legacy section names/env vars.
-                                            config.GetSection("Readarr:Postgres").Bind(o);
-                                            config.GetSection("Audioarr:Postgres").Bind(o);
-                                        }
-                                    });
-                                    services.Configure<AppOptions>(config.GetSection("Chaptarr:App"));
-                                    services.Configure<AuthOptions>(config.GetSection("Chaptarr:Auth"));
-                                    services.Configure<ServerOptions>(config.GetSection("Chaptarr:Server"));
-                                    services.Configure<LogOptions>(config.GetSection("Chaptarr:Log"));
-                                    services.Configure<UpdateOptions>(config.GetSection("Chaptarr:Update"));
-                                }).Build();
+                            var utilityServices = new ServiceCollection();
+                            utilityServices.AddLogging(logging =>
+                            {
+                                logging.ClearProviders();
+                                logging.SetMinimumLevel(Microsoft.Extensions.Logging.LogLevel.Trace);
+                                logging.AddNLog();
+                            });
+                            utilityServices.Configure<PostgresOptions>(config.GetSection("Chaptarr:Postgres"));
+                            utilityServices.Configure<AppOptions>(config.GetSection("Chaptarr:App"));
+                            utilityServices.Configure<AuthOptions>(config.GetSection("Chaptarr:Auth"));
+                            utilityServices.Configure<ServerOptions>(config.GetSection("Chaptarr:Server"));
+                            utilityServices.Configure<LogOptions>(config.GetSection("Chaptarr:Log"));
+                            utilityServices.Configure<UpdateOptions>(config.GetSection("Chaptarr:Update"));
+
+                            var utilityFactory = new DryIocServiceProviderFactory(
+                                new Container(rules => rules.WithNzbDroneRules()));
+                            using var utilityContainer = utilityFactory.CreateBuilder(utilityServices);
+                            utilityContainer.AutoAddServices(Bootstrap.ASSEMBLIES)
+                                .RegisterHttpClients()
+                                .AddIndexerProxyProvider()
+                                .AddNzbDroneLogger()
+                                .AddDatabase()
+                                .AddFuzzyMatchingServices()
+                                .AddImportServices()
+                                .AddNamingPatternServices()
+                                // .AddHardcoverServices() // Removed - using V5 API via BookInfoProxy
+                                .AddStartupContext(startupContext);
+
+                            var utilityProvider = utilityFactory.CreateServiceProvider(utilityContainer);
+                            utilityProvider.GetRequiredService<IUtilityModeRouter>().Route(appMode);
 
                             break;
                         }
@@ -156,11 +156,16 @@ namespace NzbDrone.Host
             var config = GetConfiguration(context);
 
             var bindAddress = config.GetValue<string>($"Chaptarr:Server:{nameof(ServerOptions.BindAddress)}") ?? config.GetValue(nameof(ConfigFileProvider.BindAddress), "*");
-            var port = config.GetValue<int?>($"Chaptarr:Server:{nameof(ServerOptions.Port)}") ?? config.GetValue(nameof(ConfigFileProvider.Port), 8789);
+            var port = config.GetValue<int?>($"Chaptarr:Server:{nameof(ServerOptions.Port)}") ??
+                config.GetValue<int?>(nameof(ConfigFileProvider.Port)) ??
+                ServerConfigurationDefaults.Port;
             var sslPort = config.GetValue<int?>($"Chaptarr:Server:{nameof(ServerOptions.SslPort)}") ?? config.GetValue(nameof(ConfigFileProvider.SslPort), 6868);
             var enableSsl = config.GetValue<bool?>($"Chaptarr:Server:{nameof(ServerOptions.EnableSsl)}") ?? config.GetValue(nameof(ConfigFileProvider.EnableSsl), false);
             var sslCertPath = config.GetValue<string>($"Chaptarr:Server:{nameof(ServerOptions.SslCertPath)}") ?? config.GetValue<string>(nameof(ConfigFileProvider.SslCertPath));
             var sslCertPassword = config.GetValue<string>($"Chaptarr:Server:{nameof(ServerOptions.SslCertPassword)}") ?? config.GetValue<string>(nameof(ConfigFileProvider.SslCertPassword));
+            var metricsEnabled = config.GetValue<bool?>("Chaptarr:Metrics:Enabled") ?? config.GetValue<bool?>("MetricsEnabled") ?? false;
+            var metricsPort = config.GetValue<int?>("Chaptarr:Metrics:Port") ?? config.GetValue<int?>("MetricsPort") ?? 9797;
+            var metricsBindAddress = config.GetValue<string>("Chaptarr:Metrics:BindAddress") ?? config.GetValue<string>("MetricsBindAddress") ?? "127.0.0.1";
 
             var urls = new List<string> { BuildUrl("http", bindAddress, port) };
 
@@ -169,12 +174,33 @@ namespace NzbDrone.Host
                 urls.Add(BuildUrl("https", bindAddress, sslPort));
             }
 
+            if (metricsEnabled)
+            {
+                if (metricsPort < 1 || metricsPort > 65535)
+                {
+                    throw new ChaptarrStartupException("Metrics port must be between 1 and 65535");
+                }
+
+                if (metricsPort == port || (enableSsl && sslCertPath.IsNotNullOrWhiteSpace() && metricsPort == sslPort))
+                {
+                    throw new ChaptarrStartupException("Metrics port must be different from the Chaptarr HTTP and HTTPS ports");
+                }
+
+                if (metricsBindAddress.IsNullOrWhiteSpace())
+                {
+                    throw new ChaptarrStartupException("Metrics bind address cannot be empty");
+                }
+
+                urls.Add(BuildUrl("http", metricsBindAddress, metricsPort));
+            }
+
             return new HostBuilder()
-                .UseContentRoot(Directory.GetCurrentDirectory())
+                // Resolve packaged application files independently of the process working directory.
+                .UseContentRoot(AppContext.BaseDirectory)
                 .UseServiceProviderFactory(new DryIocServiceProviderFactory(new Container(rules => rules.WithNzbDroneRules())))
                 .ConfigureContainer<IContainer>(c =>
                 {
-                    c.AutoAddServices(Bootstrap.ASSEMBLIES)
+                    c.AutoAddServices(Bootstrap.ASSEMBLIES, GetDiagnosticsPluginPaths(context))
                         .RegisterHttpClients()
                         .AddIndexerProxyProvider()
                         .AddNzbDroneLogger()
@@ -189,15 +215,6 @@ namespace NzbDrone.Host
                 .ConfigureServices(services =>
                 {
                     services.Configure<PostgresOptions>(config.GetSection("Chaptarr:Postgres"));
-                    services.PostConfigure<PostgresOptions>(o =>
-                    {
-                        if (string.IsNullOrWhiteSpace(o.Host))
-                        {
-                            // Rebrand compatibility (Readarr/AudioArr → Chaptarr): accept legacy section names/env vars.
-                            config.GetSection("Readarr:Postgres").Bind(o);
-                            config.GetSection("Audioarr:Postgres").Bind(o);
-                        }
-                    });
                     services.Configure<AppOptions>(config.GetSection("Chaptarr:App"));
                     services.Configure<AuthOptions>(config.GetSection("Chaptarr:Auth"));
                     services.Configure<ServerOptions>(config.GetSection("Chaptarr:Server"));
@@ -221,10 +238,21 @@ namespace NzbDrone.Host
                     builder.ConfigureKestrel(serverOptions =>
                     {
                         serverOptions.AllowSynchronousIO = false;
-                        serverOptions.Limits.MaxRequestBodySize = 100 * 1024 * 1024;
+                        serverOptions.Limits.MaxRequestBodySize = HttpSecuritySettings.GetMaxRequestBodySize(config);
                     });
                     builder.UseStartup<Startup>();
                 });
+        }
+
+        private static IEnumerable<string> GetDiagnosticsPluginPaths(StartupContext context)
+        {
+            var appFolders = new AppFolderInfo(context);
+            return DiagnosticsPluginPathResolver.Resolve(
+                appFolders.AppDataFolder,
+                appFolders.StartUpFolder,
+                Environment.GetEnvironmentVariable("CHAPTARR_DIAGNOSTICS_ENABLED"),
+                Environment.GetEnvironmentVariable("BOOKSHELF_DIAGNOSTICS_ENABLED"),
+                message => Logger.Warn(message));
         }
 
         public static ApplicationModes GetApplicationMode(IStartupContext startupContext)
@@ -232,6 +260,69 @@ namespace NzbDrone.Host
             if (startupContext.Help)
             {
                 return ApplicationModes.Help;
+            }
+
+            var migrateBookshelf = startupContext.MigrateBookshelf || startupContext.PreviewBookshelfMigration;
+            if (startupContext.MergeBookshelfDatabases && !migrateBookshelf)
+            {
+                throw new InvalidOperationException("-merge-bookshelf-databases must be used with -migrate-bookshelf or -preview-bookshelf-migration.");
+            }
+            var checkBookshelfMigration = startupContext.CheckBookshelfMigration;
+            var restoreBookshelf = startupContext.RestoreBookshelf || startupContext.PreviewBookshelfRestore;
+            var postgresBackupMode = startupContext.CheckBookshelfPostgresBackup ||
+                startupContext.PreviewBookshelfPostgresRestore ||
+                startupContext.BackupBookshelfPostgres ||
+                startupContext.RestoreBookshelfPostgres;
+            var postgresUtilityCount =
+                (startupContext.CheckBookshelfPostgresBackup ? 1 : 0) +
+                (startupContext.PreviewBookshelfPostgresRestore ? 1 : 0) +
+                (startupContext.BackupBookshelfPostgres ? 1 : 0) +
+                (startupContext.RestoreBookshelfPostgres ? 1 : 0);
+            if (postgresUtilityCount > 1 ||
+                (postgresBackupMode && (migrateBookshelf || restoreBookshelf || checkBookshelfMigration)) ||
+                (checkBookshelfMigration && (migrateBookshelf || restoreBookshelf)))
+            {
+                throw new InvalidOperationException("Choose one BookshelfNG migration or PostgreSQL backup utility command at a time.");
+            }
+
+            if (migrateBookshelf && restoreBookshelf)
+            {
+                throw new InvalidOperationException("Choose either BookshelfNG migration or BookshelfNG rollback, not both.");
+            }
+
+            if (startupContext.CheckBookshelfPostgresBackup)
+            {
+                return ApplicationModes.CheckBookshelfPostgresBackup;
+            }
+
+            if (startupContext.PreviewBookshelfPostgresRestore)
+            {
+                return ApplicationModes.PreviewBookshelfPostgresRestore;
+            }
+
+            if (startupContext.BackupBookshelfPostgres)
+            {
+                return ApplicationModes.BackupBookshelfPostgres;
+            }
+
+            if (startupContext.RestoreBookshelfPostgres)
+            {
+                return ApplicationModes.RestoreBookshelfPostgres;
+            }
+
+            if (restoreBookshelf)
+            {
+                return ApplicationModes.RestoreBookshelf;
+            }
+
+            if (migrateBookshelf)
+            {
+                return ApplicationModes.MigrateBookshelf;
+            }
+
+            if (checkBookshelfMigration)
+            {
+                return ApplicationModes.CheckBookshelfMigration;
             }
 
             if (OsInfo.IsWindows && startupContext.RegisterUrl)
@@ -277,11 +368,13 @@ namespace NzbDrone.Host
 
             try
             {
-                return new ConfigurationBuilder()
+                var configuration = new ConfigurationBuilder()
                     .AddXmlFile(configPath, optional: true, reloadOnChange: false)
                     .AddInMemoryCollection(new List<KeyValuePair<string, string>> { new("dataProtectionFolder", appFolder.GetDataProtectionPath()) })
                     .AddEnvironmentVariables()
                     .Build();
+
+                return LegacyConfigurationCompatibility.AddFallbackSections(configuration);
             }
             catch (InvalidDataException ex)
             {
@@ -293,6 +386,11 @@ namespace NzbDrone.Host
 
         private static string BuildUrl(string scheme, string bindAddress, int port)
         {
+            if (bindAddress.Contains(":") && !bindAddress.StartsWith("[", StringComparison.Ordinal))
+            {
+                bindAddress = $"[{bindAddress}]";
+            }
+
             return $"{scheme}://{bindAddress}:{port}";
         }
 

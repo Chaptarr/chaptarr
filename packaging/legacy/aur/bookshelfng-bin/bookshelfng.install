@@ -1,0 +1,169 @@
+_service=bookshelfng.service
+_active_marker=/run/bookshelfng-package-was-active
+_source_binary=/usr/lib/bookshelfng/Readarr
+_source_dir=/usr/lib/bookshelfng
+_target_package_info=/usr/lib/chaptarrng/package_info
+_pending_marker=/var/lib/bookshelfng/.chaptarrng-bookshelfng-migration-pending
+_deferred_marker=/var/lib/bookshelfng/.chaptarrng-bookshelfng-migration-deferred
+_handoff_status=/var/lib/bookshelfng/.chaptarrng-bookshelfng-handoff-status
+_handoff_dir=/var/lib/bookshelfng/.chaptarrng-bookshelfng-handoff
+_journal=/usr/lib/chaptarrng/handoff/bookshelfng-journal
+
+set -e
+
+_bookshelfng_has_controlling_tty() {
+  [ -t 0 ] && ( : </dev/tty >/dev/tty ) 2>/dev/null
+}
+
+_snapshot_source() {
+  install -d -m750 /var/lib/bookshelfng
+  if [[ ! -f "$_handoff_dir/snapshot-ready" ]]; then
+    rm -rf -- "$_handoff_dir"
+    install -d -m700 "$_handoff_dir"
+    cp -a "$_source_dir" "$_handoff_dir/source-app"
+    for _candidate in /lib/systemd/system/bookshelfng.service /usr/lib/systemd/system/bookshelfng.service; do
+      if [[ -f "$_candidate" ]]; then
+        cp -a "$_candidate" "$_handoff_dir/source-unit"
+        printf '%s\n' "$_candidate" > "$_handoff_dir/source-unit-path"
+        break
+      fi
+    done
+    if [[ -e /usr/bin/bookshelfng || -L /usr/bin/bookshelfng ]]; then
+      cp -a /usr/bin/bookshelfng "$_handoff_dir/source-bin-entry"
+    else
+      touch "$_handoff_dir/source-bin-entry-absent"
+    fi
+    touch "$_handoff_dir/snapshot-ready"
+  fi
+}
+
+_prepare_handoff() {
+  if [[ -e "$_deferred_marker" || ( ! -e "$_target_package_info" && -x "$_source_binary" ) ]]; then
+    _snapshot_source
+    migration_mode=${BOOKSHELFNG_MIGRATION_MODE:-automatic}
+    defer_migration=false
+    case "$migration_mode" in
+      automatic) ;;
+      manual)
+        echo 'BookshelfNG package update will continue, but ChaptarrNG migration is deferred. Review docs/MIGRATE_FROM_BOOKSHELFNG.md and run the Console migration commands when ready.' >&2
+        defer_migration=true
+        ;;
+      ask)
+        if ! _bookshelfng_has_controlling_tty; then
+          echo 'No terminal is available; the package update will continue with BookshelfNG restored and migration deferred. Set BOOKSHELFNG_MIGRATION_MODE=automatic or manual for the next package transaction.' >&2
+          defer_migration=true
+        else
+          printf 'Replace BookshelfNG with ChaptarrNG now? A still-legacy database will be migrated automatically. [y/N] ' >/dev/tty
+          IFS= read -r migration_choice </dev/tty || migration_choice=
+          case "$migration_choice" in
+            y|Y|yes|YES|Yes) ;;
+            *)
+              echo 'ChaptarrNG migration deferred; pacman will finish the package update and BookshelfNG will be restored.' >&2
+              defer_migration=true
+              ;;
+          esac
+        fi
+        ;;
+      *)
+        echo 'Invalid BOOKSHELFNG_MIGRATION_MODE; the package update will continue with BookshelfNG restored and migration deferred.' >&2
+        defer_migration=true
+        ;;
+    esac
+    if [[ "$defer_migration" == true ]]; then
+      install -Dm600 /dev/null "$_deferred_marker"
+      rm -f -- "$_pending_marker"
+    else
+      rm -f -- "$_deferred_marker"
+      install -Dm600 /dev/null "$_pending_marker"
+    fi
+  fi
+
+  rm -f -- "$_active_marker"
+  if systemctl is-active --quiet "$_service"; then
+    install -Dm600 /dev/null "$_active_marker"
+    systemctl stop "$_service"
+  fi
+}
+
+pre_install() {
+  _prepare_handoff
+}
+
+pre_upgrade() {
+  _prepare_handoff
+}
+
+_restore_deferred_handoff() {
+  if [[ ! -f "$_handoff_dir/snapshot-ready" || ! -x "$_handoff_dir/source-app/Readarr" ]]; then
+    echo 'BookshelfNG migration is deferred, but its saved application is missing; the service was not started.' >&2
+    return 1
+  fi
+
+  rm -rf -- "$_source_dir"
+  install -d -m0755 /usr/lib
+  cp -a "$_handoff_dir/source-app" "$_source_dir"
+
+  if [[ -f "$_handoff_dir/source-unit-path" ]]; then
+    unit_path=$(cat "$_handoff_dir/source-unit-path")
+    case "$unit_path" in
+      /lib/systemd/system/bookshelfng.service|/usr/lib/systemd/system/bookshelfng.service)
+        if [[ -f "$_handoff_dir/source-unit" ]]; then
+          cp -a "$_handoff_dir/source-unit" "$unit_path"
+        fi
+        ;;
+      *) echo 'Saved BookshelfNG unit path is not a standard path; the original application was restored for operator recovery.' >&2 ;;
+    esac
+  fi
+
+  if [[ -f "$_handoff_dir/source-bin-entry" ]]; then
+    rm -f -- /usr/bin/bookshelfng
+    cp -a "$_handoff_dir/source-bin-entry" /usr/bin/bookshelfng
+  elif [[ -f "$_handoff_dir/source-bin-entry-absent" ]]; then
+    rm -f -- /usr/bin/bookshelfng
+  fi
+
+  printf '%s\n' deferred > "$_handoff_status.tmp"
+  chmod 0600 "$_handoff_status.tmp"
+  mv -f "$_handoff_status.tmp" "$_handoff_status"
+  if [[ -x "$_journal" ]]; then
+    "$_journal" state deferred || true
+  fi
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  if [[ -e "$_active_marker" ]]; then
+    systemctl start "$_service"
+    rm -f -- "$_active_marker"
+  fi
+  echo 'BookshelfNG was restored and its ChaptarrNG migration remains deferred.'
+}
+
+_configure_service() {
+  set -e
+  if [[ -e "$_deferred_marker" ]]; then
+    _restore_deferred_handoff
+    return 0
+  fi
+  systemd-sysusers
+  systemd-tmpfiles --create /usr/lib/tmpfiles.d/bookshelfng.conf
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  /usr/lib/chaptarrng/handoff/bookshelfng-prepare
+  if [[ -e "$_active_marker" ]]; then
+    systemctl start "$_service"
+    rm -f -- "$_active_marker"
+  fi
+}
+
+post_install() {
+  _configure_service
+}
+
+post_upgrade() {
+  _configure_service
+}
+
+pre_remove() {
+  systemctl stop "$_service" >/dev/null 2>&1 || true
+}
+
+post_remove() {
+  systemctl daemon-reload >/dev/null 2>&1 || true
+}

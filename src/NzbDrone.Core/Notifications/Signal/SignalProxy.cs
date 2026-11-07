@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using FluentValidation.Results;
 using NLog;
+using NzbDrone.Core.Localization;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Common.Serializer;
@@ -19,11 +20,13 @@ namespace NzbDrone.Core.Notifications.Signal
     {
         private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
+        private readonly NotificationText _notificationText;
 
-        public SignalProxy(IHttpClient httpClient, Logger logger)
+        public SignalProxy(IHttpClient httpClient, ILocalizationService localizationService, Logger logger)
         {
             _httpClient = httpClient;
             _logger = logger;
+            _notificationText = new NotificationText(localizationService);
         }
 
         public void SendNotification(string title, string message, SignalSettings settings)
@@ -63,8 +66,8 @@ namespace NzbDrone.Core.Notifications.Signal
         {
             try
             {
-                const string title = "Test Notification";
-                const string body = "This is a test message from Chaptarr";
+                var title = _notificationText.Get("notification.test.title", "Test Notification");
+                var body = _notificationText.Get("notification.test.body", "This is a test message from Chaptarr.");
 
                 SendNotification(title, body, settings);
             }

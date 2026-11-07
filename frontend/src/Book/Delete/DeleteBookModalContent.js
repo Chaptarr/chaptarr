@@ -14,7 +14,7 @@ import translate from 'Utilities/String/translate';
 import styles from './DeleteBookModalContent.css';
 
 function formatMediaTypeLabel(mediaType) {
-  return mediaType === 'ebook' ? 'eBook' : 'audiobook';
+  return translate(mediaType === 'ebook' ? 'EbookLabel' : 'AudiobookLabel');
 }
 
 function formatMediaTypeCount(count, mediaType) {
@@ -22,15 +22,13 @@ function formatMediaTypeCount(count, mediaType) {
     return null;
   }
 
-  let label = null;
+  let labelKey = count === 1 ? 'AudiobookLabel' : 'Audiobooks';
 
   if (mediaType === 'ebook') {
-    label = count === 1 ? 'eBook' : 'eBooks';
-  } else {
-    label = count === 1 ? 'audiobook' : 'audiobooks';
+    labelKey = count === 1 ? 'EbookLabel' : 'Ebooks';
   }
 
-  return `${count} ${label}`;
+  return `${count} ${translate(labelKey)}`;
 }
 
 function getSiblingDeleteLabel(currentMediaType, siblingBook) {
@@ -41,10 +39,10 @@ function getSiblingDeleteLabel(currentMediaType, siblingBook) {
     const label = formatMediaTypeLabel(siblingMediaType);
 
     if (siblingMediaType === currentMediaType) {
-      return `Delete the matched ${label} clone as well`;
+      return translate('DeleteMatchedMediaTypeCloneLabel', { mediaType: label });
     }
 
-    return `Delete the matched ${label} version as well`;
+    return translate('DeleteMatchedMediaTypeVersionLabel', { mediaType: label });
   }
 
   const counts = [
@@ -53,8 +51,8 @@ function getSiblingDeleteLabel(currentMediaType, siblingBook) {
   ].filter(Boolean);
 
   return counts.length ?
-    `Delete all matched copies of this book (${counts.join(', ')})` :
-    'Delete all matched copies of this book';
+    translate('DeleteAllMatchedBookCopiesWithCountsLabel', { counts: counts.join(', ') }) :
+    translate('DeleteAllMatchedBookCopiesLabel');
 }
 
 function getFileCount(details) {
@@ -148,23 +146,24 @@ class DeleteBookModalContent extends Component {
     const totalBookFileCount = currentFileCount + (applyToBothFormats ? siblingFileCount : 0);
     const totalSizeOnDisk = currentSizeOnDisk + (applyToBothFormats ? siblingSizeOnDisk : 0);
 
-    const deleteFilesLabel = applyToBothFormats && siblingBook ?
-      'Delete files for all matched books' :
-      `Delete files for this ${currentFormatLabel}`;
-    const deleteFilesHelpText = applyToBothFormats && siblingBook ?
-      `If enabled, Chaptarr will delete files for this ${currentFormatLabel} and all matched copies of the same book.` :
-      `Delete files for this ${currentFormatLabel}.`;
-    const addImportListExclusionLabel = applyToBothFormats && siblingBook ?
-      'Don\'t add these books back' :
-      `Don't add this ${currentFormatLabel} back`;
-    const addImportListExclusionHelpText = applyToBothFormats && siblingBook ?
-      'Chaptarr will skip re-adding both formats during refresh and import-list sync until you manually add them again.' :
-      `Chaptarr will skip re-adding this ${currentFormatLabel} during refresh and import-list sync until you manually add it again.`;
+    const applyToBothBooks = applyToBothFormats && !!siblingBook;
+    const deleteFilesLabel = translate(applyToBothBooks ?
+      'DeleteFilesForAllMatchedBooksLabel' :
+      'DeleteFilesForMediaTypeLabel', { mediaType: currentFormatLabel });
+    const deleteFilesHelpText = translate(applyToBothBooks ?
+      'DeleteFilesForAllMatchedBooksHelpText' :
+      'DeleteFilesForMediaTypeHelpText', { mediaType: currentFormatLabel });
+    const addImportListExclusionLabel = translate(applyToBothBooks ?
+      'DontAddTheseBooksBackLabel' :
+      'DontAddThisMediaTypeBackLabel', { mediaType: currentFormatLabel });
+    const addImportListExclusionHelpText = translate(applyToBothBooks ?
+      'DontAddTheseBooksBackHelpText' :
+      'DontAddThisMediaTypeBackHelpText', { mediaType: currentFormatLabel });
     const siblingDeleteLabel = siblingBook ?
       getSiblingDeleteLabel(mediaType, siblingBook) :
       null;
     const siblingDeleteHelpText = siblingBook ?
-      `If enabled, file deletion and "don't add back" apply to this ${currentFormatLabel} and all matched copies of the same book.` :
+      translate('DeleteFilesAndDontAddBackForMatchedCopiesHelpText', { mediaType: currentFormatLabel }) :
       null;
 
     return (
@@ -227,8 +226,8 @@ class DeleteBookModalContent extends Component {
                 <div>
                   {
                     applyToBothFormats && siblingBook ?
-                      'If you do not block re-adds, these books may come back during the next author refresh or import-list sync.' :
-                      'If you do not block re-adds, this book may come back during the next author refresh or import-list sync.'
+                      translate('BooksMayBeAddedBackAfterRefreshOrSync') :
+                      translate('BookMayBeAddedBackAfterRefreshOrSync')
                   }
                 </div>
               </div>
@@ -238,7 +237,7 @@ class DeleteBookModalContent extends Component {
             deleteFiles &&
               <div className={styles.deleteFilesMessage}>
                 <div>
-                  {applyToBothFormats && siblingBook ? 'Files for all matched books will be deleted.' : 'The book files will be deleted.'}
+                  {translate(applyToBothFormats && siblingBook ? 'FilesForAllMatchedBooksWillBeDeleted' : 'TheBooksFilesWillBeDeleted')}
                 </div>
 
                 {

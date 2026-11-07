@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types';
 import React from 'react';
+import translate from 'Utilities/String/translate';
 import SegmentedToggle from './SegmentedToggle';
 import styles from './MediaTypeToggle.css';
 
@@ -18,27 +19,27 @@ function MediaTypeToggle(props) {
   const ebookDisabled = !hasEbookRootFolder;
   const bothDisabled = includeBoth && (audiobookDisabled || ebookDisabled);
 
-  const effectiveMediaType = (!includeBoth && selectedMediaType === 'both')
-    ? 'audiobook'
-    : selectedMediaType;
+  const effectiveMediaType = (!includeBoth && selectedMediaType === 'both') ?
+    'audiobook' :
+    selectedMediaType;
 
   const options = [
     {
       key: 'audiobook',
-      label: 'Audiobooks',
-      icon: <span className={styles.icon}>🎧</span>,
+      label: translate('Audiobooks'),
+      icon: <span className={styles.icon} aria-hidden="true">🎧</span>,
       isDisabled: audiobookDisabled
     },
     includeBoth ? {
       key: 'both',
-      label: 'Both',
+      label: translate('Both'),
       icon: null,
       isDisabled: bothDisabled
     } : null,
     {
       key: 'ebook',
-      label: 'eBooks',
-      icon: <span className={styles.icon}>📖</span>,
+      label: translate('Ebooks'),
+      icon: <span className={styles.icon} aria-hidden="true">📖</span>,
       isDisabled: ebookDisabled
     }
   ].filter(Boolean);
@@ -48,6 +49,7 @@ function MediaTypeToggle(props) {
       <SegmentedToggle
         value={effectiveMediaType}
         options={options}
+        ariaLabel={translate('Format')}
         onChange={onMediaTypeChange}
       />
       {children}

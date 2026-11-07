@@ -33,7 +33,7 @@ function AuthorDetailsControls(props) {
   // Show message if there's a root folder issue
   const showRootFolderMessage = !currentMediaTypeAvailable || !currentMediaTypeConfigured;
 
-  const mediaTypeName = selectedMediaType === 'audiobook' ? 'audiobook' : 'ebook';
+  const mediaTypeName = translate(selectedMediaType === 'audiobook' ? 'AudiobookLabel' : 'EbookLabel');
 
   // Determine the right message and CTA based on the specific situation
   let messageText = null;
@@ -43,13 +43,13 @@ function AuthorDetailsControls(props) {
 
   if (!currentMediaTypeAvailable) {
     // No compatible root folders exist globally
-    messageText = `No ${mediaTypeName} root folders are configured.`;
-    ctaText = 'Manage root folders';
+    messageText = translate('NoMediaTypeRootFoldersConfigured', { mediaType: mediaTypeName });
+    ctaText = translate('RootFolders');
     ctaLink = '/settings/mediamanagement';
   } else if (!currentMediaTypeConfigured) {
     // Global folders exist but author hasn't selected one
-    messageText = `No ${mediaTypeName} root folder selected for this author.`;
-    ctaText = 'Select root folder';
+    messageText = translate('NoMediaTypeRootFolderSelectedForAuthor', { mediaType: mediaTypeName });
+    ctaText = translate('SelectRootFolder');
     ctaOnPress = () => onSelectRootFolderPress(selectedMediaType);
   }
 

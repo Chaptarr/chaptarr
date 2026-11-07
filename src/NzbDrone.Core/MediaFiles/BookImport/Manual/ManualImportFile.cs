@@ -28,6 +28,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
         public string DownloadId { get; set; }
         public bool DisableReleaseSwitching { get; set; }
 
+        // Production overrides for audiobooks. Null leaves detection from tags and release data in charge.
+        public bool? IsGraphicAudio { get; set; }
+        public string AudioProductionType { get; set; }
+
         public bool Equals(ManualImportFile other)
         {
             if (other == null)

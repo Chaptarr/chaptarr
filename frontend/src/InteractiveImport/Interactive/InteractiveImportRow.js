@@ -258,7 +258,7 @@ class InteractiveImportRow extends Component {
     const pathCell = additionalFile ? (
       <Tooltip
         anchor={pathCellContents}
-        tooltip='This file is already in your library for a release you are currently importing'
+        tooltip={translate('FileAlreadyInLibraryForCurrentRelease')}
         position={tooltipPositions.TOP}
       />
     ) : pathCellContents;
@@ -275,9 +275,9 @@ class InteractiveImportRow extends Component {
     const hasWarnings = !!warnings?.length;
     const statusIcon = hasRejections ? icons.DANGER : icons.WARNING;
     const statusKind = hasRejections ? kinds.DANGER : kinds.WARNING;
-    let statusTitle = 'Warnings';
+    let statusTitle = translate('Warnings');
     if (hasRejections && hasWarnings) {
-      statusTitle = 'Rejections / Warnings';
+      statusTitle = translate('RejectionsWarnings');
     } else if (hasRejections) {
       statusTitle = translate('ReleaseRejected');
     }
@@ -300,32 +300,32 @@ class InteractiveImportRow extends Component {
     if (hasAuthor) {
       bookTitleAttribute = translate('AuthorClickToChangeBook');
     } else if (suggestedBookLabel) {
-      bookTitleAttribute = 'Select a local author to override the suggested book';
+      bookTitleAttribute = translate('InteractiveImportSelectAuthorToOverrideSuggestedBookTooltip');
     }
 
     let editionTitleAttribute = undefined;
     if (hasBook) {
       editionTitleAttribute = translate('ClickToChangeEdition');
     } else if (suggestedEditionLabel) {
-      editionTitleAttribute = 'Select a local book to override the suggested edition';
+      editionTitleAttribute = translate('InteractiveImportSelectBookToOverrideSuggestedEditionTooltip');
     }
 
-    let actionLabel = 'Choose';
+    let actionLabel = translate('InteractiveImportChooseLabel');
     let actionKind = kinds.WARNING;
-    let actionTitle = 'Select a local author and book before importing';
+    let actionTitle = translate('InteractiveImportSelectAuthorAndBookTooltip');
 
     if (isLocalReady) {
-      actionLabel = 'Local';
+      actionLabel = translate('InteractiveImportLocalLabel');
       actionKind = kinds.SUCCESS;
-      actionTitle = 'Ready to import using your local library';
+      actionTitle = translate('InteractiveImportReadyUsingLocalLibraryTooltip');
     } else if (hasAuthor && hasBook && !hasEdition) {
-      actionTitle = 'Select a local edition before importing';
+      actionTitle = translate('InteractiveImportSelectLocalEditionTooltip');
     } else if (isMetadataSuggested) {
-      actionLabel = 'Select to Add';
+      actionLabel = translate('InteractiveImportSelectToAddLabel');
       actionKind = kinds.INFO;
       actionTitle = suggestedForeignEditionId ?
-        'Selecting this row explicitly adds and pins the suggested metadata edition' :
-        'Selecting this row adds the suggested metadata work, then verifies it before import';
+        translate('InteractiveImportAddAndPinSuggestedEditionTooltip') :
+        translate('InteractiveImportAddSuggestedWorkBeforeImportTooltip');
     }
 
     return (

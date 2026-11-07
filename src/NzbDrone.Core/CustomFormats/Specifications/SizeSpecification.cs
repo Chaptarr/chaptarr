@@ -20,10 +20,10 @@ namespace NzbDrone.Core.CustomFormats
         public override int Order => 8;
         public override string ImplementationName => "Size";
 
-        [FieldDefinition(1, Label = "Minimum Size", HelpText = "Release must be greater than this size", Unit = "GB", Type = FieldType.Number)]
+        [FieldDefinition(1, Label = "provider.field.fa65c5057eb7e", HelpText = "provider.field.fe9b5e70cc374", Unit = "GB", Type = FieldType.Number)]
         public double Min { get; set; }
 
-        [FieldDefinition(1, Label = "Maximum Size", HelpText = "Release must be less than or equal to this size", Unit = "GB", Type = FieldType.Number)]
+        [FieldDefinition(1, Label = "MaximumSize", HelpText = "provider.field.f2aa9bf2bc039", Unit = "GB", Type = FieldType.Number)]
         public double Max { get; set; }
 
         protected override bool IsSatisfiedByWithoutNegate(CustomFormatInput input)

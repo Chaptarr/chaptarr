@@ -27,6 +27,12 @@ namespace NzbDrone.Core.Messaging.Commands
         CommandModel Get(int id);
         List<CommandModel> GetStarted();
         void SetMessage(CommandModel command, string message);
+
+        // Progress text that changes many times a second (one per book during an author refresh).
+        // Default = SetMessage so every existing implementer/test double keeps its behaviour; the real
+        // manager overrides it to persist at most once per ProgressPersistInterval.
+        void SetProgressMessage(CommandModel command, string message) => SetMessage(command, message);
+
         void TouchProgress(CommandModel command);
         void SetResult(CommandModel command, CommandResult result);
         void Start(CommandModel command);
@@ -44,8 +50,11 @@ namespace NzbDrone.Core.Messaging.Commands
 
     public class CommandQueueManager : IManageCommandQueue, IHandle<ApplicationStartedEvent>
     {
+        private const string CancellingMessage = "Cancelling";
         private const string MaxManualQueueDepthEnvVar = "CHAPTARR_MAX_MANUAL_COMMAND_QUEUE";
         private const int DefaultMaxManualQueueDepth = 1000;
+        private const string DiskAccessLimitEnvVar = "CHAPTARR_DISK_ACCESS_LIMIT";
+        private const int DefaultDiskAccessLimit = 1;
         private static readonly int MaxManualQueueDepth = GetMaxManualQueueDepth();
 
         private readonly ICommandRepository _repo;
@@ -54,6 +63,8 @@ namespace NzbDrone.Core.Messaging.Commands
 
         private readonly CommandQueue _commandQueue;
         private readonly ConcurrentDictionary<int, CancellationTokenSource> _cancellationTokenSources;
+        private readonly ConcurrentDictionary<int, long> _lastProgressPersistTicks = new ConcurrentDictionary<int, long>();
+        private static readonly long ProgressPersistIntervalTicks = System.Diagnostics.Stopwatch.Frequency; // 1s
 
         public CommandQueueManager(ICommandRepository repo,
                                    IServiceFactory serviceFactory,
@@ -64,8 +75,31 @@ namespace NzbDrone.Core.Messaging.Commands
             _knownTypes = knownTypes;
             _logger = logger;
 
-            _commandQueue = new CommandQueue();
+            _commandQueue = new CommandQueue(GetDiskAccessGroupLimit, () => CommandExecutor.ThreadLimit);
             _cancellationTokenSources = new ConcurrentDictionary<int, CancellationTokenSource>();
+        }
+
+        /// <summary>
+        /// How many disk-access commands from the same group may run concurrently.
+        /// Defaults to 1, which preserves the previous strictly-serial behaviour.
+        ///
+        /// Raising this helps when the library sits on a high-latency filesystem
+        /// (e.g. FUSE/mergerfs or a network mount) where a single command spends most
+        /// of its time waiting on per-file I/O rather than saturating CPU or disk
+        /// bandwidth - work that parallelises well. It is opt-in because concurrent
+        /// commands share the database and can touch the same files, so the safe
+        /// default remains serial.
+        /// </summary>
+        private static int GetDiskAccessGroupLimit(string group)
+        {
+            var value = Environment.GetEnvironmentVariable(DiskAccessLimitEnvVar);
+
+            if (!string.IsNullOrWhiteSpace(value) && int.TryParse(value, out var parsed) && parsed > 0)
+            {
+                return Math.Min(parsed, 32);
+            }
+
+            return DefaultDiskAccessLimit;
         }
 
         private static int GetMaxManualQueueDepth()
@@ -93,7 +127,7 @@ namespace NzbDrone.Core.Messaging.Commands
 
                 foreach (var command in commands)
                 {
-                    var existing = existingCommands.FirstOrDefault(c => c.Name == command.Name && CommandEqualityComparer.Instance.Equals(c.Body, command));
+                    var existing = existingCommands.Concat(commandModels).FirstOrDefault(c => c.Name == command.Name && CommandEqualityComparer.Instance.Equals(c.Body, command));
 
                     if (existing != null)
                     {
@@ -111,12 +145,11 @@ namespace NzbDrone.Core.Messaging.Commands
                     };
 
                     commandModels.Add(commandModel);
-                }
-
-                _repo.InsertMany(commandModels);
-
-                foreach (var commandModel in commandModels)
-                {
+                    // InsertMany binds Dapper parameters from each command body's runtime type, which has no
+                    // handler for derived commands such as RefreshAuthorCommand. Insert maps through the declared
+                    // Body column type. Queue each successful insert immediately so a later insert failure cannot
+                    // leave earlier rows persisted but invisible to the in-memory executor.
+                    _repo.Insert(commandModel);
                     _commandQueue.Add(commandModel);
                 }
 
@@ -212,10 +245,44 @@ namespace NzbDrone.Core.Messaging.Commands
             return _commandQueue.All().Where(c => c.Status == CommandStatus.Started).ToList();
         }
 
-        public void SetMessage(CommandModel command, string message)
+        public void SetProgressMessage(CommandModel command, string message)
         {
+            // Always keep the in-memory model current (that is what the API/UI reads while a command
+            // runs); only the DB write is throttled. Persisting Message + LastProgressAt on every call
+            // cost one UPDATE per book during a refresh, and LastProgressAt already has its own 30s
+            // heartbeat (TouchProgress), so nothing depends on it moving faster than this.
             command.Message = message;
             command.LastProgressAt = DateTime.UtcNow;
+
+            var now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_lastProgressPersistTicks.TryGetValue(command.Id, out var last) &&
+                now - last < ProgressPersistIntervalTicks)
+            {
+                return;
+            }
+
+            if (_lastProgressPersistTicks.Count > 1024)
+            {
+                _lastProgressPersistTicks.Clear();
+            }
+
+            _lastProgressPersistTicks[command.Id] = now;
+            PersistMessage(command);
+        }
+
+        public void SetMessage(CommandModel command, string message)
+        {
+            // Terminal/explicit messages (Completed, Failed, Cancelled, Resumed, ...) always persist and
+            // end the command's progress throttling.
+            _lastProgressPersistTicks.TryRemove(command.Id, out _);
+
+            command.Message = message;
+            command.LastProgressAt = DateTime.UtcNow;
+            PersistMessage(command);
+        }
+
+        private void PersistMessage(CommandModel command)
+        {
             try
             {
                 // Persist progress heartbeat and message
@@ -301,6 +368,13 @@ namespace NzbDrone.Core.Messaging.Commands
                 throw new NzbDroneClientException(HttpStatusCode.Conflict, "Cannot cancel a command that has already finished");
             }
 
+            if (command.Status == CommandStatus.Started && command.Message == CancellingMessage)
+            {
+                // Already asked to stop; the handler has not exited yet. Nothing more to do (and do not fall through
+                // to the Cancelled path below, which would hide the still-running handler).
+                return;
+            }
+
             // If queued, remove from the in-memory queue to prevent execution.
             if (command.Status == CommandStatus.Queued)
             {
@@ -308,11 +382,25 @@ namespace NzbDrone.Core.Messaging.Commands
             }
 
             // Best-effort: cancel running work if a token source exists.
+            var cancellationRequested = false;
             if (_cancellationTokenSources.TryRemove(id, out var cancellationTokenSource))
             {
+                cancellationRequested = true;
                 _logger.Info("Cancelling command with ID: {0}", id);
                 cancellationTokenSource.Cancel();
                 cancellationTokenSource.Dispose();
+            }
+
+            if (command.Status == CommandStatus.Started && cancellationRequested)
+            {
+                // The token has been signalled, but the handler is still running on its worker thread and only stops
+                // if it observes the token. Marking the command Cancelled here hid a thread that was still busy: the
+                // command left the started list and stopped counting toward disk access group limits while the handler
+                // kept going. Keep it Started until the executor sees the handler exit (OperationCanceledException ->
+                // Cancelled, or normal completion -> Completed).
+                SetMessage(command, CancellingMessage);
+                _logger.Info("Cancellation requested for running command with ID: {0}; it stays Started until its handler exits", id);
+                return;
             }
 
             if (command.Status == CommandStatus.Queued ||

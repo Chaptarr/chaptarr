@@ -22,6 +22,14 @@ namespace Chaptarr.Core.Test.Http
             }
         }
 
+        private class MissingSearchValidator : AbstractValidator<TestModel>
+        {
+            public MissingSearchValidator()
+            {
+                RuleFor(x => x.Interval).IsValidMissingBookSearchInterval();
+            }
+        }
+
         private static readonly TestValidator Validator = new();
 
         [TestCase("http://example.com", true)]
@@ -43,6 +51,19 @@ namespace Chaptarr.Core.Test.Http
         public void rss_sync_interval_should_validate_expected_bounds(int interval, bool isValid)
         {
             var result = Validator.Validate(new TestModel { Url = "https://example.com", Interval = interval });
+
+            Assert.That(result.IsValid, Is.EqualTo(isValid));
+        }
+
+        [TestCase(0, true)]
+        [TestCase(60, true)]
+        [TestCase(1440, true)]
+        [TestCase(1, false)]
+        [TestCase(59, false)]
+        [TestCase(-1, false)]
+        public void missing_book_search_interval_should_validate_expected_bounds(int interval, bool isValid)
+        {
+            var result = new MissingSearchValidator().Validate(new TestModel { Url = "https://example.com", Interval = interval });
 
             Assert.That(result.IsValid, Is.EqualTo(isValid));
         }

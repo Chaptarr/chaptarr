@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using NLog;
@@ -20,6 +21,7 @@ namespace NzbDrone.Core.Backup
     public interface IBackupService
     {
         void Backup(BackupType backupType);
+        string CreateTemporaryBackup();
         List<Backup> GetBackups();
         void Restore(string backupFileName);
         string GetBackupFolder();
@@ -39,8 +41,9 @@ namespace NzbDrone.Core.Backup
         private readonly Logger _logger;
 
         private string _backupTempFolder;
+        private string _backupEncryptionTempFolder;
 
-        public static readonly Regex BackupFileRegex = new Regex(@"(chaptarr|readarr|audioarr)_backup_(v[0-9.]+_)?[._0-9]+\.zip", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        public static readonly Regex BackupFileRegex = new Regex(@"(chaptarr|readarr|audioarr)_backup_(v[0-9.]+_)?[._0-9]+\.zip(?:\.enc)?$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         public BackupService(IMainDatabase maindDb,
                              IMakeDatabaseBackup makeDatabaseBackup,
@@ -63,6 +66,7 @@ namespace NzbDrone.Core.Backup
             _logger = logger;
 
             _backupTempFolder = Path.Combine(_appFolderInfo.TempFolder, "chaptarr_backup");
+            _backupEncryptionTempFolder = Path.Combine(_appFolderInfo.TempFolder, "chaptarr_backup_encryption");
         }
 
         public void Backup(BackupType backupType)
@@ -70,8 +74,16 @@ namespace NzbDrone.Core.Backup
             _logger.ProgressInfo("Starting Backup");
 
             var backupFolder = GetBackupFolder(backupType);
+            var encryptionPassphrase = BackupArchiveEncryption.GetConfiguredPassphrase();
 
             _diskProvider.EnsureFolder(_backupTempFolder);
+            RestrictTempFolder(_backupTempFolder);
+
+            if (encryptionPassphrase != null)
+            {
+                EnsurePrivateTempFolder(_backupEncryptionTempFolder);
+            }
+
             _diskProvider.EnsureFolder(backupFolder);
 
             if (!_diskProvider.FolderWritable(backupFolder))
@@ -80,36 +92,120 @@ namespace NzbDrone.Core.Backup
             }
 
             var dateNow = DateTime.Now;
-            var backupFilename = $"chaptarr_backup_v{BuildInfo.Version}_{dateNow:yyyy.MM.dd_HH.mm.ss}.zip";
+            var backupFilename = $"chaptarr_backup_v{BuildInfo.Version}_{dateNow:yyyy.MM.dd_HH.mm.ss}.zip{(encryptionPassphrase == null ? string.Empty : ".enc")}";
             var backupPath = Path.Combine(backupFolder, backupFilename);
+            var plaintextArchivePath = encryptionPassphrase == null
+                ? backupPath
+                : Path.Combine(_backupEncryptionTempFolder, $"chaptarr_backup_{Guid.NewGuid():N}.zip");
+            var encryptedBackupCreated = false;
+            var encryptedBackupExistedBefore = encryptionPassphrase != null && _diskProvider.FileExists(backupPath);
 
-            Cleanup();
-
-            if (backupType != BackupType.Manual)
+            try
             {
-                CleanupOldBackups(backupType);
-            }
+                Cleanup();
 
-            BackupConfigFile();
-            BackupDatabase();
-            CreateVersionInfo(dateNow);
-
-            _logger.ProgressDebug("Creating backup zip");
-
-            // Delete journal file(s) created during database backup (DB filename may differ for legacy installs).
-            foreach (var file in _diskProvider.GetFiles(_backupTempFolder, false))
-            {
-                if (file.EndsWith("-journal", StringComparison.OrdinalIgnoreCase))
+                if (backupType != BackupType.Manual)
                 {
-                    _diskProvider.DeleteFile(file);
+                    CleanupOldBackups(backupType);
+                }
+
+                BackupConfigFile(_backupTempFolder);
+                BackupDatabase(_backupTempFolder);
+                CreateVersionInfo(dateNow, _backupTempFolder);
+
+                _logger.ProgressDebug("Creating backup zip");
+
+                // Delete journal file(s) created during database backup (DB filename may differ for legacy installs).
+                foreach (var file in _diskProvider.GetFiles(_backupTempFolder, false))
+                {
+                    if (file.EndsWith("-journal", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _diskProvider.DeleteFile(file);
+                    }
+                }
+
+                _archiveService.CreateZip(plaintextArchivePath, _diskProvider.GetFiles(_backupTempFolder, false));
+
+                if (encryptionPassphrase != null)
+                {
+                    BackupArchiveEncryption.Encrypt(plaintextArchivePath, backupPath, encryptionPassphrase);
+                    encryptedBackupCreated = true;
+                    _diskProvider.DeleteFile(plaintextArchivePath);
+                    _logger.ProgressDebug("Encrypted backup archive created");
+                }
+                else
+                {
+                    _logger.ProgressDebug("Backup zip created without full-backup encryption; configure {0} to encrypt full backups", BackupArchiveEncryption.PassphraseFileEnvironmentVariable);
                 }
             }
+            finally
+            {
+                if (encryptionPassphrase != null && !encryptedBackupCreated && !encryptedBackupExistedBefore && _diskProvider.FileExists(backupPath))
+                {
+                    _diskProvider.DeleteFile(backupPath);
+                }
 
-            _archiveService.CreateZip(backupPath, _diskProvider.GetFiles(_backupTempFolder, false));
+                if (encryptionPassphrase != null && _diskProvider.FileExists(plaintextArchivePath))
+                {
+                    _diskProvider.DeleteFile(plaintextArchivePath);
+                }
 
-            Cleanup();
+                Cleanup();
+            }
+        }
 
-            _logger.ProgressDebug("Backup zip created");
+        public string CreateTemporaryBackup()
+        {
+            EnsurePrivateTempFolder(_backupEncryptionTempFolder);
+
+            var suffix = Guid.NewGuid().ToString("N");
+            var stagingFolder = Path.Combine(_backupEncryptionTempFolder, $"export_{suffix}");
+            var backupPath = Path.Combine(_backupEncryptionTempFolder, $"chaptarr_backup_export_{suffix}.zip");
+            var dateNow = DateTime.Now;
+
+            try
+            {
+                _diskProvider.EnsureFolder(stagingFolder);
+                RestrictTempFolder(stagingFolder);
+
+                BackupConfigFile(stagingFolder);
+                BackupDatabase(stagingFolder);
+                CreateVersionInfo(dateNow, stagingFolder);
+
+                foreach (var file in _diskProvider.GetFiles(stagingFolder, false))
+                {
+                    if (file.EndsWith("-journal", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _diskProvider.DeleteFile(file);
+                    }
+                }
+
+                _archiveService.CreateZip(backupPath, _diskProvider.GetFiles(stagingFolder, false));
+                _diskProvider.DeleteFolder(stagingFolder, true);
+
+                return backupPath;
+            }
+            catch
+            {
+                if (_diskProvider.FileExists(backupPath))
+                {
+                    _diskProvider.DeleteFile(backupPath);
+                }
+
+                if (_diskProvider.FolderExists(stagingFolder))
+                {
+                    try
+                    {
+                        _diskProvider.DeleteFolder(stagingFolder, true);
+                    }
+                    catch (Exception cleanupException)
+                    {
+                        _logger.Error(cleanupException, "Failed to clean up temporary plaintext backup staging folder {0}", stagingFolder);
+                    }
+                }
+
+                throw;
+            }
         }
 
         public List<Backup> GetBackups()
@@ -142,6 +238,41 @@ namespace NzbDrone.Core.Backup
                 throw new RestoreBackupFailedException(HttpStatusCode.BadRequest, "Database restore is only supported for SQLite. PostgreSQL databases must be restored externally using pg_restore");
             }
 
+            if (backupFileName.EndsWith(".enc", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!backupFileName.EndsWith(".zip.enc", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new RestoreBackupFailedException(HttpStatusCode.BadRequest, "Encrypted full backups must use the .zip.enc extension");
+                }
+
+                var encryptionPassphrase = BackupArchiveEncryption.GetConfiguredPassphrase();
+                if (encryptionPassphrase == null)
+                {
+                    throw new RestoreBackupFailedException(HttpStatusCode.BadRequest, $"Set {BackupArchiveEncryption.PassphraseFileEnvironmentVariable} to a mounted secret-file path before restoring this encrypted full backup");
+                }
+
+                EnsurePrivateTempFolder(_backupEncryptionTempFolder);
+                var plaintextPath = Path.Combine(_backupEncryptionTempFolder, $"chaptarr_backup_restore_{Guid.NewGuid():N}.zip");
+                try
+                {
+                    BackupArchiveEncryption.Decrypt(backupFileName, plaintextPath, encryptionPassphrase);
+                    Restore(plaintextPath);
+                    return;
+                }
+                catch (Exception ex) when (ex is CryptographicException || ex is InvalidDataException || ex is EndOfStreamException)
+                {
+                    _logger.Warn(ex, "Encrypted full backup could not be authenticated or read");
+                    throw new RestoreBackupFailedException(HttpStatusCode.BadRequest, "Unable to decrypt the full backup. Verify the backup file and mounted secret file configured by CHAPTARR_BACKUP_ENCRYPTION_KEY_FILE.");
+                }
+                finally
+                {
+                    if (_diskProvider.FileExists(plaintextPath))
+                    {
+                        _diskProvider.DeleteFile(plaintextPath);
+                    }
+                }
+            }
+
             if (backupFileName.EndsWith(".zip", StringComparison.InvariantCultureIgnoreCase))
             {
                 var temporaryPath = Path.Combine(_appFolderInfo.TempFolder, $"chaptarr_backup_restore_{Guid.NewGuid():N}");
@@ -149,6 +280,7 @@ namespace NzbDrone.Core.Backup
                 try
                 {
                     _diskProvider.EnsureFolder(temporaryPath);
+                    RestrictTempFolder(temporaryPath);
                     _archiveService.Extract(backupFileName, temporaryPath);
 
                     var files = _diskProvider.GetFiles(temporaryPath, false).ToList();
@@ -232,13 +364,34 @@ namespace NzbDrone.Core.Backup
             }
         }
 
-        private void BackupDatabase()
+        private void EnsurePrivateTempFolder(string path)
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                _diskProvider.EnsureFolder(path);
+                return;
+            }
+
+            var ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+            Directory.CreateDirectory(path, ownerOnly);
+            File.SetUnixFileMode(path, ownerOnly);
+        }
+
+        private static void RestrictTempFolder(string path)
+        {
+            if (!OperatingSystem.IsWindows() && Directory.Exists(path))
+            {
+                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+        }
+
+        private void BackupDatabase(string backupTempFolder)
         {
             if (_maindDb.DatabaseType == DatabaseType.SQLite)
             {
                 _logger.ProgressDebug("Backing up database");
 
-                _makeDatabaseBackup.BackupDatabase(_maindDb, _backupTempFolder);
+                _makeDatabaseBackup.BackupDatabase(_maindDb, backupTempFolder);
             }
             else
             {
@@ -246,19 +399,19 @@ namespace NzbDrone.Core.Backup
             }
         }
 
-        private void BackupConfigFile()
+        private void BackupConfigFile(string backupTempFolder)
         {
             _logger.ProgressDebug("Backing up config.xml");
 
             var configFile = _appFolderInfo.GetConfigPath();
-            var tempConfigFile = Path.Combine(_backupTempFolder, Path.GetFileName(configFile));
+            var tempConfigFile = Path.Combine(backupTempFolder, Path.GetFileName(configFile));
 
             _diskTransferService.TransferFile(configFile, tempConfigFile, TransferMode.Copy);
         }
 
-        private void CreateVersionInfo(DateTime dateNow)
+        private void CreateVersionInfo(DateTime dateNow, string backupTempFolder)
         {
-            var tempFile = Path.Combine(_backupTempFolder, "INFO");
+            var tempFile = Path.Combine(backupTempFolder, "INFO");
 
             var builder = new StringBuilder();
             builder.AppendLine($"v{BuildInfo.Version}");

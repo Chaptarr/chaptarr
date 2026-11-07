@@ -1,0 +1,38 @@
+name: gVisor runner smoke
+
+run-name: ${{ format('action:{0}:pool:{1}', inputs.action, inputs.runner_pool) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Run the gVisor smoke check
+        required: true
+        type: choice
+        options: [smoke]
+      runner_pool:
+        description: Required private ephemeral JIT runner pool
+        required: true
+        type: choice
+        options: [private]
+
+permissions: {}
+
+jobs:
+  smoke:
+    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 5
+    runs-on:
+      group: gvisor-sandbox
+      labels: gvisor-sandbox
+    steps:
+      - name: Check runner boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -s)" = Linux
+          test "$(uname -m)" = x86_64
+          test ! -S /var/run/docker.sock
+          test ! -S /run/podman/podman.sock
+          printf 'repository=%s\nrunner=%s\ncommit=%s\n' \
+            "$GITHUB_REPOSITORY" "$RUNNER_NAME" "$GITHUB_SHA"

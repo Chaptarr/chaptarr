@@ -139,7 +139,7 @@ class EditCustomFormatModalContent extends Component {
       <ModalContent onModalClose={onModalClose}>
 
         <ModalHeader>
-          {id ? 'Edit Custom Format' : 'Add Custom Format'}
+          {translate(id ? 'EditCustomFormatTitle' : 'AddCustomFormatTitle')}
         </ModalHeader>
 
         <ModalBody>
@@ -152,7 +152,7 @@ class EditCustomFormatModalContent extends Component {
             {
               !isFetching && !!error &&
                 <div>
-                  {'Unable to add a new custom format, please try again.'}
+                  {translate('UnableToLoadCustomFormats')}
                 </div>
             }
 

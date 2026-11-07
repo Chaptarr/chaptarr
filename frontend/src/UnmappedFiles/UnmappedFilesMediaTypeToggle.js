@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import React from 'react';
 import SegmentedToggle from 'Components/Form/SegmentedToggle';
+import translate from 'Utilities/String/translate';
 import styles from './UnmappedFilesMediaTypeToggle.css';
 
 function UnmappedFilesMediaTypeToggle(props) {
@@ -12,16 +13,16 @@ function UnmappedFilesMediaTypeToggle(props) {
   const options = [
     {
       key: 'audiobook',
-      label: 'Audiobooks',
+      label: translate('Audiobooks'),
       icon: <span className={styles.icon}>🎧</span>
     },
     {
       key: 'all',
-      label: 'All'
+      label: translate('All')
     },
     {
       key: 'ebook',
-      label: 'eBooks',
+      label: translate('Ebooks'),
       icon: <span className={styles.icon}>📖</span>
     }
   ];

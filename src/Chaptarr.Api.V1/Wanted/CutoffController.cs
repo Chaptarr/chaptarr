@@ -39,7 +39,9 @@ namespace Chaptarr.Api.V1.Wanted
                 Page = pagingResource.Page,
                 PageSize = pagingResource.PageSize,
                 SortKey = pagingResource.SortKey,
-                SortDirection = pagingResource.SortDirection
+                SortDirection = pagingResource.SortDirection == SortDirection.Default
+                    ? SortDirection.Descending
+                    : pagingResource.SortDirection
             };
 
             pagingSpec.FilterExpressions.Add(AuthorExtensions.GetBookMonitoringFilter(requestedMediaType, monitored));

@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Chaptarr.Http;
+using Chaptarr.Http.Middleware;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Localization;
@@ -20,10 +22,14 @@ namespace Chaptarr.Api.V1.Localization
             _serializerSettings.PropertyNamingPolicy = null;
         }
 
+        [AllowAnonymous]
         [HttpGet]
         public string GetLocalizationDictionary()
         {
-            return JsonSerializer.Serialize(_localizationService.GetLocalizationDictionary().ToResource(), _serializerSettings);
+            var dictionary = HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true
+                ? _localizationService.GetBookshelfLocalizationDictionary()
+                : _localizationService.GetLocalizationDictionary();
+            return JsonSerializer.Serialize(dictionary.ToResource(_localizationService.GetCurrentLocale()), _serializerSettings);
         }
     }
 }

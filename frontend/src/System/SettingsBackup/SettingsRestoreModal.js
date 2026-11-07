@@ -16,6 +16,7 @@ import ModalHeader from 'Components/Modal/ModalHeader';
 import { inputTypes, kinds, sizes } from 'Helpers/Props';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import translate from 'Utilities/String/translate';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import SettingsBackupCategoryPicker, {
   getDefaultSettingsBackupCategories,
   toCategoryList
@@ -348,7 +349,7 @@ class SettingsRestoreModal extends Component {
                     className={styles.statusAlert}
                     kind={kinds.DANGER}
                   >
-                    {restoreError}
+                    {translateServerMessage(restoreError)}
                   </Alert>
                 </FormGroup>
               )}

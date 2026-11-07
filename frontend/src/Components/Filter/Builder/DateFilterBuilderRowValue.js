@@ -5,17 +5,25 @@ import SelectInput from 'Components/Form/SelectInput';
 import TextInput from 'Components/Form/TextInput';
 import { IN_LAST, IN_NEXT, NOT_IN_LAST, NOT_IN_NEXT } from 'Helpers/Props/filterTypes';
 import isString from 'Utilities/String/isString';
+import translate from 'Utilities/String/translate';
 import { NAME } from './FilterBuilderRowValue';
 import styles from './DateFilterBuilderRowValue.css';
 
-const timeOptions = [
-  { key: 'seconds', value: 'seconds' },
-  { key: 'minutes', value: 'minutes' },
-  { key: 'hours', value: 'hours' },
-  { key: 'days', value: 'days' },
-  { key: 'weeks', value: 'weeks' },
-  { key: 'months', value: 'months' }
+const timeOptionKeys = [
+  ['seconds', 'Seconds'],
+  ['minutes', 'FormatAgeMinutes'],
+  ['hours', 'FormatAgeHours'],
+  ['days', 'FormatAgeDays'],
+  ['weeks', 'Weeks'],
+  ['months', 'Months']
 ];
+
+function getTimeOptions() {
+  return timeOptionKeys.map(([key, translationKey]) => ({
+    key,
+    value: translate(translationKey)
+  }));
+}
 
 function isInFilter(filterType) {
   return (
@@ -42,7 +50,7 @@ class DateFilterBuilderRowValue extends Component {
       onChange({
         name: NAME,
         value: {
-          time: timeOptions[0].key,
+          time: timeOptionKeys[0][0],
           value: null
         }
       });
@@ -64,7 +72,7 @@ class DateFilterBuilderRowValue extends Component {
       onChange({
         name: NAME,
         value: {
-          time: timeOptions[0].key,
+          time: timeOptionKeys[0][0],
           value: null
         }
       });
@@ -149,7 +157,7 @@ class DateFilterBuilderRowValue extends Component {
             className={styles.selectInput}
             name={NAME}
             value={filterValue.time}
-            values={timeOptions}
+            values={getTimeOptions()}
             onChange={this.onTimeChange}
           />
         </div>

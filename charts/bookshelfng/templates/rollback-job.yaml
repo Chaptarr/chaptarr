@@ -1,0 +1,105 @@
+{{- $migration := default dict .Values.bookshelfMigration -}}
+{{- $rollback := default dict $migration.rollback -}}
+{{- if $rollback.enabled -}}
+{{- if not .Release.IsUpgrade -}}
+{{- fail "BookshelfNG rollback is available only when upgrading an existing Helm release" -}}
+{{- end -}}
+{{- if ne $rollback.confirmed true -}}
+{{- fail "bookshelfMigration.rollback.confirmed=true is required before restoring BookshelfNG data" -}}
+{{- end -}}
+{{- if ne (int .Values.replicaCount) 0 -}}
+{{- fail "scale the BookshelfNG StatefulSet to zero and wait for its pod to stop before enabling the rollback job" -}}
+{{- end -}}
+{{- if not (or .Values.persistence.enabled .Values.persistence.existingClaim) -}}
+{{- fail "BookshelfNG rollback requires a persistent /config volume" -}}
+{{- end -}}
+{{- $databaseType := lower (toString (default "" $rollback.databaseType)) -}}
+{{- $postgresBackupPath := toString (default "" $rollback.postgresBackupPath) -}}
+{{- $postgresBackupRoot := trimSuffix "/postgres-source" $postgresBackupPath -}}
+{{- if not (has $databaseType (list "sqlite" "postgresql")) -}}
+{{- fail "bookshelfMigration.rollback.databaseType must be sqlite or postgresql" -}}
+{{- end -}}
+{{- if eq $databaseType "postgresql" -}}
+  {{- if not (regexMatch "^\\.chaptarrng-bookshelf-handoff/[0-9TZ-]+/postgres-source$" $postgresBackupPath) -}}
+  {{- fail "PostgreSQL rollback requires postgresBackupPath under .chaptarrng-bookshelf-handoff/<attempt-id>/postgres-source" -}}
+  {{- end -}}
+{{- else if ne $postgresBackupPath "" -}}
+{{- fail "postgresBackupPath is valid only when rollback.databaseType=postgresql" -}}
+{{- end -}}
+{{- $imageDigest := required "image.digest must be set to a validated ChaptarrNG sha256 digest" .Values.image.digest -}}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $imageDigest) -}}
+{{- fail "image.digest must have the form sha256:<64 lowercase hexadecimal characters>" -}}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-rollback-%d" (include "bookshelfng.fullname" . | trunc 45 | trimSuffix "-") .Release.Revision | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "bookshelfng.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rollback
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 14700
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "bookshelfng.name" . }}
+        app.kubernetes.io/component: rollback
+    spec:
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30600
+      serviceAccountName: {{ if .Values.serviceAccount.create }}{{ default (include "bookshelfng.fullname" .) .Values.serviceAccount.name }}{{ else }}{{ default "default" .Values.serviceAccount.name }}{{ end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: restore-bookshelfng
+          image: "{{ .Values.image.repository }}@{{ $imageDigest }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              {{ if eq $databaseType "postgresql" }}
+              dotnet /app/Chaptarr.dll -preview-bookshelf-postgres-restore -confirm-bookshelf-service-stopped -bookshelf-postgres-log-cache-only -bookshelf-postgres-backup=/config/{{ $postgresBackupPath }} -data=/config
+              {{ end }}
+              dotnet /app/Chaptarr.dll -preview-bookshelf-restore -bookshelf-backup=auto -data=/config
+              {{ if eq $databaseType "postgresql" }}
+              postgresRollbackBackup=/config/{{ $postgresBackupRoot }}/target-postgres-log-cache-{{ .Release.Revision }}
+              mkdir -m 0700 "$postgresRollbackBackup"
+              dotnet /app/Chaptarr.dll -backup-bookshelf-postgres -confirm-bookshelf-service-stopped -bookshelf-postgres-log-cache-only "-bookshelf-postgres-backup=$postgresRollbackBackup" -data=/config
+              {{ end }}
+              dotnet /app/Chaptarr.dll -restore-bookshelf -confirm-bookshelf-service-stopped -bookshelf-backup=auto -data=/config
+              {{ if eq $databaseType "postgresql" }}
+              dotnet /app/Chaptarr.dll -restore-bookshelf-postgres -confirm-bookshelf-service-stopped -bookshelf-postgres-log-cache-only -bookshelf-postgres-backup=/config/{{ $postgresBackupPath }} -data=/config
+              {{ end }}
+          env:
+            {{- include "bookshelfng.containerEnv" . | nindent 12 }}
+          {{- with .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-config" (include "bookshelfng.fullname" .)) }}
+{{- end }}

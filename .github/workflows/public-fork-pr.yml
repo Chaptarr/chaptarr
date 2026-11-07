@@ -1,0 +1,30 @@
+name: ChaptarrNG fork PR validation
+on:
+  pull_request:
+    types: [labeled]
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: public-fork-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    name: Run disposable fork validation
+    if: >-
+      github.event.action == 'labeled' &&
+      github.actor == 'snapetech' &&
+      (startsWith(github.event.label.name, 'action:') ||
+       startsWith(github.event.label.name, 'pool:')) &&
+      contains(github.event.pull_request.labels.*.name, 'action:ci') &&
+      (contains(github.event.pull_request.labels.*.name, 'pool:public') ||
+       contains(github.event.pull_request.labels.*.name, 'pool:hybrid')) &&
+      github.event.pull_request.head.repo.fork == true &&
+      github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name &&
+      github.event.pull_request.base.repo.full_name == 'snapetech-org/chaptarrng' &&
+      github.event.pull_request.base.ref == 'main'
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: snapetech-org/chaptarrng/.github/workflows/fork-safe-validation.yml@f1d625aa0bf03151a735c0e0e7ce398ce1f156b2
+

@@ -2,6 +2,7 @@ using System;
 using System.Net;
 using FluentValidation.Results;
 using NLog;
+using NzbDrone.Core.Localization;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Http;
 
@@ -18,11 +19,13 @@ namespace NzbDrone.Core.Notifications.Prowl
         private const string PUSH_URL = "https://api.prowlapp.com/publicapi/add";
         private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
+        private readonly NotificationText _notificationText;
 
-        public ProwlProxy(IHttpClient httpClient, Logger logger)
+        public ProwlProxy(IHttpClient httpClient, ILocalizationService localizationService, Logger logger)
         {
             _httpClient = httpClient;
             _logger = logger;
+            _notificationText = new NotificationText(localizationService);
         }
 
         public void SendNotification(string title, string message, ProwlSettings settings)
@@ -61,8 +64,8 @@ namespace NzbDrone.Core.Notifications.Prowl
         {
             try
             {
-                const string title = "Test Notification";
-                const string body = "This is a test message from Chaptarr";
+                var title = _notificationText.Get("notification.test.title", "Test Notification");
+                var body = _notificationText.Get("notification.test.body", "This is a test message from Chaptarr.");
 
                 SendNotification(title, body, settings);
             }

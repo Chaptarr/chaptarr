@@ -14,6 +14,29 @@ namespace Chaptarr.Core.Test.DecisionEngine
     [TestFixture]
     public class ReleaseTitleMatchSpecificationFixture
     {
+        [TestCase("Isaac Asimov Galactic Empire Series 2 Books Set EPUB")]
+        [TestCase("Isaac Asimov Galactic Empire Series Book 1 EPUB")]
+        [TestCase("Isaac Asimov Galactic Empire Series Pebble in the Sky EPUB")]
+        public void should_reject_partial_series_sets_with_default_balanced_matching(string releaseTitle)
+        {
+            var author = new Author { Name = "Isaac Asimov" };
+            var book = new Book { Title = "Galactic Empire Series 3 Books Set", Author = author };
+            var criteria = new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                InteractiveSearch = true
+            };
+            var remoteBook = new RemoteBook
+            {
+                Release = new ReleaseInfo { Title = releaseTitle, Author = author.Name }
+            };
+
+            var spec = new ReleaseTitleMatchSpecification(LogManager.GetCurrentClassLogger());
+
+            Assert.That(spec.IsSatisfiedBy(remoteBook, criteria).Accepted, Is.False);
+        }
+
         [Test]
         public void should_accept_interactive_search_result_when_release_title_omits_author_but_release_author_hint_matches()
         {
@@ -166,7 +189,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
         }
 
         [Test]
-        public void should_reject_interactive_search_result_when_release_omits_the_monitored_edition_subtitle()
+        public void should_require_the_monitored_edition_subtitle_for_interactive_search()
         {
             var author = new Author { Name = "Mitch Albom" };
             var book = new Book
@@ -207,9 +230,15 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var logger = LogManager.GetCurrentClassLogger();
             var spec = new ReleaseTitleMatchSpecification(logger);
 
-            var decision = spec.IsSatisfiedBy(remoteBook, criteria);
+            var withoutSubtitle = spec.IsSatisfiedBy(remoteBook, criteria);
+            release.Title = book.Editions[0].Title;
+            var withSubtitle = spec.IsSatisfiedBy(remoteBook, criteria);
 
-            Assert.That(decision.Accepted, Is.False);
+            Assert.Multiple(() =>
+            {
+                Assert.That(withoutSubtitle.Accepted, Is.False);
+                Assert.That(withSubtitle.Accepted, Is.True);
+            });
         }
 
         [Test]

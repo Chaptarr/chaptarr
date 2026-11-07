@@ -8,11 +8,13 @@ using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Organizer;
+using NzbDrone.Core.RootFolders;
 
 namespace NzbDrone.Core.MediaFiles
 {
@@ -36,10 +38,14 @@ namespace NzbDrone.Core.MediaFiles
     public class RenameBookFileService : IRenameBookFileService, IExecute<RenameFilesCommand>, IExecute<RenameAuthorCommand>
     {
         private readonly IAuthorService _authorService;
+        private readonly IConfigService _configService;
+        private readonly IBookshelfLegacyIdentityMapService _legacyIdentityMapService;
         private readonly IMediaFileService _mediaFileService;
         private readonly IMoveBookFiles _bookFileMover;
         private readonly IEventAggregator _eventAggregator;
         private readonly IDiskProvider _diskProvider;
+        private readonly IRootFolderWatchingService _rootFolderWatchingService;
+        private readonly IRootFolderService _rootFolderService;
         private readonly Logger _logger;
 
         public RenameBookFileService(IAuthorService authorService,
@@ -47,13 +53,21 @@ namespace NzbDrone.Core.MediaFiles
                                         IMoveBookFiles bookFileMover,
                                         IEventAggregator eventAggregator,
                                         IDiskProvider diskProvider,
-                                        Logger logger)
+                                        IRootFolderWatchingService rootFolderWatchingService,
+                                        Logger logger,
+                                        IRootFolderService rootFolderService = null,
+                                        IConfigService configService = null,
+                                        IBookshelfLegacyIdentityMapService legacyIdentityMapService = null)
         {
             _authorService = authorService;
+            _configService = configService;
+            _legacyIdentityMapService = legacyIdentityMapService;
             _mediaFileService = mediaFileService;
             _bookFileMover = bookFileMover;
             _eventAggregator = eventAggregator;
             _diskProvider = diskProvider;
+            _rootFolderWatchingService = rootFolderWatchingService;
+            _rootFolderService = rootFolderService;
             _logger = logger;
         }
 
@@ -84,10 +98,28 @@ namespace NzbDrone.Core.MediaFiles
                 .OrderBy(e => e.ExistingPath).ToList();
         }
 
+        private static bool IsCalibreManaged(List<RootFolder> rootFolders, string path)
+        {
+            if (path.IsNullOrWhiteSpace())
+            {
+                return false;
+            }
+
+            var bestRoot = rootFolders
+                .Where(r => r.Path.IsNotNullOrWhiteSpace() && (r.Path.PathEquals(path) || r.Path.IsParentPath(path)))
+                .OrderByDescending(r => r.Path.Length)
+                .FirstOrDefault();
+
+            return bestRoot?.IsCalibreLibrary == true;
+        }
+
         private IEnumerable<RenameBookFilePreview> GetPreviews(Author author, List<BookFile> files, bool moveToCanonicalAuthorFolder)
         {
-            var renameFiles = files.Where(x => x.CalibreId == 0).ToList();
-            EnsurePartNumbers(renameFiles);
+            var rootFolders = _rootFolderService?.All() ?? new List<RootFolder>();
+            var renameFiles = files.Where(x => x.CalibreId == 0 && !IsCalibreManaged(rootFolders, x.Path)).ToList();
+            EnsurePartNumbers(renameFiles, _configService?.BookshelfMatchCompatibility == true
+                ? _mediaFileService.GetFilesByAuthor(author.Id)
+                : null);
             // Pass 1: compute target directories for audiobook files that are part of this rename batch.
             var batchContext = new RenameBatchContext();
 
@@ -157,9 +189,31 @@ namespace NzbDrone.Core.MediaFiles
                 .Where(f => string.Equals(GetEffectiveMediaType(f), mediaType, StringComparison.OrdinalIgnoreCase));
         }
 
-        private static void EnsurePartNumbers(List<BookFile> files)
+        private void EnsurePartNumbers(List<BookFile> files, List<BookFile> countFiles = null)
         {
-            PartAssignmentHelper.NormalizeBookFilesByEdition(files);
+            if (_configService?.BookshelfMatchCompatibility != true)
+            {
+                PartAssignmentHelper.NormalizeBookFilesByEdition(files);
+                return;
+            }
+
+            // Source naming counted every file in the source edition and used
+            // its persisted Part. Migration can split one edition across media
+            // instances; reconstruct that group without renumbering its files.
+            countFiles ??= files;
+            var mappings = _legacyIdentityMapService?.GetMappingsByTargetIds("Edition", countFiles.Select(file => file.EditionId))
+                ?? new List<BookshelfLegacyIdentityMapEntry>();
+            var sourceByTarget = mappings.GroupBy(mapping => mapping.TargetId)
+                .Where(group => group.Select(mapping => mapping.SourceId).Distinct().Count() == 1)
+                .ToDictionary(group => group.Key, group => group.First().SourceId);
+            string Key(BookFile file) => sourceByTarget.TryGetValue(file.EditionId, out var sourceId)
+                ? "source:" + sourceId
+                : "target:" + file.EditionId;
+            var counts = countFiles.GroupBy(Key).ToDictionary(group => group.Key, group => group.Count());
+            foreach (var file in files)
+            {
+                file.PartCount = counts[Key(file)];
+            }
         }
 
         internal static string FormatRenameResultMessage(RenameFilesResult result, string authorName)
@@ -237,10 +291,12 @@ namespace NzbDrone.Core.MediaFiles
             var cleanupCandidates = new List<(string PreviousPath, string SourceAuthorFolderPath)>();
             var canonicalMoves = new List<(string MediaType, string SourceAuthorFolderPath, string DestinationAuthorFolderPath)>();
 
+            var rootFolders = _rootFolderService?.All() ?? new List<RootFolder>();
+
             // Don't rename Calibre files.
             // Ensure audiobook files are renamed first so mixed-root ebook colocation can clamp to the updated audiobook folders.
             var ordered = filesToRename
-                .Where(x => x.CalibreId == 0)
+                .Where(x => x.CalibreId == 0 && !IsCalibreManaged(rootFolders, x.Path))
                 .OrderBy(x =>
                 {
                     var mt = x.MediaType;
@@ -255,11 +311,21 @@ namespace NzbDrone.Core.MediaFiles
                 .ToList();
 
             var batchContext = new RenameBatchContext();
+            var previousPaths = ordered.ToDictionary(f => f.Id, f => f.Path);
+
+            // Audiobook destinations only depend on naming, so they can be planned up front; ebook plans
+            // still wait for the audiobook moves recorded in the batch context.
+            var audiobookPlans = ordered
+                .Where(IsAudiobook)
+                .ToDictionary(f => f.Id, f => _bookFileMover.GetOrganizeDestination(f, author, moveToCanonicalAuthorFolder, batchContext));
+            var relocatedFileIds = RelocateAudiobookFolders(ordered, allFiles, audiobookPlans);
 
             foreach (var bookFile in ordered)
             {
-                var previousPath = bookFile.Path;
-                var plan = _bookFileMover.GetOrganizeDestination(bookFile, author, moveToCanonicalAuthorFolder, batchContext);
+                var previousPath = previousPaths[bookFile.Id];
+                var plan = audiobookPlans.TryGetValue(bookFile.Id, out var audiobookPlan)
+                    ? audiobookPlan
+                    : _bookFileMover.GetOrganizeDestination(bookFile, author, moveToCanonicalAuthorFolder, batchContext);
                 if (!plan.CanOrganize)
                 {
                     result.BoundarySkippedCount++;
@@ -272,7 +338,12 @@ namespace NzbDrone.Core.MediaFiles
                 try
                 {
                     _logger.Debug("Organizing book file: {0}", bookFile);
-                    _bookFileMover.MoveBookFile(bookFile, author, plan, batchContext);
+
+                    // A file carried by a folder move is already in place unless its own name changes too.
+                    if (!relocatedFileIds.Contains(bookFile.Id) || bookFile.Path.PathNotEquals(plan.DestinationPath))
+                    {
+                        _bookFileMover.MoveBookFile(bookFile, author, plan, batchContext);
+                    }
 
                     _mediaFileService.Update(bookFile);
                     TrackAudiobookFolderMove(batchContext, bookFile, previousPath);
@@ -333,6 +404,152 @@ namespace NzbDrone.Core.MediaFiles
             }
 
             return result;
+        }
+
+        // When every file of an audiobook folder goes to the same new folder, the folder is moved as a whole:
+        // sidecars Chaptarr does not track (AudioBookShelf cover.jpg/metadata.json, .opf, desc.txt...) stay with
+        // the book, and library watchers see one rename instead of a new folder filling up file by file. If the
+        // folder cannot be moved in one step, the sidecars are moved ahead of the audio files instead.
+        private HashSet<int> RelocateAudiobookFolders(List<BookFile> ordered, List<BookFile> allFiles, Dictionary<int, BookFileMovePlan> plans)
+        {
+            var relocatedFileIds = new HashSet<int>();
+
+            var groups = ordered
+                .Where(f => plans.TryGetValue(f.Id, out var plan) &&
+                            plan.CanOrganize &&
+                            plan.ReplicaPaths == null &&
+                            !plan.ShouldCleanupReplicas &&
+                            plan.DestinationPath.IsNotNullOrWhiteSpace() &&
+                            f.Path.IsNotNullOrWhiteSpace())
+                .GroupBy(f => Path.GetDirectoryName(f.Path), PathEqualityComparer.Instance);
+
+            foreach (var group in groups)
+            {
+                var oldFolder = group.Key;
+                var files = group.ToList();
+                var newFolders = files
+                    .Select(f => Path.GetDirectoryName(plans[f.Id].DestinationPath))
+                    .Distinct(PathEqualityComparer.Instance)
+                    .ToList();
+
+                if (newFolders.Count != 1)
+                {
+                    continue;
+                }
+
+                var newFolder = newFolders[0];
+
+                try
+                {
+                    if (!CanRelocateFolder(oldFolder, newFolder, plans[files[0].Id].SourceAuthorFolderPath, files, allFiles))
+                    {
+                        continue;
+                    }
+
+                    if (!_diskProvider.FolderExists(newFolder) && !_diskProvider.GetDirectories(oldFolder).Any())
+                    {
+                        var parentFolder = Path.GetDirectoryName(newFolder);
+                        if (parentFolder.IsNotNullOrWhiteSpace() && !_diskProvider.FolderExists(parentFolder))
+                        {
+                            _diskProvider.CreateFolder(parentFolder);
+                        }
+
+                        _rootFolderWatchingService.ReportFileSystemChangeBeginning(oldFolder, newFolder);
+                        _diskProvider.MoveFolder(oldFolder, newFolder);
+                        _logger.Debug("Moved audiobook folder {0} to {1}", oldFolder, newFolder);
+
+                        foreach (var file in files)
+                        {
+                            file.Path = Path.Combine(newFolder, Path.GetFileName(file.Path));
+                            relocatedFileIds.Add(file.Id);
+                        }
+                    }
+                    else
+                    {
+                        MoveSidecarFiles(oldFolder, newFolder);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "Unable to move audiobook folder {0} to {1} as a whole, moving its files one by one", oldFolder, newFolder);
+                }
+            }
+
+            return relocatedFileIds;
+        }
+
+        private bool CanRelocateFolder(string oldFolder, string newFolder, string sourceAuthorFolder, List<BookFile> files, List<BookFile> allFiles)
+        {
+            // Only book folders below the author folder, never the author folder itself or a case-only change.
+            if (sourceAuthorFolder.IsNullOrWhiteSpace() ||
+                !sourceAuthorFolder.IsParentPath(oldFolder) ||
+                string.Equals(oldFolder, newFolder, StringComparison.OrdinalIgnoreCase) ||
+                oldFolder.IsParentPath(newFolder) ||
+                newFolder.IsParentPath(oldFolder))
+            {
+                return false;
+            }
+
+            // Every known file in or below the folder has to be part of this move (no ebook or other book left behind).
+            var movingIds = files.Select(f => f.Id).ToHashSet();
+            if (allFiles.Any(f => f.Path.IsNotNullOrWhiteSpace() &&
+                                  !movingIds.Contains(f.Id) &&
+                                  (Path.GetDirectoryName(f.Path).PathEquals(oldFolder) || oldFolder.IsParentPath(f.Path))))
+            {
+                return false;
+            }
+
+            if (!_diskProvider.FolderExists(oldFolder))
+            {
+                return false;
+            }
+
+            // The media files on disk must be exactly the ones being moved: an untracked one would be carried
+            // along silently, and a missing one means the database and the disk disagree.
+            var movingPaths = files.Select(f => f.Path).ToHashSet(PathEqualityComparer.Instance);
+            return movingPaths.SetEquals(_diskProvider.GetFiles(oldFolder, false).Where(IsMediaFile));
+        }
+
+        private void MoveSidecarFiles(string oldFolder, string newFolder)
+        {
+            var sidecars = _diskProvider.GetFiles(oldFolder, false)
+                .Where(path => !IsMediaFile(path))
+                .ToList();
+
+            if (sidecars.Count == 0)
+            {
+                return;
+            }
+
+            if (!_diskProvider.FolderExists(newFolder))
+            {
+                _diskProvider.CreateFolder(newFolder);
+            }
+
+            foreach (var sidecar in sidecars)
+            {
+                var destination = Path.Combine(newFolder, Path.GetFileName(sidecar));
+
+                if (_diskProvider.FileExists(destination))
+                {
+                    _logger.Debug("Keeping sidecar {0} in place, {1} already exists", sidecar, destination);
+                    continue;
+                }
+
+                _rootFolderWatchingService.ReportFileSystemChangeBeginning(sidecar, destination);
+                _diskProvider.MoveFile(sidecar, destination);
+                _logger.Debug("Moved sidecar {0} to {1}", sidecar, destination);
+            }
+        }
+
+        private static bool IsMediaFile(string path)
+        {
+            return MediaFileExtensions.AllExtensions.Contains(Path.GetExtension(path));
+        }
+
+        private static bool IsAudiobook(BookFile file)
+        {
+            return string.Equals(GetEffectiveMediaType(file), "audiobook", StringComparison.OrdinalIgnoreCase);
         }
 
         private static void TrackAudiobookFolderMove(RenameBatchContext batchContext, BookFile bookFile, string previousPath)

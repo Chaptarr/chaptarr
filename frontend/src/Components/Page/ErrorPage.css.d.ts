@@ -2,6 +2,7 @@
 // Please do not change this file!
 interface CssExports {
   'page': string;
+  'retry': string;
   'version': string;
 }
 export const cssExports: CssExports;

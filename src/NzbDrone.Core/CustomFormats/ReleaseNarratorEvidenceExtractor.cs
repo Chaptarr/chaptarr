@@ -12,15 +12,21 @@ namespace NzbDrone.Core.CustomFormats
         private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
         private static readonly Regex FullCastRegex = new Regex(@"\b(full\s*cast|cast\s*recording|dramati[sz]ed|graphic\s*audio)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout);
         private static readonly Regex AdditionalNarratorCountRegex = new Regex(@"\+\s*(\d+)\s+(?:more|additional|other)\s+(?:narrators?|voices?|performers?)", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout);
+        private static readonly Regex TrailingYearRegex = new Regex(@"[\s,]+(?:19|20)\d{2}\s*$", RegexOptions.Compiled, RegexTimeout);
         private static readonly Regex[] ExplicitNarratorPatterns =
         {
-            new Regex(@"(?:read by|narrated by|narrator[:\s]+)([^,\[\(]+?)(?=\s+-\s+|[,\[\(]|$)", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout)
+            new Regex(@"(?:read by|narrated by|narrator[:\s]+)([^,\[\]\(\)]+?)(?=\s+-\s+|[,\[\]\(\)]|$)", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout)
         };
 
-        private static readonly Regex[] UnlabelledNarratorPatterns =
+        // RequireNameShape marks patterns whose delimiters are also used for release metadata.
+        // Parentheses hold a narrator credit ("(Roy Dotrice)") about as often as they hold a
+        // year, format or bitrate ("(2011)", "(M4B-64)", "(Retail MP3)"), so a candidate found
+        // there must additionally look like a person's name before it counts as evidence.
+        private static readonly (Regex Pattern, bool RequireNameShape)[] UnlabelledNarratorPatterns =
         {
-            new Regex(@"\[([^,\[\]]+)\]$", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout),
-            new Regex(@"-\s*([^,\-\[\(\)]+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout)
+            (new Regex(@"\[([^,\[\]]+)\]$", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout), false),
+            (new Regex(@"\(([^,\(\)]+)\)\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout), true),
+            (new Regex(@"-\s*([^,\-\[\(\)]+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout), false)
         };
 
         public static ReleaseNarratorEvidence Extract(CustomFormatInput input, Func<string, bool> includeUnlabelledCandidate = null)
@@ -37,7 +43,7 @@ namespace NzbDrone.Core.CustomFormats
                     AddExtraction(ExtractNames(null, narratorText), names, ref hasUnresolvedNames);
                 }
 
-                foreach (var candidate in ExtractUnlabelledNarratorCandidates(field))
+                foreach (var (candidate, requireNameShape) in ExtractUnlabelledNarratorCandidates(field))
                 {
                     // A trailing person-shaped token is only weak narrator evidence. When it is
                     // the known author, it proves authorship rather than narration. Keep explicit
@@ -47,7 +53,16 @@ namespace NzbDrone.Core.CustomFormats
                         continue;
                     }
 
-                    if (IsPlausibleUnlabelledNarrator(candidate) || includeUnlabelledCandidate?.Invoke(candidate) == true)
+                    // Matching a name the book already asks for is authoritative on its own, so
+                    // it overrides the name-shape requirement.
+                    var matchesRequestedNarrator = includeUnlabelledCandidate?.Invoke(candidate) == true;
+
+                    if (requireNameShape && !matchesRequestedNarrator && !LooksLikePersonName(candidate))
+                    {
+                        continue;
+                    }
+
+                    if (IsPlausibleUnlabelledNarrator(candidate) || matchesRequestedNarrator)
                     {
                         AddExtraction(ExtractNames(null, candidate), names, ref hasUnresolvedNames);
                     }
@@ -150,7 +165,9 @@ namespace NzbDrone.Core.CustomFormats
                 var match = pattern.Match(field);
                 if (match.Success && match.Groups.Count > 1)
                 {
-                    var narrator = match.Groups[1].Value.Trim();
+                    // Release names routinely append a publication year to the narrator credit
+                    // ("... (Narrator Julia Whelan 2019)"); it is not part of the name.
+                    var narrator = TrailingYearRegex.Replace(match.Groups[1].Value.Trim(), string.Empty).Trim();
                     if (!string.IsNullOrWhiteSpace(narrator))
                     {
                         yield return narrator;
@@ -159,9 +176,9 @@ namespace NzbDrone.Core.CustomFormats
             }
         }
 
-        private static IEnumerable<string> ExtractUnlabelledNarratorCandidates(string field)
+        private static IEnumerable<(string Candidate, bool RequireNameShape)> ExtractUnlabelledNarratorCandidates(string field)
         {
-            foreach (var pattern in UnlabelledNarratorPatterns)
+            foreach (var (pattern, requireNameShape) in UnlabelledNarratorPatterns)
             {
                 var match = pattern.Match(field);
                 if (match.Success && match.Groups.Count > 1)
@@ -169,10 +186,17 @@ namespace NzbDrone.Core.CustomFormats
                     var candidate = match.Groups[1].Value.Trim();
                     if (!string.IsNullOrWhiteSpace(candidate))
                     {
-                        yield return candidate;
+                        yield return (candidate, requireNameShape);
                     }
                 }
             }
+        }
+
+        private static bool LooksLikePersonName(string candidate)
+        {
+            var tokens = TextNormalizer.NormalizeAndTokenize(candidate);
+
+            return tokens.Count is >= 2 and <= 6 && tokens.All(token => token.All(char.IsLetter));
         }
 
         private static bool IsPlausibleUnlabelledNarrator(string candidate)

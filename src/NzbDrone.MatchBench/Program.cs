@@ -1305,7 +1305,7 @@ LIMIT @limit"), parameters).ToList();
                 int? durationSeconds;
                 try
                 {
-                    (tags, durationSeconds) = tagService.ReadAllTagsAndDuration(fs.FileInfo.FromFileName(path));
+                    (tags, durationSeconds) = tagService.ReadAllTagsAndDuration(fs.FileInfo.New(path));
                     tags ??= new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
                 }
                 catch (Exception ex)

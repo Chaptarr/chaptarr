@@ -33,7 +33,7 @@ namespace NzbDrone.Core.Notifications.Slack
                                       Color = "warning"
                                   }
                               };
-            var payload = CreatePayload($"Grabbed: {message.Message}", attachments);
+            var payload = CreatePayload(Localize("notification.prefix.grabbed", "Grabbed: {message}", new Dictionary<string, object> { ["message"] = message.Message }), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -50,7 +50,7 @@ namespace NzbDrone.Core.Notifications.Slack
                     Color = "good"
                 }
             };
-            var payload = CreatePayload($"Imported: {message.Message}", attachments);
+            var payload = CreatePayload(Localize("notification.prefix.imported", "Imported: {message}", new Dictionary<string, object> { ["message"] = message.Message }), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -65,7 +65,7 @@ namespace NzbDrone.Core.Notifications.Slack
                                   }
                               };
 
-            var payload = CreatePayload("Renamed", attachments);
+            var payload = CreatePayload(Localize("notification.heading.renamed", "Renamed"), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -80,7 +80,7 @@ namespace NzbDrone.Core.Notifications.Slack
                                  }
                              };
 
-            var payload = CreatePayload("Author Added", attachments);
+            var payload = CreatePayload(Localize("notification.heading.authorAdded", "Author Added"), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -95,7 +95,7 @@ namespace NzbDrone.Core.Notifications.Slack
                                  }
                              };
 
-            var payload = CreatePayload("Book Added", attachments);
+            var payload = CreatePayload(Localize("notification.heading.bookAdded", "Book Added"), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -111,7 +111,7 @@ namespace NzbDrone.Core.Notifications.Slack
                                  }
                              };
 
-            var payload = CreatePayload("Author Deleted", attachments);
+            var payload = CreatePayload(Localize("notification.heading.authorDeleted", "Author Deleted"), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -122,12 +122,12 @@ namespace NzbDrone.Core.Notifications.Slack
                              {
                                  new Attachment
                                  {
-                                     Title =  $"${deleteMessage.Book.Author.Name} - ${deleteMessage.Book.Title}",
+                                     Title =  $"{deleteMessage.Book.Author.Name} - {deleteMessage.Book.Title}",
                                      Text = deleteMessage.DeletedFilesMessage
                                  }
                              };
 
-            var payload = CreatePayload("Book Deleted", attachments);
+            var payload = CreatePayload(Localize("notification.heading.bookDeleted", "Book Deleted"), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -138,12 +138,13 @@ namespace NzbDrone.Core.Notifications.Slack
                              {
                                  new Attachment
                                  {
-                                     Title =  $"${deleteMessage.Book.Author.Name} - ${deleteMessage.Book.Title} - file deleted",
+                                     Title = Localize("notification.body.fileDeleted", "{author} - {book} - file deleted",
+                        new Dictionary<string, object> { ["author"] = deleteMessage.Book.Author.Name, ["book"] = deleteMessage.Book.Title }),
                                      Text = deleteMessage.BookFile.Path
                                  }
                              };
 
-            var payload = CreatePayload("Book File Deleted", attachments);
+            var payload = CreatePayload(Localize("notification.heading.bookFileDeleted", "Book File Deleted"), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -160,7 +161,7 @@ namespace NzbDrone.Core.Notifications.Slack
                                   }
                               };
 
-            var payload = CreatePayload("Health Issue", attachments);
+            var payload = CreatePayload(Localize("notification.heading.healthIssue", "Health Check Failure"), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -193,7 +194,7 @@ namespace NzbDrone.Core.Notifications.Slack
                     Color = "danger"
                 }
             };
-            var payload = CreatePayload($"Download Failed: {message.Message}", attachments);
+            var payload = CreatePayload(Localize("notification.prefix.downloadFailed", "Download failed: {message}", new Dictionary<string, object> { ["message"] = message.Message }), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -209,7 +210,7 @@ namespace NzbDrone.Core.Notifications.Slack
                     Color = "warning"
                 }
             };
-            var payload = CreatePayload($"Import Failed: {message.Message}", attachments);
+            var payload = CreatePayload(Localize("notification.prefix.importFailed", "Import failed: {message}", new Dictionary<string, object> { ["message"] = message.Message }), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -226,7 +227,7 @@ namespace NzbDrone.Core.Notifications.Slack
                                   }
                               };
 
-            var payload = CreatePayload("Application Updated", attachments);
+            var payload = CreatePayload(Localize("notification.heading.applicationUpdate", "Application Updated"), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -244,7 +245,8 @@ namespace NzbDrone.Core.Notifications.Slack
         {
             try
             {
-                var message = $"Test message from Chaptarr posted at {DateTime.Now}";
+                var message = Localize("notification.test.timestampedBody", "Test message from Chaptarr posted at {timestamp}",
+                    new Dictionary<string, object> { ["timestamp"] = DateTime.Now });
                 var payload = CreatePayload(message);
 
                 _proxy.SendPayload(payload, Settings);

@@ -23,6 +23,7 @@ using NzbDrone.Core.ProgressMessaging;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RootFolders;
+using NzbDrone.Common;
 using NzbDrone.Common.Extensions;
 using System.Text.RegularExpressions;
 using static NzbDrone.Core.MediaFiles.BookImport.BookImportSerializationHelper;
@@ -51,6 +52,41 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             private readonly IManageCommandQueue _commandQueueManager;
             private readonly StagingResidualQueueSweeper _stagingResidualQueueSweeper;
             private readonly Logger _logger;
+
+            private bool TryCompleteAlreadyLinkedFile(string path, Book canonicalBook, Dictionary<string, IngestQueueItem> byPath, int? matchedAuthorId, HashSet<string> matchedPaths)
+            {
+                BookFile tracked = null;
+                try
+                {
+                    tracked = _mediaFileService.GetFileWithPath(path);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug(ex, "Unable to look up tracked file for {0}", path);
+                }
+
+                if (tracked == null || tracked.EditionId <= 0)
+                {
+                    return false;
+                }
+
+                _logger.Debug("[DEFERRED-INGEST] File {0} is already linked (EditionId={1}); skipping re-import", path, tracked.EditionId);
+                if (byPath != null && byPath.TryGetValue(path, out var itemRef))
+                {
+                    _ingestQueue.CompleteItemWithResult(
+                        itemRef.Id,
+                        path,
+                        ImportOutcome.AlreadyLinked,
+                        bookId: canonicalBook?.Id,
+                        authorId: matchedAuthorId,
+                        errorMessage: "ALREADY_LINKED",
+                        statusError: null);
+                }
+
+                matchedPaths?.Add(path);
+                return true;
+            }
+
             private sealed class AuthorIngestGate : IDisposable
             {
                 public SemaphoreSlim Semaphore { get; } = new SemaphoreSlim(1, 1);
@@ -78,6 +114,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             private static readonly SemaphoreSlim _globalIngestGate = new SemaphoreSlim(1, 1);
             private readonly ConcurrentDictionary<string, DateTime> _negativeCacheByUnit = new ConcurrentDictionary<string, DateTime>();
             private readonly ConcurrentDictionary<string, DateTime> _authorLastProcessed = new ConcurrentDictionary<string, DateTime>();
+            private readonly UnmappedRescanBackoff _unmappedRescanBackoff = new UnmappedRescanBackoff();
             private const int NegativeCacheMinutes = 30; // TTL for negative result caching
             private const int LargeAuthorReadyCompactionFileThreshold = 100;
             private static readonly TimeSpan LargeAuthorReadyCompactionDurationThreshold = TimeSpan.FromMinutes(2);
@@ -381,9 +418,21 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
                         var normalized = NormalizeDirectory(folder);
                         var files = _mediaFileService.GetFilesWithBasePath(normalized);
-                        if (files.Any(file => file.EditionId == 0))
+                        var unmapped = files.Where(file => file.EditionId == 0).ToList();
+                        if (unmapped.Count == 0)
+                        {
+                            _unmappedRescanBackoff.Clear($"{author.Id}|{normalized}");
+                            return;
+                        }
+
+                        var signature = UnmappedRescanBackoff.BuildSignature(unmapped, author.LastInfoSync);
+                        if (_unmappedRescanBackoff.ShouldRescan($"{author.Id}|{normalized}", signature, DateTime.UtcNow))
                         {
                             foldersToRescan.Add(normalized);
+                        }
+                        else
+                        {
+                            _logger.Debug("[INGEST-AUTHOR-READY] Skipping repeat rescan of {0} unmapped file(s) under '{1}' for author '{2}'; nothing changed since the last attempt", unmapped.Count, normalized, author.Name);
                         }
                     }
 
@@ -760,6 +809,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     // - per-file tags for small/multi-book flat folders (correctness path).
                     var extractionFailedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     var unitTagsByKey = BuildUnitTagsByKey(claimedSet, extractionFailedPaths);
+                    var existingUnmappedByPath = (_mediaFileService.GetFileWithPath(claimedSet
+                            .Where(item => !string.IsNullOrWhiteSpace(item?.Path))
+                            .Select(item => item.Path)
+                            .Distinct(PathEqualityComparer.Instance)
+                            .ToList()) ?? new List<BookFile>())
+                        .Where(file => !string.IsNullOrWhiteSpace(file?.Path))
+                        .GroupBy(file => file.Path, PathEqualityComparer.Instance)
+                        .ToDictionary(group => group.Key, group => group.First(), PathEqualityComparer.Instance);
                     foreach (var claimed in claimedSet)
                     {
                         if (extractionFailedPaths.Contains(claimed.Path))
@@ -848,13 +905,18 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                             }
                         }
 
+                        var modified = GetQueuedFileModifiedUtc(claimed);
+                        existingUnmappedByPath.TryGetValue(claimed.Path, out var existingUnmapped);
                         discovered.Add(new DiscoveredFileWithMetadata
                         {
                             Path = claimed.Path,
                             Size = claimed.SizeBytes,
-                            Modified = GetQueuedFileModifiedUtc(claimed),
+                            Modified = modified,
                             AllTags = tags,
-                            DurationSeconds = discoveredDurationSeconds
+                            DurationSeconds = discoveredDurationSeconds,
+                            LastRemoteSearchTime = MediaFileFreshness.IsUnchanged(existingUnmapped, claimed.SizeBytes, modified)
+                                ? existingUnmapped?.LastRemoteSearchTime
+                                : null
                         });
                         byPath[claimed.Path] = claimed;
                     }
@@ -985,7 +1047,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                             Modified = observed?.Modified ?? GetQueuedFileModifiedUtc(queued),
                             Quality = observed?.Quality,
                             AllTags = tags ?? observed?.AllTags,
-                            DurationSeconds = durationSeconds ?? observed?.DurationSeconds
+                            DurationSeconds = durationSeconds ?? observed?.DurationSeconds,
+                            LastRemoteSearchTime = observed?.LastRemoteSearchTime
                         };
                     }
 
@@ -1054,6 +1117,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                                 var splitUnitAppliedAny = false;
                                 foreach (var (p, tags, durationSeconds, provenance) in list)
                                 {
+                                    if (TryCompleteAlreadyLinkedFile(p, canonicalBook, byPath, matchedAuthorId, matchedPaths))
+                                    {
+                                        continue;
+                                    }
+
                                     var perFileKey = BuildPerFileUnitKey(p, canonicalEdition.Title, canonicalBook.MediaType);
                                     var fileDest = _unitDestination.ResolveDestinationForUnit(canonicalBook, canonicalEdition, perFileKey);
 
@@ -1074,7 +1142,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                                             fileDest.BookId,
                                             matchedAuthorId,
                                             ref importedCount,
-                                            ref applyFailureCount);
+                                            ref applyFailureCount,
+                                            lastRemoteSearchTime: discoveredByPath.TryGetValue(p, out var splitMeta) ? splitMeta.LastRemoteSearchTime : null);
                                         splitUnitAppliedAny |= applyResult.IsApplied;
                                     }
                                 }
@@ -1105,14 +1174,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                                     if (byPath.TryGetValue(p, out var itemRef))
                                     {
                                         matchedPaths.Add(p);
-                                        MarkUnmapped(p);
+                                        discoveredByPath.TryGetValue(p, out var ambiguousMeta);
+                                        MarkUnmapped(p, ambiguousMeta?.LastRemoteSearchTime, updateRemoteSearchTime: true);
                                         _ingestQueue.CompleteItemWithResult(
                                             itemRef.Id,
                                             p,
                                             ImportOutcome.Unmapped,
                                             authorId: matchedAuthorId,
                                             errorMessage: errorCode,
-                                            statusError: errorCode);
+                                            statusError: errorCode,
+                                            lastRemoteSearchTime: ambiguousMeta?.LastRemoteSearchTime);
                                     }
                                 }
 
@@ -1148,6 +1219,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                             }
 
                             // Use helper-provided root-level unit key
+                            list = list.Where(file => !TryCompleteAlreadyLinkedFile(file.Path, canonicalBook, byPath, matchedAuthorId, matchedPaths)).ToList();
+                            if (list.Count == 0)
+                            {
+                                continue;
+                            }
+
                             var coalescedDestKey = _unitDestination.BuildRootUnitKeyWithExtension(sampleMatch.File.Path, canonicalEdition.Title, canonicalBook.MediaType);
                             var coalescedDest = _unitDestination.ResolveDestinationForUnit(canonicalBook, canonicalEdition, coalescedDestKey);
 
@@ -1168,7 +1245,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                                         coalescedDest.BookId,
                                         matchedAuthorId,
                                         ref importedCount,
-                                        ref applyFailureCount);
+                                        ref applyFailureCount,
+                                        lastRemoteSearchTime: discoveredByPath.TryGetValue(p, out var coalescedMeta) ? coalescedMeta.LastRemoteSearchTime : null);
                                     unitAppliedAny |= applyResult.IsApplied;
                                 }
                             }
@@ -1187,6 +1265,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
                         // Use a root-level unit key (book root + media type + extension) to avoid per-disc clones
                         // while ensuring different media containers (m4b vs mp3) never collapse into the same book.
+                        list = list.Where(file => !TryCompleteAlreadyLinkedFile(file.Path, canonicalBook, byPath, matchedAuthorId, matchedPaths)).ToList();
+                        if (list.Count == 0)
+                        {
+                            continue;
+                        }
+
                         var destKey = _unitDestination.BuildRootUnitKeyWithExtension(sampleMatch.File.Path, canonicalEdition.Title, canonicalBook.MediaType);
                         var dest = _unitDestination.ResolveDestinationForUnit(canonicalBook, canonicalEdition, destKey);
 
@@ -1207,7 +1291,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                                     dest.BookId,
                                     matchedAuthorId,
                                     ref importedCount,
-                                    ref applyFailureCount);
+                                    ref applyFailureCount,
+                                    lastRemoteSearchTime: discoveredByPath.TryGetValue(p, out var unitMeta) ? unitMeta.LastRemoteSearchTime : null);
                                 unitApplied |= applyResult.IsApplied;
                             }
                         }
@@ -1257,24 +1342,45 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                             {
                                 var err = "AUTHOR_NOT_IN_TAGS";
                                 _logger.Debug("[READY-DECISION] UNMAPPED file='{0}' unitKey='{1}' reason='{2}'", LeafName(path), LeafUnitKey(unitKey), err);
+                                discoveredByPath.TryGetValue(path, out var authorTagsMeta);
                                 var (outcome, dispositionReason) = StagingQueueFileDispositionHelper.EnsureVisibleOrIgnored(
                                     path,
                                     tags,
-                                    discoveredByPath.TryGetValue(path, out var authorTagsMeta) ? authorTagsMeta.DurationSeconds : itemRef.DurationSeconds,
+                                    authorTagsMeta?.DurationSeconds ?? itemRef.DurationSeconds,
                                     _mediaFileService,
                                     _diskProvider,
                                     _rootFolderService.GetBestRootFolder,
                                     _logger,
                                     "[INGEST-AUTHOR-READY]");
                                 var finalReason = outcome == ImportOutcome.Unmapped ? err : dispositionReason;
-                                _ingestQueue.CompleteItemWithResult(itemRef.Id, path, outcome, authorId: author.Id, errorMessage: finalReason, statusError: finalReason);
+                                if (outcome == ImportOutcome.Unmapped)
+                                {
+                                    MarkUnmapped(path, authorTagsMeta?.LastRemoteSearchTime, updateRemoteSearchTime: true);
+                                }
+
+                                _ingestQueue.CompleteItemWithResult(
+                                    itemRef.Id,
+                                    path,
+                                    outcome,
+                                    authorId: author.Id,
+                                    errorMessage: finalReason,
+                                    statusError: finalReason,
+                                    lastRemoteSearchTime: authorTagsMeta?.LastRemoteSearchTime);
                                 processedCount++;
                                 continue;
                             }
 
-                            MarkUnmapped(path);
+                            discoveredByPath.TryGetValue(path, out var unmatchedMeta);
+                            MarkUnmapped(path, unmatchedMeta?.LastRemoteSearchTime, updateRemoteSearchTime: true);
                             var unmappedReason = $"No matching edition for author '{author.Name}' - {reason}";
-                            _ingestQueue.CompleteItemWithResult(itemRef.Id, path, ImportOutcome.Unmapped, authorId: author.Id, errorMessage: unmappedReason, statusError: unmappedReason);
+                            _ingestQueue.CompleteItemWithResult(
+                                itemRef.Id,
+                                path,
+                                ImportOutcome.Unmapped,
+                                authorId: author.Id,
+                                errorMessage: unmappedReason,
+                                statusError: unmappedReason,
+                                lastRemoteSearchTime: unmatchedMeta?.LastRemoteSearchTime);
                             processedCount++;
                         }
                             else
@@ -2118,7 +2224,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             int bookId,
             int authorId,
             ref int importedCount,
-            ref int applyFailureCount)
+            ref int applyFailureCount,
+            DateTime? lastRemoteSearchTime = null)
         {
             var applyResult = applyResults?
                 .FirstOrDefault(result => result?.Path != null && result.Path.PathEquals(path)) ??
@@ -2126,7 +2233,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
             if (applyResult.Outcome == ImportOutcome.Unmapped)
             {
-                MarkUnmapped(path);
+                MarkUnmapped(path, lastRemoteSearchTime, updateRemoteSearchTime: true);
             }
 
             _ingestQueue.CompleteItemWithResult(
@@ -2137,7 +2244,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 authorId: authorId,
                 quality: "Unknown",
                 errorMessage: applyResult.ReasonCode,
-                statusError: applyResult.ReasonCode);
+                statusError: applyResult.ReasonCode,
+                lastRemoteSearchTime: lastRemoteSearchTime);
 
             if (applyResult.IsApplied)
             {
@@ -2151,9 +2259,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             return applyResult;
         }
 
-        private void MarkUnmapped(string filePath)
+        private void MarkUnmapped(string filePath, DateTime? lastRemoteSearchTime = null, bool updateRemoteSearchTime = false)
         {
-            BookImportUnmappedFileHelper.MarkUnmapped(_mediaFileService, _diskProvider, filePath, _logger, "[INGEST-AUTHOR-READY]");
+            BookImportUnmappedFileHelper.MarkUnmapped(
+                _mediaFileService,
+                _diskProvider,
+                filePath,
+                _logger,
+                "[INGEST-AUTHOR-READY]",
+                lastRemoteSearchTime,
+                updateRemoteSearchTime);
         }
         private int? GetDurationSeconds(string filePath)
         {

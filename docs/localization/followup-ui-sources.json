@@ -1,0 +1,644 @@
+{
+  "version": 1,
+  "scope": "Bounded 2026-10-31 UI/task-label source follow-up; 18 new IDs and ten reused IDs. Task/protocol identifiers and raw values stay unchanged.",
+  "counts": {
+    "messages": 28,
+    "sourceCallsites": 62,
+    "excludedCallsites": 0
+  },
+  "records": [
+    {
+      "id": "ui.author.syncMonitoringHelp",
+      "source": "When enabled, monitored books are synced across formats immediately. This does not trigger a search.",
+      "sourceFingerprint": "24edbc9d2a8b4155373ef7a21e592bf9c39a0f12b260fe4078e7cedfe6daa48e",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Author/Edit/EditAuthorModalContent.js",
+          "line": 201,
+          "sourceLine": "translate('ui.author.syncMonitoringHelp') :",
+          "sourceLineSha256": "15f19821b4a7044b6e0492f4825f09957e0a949101dd426e3c4f6d4c2746392c"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.author.syncMonitoringRequiresRoots",
+      "source": "Requires both audiobook and ebook root folders configured for this author. Add the missing root folder, or clear this setting if it was enabled earlier.",
+      "sourceFingerprint": "84e27d033652006aa55b8ae9463ebcce66409ca055947df9a1c5a137ccdcf255",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Author/Edit/EditAuthorModalContent.js",
+          "line": 202,
+          "sourceLine": "translate('ui.author.syncMonitoringRequiresRoots');",
+          "sourceLineSha256": "139745f9f0841cff5cae65016b23210bc2b58480eef7eeeaa0bd4ff35d34f134"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.dialog.label",
+      "source": "Dialog",
+      "sourceFingerprint": "49929b299674a35de0535badf44cfd2a8adc761fcbb690782c89d16f406e7edb",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Modal/ModalContent.js",
+          "line": 33,
+          "sourceLine": "translate('ui.dialog.label') : document.title || translate('ui.dialog.label');",
+          "sourceLineSha256": "a6d06382e25146960a4b2f1712e115da2257c3c4dde8cea419090936532e5370"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.error.unknown",
+      "source": "An unknown error occurred",
+      "sourceFingerprint": "66b46037fa9fcc02536cc026d519fbd12fa4528378a045f2cd4803b8e5666d05",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Settings/ImportLists/ImportLists/EditImportListModalContent.js",
+          "line": 240,
+          "sourceLine": "return xhr.statusText || translate('ui.error.unknown');",
+          "sourceLineSha256": "42a1388f5346e3a1690e49254a0d70fcfa2a1c78c2b9aa3480c6dcba5a580c58"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.oauth.authorizationTimedOut",
+      "source": "OAuth timed out waiting for authorization",
+      "sourceFingerprint": "53809e350de0e787994e5f7d70feeadf7df3a7da285b03e3857490f0ad21f105",
+      "protectedLiterals": [
+        "OAuth"
+      ],
+      "callsites": [
+        {
+          "file": "frontend/src/Store/Actions/oAuthActions.js",
+          "line": 168,
+          "sourceLine": "deferred.reject(createOAuthError(payload, translate('ui.oauth.authorizationTimedOut')));",
+          "sourceLineSha256": "95f0f887afc5e5a400733ebb8ab83cf9ebe4df65919968480e8f0b810c064c1d"
+        },
+        {
+          "file": "frontend/src/Store/Actions/oAuthActions.js",
+          "line": 210,
+          "sourceLine": "deferred.reject(createOAuthError(payload, translate('ui.oauth.authorizationTimedOut')));",
+          "sourceLineSha256": "95f0f887afc5e5a400733ebb8ab83cf9ebe4df65919968480e8f0b810c064c1d"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.oauth.windowClosed",
+      "source": "OAuth window was closed before authorization completed",
+      "sourceFingerprint": "3d598f5d0ff16ed5d7d217224ea88aba9377abe990777bd374239bb6b214c895",
+      "protectedLiterals": [
+        "OAuth"
+      ],
+      "callsites": [
+        {
+          "file": "frontend/src/Store/Actions/oAuthActions.js",
+          "line": 156,
+          "sourceLine": "deferred.reject(createOAuthError(payload, translate('ui.oauth.windowClosed')));",
+          "sourceLineSha256": "6cebd8f5d975dab34c023942a7be7fddc49cc8df657d5566f5802cf8b9e18242"
+        },
+        {
+          "file": "frontend/src/Store/Actions/oAuthActions.js",
+          "line": 237,
+          "sourceLine": "deferred.reject(createOAuthError(payload, translate('ui.oauth.windowClosed')));",
+          "sourceLineSha256": "6cebd8f5d975dab34c023942a7be7fddc49cc8df657d5566f5802cf8b9e18242"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.release.queueFailed",
+      "source": "Failed to add to download queue",
+      "sourceFingerprint": "77dcd8aa4379ed3c903aa47ffed6f3fd6e187c37bf283d52d900d7897423c018",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Store/Actions/releaseActions.js",
+          "line": 409,
+          "sourceLine": "const grabError = response.message || translate('ui.release.queueFailed');",
+          "sourceLineSha256": "58ca14df0c98b9f1e47685c86248188feec2d26386e26409f963afdb565f0f2a"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.task.applicationUpdateCheck",
+      "source": "Application Update Check",
+      "sourceFingerprint": "40a9ba7041bcca481fa81e7a1062d1a593682470873adb64c1d4f9daaeb2c093",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Utilities/Localization/scheduled-task-labels.json",
+          "line": 14,
+          "sourceLine": "\"id\": \"ui.task.applicationUpdateCheck\",",
+          "sourceLineSha256": "10643f9f33997230c4d98edc7b2cec65ec2c1aaa5c7b89ed02dad46864129884"
+        },
+        {
+          "file": "src/NzbDrone.Core/Jobs/TaskManager.cs",
+          "line": 131,
+          "sourceLine": "TypeName = typeof(ApplicationUpdateCheckCommand).FullName",
+          "sourceLineSha256": "8366f0a2f8929e1fd686f9a003ed63715bf1de7706794ee9b1343736b7f09b9c"
+        },
+        {
+          "file": "frontend/src/System/Tasks/Scheduled/ScheduledTaskRow.js",
+          "line": 123,
+          "sourceLine": "<TableRowCell>{getScheduledTaskLabel(taskName, name, translateWithFallback)}</TableRowCell>",
+          "sourceLineSha256": "1db895c66ea1cd9210aab738a092dbd5be964ca2cf6fac4a2211926e6758cdd2"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.task.checkHealth",
+      "source": "Check Health",
+      "sourceFingerprint": "9435c6ccc01987c53e139a27d0bdabcc2f74b913c0dbc913b45d0d613461cfee",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Utilities/Localization/scheduled-task-labels.json",
+          "line": 19,
+          "sourceLine": "\"id\": \"ui.task.checkHealth\",",
+          "sourceLineSha256": "3352eac191a84142e3c1b97daa6bfeb4deb95b662d44c27b3e62a9b155769da0"
+        },
+        {
+          "file": "src/NzbDrone.Core/Jobs/TaskManager.cs",
+          "line": 137,
+          "sourceLine": "TypeName = typeof(CheckHealthCommand).FullName",
+          "sourceLineSha256": "ad7d027d0bd3188c131bf104756c5e710cf8d5d11d177c6b5a9d19ffa4feb7c5"
+        },
+        {
+          "file": "frontend/src/System/Tasks/Scheduled/ScheduledTaskRow.js",
+          "line": 123,
+          "sourceLine": "<TableRowCell>{getScheduledTaskLabel(taskName, name, translateWithFallback)}</TableRowCell>",
+          "sourceLineSha256": "1db895c66ea1cd9210aab738a092dbd5be964ca2cf6fac4a2211926e6758cdd2"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.task.hardcoverLibrarySync",
+      "source": "Hardcover Library Sync",
+      "sourceFingerprint": "1dbd69d69d0ba591cd6bb74e5e7961b69f11a27ef9245f01a4fdb2ca455784ea",
+      "protectedLiterals": [
+        "Hardcover"
+      ],
+      "callsites": [
+        {
+          "file": "frontend/src/Utilities/Localization/scheduled-task-labels.json",
+          "line": 59,
+          "sourceLine": "\"id\": \"ui.task.hardcoverLibrarySync\",",
+          "sourceLineSha256": "0fac2c2ac7bd4d33f8c2df9781bbd5ae1c2aa3bacf62680e5418b01bcd938f9f"
+        },
+        {
+          "file": "src/NzbDrone.Core/Jobs/TaskManager.cs",
+          "line": 186,
+          "sourceLine": "TypeName = typeof(HardcoverLibrarySyncCommand).FullName",
+          "sourceLineSha256": "c8ce91657105db0734dd6f3e309d77ab7f989169581157d3c603f4588c5a7a67"
+        },
+        {
+          "file": "frontend/src/System/Tasks/Scheduled/ScheduledTaskRow.js",
+          "line": 123,
+          "sourceLine": "<TableRowCell>{getScheduledTaskLabel(taskName, name, translateWithFallback)}</TableRowCell>",
+          "sourceLineSha256": "1db895c66ea1cd9210aab738a092dbd5be964ca2cf6fac4a2211926e6758cdd2"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.task.housekeeping",
+      "source": "Housekeeping",
+      "sourceFingerprint": "e5dbc299f6f70ebe38715cbf03caa702d720036e5db4e0f34560ac8f66a3b565",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Utilities/Localization/scheduled-task-labels.json",
+          "line": 39,
+          "sourceLine": "\"id\": \"ui.task.housekeeping\",",
+          "sourceLineSha256": "1a2d1d88127908dcb1449e7b292426251b537aec904f9ef06195d3d121fb9827"
+        },
+        {
+          "file": "src/NzbDrone.Core/Jobs/TaskManager.cs",
+          "line": 161,
+          "sourceLine": "TypeName = typeof(HousekeepingCommand).FullName",
+          "sourceLineSha256": "82ddeb765b81e2e779d8d2ee53b3874f3236b845a48e63f8569f5cf8140c61b4"
+        },
+        {
+          "file": "frontend/src/System/Tasks/Scheduled/ScheduledTaskRow.js",
+          "line": 123,
+          "sourceLine": "<TableRowCell>{getScheduledTaskLabel(taskName, name, translateWithFallback)}</TableRowCell>",
+          "sourceLineSha256": "1db895c66ea1cd9210aab738a092dbd5be964ca2cf6fac4a2211926e6758cdd2"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.task.importListSync",
+      "source": "Import List Sync",
+      "sourceFingerprint": "22906a8708eed13a322dd274b3c0abb3efe48305a12d5c7a88b7884d9e7a6a7a",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Utilities/Localization/scheduled-task-labels.json",
+          "line": 54,
+          "sourceLine": "\"id\": \"ui.task.importListSync\",",
+          "sourceLineSha256": "3e55349d36eedd9bba77ac794227186c51f7d29870219236c6a723b8556b1011"
+        },
+        {
+          "file": "src/NzbDrone.Core/Jobs/TaskManager.cs",
+          "line": 180,
+          "sourceLine": "TypeName = typeof(ImportListSyncCommand).FullName",
+          "sourceLineSha256": "ccc86981012c5a59c9243a4143abf00b7f94377fe48d00e9846d227a9e43fcd3"
+        },
+        {
+          "file": "frontend/src/System/Tasks/Scheduled/ScheduledTaskRow.js",
+          "line": 123,
+          "sourceLine": "<TableRowCell>{getScheduledTaskLabel(taskName, name, translateWithFallback)}</TableRowCell>",
+          "sourceLineSha256": "1db895c66ea1cd9210aab738a092dbd5be964ca2cf6fac4a2211926e6758cdd2"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.task.messagingCleanup",
+      "source": "Messaging Cleanup",
+      "sourceFingerprint": "8dc6dffaef39957c7d5a4606f4c8001d9cc9e05d9166c84b440afb036e3d4fc4",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Utilities/Localization/scheduled-task-labels.json",
+          "line": 9,
+          "sourceLine": "\"id\": \"ui.task.messagingCleanup\",",
+          "sourceLineSha256": "f81ca7219269ea929f6d6fb4707a169f5348d22c634a00525d661063ad3df3cd"
+        },
+        {
+          "file": "src/NzbDrone.Core/Jobs/TaskManager.cs",
+          "line": 125,
+          "sourceLine": "TypeName = typeof(MessagingCleanupCommand).FullName",
+          "sourceLineSha256": "01aeb26fbe48e4742ea30facdc7335865232dfdc5de520f9154c17d102e27acf"
+        },
+        {
+          "file": "frontend/src/System/Tasks/Scheduled/ScheduledTaskRow.js",
+          "line": 123,
+          "sourceLine": "<TableRowCell>{getScheduledTaskLabel(taskName, name, translateWithFallback)}</TableRowCell>",
+          "sourceLineSha256": "1db895c66ea1cd9210aab738a092dbd5be964ca2cf6fac4a2211926e6758cdd2"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.task.missingBookSearch",
+      "source": "Missing Book Search",
+      "sourceFingerprint": "7cae537fb5111deb4510d87b724fabb932233169ba416dca4e1fe6a4cc8c1389",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Utilities/Localization/scheduled-task-labels.json",
+          "line": 69,
+          "sourceLine": "\"id\": \"ui.task.missingBookSearch\",",
+          "sourceLineSha256": "8513682ca550d383efee327aae86f65600f905723c3ebd1a7e6912364e2e4ba4"
+        },
+        {
+          "file": "src/NzbDrone.Core/Jobs/TaskManager.cs",
+          "line": 198,
+          "sourceLine": "TypeName = typeof(MissingBookSearchCommand).FullName,",
+          "sourceLineSha256": "9ca20b52cd2e751a546d2802e825df28cbba58d766369d60da63d5f8967d8056"
+        },
+        {
+          "file": "frontend/src/System/Tasks/Scheduled/ScheduledTaskRow.js",
+          "line": 123,
+          "sourceLine": "<TableRowCell>{getScheduledTaskLabel(taskName, name, translateWithFallback)}</TableRowCell>",
+          "sourceLineSha256": "1db895c66ea1cd9210aab738a092dbd5be964ca2cf6fac4a2211926e6758cdd2"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.task.processPendingImports",
+      "source": "Process Pending Imports",
+      "sourceFingerprint": "f615f00d7f6645c598969bdab4c92c756820feadeac030a2ebc4eb5c460ed2cc",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Utilities/Localization/scheduled-task-labels.json",
+          "line": 74,
+          "sourceLine": "\"id\": \"ui.task.processPendingImports\",",
+          "sourceLineSha256": "fc02f9a788f6070097609b1eeae3e61a20d8c6a93e27b84168a704878963bfea"
+        },
+        {
+          "file": "src/NzbDrone.Core/Jobs/TaskManager.cs",
+          "line": 205,
+          "sourceLine": "TypeName = typeof(ProcessPendingImportsCommand).FullName,",
+          "sourceLineSha256": "b54dafa3a1193ac72e620110939ccbeec680ffb4fbb05e9bbfb3517d99a15643"
+        },
+        {
+          "file": "frontend/src/System/Tasks/Scheduled/ScheduledTaskRow.js",
+          "line": 123,
+          "sourceLine": "<TableRowCell>{getScheduledTaskLabel(taskName, name, translateWithFallback)}</TableRowCell>",
+          "sourceLineSha256": "1db895c66ea1cd9210aab738a092dbd5be964ca2cf6fac4a2211926e6758cdd2"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.task.refreshMonitoredDownloads",
+      "source": "Refresh Monitored Downloads",
+      "sourceFingerprint": "19df2fa7141c065d952aec8925ea1ab7ed293eea7d90c3408b95bde5e28c756c",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Utilities/Localization/scheduled-task-labels.json",
+          "line": 4,
+          "sourceLine": "\"id\": \"ui.task.refreshMonitoredDownloads\",",
+          "sourceLineSha256": "0001ef0d5666a0beb6479477f711e05b5013934258c396701ac2f34971f30357"
+        },
+        {
+          "file": "src/NzbDrone.Core/Jobs/TaskManager.cs",
+          "line": 118,
+          "sourceLine": "TypeName = typeof(RefreshMonitoredDownloadsCommand).FullName,",
+          "sourceLineSha256": "d7873a9f251983119ad37933c136f35ee6eb9617823cda95e0df5fde9ef40e90"
+        },
+        {
+          "file": "frontend/src/System/Tasks/Scheduled/ScheduledTaskRow.js",
+          "line": 123,
+          "sourceLine": "<TableRowCell>{getScheduledTaskLabel(taskName, name, translateWithFallback)}</TableRowCell>",
+          "sourceLineSha256": "1db895c66ea1cd9210aab738a092dbd5be964ca2cf6fac4a2211926e6758cdd2"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.task.refreshMyAnonaMouseAccountStatus",
+      "source": "Refresh My Anona Mouse Account Status",
+      "sourceFingerprint": "b8dea6d32f1e2a09d3358d66f79b43dc442566795adb32c2524a7cd6681cb414",
+      "protectedLiterals": [
+        "My Anona Mouse"
+      ],
+      "callsites": [
+        {
+          "file": "frontend/src/Utilities/Localization/scheduled-task-labels.json",
+          "line": 24,
+          "sourceLine": "\"id\": \"ui.task.refreshMyAnonaMouseAccountStatus\",",
+          "sourceLineSha256": "5133509680533d431ae67285b8982d0ac3cac6c839c6312e3e628af70d1713c8"
+        },
+        {
+          "file": "src/NzbDrone.Core/Jobs/TaskManager.cs",
+          "line": 143,
+          "sourceLine": "TypeName = typeof(RefreshMyAnonaMouseAccountStatusCommand).FullName",
+          "sourceLineSha256": "116bcca1ccc602220a99079be04250742b3ec02bd0ae8493d68c2817827b62e6"
+        },
+        {
+          "file": "frontend/src/System/Tasks/Scheduled/ScheduledTaskRow.js",
+          "line": 123,
+          "sourceLine": "<TableRowCell>{getScheduledTaskLabel(taskName, name, translateWithFallback)}</TableRowCell>",
+          "sourceLineSha256": "1db895c66ea1cd9210aab738a092dbd5be964ca2cf6fac4a2211926e6758cdd2"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "ui.task.repairAuthorMediaCovers",
+      "source": "Repair Author Media Covers",
+      "sourceFingerprint": "b6d08556a0ceda59ac00715d5334eccda8941c5415aec75e8c6464c70fe563f1",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Utilities/Localization/scheduled-task-labels.json",
+          "line": 44,
+          "sourceLine": "\"id\": \"ui.task.repairAuthorMediaCovers\",",
+          "sourceLineSha256": "480792129df714635ff4af8b030c4a526b161618490cd101871d409138ae2b48"
+        },
+        {
+          "file": "src/NzbDrone.Core/Jobs/TaskManager.cs",
+          "line": 167,
+          "sourceLine": "TypeName = typeof(RepairAuthorMediaCoversCommand).FullName,",
+          "sourceLineSha256": "1e4b0fb66ada8ee97093a26ef96ad887f1176fdb1cea6e37fc841304695e43dd"
+        },
+        {
+          "file": "frontend/src/System/Tasks/Scheduled/ScheduledTaskRow.js",
+          "line": 123,
+          "sourceLine": "<TableRowCell>{getScheduledTaskLabel(taskName, name, translateWithFallback)}</TableRowCell>",
+          "sourceLineSha256": "1db895c66ea1cd9210aab738a092dbd5be964ca2cf6fac4a2211926e6758cdd2"
+        }
+      ],
+      "status": "new source; target translations pending"
+    },
+    {
+      "id": "NotMonitored",
+      "source": "Not Monitored",
+      "sourceFingerprint": "82548ee2408b0eda0a70fd1647b3e98f7ccdf4dddc792cb7adc24ea739e42523",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Book/BookQuality.js",
+          "line": 24,
+          "sourceLine": "title += ` [${translate('NotMonitored')}]`;",
+          "sourceLineSha256": "fe4f87a696571f1df850b3cedce59e2a46a72966f513a6f7af04bc76d4ee6bbb"
+        }
+      ],
+      "status": "existing catalog source; caller wiring added"
+    },
+    {
+      "id": "CutoffNotMetLabel",
+      "source": "Cutoff Not Met",
+      "sourceFingerprint": "ab0016f8fe1e56830a5e4b724c5c7c0370710ca25c3ff3ca51261bbdf27c77f7",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Book/BookQuality.js",
+          "line": 26,
+          "sourceLine": "title += ` [${translate('CutoffNotMetLabel')}]`;",
+          "sourceLineSha256": "a4124acc6192849e3c3c69e70f05b2d852b1ce420bcf874e93f36adb5f136121"
+        }
+      ],
+      "status": "existing catalog source; caller wiring added"
+    },
+    {
+      "id": "ByPrefix",
+      "source": "by",
+      "sourceFingerprint": "4c3f2124bbaa4cbf7302540aad104c4846295a63ed8fb8fc4c5f8e15a597482c",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/System/Status/About/About.js",
+          "line": 49,
+          "sourceLine": "data={(packageAuthor ? <span> {packageVersion} {' '}{translate('ByPrefix')}{' '} <InlineMarkdown data={packageAuthor} /> </span> : packageVersion)}",
+          "sourceLineSha256": "6683447edf08699a367b74dc64c3742c9c62256611911c96f003cea256afa7c0"
+        }
+      ],
+      "status": "existing catalog source; caller wiring added"
+    },
+    {
+      "id": "Disabled",
+      "source": "Disabled",
+      "sourceFingerprint": "4112c873ddc7a7502857be0a5c3b2dbfe1351e51526a324de7a6207c71204d71",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/System/Tasks/Scheduled/ScheduledTaskRow.js",
+          "line": 127,
+          "sourceLine": "{isDisabled ? translate('Disabled') : duration}",
+          "sourceLineSha256": "49088ad9561c11956c2cdf07b145ddafbb0e7ce59c80bc3216085f853129efc2"
+        }
+      ],
+      "status": "existing catalog source; caller wiring added"
+    },
+    {
+      "id": "LogFiles",
+      "source": "Log Files",
+      "sourceFingerprint": "bf5f07c6af9132de51f52b95a6637268aa85e91be8ad4b3d6fca90faaaddb8d6",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/System/Logs/LogsNavMenu.js",
+          "line": 44,
+          "sourceLine": "currentLabel = translate('LogFiles');",
+          "sourceLineSha256": "7c489e585e5346154f921f25c9c0f65bba6697ac297e410c3600337c91901267"
+        },
+        {
+          "file": "frontend/src/System/Logs/LogsNavMenu.js",
+          "line": 62,
+          "sourceLine": "{translate('LogFiles')}",
+          "sourceLineSha256": "990a1a40c91d59d5ad2ad3cb3f89d11e3fd3c1ba17071e8e9bdd8c7d27093383"
+        }
+      ],
+      "status": "existing catalog source; caller wiring added"
+    },
+    {
+      "id": "UpdaterLogFiles",
+      "source": "Updater Log Files",
+      "sourceFingerprint": "6c3f899db2dd7075fa69744a4af7a64f574a5c5469a47d562580f906dfde8e26",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/System/Logs/LogsNavMenu.js",
+          "line": 46,
+          "sourceLine": "currentLabel = translate('UpdaterLogFiles');",
+          "sourceLineSha256": "6e2da5c4fa2246ca9d5299fc9ccdf1eb889df7131ee90b6d9f7df516a72863bc"
+        },
+        {
+          "file": "frontend/src/System/Logs/LogsNavMenu.js",
+          "line": 68,
+          "sourceLine": "{translate('UpdaterLogFiles')}",
+          "sourceLineSha256": "d8f6f3e4e29efe7c1982dcac542cf3c4bca1f5ba1da316dd6830f7574dd3e044"
+        }
+      ],
+      "status": "existing catalog source; caller wiring added"
+    },
+    {
+      "id": "RefreshAuthor",
+      "source": "Refresh Author",
+      "sourceFingerprint": "a090ce34695ad4099a0b055300f320948f5b703cf41caab19d49512796c05d36",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Utilities/Localization/scheduled-task-labels.json",
+          "line": 29,
+          "sourceLine": "\"id\": \"RefreshAuthor\",",
+          "sourceLineSha256": "9dec2b3d8963101888f67bea21d08959c0318732369775c9c8ddc4741a57aca3"
+        },
+        {
+          "file": "src/NzbDrone.Core/Jobs/TaskManager.cs",
+          "line": 149,
+          "sourceLine": "TypeName = typeof(RefreshAuthorCommand).FullName",
+          "sourceLineSha256": "a8d5e1810d22c9a2adf5bd69a1d6d511eff39171563dcd7e3da435b4e91bf096"
+        },
+        {
+          "file": "frontend/src/System/Tasks/Scheduled/ScheduledTaskRow.js",
+          "line": 123,
+          "sourceLine": "<TableRowCell>{getScheduledTaskLabel(taskName, name, translateWithFallback)}</TableRowCell>",
+          "sourceLineSha256": "1db895c66ea1cd9210aab738a092dbd5be964ca2cf6fac4a2211926e6758cdd2"
+        }
+      ],
+      "status": "existing catalog source; caller wiring added"
+    },
+    {
+      "id": "UnmappedFilesRescanFolders",
+      "source": "Rescan Folders",
+      "sourceFingerprint": "3104671bd45ce2e60da62de19654b40e8b10fa1df8513d076a8a9f1e7ce1bf86",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Utilities/Localization/scheduled-task-labels.json",
+          "line": 34,
+          "sourceLine": "\"id\": \"UnmappedFilesRescanFolders\",",
+          "sourceLineSha256": "a58f8e506683e2f227f0ed7db2eb15b8827cd4353797c794c6772bf34789dc06"
+        },
+        {
+          "file": "src/NzbDrone.Core/Jobs/TaskManager.cs",
+          "line": 155,
+          "sourceLine": "TypeName = typeof(RescanFoldersCommand).FullName",
+          "sourceLineSha256": "338ca08abc933f1a80c44618863b1831120c4037600d17ed71d48dbeea50ecad"
+        },
+        {
+          "file": "frontend/src/System/Tasks/Scheduled/ScheduledTaskRow.js",
+          "line": 123,
+          "sourceLine": "<TableRowCell>{getScheduledTaskLabel(taskName, name, translateWithFallback)}</TableRowCell>",
+          "sourceLineSha256": "1db895c66ea1cd9210aab738a092dbd5be964ca2cf6fac4a2211926e6758cdd2"
+        }
+      ],
+      "status": "existing catalog source; caller wiring added"
+    },
+    {
+      "id": "Backup",
+      "source": "Backup",
+      "sourceFingerprint": "01602066a7bff05708353b2f3bd4f6b0dfef0737bd36a73acf3081faca746dd5",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Utilities/Localization/scheduled-task-labels.json",
+          "line": 49,
+          "sourceLine": "\"id\": \"Backup\",",
+          "sourceLineSha256": "a19cae1f341b09bd3019eb46f0e8f6222bd9ad38062ce31cb71f946aa6dbf3ab"
+        },
+        {
+          "file": "src/NzbDrone.Core/Jobs/TaskManager.cs",
+          "line": 174,
+          "sourceLine": "TypeName = typeof(BackupCommand).FullName",
+          "sourceLineSha256": "f34f44c18c279f308d0f66f8bb832e4336fc4105883846e5f5d8d97d640844f6"
+        },
+        {
+          "file": "frontend/src/System/Tasks/Scheduled/ScheduledTaskRow.js",
+          "line": 123,
+          "sourceLine": "<TableRowCell>{getScheduledTaskLabel(taskName, name, translateWithFallback)}</TableRowCell>",
+          "sourceLineSha256": "1db895c66ea1cd9210aab738a092dbd5be964ca2cf6fac4a2211926e6758cdd2"
+        }
+      ],
+      "status": "existing catalog source; caller wiring added"
+    },
+    {
+      "id": "RSSSync",
+      "source": "RSS Sync",
+      "sourceFingerprint": "6709c3146dc43e57bfd47a2181105d3e0963b1f610c77af1ecbf57d2d8355abd",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Utilities/Localization/scheduled-task-labels.json",
+          "line": 64,
+          "sourceLine": "\"id\": \"RSSSync\",",
+          "sourceLineSha256": "34d64a341fbb82b00c2abccd3ff9bc58fb675a39423320fdb99ea5385ec9088c"
+        },
+        {
+          "file": "src/NzbDrone.Core/Jobs/TaskManager.cs",
+          "line": 192,
+          "sourceLine": "TypeName = typeof(RssSyncCommand).FullName",
+          "sourceLineSha256": "99ac1c2932c73cf6c03bfebf0a5227aa6bf883b6126674d0e0e9549a5ac1c734"
+        },
+        {
+          "file": "frontend/src/System/Tasks/Scheduled/ScheduledTaskRow.js",
+          "line": 123,
+          "sourceLine": "<TableRowCell>{getScheduledTaskLabel(taskName, name, translateWithFallback)}</TableRowCell>",
+          "sourceLineSha256": "1db895c66ea1cd9210aab738a092dbd5be964ca2cf6fac4a2211926e6758cdd2"
+        }
+      ],
+      "status": "existing catalog source; caller wiring added"
+    }
+  ],
+  "excluded": []
+}

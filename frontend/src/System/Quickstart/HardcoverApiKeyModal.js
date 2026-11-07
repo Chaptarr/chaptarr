@@ -18,6 +18,7 @@ import { inputTypes, kinds, sizes } from 'Helpers/Props';
 import { fetchHardcoverConfig } from 'Store/Actions/settingsActions';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import translate from 'Utilities/String/translate';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import styles from './HardcoverApiKeyModal.css';
 
 class HardcoverApiKeyModal extends Component {
@@ -45,7 +46,7 @@ class HardcoverApiKeyModal extends Component {
     const { apiKey } = this.state;
 
     if (!apiKey.trim()) {
-      this.setState({ saveError: 'API key is required' });
+      this.setState({ saveError: translate('ApiKeyRequired') });
       return;
     }
 
@@ -84,26 +85,28 @@ class HardcoverApiKeyModal extends Component {
     });
 
     request.request.fail((xhr) => {
-      let errorMessage = 'Failed to save API key';
+      let errorMessage = translate('FailedToSaveApiKey');
 
       if (Array.isArray(xhr?.responseJSON)) {
         const messages = xhr.responseJSON
-          .map((e) => e?.errorMessage || e?.message)
+          .map((e) => translateServerMessage(e?.errorMessage || e?.message))
           .filter(Boolean);
 
         errorMessage = messages.length ? messages.join(' ') : errorMessage;
       } else if (xhr.responseJSON && typeof xhr.responseJSON === 'object') {
         errorMessage = xhr.responseJSON.error || xhr.responseJSON.message || errorMessage;
       } else if (xhr.status === 400) {
-        errorMessage = 'Invalid API key. Please check your token and try again.';
+        errorMessage = translate('InvalidApiKeyTryAgain');
       } else if (xhr.status >= 500) {
-        errorMessage = 'Hardcover\'s API is currently unavailable. Please try again later.';
+        errorMessage = translate('HardcoverApiUnavailableTryAgain');
       }
 
       this.setState({
         isSaving: false,
         saveError: errorMessage
       });
+
+      this.props.onConnectionFailure?.(xhr);
     });
   };
 
@@ -172,7 +175,7 @@ class HardcoverApiKeyModal extends Component {
               {saveError && (
                 <FormGroup>
                   <Alert kind={kinds.DANGER} className={styles.saveError}>
-                    {saveError}
+                    {translateServerMessage(saveError)}
                   </Alert>
                 </FormGroup>
               )}
@@ -206,7 +209,8 @@ HardcoverApiKeyModal.propTypes = {
   fetchHardcoverConfig: PropTypes.func.isRequired,
   isOpen: PropTypes.bool.isRequired,
   onModalClose: PropTypes.func.isRequired,
-  onConnectionSuccess: PropTypes.func
+  onConnectionSuccess: PropTypes.func,
+  onConnectionFailure: PropTypes.func
 };
 
 const mapDispatchToProps = {

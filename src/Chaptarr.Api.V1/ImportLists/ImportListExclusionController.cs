@@ -9,6 +9,8 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Http.REST.Attributes;
 
+using NzbDrone.Core.Validation;
+
 namespace Chaptarr.Api.V1.ImportLists
 {
     [V1ApiController]

@@ -1,8 +1,10 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
+import Button from 'Components/Link/Button';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import { kinds } from 'Helpers/Props';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import AgendaConnector from './Agenda/AgendaConnector';
 import * as calendarViews from './calendarViews';
@@ -21,7 +23,8 @@ class Calendar extends Component {
       isFetching,
       isPopulated,
       error,
-      view
+      view,
+      onRetryPress
     } = this.props;
 
     return (
@@ -33,8 +36,11 @@ class Calendar extends Component {
 
         {
           !isFetching && !!error &&
-            <Alert kind={kinds.DANGER}>
-              {translate('UnableToLoadTheCalendar')}
+            <Alert kind={kinds.DANGER} role="alert">
+              <div>{getErrorMessage(error, translate('UnableToLoadTheCalendar'))}</div>
+              <Button size="small" onPress={onRetryPress}>
+                {translate('Retry')}
+              </Button>
             </Alert>
         }
 
@@ -63,6 +69,7 @@ Calendar.propTypes = {
   isFetching: PropTypes.bool.isRequired,
   isPopulated: PropTypes.bool.isRequired,
   error: PropTypes.object,
+  onRetryPress: PropTypes.func.isRequired,
   view: PropTypes.string.isRequired
 };
 

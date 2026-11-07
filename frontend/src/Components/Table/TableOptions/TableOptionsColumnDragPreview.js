@@ -1,6 +1,6 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
-import { DragLayer } from 'react-dnd';
+import { useDragLayer } from 'react-dnd';
 import DragPreviewLayer from 'Components/DragPreviewLayer';
 import { TABLE_COLUMN } from 'Helpers/dragTypes';
 import dimensions from 'Styles/Variables/dimensions.js';
@@ -20,7 +20,7 @@ function collectDragLayer(monitor) {
   };
 }
 
-class TableOptionsColumnDragPreview extends Component {
+class TableOptionsColumnDragPreviewView extends Component {
 
   //
   // Render
@@ -66,7 +66,7 @@ class TableOptionsColumnDragPreview extends Component {
   }
 }
 
-TableOptionsColumnDragPreview.propTypes = {
+TableOptionsColumnDragPreviewView.propTypes = {
   item: PropTypes.object,
   itemType: PropTypes.string,
   currentOffset: PropTypes.shape({
@@ -75,4 +75,15 @@ TableOptionsColumnDragPreview.propTypes = {
   })
 };
 
-export default DragLayer(collectDragLayer)(TableOptionsColumnDragPreview);
+function TableOptionsColumnDragPreview(props) {
+  const dragLayerProps = useDragLayer(collectDragLayer);
+
+  return (
+    <TableOptionsColumnDragPreviewView
+      {...props}
+      {...dragLayerProps}
+    />
+  );
+}
+
+export default TableOptionsColumnDragPreview;

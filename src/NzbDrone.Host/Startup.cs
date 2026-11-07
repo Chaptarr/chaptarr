@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Threading.RateLimiting;
 using Chaptarr.Api.V1.System;
 using Chaptarr.Http;
 using Chaptarr.Http.Authentication;
@@ -15,19 +16,22 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.OpenApi.Models;
+using Microsoft.OpenApi;
 using NLog.Extensions.Logging;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Instrumentation;
 using NzbDrone.Common.Processes;
 using NzbDrone.Common.Serializer;
+using NzbDrone.Core.Authentication;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Instrumentation;
 using NzbDrone.Core.Lifecycle;
+using NzbDrone.Core.Metrics;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Host.AccessControl;
 using NzbDrone.Http.Authentication;
@@ -60,33 +64,77 @@ namespace NzbDrone.Host
 
             services.Configure<ForwardedHeadersOptions>(options =>
             {
-                options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
-                options.KnownIPNetworks.Add(new IPNetwork(IPAddress.Parse("10.0.0.0"), 8));
-                options.KnownIPNetworks.Add(new IPNetwork(IPAddress.Parse("172.16.0.0"), 12));
-                options.KnownIPNetworks.Add(new IPNetwork(IPAddress.Parse("192.168.0.0"), 16));
-                // CGNAT range (100.64.0.0/10) is commonly used by VPN overlays like Tailscale.
-                options.KnownIPNetworks.Add(new IPNetwork(IPAddress.Parse("100.64.0.0"), 10));
-                options.KnownIPNetworks.Add(new IPNetwork(IPAddress.Parse("fc00::"), 7));
-                options.KnownIPNetworks.Add(new IPNetwork(IPAddress.Parse("fe80::"), 10));
+                options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+                options.ForwardLimit = 1;
+                options.RequireHeaderSymmetry = true;
+
+                foreach (var proxy in HttpSecuritySettings.GetTrustedProxies(Configuration))
+                {
+                    if (proxy.Contains('/'))
+                    {
+                        options.KnownIPNetworks.Add(IPNetwork.Parse(proxy));
+                    }
+                    else
+                    {
+                        options.KnownProxies.Add(IPAddress.Parse(proxy));
+                    }
+                }
             });
 
             services.AddRouting(options => options.LowercaseUrls = true);
 
             services.AddResponseCompression();
 
+            var allowedOrigins = HttpSecuritySettings.GetAllowedOrigins(Configuration);
+
             services.AddCors(options =>
             {
                 options.AddPolicy(VersionedApiControllerAttribute.API_CORS_POLICY,
                     builder =>
-                    builder.AllowAnyOrigin()
-                    .AllowAnyMethod()
-                    .AllowAnyHeader());
+                    {
+                        builder.AllowAnyMethod()
+                            .AllowAnyHeader()
+                            .WithExposedHeaders("X-Bookshelf-Request-Id");
+
+                        if (allowedOrigins.Length > 0)
+                        {
+                            builder.WithOrigins(allowedOrigins);
+                        }
+                    });
 
                 options.AddPolicy("AllowGet",
                     builder =>
-                    builder.AllowAnyOrigin()
-                    .WithMethods("GET", "OPTIONS")
-                    .AllowAnyHeader());
+                    {
+                        builder.WithMethods("GET", "OPTIONS")
+                            .AllowAnyHeader()
+                            .WithExposedHeaders("X-Bookshelf-Request-Id");
+
+                        if (allowedOrigins.Length > 0)
+                        {
+                            builder.WithOrigins(allowedOrigins);
+                        }
+                    });
+            });
+
+            services.AddRateLimiter(options =>
+            {
+                options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+                var requestsPerMinute = HttpSecuritySettings.GetRequestsPerMinute(Configuration);
+                options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+                    RateLimitPartition.GetFixedWindowLimiter(
+                        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                        _ => new FixedWindowRateLimiterOptions
+                        {
+                            PermitLimit = requestsPerMinute,
+                            Window = TimeSpan.FromMinutes(1),
+                            QueueLimit = 0,
+                            AutoReplenishment = true
+                        }));
+                options.OnRejected = (context, _) =>
+                {
+                    context.HttpContext.Response.Headers["Retry-After"] = "60";
+                    return System.Threading.Tasks.ValueTask.CompletedTask;
+                };
             });
 
             services
@@ -112,10 +160,11 @@ namespace NzbDrone.Host
                     License = new OpenApiLicense
                     {
                         Name = "GPL-3.0-only",
-                        Url = new Uri("https://github.com/Chaptarr/Chaptarr/blob/develop/LICENSE")
+                        Url = new Uri("https://github.com/snapetech-org/chaptarrng/blob/main/LICENSE")
                     }
                 });
                 c.EnableAnnotations();
+                c.OperationFilter<BookshelfBackupOpenApiOperationFilter>();
 
                 var apiKeyHeader = new OpenApiSecurityScheme
                 {
@@ -124,18 +173,13 @@ namespace NzbDrone.Host
                     Scheme = "apiKey",
                     Description = "Apikey passed as header",
                     In = ParameterLocation.Header,
-                    Reference = new OpenApiReference
-                    {
-                        Type = ReferenceType.SecurityScheme,
-                        Id = "X-Api-Key"
-                    },
                 };
 
                 c.AddSecurityDefinition("X-Api-Key", apiKeyHeader);
 
-                c.AddSecurityRequirement(new OpenApiSecurityRequirement
+                c.AddSecurityRequirement(document => new OpenApiSecurityRequirement
                 {
-                    { apiKeyHeader, Array.Empty<string>() }
+                    [new OpenApiSecuritySchemeReference("X-Api-Key", document)] = new List<string>()
                 });
 
                 var apikeyQuery = new OpenApiSecurityScheme
@@ -145,11 +189,6 @@ namespace NzbDrone.Host
                     Scheme = "apiKey",
                     Description = "Apikey passed as query parameter",
                     In = ParameterLocation.Query,
-                    Reference = new OpenApiReference
-                    {
-                        Type = ReferenceType.SecurityScheme,
-                        Id = "apikey"
-                    },
                 };
 
                 c.AddServer(new OpenApiServer
@@ -164,9 +203,9 @@ namespace NzbDrone.Host
 
                 c.AddSecurityDefinition("apikey", apikeyQuery);
 
-                c.AddSecurityRequirement(new OpenApiSecurityRequirement
+                c.AddSecurityRequirement(document => new OpenApiSecurityRequirement
                 {
-                    { apikeyQuery, Array.Empty<string>() }
+                    [new OpenApiSecuritySchemeReference("apikey", document)] = new List<string>()
                 });
 
                 c.DescribeAllParametersInCamelCase();
@@ -220,6 +259,7 @@ namespace NzbDrone.Host
                               ISingleInstancePolicy singleInstancePolicy,
                               InitializeLogger initializeLogger,
                               ReconfigureLogging reconfigureLogging,
+                              FirstRunAuthenticationSetup firstRunAuthenticationSetup,
                               IAppFolderFactory appFolderFactory,
                               IProvidePidFile pidFileProvider,
                               IConfigFileProvider configFileProvider,
@@ -245,6 +285,14 @@ namespace NzbDrone.Host
 
             dbTarget.Register();
             SchemaBuilder.Initialize(container);
+            firstRunAuthenticationSetup.EnsureInitialAccountSetup();
+
+            if (configFileProvider.AuthenticationMethod == AuthenticationType.None &&
+                configFileProvider.BindAddress != "127.0.0.1" && configFileProvider.BindAddress != "::1" &&
+                configFileProvider.BindAddress != "localhost")
+            {
+                NLog.LogManager.GetLogger("Security").Warn("Authentication is disabled while ChaptarrNG is bound to a non-loopback address. The UI initialization endpoint exposes the API key to authenticated UI sessions; enable Forms or Basic authentication before exposing this listener.");
+            }
 
             if (OsInfo.IsNotWindows)
             {
@@ -269,8 +317,65 @@ namespace NzbDrone.Host
                 ExceptionHandler = errorHandler.HandleException
             });
 
+            var metricsEnabled = Configuration.GetValue<bool?>("Chaptarr:Metrics:Enabled") ?? Configuration.GetValue<bool?>("MetricsEnabled") ?? false;
+            if (metricsEnabled)
+            {
+                var metricsPort = Configuration.GetValue<int?>("Chaptarr:Metrics:Port") ?? Configuration.GetValue<int?>("MetricsPort") ?? 9797;
+                var metricsService = app.ApplicationServices.GetRequiredService<IOperationalMetricsService>();
+
+                // Metrics use a separate listener and intentionally bypass API authentication.
+                // The listener branch only serves /metrics and returns 404 for every other path.
+                app.MapWhen(context => context.Connection.LocalPort == metricsPort, metricsApp =>
+                {
+                    metricsApp.Run(async context =>
+                    {
+                        if (!HttpMethods.IsGet(context.Request.Method))
+                        {
+                            context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
+                            return;
+                        }
+
+                        if (context.Request.Path != "/metrics")
+                        {
+                            context.Response.StatusCode = StatusCodes.Status404NotFound;
+                            return;
+                        }
+
+                        context.Response.ContentType = "text/plain; version=0.0.4; charset=utf-8";
+                        context.Response.Headers["Cache-Control"] = "no-store";
+                        await context.Response.WriteAsync(metricsService.RenderPrometheusText());
+                    });
+                });
+            }
+
             app.UseRouting();
+            app.UseRateLimiter();
             app.UseCors();
+
+            // Apple's OIDC form_post callback is cross-site; cap that request
+            // independently of unrelated API and media upload limits.
+            app.Use(async (context, next) =>
+            {
+                if (HttpMethods.IsPost(context.Request.Method) &&
+                    (context.Request.Path.Value ?? string.Empty).EndsWith("/signin-oidc", StringComparison.OrdinalIgnoreCase))
+                {
+                    const long maxCallbackBytes = 16 * 1024;
+                    var bodyLimit = context.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
+                    if (bodyLimit != null && !bodyLimit.IsReadOnly)
+                    {
+                        bodyLimit.MaxRequestBodySize = maxCallbackBytes;
+                    }
+
+                    if (context.Request.ContentLength > maxCallbackBytes ||
+                        (context.Request.ContentLength == null && (bodyLimit == null || bodyLimit.IsReadOnly)))
+                    {
+                        context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+                        return;
+                    }
+                }
+
+                await next();
+            });
             app.UseAuthentication();
             app.UseAuthorization();
             app.UseResponseCompression();

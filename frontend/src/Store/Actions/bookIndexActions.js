@@ -30,6 +30,7 @@ export const defaultState = {
   secondarySortKey: 'title',
   secondarySortDirection: sortDirections.ASCENDING,
   view: 'posters',
+  selectedMediaType: localStorage.getItem('selectedMediaType') === 'ebook' ? 'ebook' : 'audiobook',
 
   posterOptions: {
     detailedProgressBar: false,
@@ -315,6 +316,7 @@ export const defaultState = {
 export const persistState = [
   'bookIndex.sortKey',
   'bookIndex.sortDirection',
+  'bookIndex.selectedMediaType',
   'bookIndex.selectedFilterKey',
   'bookIndex.customFilters',
   'bookIndex.view',
@@ -330,6 +332,7 @@ export const persistState = [
 
 export const SET_BOOK_SORT = 'bookIndex/setBookSort';
 export const SET_BOOK_FILTER = 'bookIndex/setBookFilter';
+export const SET_BOOK_MEDIA_TYPE = 'bookIndex/setBookMediaType';
 export const SET_BOOK_VIEW = 'bookIndex/setBookView';
 export const SET_BOOK_TABLE_OPTION = 'bookIndex/setBookTableOption';
 export const SET_BOOK_POSTER_OPTION = 'bookIndex/setBookPosterOption';
@@ -343,6 +346,7 @@ export const BULK_DELETE_BOOK = 'bookEditor/bulkDeleteBook';
 
 export const setBookSort = createAction(SET_BOOK_SORT);
 export const setBookFilter = createAction(SET_BOOK_FILTER);
+export const setBookMediaType = createAction(SET_BOOK_MEDIA_TYPE);
 export const setBookView = createAction(SET_BOOK_VIEW);
 export const setBookTableOption = createAction(SET_BOOK_TABLE_OPTION);
 export const setBookPosterOption = createAction(SET_BOOK_POSTER_OPTION);
@@ -435,6 +439,10 @@ export const reducers = createHandleActions({
 
   [SET_BOOK_SORT]: createSetClientSideCollectionSortReducer(section),
   [SET_BOOK_FILTER]: createSetClientSideCollectionFilterReducer(section),
+
+  [SET_BOOK_MEDIA_TYPE]: function(state, { payload }) {
+    return Object.assign({}, state, { selectedMediaType: payload.mediaType });
+  },
 
   [SET_BOOK_VIEW]: function(state, { payload }) {
     return Object.assign({}, state, { view: payload.view });

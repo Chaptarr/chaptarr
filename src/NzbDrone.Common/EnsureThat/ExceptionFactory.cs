@@ -1,5 +1,6 @@
 using System;
 using NLog;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Common.EnsureThat
 {
@@ -9,7 +10,7 @@ namespace NzbDrone.Common.EnsureThat
 
         internal static ArgumentException CreateForParamValidation(string paramName, string message)
         {
-            Logger.Warn(message);
+            Logger.WarnSafe(message);
             return new ArgumentException(message, paramName);
         }
 

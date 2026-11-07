@@ -14,6 +14,7 @@ using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.MetadataSource;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Books.Services
 {
@@ -79,13 +80,13 @@ namespace NzbDrone.Core.Books.Services
                     var existingAuthor = _authorService.FindByProviderId(prefix, rawId);
                     if (existingAuthor != null)
                     {
-                        _logger.Debug("[PENDING-IMPORT] Author already exists in database, skipping author-only queue: {0} (ID: {1})", providerId, existingAuthor.Id);
+                        _logger.DebugSafe("[PENDING-IMPORT] Author already exists in database, skipping author-only queue: {0} (ID: {1})", providerId, existingAuthor.Id);
                         return Task.FromResult(0);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warn(ex, "[PENDING-IMPORT] Failed to check existing author for {0}; proceeding cautiously", providerId);
+                    _logger.WarnSafe(ex, "[PENDING-IMPORT] Failed to check existing author for {0}; proceeding cautiously", providerId);
                 }
             }
 
@@ -95,7 +96,7 @@ namespace NzbDrone.Core.Books.Services
                 var existing = _repository.GetActiveByProviderId(providerId);
                 if (existing != null)
                 {
-                    _logger.Debug("Found existing pending import for {0}, merging configuration", providerId);
+                    _logger.DebugSafe("Found existing pending import for {0}, merging configuration", providerId);
 
                     // Merge compatible settings (widen scope if needed)
                     bool updated = false;
@@ -270,6 +271,16 @@ namespace NzbDrone.Core.Books.Services
                         updated = true;
                     }
 
+                    if (TryMergeSelectedRemoteEditions(
+                            existing.SelectedRemoteEditions,
+                            config.SelectedRemoteEditions,
+                            providerId,
+                            out var selectedRemoteEditions))
+                    {
+                        existing.SelectedRemoteEditions = selectedRemoteEditions;
+                        updated = true;
+                    }
+
                     // Preserve discovered author folder path if provided and not already set
                     if (string.IsNullOrWhiteSpace(existing.DiscoveredAuthorFolderPath) && !string.IsNullOrWhiteSpace(config.DiscoveredAuthorFolderPath))
                     {
@@ -316,6 +327,9 @@ namespace NzbDrone.Core.Books.Services
                     RequestedBy = config.RequestedBy,
                     SearchForMissingBooks = config.SearchForMissingBooks ?? false,
                     LastSelectedMediaType = config.LastSelectedMediaType,
+                    SelectedRemoteEditions = config.SelectedRemoteEditions?.Any() == true
+                        ? JsonConvert.SerializeObject(config.SelectedRemoteEditions)
+                        : null,
                     Version = 1
                 };
 
@@ -376,7 +390,7 @@ namespace NzbDrone.Core.Books.Services
                 try
                 {
                     _repository.Insert(pending);
-                    _logger.Info("Queued author {0} for pending import (ID: {1}), NextAttemptAt={2:o}", providerId, pending.Id, pending.NextAttemptAt);
+                    _logger.InfoSafe("Queued author {0} for pending import (ID: {1}), NextAttemptAt={2:o}", providerId, pending.Id, pending.NextAttemptAt);
 
                     // Fire event for UI updates
                     _eventAggregator.PublishEvent(new PendingAuthorImportQueuedEvent(pending));
@@ -399,7 +413,84 @@ namespace NzbDrone.Core.Books.Services
             return config?.AudiobookBooksToMonitor?.Any() == true ||
                    config?.AudiobookBooksToSearch?.Any() == true ||
                    config?.EbookBooksToMonitor?.Any() == true ||
-                   config?.EbookBooksToSearch?.Any() == true;
+                   config?.EbookBooksToSearch?.Any() == true ||
+                   config?.SelectedRemoteEditions?.Any() == true;
+        }
+
+        private bool TryMergeSelectedRemoteEditions(
+            string existingJson,
+            IEnumerable<UserSelectedRemoteEdition> incoming,
+            string providerId,
+            out string serialized)
+        {
+            serialized = existingJson;
+            var incomingSelections = (incoming ?? Enumerable.Empty<UserSelectedRemoteEdition>())
+                .Where(selection => selection != null && !string.IsNullOrWhiteSpace(selection.WorkProviderId))
+                .ToList();
+            if (incomingSelections.Count == 0)
+            {
+                return false;
+            }
+
+            List<UserSelectedRemoteEdition> selections;
+            try
+            {
+                selections = string.IsNullOrWhiteSpace(existingJson)
+                    ? new List<UserSelectedRemoteEdition>()
+                    : JsonConvert.DeserializeObject<List<UserSelectedRemoteEdition>>(existingJson) ?? new List<UserSelectedRemoteEdition>();
+            }
+            catch (JsonException ex)
+            {
+                _logger.ErrorSafe(ex, "[PENDING-IMPORT] Cannot merge selected-edition requests for {0}: persisted request data is invalid", providerId);
+                throw new InvalidOperationException($"Pending selected-edition data for author {providerId} is invalid.", ex);
+            }
+
+            var changed = false;
+            foreach (var selection in incomingSelections)
+            {
+                var existing = selections.FirstOrDefault(candidate =>
+                    candidate != null &&
+                    candidate.MediaType == selection.MediaType &&
+                    string.Equals(candidate.WorkProviderId, selection.WorkProviderId, StringComparison.OrdinalIgnoreCase) &&
+                    (string.IsNullOrWhiteSpace(selection.EditionProviderId)
+                        ? string.IsNullOrWhiteSpace(candidate.EditionProviderId) &&
+                          string.Equals(candidate.EditionTitle, selection.EditionTitle, StringComparison.OrdinalIgnoreCase)
+                        : string.Equals(candidate.EditionProviderId, selection.EditionProviderId, StringComparison.OrdinalIgnoreCase)));
+
+                if (existing == null)
+                {
+                    selections.Add(new UserSelectedRemoteEdition
+                    {
+                        AuthorProviderId = selection.AuthorProviderId,
+                        WorkProviderId = selection.WorkProviderId,
+                        EditionProviderId = selection.EditionProviderId,
+                        EditionTitle = selection.EditionTitle,
+                        MediaType = selection.MediaType,
+                        QueueIfUnavailable = true
+                    });
+                    changed = true;
+                }
+                else if (string.IsNullOrWhiteSpace(existing.EditionTitle) && !string.IsNullOrWhiteSpace(selection.EditionTitle))
+                {
+                    selections[selections.IndexOf(existing)] = new UserSelectedRemoteEdition
+                    {
+                        AuthorProviderId = existing.AuthorProviderId,
+                        WorkProviderId = existing.WorkProviderId,
+                        EditionProviderId = existing.EditionProviderId,
+                        EditionTitle = selection.EditionTitle,
+                        MediaType = existing.MediaType,
+                        QueueIfUnavailable = true
+                    };
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                serialized = JsonConvert.SerializeObject(selections);
+            }
+
+            return changed;
         }
 
         private static bool MergeExistingMonitorMode(
@@ -508,7 +599,7 @@ namespace NzbDrone.Core.Books.Services
             }
             catch (Exception ex)
             {
-                _logger.Warn(ex, "Failed to merge {0} for existing pending import {1}", fieldName, providerId);
+                _logger.WarnSafe(ex, "Failed to merge {0} for existing pending import {1}", fieldName, providerId);
                 return false;
             }
         }
@@ -545,7 +636,10 @@ namespace NzbDrone.Core.Books.Services
             }
             catch (Exception ex)
             {
-                _logger.Warn(ex, "Failed to merge {0} for existing pending import {1}", fieldName, providerId);
+                _logger.Warn("Failed to merge {0} for existing pending import {1}: {2}",
+                    CleanseLogMessage.Cleanse(fieldName),
+                    CleanseLogMessage.Cleanse(providerId),
+                    CleanseLogMessage.Cleanse(ex.ToString()));
                 return false;
             }
         }

@@ -1,14 +1,21 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
+using System.Text;
+using System.Threading.Tasks;
+using GoodreadsBookshelfNotificationSettings = NzbDrone.Core.Notifications.Goodreads.GoodreadsBookshelfNotificationSettings;
+using GoodreadsOwnedBooksNotificationSettings = NzbDrone.Core.Notifications.Goodreads.GoodreadsOwnedBooksNotificationSettings;
 using Newtonsoft.Json.Linq;
 using NLog;
 using NUnit.Framework;
+using Chaptarr.Core.Test.Indexers;
 using NzbDrone.Common.Http;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.ImportLists.Goodreads;
+using NzbDrone.Core.Notifications;
 using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.Qualities;
@@ -26,6 +33,7 @@ namespace Chaptarr.Core.Test.ImportLists.Goodreads
             public QualityProfile Add(QualityProfile profile) => throw new NotImplementedException();
             public void Update(QualityProfile profile) => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
+            public void EnsureNotInUse(IEnumerable<int> ids) => throw new NotImplementedException();
             public List<QualityProfile> All() => new();
             public List<QualityProfile> GetByType(ProfileType type) => new();
             public QualityProfile Get(int id) => throw new NotImplementedException();
@@ -338,6 +346,244 @@ namespace Chaptarr.Core.Test.ImportLists.Goodreads
 
             // Verify no OAuth Authorization headers are sent (public API key only).
             Assert.That(httpClient.Requests.All(r => !r.Headers.ContainsKey("Authorization")), Is.True);
+        }
+
+        [Test]
+        public void should_fetch_existing_private_goodreads_shelves_with_oauth_credentials()
+        {
+            const string reviewListXml = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <GoodreadsResponse>
+                  <reviews start="1" end="1" total="1">
+                    <review><book><id>456</id><title>Test Book</title><title_without_series>Test Book</title_without_series><work><id>123</id></work><authors><author><id>789</id><name>Test Author</name></author></authors></book></review>
+                  </reviews>
+                </GoodreadsResponse>
+                """;
+
+            var transport = new DirectDownloadTestHttp();
+            var requests = new List<HttpRequest>();
+            transport.AddRoute(url => url.Contains("auth.servarr.com/v1/goodreads/sign", StringComparison.Ordinal), request =>
+            {
+                requests.Add(request);
+                return Task.FromResult(new HttpResponse(request, new HttpHeader { ContentType = "application/json" }, "{\"authorization\":\"OAuth fixture-header\"}"));
+            });
+            transport.AddRoute(url => url.Contains("goodreads.com/review/list.xml", StringComparison.Ordinal), request =>
+            {
+                requests.Add(request);
+                return Task.FromResult(new HttpResponse(request, new HttpHeader { ContentType = "application/xml" }, reviewListXml));
+            });
+
+            var settings = new GoodreadsBookshelfImportListSettings
+            {
+                UserId = "12345678",
+                BookshelfIds = new[] { "private-shelf" },
+                AccessToken = "fixture-access-token",
+                AccessTokenSecret = "fixture-access-secret"
+            };
+            var importList = new GoodreadsBookshelf(
+                importListStatusService: new StubImportListStatusService(),
+                configService: null,
+                parsingService: null,
+                httpClient: transport.CreateClient(),
+                qualityProfileService: new Lazy<IQualityProfileService>(() => new StubQualityProfileService()),
+                metadataProfileService: new Lazy<IMetadataProfileService>(() => new StubMetadataProfileService()),
+                tagService: new Lazy<ITagService>(() => new StubTagService()),
+                rootFolderService: new StubRootFolderService(),
+                rootFolderSettingsResolver: new StubRootFolderSettingsResolver(),
+                logger: LogManager.GetCurrentClassLogger())
+            {
+                Definition = new ImportListDefinition { Id = 8, Name = "Goodreads Bookshelves", Settings = settings }
+            };
+
+            var items = importList.Fetch();
+            var apiRequest = requests.Single(request => request.Url.FullUri.Contains("goodreads.com/review/list.xml", StringComparison.Ordinal));
+            var signingRequest = requests.Single(request => request.Url.FullUri.Contains("auth.servarr.com/v1/goodreads/sign", StringComparison.Ordinal));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(items, Has.Count.EqualTo(1));
+                Assert.That(items[0].BookGoodreadsId, Is.EqualTo("gr:123"));
+                Assert.That(apiRequest.Method, Is.EqualTo(HttpMethod.Get));
+                Assert.That(apiRequest.Headers.GetSingleValue("Authorization"), Is.EqualTo("OAuth fixture-header"));
+                Assert.That(apiRequest.AllowAutoRedirect, Is.False);
+                Assert.That(apiRequest.LogHttpError, Is.False);
+                Assert.That(apiRequest.LogResponseContent, Is.False);
+                Assert.That(signingRequest.AllowAutoRedirect, Is.False);
+                Assert.That(signingRequest.LogHttpError, Is.False);
+                Assert.That(signingRequest.LogResponseContent, Is.False);
+            });
+        }
+
+        [Test]
+        public void should_fetch_existing_goodreads_owned_books_with_oauth_credentials()
+        {
+            const string ownedBooksXml = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <GoodreadsResponse>
+                  <owned_books start="1" end="1" total="1">
+                    <owned_book><id>900</id><book><id>456</id><title>Test Book</title><title_without_series>Test Book</title_without_series><work><id>123</id></work><authors><author><id>789</id><name>Test Author</name></author></authors></book></owned_book>
+                  </owned_books>
+                </GoodreadsResponse>
+                """;
+
+            var transport = new DirectDownloadTestHttp();
+            var requests = new List<HttpRequest>();
+            transport.AddRoute(url => url.Contains("auth.servarr.com/v1/goodreads/sign", StringComparison.Ordinal), request =>
+            {
+                requests.Add(request);
+                return Task.FromResult(new HttpResponse(request, new HttpHeader { ContentType = "application/json" }, "{\"authorization\":\"OAuth fixture-header\"}"));
+            });
+            transport.AddRoute(url => url.Contains("goodreads.com/owned_books/user", StringComparison.Ordinal), request =>
+            {
+                requests.Add(request);
+                return Task.FromResult(new HttpResponse(request, new HttpHeader { ContentType = "application/xml" }, ownedBooksXml));
+            });
+
+            var settings = new GoodreadsOwnedBooksImportListSettings
+            {
+                UserId = "12345678",
+                AccessToken = "fixture-access-token",
+                AccessTokenSecret = "fixture-access-secret"
+            };
+            var importList = new GoodreadsOwnedBooks(
+                importListStatusService: new StubImportListStatusService(),
+                configService: null,
+                parsingService: null,
+                httpClient: transport.CreateClient(),
+                logger: LogManager.GetCurrentClassLogger())
+            {
+                Definition = new ImportListDefinition { Id = 9, Name = "Goodreads Owned Books", Settings = settings }
+            };
+
+            var items = importList.Fetch();
+            var apiRequest = requests.Single(request => request.Url.FullUri.Contains("goodreads.com/owned_books/user", StringComparison.Ordinal));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(items, Has.Count.EqualTo(1));
+                Assert.That(items[0].BookGoodreadsId, Is.EqualTo("gr:123"));
+                Assert.That(items[0].EditionGoodreadsId, Is.EqualTo("gr:456"));
+                Assert.That(apiRequest.Headers.GetSingleValue("Authorization"), Is.EqualTo("OAuth fixture-header"));
+                Assert.That(apiRequest.AllowAutoRedirect, Is.False);
+                Assert.That(apiRequest.LogHttpError, Is.False);
+                Assert.That(apiRequest.LogResponseContent, Is.False);
+            });
+        }
+
+        [Test]
+        public void should_test_goodreads_oauth_and_write_imported_edition_to_owned_books()
+        {
+            var transport = new DirectDownloadTestHttp();
+            var requests = new List<HttpRequest>();
+            transport.AddRoute(url => url.Contains("auth.servarr.com/v1/goodreads/sign", StringComparison.Ordinal), request =>
+            {
+                requests.Add(request);
+                return Task.FromResult(new HttpResponse(request, new HttpHeader { ContentType = "application/json" }, "{\"authorization\":\"OAuth fixture-header\"}"));
+            });
+            transport.AddRoute(url => url.Contains("goodreads.com/api/auth_user", StringComparison.Ordinal), request =>
+            {
+                requests.Add(request);
+                return Task.FromResult(new HttpResponse(request, new HttpHeader { ContentType = "application/xml" }, "<GoodreadsResponse><user id=\"12345678\"><name>Fixture User</name></user></GoodreadsResponse>"));
+            });
+            transport.AddRoute(url => url.Contains("goodreads.com/owned_books.xml", StringComparison.Ordinal), request =>
+            {
+                requests.Add(request);
+                return Task.FromResult(new HttpResponse(request, new HttpHeader { ContentType = "application/xml" }, "<GoodreadsResponse />"));
+            });
+
+            var settings = new GoodreadsOwnedBooksNotificationSettings
+            {
+                AccessToken = "fixture-access-token",
+                AccessTokenSecret = "fixture-access-secret",
+                UserId = "12345678",
+                UserName = "Fixture User"
+            };
+            var notification = new NzbDrone.Core.Notifications.Goodreads.GoodreadsOwnedBooks(
+                transport.CreateClient(), LogManager.GetCurrentClassLogger())
+            {
+                Definition = new NotificationDefinition { Settings = settings }
+            };
+
+            var connectionTest = notification.Test();
+            notification.OnReleaseImport(new BookDownloadMessage
+            {
+                Book = new Book
+                {
+                    Editions = new List<Edition> { new Edition { GoodreadsEditionId = 456, Monitored = true } }
+                }
+            });
+
+            var writeRequest = requests.Single(request => request.Url.FullUri.Contains("goodreads.com/owned_books.xml", StringComparison.Ordinal));
+            var body = Uri.UnescapeDataString(Encoding.UTF8.GetString(writeRequest.ContentData).Replace('+', ' '));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(connectionTest.IsValid, Is.True);
+                Assert.That(writeRequest.Method, Is.EqualTo(HttpMethod.Post));
+                Assert.That(writeRequest.Headers.GetSingleValue("Authorization"), Is.EqualTo("OAuth fixture-header"));
+                Assert.That(body, Does.Contain("owned_book[book_id]=456"));
+                Assert.That(writeRequest.AllowAutoRedirect, Is.False);
+                Assert.That(writeRequest.LogHttpError, Is.False);
+                Assert.That(writeRequest.LogResponseContent, Is.False);
+                Assert.That(requests.Where(request => request.Url.FullUri.Contains("auth.servarr.com/v1/goodreads/sign", StringComparison.Ordinal)).All(request =>
+                    request.AllowAutoRedirect == false && !request.LogHttpError && !request.LogResponseContent), Is.True);
+            });
+        }
+
+        [Test]
+        public void should_add_imported_goodreads_edition_to_configured_shelves()
+        {
+            var transport = new DirectDownloadTestHttp();
+            var requests = new List<HttpRequest>();
+            transport.AddRoute(url => url.Contains("auth.servarr.com/v1/goodreads/sign", StringComparison.Ordinal), request =>
+            {
+                requests.Add(request);
+                return Task.FromResult(new HttpResponse(request, new HttpHeader { ContentType = "application/json" }, "{\"authorization\":\"OAuth fixture-header\"}"));
+            });
+            transport.AddRoute(url => url.Contains("goodreads.com/shelf/add_books_to_shelves.xml", StringComparison.Ordinal), request =>
+            {
+                requests.Add(request);
+                return Task.FromResult(new HttpResponse(request, new HttpHeader { ContentType = "application/xml" }, "<GoodreadsResponse />"));
+            });
+
+            var settings = new GoodreadsBookshelfNotificationSettings
+            {
+                AccessToken = "fixture-access-token",
+                AccessTokenSecret = "fixture-access-secret",
+                UserId = "12345678",
+                AddIds = new[] { "read" },
+                RemoveIds = Array.Empty<string>()
+            };
+            var notification = new NzbDrone.Core.Notifications.Goodreads.GoodreadsBookshelf(
+                transport.CreateClient(), LogManager.GetCurrentClassLogger())
+            {
+                Definition = new NotificationDefinition { Settings = settings }
+            };
+
+            notification.OnReleaseImport(new BookDownloadMessage
+            {
+                Book = new Book
+                {
+                    GoodreadsWorkId = "gr:123",
+                    Author = new Author { Name = "Test Author" },
+                    Editions = new List<Edition> { new Edition { GoodreadsEditionId = 456, Monitored = true } }
+                }
+            });
+
+            var writeRequest = requests.Single(request => request.Url.FullUri.Contains("goodreads.com/shelf/add_books_to_shelves.xml", StringComparison.Ordinal));
+            var body = Uri.UnescapeDataString(Encoding.UTF8.GetString(writeRequest.ContentData).Replace('+', ' '));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(settings.Validate().IsValid, Is.True);
+                Assert.That(writeRequest.Method, Is.EqualTo(HttpMethod.Post));
+                Assert.That(writeRequest.Headers.GetSingleValue("Authorization"), Is.EqualTo("OAuth fixture-header"));
+                Assert.That(body, Does.Contain("bookids=456"));
+                Assert.That(body, Does.Contain("shelves=read"));
+                Assert.That(writeRequest.AllowAutoRedirect, Is.False);
+                Assert.That(writeRequest.LogHttpError, Is.False);
+                Assert.That(writeRequest.LogResponseContent, Is.False);
+            });
         }
 
         [Test]
@@ -946,6 +1192,51 @@ namespace Chaptarr.Core.Test.ImportLists.Goodreads
             var result = settings.Validate();
 
             Assert.That(result.IsValid, Is.False);
+        }
+
+        [TestCase(1, false)]
+        [TestCase(14, false)]
+        [TestCase(15, true)]
+        [TestCase(720, true)]
+        public void settings_should_require_a_refresh_interval_of_at_least_15_minutes(int minutes, bool valid)
+        {
+            var settings = new GoodreadsBookshelfImportListSettings
+            {
+                UserId = "12345678",
+                BookshelfIds = new[] { "to-read" },
+                AudiobookRootFolderPath = "/audiobooks",
+                EbookRootFolderPath = "/books",
+                RefreshIntervalMinutes = minutes
+            };
+
+            Assert.That(settings.Validate().IsValid, Is.EqualTo(valid));
+        }
+
+        [TestCase(5, 15)]
+        [TestCase(15, 15)]
+        [TestCase(40, 40)]
+        [TestCase(0, 720)]
+        public void refresh_interval_should_never_drop_below_15_minutes(int configured, int expected)
+        {
+            var importList = new GoodreadsBookshelf(
+                importListStatusService: new StubImportListStatusService(),
+                configService: null,
+                parsingService: null,
+                httpClient: null,
+                qualityProfileService: new Lazy<IQualityProfileService>(() => new StubQualityProfileService()),
+                metadataProfileService: new Lazy<IMetadataProfileService>(() => new StubMetadataProfileService()),
+                tagService: new Lazy<ITagService>(() => new StubTagService()),
+                rootFolderService: new StubRootFolderService(),
+                rootFolderSettingsResolver: new StubRootFolderSettingsResolver(),
+                logger: LogManager.GetCurrentClassLogger())
+            {
+                Definition = new ImportListDefinition
+                {
+                    Settings = new GoodreadsBookshelfImportListSettings { RefreshIntervalMinutes = configured }
+                }
+            };
+
+            Assert.That(importList.MinRefreshInterval, Is.EqualTo(TimeSpan.FromMinutes(expected)));
         }
 
         [Test]

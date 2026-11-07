@@ -937,7 +937,7 @@ namespace NzbDrone.Core.Datastore
             }
         }
 
-        protected List<TModel> GetPagedRecords(SqlBuilder builder, PagingSpec<TModel> pagingSpec, Func<SqlBuilder, IEnumerable<TModel>> queryFunc)
+        protected List<TModel> GetPagedRecords(SqlBuilder builder, PagingSpec<TModel> pagingSpec, Func<SqlBuilder, IEnumerable<TModel>> queryFunc, string sortColumnOverride = null)
         {
             AddFilters(builder, pagingSpec);
 
@@ -965,7 +965,8 @@ namespace NzbDrone.Core.Datastore
 
             var sortDirection = pagingSpec.SortDirection == SortDirection.Descending ? "DESC" : "ASC";
             var pagingOffset = Math.Max(pagingSpec.Page - 1, 0) * pagingSpec.PageSize;
-            builder.OrderBy($"\"{sortKey.Table ?? _table}\".\"{sortKey.Column}\" {sortDirection} LIMIT {pagingSpec.PageSize} OFFSET {pagingOffset}");
+            var sortColumn = sortColumnOverride ?? $"\"{sortKey.Table ?? _table}\".\"{sortKey.Column}\"";
+            builder.OrderBy($"{sortColumn} {sortDirection} LIMIT {pagingSpec.PageSize} OFFSET {pagingOffset}");
 
             return queryFunc(builder).ToList();
         }

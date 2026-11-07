@@ -2,6 +2,7 @@ using System;
 using System.Reflection;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.DecisionEngine.Specifications.RssSync;
 using NzbDrone.Core.Download.Pending;
@@ -32,6 +33,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 DispatchProxy.Create<IUpgradableSpecification, ThrowingProxy<IUpgradableSpecification>>(),
                 DispatchProxy.Create<IDelayProfileService, ThrowingProxy<IDelayProfileService>>(),
                 DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
+                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
                 LogManager.GetCurrentClassLogger());
 
             var decision = subject.IsSatisfiedBy(

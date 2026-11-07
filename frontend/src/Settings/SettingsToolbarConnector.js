@@ -6,8 +6,11 @@ import { toggleAdvancedSettings } from 'Store/Actions/settingsActions';
 import SettingsToolbar from './SettingsToolbar';
 
 function mapStateToProps(state) {
+  const isAdvancedExperience = (state.settings.ui.item.experienceMode || 'advanced') === 'advanced';
+
   return {
-    advancedSettings: state.settings.advancedSettings
+    advancedSettings: isAdvancedExperience && state.settings.advancedSettings,
+    isAdvancedExperience
   };
 }
 

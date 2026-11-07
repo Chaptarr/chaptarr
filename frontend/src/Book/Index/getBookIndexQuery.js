@@ -16,6 +16,7 @@ export default function getBookIndexQuery(bookIndex = {}, selectedMediaType) {
   const sortDirection = bookIndex.sortDirection || 'ascending';
   const filterKey = bookIndex.selectedFilterKey || 'all';
   const mediaType = selectedMediaType || 'audiobook';
+  const queryMediaType = mediaType === 'both' ? 'all' : mediaType;
   let monitored = undefined;
   let downloaded = undefined;
   let missing = undefined;
@@ -37,12 +38,12 @@ export default function getBookIndexQuery(bookIndex = {}, selectedMediaType) {
 
   return {
     queryKey: `${sortKey}_${sortDirection}_${filterKey}_${mediaType}`,
-    useClientSidePosters: !isServerSideBookIndexFilter(filterKey),
+    useClientSideBooks: !isServerSideBookIndexFilter(filterKey),
     queryParams: {
       sortKey,
       sortDirection,
       filters: {
-        mediaType,
+        mediaType: queryMediaType,
         monitored,
         downloaded,
         missing,

@@ -35,7 +35,7 @@ namespace NzbDrone.Core.Indexers.Torznab
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new TorznabRequestGenerator(_capabilitiesProvider)
+            return new TorznabRequestGenerator(_capabilitiesProvider, _logger, Definition?.Name)
             {
                 PageSize = PageSize,
                 Settings = Settings,

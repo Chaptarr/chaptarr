@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import BidiText from 'Components/BidiText';
 import styles from './TableRowCell.css';
 
 class TableRowCell extends Component {
@@ -14,12 +15,16 @@ class TableRowCell extends Component {
       ...otherProps
     } = this.props;
 
+    const content = typeof children === 'string' || typeof children === 'number' ?
+      <BidiText>{children}</BidiText> :
+      children;
+
     return (
       <td
         className={className}
         {...otherProps}
       >
-        {children}
+        {content}
       </td>
     );
   }

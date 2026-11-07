@@ -41,5 +41,18 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(tags["AUTHOR"], Is.EquivalentTo(new[] { "J.K. Rowling" }));
             Assert.That(tags["TITLE"], Is.EquivalentTo(new[] { "Harry Potter and the Order of the Phoenix" }));
         }
+
+        [TestCase("Octavia Butler_UNPACK_", "Octavia Butler")]
+        [TestCase("Octavia Butler_FAILED_", "Octavia Butler")]
+        public void build_path_derived_tags_should_clean_download_suffixes_from_author_folder(string authorFolder, string expectedAuthor)
+        {
+            var tags = CanonicalMatchInputBuilder.BuildPathDerivedTags(
+                $"/audiobooks/{authorFolder}/Kindred/Kindred.m4b",
+                $"/audiobooks/{authorFolder}/Kindred",
+                $"/audiobooks/{authorFolder}");
+
+            Assert.That(tags["AUTHOR"], Is.EquivalentTo(new[] { expectedAuthor }));
+            Assert.That(tags["ALBUM"], Is.EquivalentTo(new[] { "Kindred" }));
+        }
     }
 }

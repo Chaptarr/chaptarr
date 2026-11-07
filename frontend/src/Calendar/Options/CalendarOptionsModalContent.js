@@ -11,7 +11,7 @@ import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { inputTypes } from 'Helpers/Props';
-import { firstDayOfWeekOptions, timeFormatOptions, weekColumnOptions } from 'Settings/UI/UISettings';
+import { getFirstDayOfWeekOptions, getTimeFormatOptions, getWeekColumnOptions } from 'Settings/UI/UISettings';
 import translate from 'Utilities/String/translate';
 
 class CalendarOptionsModalContent extends Component {
@@ -153,7 +153,7 @@ class CalendarOptionsModalContent extends Component {
                 <FormInputGroup
                   type={inputTypes.SELECT}
                   name="firstDayOfWeek"
-                  values={firstDayOfWeekOptions}
+                  values={getFirstDayOfWeekOptions()}
                   value={firstDayOfWeek}
                   onChange={this.onGlobalInputChange}
                 />
@@ -167,7 +167,7 @@ class CalendarOptionsModalContent extends Component {
                 <FormInputGroup
                   type={inputTypes.SELECT}
                   name="calendarWeekColumnHeader"
-                  values={weekColumnOptions}
+                  values={getWeekColumnOptions()}
                   value={calendarWeekColumnHeader}
                   onChange={this.onGlobalInputChange}
                   helpText={translate('ShownAboveEachColumnWhenWeekIsTheActiveView')}
@@ -182,7 +182,7 @@ class CalendarOptionsModalContent extends Component {
                 <FormInputGroup
                   type={inputTypes.SELECT}
                   name="timeFormat"
-                  values={timeFormatOptions}
+                  values={getTimeFormatOptions()}
                   value={timeFormat}
                   onChange={this.onGlobalInputChange}
                 />

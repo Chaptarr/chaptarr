@@ -12,7 +12,6 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using NLog;
 using NUnit.Framework;
-using NzbDrone.Common.Cache;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.MediaCover;
@@ -85,6 +84,14 @@ namespace Chaptarr.Core.Test.MediaCover
             public bool Placeholder { get; set; }
 
             public string RegisterUrl(string url) => throw new NotImplementedException();
+            public bool IsProxyUrl(string url) => false;
+
+            public bool TryResolveProxyUrl(string url, out string resolved)
+            {
+                resolved = null;
+                return false;
+            }
+
             public void ProxyRemoteUrls(IEnumerable<NzbDrone.Core.MediaCover.MediaCover> covers) => throw new NotImplementedException();
             public string GetUrl(string hash) => throw new NotImplementedException();
             public byte[] GetImage(string hash) => Missing
@@ -98,7 +105,7 @@ namespace Chaptarr.Core.Test.MediaCover
         public void remote_images_should_be_fronted_without_rewriting_local_images()
         {
             var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
-            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(null, config, null, new CacheManager());
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(null, config, null);
             var remote = new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Cover, "https://images.example/cover.webp");
             var local = new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Poster, "/MediaCover/1/poster.jpg");
 
@@ -113,7 +120,7 @@ namespace Chaptarr.Core.Test.MediaCover
         public void extensionless_remote_images_should_get_a_routable_filename()
         {
             var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
-            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(null, config, null, new CacheManager());
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(null, config, null);
 
             var result = proxy.RegisterUrl("https://books.example/content?id=123&img=1");
 
@@ -121,10 +128,26 @@ namespace Chaptarr.Core.Test.MediaCover
         }
 
         [Test]
+        public void registering_a_large_response_should_not_clear_earlier_proxy_mappings()
+        {
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(null, config, null);
+            var firstUrl = proxy.RegisterUrl("https://images.example/cover-0.jpg");
+            var firstHash = firstUrl.Split('/')[3];
+
+            for (var i = 1; i <= 20000; i++)
+            {
+                proxy.RegisterUrl($"https://images.example/cover-{i}.jpg");
+            }
+
+            Assert.That(proxy.GetUrl(firstHash), Is.EqualTo("https://images.example/cover-0.jpg"));
+        }
+
+        [Test]
         public void known_amazon_default_author_image_should_not_be_registered_for_proxying()
         {
             var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
-            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(null, config, null, new CacheManager());
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(null, config, null);
 
             var result = proxy.RegisterUrl("https://m.media-amazon.com/images/I/01Kv-W2ysOL.png?size=500");
 
@@ -137,7 +160,7 @@ namespace Chaptarr.Core.Test.MediaCover
             var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
             var httpClient = DispatchProxy.Create<IHttpClient, HttpClientProxy>();
             ((HttpClientProxy)(object)httpClient).WriteOversizedResponse = true;
-            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null);
             var proxyUrl = proxy.RegisterUrl("https://1.1.1.1/cover.jpg");
             var hash = proxyUrl.Split('/')[3];
 
@@ -150,7 +173,7 @@ namespace Chaptarr.Core.Test.MediaCover
             var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
             var httpClient = DispatchProxy.Create<IHttpClient, HttpClientProxy>();
             ((HttpClientProxy)(object)httpClient).ResponseData = Convert.FromBase64String(MediaCoverRenditionFixture.MascotWebpBase64);
-            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null);
             const string remoteUrl = "https://1.1.1.1/provider-default.jpg";
             var proxyUrl = proxy.RegisterUrl(remoteUrl);
             var hash = proxyUrl.Split('/')[3];
@@ -187,7 +210,7 @@ namespace Chaptarr.Core.Test.MediaCover
             var httpClient = DispatchProxy.Create<IHttpClient, HttpClientProxy>();
             var client = (HttpClientProxy)(object)httpClient;
             client.FailureStatusCode = HttpStatusCode.Forbidden;
-            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null);
             var proxyUrl = proxy.RegisterUrl("https://1.1.1.1/challenged.jfif");
             var mapper = new MediaCoverProxyMapper(proxy, Logger);
 
@@ -204,7 +227,7 @@ namespace Chaptarr.Core.Test.MediaCover
             var httpClient = DispatchProxy.Create<IHttpClient, HttpClientProxy>();
             var client = (HttpClientProxy)(object)httpClient;
             client.NetworkFailureStatus = WebExceptionStatus.Timeout;
-            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null, new CacheManager());
+            var proxy = new NzbDrone.Core.MediaCover.MediaCoverProxy(httpClient, config, null);
             var proxyUrl = proxy.RegisterUrl("https://1.1.1.1/timeout.jpg");
             var mapper = new MediaCoverProxyMapper(proxy, Logger);
 

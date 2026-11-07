@@ -19,6 +19,7 @@ namespace NzbDrone.Core.Notifications.Webhook
         BookFileDelete,
         Health,
         Retag,
-        ApplicationUpdate
+        ApplicationUpdate,
+        Canonical
     }
 }

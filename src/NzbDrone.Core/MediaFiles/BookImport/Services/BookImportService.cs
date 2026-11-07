@@ -167,6 +167,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 }
 
                 // Create BookFile entity
+                var mediaInfo = MediaDuration.CreateMediaInfo(_mediaInfoExtractor, path, durationSeconds: null);
+                var detectedDuration = MediaDuration.FromTimeSpan(mediaInfo.Duration) ?? GetDurationSeconds(path);
+                mediaInfo = MediaDuration.ApplyToMediaInfo(mediaInfo, detectedDuration);
                 var bookFile = new BookFile
                 {
                     Path = path,
@@ -175,13 +178,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     DateAdded = DateTime.UtcNow,
                     // Prefer extension-based quality detection; fall back to parsed quality
                     Quality = DetermineQualityByExtension(path) ?? localBook.Quality ?? new QualityModel { Quality = Quality.Unknown },
-                    // Ensure non-null MediaInfo to satisfy DB constraint; extractor can enrich later
-                    MediaInfo = new MediaInfoModel(),
+                    // Keep audio details with the file so naming tokens can use its real media info.
+                    MediaInfo = mediaInfo,
                     EditionId = localBook.Edition.Id,
                     Part = localBook.Part,
                     MediaType = book.MediaType == 0 ? "audiobook" : "ebook",
                     AllTags = tags,
-                    DurationSeconds = GetDurationSeconds(path)
+                    DurationSeconds = detectedDuration
                 };
 
                 // Use UpgradeMediaFiles to respect Media Management (rename + move/copy/hardlink)
@@ -349,6 +352,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 	                        existing.Author = book.Author;
 	                        RefreshTrackedFileMetadata(existing, file, book);
                         ApplySuccessfulMatchState(existing, provenance, book.Author, book, targetEdition);
+                        EnsureBookMonitored(book);
 
 	                        _mediaFileService.Update(existing);
 
@@ -403,7 +407,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
                 // Create BookFile without moving
                 var detectedQuality = file?.Quality ?? DetermineQualityByExtension(path) ?? new QualityModel { Quality = Quality.Unknown };
-                var detectedDuration = durationSeconds ?? GetDurationSeconds(path);
+                var mediaInfo = MediaDuration.CreateMediaInfo(_mediaInfoExtractor, path, durationSeconds);
+                var detectedDuration = durationSeconds;
+                if (!MediaDuration.HasDuration(detectedDuration))
+                {
+                    detectedDuration = MediaDuration.FromTimeSpan(mediaInfo.Duration) ?? GetDurationSeconds(path);
+                }
+                mediaInfo = MediaDuration.ApplyToMediaInfo(mediaInfo, detectedDuration);
                 var bf = new BookFile
                 {
                     Path = path,
@@ -411,7 +421,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     Modified = GetObservedModified(file),
                     DateAdded = DateTime.UtcNow,
                     Quality = file?.Quality ?? detectedQuality,
-                    MediaInfo = MediaDuration.CreateMediaInfo(detectedDuration),
+                    MediaInfo = mediaInfo,
                     EditionId = targetEdition.Id,
                     MediaType = book.MediaType == 0 ? "audiobook" : "ebook",
                     AllTags = tags,
@@ -628,7 +638,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             var partAssignments = PartAssignmentHelper.BuildPathAssignmentsByEdition(
-                resolvedFiles.Select(item => (item.Request.File.Path, (int?)item.Edition.Id)),
+                resolvedFiles.Select(item => (item.Request.File.Path, (int?)item.Edition.Id, item.Request.File.AllTags)),
                 defaultEdition?.Id ?? 0);
 
             // Resolve existing DB rows per path (list size is per-book and should be small).
@@ -700,13 +710,20 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     existingFile.Part = assignment.Part;
                     RefreshTrackedFileMetadata(existingFile, file, book, assignment.PartCount);
                     ApplySuccessfulMatchState(existingFile, request.Provenance, author, book, edition);
+                    EnsureBookMonitored(book);
 
                     pendingUpdates.Add((existingFile, file.Path, edition.Id, assignment.Part, previousEditionId <= 0 && edition.Id > 0, false, null, edition));
                 }
                 else
                 {
                     // NEW file: Create BookFile record (NO DISK OPS)
-                    var detectedDuration = file.DurationSeconds ?? GetDurationSeconds(file.Path);
+                    var mediaInfo = MediaDuration.CreateMediaInfo(_mediaInfoExtractor, file.Path, file.DurationSeconds);
+                    var detectedDuration = file.DurationSeconds;
+                    if (!MediaDuration.HasDuration(detectedDuration))
+                    {
+                        detectedDuration = MediaDuration.FromTimeSpan(mediaInfo.Duration) ?? GetDurationSeconds(file.Path);
+                    }
+                    mediaInfo = MediaDuration.ApplyToMediaInfo(mediaInfo, detectedDuration);
                     var bf = new BookFile
                     {
                         Path = file.Path.CleanFilePath(),
@@ -714,7 +731,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                         Modified = GetObservedModified(file),
                         DateAdded = DateTime.UtcNow,
                         Quality = file.Quality ?? DetermineQualityByExtension(file.Path) ?? new QualityModel { Quality = Quality.Unknown },
-                        MediaInfo = MediaDuration.CreateMediaInfo(detectedDuration),
+                        MediaInfo = mediaInfo,
                         EditionId = edition.Id,
                         Part = assignment.Part,
                         PartCount = assignment.PartCount,
@@ -894,25 +911,60 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             var durationSeconds = observed?.DurationSeconds;
+            var mediaInfo = MediaDuration.CreateMediaInfo(_mediaInfoExtractor, observed?.Path, durationSeconds);
             if (!MediaDuration.HasDuration(durationSeconds))
             {
-                durationSeconds = GetDurationSeconds(observed?.Path);
+                durationSeconds = MediaDuration.FromTimeSpan(mediaInfo.Duration) ?? GetDurationSeconds(observed?.Path);
             }
+            mediaInfo = MediaDuration.ApplyToMediaInfo(mediaInfo, durationSeconds);
 
             existing.Quality = observed?.Quality ?? DetermineQualityByExtension(observed?.Path) ?? new QualityModel { Quality = Quality.Unknown };
             existing.Size = GetObservedSize(observed);
             existing.Modified = GetObservedModified(observed);
             existing.AllTags = observed?.AllTags ?? existing.AllTags;
             existing.DurationSeconds = durationSeconds;
-            existing.MediaInfo ??= new MediaInfoModel();
-            existing.MediaInfo.Duration = MediaDuration.HasDuration(durationSeconds)
-                ? TimeSpan.FromSeconds(durationSeconds.Value)
-                : TimeSpan.Zero;
+            existing.MediaInfo = mediaInfo;
         }
 
         private static string GetMediaType(Book book)
         {
             return book?.MediaType == BookMediaType.Audiobook ? "audiobook" : "ebook";
+        }
+
+        private void EnsureBookMonitored(Book book)
+        {
+            try
+            {
+                if (book == null || book.Id <= 0)
+                {
+                    return;
+                }
+
+                var alreadyMonitored = book.MediaType == BookMediaType.Audiobook ? book.AudiobookMonitored : book.EbookMonitored;
+                if (alreadyMonitored)
+                {
+                    return;
+                }
+
+                var mediaType = book.MediaType == BookMediaType.Audiobook ? "audiobook" : "ebook";
+
+                _bookService.SetBookMonitored(book.Id, true);
+
+                if (book.MediaType == BookMediaType.Audiobook)
+                {
+                    book.AudiobookMonitored = true;
+                }
+                else
+                {
+                    book.EbookMonitored = true;
+                }
+
+                _logger.Debug("Monitored '{0}' ({1}) after attaching a library file", book.Title, mediaType);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Unable to monitor book '{0}' after attaching a file", book?.Title);
+            }
         }
 
         private bool ApplySuccessfulMatchState(
@@ -947,6 +999,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 shouldUpdate = true;
             }
 
+            if (persisted.LastRemoteSearchTime.HasValue)
+            {
+                persisted.LastRemoteSearchTime = null;
+                shouldUpdate = true;
+            }
+
             return shouldUpdate;
         }
 
@@ -977,6 +1035,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     return;
                 }
 
+                EnsureBookMonitored(book);
                 if (ApplySuccessfulMatchState(persisted, provenance, author, book, edition))
                 {
                     _mediaFileService.Update(persisted);

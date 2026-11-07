@@ -2,6 +2,7 @@ import PropTypes from 'prop-types';
 import React from 'react';
 import Icon from 'Components/Icon';
 import { icons } from 'Helpers/Props';
+import translate from 'Utilities/String/translate';
 import styles from './HeartRating.css';
 
 function HeartRating({ rating, iconSize }) {
@@ -9,7 +10,7 @@ function HeartRating({ rating, iconSize }) {
   const displayValue = hasRating ? rating.toFixed(1) : '—';
   
   return (
-    <span className={styles.rating} title={hasRating ? displayValue : 'No rating'}>
+    <span className={styles.rating} title={hasRating ? displayValue : translate('NoRating')}>
       <Icon
         className={styles.heart}
         name={icons.HEART}

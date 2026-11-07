@@ -119,7 +119,8 @@ namespace Chaptarr.Core.Test.Http
                 bool useCookies,
                 ICredentials credentials,
                 bool preAuthenticate,
-                int maxConnectionsPerServer)
+                int maxConnectionsPerServer,
+                bool allowPrivateNetworkTargets = true)
             {
                 return new SocketsHttpHandler();
             }

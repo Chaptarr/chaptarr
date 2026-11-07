@@ -1,21 +1,27 @@
 .item {
-  border-left: 3px solid transparent;
+  margin: 3px 15px;
   color: var(--sidebarColor);
-  transition: border-left 0.3s ease-in-out;
 }
 
 .isActiveItem {
-  border-left: 3px solid var(--themeAlternateRed);
+  border-left: 0;
 }
 
 .link {
-  display: block;
-  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  min-height: 42px;
+  border-radius: 8px;
   color: var(--sidebarColor);
+  font-weight: 600;
+  font-size: 16px;
+  transition: background-color 150ms ease, color 150ms ease;
 
   &:hover,
   &:focus {
-    color: var(--themeRed);
+    background-color: rgba(148, 163, 184, 0.1);
+    color: var(--white);
     text-decoration: none;
   }
 }
@@ -23,28 +29,55 @@
 .childLink {
   composes: link;
 
-  padding: 10px 24px;
+  margin: 0;
+  padding: 0 8px;
+  min-height: 36px;
+  color: var(--helpTextColor);
+  font-weight: 500;
+  font-size: 14px;
+
+  &:hover,
+  &:focus {
+    color: var(--white);
+  }
 }
 
 .isActiveLink {
-  color: var(--themeAlternateRed);
+  color: var(--themeRed);
+  font-weight: 600;
 }
 
 .isActiveParentLink {
-  background-color: var(--sidebarActiveBackgroundColor);
+  background: linear-gradient(105deg, var(--themeAlternateRed) 0%, var(--themeRed) 100%);
+  color: var(--white);
+
+  &:hover,
+  &:focus {
+    background: linear-gradient(105deg, var(--themeAlternateRed) 0%, var(--themeRed) 100%);
+    color: var(--white);
+  }
 }
 
 .iconContainer {
-  display: inline-block;
-  margin-right: 7px;
-  width: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 20px;
+  margin-right: 10px;
+  width: 20px;
   text-align: center;
 }
 
+.label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .noIcon {
-  margin-left: 25px;
+  margin-left: 30px;
 }
 
 .status {
-  float: right;
+  flex: 0 0 auto;
+  margin-left: auto;
 }

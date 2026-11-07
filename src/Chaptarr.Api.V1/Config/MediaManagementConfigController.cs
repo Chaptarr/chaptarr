@@ -1,3 +1,4 @@
+using System.Reflection;
 using Chaptarr.Http;
 using FluentValidation;
 using NzbDrone.Common.EnvironmentInfo;
@@ -33,11 +34,24 @@ namespace Chaptarr.Api.V1.Config
             SharedValidator.RuleFor(c => c.RecycleBinCleanupDays).GreaterThanOrEqualTo(0);
             SharedValidator.RuleFor(c => c.ChmodFolder).SetValidator(folderChmodValidator).When(c => !string.IsNullOrEmpty(c.ChmodFolder) && (OsInfo.IsLinux || OsInfo.IsOsx));
             SharedValidator.RuleFor(c => c.MinimumFreeSpaceWhenImporting).GreaterThanOrEqualTo(100);
+            SharedValidator.RuleFor(c => c.BookImportMinimumMatchPercent).InclusiveBetween(50, 99);
         }
 
         protected override MediaManagementConfigResource ToResource(IConfigService model)
         {
             return MediaManagementConfigResourceMapper.ToResource(model);
+        }
+
+        protected override void NormalizeForSave(MediaManagementConfigResource resource)
+        {
+            resource.ApplyBookshelfCompatibilityAliases();
+        }
+
+        protected override bool ShouldSaveProperty(PropertyInfo property)
+        {
+            return property.Name != nameof(MediaManagementConfigResource.NewAuthorEbookRootFolderPath) &&
+                   property.Name != nameof(MediaManagementConfigResource.NewAuthorAudiobookRootFolderPath) &&
+                   base.ShouldSaveProperty(property);
         }
     }
 }

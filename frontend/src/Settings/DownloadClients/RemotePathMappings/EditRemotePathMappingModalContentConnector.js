@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import find from 'lodash/find';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -10,6 +10,7 @@ import {
 } from 'Store/Actions/settingsActions';
 import selectSettings from 'Store/Selectors/selectSettings';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
+import translate from 'Utilities/String/translate';
 import EditRemotePathMappingModalContent from './EditRemotePathMappingModalContent';
 
 const newRemotePathMapping = {
@@ -76,7 +77,7 @@ const selectRemotePathMappingOptions = createSelector(
       return {
         key: downloadClient.id,
         value: downloadClient.name,
-        hint: !host ? 'No host configured' : host,
+        hint: !host ? translate('ProxyNoHostConfigured') : host,
         isDisabled: !host,
         host
       };
@@ -84,8 +85,8 @@ const selectRemotePathMappingOptions = createSelector(
 
     downloadClientOptions.unshift({
       key: 0,
-      value: 'Host-wide mapping',
-      hint: 'Traditional mapping by host'
+      value: translate('RemotePathMappingHostWideOption'),
+      hint: translate('RemotePathMappingTraditionalHostHint')
     });
 
     return {
@@ -110,7 +111,7 @@ function createRemotePathMappingSelector() {
         items
       } = remotePathMappings;
 
-      const mapping = id ? _.find(items, { id }) : newRemotePathMapping;
+      const mapping = id ? find(items, { id }) : newRemotePathMapping;
       const settings = selectSettings(mapping, pendingChanges, saveError);
 
       return {
@@ -264,7 +265,7 @@ class EditRemotePathMappingModalContentConnector extends Component {
       })
     });
 
-    this._testRequest.request.done((result) => {
+    this._testRequest.request.then((result) => {
       this.setState({
         isTesting: false,
         testError: null,
@@ -272,7 +273,7 @@ class EditRemotePathMappingModalContentConnector extends Component {
       });
     });
 
-    this._testRequest.request.fail((xhr) => {
+    this._testRequest.request.catch((xhr) => {
       if (xhr.aborted) {
         return;
       }
@@ -300,14 +301,14 @@ class EditRemotePathMappingModalContentConnector extends Component {
       }
     });
 
-    this._suggestionsRequest.request.done((result) => {
+    this._suggestionsRequest.request.then((result) => {
       this.setState({
         downloadClientPathSuggestions: limitPathSuggestions(result.downloadClientPaths),
         chaptarrPathSuggestions: limitPathSuggestions(result.chaptarrPaths)
       });
     });
 
-    this._suggestionsRequest.request.fail((xhr) => {
+    this._suggestionsRequest.request.catch((xhr) => {
       if (xhr.aborted) {
         return;
       }

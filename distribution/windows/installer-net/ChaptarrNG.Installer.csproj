@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <UseWPF>true</UseWPF>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <RootNamespace>ChaptarrNG.Installer</RootNamespace>
+    <AssemblyName>ChaptarrNG.Installer</AssemblyName>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <EnableCodeStyleInBuild>false</EnableCodeStyleInBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../installer-net-core/ChaptarrNG.Installer.Core.csproj" />
+    <PackageReference Include="WPF-UI" Version="4.3.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Payload\Chaptarr.payload.zip" LogicalName="ChaptarrNG.Installer.Payload.Chaptarr.payload.zip" />
+    <EmbeddedResource Include="upgrade-helpers\rollback.ps1" LogicalName="rollback.ps1" />
+    <EmbeddedResource Include="upgrade-helpers\finalize-service-handoff.ps1" LogicalName="finalize-service-handoff.ps1" />
+  </ItemGroup>
+
+</Project>

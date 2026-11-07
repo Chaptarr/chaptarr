@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+data_dir=/var/lib/bookshelfng
+pending_marker="$data_dir/.chaptarrng-bookshelfng-migration-pending"
+handoff_status="$data_dir/.chaptarrng-bookshelfng-handoff-status"
+handoff_dir="$data_dir/.chaptarrng-bookshelfng-handoff"
+
+if [ ! -f "$pending_marker" ] && [ "$(cat "$handoff_status" 2>/dev/null || true)" = healthy ]; then
+  rm -rf -- "$handoff_dir"
+fi

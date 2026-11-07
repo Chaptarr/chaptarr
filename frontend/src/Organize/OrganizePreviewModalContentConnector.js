@@ -75,6 +75,16 @@ class OrganizePreviewModalContentConnector extends Component {
   //
   // Listeners
 
+  onRetryPress = () => {
+    this.props.fetchOrganizePreview({
+      authorId: this.props.authorId,
+      bookId: this.props.bookId,
+      mediaType: this.props.mediaType,
+      moveToCanonicalAuthorFolder: this.state.moveToCanonicalAuthorFolder
+    });
+    this.props.fetchNamingSettings();
+  };
+
   onOrganizePress = (files) => {
     this.props.executeCommand({
       name: commandNames.RENAME_FILES,
@@ -109,6 +119,7 @@ class OrganizePreviewModalContentConnector extends Component {
         canMoveToCanonicalAuthorFolder={canMoveToCanonicalAuthorFolder}
         moveToCanonicalAuthorFolder={this.state.moveToCanonicalAuthorFolder}
         onMoveToCanonicalAuthorFolderChange={this.onMoveToCanonicalAuthorFolderChange}
+        onRetryPress={this.onRetryPress}
         onOrganizePress={this.onOrganizePress}
       />
     );

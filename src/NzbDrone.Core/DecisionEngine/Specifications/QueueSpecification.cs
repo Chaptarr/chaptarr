@@ -54,8 +54,13 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 var remoteBook = queueItem.RemoteBook;
                 var queuedSourceQuality = remoteBook?.ParsedBookInfo?.Quality ?? queueItem.Quality;
                 var candidateSourceQuality = subject.ParsedBookInfo.Quality;
-                var queuedEffectiveQuality = QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(subject.Author, queuedSourceQuality);
-                var candidateEffectiveQuality = QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(subject.Author, candidateSourceQuality);
+                var bookshelfCompatibility = _configService?.BookshelfMatchCompatibility == true;
+                var queuedEffectiveQuality = bookshelfCompatibility
+                    ? queuedSourceQuality
+                    : QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(subject.Author, queuedSourceQuality);
+                var candidateEffectiveQuality = bookshelfCompatibility
+                    ? candidateSourceQuality
+                    : QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(subject.Author, candidateSourceQuality);
                 var qualityProfile = subject.Author.GetQualityProfileForQuality(candidateSourceQuality.Quality);
 
                 // To avoid a race make sure it's not FailedPending (failed awaiting removal/search).

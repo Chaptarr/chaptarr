@@ -1,4 +1,5 @@
 declare module '*.module.css';
+declare module '*.css';
 
 interface Window {
   Chaptarr: {

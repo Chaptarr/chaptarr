@@ -10,12 +10,14 @@ using NLog;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.ThingiProvider;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Indexers.MyAnonaMouse
 {
-    public class MyAnonaMouse : HttpIndexerBase<MyAnonaMouseSettings>
+    public class MyAnonaMouse : HttpIndexerBase<MyAnonaMouseSettings>, IIndexerDownloadFallback
     {
         private readonly IMamUnsatisfiedSlotReservationRepository _slotReservationRepository;
 
@@ -25,6 +27,16 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         public override bool SupportsRss => true; // Uses MAM JSON search endpoint for RSS-style sync
         public override bool SupportsSearch => true;
         public override int PageSize => 100;
+        public string GetFallbackDownloadUrl(string downloadUrl)
+        {
+            return HasFreeleechParameter(downloadUrl) ? RemoveFreeleechParameter(downloadUrl) : null;
+        }
+
+        public bool IsRequiredDownloadFallback(string downloadUrl)
+        {
+            return Settings.UseFreeleechWedge == (int)MyAnonaMouseFreeleechWedgeAction.Required &&
+                   HasFreeleechParameter(downloadUrl);
+        }
 
         public MyAnonaMouse(IIndexerHttpClientFactory httpClientFactory, IIndexerStatusService indexerStatusService, IConfigService configService, IParsingService parsingService,
                             IMamUnsatisfiedSlotReservationRepository slotReservationRepository, Logger logger)
@@ -81,7 +93,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             query.Remove("isAudiobook");
             query.Remove("fl");
 
-            var applyWedge = Settings.UseFreeleechWedge == (int)MyAnonaMouseFreeleechWedgeAction.Preferred &&
+            var applyWedge = (Settings.UseFreeleechWedge is (int)MyAnonaMouseFreeleechWedgeAction.Preferred or (int)MyAnonaMouseFreeleechWedgeAction.Required) &&
                              canUseWedge &&
                              (!Settings.UseFreeleechOnlyForAudiobooks || isAudiobook);
             var queryString = query.ToString();
@@ -94,7 +106,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             if (applyWedge)
             {
                 downloadLink += string.IsNullOrWhiteSpace(queryString) ? "?fl" : "&fl";
-                _logger.Debug("Requesting a MAM personal freeleech wedge for torrent {0}", tid);
+                _logger.DebugSafe("Requesting a MAM personal freeleech wedge for torrent {0}", tid);
             }
 
             var request = new HttpRequest(downloadLink);
@@ -121,9 +133,9 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             {
                 var referer = Settings.BaseUrl.TrimEnd('/') + "/t/" + tid;
                 request.Headers.Set("Referer", referer);
-                _logger.Debug("MAM_DOWNLOAD: Added Referer header to {0}", referer);
+                _logger.DebugSafe("MAM_DOWNLOAD: Added Referer header to {0}", referer);
             }
-            _logger.Debug("MAM_DOWNLOAD: Created download request for {0}", downloadLink);
+            _logger.DebugSafe("MAM_DOWNLOAD: Created download request for {0}", downloadLink);
             _logger.Trace("MAM_DOWNLOAD: Cookie configured - mam_id present: {0}, length: {1}",
                 !string.IsNullOrWhiteSpace(Settings.MamId),
                 Settings.MamId?.Length ?? 0);
@@ -142,6 +154,11 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             {
                 ConfirmServedTorrent(request, response);
                 return response;
+            }
+
+            if (IsRequiredDownloadFallback(request.Url.FullUri))
+            {
+                throw new HttpException(request, response, "MAM did not apply the required personal freeleech wedge.");
             }
 
             _logger.Debug("MAM did not return a torrent for the preferred-wedge request; retrying the download without forcing a wedge");
@@ -242,6 +259,21 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             }
         }
 
+        // Requests always send Settings.MamId, so adopt MAM's rotated cookie or the original expires after
+        // ~30 days. MyAnonaMouseAccountStatusService saves Settings after each successful refresh.
+        private void PersistRefreshedMamId(HttpResponse response)
+        {
+            if (!response.GetCookies().TryGetValue("mam_id", out var refreshedMamId) ||
+                string.IsNullOrWhiteSpace(refreshedMamId) ||
+                string.Equals(refreshedMamId, Settings.MamId, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _logger.Info("MAM issued a refreshed mam_id for indexer '{0}', persisting it", Definition?.Name);
+            Settings.MamId = refreshedMamId;
+        }
+
         public async Task<MyAnonaMouseAccountStatus> RefreshAccountStatus()
         {
             var request = new HttpRequestBuilder($"{Settings.BaseUrl.TrimEnd('/')}/jsonLoad.php?snatch_summary&pretty")
@@ -262,6 +294,8 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             {
                 throw new InvalidOperationException($"Failed to fetch MAM user data: HTTP {(int)response.StatusCode} {response.StatusCode}");
             }
+
+            PersistRefreshedMamId(response);
 
             var userData = JsonConvert.DeserializeObject<MyAnonaMouseUserDataResponse>(response.Content);
             var className = userData?.ClassName;

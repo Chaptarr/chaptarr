@@ -80,7 +80,7 @@ const COLUMNS: Column[] = [
   },
   {
     name: 'tags',
-    label: 'Tags',
+    label: () => translate('Tags'),
     isSortable: true,
     isVisible: true,
   },
@@ -212,7 +212,7 @@ function ManageDownloadClientsModalContent(
 
   const errorMessage = getErrorMessage(
     error,
-    'Unable to load download clients.'
+    translate('UnableToLoadDownloadClients')
   );
   const anySelected = selectedCount > 0;
 

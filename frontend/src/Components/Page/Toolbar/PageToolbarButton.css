@@ -2,7 +2,8 @@
   composes: link from '~Components/Link/Link.css';
 
   padding-top: 4px;
-  width: $toolbarButtonWidth;
+  min-width: $toolbarButtonWidth;
+  max-width: 130px;
   text-align: center;
 
   &:hover {
@@ -23,7 +24,7 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  height: 24px;
+  min-height: 24px;
 }
 
 .label {
@@ -31,6 +32,7 @@
   max-width: 100%;
   max-height: 100%;
   color: var(--toolbarLabelColor);
+  overflow-wrap: break-word;
   font-size: $extraSmallFontSize;
   line-height: calc($extraSmallFontSize + 1px);
 }

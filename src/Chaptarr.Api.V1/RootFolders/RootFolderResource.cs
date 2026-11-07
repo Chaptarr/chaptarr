@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json.Serialization;
 using Chaptarr.Http.REST;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
@@ -33,9 +32,15 @@ namespace Chaptarr.Api.V1.RootFolders
     {
         public string Name { get; set; }
         public string Path { get; set; }
-        // DELETED: DefaultMetadataProfileId, DefaultQualityProfileId, DefaultAudiobookMetadataProfileId, DefaultEbookMetadataProfileId - use media-specific settings
+        // BookshelfNG v1 compatibility aliases. ChaptarrNG's authoritative settings remain per-format.
+        public int? DefaultMetadataProfileId { get; set; }
+        public int? DefaultQualityProfileId { get; set; }
+        public MonitorTypes? DefaultMonitorOption { get; set; }
+        public NewItemMonitorTypes? DefaultNewItemMonitorOption { get; set; }
         public HashSet<int> DefaultTags { get; set; }
         public bool IsCalibreLibrary { get; set; }
+        public bool ReapCalibreDuplicates { get; set; }
+        public bool AutoPushCalibreMetadata { get; set; }
         public string Host { get; set; }
         public int Port { get; set; }
         public string UrlBase { get; set; }
@@ -45,7 +50,6 @@ namespace Chaptarr.Api.V1.RootFolders
         public string OutputFormat { get; set; }
         public string OutputProfile { get; set; }
         public bool UseSsl { get; set; }
-        [JsonRequired]
         public int FolderType { get; set; }
         public bool PlaceEbooksWithAudiobooks { get; set; }
         public bool? DefaultSyncMonitoredAcrossFormats { get; set; }
@@ -89,6 +93,12 @@ namespace Chaptarr.Api.V1.RootFolders
         public bool Accessible { get; set; }
         public long? FreeSpace { get; set; }
         public long? TotalSpace { get; set; }
+
+        // True when at least one author's AudiobookRootFolderPath or EbookRootFolderPath
+        // points at this folder. Mirrors RootFolderController.UpdateRootFolder's own
+        // fail-closed type-change guard, so the UI can disable the "Import Mixed Content?"
+        // control up front instead of only surfacing the rejection after Save.
+        public bool HasAssignedAuthors { get; set; }
     }
 
     public static class RootFolderResourceMapper
@@ -106,9 +116,14 @@ namespace Chaptarr.Api.V1.RootFolders
 
                 Name = model.Name,
                 Path = model.Path.GetCleanPath(),
-                // REMOVED: DefaultMetadataProfileId, DefaultQualityProfileId, DefaultAudiobookMetadataProfileId, DefaultEbookMetadataProfileId
+                DefaultMetadataProfileId = model.GetAudiobookSettings()?.MetadataProfileId ?? model.GetEbookSettings()?.MetadataProfileId ?? 0,
+                DefaultQualityProfileId = model.GetAudiobookSettings()?.QualityProfileId ?? model.GetEbookSettings()?.QualityProfileId ?? 0,
+                DefaultMonitorOption = model.GetAudiobookSettings()?.MonitorExistingMode ?? model.GetEbookSettings()?.MonitorExistingMode ?? MonitorTypes.All,
+                DefaultNewItemMonitorOption = model.GetAudiobookSettings()?.MonitorNewItems ?? model.GetEbookSettings()?.MonitorNewItems ?? NewItemMonitorTypes.All,
                 DefaultTags = model.DefaultTags,
                 IsCalibreLibrary = model.IsCalibreLibrary,
+                ReapCalibreDuplicates = model.ReapCalibreDuplicates,
+                AutoPushCalibreMetadata = model.AutoPushCalibreMetadata,
                 Host = model.CalibreSettings?.Host,
                 Port = model.CalibreSettings?.Port ?? 0,
                 UrlBase = model.CalibreSettings?.UrlBase,
@@ -162,7 +177,7 @@ namespace Chaptarr.Api.V1.RootFolders
             };
         }
 
-        public static RootFolderResource ToResource(this RootFolder model, IEnumerable<RootFolder> allRootFolders, string defaultAudiobookRootFolderPath, string defaultEbookRootFolderPath)
+        public static RootFolderResource ToResource(this RootFolder model, IEnumerable<RootFolder> allRootFolders, string defaultAudiobookRootFolderPath, string defaultEbookRootFolderPath, bool hasAssignedAuthors = false)
         {
             var resource = model.ToResource();
             if (resource == null)
@@ -172,6 +187,7 @@ namespace Chaptarr.Api.V1.RootFolders
 
             resource.IsEffectiveDefaultAudiobook = IsEffectiveDefaultRootFolder(model, allRootFolders, FolderType.Audiobook, defaultAudiobookRootFolderPath);
             resource.IsEffectiveDefaultEbook = IsEffectiveDefaultRootFolder(model, allRootFolders, FolderType.Ebook, defaultEbookRootFolderPath);
+            resource.HasAssignedAuthors = hasAssignedAuthors;
 
             return resource;
         }
@@ -230,11 +246,29 @@ namespace Chaptarr.Api.V1.RootFolders
                 // Migration 025 will drop these columns from the database
                 DefaultTags = resource.DefaultTags ?? new HashSet<int>(),
                 IsCalibreLibrary = resource.IsCalibreLibrary,
+                ReapCalibreDuplicates = resource.ReapCalibreDuplicates,
+                AutoPushCalibreMetadata = resource.AutoPushCalibreMetadata,
                 CalibreSettings = cs,
                 FolderType = (NzbDrone.Core.RootFolders.FolderType)resource.FolderType,
                 PlaceEbooksWithAudiobooks = resource.PlaceEbooksWithAudiobooks,
                 DefaultSyncMonitoredAcrossFormats = resource.DefaultSyncMonitoredAcrossFormats
             };
+
+            // Older BookshelfNG clients know one root-folder default set. Apply it to each
+            // supported format only when no ChaptarrNG per-format settings were submitted.
+            if (!HasMediaSpecificSettings(resource) && HasLegacyDefaults(resource))
+            {
+                var legacySettings = CreateLegacySettings(resource);
+                if (model.FolderType != FolderType.Ebook)
+                {
+                    model.SetAudiobookSettings(CloneSettings(legacySettings));
+                }
+
+                if (model.FolderType != FolderType.Audiobook)
+                {
+                    model.SetEbookSettings(CloneSettings(legacySettings));
+                }
+            }
 
             // Set new per-media-type settings if provided
             // First, handle structured settings objects
@@ -456,6 +490,69 @@ namespace Chaptarr.Api.V1.RootFolders
             return model;
         }
 
+        private static bool HasLegacyDefaults(RootFolderResource resource)
+        {
+            return resource.DefaultMetadataProfileId.HasValue ||
+                   resource.DefaultQualityProfileId.HasValue ||
+                   resource.DefaultMonitorOption.HasValue ||
+                   resource.DefaultNewItemMonitorOption.HasValue ||
+                   (resource.DefaultTags?.Count ?? 0) > 0;
+        }
+
+        private static bool HasMediaSpecificSettings(RootFolderResource resource)
+        {
+            return resource.Audiobook != null ||
+                   resource.Ebook != null ||
+                   HasConfiguredIndividualSettings(
+                       resource.AudiobookMonitored,
+                       resource.AudiobookMonitorExistingMode,
+                       resource.AudiobookMonitorExistingBooks,
+                       resource.AudiobookMonitorExisting,
+                       resource.AudiobookMonitorFuture,
+                       resource.AudiobookMonitorNewItems,
+                       resource.AudiobookQualityProfileId,
+                       resource.AudiobookMetadataProfileId,
+                       resource.AudiobookTags,
+                       resource.AudiobookWriteAudioBookShelfMetadataJson,
+                       resource.AudiobookWriteAudioBookShelfCover) ||
+                   HasConfiguredIndividualSettings(
+                       resource.EbookMonitored,
+                       resource.EbookMonitorExistingMode,
+                       resource.EbookMonitorExistingBooks,
+                       resource.EbookMonitorExisting,
+                       resource.EbookMonitorFuture,
+                       resource.EbookMonitorNewItems,
+                       resource.EbookQualityProfileId,
+                       resource.EbookMetadataProfileId,
+                       resource.EbookTags,
+                       resource.EbookWriteAudioBookShelfMetadataJson,
+                       resource.EbookWriteAudioBookShelfCover);
+        }
+
+        private static MediaTypeSettings CreateLegacySettings(RootFolderResource resource)
+        {
+            return new MediaTypeSettings
+            {
+                QualityProfileId = resource.DefaultQualityProfileId > 0 ? resource.DefaultQualityProfileId : null,
+                MetadataProfileId = resource.DefaultMetadataProfileId > 0 ? resource.DefaultMetadataProfileId : null,
+                MonitorExistingMode = resource.DefaultMonitorOption,
+                MonitorNewItems = resource.DefaultNewItemMonitorOption,
+                Tags = resource.DefaultTags?.ToList() ?? new List<int>()
+            };
+        }
+
+        private static MediaTypeSettings CloneSettings(MediaTypeSettings settings)
+        {
+            return new MediaTypeSettings
+            {
+                QualityProfileId = settings.QualityProfileId,
+                MetadataProfileId = settings.MetadataProfileId,
+                MonitorExistingMode = settings.MonitorExistingMode,
+                MonitorNewItems = settings.MonitorNewItems,
+                Tags = settings.Tags?.ToList() ?? new List<int>()
+            };
+        }
+
         private static bool HasConfiguredMediaTypeSettings(MediaTypeSettingsResource settings)
         {
             return settings != null &&
@@ -648,11 +745,11 @@ namespace Chaptarr.Api.V1.RootFolders
             return models.Select(ToResource).ToList();
         }
 
-        public static List<RootFolderResource> ToResource(this IEnumerable<RootFolder> models, IEnumerable<RootFolder> allRootFolders, string defaultAudiobookRootFolderPath, string defaultEbookRootFolderPath)
+        public static List<RootFolderResource> ToResource(this IEnumerable<RootFolder> models, IEnumerable<RootFolder> allRootFolders, string defaultAudiobookRootFolderPath, string defaultEbookRootFolderPath, Func<RootFolder, bool> hasAssignedAuthors = null)
         {
             var allFolders = (allRootFolders ?? Enumerable.Empty<RootFolder>()).ToList();
 
-            return models.Select(model => model.ToResource(allFolders, defaultAudiobookRootFolderPath, defaultEbookRootFolderPath)).ToList();
+            return models.Select(model => model.ToResource(allFolders, defaultAudiobookRootFolderPath, defaultEbookRootFolderPath, hasAssignedAuthors?.Invoke(model) ?? false)).ToList();
         }
     }
 }

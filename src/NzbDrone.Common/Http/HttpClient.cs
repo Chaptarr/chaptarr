@@ -12,6 +12,7 @@ using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http.Dispatchers;
 using NzbDrone.Common.TPL;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Common.Http
 {
@@ -41,6 +42,14 @@ namespace NzbDrone.Common.Http
     public class HttpClient : IHttpClient
     {
         private const int MaxRedirects = 5;
+        private static readonly HashSet<string> SensitiveCrossOriginRedirectHeaders = new (StringComparer.OrdinalIgnoreCase)
+        {
+            "Authorization",
+            "Cookie",
+            "Cookie2",
+            "Proxy-Authorization",
+            "Set-Cookie"
+        };
 
         private readonly Logger _logger;
         private readonly IRateLimitService _rateLimitService;
@@ -84,18 +93,51 @@ namespace NzbDrone.Common.Http
 
                 do
                 {
+                    var redirectRequest = response.Request ?? request;
+                    // A streamed body may already be consumed and disposed by the dispatcher.
+                    // Never replay it to another endpoint, especially with upload credentials.
+                    if (redirectRequest.Content != null)
+                    {
+                        throw new WebException("Automatic redirects are not supported for streamed request bodies.", WebExceptionStatus.ProtocolError);
+                    }
+
                     var location = response.Headers.GetSingleValue("Location");
                     if (location.IsNullOrWhiteSpace())
                     {
-                        throw new WebException($"Redirect response from {request.Url} is missing a Location header.", WebExceptionStatus.ProtocolError);
+                        throw new WebException($"Redirect response from {redirectRequest.Url} is missing a Location header.", WebExceptionStatus.ProtocolError);
                     }
 
-                    var nextUrl = request.Url + new HttpUri(location);
+                    var sourceUrl = redirectRequest.Url;
+                    if (!Uri.TryCreate((Uri)sourceUrl, location, out var resolvedLocation) ||
+                        !resolvedLocation.IsAbsoluteUri ||
+                        !string.IsNullOrEmpty(resolvedLocation.UserInfo))
+                    {
+                        // Redirect locations can contain credentials; never include the value in the error.
+                        throw new WebException("Redirect target is invalid or contains URL credentials.", WebExceptionStatus.ProtocolError);
+                    }
+
+                    HttpUri nextUrl;
+                    try
+                    {
+                        nextUrl = sourceUrl + new HttpUri(location);
+                    }
+                    catch (ArgumentException)
+                    {
+                        // Do not echo malformed Location values; they may contain credentials.
+                        throw new WebException("Redirect target is invalid or unsupported.", WebExceptionStatus.ProtocolError);
+                    }
 
                     EnsureSafeRedirectTarget(nextUrl);
 
+                    if (IsCrossOriginRedirect(sourceUrl, nextUrl) && HasSensitiveRequestData(redirectRequest, nextUrl, cookieContainer))
+                    {
+                        throw new WebException("Refusing to redirect a request containing credentials, cookies, or a body to another origin", WebExceptionStatus.ProtocolError);
+                    }
+
+                    request = redirectRequest;
+
                     // 302 or 303 should default to GET on redirect even if POST on original
-                    if (RequestRequiresForceGet(response.StatusCode, response.Request.Method))
+                    if (RequestRequiresForceGet(response.StatusCode, redirectRequest.Method))
                     {
                         request.Method = HttpMethod.Get;
                         request.ContentData = null;
@@ -174,6 +216,45 @@ namespace NzbDrone.Common.Http
         private static bool IsCloudMetadataTarget(HttpUri url)
         {
             return CloudMetadataTargetPolicy.IsBlocked(url?.Host);
+        }
+
+        private static bool IsCrossOriginRedirect(HttpUri source, HttpUri destination)
+        {
+            var sourceUri = (Uri)source;
+            var destinationUri = (Uri)destination;
+
+            return !string.Equals(sourceUri.Scheme, destinationUri.Scheme, StringComparison.OrdinalIgnoreCase) ||
+                   !string.Equals(sourceUri.IdnHost, destinationUri.IdnHost, StringComparison.OrdinalIgnoreCase) ||
+                   sourceUri.Port != destinationUri.Port;
+        }
+
+        private static bool HasSensitiveRequestData(HttpRequest request, HttpUri destination, CookieContainer cookieContainer)
+        {
+            if (request.Credentials != null ||
+                request.Content != null ||
+                request.ContentData != null ||
+                request.Cookies.Count != 0 ||
+                !string.IsNullOrEmpty(((Uri)request.Url).UserInfo) ||
+                !string.IsNullOrEmpty(((Uri)destination).UserInfo) ||
+                cookieContainer.GetCookieHeader((Uri)request.Url).IsNotNullOrWhiteSpace() ||
+                cookieContainer.GetCookieHeader((Uri)destination).IsNotNullOrWhiteSpace())
+            {
+                return true;
+            }
+
+            return request.Headers.Any(header => IsSensitiveRedirectHeader(header.Key));
+        }
+
+        private static bool IsSensitiveRedirectHeader(string name)
+        {
+            return SensitiveCrossOriginRedirectHeaders.Contains(name) ||
+                   name.Contains("auth", StringComparison.OrdinalIgnoreCase) ||
+                   name.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+                   name.Contains("secret", StringComparison.OrdinalIgnoreCase) ||
+                   name.Contains("password", StringComparison.OrdinalIgnoreCase) ||
+                   name.Contains("credential", StringComparison.OrdinalIgnoreCase) ||
+                   name.Contains("cookie", StringComparison.OrdinalIgnoreCase) ||
+                   (name.Contains("api", StringComparison.OrdinalIgnoreCase) && name.Contains("key", StringComparison.OrdinalIgnoreCase));
         }
 
         public HttpResponse Execute(HttpRequest request)
@@ -335,7 +416,7 @@ namespace NzbDrone.Common.Http
                     fileInfo.Directory.Create();
                 }
 
-                _logger.Debug("Downloading [{0}] to [{1}]", url, fileName);
+                _logger.DebugSafe("Downloading [{0}] to [{1}]", url, fileName);
 
                 var stopWatch = Stopwatch.StartNew();
                 await using (var fileStream = new FileStream(fileNamePart, FileMode.Create, FileAccess.ReadWrite))

@@ -9,6 +9,7 @@ interface CssExports {
   'mbLinkIcon': string;
   'narrator': string;
   'notAddableIcon': string;
+  'notAddableMessage': string;
   'overlay': string;
   'overview': string;
   'poster': string;

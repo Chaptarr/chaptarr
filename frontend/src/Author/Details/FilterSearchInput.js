@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import translate from 'Utilities/String/translate';
 import { connect } from 'react-redux';
 import Icon from 'Components/Icon';
 import IconButton from 'Components/Link/IconButton';
@@ -72,7 +73,7 @@ class FilterSearchInput extends Component {
           className={styles.searchInput}
           name="authorDetailsFilter"
           value={filterValue}
-          placeholder="Search books, series, narrators..."
+          placeholder={translate('SearchBooksSeriesNarratorsPlaceholder')}
           onChange={this.onFilterChange}
           onFocus={this.onFocus}
           onBlur={this.onBlur}
@@ -81,7 +82,7 @@ class FilterSearchInput extends Component {
           <IconButton
             className={styles.clearIcon}
             name={icons.REMOVE}
-            title="Clear filter"
+            title={translate('ClearFilter')}
             onPress={this.onClearPress}
           />
         }

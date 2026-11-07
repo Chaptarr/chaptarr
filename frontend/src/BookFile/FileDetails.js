@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import map from 'lodash/map';
 import PropTypes from 'prop-types';
 import React, { Fragment } from 'react';
 import DescriptionList from 'Components/DescriptionList/DescriptionList';
@@ -15,7 +15,7 @@ function renderRejections(rejections) {
         {translate('Rejections')}
       </DescriptionListItemTitle>
       {
-        _.map(rejections, (item, key) => {
+        map(rejections, (item, key) => {
           return (
             <DescriptionListItemDescription key={key}>
               {item.reason}

@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using Chaptarr.Api.V1.Author;
 using Chaptarr.Api.V1.Books;
+using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Api.V1.Series;
+using AuthorApiResource = Chaptarr.Api.V1.Author.AuthorResource;
 using Chaptarr.Http;
 using Chaptarr.Http.Middleware;
 using Microsoft.AspNetCore.Mvc;
@@ -11,6 +13,9 @@ using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Organizer;
+using NzbDrone.Common.Instrumentation;
+using AdditionalMetadataSources = NzbDrone.Core.MetadataSource.BookInfo.AdditionalMetadataSources;
+using ProviderSearchResult = NzbDrone.Core.MetadataSource.BookInfo.ProviderSearchResult;
 
 namespace Chaptarr.Api.V1.Search
 {
@@ -38,17 +43,23 @@ namespace Chaptarr.Api.V1.Search
 
         [HttpGet]
         [ProducesResponseType(typeof(List<SearchResource>), 200)]
-        public ActionResult<List<SearchResource>> Search([FromQuery] string term, [FromQuery] string provider = null)
+        public ActionResult<List<SearchResource>> Search([FromQuery] string term, [FromQuery] string provider = null, [FromQuery] string mediaType = null)
         {
             // Add logging to trace the search request
             var logger = NLog.LogManager.GetCurrentClassLogger();
-            logger.Info($"[SEARCH API] Called with term: '{term}', provider: '{provider ?? "null"}'");
+            logger.InfoSafe($"[SEARCH API] Called with term: '{term}', provider: '{provider ?? "null"}'");
 
             try
             {
                 var searchResults = string.IsNullOrEmpty(provider)
                     ? _searchProxy.SearchForNewEntity(term)
-                    : _searchProxy.SearchForNewEntity(term, provider);
+                    : _searchProxy.SearchForNewEntity(
+                        term,
+                        provider,
+                        (string.Equals(provider, "metadata", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(provider, AdditionalMetadataSources.MetadataApi, StringComparison.OrdinalIgnoreCase))
+                            ? MediaTypeParameterParser.ParseOptional(mediaType)
+                            : null);
 
                 logger.Info($"[SEARCH API] Returned {searchResults?.Count ?? 0} results");
 
@@ -77,7 +88,7 @@ namespace Chaptarr.Api.V1.Search
             }
             catch (Exception ex)
             {
-                logger.Error(ex, $"[SEARCH API] Error during search for term: '{term}', provider: '{provider}'");
+                logger.ErrorSafe(ex, $"[SEARCH API] Error during search for term: '{term}', provider: '{provider}'");
                 throw;
             }
         }
@@ -86,8 +97,11 @@ namespace Chaptarr.Api.V1.Search
         {
             var isAudiobookProvider = string.Equals(provider, "audible", StringComparison.OrdinalIgnoreCase);
             var id = 1;
-            foreach (var result in results)
+            foreach (var searchResult in results)
             {
+                var preferredAuthorId = (searchResult as ProviderSearchResult)?.PreferredAuthorId;
+                var result = (searchResult as ProviderSearchResult)?.Entity ?? searchResult;
+
                 var resource = new SearchResource();
                 resource.Id = id++;
 
@@ -103,6 +117,8 @@ namespace Chaptarr.Api.V1.Search
                         resource.Author.TitleSlug = existingAuthor.TitleSlug;
                         resource.Author.SelectedPosterHash = existingAuthor.SelectedPosterHash;
                     }
+
+                    ApplyPreferredSearchAuthorId(resource.Author, preferredAuthorId, facadeContext);
 
                     resource.ForeignId = resource.Author.ForeignAuthorId;
                     resource.ProviderId = resource.Author.ForeignAuthorId;
@@ -170,6 +186,8 @@ namespace Chaptarr.Api.V1.Search
                         resource.Book.Author.Id = existingBookAuthor.Id;
                         resource.Book.Author.TitleSlug = existingBookAuthor.TitleSlug;
                     }
+
+                    ApplyPreferredSearchAuthorId(resource.Book.Author, preferredAuthorId, facadeContext);
 
                     resource.Book.Editions = book.Editions.ToResource(facadeContext);
 
@@ -296,6 +314,14 @@ namespace Chaptarr.Api.V1.Search
             }
         }
 
+        private static void ApplyPreferredSearchAuthorId(AuthorApiResource resource, string preferredAuthorId, ReadarrFacadeContext facadeContext)
+        {
+            if (resource != null && facadeContext == null && !string.IsNullOrWhiteSpace(preferredAuthorId))
+            {
+                resource.ForeignAuthorId = preferredAuthorId;
+            }
+        }
+
         private NzbDrone.Core.Books.Author FindExistingAuthor(NzbDrone.Core.Books.Author searchAuthor)
         {
             if (_providerAliasService != null)
@@ -323,7 +349,8 @@ namespace Chaptarr.Api.V1.Search
 	                ("gr", searchAuthor.GoodreadsAuthorId),
 	                ("ol", searchAuthor.OpenLibraryAuthorId),
 	                ("gb", searchAuthor.GoogleBooksAuthorId),
-	                ("az", searchAuthor.AudnexusAuthorId)
+                ("az", searchAuthor.AudnexusAuthorId),
+                ("meta", searchAuthor.AdditionalMetadataProviderId)
 	            };
 
             foreach (var (provider, id) in lookups)
@@ -367,6 +394,7 @@ namespace Chaptarr.Api.V1.Search
             Add(searchAuthor?.OpenLibraryAuthorId);
             Add(searchAuthor?.GoogleBooksAuthorId);
             Add(searchAuthor?.AudnexusAuthorId);
+            Add(searchAuthor?.AdditionalMetadataProviderId);
 
             if (searchAuthor?.RemoteProviderIds != null)
             {

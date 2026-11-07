@@ -76,6 +76,55 @@
   font-size: 11px;
 }
 
+.rootFolderScopePrompt {
+  margin: 20px 0 0;
+  padding: 0;
+  min-width: 0;
+  border: 0;
+}
+
+.rootFolderScopeOptions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+
+  margin-top: 8px;
+}
+
+.rootFolderScopeOption {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+
+  padding: 8px 12px;
+  border: 1px solid var(--inputBorderColor);
+  border-radius: 4px;
+  background-color: var(--inputBackgroundColor);
+  cursor: pointer;
+}
+
+.rootFolderScopeOption:hover {
+  background-color: var(--inputHoverBackgroundColor);
+}
+
+.rootFolderScopeOption input {
+  margin: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.rootFolderScopeHelp {
+  margin-top: 8px;
+  color: var(--helpTextColor);
+  font-size: 12px;
+}
+
+.rootFolderScopeError {
+  margin-top: 8px;
+  color: var(--dangerColor);
+  font-size: 13px;
+}
+
 .addRootFolderCard {
   composes: rootFolderCard;
 

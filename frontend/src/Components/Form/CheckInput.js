@@ -100,6 +100,8 @@ class CheckInput extends Component {
       uncheckedValue,
       helpText,
       helpTextWarning,
+      ariaDescribedBy,
+      hasError,
       isDisabled,
       kind
     } = this.props;
@@ -122,6 +124,8 @@ class CheckInput extends Component {
             name={name}
             checked={isChecked}
             disabled={isDisabled}
+            aria-describedby={ariaDescribedBy}
+            aria-invalid={hasError || undefined}
             onChange={this.onChange}
           />
 
@@ -148,6 +152,7 @@ class CheckInput extends Component {
             helpText &&
               <FormInputHelpText
                 className={styles.helpText}
+                id={`${name}-help`}
                 text={helpText}
               />
           }
@@ -175,6 +180,8 @@ CheckInput.propTypes = {
   value: PropTypes.oneOfType([PropTypes.string, PropTypes.bool]),
   helpText: PropTypes.string,
   helpTextWarning: PropTypes.string,
+  ariaDescribedBy: PropTypes.string,
+  hasError: PropTypes.bool,
   isDisabled: PropTypes.bool,
   kind: PropTypes.oneOf(kinds.all).isRequired,
   onChange: PropTypes.func.isRequired

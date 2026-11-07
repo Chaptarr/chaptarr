@@ -14,6 +14,7 @@ function addRootUrl(ajaxOptions) {
 function addApiKey(ajaxOptions) {
   ajaxOptions.headers = ajaxOptions.headers || {};
   ajaxOptions.headers['X-Api-Key'] = window.Chaptarr.apiKey;
+  ajaxOptions.headers['X-ChaptarrNG-Client'] = 'native';
 }
 
 function addContentType(ajaxOptions) {

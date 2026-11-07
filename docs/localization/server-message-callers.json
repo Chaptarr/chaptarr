@@ -1,0 +1,454 @@
+{
+  "version": 1,
+  "scope": "Presentation boundaries only; stores retain raw server messages and captured provider/user values stay data. See server-copy-review.md for complete caller review.",
+  "counts": {
+    "files": 34,
+    "callsites": 74
+  },
+  "callsites": [
+    {
+      "file": "frontend/src/Activity/History/Details/HistoryDetails.js",
+      "line": 30,
+      "sourceLine": "{translateServerMessage(message)}",
+      "sourceLineSha256": "5094488fcf0f7f4abca6f201b2f51404bdf2d9fa105c5b0aa908e7bc846cb873"
+    },
+    {
+      "file": "frontend/src/Activity/History/Details/HistoryDetails.js",
+      "line": 206,
+      "sourceLine": "data={translateServerMessage(message)}",
+      "sourceLineSha256": "fad608f76f3dbf065d9170be83a524aa4d6797c74ed019495db86ecb747deb01"
+    },
+    {
+      "file": "frontend/src/Activity/History/Details/HistoryDetails.js",
+      "line": 355,
+      "sourceLine": "data={translateServerMessage(message)}",
+      "sourceLineSha256": "fad608f76f3dbf065d9170be83a524aa4d6797c74ed019495db86ecb747deb01"
+    },
+    {
+      "file": "frontend/src/Activity/History/Details/HistoryDetails.js",
+      "line": 584,
+      "sourceLine": "data={translateServerMessage(message)}",
+      "sourceLineSha256": "fad608f76f3dbf065d9170be83a524aa4d6797c74ed019495db86ecb747deb01"
+    },
+    {
+      "file": "frontend/src/Activity/Queue/QueueDetails.js",
+      "line": 39,
+      "sourceLine": "title={translate('ImportFailedInterp', [translateServerMessage(errorMessage)])}",
+      "sourceLineSha256": "dcadc36adbbeefd8904f787dc07e75e0d6dd519fdd6183bb0b0f745d272b3267"
+    },
+    {
+      "file": "frontend/src/Activity/Queue/QueueDetails.js",
+      "line": 52,
+      "sourceLine": "title={translate('DownloadFailedInterp', [translateServerMessage(errorMessage)])}",
+      "sourceLineSha256": "002f8f031af1a13da111a63ca0e33e1d98ded7de2631b1b36fc841d11ef3f9d3"
+    },
+    {
+      "file": "frontend/src/Activity/Queue/QueueRow.js",
+      "line": 307,
+      "sourceLine": "title={translateServerMessage(conversionMessage) || ''}",
+      "sourceLineSha256": "31b596c21463b14c91c2b89d8ca18ce6e4a1365b716b022d07b23eb8208c57a7"
+    },
+    {
+      "file": "frontend/src/Activity/Queue/QueueRow.js",
+      "line": 427,
+      "sourceLine": "title={translateServerMessage(conversionMessage) || conversionProgressLabel}",
+      "sourceLineSha256": "bc8f5bb9134ed49e50ed45c66bb0c591b933ab57c8693eb24ae914507b8b6651"
+    },
+    {
+      "file": "frontend/src/Activity/Queue/QueueRow.js",
+      "line": 432,
+      "sourceLine": "aria-label={translateServerMessage(conversionMessage) || conversionProgressLabel}",
+      "sourceLineSha256": "590711026f6731dc3e796ffe5dc8edcea5fbac96c5f3181824dc9a2313956c5b"
+    },
+    {
+      "file": "frontend/src/Activity/Queue/QueueStatusCell.js",
+      "line": 18,
+      "sourceLine": "{translateServerMessage(title)}",
+      "sourceLineSha256": "f65483c26b4d3e75076b25b3aa5594a77650be15e4b9a7a57f2ee26d785c1da3"
+    },
+    {
+      "file": "frontend/src/Activity/Queue/QueueStatusCell.js",
+      "line": 24,
+      "sourceLine": "{translateServerMessage(message)}",
+      "sourceLineSha256": "5094488fcf0f7f4abca6f201b2f51404bdf2d9fa105c5b0aa908e7bc846cb873"
+    },
+    {
+      "file": "frontend/src/Activity/Queue/QueueStatusCell.js",
+      "line": 69,
+      "sourceLine": "popoverBody = translateServerMessage(conversionMessage);",
+      "sourceLineSha256": "fcfbcb5937b2f20989c75958fbef58bf333b6e031ba53eba8455db46420e8b78"
+    },
+    {
+      "file": "frontend/src/Activity/Queue/QueueStatusCell.js",
+      "line": 73,
+      "sourceLine": "popoverBody = translateServerMessage(conversionMessage);",
+      "sourceLineSha256": "fcfbcb5937b2f20989c75958fbef58bf333b6e031ba53eba8455db46420e8b78"
+    },
+    {
+      "file": "frontend/src/Activity/Queue/QueueStatusCell.js",
+      "line": 217,
+      "sourceLine": "title={translateServerMessage(title)}",
+      "sourceLineSha256": "ad55af10454f8e7a9fd60efe9dcd614939b4064744f4f4be48a272a1375a214d"
+    },
+    {
+      "file": "frontend/src/Author/Edit/AuthorMediaMoveControl.js",
+      "line": 18,
+      "sourceLine": "return translateServerMessage(xhr.responseJSON?.message || xhr.responseJSON?.error || translate('AuthorMediaMoveRequestFailed'));",
+      "sourceLineSha256": "0182be8f2c44c8aaa4b15764a62b3c9c695ec8dd221a5a6114ad0e25931c9fc5"
+    },
+    {
+      "file": "frontend/src/Author/Editor/BulkAuthorMediaMoveModal.js",
+      "line": 18,
+      "sourceLine": "return translateServerMessage(xhr.responseJSON?.message || xhr.responseJSON?.error || translate('AuthorMediaMoveRequestFailed'));",
+      "sourceLineSha256": "0182be8f2c44c8aaa4b15764a62b3c9c695ec8dd221a5a6114ad0e25931c9fc5"
+    },
+    {
+      "file": "frontend/src/Book/Details/Matching/BookMatchProvenanceTable.js",
+      "line": 118,
+      "sourceLine": "return range.detail ? `${label}: ${translateServerMessage(range.detail)}` : label;",
+      "sourceLineSha256": "36cb15985db9f79c1b1ca42ec277e4f05d37cfc2c8ebda844358ff0716ae836b"
+    },
+    {
+      "file": "frontend/src/Book/Details/Matching/BookMatchProvenanceTable.js",
+      "line": 264,
+      "sourceLine": "return translateServerMessage(signal.detail) || '';",
+      "sourceLineSha256": "ff99da9db465d19b08e83a4399539cfe1ce46e1f3d9a691606d2996c63bbf98f"
+    },
+    {
+      "file": "frontend/src/Book/Details/Matching/BookMatchProvenanceTable.js",
+      "line": 557,
+      "sourceLine": "title={translateServerMessage(signal.detail)}",
+      "sourceLineSha256": "d7a859f2ea7c1d3ca6681224a31b805fae594633e0664d919e1a8d46008857c3"
+    },
+    {
+      "file": "frontend/src/Components/Form/EnhancedSelectInput.js",
+      "line": 40,
+      "sourceLine": ".map((e) => translateServerMessage(e?.errorMessage))",
+      "sourceLineSha256": "6f295eb7472c4c00aabb8159505fe1a4607d2bf8f29a75ec1ad0d663391530fc"
+    },
+    {
+      "file": "frontend/src/Components/Form/EnhancedSelectInput.js",
+      "line": 43,
+      "sourceLine": "return messages.length ? messages.join(' ') : (translateServerMessage(error.responseText) || null);",
+      "sourceLineSha256": "528de446877fa01e6dea279e015f12e2fab622ba0d0c40879fe51f1fa4c9d842"
+    },
+    {
+      "file": "frontend/src/Components/Form/EnhancedSelectInput.js",
+      "line": 47,
+      "sourceLine": "return translateServerMessage(responseJSON.message || responseJSON.error || error.responseText) || null;",
+      "sourceLineSha256": "4cccff4e6a5b7a9a48c99888c8a4f4e56c31d7c4aa4ff928c2f5464a1bede63c"
+    },
+    {
+      "file": "frontend/src/Components/Form/EnhancedSelectInput.js",
+      "line": 50,
+      "sourceLine": "return translateServerMessage(error.responseText) || (error.status && error.statusText ? `${error.status} ${error.statusText}` : null);",
+      "sourceLineSha256": "0bbbd499be1b809edd01b3ba7b86aaca6a0a5f2b4a3e4874580c28b8c1b709c2"
+    },
+    {
+      "file": "frontend/src/Components/Form/Form.js",
+      "line": 30,
+      "sourceLine": "{translateServerMessage(msg)}",
+      "sourceLineSha256": "64ebb150bc6ab374bd56df844a59e052c1dc5cafe42701342ac709551ce6edd8"
+    },
+    {
+      "file": "frontend/src/Components/Form/Form.js",
+      "line": 43,
+      "sourceLine": "{translateServerMessage(error.errorMessage)}",
+      "sourceLineSha256": "6d6847e3da03842f537d59dd19f9432ec279d10af3d5c6349ed2c6eca78f6e17"
+    },
+    {
+      "file": "frontend/src/Components/Form/Form.js",
+      "line": 56,
+      "sourceLine": "{translateServerMessage(warning.errorMessage)}",
+      "sourceLineSha256": "d8104d4f6819927eac1d90716d91603006129a17758f8554a0527b5a8c526a54"
+    },
+    {
+      "file": "frontend/src/Components/Form/FormInputGroup.js",
+      "line": 267,
+      "sourceLine": "text={translateServerMessage(error.message)}",
+      "sourceLineSha256": "f2cf8deb1d180173334f2fc26c575908760dba65a97c36a6e1acab13f9254309"
+    },
+    {
+      "file": "frontend/src/Components/Form/FormInputGroup.js",
+      "line": 269,
+      "sourceLine": "tooltip={translateServerMessage(error.detailedMessage)}",
+      "sourceLineSha256": "34658f0a6a7458bb1af56a319197bd3ef8fd33b57f7b5b1096d1bdd4571291f9"
+    },
+    {
+      "file": "frontend/src/Components/Form/FormInputGroup.js",
+      "line": 283,
+      "sourceLine": "text={translateServerMessage(warning.message)}",
+      "sourceLineSha256": "64802984b43be8f75bb55aec675ad12d06d6ed570ced7a05c7a61f3fa4883d37"
+    },
+    {
+      "file": "frontend/src/Components/Form/FormInputGroup.js",
+      "line": 285,
+      "sourceLine": "tooltip={translateServerMessage(warning.detailedMessage)}",
+      "sourceLineSha256": "d554a318a0ae182adff8bd233cb79dcac5045b4a099ca04c0c08423e5288752a"
+    },
+    {
+      "file": "frontend/src/Components/Form/FormInputHelpText.js",
+      "line": 32,
+      "sourceLine": "{translateServerMessage(text)}",
+      "sourceLineSha256": "ce890f9941b3a10206e7e5b6708d63d1e9dd79e2973c5a42a0822bb18b8ac24e"
+    },
+    {
+      "file": "frontend/src/Components/Form/FormInputHelpText.js",
+      "line": 39,
+      "sourceLine": "title={translateServerMessage(tooltip)}",
+      "sourceLineSha256": "31d219f1bc3dd65e550b89666be73799907a5408b1708cea767ce3390d99b40a"
+    },
+    {
+      "file": "frontend/src/Components/Form/FormInputHelpText.js",
+      "line": 53,
+      "sourceLine": "title={translateServerMessage(tooltip)}",
+      "sourceLineSha256": "31d219f1bc3dd65e550b89666be73799907a5408b1708cea767ce3390d99b40a"
+    },
+    {
+      "file": "frontend/src/Components/Form/OAuthInput.js",
+      "line": 18,
+      "sourceLine": ".map((e) => translateServerMessage(e?.errorMessage))",
+      "sourceLineSha256": "6f295eb7472c4c00aabb8159505fe1a4607d2bf8f29a75ec1ad0d663391530fc"
+    },
+    {
+      "file": "frontend/src/Components/Form/OAuthInput.js",
+      "line": 21,
+      "sourceLine": "return messages.length ? messages.join(' ') : (translateServerMessage(error.responseText) || null);",
+      "sourceLineSha256": "528de446877fa01e6dea279e015f12e2fab622ba0d0c40879fe51f1fa4c9d842"
+    },
+    {
+      "file": "frontend/src/Components/Form/OAuthInput.js",
+      "line": 25,
+      "sourceLine": "return translateServerMessage(responseJSON.message || error.responseText) || null;",
+      "sourceLineSha256": "332ec4fa638e6183a136b62dba7a702b5552e4e51acce4ec6d4d3c654ea89d85"
+    },
+    {
+      "file": "frontend/src/Components/Form/OAuthInput.js",
+      "line": 28,
+      "sourceLine": "return translateServerMessage(error.responseText) || null;",
+      "sourceLineSha256": "57deae359f55a2ee338fa0de4470c4297b9df6ed77e302d230bdd57818e010f2"
+    },
+    {
+      "file": "frontend/src/Components/Page/Header/ImportProgressDrawerModal.js",
+      "line": 63,
+      "sourceLine": "const stageText = translateServerMessage(importTracker?.message) || formatStage(importTracker?.stage);",
+      "sourceLineSha256": "e3ca60ae24de2e0cb184421095eb3aeaad2b7a8fab2f558a4618f3ba406fb7b0"
+    },
+    {
+      "file": "frontend/src/Components/Page/Sidebar/Messages/Message.js",
+      "line": 76,
+      "sourceLine": "message={translateServerMessage(message)}",
+      "sourceLineSha256": "ef86e1bc76c9ac3d7b22713a2b7ef2bb8724a0665ed8df21398a6eafc1815534"
+    },
+    {
+      "file": "frontend/src/Components/Page/Sidebar/Messages/Message.js",
+      "line": 99,
+      "sourceLine": "const stageText = translateServerMessage(message);",
+      "sourceLineSha256": "7b74f4a37332c5045ffcb0c09d2c3e3639ce76a05fd5cf9c73352dbf9bfca721"
+    },
+    {
+      "file": "frontend/src/Components/Page/Sidebar/Messages/Message.js",
+      "line": 178,
+      "sourceLine": "{translateServerMessage(message)}",
+      "sourceLineSha256": "5094488fcf0f7f4abca6f201b2f51404bdf2d9fa105c5b0aa908e7bc846cb873"
+    },
+    {
+      "file": "frontend/src/Components/PendingImportStatus/PendingImportStatus.js",
+      "line": 27,
+      "sourceLine": "{translateServerMessage(message) || translate('PendingImportProcessing')}",
+      "sourceLineSha256": "e999a42b4b278adc505f7f4f2735a5ba8820110e47c15f598a13e24d654a36e6"
+    },
+    {
+      "file": "frontend/src/Components/PendingImportStatus/PendingImportStatus.js",
+      "line": 41,
+      "sourceLine": "✗ {translateServerMessage(error) || translate('PendingImportFailed')}",
+      "sourceLineSha256": "2da0ddde73c9f8c0d7b5ccdb5a33d74325b6f1033d7d70e5eae707a7d7b5d1db"
+    },
+    {
+      "file": "frontend/src/FirstRun/AuthenticationRequiredModalContent.js",
+      "line": 47,
+      "sourceLine": "return message ? [translateServerMessage(message)] : [];",
+      "sourceLineSha256": "362149931d9dba875e7c76668503df75239d55532775fa32bbe8d0a3c32eacae"
+    },
+    {
+      "file": "frontend/src/InteractiveSearch/InteractiveSearchRow.js",
+      "line": 64,
+      "sourceLine": "return translateServerMessage(grabError);",
+      "sourceLineSha256": "752323850afe12c6fc90993e3141fed0609e5af92dfc34cdbd083cd1a8962b27"
+    },
+    {
+      "file": "frontend/src/InteractiveSearch/InteractiveSearchRow.js",
+      "line": 346,
+      "sourceLine": "{translateServerMessage(grabError)}",
+      "sourceLineSha256": "da62b57a54c1641a4fbed3f1ab377b326a3ca71b7ce4491ea9a438d4aca76eb7"
+    },
+    {
+      "file": "frontend/src/Search/Series/AddNewSeriesModalContent.js",
+      "line": 386,
+      "sourceLine": "{fetchError && <Alert kind={kinds.WARNING}>{translateServerMessage(fetchError)}</Alert>}",
+      "sourceLineSha256": "368a08daf4725cf321b6cbe0c873395546961a48f8d46b8a5246068f418e0059"
+    },
+    {
+      "file": "frontend/src/Search/Series/AddNewSeriesModalContent.js",
+      "line": 501,
+      "sourceLine": "{translateServerMessage(error.message || error)}",
+      "sourceLineSha256": "a4fbca27d82d81fd819cefb9c965ffcdaa054e0c4d113e48a972266b52383de7"
+    },
+    {
+      "file": "frontend/src/Settings/DownloadClients/DownloadClients/EditDownloadClientModalContent.js",
+      "line": 285,
+      "sourceLine": "{translateServerMessage(message.value.message)}",
+      "sourceLineSha256": "255fd0936ae1edf356f999254872e3671e38456de9e6ae2901bb3bdc4edc3b04"
+    },
+    {
+      "file": "frontend/src/Settings/ImportLists/ImportLists/EditImportListModalContent.js",
+      "line": 198,
+      "sourceLine": "return translateServerMessage(responseJson);",
+      "sourceLineSha256": "b3dfaebaea3aa274d02b9b0ac5ecddc0f978b9f89860164cf4268a6bb16a4a46"
+    },
+    {
+      "file": "frontend/src/Settings/ImportLists/ImportLists/EditImportListModalContent.js",
+      "line": 202,
+      "sourceLine": "return translateServerMessage(responseJson.message);",
+      "sourceLineSha256": "9d156b0eaa8306c38f127d901f12467d14f30f09e9a82c0b528e434cdf334904"
+    },
+    {
+      "file": "frontend/src/Settings/ImportLists/ImportLists/EditImportListModalContent.js",
+      "line": 206,
+      "sourceLine": "return translateServerMessage(responseJson.error);",
+      "sourceLineSha256": "3dbe980f0052712ce90420549ce1affe7648001324bf8cf4c17b288f8b74da65"
+    },
+    {
+      "file": "frontend/src/Settings/ImportLists/ImportLists/EditImportListModalContent.js",
+      "line": 210,
+      "sourceLine": "return translateServerMessage(responseJson.detail);",
+      "sourceLineSha256": "1295fab30644367c15ea65b172652e8e21e7c07d9b238cf21d885f46ccef7a2c"
+    },
+    {
+      "file": "frontend/src/Settings/ImportLists/ImportLists/EditImportListModalContent.js",
+      "line": 625,
+      "sourceLine": "{translateServerMessage(message.value.message)}",
+      "sourceLineSha256": "255fd0936ae1edf356f999254872e3671e38456de9e6ae2901bb3bdc4edc3b04"
+    },
+    {
+      "file": "frontend/src/Settings/ImportLists/ImportLists/EditImportListModalContent.js",
+      "line": 647,
+      "sourceLine": "{translateServerMessage(goodreadsValidationMessage)}",
+      "sourceLineSha256": "17ac5877d376f4a1e6d7acf78c81a704b60a7baa2c9ef2746483639edb913125"
+    },
+    {
+      "file": "frontend/src/Settings/ImportLists/ImportLists/ImportListSyncModal.js",
+      "line": 22,
+      "sourceLine": ".map((message) => translateServerMessage(message.trim()));",
+      "sourceLineSha256": "a2d4d2ee7eac643f7b64133d3587fe31878d56b65ee56334611af8dd532a5d98"
+    },
+    {
+      "file": "frontend/src/Settings/ImportLists/ImportLists/ImportListSyncModal.js",
+      "line": 30,
+      "sourceLine": "return translateServerMessage(responseJson);",
+      "sourceLineSha256": "b3dfaebaea3aa274d02b9b0ac5ecddc0f978b9f89860164cf4268a6bb16a4a46"
+    },
+    {
+      "file": "frontend/src/Settings/ImportLists/ImportLists/ImportListSyncModal.js",
+      "line": 33,
+      "sourceLine": "return translateServerMessage(responseJson?.message ||",
+      "sourceLineSha256": "9d074330439485ef972e2cb565fa621df4bcf8df04cfbf0c80dec9af002bb712"
+    },
+    {
+      "file": "frontend/src/Settings/Indexers/Indexers/EditIndexerModalContent.js",
+      "line": 150,
+      "sourceLine": "{translateServerMessage(item.message.message)}",
+      "sourceLineSha256": "c40183ea4d371dca166762a1dee2a270b113bddb44d6fe9d604da49c37ca4969"
+    },
+    {
+      "file": "frontend/src/Settings/MediaManagement/Naming/NamingVisualBuilder/ValidationPanel.js",
+      "line": 19,
+      "sourceLine": "return messages[error.code] || translateServerMessage(error.message) || error.code || translate('NamingBuilderErrorGeneral');",
+      "sourceLineSha256": "80920382cc005be6bd1e864636ac5ac90ad222e46f2ddd2dc6e1fa6b0ee2b707"
+    },
+    {
+      "file": "frontend/src/Settings/MediaManagement/RootFolder/EditRootFolderModalContent.js",
+      "line": 151,
+      "sourceLine": "return translateServerMessage(saveError.message);",
+      "sourceLineSha256": "035dbc23dd7dfa98199a9271ab0cd05dd134c86eb724bc5c8c626e3f4f22be30"
+    },
+    {
+      "file": "frontend/src/Settings/MediaManagement/RootFolder/EditRootFolderModalContent.js",
+      "line": 155,
+      "sourceLine": "return translateServerMessage(saveError.responseJSON[0].errorMessage ||",
+      "sourceLineSha256": "d60a9ff2a9bc6b12b5b04aab42b92e67d63720c7e66b5e8c1c81a67a23dd1f6b"
+    },
+    {
+      "file": "frontend/src/Settings/Notifications/Notifications/EditNotificationModalContent.js",
+      "line": 95,
+      "sourceLine": "{translateServerMessage(message.value.message)}",
+      "sourceLineSha256": "255fd0936ae1edf356f999254872e3671e38456de9e6ae2901bb3bdc4edc3b04"
+    },
+    {
+      "file": "frontend/src/Store/Actions/systemActions.js",
+      "line": 456,
+      "sourceLine": "message: translate('ProxyTestSuccessfulWithDetails', { details: translateServerMessage(data.message) }),",
+      "sourceLineSha256": "fb04a23d67d8a53e9d3cc03cacd9aa7cfbf554f574a736f4158a91bc5355cf8e"
+    },
+    {
+      "file": "frontend/src/Store/Actions/systemActions.js",
+      "line": 471,
+      "sourceLine": "message: translate('ProxyTestFailedWithDetails', { details: translateServerMessage(data.message) }),",
+      "sourceLineSha256": "48871bd1c0c457266294bb83fb8ca408bc1751ba33539090bb5a6790189711f4"
+    },
+    {
+      "file": "frontend/src/System/Backup/RestoreBackupModalContent.js",
+      "line": 24,
+      "sourceLine": "return translateServerMessage(error.responseJSON.message);",
+      "sourceLineSha256": "9de36880560baeca29dbb61ed89e03ec2859bd686df81a974293f36ce51a0e4a"
+    },
+    {
+      "file": "frontend/src/System/Quickstart/HardcoverApiKeyModal.js",
+      "line": 92,
+      "sourceLine": ".map((e) => translateServerMessage(e?.errorMessage || e?.message))",
+      "sourceLineSha256": "26b19d3621a93005512850b44456db73fe22ced3e3697e06638c885e9c6cbf73"
+    },
+    {
+      "file": "frontend/src/System/Quickstart/HardcoverApiKeyModal.js",
+      "line": 178,
+      "sourceLine": "{translateServerMessage(saveError)}",
+      "sourceLineSha256": "75e395e746e752141db1a8e9df0b791dd49e1450bbf98385c59b816f5f7bf06d"
+    },
+    {
+      "file": "frontend/src/System/Quickstart/Quickstart.js",
+      "line": 273,
+      "sourceLine": "[name]: translateServerMessage(responseMessage || error?.statusText || error?.message) || translate('QuickstartConnectionFailed')",
+      "sourceLineSha256": "78912291460940e2135d530a865635238dee45e66089a2ee55411369e69b488f"
+    },
+    {
+      "file": "frontend/src/System/SettingsBackup/SettingsBackupModal.js",
+      "line": 281,
+      "sourceLine": "{translateServerMessage(saveError)}",
+      "sourceLineSha256": "75e395e746e752141db1a8e9df0b791dd49e1450bbf98385c59b816f5f7bf06d"
+    },
+    {
+      "file": "frontend/src/System/SettingsBackup/SettingsRestoreModal.js",
+      "line": 352,
+      "sourceLine": "{translateServerMessage(restoreError)}",
+      "sourceLineSha256": "e97626b85c755d84b48db20adff283b9c15e4f39b92961a5173ac45cc132f9af"
+    },
+    {
+      "file": "frontend/src/System/Status/Health/Health.js",
+      "line": 210,
+      "sourceLine": "<TableRowCell>{translateServerMessage(item.message)}</TableRowCell>",
+      "sourceLineSha256": "030d11865dc0291d2dd364498a88d6d948ee814ca056c7dc16e8372c64175c47"
+    },
+    {
+      "file": "frontend/src/UnmappedFiles/UnmappedFilesTable.js",
+      "line": 591,
+      "sourceLine": "{translateServerMessage(sendLogsPreviewError)}",
+      "sourceLineSha256": "741a619f60ced64ae8576b7d8bf06c89598c87aa975fd887d6cdd012be0596eb"
+    },
+    {
+      "file": "frontend/src/Utilities/Object/getErrorMessage.js",
+      "line": 8,
+      "sourceLine": "return translateServerMessage(typeof message === 'string' && message ? message : fallbackErrorMessage);",
+      "sourceLineSha256": "553d3961bf937e14866feba90fcd6ed7254875b3b3d099d6f5c4055daa395a6a"
+    }
+  ]
+}

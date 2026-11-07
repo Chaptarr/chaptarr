@@ -27,11 +27,13 @@ namespace Chaptarr.Core.Test.Download
         private sealed class RecordingEventAggregator : IEventAggregator
         {
             public List<IEvent> Events { get; } = new();
+            public Action<IEvent> OnPublish { get; set; }
 
             public void PublishEvent<TEvent>(TEvent @event)
                 where TEvent : class, IEvent
             {
                 Events.Add(@event);
+                OnPublish?.Invoke(@event);
             }
         }
 
@@ -719,6 +721,67 @@ namespace Chaptarr.Core.Test.Download
 
             Assert.That(verified, Is.False);
             Assert.That(eventAggregator.Events, Is.Empty);
+        }
+
+        [Test]
+        public void verify_import_should_keep_download_importing_until_completion_handlers_finish()
+        {
+            var eventAggregator = new RecordingEventAggregator();
+            var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
+            ((HistoryServiceProxy)(object)historyService).HistoryItems = new List<EntityHistory>();
+
+            var trackedDownload = new TrackedDownload
+            {
+                DownloadItem = new DownloadClientItem
+                {
+                    DownloadId = "download-completion-race",
+                    Title = "Expected Book",
+                    Status = DownloadItemStatus.Completed,
+                    DownloadClientInfo = new DownloadClientItemClientInfo
+                    {
+                        Id = 1,
+                        Name = "SABnzbd",
+                        Protocol = DownloadProtocol.Usenet
+                    }
+                },
+                RemoteBook = new RemoteBook
+                {
+                    Author = new Author { Id = 7, Name = "Test Author" },
+                    Books = new List<Book>
+                    {
+                        new() { Id = 10, AuthorId = 7, Title = "Expected Book" }
+                    }
+                },
+                State = TrackedDownloadState.Importing
+            };
+            TrackedDownloadState? stateDuringCompletionEvent = null;
+            eventAggregator.OnPublish = message =>
+            {
+                if (message is DownloadCompletedEvent)
+                {
+                    stateDuringCompletionEvent = trackedDownload.State;
+                }
+            };
+
+            var subject = new CompletedDownloadService(
+                eventAggregator,
+                historyService,
+                new StubProvideImportItemService("/tmp/chaptarr-completion-race"),
+                new RecordingDownloadedBooksImportService(),
+                new PassthroughDownloadImportModeResolver(),
+                new StubTrackedDownloadAlreadyImported { Result = false },
+                NoopFailedDownloadService.Instance,
+                LogManager.GetCurrentClassLogger(),
+                NoopDownloadClientFileSnapshotService.Instance);
+
+            var verified = subject.VerifyImport(trackedDownload, new List<ImportResult>
+            {
+                CreateImportedResult(10, 7, "Expected Book")
+            });
+
+            Assert.That(verified, Is.True);
+            Assert.That(stateDuringCompletionEvent, Is.EqualTo(TrackedDownloadState.Importing));
+            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.Imported));
         }
 
         [Test]

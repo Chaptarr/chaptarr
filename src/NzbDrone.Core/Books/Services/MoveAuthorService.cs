@@ -40,7 +40,14 @@ namespace NzbDrone.Core.Books
             _logger = logger;
         }
 
-        private bool MoveSingleAuthor(Author author, string sourcePath, string destinationPath, string mediaType = null, int? index = null, int? total = null)
+        private bool MoveSingleAuthor(
+            Author author,
+            string sourcePath,
+            string destinationPath,
+            string mediaType = null,
+            int? index = null,
+            int? total = null,
+            bool updateFormatPaths = false)
         {
             if (!_diskProvider.FolderExists(sourcePath))
             {
@@ -68,6 +75,11 @@ namespace NzbDrone.Core.Books
                 _rootFolderWatchingService.ReportFileSystemChangeBeginning(sourcePath, destinationPath);
 
                 _diskTransferService.TransferFolder(sourcePath, destinationPath, TransferMode.Move);
+
+                if (updateFormatPaths)
+                {
+                    UpdateFormatPaths(author.Id, sourcePath, destinationPath);
+                }
 
                 _logger.ProgressInfo("{0} moved successfully to {1}", author.Name, destinationPath);
 
@@ -123,7 +135,43 @@ namespace NzbDrone.Core.Books
         public void Execute(MoveAuthorCommand message)
         {
             var author = _authorService.GetAuthor(message.AuthorId);
-            MoveSingleAuthor(author, message.SourcePath, message.DestinationPath);
+            MoveSingleAuthor(author, message.SourcePath, message.DestinationPath, updateFormatPaths: true);
+        }
+
+        private void UpdateFormatPaths(int authorId, string sourcePath, string destinationPath)
+        {
+            var author = _authorService.GetAuthor(authorId);
+            var ebookPath = MovePath(sourcePath, destinationPath, author.EbookPath);
+            var audiobookPath = MovePath(sourcePath, destinationPath, author.AudiobookPath);
+
+            if (ebookPath == author.EbookPath && audiobookPath == author.AudiobookPath)
+            {
+                return;
+            }
+
+            author.EbookPath = ebookPath;
+            author.AudiobookPath = audiobookPath;
+            _authorService.UpdateAuthor(author);
+        }
+
+        private string MovePath(string sourcePath, string destinationPath, string formatPath)
+        {
+            if (formatPath.IsNullOrWhiteSpace())
+            {
+                return formatPath;
+            }
+
+            if (sourcePath.PathEquals(formatPath))
+            {
+                return destinationPath;
+            }
+
+            if (sourcePath.IsParentPath(formatPath))
+            {
+                return Path.Combine(destinationPath, sourcePath.GetRelativePath(formatPath));
+            }
+
+            return formatPath;
         }
 
         public void Execute(BulkMoveAuthorCommand message)

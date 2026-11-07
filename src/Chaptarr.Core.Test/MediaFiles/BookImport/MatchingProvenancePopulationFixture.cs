@@ -186,7 +186,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public Book AddWantedEdition(int bookId, int editionId, bool asNewVariant = false) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -216,7 +216,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public Edition GetEditionByOpenLibraryEditionId(string openLibraryEditionId) => throw new NotImplementedException();
             public Edition GetEditionByProviderAndId(string providerPrefix, string providerId) => throw new NotImplementedException();
             public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
-            public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
+            public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
@@ -591,6 +591,213 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(finalDecision.Decision, Is.EqualTo("UNMATCHED"));
             Assert.That(finalDecision.PathFallbackUsed, Is.False);
             Assert.That(finalDecision.PathFallbackSuppressedReason, Is.EqualTo("disabled_by_context"));
+        }
+
+        private static (FileMatchingService Sut, CapturingMatchingUploadLogger Log, Book Book, Author Author) CreatePinnedNarrationSut(
+            int? editionDurationSeconds,
+            IEditionFtsRepository fts)
+        {
+            var logger = LogManager.GetCurrentClassLogger();
+            var matchingLogger = new CapturingMatchingUploadLogger();
+            var author = new Author { Id = 4, Name = "J.K. Rowling", Path = "/audiobooks/J.K. Rowling" };
+
+            // A second narration requested next to the one already in the library: the variant
+            // book pins the Jim Dale recording.
+            var pinnedEdition = new Edition
+            {
+                Id = 12885,
+                BookId = 2140,
+                Title = "Harry Potter and the Sorcerer's Stone, Book 1",
+                Monitored = true,
+                ManualAdd = true,
+                DurationSeconds = editionDurationSeconds,
+                NarratorNames = new List<string> { "Jim Dale" }
+            };
+
+            // The variant keeps the book's other audiobook editions. The Stephen Fry reading is only
+            // seven minutes longer, inside the usual matching tolerance.
+            var otherNarration = new Edition
+            {
+                Id = 12886,
+                BookId = 2140,
+                Title = "Harry Potter and the Philosopher's Stone",
+                DurationSeconds = 30300,
+                NarratorNames = new List<string> { "Stephen Fry" }
+            };
+            var unnarratedListing = new Edition
+            {
+                Id = 12887,
+                BookId = 2140,
+                Title = "Harry Potter and the Sorcerer's Stone",
+                DurationSeconds = 29900
+            };
+
+            var book = new Book
+            {
+                Id = 2140,
+                Title = "Harry Potter and the Sorcerer's Stone, Book 1",
+                Author = author,
+                AuthorId = author.Id,
+                MediaType = BookMediaType.Audiobook,
+                AnyEditionOk = false,
+                Editions = new List<Edition> { pinnedEdition, otherNarration, unnarratedListing }
+            };
+
+            var sut = new FileMatchingService(
+                matchingLogger: matchingLogger,
+                v5MatchingService: null,
+                containmentValidator: new ContainmentValidator(new TagNormalizer(), logger),
+                pendingAuthorImportService: null,
+                commandQueue: null,
+                authorFolderMatchingService: null,
+                rootFolderService: null,
+                configService: ConfigServiceTestProxy.Create(),
+                authorService: new StubAuthorService(author),
+                eventAggregator: null,
+                authorLibraryService: null,
+                editionFtsRepository: fts,
+                bookService: new StubBookService(book),
+                editionService: new StubEditionService(pinnedEdition),
+                editionRepository: null,
+                mediaInfoExtractor: null,
+                logger: logger);
+
+            return (sut, matchingLogger, book, author);
+        }
+
+        // The tags of a real upload of this recording: no narrator credit anywhere.
+        private static DiscoveredFileWithMetadata UntaggedNarratorFile(int durationSeconds, params (string Key, string Value)[] extraTags)
+        {
+            var tags = new Dictionary<string, List<string>>
+            {
+                { "TITLE", new List<string> { "Harry Potter and the Sorcerer's Stone" } },
+                { "ALBUM", new List<string> { "Harry Potter" } },
+                { "ARTIST", new List<string> { "J.K. Rowling" } },
+                { "GENRE", new List<string> { "Audiobook" } }
+            };
+
+            foreach (var (key, value) in extraTags)
+            {
+                tags[key] = new List<string> { value };
+            }
+
+            return new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/completed/Harry Potter 01 - The Sorcerer's Stone.m4b",
+                Size = 300_000_000,
+                DurationSeconds = durationSeconds,
+                AllTags = tags
+            };
+        }
+
+        private static MatchingContext PinnedContext(Book book)
+        {
+            return new MatchingContext
+            {
+                AllowV5Identification = false,
+                AllowAuthorImport = false,
+                DeferUnmatchedToAuthorReady = false,
+                AllowUnscopedFallback = false,
+                PerFileMatching = false,
+                TargetBookIds = new List<int> { book.Id }
+            };
+        }
+
+        [Test]
+        public async Task pinned_first_crack_should_accept_a_file_without_narrator_tags_when_the_length_matches()
+        {
+            var (sut, log, book, author) = CreatePinnedNarrationSut(29880, new ThrowingEditionFtsRepository());
+
+            var result = await sut.MatchFilesToLibraryAsync(new[] { UntaggedNarratorFile(29911) }, author.Id, PinnedContext(book));
+
+            Assert.That(result.MatchedFiles, Has.Length.EqualTo(1));
+            Assert.That(result.MatchedFiles[0].BookId, Is.EqualTo(book.Id));
+            Assert.That(result.MatchedFiles[0].EditionId, Is.EqualTo(12885));
+            Assert.That(log.FinalDecisions.Last().Result.PinnedTargetResult, Is.EqualTo("matched"));
+            var provenance = result.MatchedFiles[0].Provenance;
+            Assert.That(provenance.Route, Is.EqualTo("pinned_target/embedded_tags"));
+            Assert.That(provenance.SupportingSignals.Select(signal => signal.Type), Does.Contain("duration"));
+            Assert.That(provenance.SupportingSignals.Select(signal => signal.Type), Does.Not.Contain("narrator"));
+        }
+
+        [Test]
+        public async Task pinned_first_crack_should_accept_a_title_without_the_audible_book_number()
+        {
+            var (sut, log, book, author) = CreatePinnedNarrationSut(29880, new ThrowingEditionFtsRepository());
+
+            var result = await sut.MatchFilesToLibraryAsync(new[] { UntaggedNarratorFile(25000, ("NARRATOR", "Jim Dale")) }, author.Id, PinnedContext(book));
+
+            Assert.That(result.MatchedFiles, Has.Length.EqualTo(1));
+            Assert.That(result.MatchedFiles[0].EditionId, Is.EqualTo(12885));
+            var signals = result.MatchedFiles[0].Provenance.SupportingSignals;
+            Assert.That(signals.Select(signal => signal.Type), Does.Contain("narrator"));
+            Assert.That(signals.Where(signal => signal.Type == "title").Select(signal => signal.Expected),
+                Has.All.EqualTo("Harry Potter and the Sorcerer's Stone"));
+        }
+
+        [Test]
+        public async Task pinned_first_crack_should_still_require_the_title_when_the_length_matches()
+        {
+            var (sut, log, book, author) = CreatePinnedNarrationSut(29880, new PathSensitiveEditionFtsRepository());
+
+            var result = await sut.MatchFilesToLibraryAsync(
+                new[] { UntaggedNarratorFile(29880, ("TITLE", "Harry Potter and the Chamber of Secrets")) },
+                author.Id,
+                PinnedContext(book));
+
+            Assert.That(result.MatchedFiles, Is.Empty);
+            Assert.That(log.FinalDecisions.Last().Result.PinnedTargetFailure, Is.EqualTo("wanted edition title not present in embedded tags"));
+        }
+
+        [TestCase(30290)] // the Fry reading
+        [TestCase(30110)] // about halfway between the two readings
+        public async Task pinned_first_crack_should_not_use_the_length_when_another_narration_is_as_close(int durationSeconds)
+        {
+            var (sut, log, book, author) = CreatePinnedNarrationSut(29880, new PathSensitiveEditionFtsRepository());
+
+            var result = await sut.MatchFilesToLibraryAsync(new[] { UntaggedNarratorFile(durationSeconds) }, author.Id, PinnedContext(book));
+
+            Assert.That(result.MatchedFiles, Is.Empty);
+            Assert.That(log.FinalDecisions.Last().Result.PinnedTargetFailure, Is.EqualTo("wanted narrator not present in embedded tags"));
+        }
+
+        [Test]
+        public async Task pinned_first_crack_should_reject_a_file_without_narrator_tags_of_another_length()
+        {
+            // 8h18m pinned; a 9h15m recording is another narration of the same book
+            var (sut, log, book, author) = CreatePinnedNarrationSut(29880, new PathSensitiveEditionFtsRepository());
+
+            var result = await sut.MatchFilesToLibraryAsync(new[] { UntaggedNarratorFile(33300) }, author.Id, PinnedContext(book));
+
+            Assert.That(result.MatchedFiles, Is.Empty);
+            var finalDecision = log.FinalDecisions.Last().Result;
+            Assert.That(finalDecision.PinnedTargetResult, Is.EqualTo("failed"));
+            Assert.That(finalDecision.PinnedTargetFailure, Is.EqualTo("wanted narrator not present in embedded tags"));
+        }
+
+        [TestCase("COMPOSER", "Stephen Fry")]
+        [TestCase("MP4:©wrt", "Stephen Fry")]
+        [TestCase("ID3v2:TXXX:NARRATOR", "Stephen Fry")]
+        [TestCase("COMMENT", "Narrated by Stephen Fry")]
+        public async Task pinned_first_crack_should_not_use_the_length_when_a_tag_names_another_narrator(string key, string value)
+        {
+            var (sut, log, book, author) = CreatePinnedNarrationSut(29880, new PathSensitiveEditionFtsRepository());
+
+            var result = await sut.MatchFilesToLibraryAsync(new[] { UntaggedNarratorFile(29880, (key, value)) }, author.Id, PinnedContext(book));
+
+            Assert.That(result.MatchedFiles, Is.Empty);
+            Assert.That(log.FinalDecisions.Last().Result.PinnedTargetFailure, Is.EqualTo("wanted narrator not present in embedded tags"));
+        }
+
+        [Test]
+        public async Task pinned_first_crack_should_not_use_the_length_when_the_pinned_edition_has_none()
+        {
+            var (sut, log, book, author) = CreatePinnedNarrationSut(null, new PathSensitiveEditionFtsRepository());
+
+            var result = await sut.MatchFilesToLibraryAsync(new[] { UntaggedNarratorFile(29880) }, author.Id, PinnedContext(book));
+
+            Assert.That(result.MatchedFiles, Is.Empty);
+            Assert.That(log.FinalDecisions.Last().Result.PinnedTargetFailure, Is.EqualTo("wanted narrator not present in embedded tags"));
         }
 
         [Test]

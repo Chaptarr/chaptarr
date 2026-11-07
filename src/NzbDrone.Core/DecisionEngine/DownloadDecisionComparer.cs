@@ -40,6 +40,11 @@ namespace NzbDrone.Core.DecisionEngine
                 y.RemoteBook.Release.Title,
                 y.RemoteBook.Release.Size.SizeSuffix());
 
+            if (UsesBookshelfLegacyReleasePriority(x, y))
+            {
+                return CompareBookshelfLegacyReleases(x, y).Result;
+            }
+
             var comparers = new List<(string name, CompareDelegate comparer)>
             {
                 ("Title Match", CompareTitleMatch),
@@ -77,6 +82,18 @@ namespace NzbDrone.Core.DecisionEngine
                 y.RemoteBook.Release.Title,
                 y.RemoteBook.Release.Size.SizeSuffix());
 
+            if (UsesBookshelfLegacyReleasePriority(x, y))
+            {
+                var comparison = CompareBookshelfLegacyReleases(x, y);
+                var reason = comparison.Result == 0
+                    ? "Download allowed and meets all requirements"
+                    : GetBookshelfPriorityReason(comparison.ComparisonName, x, y, comparison.Result > 0 ? x : y);
+
+                return new DownloadDecisionComparisonResult(
+                    comparison.Result,
+                    new List<DownloadDecisionReason> { new DownloadDecisionReason("Primary", reason) });
+            }
+
             var reasons = new List<DownloadDecisionReason>();
 
             var comparers = new List<(string name, CompareDelegate comparer)>
@@ -112,6 +129,138 @@ namespace NzbDrone.Core.DecisionEngine
             }
 
             return new DownloadDecisionComparisonResult(0, reasons);
+        }
+
+        private bool UsesBookshelfLegacyReleasePriority(DownloadDecision x, DownloadDecision y)
+        {
+            if (_configService?.BookshelfMatchCompatibility != true || x?.RemoteBook == null || y?.RemoteBook == null)
+            {
+                return false;
+            }
+
+            // BookshelfNG had one release ranking for its book catalog. Preserve it
+            // for both same-format Chaptarr searches after migration; mixed-format
+            // comparisons continue through Chaptarr's format preference path.
+            return GetBookshelfDecisionMediaType(x) == GetBookshelfDecisionMediaType(y);
+        }
+
+        private static BookMediaType GetBookshelfDecisionMediaType(DownloadDecision decision)
+        {
+            var remoteBook = decision?.RemoteBook;
+            var detected = QualityMediaTypeHelper.DetectMediaType(
+                remoteBook?.ParsedBookInfo?.Quality?.Quality,
+                remoteBook?.Release);
+
+            return detected ?? remoteBook.GetPreferredMediaType();
+        }
+
+        private (int Result, string ComparisonName) CompareBookshelfLegacyReleases(DownloadDecision x, DownloadDecision y)
+        {
+            var comparers = new (string name, CompareDelegate comparer)[]
+            {
+                ("Quality", CompareBookshelfQuality),
+                ("Revision", CompareBookshelfRevision),
+                ("Custom Format Score", CompareBookshelfCustomFormatScore),
+                ("Protocol", CompareBookshelfProtocol),
+                ("Indexer Priority", CompareIndexerPriority),
+                ("Peers", ComparePeersIfTorrent),
+                ("Book Count", CompareBookCount),
+                ("Age", CompareAgeIfUsenet),
+                ("Size", CompareBookshelfSize)
+            };
+
+            foreach (var (name, comparer) in comparers)
+            {
+                var result = comparer(x, y);
+                _logger.Debug("BookshelfNG compatibility comparison {0}: {1}", name, result);
+                if (result != 0)
+                {
+                    return (result, name);
+                }
+            }
+
+            return (0, string.Empty);
+        }
+
+        private int CompareBookshelfQuality(DownloadDecision x, DownloadDecision y)
+        {
+            var xQuality = x.RemoteBook?.ParsedBookInfo?.Quality;
+            var yQuality = y.RemoteBook?.ParsedBookInfo?.Quality;
+            var xProfile = xQuality == null ? null : x.RemoteBook.Author?.GetQualityProfileForQuality(xQuality.Quality);
+            var yProfile = yQuality == null ? null : y.RemoteBook.Author?.GetQualityProfileForQuality(yQuality.Quality);
+
+            if (xQuality == null || yQuality == null || xProfile == null || yProfile == null)
+            {
+                return 0;
+            }
+
+            var qualityComparison = xProfile.GetIndex(xQuality.Quality).CompareTo(yProfile.GetIndex(yQuality.Quality));
+            return qualityComparison;
+        }
+
+        private int CompareBookshelfRevision(DownloadDecision x, DownloadDecision y)
+        {
+            if (_configService?.DownloadPropersAndRepacks == ProperDownloadTypes.DoNotPrefer)
+            {
+                return 0;
+            }
+
+            var xQuality = x.RemoteBook?.ParsedBookInfo?.Quality;
+            var yQuality = y.RemoteBook?.ParsedBookInfo?.Quality;
+            var xProfile = xQuality == null ? null : x.RemoteBook.Author?.GetQualityProfileForQuality(xQuality.Quality);
+            var yProfile = yQuality == null ? null : y.RemoteBook.Author?.GetQualityProfileForQuality(yQuality.Quality);
+
+            if (xQuality == null || yQuality == null || xProfile == null || yProfile == null)
+            {
+                return 0;
+            }
+
+            return xQuality.Revision.CompareTo(yQuality.Revision);
+        }
+
+        private int CompareBookshelfProtocol(DownloadDecision x, DownloadDecision y)
+        {
+            return CompareBy(x.RemoteBook, y.RemoteBook, remoteBook =>
+            {
+                var delayProfile = _delayProfileService.BestForTags(remoteBook.Author.Tags);
+                return remoteBook.Release.DownloadProtocol == delayProfile.PreferredProtocol;
+            });
+        }
+
+        private int CompareBookshelfCustomFormatScore(DownloadDecision x, DownloadDecision y)
+        {
+            return CompareBy(x.RemoteBook, y.RemoteBook, remoteBook => remoteBook.CustomFormatScore);
+        }
+
+        private int CompareBookshelfSize(DownloadDecision x, DownloadDecision y)
+        {
+            return CompareBy(x.RemoteBook, y.RemoteBook, remoteBook => remoteBook.Release.Size.Round(200.Megabytes()));
+        }
+
+        private string GetBookshelfPriorityReason(string comparisonName, DownloadDecision x, DownloadDecision y, DownloadDecision winner)
+        {
+            switch (comparisonName)
+            {
+                case "Quality":
+                case "Custom Format Score":
+                    return GetComparisonDetails(comparisonName, x, y, winner);
+                case "Revision":
+                    return $"Preferred release revision ({winner.RemoteBook.ParsedBookInfo.Quality.Revision})";
+                case "Protocol":
+                    return GetPrimaryReason("Protocol Preference", x, y, winner);
+                case "Indexer Priority":
+                    return GetPrimaryReason("Indexer Priority", x, y, winner);
+                case "Peers":
+                    return GetPrimaryReason("Torrent Health", x, y, winner);
+                case "Book Count":
+                    return GetPrimaryReason("Release Scope", x, y, winner);
+                case "Age":
+                    return GetPrimaryReason("Usenet Age", x, y, winner);
+                case "Size":
+                    return GetPrimaryReason("File Size", x, y, winner);
+                default:
+                    return "BookshelfNG release preference";
+            }
         }
 
         private string GetPrimaryReason(string comparisonName, DownloadDecision x, DownloadDecision y, DownloadDecision winner)

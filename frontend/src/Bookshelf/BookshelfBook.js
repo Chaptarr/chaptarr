@@ -1,6 +1,7 @@
 import classNames from 'classnames';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import Link from 'Components/Link/Link';
 import MonitorToggleButton from 'Components/MonitorToggleButton';
 import translate from 'Utilities/String/translate';
 import styles from './BookshelfBook.css';
@@ -24,9 +25,11 @@ class BookshelfBook extends Component {
 
   render() {
     const {
+      id,
       title,
       disambiguation,
       narrator,
+      formatLabelKey,
       monitored,
       statistics = {},
       isSaving
@@ -48,14 +51,25 @@ class BookshelfBook extends Component {
             onPress={this.onBookMonitoredPress}
           />
 
-          <span>
-            {
-              disambiguation ? `${title} (${disambiguation})` : `${title}`
-            }
-            {
-              narrator && <span className={styles.narrator}> - {narrator}</span>
-            }
-          </span>
+          {
+            formatLabelKey ?
+              <Link
+                className={styles.formatLink}
+                to={`/book/${id}`}
+                aria-label={translate('OpenFormatOfTitle', {
+                  format: translate(formatLabelKey),
+                  title
+                })}
+              >
+                <span>{translate(formatLabelKey)}</span>
+                {disambiguation ? <span> ({disambiguation})</span> : null}
+                {narrator ? <span className={styles.narrator}> - {narrator}</span> : null}
+              </Link> :
+              <span>
+                {disambiguation ? `${title} (${disambiguation})` : `${title}`}
+                {narrator && <span className={styles.narrator}> - {narrator}</span>}
+              </span>
+          }
         </div>
 
         <div
@@ -82,7 +96,9 @@ class BookshelfBook extends Component {
 BookshelfBook.propTypes = {
   id: PropTypes.number.isRequired,
   title: PropTypes.string.isRequired,
+  formatLabelKey: PropTypes.string,
   disambiguation: PropTypes.string,
+  narrator: PropTypes.string,
   monitored: PropTypes.bool.isRequired,
   statistics: PropTypes.object.isRequired,
   isSaving: PropTypes.bool.isRequired,

@@ -1,15 +1,18 @@
-import moment from 'moment';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import SpinnerIconButton from 'Components/Link/SpinnerIconButton';
 import TableRowCell from 'Components/Table/Cells/TableRowCell';
 import TableRow from 'Components/Table/TableRow';
 import { icons } from 'Helpers/Props';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import formatDate from 'Utilities/Date/formatDate';
 import formatDateTime from 'Utilities/Date/formatDateTime';
 import formatTimeSpan from 'Utilities/Date/formatTimeSpan';
-import translate from 'Utilities/String/translate';
+import scheduledTaskLabels from 'Utilities/Localization/scheduled-task-labels.cjs';
+import translate, { translateWithFallback } from 'Utilities/String/translate';
 import styles from './ScheduledTaskRow.css';
+
+const { getScheduledTaskLabel } = scheduledTaskLabels;
 
 function getFormattedDates(props) {
   const {
@@ -24,8 +27,8 @@ function getFormattedDates(props) {
 
   if (showRelativeDates) {
     return {
-      lastExecutionTime: moment(lastExecution).fromNow(),
-      nextExecutionTime: isDisabled ? '-' : moment(nextExecution).fromNow()
+      lastExecutionTime: dayjs(lastExecution).fromNow(),
+      nextExecutionTime: isDisabled ? '-' : dayjs(nextExecution).fromNow()
     };
   }
 
@@ -91,6 +94,7 @@ class ScheduledTaskRow extends Component {
   render() {
     const {
       name,
+      taskName,
       interval,
       lastExecution,
       lastStartTime,
@@ -109,18 +113,18 @@ class ScheduledTaskRow extends Component {
     } = this.state;
 
     const isDisabled = interval === 0;
-    const executeNow = !isDisabled && moment().isAfter(nextExecution);
+    const executeNow = !isDisabled && dayjs().isAfter(nextExecution);
     const hasNextExecutionTime = !isDisabled && !executeNow;
-    const duration = moment.duration(interval, 'minutes').humanize().replace(/an?(?=\s)/, '1');
-    const hasLastStartTime = moment(lastStartTime).isAfter('2010-01-01');
+    const duration = dayjs.duration(interval, 'minutes').humanize().replace(/an?(?=\s)/, '1');
+    const hasLastStartTime = dayjs(lastStartTime).isAfter('2010-01-01');
 
     return (
       <TableRow>
-        <TableRowCell>{name}</TableRowCell>
+        <TableRowCell>{getScheduledTaskLabel(taskName, name, translateWithFallback)}</TableRowCell>
         <TableRowCell
           className={styles.interval}
         >
-          {isDisabled ? 'disabled' : duration}
+          {isDisabled ? translate('Disabled') : duration}
         </TableRowCell>
 
         <TableRowCell
@@ -187,6 +191,7 @@ class ScheduledTaskRow extends Component {
 
 ScheduledTaskRow.propTypes = {
   name: PropTypes.string.isRequired,
+  taskName: PropTypes.string.isRequired,
   interval: PropTypes.number.isRequired,
   lastExecution: PropTypes.string.isRequired,
   lastStartTime: PropTypes.string.isRequired,

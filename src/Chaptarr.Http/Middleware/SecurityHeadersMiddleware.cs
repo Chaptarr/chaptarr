@@ -19,7 +19,7 @@ namespace Chaptarr.Http.Middleware
             var host = context?.Request?.Host.ToUriComponent();
             var websocketSources = string.IsNullOrWhiteSpace(host)
                 ? string.Empty
-                : $" ws://{host} wss://{host}";
+                : $" {(context?.Request?.IsHttps == true ? "wss" : "ws")}://{host}";
 
             return
                 "default-src 'self'; " +

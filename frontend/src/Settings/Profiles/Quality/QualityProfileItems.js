@@ -75,7 +75,7 @@ class QualityProfileItems extends Component {
 
         <div>
           <FormInputHelpText
-            text="Qualities higher in the list are more preferred."
+            text={translate('QualityListOrderHelpText')}
           />
 
           {

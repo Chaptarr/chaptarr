@@ -1,0 +1,273 @@
+{
+  "version": 1,
+  "scope": "All seventeen authored loading jokes retain their original text/fallback and no-repeat shuffled variety; only display text is localized. Protected contributor names and API/app identifiers stay exact.",
+  "records": [
+    {
+      "id": "ui.loading.organizingBookshelf",
+      "source": "Organizing your bookshelf...",
+      "sourceFingerprint": "cb89c922187c8fce2cad7b86949231250cc0ecffdb130da348c16dfcca537c8f",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 3,
+          "sourceLine": "\"id\": \"ui.loading.organizingBookshelf\",",
+          "sourceLineSha256": "2bf455e50935c0dc485eaf2275473679f0995263fc24cf20c4797bb7bcb89019"
+        }
+      ]
+    },
+    {
+      "id": "ui.loading.nextChapter",
+      "source": "Turning to the next chaptarr...",
+      "sourceFingerprint": "b84f1bea2b7447a13bc3faccc03923a1b45131027cf52a19ca49e9d209e68f8d",
+      "protectedLiterals": [
+        "chaptarr"
+      ],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 7,
+          "sourceLine": "\"id\": \"ui.loading.nextChapter\",",
+          "sourceLineSha256": "c4f579d023689eda01550a3e17d08ee944b3aab526203d66483f1fb2ebc56b33"
+        }
+      ]
+    },
+    {
+      "id": "ui.loading.libraryVoices",
+      "source": "Shh! Library voices, please...",
+      "sourceFingerprint": "8f8478d0edf94dcde92626e6a55ad5571fbe9aa5719053f3167e84aa326e5760",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 11,
+          "sourceLine": "\"id\": \"ui.loading.libraryVoices\",",
+          "sourceLineSha256": "aa6707d72309d5cbc2e2ccbcd35bbd162c68dfb47a22072567fe3e28fbd9b27b"
+        }
+      ]
+    },
+    {
+      "id": "ui.loading.overdueBooks",
+      "source": "Checking for overdue books...",
+      "sourceFingerprint": "bd8d93b82552b5e8672db93c059362a285710cd11131a7852e2166a356c9aa60",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 15,
+          "sourceLine": "\"id\": \"ui.loading.overdueBooks\",",
+          "sourceLineSha256": "8af026fec57f914582a3acaeb8b4157dacdbc72c93e3bb4d40200505818adadd"
+        }
+      ]
+    },
+    {
+      "id": "ui.loading.newEbookSmell",
+      "source": "There's just nothing quite like the smell of opening a new... eBook?",
+      "sourceFingerprint": "19249addf57ca4dd0e01f2bfb3e196ee8576ed9ec0eedaefe692fbb1f87b1c19",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 19,
+          "sourceLine": "\"id\": \"ui.loading.newEbookSmell\",",
+          "sourceLineSha256": "ebb1dae997e695b827a9d56e96a498d8d3933e36050112df0dec6628e9d5977c"
+        }
+      ]
+    },
+    {
+      "id": "ui.loading.placeInStory",
+      "source": "Finding your place in the story...",
+      "sourceFingerprint": "5aa037a36e82e1b2982cca811d4bd73d9c5730d638fede416278901f00fa35f6",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 23,
+          "sourceLine": "\"id\": \"ui.loading.placeInStory\",",
+          "sourceLineSha256": "8c067fa4bbb9377523903ee4119029a6143913d697560367e8290bb9d0154343"
+        }
+      ]
+    },
+    {
+      "id": "ui.loading.rewindAudiobooks",
+      "source": "Be Kind: Rewind your audiobooks",
+      "sourceFingerprint": "1b9c5c6a06d8f2bfe59a58af02ff93424360ab1f09f6bbf1e566b9a627249b0b",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 27,
+          "sourceLine": "\"id\": \"ui.loading.rewindAudiobooks\",",
+          "sourceLineSha256": "ffcf35855a402e0d815df1cf94b091d0fe6f6f3b43fe182dbbdffe4a45c79283"
+        }
+      ]
+    },
+    {
+      "id": "ui.loading.nextAdventure",
+      "source": "Loading your next adventure...",
+      "sourceFingerprint": "f51cc3b69d3ceccb4f48fb1836508b03bdec392163d31696892f2177a3f61250",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 31,
+          "sourceLine": "\"id\": \"ui.loading.nextAdventure\",",
+          "sourceLineSha256": "ea6a697a3f3d009c4cf52a09aab3c87e9781d119c2f3aadc99f57794b621bc44"
+        }
+      ]
+    },
+    {
+      "id": "ui.loading.blameCody",
+      "source": "I blame Cody...",
+      "sourceFingerprint": "e2be5ea458113990f87bd0f46cb612d34f954dc89e6144559300cfb05184dca2",
+      "protectedLiterals": [
+        "Cody"
+      ],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 35,
+          "sourceLine": "\"id\": \"ui.loading.blameCody\",",
+          "sourceLineSha256": "61e3ed4807fe53d4a387119e2f2a70197934c1ec6fe6b661d2a40aed5ef56216"
+        }
+      ]
+    },
+    {
+      "id": "ui.loading.gomeyyApi",
+      "source": "Sorry Gomeyy...this isn't the API you're looking for",
+      "sourceFingerprint": "fa435ccacef4afb2919db2bd41eb4035cddda3fc97f4efe9d03a2ffd1d5f3324",
+      "protectedLiterals": [
+        "API",
+        "Gomeyy"
+      ],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 39,
+          "sourceLine": "\"id\": \"ui.loading.gomeyyApi\",",
+          "sourceLineSha256": "591dd5f5c7d0db9634ccf787f3c67fc0e5d3911ec9081734f642d9e521caf4dd"
+        }
+      ]
+    },
+    {
+      "id": "ui.loading.shaneKing",
+      "source": "Shane.......our King",
+      "sourceFingerprint": "e0664fdee1b995d09d477e423c1fa05ae43888f98493ffd222d53190bba7401f",
+      "protectedLiterals": [
+        "Shane"
+      ],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 43,
+          "sourceLine": "\"id\": \"ui.loading.shaneKing\",",
+          "sourceLineSha256": "0e94036d765d61c4f253b3110d2969d2b29cbfd6cd531a7b27c68e283eb0df86"
+        }
+      ]
+    },
+    {
+      "id": "ui.loading.dodgeBooks",
+      "source": "Dodge-ing these piles of books",
+      "sourceFingerprint": "ea64ecfc2828977692826f897d21d30bd89d17137b8a2f2c9b5163df3bb422b4",
+      "protectedLiterals": [
+        "Dodge"
+      ],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 47,
+          "sourceLine": "\"id\": \"ui.loading.dodgeBooks\",",
+          "sourceLineSha256": "6a5ca4ab068470933eecf21c200b6adaf6c30a601d3b267990b91dc7c00a8ec9"
+        }
+      ]
+    },
+    {
+      "id": "ui.loading.goldanDragon",
+      "source": "Solid. Goldan. Dragon.",
+      "sourceFingerprint": "e9f1f421a6b19a48647f9de97d0c24b3c49d16cd8dfe6e4db0c8b4c29545c392",
+      "protectedLiterals": [
+        "Goldan",
+        "Dragon"
+      ],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 51,
+          "sourceLine": "\"id\": \"ui.loading.goldanDragon\",",
+          "sourceLineSha256": "64b901960dcd5fc44ec112222847a0573c8c3735c4f1a6a6c484eba910eea232"
+        }
+      ]
+    },
+    {
+      "id": "ui.loading.rlhIdentity",
+      "source": "Have you ever seen DefinitelyNotRLH and RLH in the same room?",
+      "sourceFingerprint": "bc3cfb01e5cfe73b1b812763405391852bc4777bef38777a048cc1e6dffa77fc",
+      "protectedLiterals": [
+        "DefinitelyNotRLH",
+        "RLH"
+      ],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 55,
+          "sourceLine": "\"id\": \"ui.loading.rlhIdentity\",",
+          "sourceLineSha256": "645c2a27819b11c8432b9aaf86d3a997f584f1753c9e9d3b53e3a79874a87e5c"
+        }
+      ]
+    },
+    {
+      "id": "ui.loading.swanDragonLibrary",
+      "source": "A Black Swan and a Goldan Dragon walk into a library...",
+      "sourceFingerprint": "1f5eda9ef44856bbdb3a10db706a2cd73491f4733fae2e684ce17a7d1e8313cf",
+      "protectedLiterals": [
+        "Goldan",
+        "Dragon",
+        "Black Swan",
+        "Goldan Dragon"
+      ],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 59,
+          "sourceLine": "\"id\": \"ui.loading.swanDragonLibrary\",",
+          "sourceLineSha256": "d07bc4f86546a27a91709f59574cd573212227e0e9c764f4f0f45ae7127dda0e"
+        }
+      ]
+    },
+    {
+      "id": "ui.loading.skippedOldBooks",
+      "source": "These old books always get skipped",
+      "sourceFingerprint": "60de5b206d5f319ef8b92f7b088b60b29fc0b9e4e4fa52893d881c0b611a7ad7",
+      "protectedLiterals": [],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 63,
+          "sourceLine": "\"id\": \"ui.loading.skippedOldBooks\",",
+          "sourceLineSha256": "1519d3d610998aefe71b6c8fd3047072639c95ae8e68d5f02b6f54d33adc78ed"
+        }
+      ]
+    },
+    {
+      "id": "ui.loading.somethingSkels",
+      "source": "Something Something Skels",
+      "sourceFingerprint": "c6dcc02f4ab7ac7aa4f5892080e3adfacbc73e078754766b291a83d1a164b3d5",
+      "protectedLiterals": [
+        "Skels"
+      ],
+      "callsites": [
+        {
+          "file": "frontend/src/Components/Loading/loading-messages.json",
+          "line": 67,
+          "sourceLine": "\"id\": \"ui.loading.somethingSkels\",",
+          "sourceLineSha256": "50576e78edc1011916c5aa973bd9961db58991da31b2ffda24b007b9dc36cd99"
+        }
+      ]
+    }
+  ],
+  "counts": {
+    "messages": 17,
+    "sourceCallsites": 17
+  },
+  "runtimeDataFile": "frontend/src/Components/Loading/loading-messages.json"
+}

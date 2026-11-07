@@ -1,12 +1,18 @@
 /* eslint max-params: 0 */
-import _ from 'lodash';
+import find from 'lodash/find';
+import findIndex from 'lodash/findIndex';
+import first from 'lodash/first';
+import last from 'lodash/last';
+import orderBy from 'lodash/orderBy';
+import reduce from 'lodash/reduce';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import * as commandNames from 'Commands/commandNames';
+import { coerceFolderType, FolderType } from 'Helpers/Props/folderTypes';
 import { setSelectedMediaType } from 'Store/Actions/appActions';
-import { updateAuthorMediaType, fetchAuthorMediaTypeSize } from 'Store/Actions/authorActions';
+import { fetchAuthorMediaTypeSize, updateAuthorMediaType } from 'Store/Actions/authorActions';
 import { clearBooks, fetchBooks } from 'Store/Actions/bookActions';
 import { clearBookFiles, fetchBookFiles } from 'Store/Actions/bookFileActions';
 import { saveBookEditor } from 'Store/Actions/bookIndexActions';
@@ -19,10 +25,9 @@ import createAllAuthorSelector from 'Store/Selectors/createAllAuthorsSelector';
 import createCommandsSelector from 'Store/Selectors/createCommandsSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createSortedSectionSelector from 'Store/Selectors/createSortedSectionSelector';
-import { findCommand, isCommandExecuting } from 'Utilities/Command';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
+import { findCommand, isCommandExecuting } from 'Utilities/Command';
 import { registerPagePopulator, unregisterPagePopulator } from 'Utilities/pagePopulator';
-import { FolderType, coerceFolderType } from 'Helpers/Props/folderTypes';
 import AuthorDetails from './AuthorDetails';
 
 const selectBooks = createSelector(
@@ -121,8 +126,8 @@ function createMapStateToProps() {
     (state) => state.authorDetails.filterValue,
     (authorId, books, series, bookFiles, allAuthors, commands, dimensions, rootFoldersState, hideUnmonitoredMissing = false, globalSelectedMediaType, allBookItems, allBookFileItems, filterValue) => {
       try {
-        const sortedAuthor = _.orderBy(allAuthors, 'sortNameLastFirst');
-        const authorIndex = _.findIndex(sortedAuthor, { id: authorId });
+        const sortedAuthor = orderBy(allAuthors, 'sortNameLastFirst');
+        const authorIndex = findIndex(sortedAuthor, { id: authorId });
         const author = sortedAuthor[authorIndex];
 
         if (!author) {
@@ -159,14 +164,14 @@ function createMapStateToProps() {
           series: seriesItems
         } = series;
 
-	        const {
-	          isBookFilesFetching,
-	          isBookFilesPopulated,
-	          bookFilesError
-	        } = bookFiles;
+        const {
+          isBookFilesFetching,
+          isBookFilesPopulated,
+          bookFilesError
+        } = bookFiles;
 
-        const previousAuthor = sortedAuthor[authorIndex - 1] || _.last(sortedAuthor);
-        const nextAuthor = sortedAuthor[authorIndex + 1] || _.first(sortedAuthor);
+        const previousAuthor = sortedAuthor[authorIndex - 1] || last(sortedAuthor);
+        const nextAuthor = sortedAuthor[authorIndex + 1] || first(sortedAuthor);
         const isAuthorRefreshing = isCommandExecuting(findCommand(commands, { name: commandNames.REFRESH_AUTHOR, authorId: author.id }));
         const authorRefreshingCommand = findCommand(commands, { name: commandNames.REFRESH_AUTHOR });
         const allAuthorRefreshing = (
@@ -187,10 +192,22 @@ function createMapStateToProps() {
         isRenamingAuthorCommand.body.authorIds.indexOf(author.id) > -1
         );
 
+        // A large author delete runs as a background command and can sit queued behind other work for a
+        // while; surface that (and the running state) so the page is not silently unchanged.
+        const deleteAuthorCommand = find(commands, (command) => (
+          command.body &&
+          command.body.name === commandNames.DELETE_AUTHOR &&
+          isCommandExecuting(command) &&
+          Array.isArray(command.body.authorIds) &&
+          command.body.authorIds.indexOf(author.id) > -1
+        ));
+        const isDeletingAuthor = !!deleteAuthorCommand;
+        const isDeleteAuthorQueued = !!deleteAuthorCommand && deleteAuthorCommand.status === 'queued';
+
         const isFetching = isBooksFetching || isSeriesFetching || isBookFilesFetching;
         const isPopulated = isBooksPopulated && isSeriesPopulated && isBookFilesPopulated;
 
-        const alternateTitles = _.reduce(author.alternateTitles, (acc, alternateTitle) => {
+        const alternateTitles = reduce(author.alternateTitles, (acc, alternateTitle) => {
           if ((alternateTitle.seasonNumber === -1 || alternateTitle.seasonNumber === undefined) &&
             (alternateTitle.sceneSeasonNumber === -1 || alternateTitle.sceneSeasonNumber === undefined)) {
             acc.push(alternateTitle.title);
@@ -202,7 +219,7 @@ function createMapStateToProps() {
         // Check root folder availability at two levels:
         const rootFolders = rootFoldersState?.items || [];
         const rootFoldersPopulated = rootFoldersState?.isPopulated || false;
-        
+
         // Global availability: Do compatible root folders exist in the system?
         const hasAudiobookRootFoldersAvailable = rootFolders.some((f) => {
           const folderType = coerceFolderType(f.folderType);
@@ -213,7 +230,7 @@ function createMapStateToProps() {
           const folderType = coerceFolderType(f.folderType);
           return folderType === FolderType.Ebook || folderType === FolderType.Mixed;
         });
-        
+
         // Author-level: Has this author configured a root folder for each media type?
         // Consider both per-type *RootFolderPath and per-type *Folder fields.
         // For mixed-content roots, the API may populate *Folder even when *RootFolderPath is null.
@@ -222,7 +239,7 @@ function createMapStateToProps() {
 
         const authorHasAudiobookConfig = audiobookRootFolderStatus.isConfigured;
         const authorHasEbookConfig = ebookRootFolderStatus.isConfigured;
-        
+
         // Combined availability: Author can use this media type if global folders exist
         // (regardless of whether author has selected one yet)
         const hasAudiobookRootFolder = hasAudiobookRootFoldersAvailable;
@@ -249,8 +266,8 @@ function createMapStateToProps() {
             selectedMediaType = 'audiobook';
           }
         }
-        
-        // If no selected media type yet and root folders are populated, 
+
+        // If no selected media type yet and root folders are populated,
         // default based on what root folders are available
         if (!selectedMediaType && rootFoldersPopulated) {
           if (hasEbookRootFolder && !hasAudiobookRootFolder) {
@@ -264,9 +281,9 @@ function createMapStateToProps() {
         }
 
         // Determine the appropriate quality profile based on selected media type
-        const qualityProfileId = selectedMediaType === 'audiobook' 
-          ? author.audiobookQualityProfileId 
-          : author.ebookQualityProfileId;
+        const qualityProfileId = selectedMediaType === 'audiobook' ?
+          author.audiobookQualityProfileId :
+          author.ebookQualityProfileId;
 
         const rootFolderStatus = getAuthorMediaTypeRootFolderStatus(author, selectedMediaType);
         const effectiveMediaType = rootFolderStatus.mediaType;
@@ -274,13 +291,13 @@ function createMapStateToProps() {
 
         // Counts should match what's visible on this author details page and must not drift as
         // other authors are imported/refreshed (SignalR updates global stores).
-        const authorBooks = Array.isArray(allBookItems)
-          ? allBookItems.filter((book) => book && book.authorId === author.id)
-          : [];
+        const authorBooks = Array.isArray(allBookItems) ?
+          allBookItems.filter((book) => book && book.authorId === author.id) :
+          [];
 
-        const authorBooksForMediaType = effectiveMediaType
-          ? authorBooks.filter((book) => (book.mediaType || '').toString().toLowerCase() === effectiveMediaType)
-          : authorBooks;
+        const authorBooksForMediaType = effectiveMediaType ?
+          authorBooks.filter((book) => (book.mediaType || '').toString().toLowerCase() === effectiveMediaType) :
+          authorBooks;
 
         const visibleBooksBase = hasRootFolder ? authorBooksForMediaType : [];
 
@@ -337,16 +354,16 @@ function createMapStateToProps() {
         } else if (hideUnmonitoredMissing && visibleBooks.length > 0) {
           // When showing "Monitored", hide only if unmonitored AND missing.
           visibleBooks = visibleBooks.filter((book) => {
-            const isMonitored = effectiveMediaType === 'audiobook'
-              ? book.audiobookMonitored
-              : book.ebookMonitored;
+            const isMonitored = effectiveMediaType === 'audiobook' ?
+              book.audiobookMonitored :
+              book.ebookMonitored;
             const hasFiles = book.statistics && book.statistics.bookFileCount > 0;
             return isMonitored || hasFiles;
           });
         }
 
-        const authorBookFiles = Array.isArray(allBookFileItems)
-          ? allBookFileItems.filter((file) => {
+        const authorBookFiles = Array.isArray(allBookFileItems) ?
+          allBookFileItems.filter((file) => {
             if (!file) {
               return false;
             }
@@ -364,23 +381,23 @@ function createMapStateToProps() {
             }
 
             return false;
-          })
-          : [];
+          }) :
+          [];
 
-        const authorBookFilesForMediaType = effectiveMediaType
-          ? authorBookFiles.filter((file) => file.mediaType === effectiveMediaType)
-          : authorBookFiles;
+        const authorBookFilesForMediaType = effectiveMediaType ?
+          authorBookFiles.filter((file) => file.mediaType === effectiveMediaType) :
+          authorBookFiles;
 
-        const visibleBookFiles = isFilterActive
-          ? authorBookFilesForMediaType.filter((file) => {
+        const visibleBookFiles = isFilterActive ?
+          authorBookFilesForMediaType.filter((file) => {
             const searchTerm = filterText.toLowerCase();
             const pathMatch = file.path && file.path.toLowerCase().includes(searchTerm);
             const titleMatch = file.book && file.book.title && file.book.title.toLowerCase().includes(searchTerm);
             const authorMatch = file.book && file.book.authorTitle && file.book.authorTitle.toLowerCase().includes(searchTerm);
 
             return pathMatch || titleMatch || authorMatch;
-          })
-          : authorBookFilesForMediaType;
+          }) :
+          authorBookFilesForMediaType;
 
         const hasBooksForAuthor = visibleBooksBase.length > 0;
         const hasMonitoredBooksForAuthor = visibleBooksBase.some((book) => {
@@ -404,6 +421,8 @@ function createMapStateToProps() {
           isSearching,
           isRenamingFiles,
           isRenamingAuthor,
+          isDeletingAuthor,
+          isDeleteAuthorQueued,
           isFetching,
           isPopulated,
           booksError,
@@ -474,40 +493,12 @@ class AuthorDetailsConnector extends Component {
     this._userSelectedMediaType = false;
   }
 
-  ensureConfiguredMediaTypeSelection = () => {
-    const {
-      authorLoaded,
-      selectedMediaType,
-      authorHasAudiobookConfig,
-      authorHasEbookConfig,
-      setSelectedMediaType
-    } = this.props;
-
-    if (!authorLoaded || this._userSelectedMediaType) {
-      return false;
-    }
-
-    const normalizedSelected = (selectedMediaType || '').toString().toLowerCase() === 'ebook' ? 'ebook' : 'audiobook';
-
-    if (normalizedSelected === 'audiobook' && !authorHasAudiobookConfig && authorHasEbookConfig) {
-      setSelectedMediaType({ mediaType: 'ebook' });
-      return true;
-    }
-
-    if (normalizedSelected === 'ebook' && !authorHasEbookConfig && authorHasAudiobookConfig) {
-      setSelectedMediaType({ mediaType: 'audiobook' });
-      return true;
-    }
-
-    return false;
-  };
-
   //
   // Lifecycle
 
   componentDidMount() {
     registerPagePopulator(this.populate);
-    
+
     // Fetch root folders first, let componentDidUpdate handle populate
     this.props.fetchRootFolders();
 
@@ -559,12 +550,12 @@ class AuthorDetailsConnector extends Component {
       this.populate();
     }
 
-	    // If selectedMediaType changed after initial load, refetch with correct media type
-	    // (The initial population is handled by the logic above)
-	    if (prevProps.selectedMediaType && prevProps.selectedMediaType !== selectedMediaType && selectedMediaType) {
-	      this.populate();
-	    }
-	  }
+    // If selectedMediaType changed after initial load, refetch with correct media type
+    // (The initial population is handled by the logic above)
+    if (prevProps.selectedMediaType && prevProps.selectedMediaType !== selectedMediaType && selectedMediaType) {
+      this.populate();
+    }
+  }
 
   componentWillUnmount() {
     unregisterPagePopulator(this.populate);
@@ -574,17 +565,45 @@ class AuthorDetailsConnector extends Component {
     this.unpopulate({ clearBooks: false });
   }
 
+  ensureConfiguredMediaTypeSelection = () => {
+    const {
+      authorLoaded,
+      selectedMediaType,
+      authorHasAudiobookConfig,
+      authorHasEbookConfig,
+      setSelectedMediaType: selectMediaType
+    } = this.props;
+
+    if (!authorLoaded || this._userSelectedMediaType) {
+      return false;
+    }
+
+    const normalizedSelected = (selectedMediaType || '').toString().toLowerCase() === 'ebook' ? 'ebook' : 'audiobook';
+
+    if (normalizedSelected === 'audiobook' && !authorHasAudiobookConfig && authorHasEbookConfig) {
+      selectMediaType({ mediaType: 'ebook' });
+      return true;
+    }
+
+    if (normalizedSelected === 'ebook' && !authorHasEbookConfig && authorHasAudiobookConfig) {
+      selectMediaType({ mediaType: 'audiobook' });
+      return true;
+    }
+
+    return false;
+  };
+
   //
   // Control
 
   populate = () => {
     const { id: authorId, selectedMediaType, hideUnmonitoredMissing } = this.props;
 
-    console.log('[AuthorDetails] populate() called with:', { 
-      authorId, 
-      selectedMediaType, 
+    console.log('[AuthorDetails] populate() called with:', {
+      authorId,
+      selectedMediaType,
       hideUnmonitoredMissing,
-      hasPopulated: this._hasPopulated 
+      hasPopulated: this._hasPopulated
     });
 
     // Don't populate if we don't have a valid author ID
@@ -611,27 +630,27 @@ class AuthorDetailsConnector extends Component {
     this._isPopulating = true;
 
     // Fetch books specifically for this author with the selected media type
-    const booksFetchParams = { 
-      authorId, 
+    const booksFetchParams = {
+      authorId,
       mediaType: selectedMediaType
     };
-    
+
     // Only add monitored parameter when hideUnmonitoredMissing is true
     // When false (All toggle), don't send monitored parameter to get all books
     if (hideUnmonitoredMissing) {
       booksFetchParams.monitored = true;
     }
-    
+
     this.props.fetchBooks(booksFetchParams);
-    
+
     this.props.fetchSeries({ authorId, mediaType: selectedMediaType });
     this.props.fetchBookFiles({ authorId, mediaType: selectedMediaType });
     this.props.fetchQueueDetails({ authorId });
-    
+
     // Fetch size for both media types
     this.props.fetchAuthorMediaTypeSize({ authorId, mediaType: 'audiobook' });
     this.props.fetchAuthorMediaTypeSize({ authorId, mediaType: 'ebook' });
-    
+
     // Reset populating flag after a short delay to allow for subsequent calls if needed
     setTimeout(() => {
       this._isPopulating = false;
@@ -674,13 +693,13 @@ class AuthorDetailsConnector extends Component {
     const { id } = this.props;
 
     this._userSelectedMediaType = true;
-    
+
     // Update global selected media type
     this.props.setSelectedMediaType({ mediaType });
-    
+
     // Update author's last selected media type
     this.props.updateAuthorMediaType({ authorId: id, mediaType });
-    
+
     // REMOVED duplicate API calls - componentDidUpdate will detect the mediaType change
     // and call populate() which handles all the fetching with proper parameters
   };

@@ -13,7 +13,9 @@ import ModalHeader from 'Components/Modal/ModalHeader';
 import { icons, kinds, sizes } from 'Helpers/Props';
 import stripHtml from 'Utilities/String/stripHtml';
 import translate from 'Utilities/String/translate';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import AddAuthorOptionsForm from '../Common/AddAuthorOptionsForm.js';
+import { getMissingAddFormatSetup } from '../Common/addFormatSetup.cjs';
 import styles from './AddNewSeriesModalContent.css';
 
 function normalizeDefaultMediaType(value, allowBoth) {
@@ -31,7 +33,6 @@ function normalizeDefaultMediaType(value, allowBoth) {
 }
 
 class AddNewSeriesModalContent extends Component {
-
   //
   // Lifecycle
 
@@ -39,7 +40,8 @@ class AddNewSeriesModalContent extends Component {
     super(props, context);
 
     this.state = {
-      selectedMediaType: normalizeDefaultMediaType(props.defaultMediaType, true) ?? 'audiobook',
+      selectedMediaType:
+        normalizeDefaultMediaType(props.defaultMediaType, true) ?? 'audiobook',
       selectedBookIds: [],
       initializedSeriesId: null
     };
@@ -48,8 +50,14 @@ class AddNewSeriesModalContent extends Component {
   }
 
   componentDidUpdate(prevProps) {
-    if (!this._didUserSelectMediaType && prevProps.defaultMediaType !== this.props.defaultMediaType) {
-      const normalized = normalizeDefaultMediaType(this.props.defaultMediaType, true);
+    if (
+      !this._didUserSelectMediaType &&
+      prevProps.defaultMediaType !== this.props.defaultMediaType
+    ) {
+      const normalized = normalizeDefaultMediaType(
+        this.props.defaultMediaType,
+        true
+      );
       if (normalized) {
         this.setState({ selectedMediaType: normalized });
       }
@@ -59,7 +67,10 @@ class AddNewSeriesModalContent extends Component {
     const seriesDetailsId = seriesDetails && seriesDetails.foreignSeriesId;
 
     // When switching to a different series, reset initialization so selection doesn't leak across modals.
-    if (prevProps.foreignSeriesId !== foreignSeriesId && this.state.initializedSeriesId !== null) {
+    if (
+      prevProps.foreignSeriesId !== foreignSeriesId &&
+      this.state.initializedSeriesId !== null
+    ) {
       this.setState({ selectedBookIds: [], initializedSeriesId: null });
       return;
     }
@@ -88,7 +99,18 @@ class AddNewSeriesModalContent extends Component {
     const { onAddSeriesPress, seriesDetails } = this.props;
     const { selectedBookIds, selectedMediaType } = this.state;
 
-    if (!seriesDetails || !seriesDetails.books || seriesDetails.books.length === 0) {
+    if (
+      !this.props.rootFoldersPopulated ||
+      getMissingAddFormatSetup({ ...this.props, selectedMediaType }).length > 0
+    ) {
+      return;
+    }
+
+    if (
+      !seriesDetails ||
+      !seriesDetails.books ||
+      seriesDetails.books.length === 0
+    ) {
       return;
     }
 
@@ -111,8 +133,20 @@ class AddNewSeriesModalContent extends Component {
 
   onAddAllPress = () => {
     const { seriesDetails } = this.props;
+    const { selectedMediaType } = this.state;
 
-    if (!seriesDetails || !seriesDetails.books || seriesDetails.books.length === 0) {
+    if (
+      !this.props.rootFoldersPopulated ||
+      getMissingAddFormatSetup({ ...this.props, selectedMediaType }).length > 0
+    ) {
+      return;
+    }
+
+    if (
+      !seriesDetails ||
+      !seriesDetails.books ||
+      seriesDetails.books.length === 0
+    ) {
       return;
     }
 
@@ -165,10 +199,7 @@ class AddNewSeriesModalContent extends Component {
 
   render() {
     const {
-      foreignSeriesId,
       title,
-      titleSlug,
-      description,
       workCount,
       primaryWorkCount,
       isAdding,
@@ -186,6 +217,9 @@ class AddNewSeriesModalContent extends Component {
       audiobookRootFolderPath,
       ebookRootFolderPath,
       rootFoldersPopulated,
+      rootFoldersFetching,
+      rootFoldersError,
+      fetchRootFolders,
       showMetadataProfile,
       isWindows,
       audiobookQualityProfileId,
@@ -208,26 +242,35 @@ class AddNewSeriesModalContent extends Component {
     const { selectedMediaType, selectedBookIds } = this.state;
     const isSubmitting = isAdding || isAddingSeries;
 
-    const audiobookRoot = audiobookRootFolderPath?.value;
-    const ebookRoot = ebookRootFolderPath?.value;
-    const audiobookProfile = audiobookQualityProfileId?.value;
-    const ebookProfile = ebookQualityProfileId?.value;
+    const missingAddSetup = rootFoldersPopulated ?
+      getMissingAddFormatSetup({ ...this.props, selectedMediaType }) :
+      ['loading'];
+    const isAddDisabled = missingAddSetup.length > 0;
 
-    const needsAudiobook = selectedMediaType === 'audiobook' || selectedMediaType === 'both';
-    const needsEbook = selectedMediaType === 'ebook' || selectedMediaType === 'both';
-
-    const isAddDisabled = !rootFoldersPopulated ||
-      (needsAudiobook && (!audiobookRoot || !audiobookProfile || audiobookProfile === 0 || audiobookProfile === 'none')) ||
-      (needsEbook && (!ebookRoot || !ebookProfile || ebookProfile === 0 || ebookProfile === 'none'));
-
-    const hasBooks = !!(seriesDetails && seriesDetails.books && seriesDetails.books.length > 0);
+    const hasBooks = !!(
+      seriesDetails &&
+      seriesDetails.books &&
+      seriesDetails.books.length > 0
+    );
     const selectedCount = hasBooks ?
-      seriesDetails.books.filter((b) => selectedBookIds.includes(b.foreignBookId)).length :
+      seriesDetails.books.filter((b) =>
+        selectedBookIds.includes(b.foreignBookId)
+      ).length :
       0;
-    const seriesWorkCount = seriesDetails && Number.isInteger(seriesDetails.workCount) ? seriesDetails.workCount : null;
-    const seriesPrimaryWorkCount = seriesDetails && Number.isInteger(seriesDetails.primaryWorkCount) ? seriesDetails.primaryWorkCount : null;
-    const displayWorkCount = seriesWorkCount != null ? seriesWorkCount : workCount;
-    const displayPrimaryWorkCount = seriesPrimaryWorkCount != null ? seriesPrimaryWorkCount : primaryWorkCount;
+    const seriesWorkCount =
+      seriesDetails && Number.isInteger(seriesDetails.workCount) ?
+        seriesDetails.workCount :
+        null;
+    const seriesPrimaryWorkCount =
+      seriesDetails && Number.isInteger(seriesDetails.primaryWorkCount) ?
+        seriesDetails.primaryWorkCount :
+        null;
+    const displayWorkCount =
+      seriesWorkCount != null ? seriesWorkCount : workCount;
+    const displayPrimaryWorkCount =
+      seriesPrimaryWorkCount != null ?
+        seriesPrimaryWorkCount :
+        primaryWorkCount;
 
     return (
       <ModalContent onModalClose={onModalClose}>
@@ -247,6 +290,10 @@ class AddNewSeriesModalContent extends Component {
                 defaultMediaType={defaultMediaType}
                 onSetDefaultMediaType={onSetDefaultMediaType}
                 isSavingDefaultMediaType={isSavingDefaultMediaType}
+                rootFoldersPopulated={rootFoldersPopulated}
+                rootFoldersFetching={rootFoldersFetching}
+                rootFoldersError={rootFoldersError}
+                fetchRootFolders={fetchRootFolders}
                 showMetadataProfile={showMetadataProfile}
                 audiobookRootFolderPath={audiobookRootFolderPath}
                 ebookRootFolderPath={ebookRootFolderPath}
@@ -272,41 +319,59 @@ class AddNewSeriesModalContent extends Component {
             </div>
 
             <div className={styles.info}>
-              <div className={styles.title}>
-                {title}
-              </div>
+              <div className={styles.title}>{title}</div>
 
               <div className={styles.bookCountAndButton}>
                 <Label size={sizes.LARGE}>
-                  {displayWorkCount} {translate(displayWorkCount === 1 ? 'Book' : 'Books')}
-                  {displayPrimaryWorkCount !== displayWorkCount && ` (${displayPrimaryWorkCount} Primary)`}
-                  {hasBooks && ` • ${selectedCount} Selected`}
+                  {translate(
+                    displayWorkCount === 1 ?
+                      'BookCountMessage' :
+                      'BooksCountMessage',
+                    { count: displayWorkCount }
+                  )}
+                  {displayPrimaryWorkCount !== displayWorkCount &&
+                    translate('SeriesPrimaryWorkCount', {
+                      count: displayPrimaryWorkCount
+                    })}
+                  {hasBooks &&
+                    ` • ${translate('SeriesBooksSelectedCount', {
+                      count: selectedCount
+                    })}`}
                 </Label>
                 <div className={styles.addButtons}>
                   <SpinnerButton
                     kind={kinds.PRIMARY}
                     size={sizes.MEDIUM}
                     isSpinning={isSubmitting}
-                    isDisabled={isSubmitting || isFetching || isAddDisabled || !hasBooks || selectedCount === 0}
+                    isDisabled={
+                      isSubmitting ||
+                      isFetching ||
+                      isAddDisabled ||
+                      !hasBooks ||
+                      selectedCount === 0
+                    }
                     onPress={this.onAddSelectedPress}
-                    title={`Add all authors from "${title}" and monitor the selected books.`}
+                    title={translate(
+                      'AddAuthorsFromSeriesAndMonitorSelectedBooks',
+                      { title }
+                    )}
                   >
-                    <Icon name={icons.ADD} />
-                    {' '}
-                    {translate('AddSelected')}
+                    <Icon name={icons.ADD} /> {translate('AddSelected')}
                   </SpinnerButton>
 
                   <SpinnerButton
                     kind={kinds.DEFAULT}
                     size={sizes.MEDIUM}
                     isSpinning={isSubmitting}
-                    isDisabled={isSubmitting || isFetching || isAddDisabled || !hasBooks}
+                    isDisabled={
+                      isSubmitting || isFetching || isAddDisabled || !hasBooks
+                    }
                     onPress={this.onAddAllPress}
-                    title={`Add all authors from "${title}" and monitor all books in this series.`}
+                    title={translate('AddAuthorsFromSeriesAndMonitorAllBooks', {
+                      title
+                    })}
                   >
-                    <Icon name={icons.ADD} />
-                    {' '}
-                    {translate('AddAllToLibrary')}
+                    <Icon name={icons.ADD} /> {translate('AddAllToLibrary')}
                   </SpinnerButton>
                 </div>
               </div>
@@ -318,38 +383,50 @@ class AddNewSeriesModalContent extends Component {
                 </div>
               )}
 
-              {fetchError && (
-                <Alert kind={kinds.WARNING}>
-                  {fetchError}
-                </Alert>
-              )}
+              {fetchError && <Alert kind={kinds.WARNING}>{translateServerMessage(fetchError)}</Alert>}
 
-              {addError && (
-                <Alert kind={kinds.DANGER}>
-                  {addError}
-                </Alert>
-              )}
+              {addError && <Alert kind={kinds.DANGER}>{addError}</Alert>}
 
-              {seriesDetails && seriesDetails.books && seriesDetails.books.length > 0 && (
+              {hasBooks && (
                 <div className={styles.booksSection}>
-                  <h3 className={styles.booksSectionTitle}>{translate('BooksInThisSeries')}</h3>
+                  <h3 className={styles.booksSectionTitle}>
+                    {translate('BooksInThisSeries')}
+                  </h3>
                   <div className={styles.booksList}>
                     {seriesDetails.books.map((book, index) => {
-                      const authorName = book.authorName || book.author?.authorName;
-                      const overview = book.overview ? stripHtml(book.overview) : '';
+                      const authorName =
+                          book.authorName || book.author?.authorName;
+                      const overview = book.overview ?
+                        stripHtml(book.overview) :
+                        '';
                       const validYear = this.getValidYear(book.releaseDate);
+                      const hasReleaseDateAndRating = !!(
+                        validYear &&
+                        book.ratings &&
+                        book.ratings.value > 0
+                      );
 
                       return (
                         <div
                           key={book.foreignBookId || index}
-                          className={`${styles.bookItem} ${selectedBookIds.includes(book.foreignBookId) ? styles.bookItemSelected : ''}`}
-                          onClick={() => this.onBookToggle(book.foreignBookId)}
+                          className={`${styles.bookItem} ${
+                            selectedBookIds.includes(book.foreignBookId) ?
+                              styles.bookItemSelected :
+                              ''
+                          }`}
+                          onClick={() =>
+                            this.onBookToggle(book.foreignBookId)
+                          }
                         >
                           <div className={styles.bookSelect}>
                             <input
                               type="checkbox"
-                              checked={selectedBookIds.includes(book.foreignBookId)}
-                              onChange={() => this.onBookToggle(book.foreignBookId)}
+                              checked={selectedBookIds.includes(
+                                book.foreignBookId
+                              )}
+                              onChange={() =>
+                                this.onBookToggle(book.foreignBookId)
+                              }
                               onClick={(e) => e.stopPropagation()}
                               disabled={isSubmitting}
                             />
@@ -365,26 +442,45 @@ class AddNewSeriesModalContent extends Component {
                           </div>
                           <div className={styles.bookInfo}>
                             <div className={styles.bookTitle}>
-                              {book.position && <span className={styles.bookPosition}>{book.position}. </span>}
+                              {book.position && (
+                                <span className={styles.bookPosition}>
+                                  {book.position}.{' '}
+                                </span>
+                              )}
                               {book.title}
                             </div>
-                            {authorName && <div className={styles.bookAuthorName}>{authorName}</div>}
+                            {authorName && (
+                              <div className={styles.bookAuthorName}>
+                                {authorName}
+                              </div>
+                            )}
                             <div className={styles.bookMetadata}>
                               {validYear && (
                                 <span className={styles.bookReleaseDate}>
                                   {validYear}
                                 </span>
                               )}
-                              {validYear && book.ratings && book.ratings.value > 0 && (
-                                <span className={styles.metadataSeparator}> • </span>
+                              {hasReleaseDateAndRating && (
+                                <span className={styles.metadataSeparator}>
+                                  {' '}
+                                  •{' '}
+                                </span>
                               )}
                               {book.ratings && book.ratings.value > 0 && (
                                 <span className={styles.bookRating}>
-                                  ★ {translate('RatingValueAndVotes', { value: book.ratings.value.toFixed(1), votes: book.ratings.votes })}
+                                  ★{' '}
+                                  {translate('RatingValueAndVotes', {
+                                    value: book.ratings.value.toFixed(1),
+                                    votes: book.ratings.votes
+                                  })}
                                 </span>
                               )}
                             </div>
-                            {!!overview && <div className={styles.bookOverview}>{overview}</div>}
+                            {!!overview && (
+                              <div className={styles.bookOverview}>
+                                {overview}
+                              </div>
+                            )}
                           </div>
                         </div>
                       );
@@ -393,7 +489,7 @@ class AddNewSeriesModalContent extends Component {
                 </div>
               )}
 
-              {(!seriesDetails || !seriesDetails.books || seriesDetails.books.length === 0) && !isFetching && (
+              {!hasBooks && !isFetching && (
                 <div className={styles.noBooksMessage}>
                   <p>{translate('NoBookDetailsForSeriesPreview')}</p>
                 </div>
@@ -402,7 +498,7 @@ class AddNewSeriesModalContent extends Component {
               {error && (
                 <Alert kind={kinds.DANGER}>
                   {translate('SeriesAddError')}
-                  {error.message || error}
+                  {translateServerMessage(error.message || error)}
                 </Alert>
               )}
             </div>
@@ -420,7 +516,7 @@ class AddNewSeriesModalContent extends Component {
         </ModalFooter>
       </ModalContent>
     );
-	  }
+  }
 }
 
 AddNewSeriesModalContent.propTypes = {
@@ -440,6 +536,9 @@ AddNewSeriesModalContent.propTypes = {
   fetchError: PropTypes.string,
   defaultMediaType: PropTypes.string,
   rootFoldersPopulated: PropTypes.bool,
+  rootFoldersFetching: PropTypes.bool,
+  rootFoldersError: PropTypes.object,
+  fetchRootFolders: PropTypes.func,
   showMetadataProfile: PropTypes.bool,
   isWindows: PropTypes.bool,
   onSetDefaultMediaType: PropTypes.func,

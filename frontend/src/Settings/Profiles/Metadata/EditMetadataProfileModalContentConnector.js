@@ -2,19 +2,23 @@ import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
-import { fetchMetadataProfileSchema, saveMetadataProfile, setMetadataProfileValue } from 'Store/Actions/settingsActions';
+import { fetchMetadataProfileGenres, fetchMetadataProfileSchema, saveMetadataProfile, setMetadataProfileValue } from 'Store/Actions/settingsActions';
 import createProfileInUseSelector from 'Store/Selectors/createProfileInUseSelector';
 import createProviderSettingsSelector from 'Store/Selectors/createProviderSettingsSelector';
 import EditMetadataProfileModalContent from './EditMetadataProfileModalContent';
+import { identifierRequirements } from './identifierRequirement';
 
 function createMapStateToProps() {
   return createSelector(
     createProviderSettingsSelector('metadataProfiles'),
     createProfileInUseSelector('metadataProfileId'),
-    (metadataProfile, isInUse) => {
+    (state) => state.settings.metadataProfiles,
+    (metadataProfile, isInUse, metadataProfilesSection) => {
       return {
         ...metadataProfile,
-        isInUse
+        isInUse,
+        isGenresFetching: metadataProfilesSection.isGenresFetching,
+        isGenresPopulated: metadataProfilesSection.isGenresPopulated
       };
     }
   );
@@ -22,6 +26,7 @@ function createMapStateToProps() {
 
 const mapDispatchToProps = {
   fetchMetadataProfileSchema,
+  fetchMetadataProfileGenres,
   setMetadataProfileValue,
   saveMetadataProfile
 };
@@ -49,6 +54,10 @@ class EditMetadataProfileModalContentConnector extends Component {
     if (!this.props.id && this.props.profileType) {
       this.props.setMetadataProfileValue({ name: 'profileType', value: this.props.profileType });
     }
+
+    if (!this.props.isGenresPopulated && !this.props.isGenresFetching) {
+      this.props.fetchMetadataProfileGenres();
+    }
   }
 
   componentDidUpdate(prevProps, prevState) {
@@ -66,6 +75,14 @@ class EditMetadataProfileModalContentConnector extends Component {
   // Listeners
 
   onInputChange = ({ name, value }) => {
+    if (name === 'skipMissingIdentifierRequirement') {
+      const flags = identifierRequirements[value] ?? identifierRequirements.none;
+
+      this.props.setMetadataProfileValue({ name: 'skipMissingIsbn', value: flags.skipMissingIsbn });
+      this.props.setMetadataProfileValue({ name: 'skipMissingAsin', value: flags.skipMissingAsin });
+      return;
+    }
+
     this.props.setMetadataProfileValue({ name, value });
 
     if (name === 'skipMissingIdentifierOmnibus' && !value) {
@@ -102,6 +119,9 @@ EditMetadataProfileModalContentConnector.propTypes = {
   item: PropTypes.object.isRequired,
   setMetadataProfileValue: PropTypes.func.isRequired,
   fetchMetadataProfileSchema: PropTypes.func.isRequired,
+  fetchMetadataProfileGenres: PropTypes.func.isRequired,
+  isGenresFetching: PropTypes.bool,
+  isGenresPopulated: PropTypes.bool,
   saveMetadataProfile: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired
 };

@@ -28,23 +28,23 @@ namespace NzbDrone.Core.Download.Clients.Blackhole
 
         private static readonly TorrentBlackholeSettingsValidator Validator = new TorrentBlackholeSettingsValidator();
 
-        [FieldDefinition(0, Label = "Torrent Folder", Type = FieldType.Path, HelpText = "Folder in which Chaptarr will store the .torrent file")]
+        [FieldDefinition(0, Label = "provider.field.f974e20cd8550", Type = FieldType.Path, HelpText = "provider.field.f848a6d927677")]
         public string TorrentFolder { get; set; }
 
-        [FieldDefinition(1, Label = "Watch Folder", Type = FieldType.Path, HelpText = "Folder from which Chaptarr should import completed downloads")]
+        [FieldDefinition(1, Label = "provider.field.fdfec772dc118", Type = FieldType.Path, HelpText = "provider.field.f85efd9cda753")]
         public string WatchFolder { get; set; }
 
         [DefaultValue(false)]
         [JsonProperty(DefaultValueHandling = DefaultValueHandling.Populate)]
-        [FieldDefinition(2, Label = "Save Magnet Files", Type = FieldType.Checkbox, HelpText = "Save the magnet link if no .torrent file is available (only useful if the download client supports magnets saved to a file)")]
+        [FieldDefinition(2, Label = "provider.field.f892a299aa334", Type = FieldType.Checkbox, HelpText = "provider.field.f0fafe62ec9fe")]
         public bool SaveMagnetFiles { get; set; }
 
-        [FieldDefinition(3, Label = "Magnet File Extension", Type = FieldType.Textbox, HelpText = "Extension to use for magnet links, defaults to '.magnet'")]
+        [FieldDefinition(3, Label = "provider.field.f375ebd2cea28", Type = FieldType.Textbox, HelpText = "provider.field.f0d53d88c6792")]
         public string MagnetFileExtension { get; set; }
 
         [DefaultValue(false)]
         [JsonProperty(DefaultValueHandling = DefaultValueHandling.Populate)]
-        [FieldDefinition(4, Label = "Read Only", Type = FieldType.Checkbox, HelpText = "Instead of moving files this will instruct Chaptarr to Copy or Hardlink (depending on settings/system configuration)")]
+        [FieldDefinition(4, Label = "provider.field.fca1048507ded", Type = FieldType.Checkbox, HelpText = "provider.field.f89119c9c0b2b")]
         public bool ReadOnly { get; set; }
 
         public NzbDroneValidationResult Validate()

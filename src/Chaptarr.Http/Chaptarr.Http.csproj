@@ -10,6 +10,9 @@
     <PackageReference Include="Microsoft.Data.Sqlite" />
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Chaptarr.Core.Test" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\NzbDrone.Core\Chaptarr.Core.csproj" />
     <ProjectReference Include="..\NzbDrone.SignalR\Chaptarr.SignalR.csproj" />
   </ItemGroup>

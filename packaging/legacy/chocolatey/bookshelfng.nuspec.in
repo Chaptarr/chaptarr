@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>bookshelfng</id>
+    <version>__VERSION__</version>
+    <title>ChaptarrNG migration update for BookshelfNG installs</title>
+    <authors>Snapetech</authors>
+    <owners>Snapetech</owners>
+    <projectUrl>https://github.com/snapetech/chaptarrng</projectUrl>
+    <packageSourceUrl>https://github.com/snapetech/chaptarrng/tree/main/packaging/legacy/chocolatey</packageSourceUrl>
+    <docsUrl>https://github.com/snapetech/chaptarrng/blob/main/docs/MIGRATE_FROM_BOOKSHELFNG.md</docsUrl>
+    <bugTrackerUrl>https://github.com/snapetech/chaptarrng/issues</bugTrackerUrl>
+    <licenseUrl>https://github.com/snapetech/chaptarrng/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>Updates an installed BookshelfNG Chocolatey package to the standard ChaptarrNG application. It keeps the bookshelfng package ID, Windows service name, and data directory while ChaptarrNG converts supported BookshelfNG SQLite data on startup and retains a source backup.</description>
+    <summary>Migration update for existing BookshelfNG Chocolatey installs</summary>
+    <tags>books audiobook ebook library bookshelfng chaptarrng migration</tags>
+    <dependencies>
+      <dependency id="nssm" version="2.24.101" />
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

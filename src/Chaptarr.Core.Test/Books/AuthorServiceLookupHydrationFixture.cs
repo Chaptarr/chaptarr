@@ -41,6 +41,7 @@ namespace Chaptarr.Core.Test.Books
             public Author FindByAudnexusId(string audnexusId) => _lookupAuthor;
             public Author FindByOpenLibraryId(string openLibraryId) => _lookupAuthor;
             public Author FindByGoogleBooksId(string googleBooksAuthorId) => _lookupAuthor;
+            public Author FindByRanobeDbId(string ranobeDbAuthorId) => _lookupAuthor;
             public Author Get(int id)
             {
                 GetCallCount++;

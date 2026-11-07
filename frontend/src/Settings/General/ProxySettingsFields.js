@@ -9,29 +9,39 @@ import { inputTypes, kinds } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 import styles from './ProxySettingsFields.css';
 
-export const proxyModeOptions = [
+const proxyModeOptions = [
   {
     key: 'disabled',
-    value: 'Disabled',
-    description: 'Chaptarr does not select a proxy. Standard HTTP_PROXY and HTTPS_PROXY environment settings still apply.'
+    valueKey: 'Disabled',
+    descriptionKey: 'ProxyDoesNotSelect'
   },
   {
     key: 'indexerOnly',
-    value: 'Indexers only',
-    description: 'Only indexer RSS, searches, and grabs use the proxy. Download clients, notifications, metadata, covers, and updates connect directly.'
+    valueKey: 'ProxyModeIndexersOnly',
+    descriptionKey: 'ProxyScope'
   },
   {
     key: 'proxyEverything',
-    value: 'Proxy everything',
-    description: 'Classic *arr behavior. Routes Chaptarr traffic through the proxy unless it matches the proxy bypass settings.'
+    valueKey: 'ProxyModeEverything',
+    descriptionKey: 'ProxyLegacyBehavior'
   }
 ];
 
-const proxyTypeOptions = [
-  { key: 'http', value: 'HTTP(S)' },
-  { key: 'socks4', value: 'Socks4' },
-  { key: 'socks5', value: 'Socks5 (Support TOR)' }
-];
+function getProxyModeOptions() {
+  return proxyModeOptions.map((option) => ({
+    ...option,
+    value: translate(option.valueKey),
+    description: translate(option.descriptionKey)
+  }));
+}
+
+function getProxyTypeOptions() {
+  return [
+    { key: 'http', value: 'HTTP(S)' },
+    { key: 'socks4', value: 'Socks4' },
+    { key: 'socks5', value: translate('Socks5SupportTor') }
+  ];
+}
 
 function hasValueProperty(field) {
   return field != null &&
@@ -58,7 +68,8 @@ function getInputProps(field, defaultValue) {
 }
 
 export function getProxyModeDescription(proxyMode) {
-  return (proxyModeOptions.find((option) => option.key === proxyMode) || proxyModeOptions[0]).description;
+  const options = getProxyModeOptions();
+  return (options.find((option) => option.key === proxyMode) || options[0]).description;
 }
 
 function getProxyModeNotice(proxyMode) {
@@ -109,6 +120,7 @@ function ProxySettingsFields(props) {
   const proxyModeValue = getFieldValue(proxyMode, 'disabled');
   const proxyEnabled = proxyModeValue !== 'disabled';
   const showServerFields = showProxyServerFields && (!showProxyMode || proxyEnabled);
+  const proxyModeSelectOptions = getProxyModeOptions();
 
   return (
     <>
@@ -120,7 +132,7 @@ function ProxySettingsFields(props) {
 
           <div className={styles.proxyModeContent}>
             <div className={styles.radioGroup}>
-              {proxyModeOptions.map((option) => (
+              {proxyModeSelectOptions.map((option) => (
                 <label
                   key={option.key}
                   className={styles.radioOption}
@@ -229,7 +241,7 @@ function ProxySettingsFields(props) {
             <FormInputGroup
               type={inputTypes.SELECT}
               name="proxyType"
-              values={proxyTypeOptions}
+              values={getProxyTypeOptions()}
               onChange={onInputChange}
               {...getInputProps(proxyType, 'http')}
             />
@@ -243,7 +255,7 @@ function ProxySettingsFields(props) {
             <FormInputGroup
               type={inputTypes.TEXT}
               name="proxyHostname"
-              placeholder="e.g. localhost or 192.168.1.1"
+              placeholder={translate('HostnameExample')}
               onChange={onInputChange}
               {...getInputProps(proxyHostname, '')}
             />

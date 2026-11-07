@@ -1,5 +1,5 @@
 import classNames from 'classnames';
-import _ from 'lodash';
+import isEmpty from 'lodash/isEmpty';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { Manager, Popper, Reference } from 'react-popper';
@@ -15,6 +15,7 @@ import { icons, scrollDirections, sizes } from 'Helpers/Props';
 import { isMobile as isMobileUtil } from 'Utilities/browser';
 import * as keyCodes from 'Utilities/Constants/keyCodes';
 import getUniqueElememtId from 'Utilities/getUniqueElementId';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import FormInputHelpText from './FormInputHelpText';
 import HintedSelectInputOption from './HintedSelectInputOption';
 import HintedSelectInputSelectedValue from './HintedSelectInputSelectedValue';
@@ -36,17 +37,17 @@ function getFetchErrorText(error) {
 
   if (Array.isArray(responseJSON)) {
     const messages = responseJSON
-      .map((e) => e?.errorMessage)
+      .map((e) => translateServerMessage(e?.errorMessage))
       .filter(Boolean);
 
-    return messages.length ? messages.join(' ') : (error.responseText || null);
+    return messages.length ? messages.join(' ') : (translateServerMessage(error.responseText) || null);
   }
 
   if (responseJSON && typeof responseJSON === 'object') {
-    return responseJSON.message || responseJSON.error || error.responseText || null;
+    return translateServerMessage(responseJSON.message || responseJSON.error || error.responseText) || null;
   }
 
-  return error.responseText || (error.status && error.statusText ? `${error.status} ${error.statusText}` : null);
+  return translateServerMessage(error.responseText) || (error.status && error.statusText ? `${error.status} ${error.statusText}` : null);
 }
 
 function isArrowKey(keyCode) {
@@ -270,7 +271,7 @@ class EnhancedSelectInput extends Component {
       newState.selectedIndex = getSelectedIndex(this.props);
     }
 
-    if (!_.isEmpty(newState)) {
+    if (!isEmpty(newState)) {
       this.setState(newState);
     }
   };
@@ -331,6 +332,7 @@ class EnhancedSelectInput extends Component {
       className,
       disabledClassName,
       name,
+      ariaDescribedBy,
       value,
       values,
       isDisabled,
@@ -391,7 +393,9 @@ class EnhancedSelectInput extends Component {
                       >
                         <TextInput
                           className={className}
+                          id={name}
                           name={name}
+                          ariaDescribedBy={ariaDescribedBy}
                           value={value}
                           readOnly={isDisabled}
                           hasError={hasError}
@@ -428,6 +432,16 @@ class EnhancedSelectInput extends Component {
                         </Link>
                       </div> :
                       <Link
+                        id={name}
+                        data-value={value == null ? '' : String(value)}
+                        role="combobox"
+                        aria-labelledby={`${name}-label`}
+                        aria-describedby={ariaDescribedBy}
+                        aria-invalid={hasError || undefined}
+                        aria-haspopup="listbox"
+                        aria-expanded={isOpen}
+                        aria-controls={this._optionsId}
+                        aria-activedescendant={isOpen && selectedOption ? String(selectedOption.key) : undefined}
                         className={classNames(
                           className,
                           hasError && styles.hasError,
@@ -503,6 +517,8 @@ class EnhancedSelectInput extends Component {
                     ref={ref}
                     id={this._optionsId}
                     className={styles.optionsContainer}
+                    role="listbox"
+                    aria-labelledby={`${name}-label`}
                     style={{
                       ...style,
                       minWidth: width
@@ -572,7 +588,11 @@ class EnhancedSelectInput extends Component {
                 innerClassName={styles.optionsInnerModalBody}
                 scrollDirection={scrollDirections.NONE}
               >
-                <Scroller className={styles.optionsModalScroller}>
+                <Scroller
+                  className={styles.optionsModalScroller}
+                  role="listbox"
+                  aria-labelledby={`${name}-label`}
+                >
                   <div className={styles.mobileCloseButtonContainer}>
                     <Link
                       className={styles.mobileCloseButton}
@@ -622,6 +642,7 @@ EnhancedSelectInput.propTypes = {
   className: PropTypes.string,
   disabledClassName: PropTypes.string,
   name: PropTypes.string.isRequired,
+  ariaDescribedBy: PropTypes.string,
   value: PropTypes.oneOfType([PropTypes.string, PropTypes.number, PropTypes.arrayOf(PropTypes.string), PropTypes.arrayOf(PropTypes.number)]).isRequired,
   values: PropTypes.arrayOf(PropTypes.object).isRequired,
   isDisabled: PropTypes.bool.isRequired,

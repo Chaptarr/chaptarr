@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import React from 'react';
 import SegmentedToggle from 'Components/Form/SegmentedToggle';
+import translate from 'Utilities/String/translate';
 import styles from './InteractiveSearchMediaTypeToggle.css';
 
 function getLabel(mediaType) {
@@ -46,7 +47,7 @@ function InteractiveSearchMediaTypeToggle(props) {
         value={selectedMediaType}
         options={options}
         onChange={onMediaTypeChange}
-        ariaLabel="Interactive search media type"
+        ariaLabel={translate('InteractiveSearchMediaType')}
       />
     </div>
   );

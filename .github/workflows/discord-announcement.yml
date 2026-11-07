@@ -1,0 +1,73 @@
+name: Announce to Discord
+run-name: ${{ format('action:{0}:pool:{1}', inputs.action, inputs.runner_pool) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Required manual workflow action
+        type: choice
+        options:
+          - announce
+        required: true
+      runner_pool:
+        description: Required private JIT runner pool
+        type: choice
+        options:
+          - private
+        required: true
+      title:
+        description: Discord embed title
+        required: true
+        type: string
+      url:
+        description: HTTPS link opened by the embed
+        required: true
+        type: string
+      body:
+        description: Announcement text
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'announce' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        github.ref == 'refs/heads/main'
+      )
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-announce"]}}', github.run_id)) }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+
+    - name: Setup Node.js
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 26.12.1
+        package-manager-cache: false
+
+    - name: Post announcement
+      env:
+        DISCORD_RELEASE_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+        ANNOUNCEMENT_TITLE: ${{ inputs.title }}
+        ANNOUNCEMENT_URL: ${{ inputs.url }}
+        ANNOUNCEMENT_BODY: ${{ inputs.body }}
+        ANNOUNCEMENT_WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        if [[ -z "$DISCORD_RELEASE_WEBHOOK" ]]; then
+          echo "::error::Add the DISCORD_RELEASE_WEBHOOK repository secret using the same webhook configured for SeerrNG."
+          exit 1
+        fi
+        node scripts/post-discord-announcement.mjs

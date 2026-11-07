@@ -163,6 +163,13 @@ namespace Chaptarr.Api.V1.Indexers
 
         public string MagnetUrl { get; set; }
         public string InfoHash { get; set; }
+
+        [JsonIgnore]
+        public bool HasOriginalInfoHash { get; set; }
+
+        [JsonIgnore]
+        public string OriginalInfoHash { get; set; }
+
         public int? Seeders { get; set; }
         public int? Leechers { get; set; }
         public DownloadProtocol Protocol { get; set; }
@@ -186,7 +193,13 @@ namespace Chaptarr.Api.V1.Indexers
         public int? BookId { get; set; }
 
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public int? SeriesId { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public int? DownloadClientId { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool AdoptExistingTorrent { get; set; }
 
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public string DownloadClient { get; set; }
@@ -297,6 +310,8 @@ namespace Chaptarr.Api.V1.Indexers
 
                 MagnetUrl = torrentInfo.MagnetUrl,
                 InfoHash = torrentInfo.InfoHash,
+                HasOriginalInfoHash = torrentInfo.HasOriginalInfoHash,
+                OriginalInfoHash = torrentInfo.OriginalInfoHash,
                 Seeders = torrentInfo.Seeders,
                 Leechers = (torrentInfo.Peers.HasValue && torrentInfo.Seeders.HasValue) ? (torrentInfo.Peers.Value - torrentInfo.Seeders.Value) : (int?)null,
                 Protocol = releaseInfo.DownloadProtocol,
@@ -568,7 +583,7 @@ namespace Chaptarr.Api.V1.Indexers
         {
             // Prefer explicit file type from indexers that provide it (e.g., MAM).
             // This is the most direct indicator of "ebook vs audiobook" and avoids category mismatches.
-            var fileType = torrent?.FileType;
+            var fileType = torrent?.FileType ?? release?.Container;
             if (!string.IsNullOrWhiteSpace(fileType))
             {
                 if (EbookHintRegex.IsMatch(fileType))

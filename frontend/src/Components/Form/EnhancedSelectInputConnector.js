@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import isEqual from 'lodash/isEqual';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -93,7 +93,7 @@ class EnhancedSelectInputConnector extends Component {
     const prevKey = getProviderDataKey(prevProps.providerData);
     const nextKey = getProviderDataKey(this.props.providerData);
 
-    if (!_.isEqual(prevKey, nextKey)) {
+    if (!isEqual(prevKey, nextKey)) {
       this.setState({ refetchRequired: true });
       // Immediately populate when provider data changes (e.g., API key entered)
       this._populate();

@@ -56,6 +56,24 @@ namespace NzbDrone.Core.Download
             if (requestedMode != ImportMode.Auto || downloadClientItem == null)
             {
                 var explicitPreserveReason = GetPreserveReason(downloadClientItem);
+
+                // An explicit Move must not override the client's own statement that the files cannot be moved. For a
+                // torrent that means it is still seeding: moving its files out breaks seeding while the client keeps
+                // reporting the torrent as healthy. Auto already resolves this case to Copy; do the same for explicit Move
+                // (for example one requested through the Manual Import API).
+                if (explicitPreserveReason == null &&
+                    requestedMode == ImportMode.Move &&
+                    downloadClientItem != null &&
+                    downloadClientItem.DownloadClientInfo?.Protocol == DownloadProtocol.Torrent &&
+                    !downloadClientItem.CanMoveFiles)
+                {
+                    _logger.Debug("[IMPORT-MODE] Downgrading requested Move to Copy for download '{0}' ({1}) because the client reports its files cannot be moved",
+                        downloadClientItem.Title ?? "<unknown>",
+                        downloadClientItem.DownloadId ?? "<unknown>");
+
+                    return new DownloadImportPolicy(ImportMode.Copy, false);
+                }
+
                 return new DownloadImportPolicy(explicitPreserveReason == null ? requestedMode : ImportMode.Copy, explicitPreserveReason != null, explicitPreserveReason);
             }
 
@@ -126,7 +144,7 @@ namespace NzbDrone.Core.Download
             // Tier 1: per-indexer protection for downloads Chaptarr grabbed.
             if (grab?.IndexerId > 0 && ShouldNeverMoveForIndexer(grab.IndexerId))
             {
-                return $"the indexer is configured to keep seeding permanently (IndexerId={grab.IndexerId})";
+                return $"the indexer is configured to preserve torrents in client (IndexerId={grab.IndexerId})";
             }
 
             // Tier 2: per-download-client protection for unmanaged downloads (no grab history).

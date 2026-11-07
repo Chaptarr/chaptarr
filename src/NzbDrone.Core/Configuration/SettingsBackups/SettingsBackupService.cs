@@ -432,8 +432,10 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                     SkipFreeSpaceCheckWhenImporting = _configService.SkipFreeSpaceCheckWhenImporting,
                     MinimumFreeSpaceWhenImporting = _configService.MinimumFreeSpaceWhenImporting,
                     CopyUsingHardlinks = _configService.CopyUsingHardlinks,
+                    KeepExistingLibraryFileOnImportConflict = _configService.KeepExistingLibraryFileOnImportConflict,
                     ImportExtraFiles = _configService.ImportExtraFiles,
                     ExtraFileExtensions = _configService.ExtraFileExtensions,
+                    MoveExtraFilesOnRename = _configService.MoveExtraFilesOnRename,
                     AudiobookConversionConcurrentConversions = _configService.AudiobookConversionConcurrentConversions,
                     AudiobookConversionMaxBitrate = _configService.AudiobookConversionMaxBitrate,
                     AudiobookConversionMaxCpuThreads = _configService.AudiobookConversionMaxCpuThreads,
@@ -452,6 +454,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             {
                 package.MetadataServerUrl = _configService.MetadataServerUrl;
                 package.MetadataSource = _configService.MetadataSource;
+                package.AudibleMarketplace = _configService.AudibleMarketplace;
                 package.Counts["metadataServer"] = 1;
             }
 
@@ -626,6 +629,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 CutoffFormatScore = profile.CutoffFormatScore,
                 ConvertMp3ToM4b = profile.ConvertMp3ToM4b,
                 ConvertToQualityId = profile.ConvertToQualityId,
+                MergeMultiPartFiles = profile.MergeMultiPartFiles,
                 UpgradeAllowed = profile.UpgradeAllowed,
                 PreferCustomFormatsOverQuality = profile.ProfileType == ProfileType.Audiobook && profile.PreferCustomFormatsOverQuality,
                 FormatItems = (profile.FormatItems ?? new List<NzbDrone.Core.Profiles.ProfileFormatItem>())
@@ -976,8 +980,10 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             _configService.SkipFreeSpaceCheckWhenImporting = mm.SkipFreeSpaceCheckWhenImporting;
             _configService.MinimumFreeSpaceWhenImporting = mm.MinimumFreeSpaceWhenImporting;
             _configService.CopyUsingHardlinks = mm.CopyUsingHardlinks;
+            _configService.KeepExistingLibraryFileOnImportConflict = mm.KeepExistingLibraryFileOnImportConflict;
             _configService.ImportExtraFiles = mm.ImportExtraFiles;
             _configService.ExtraFileExtensions = mm.ExtraFileExtensions ?? string.Empty;
+            _configService.MoveExtraFilesOnRename = mm.MoveExtraFilesOnRename;
             var audiobookConversionConcurrentConversions = mm.AudiobookConversionConcurrentConversions > 0
                 ? mm.AudiobookConversionConcurrentConversions
                 : (mm.AudiobookConversionConcurrentDownloads > 0 ? mm.AudiobookConversionConcurrentDownloads : 1);
@@ -1014,6 +1020,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             }
 
             _configService.MetadataSource = package.MetadataSource ?? string.Empty;
+            _configService.AudibleMarketplace = package.AudibleMarketplace ?? AudibleMarketplaceOptions.Default;
         }
 
         private void RestoreHardcover(SettingsBackupPackage package, SettingsBackupRestoreResult result)
@@ -1735,6 +1742,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 CutoffFormatScore = profile.CutoffFormatScore,
                 ConvertMp3ToM4b = profile.ConvertMp3ToM4b,
                 ConvertToQualityId = profile.ConvertToQualityId,
+                MergeMultiPartFiles = profile.MergeMultiPartFiles,
                 UpgradeAllowed = profile.UpgradeAllowed,
                 PreferCustomFormatsOverQuality = profile.ProfileType == ProfileType.Audiobook && profile.PreferCustomFormatsOverQuality,
                 FormatItems = new List<NzbDrone.Core.Profiles.ProfileFormatItem>()

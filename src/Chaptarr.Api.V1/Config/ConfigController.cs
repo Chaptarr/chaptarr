@@ -34,8 +34,10 @@ namespace Chaptarr.Api.V1.Config
         [RestPutById]
         public virtual ActionResult<TResource> SaveConfig([FromBody] TResource resource)
         {
+            NormalizeForSave(resource);
             var dictionary = resource.GetType()
                 .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+                .Where(ShouldSaveProperty)
                 .ToDictionary(prop => prop.Name, prop => prop.GetValue(resource, null));
 
             _configService.SaveConfigDictionary(dictionary);
@@ -45,6 +47,15 @@ namespace Chaptarr.Api.V1.Config
             updatedResource.Id = 1;
 
             return Accepted(updatedResource);
+        }
+
+        protected virtual void NormalizeForSave(TResource resource)
+        {
+        }
+
+        protected virtual bool ShouldSaveProperty(PropertyInfo property)
+        {
+            return true;
         }
 
         protected abstract TResource ToResource(IConfigService model);

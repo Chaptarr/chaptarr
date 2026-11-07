@@ -7,6 +7,7 @@ interface CssExports {
   'isActiveLink': string;
   'isActiveParentLink': string;
   'item': string;
+  'label': string;
   'link': string;
   'noIcon': string;
   'status': string;

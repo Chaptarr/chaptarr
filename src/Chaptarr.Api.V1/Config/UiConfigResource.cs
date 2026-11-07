@@ -18,6 +18,7 @@ namespace Chaptarr.Api.V1.Config
         public bool EnableColorImpairedMode { get; set; }
         public int UILanguage { get; set; }
         public string Theme { get; set; }
+        public string ExperienceMode { get; set; }
 
         public string AddNewDefaultMediaType { get; set; }
     }
@@ -40,6 +41,7 @@ namespace Chaptarr.Api.V1.Config
                 UILanguage = model.UILanguage,
 
                 Theme = config.Theme,
+                ExperienceMode = model.ExperienceMode,
 
                 AddNewDefaultMediaType = model.AddNewDefaultMediaType
             };

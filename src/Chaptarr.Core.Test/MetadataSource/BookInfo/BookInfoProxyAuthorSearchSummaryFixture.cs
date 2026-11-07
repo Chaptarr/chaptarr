@@ -111,7 +111,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 _authorCount = authorCount;
             }
 
-            public List<object> Search(string query)
+            public List<object> Search(string query, bool interactiveSearch = false)
             {
                 return Enumerable.Range(1, _authorCount)
                     .Select(index => (object)new HardcoverAuthorResult
@@ -131,11 +131,18 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (targetMethod?.Name == "IsDefined")
+                {
+                    return false;
+                }
+
                 return targetMethod?.Name switch
                 {
                     "get_HardcoverEnabled" => true,
                     "get_HardcoverApiToken" => "test-token",
                     "get_MetadataServerUrl" => "https://metadata.test",
+                    _ when targetMethod?.Name.StartsWith("get_", StringComparison.Ordinal) == true =>
+                        targetMethod.ReturnType.IsValueType ? Activator.CreateInstance(targetMethod.ReturnType) : null,
                     _ => throw new NotImplementedException($"Config proxy does not implement {targetMethod?.Name}")
                 };
             }

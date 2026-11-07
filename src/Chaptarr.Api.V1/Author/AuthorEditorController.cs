@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Chaptarr.Http;
+using Chaptarr.Http.Middleware;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
@@ -21,14 +22,20 @@ namespace Chaptarr.Api.V1.Author
         private readonly IRootFolderService _rootFolderService;
         private readonly IQualityProfileService _qualityProfileService;
         private readonly IMetadataProfileService _metadataProfileService;
+        private readonly IBackfillAuthorRootFolders _rootFolderBackfill;
+        private readonly IBookshelfLegacyIdentityMapService _legacyIdentityMapService;
 
         public AuthorEditorController(
             IAuthorService authorService,
             IManageCommandQueue commandQueueManager,
             IRootFolderService rootFolderService,
             IQualityProfileService qualityProfileService,
-            IMetadataProfileService metadataProfileService)
+            IMetadataProfileService metadataProfileService,
+            IBackfillAuthorRootFolders rootFolderBackfill,
+            IBookshelfLegacyIdentityMapService legacyIdentityMapService = null)
         {
+            _rootFolderBackfill = rootFolderBackfill;
+            _legacyIdentityMapService = legacyIdentityMapService;
             _authorService = authorService;
             _commandQueueManager = commandQueueManager;
             _rootFolderService = rootFolderService;
@@ -36,9 +43,27 @@ namespace Chaptarr.Api.V1.Author
             _metadataProfileService = metadataProfileService;
         }
 
-        [HttpPut]
+        /// <summary>
+        /// Fills the blank audiobook or ebook root folder of authors that have only one, from the
+        /// effective default root folder. With dryRun=true only the counts are returned.
+        /// </summary>
+        [HttpPost("backfill-roots")]
+        public IActionResult BackfillRootFolders([FromQuery] bool dryRun = false)
+        {
+            if (dryRun)
+            {
+                return Ok(_rootFolderBackfill.Backfill(true));
+            }
+
+            var command = _commandQueueManager.Push(new BackfillAuthorRootFoldersCommand());
+            return Accepted(new { commandId = command?.Id });
+        }
+
+        [HttpPut] // nosemgrep: csharp.dotnet.security.mvc-missing-antiforgery.mvc-missing-antiforgery -- API fallback auth accepts API keys or bearer tokens, never browser cookies.
+        [Consumes("application/json")]
         public IActionResult SaveAll([FromBody] AuthorEditorResource resource)
         {
+            resource.ApplyBookshelfCompatibilityAliases();
             var authorsToUpdate = _authorService.GetAuthors(resource.AuthorIds);
             var previousSyncByAuthorId = authorsToUpdate.ToDictionary(author => author.Id, author => author.SyncMonitoredAcrossFormats == true);
             var previousRootFoldersByAuthorId = authorsToUpdate.ToDictionary(author => author.Id, author => (author.AudiobookRootFolderPath, author.EbookRootFolderPath));
@@ -247,10 +272,31 @@ namespace Chaptarr.Api.V1.Author
 
             if (syncSkippedCount > 0)
             {
-                Response.Headers["X-Chaptarr-Warning"] = $"Sync was enabled for {syncEnabledCount} author(s). {syncSkippedCount} author(s) were skipped because both audiobook and ebook root folders are required.";
+                Response.Headers["X-Chaptarr-Warning"] = $"Sync was enabled for {syncEnabledCount} author(s). {syncSkippedCount} author(s) were skipped because both audiobook and ebook root folders are required. " +
+                    "In Author Editor, switch the media type filter to Audiobooks, select the skipped authors, and set a Root Folder (this only assigns the path - it won't move any files unless you choose to). " +
+                    "Repeat with the filter set to eBooks, then re-run Sync Monitored Audio/eBooks.";
             }
 
-            return Accepted(updatedAuthors.ToResource());
+            var facadeContext = HttpContext?.GetReadarrFacadeContext();
+            var resources = updatedAuthors.ToResource(facadeContext);
+            if (facadeContext?.IsBookshelfCompatibility == true && _legacyIdentityMapService != null)
+            {
+                var legacyMetadataIdByAuthorId = (_legacyIdentityMapService.GetMappingsByTargetIds(
+                        "AuthorMetadata",
+                        resources.Where(authorResource => authorResource != null).Select(authorResource => authorResource.Id)) ?? new List<BookshelfLegacyIdentityMapEntry>())
+                    .GroupBy(mapping => mapping.TargetId)
+                    .Where(group => group.Select(mapping => mapping.SourceId).Distinct().Count() == 1)
+                    .ToDictionary(group => group.Key, group => group.First().SourceId);
+
+                foreach (var authorResource in resources.Where(authorResource => authorResource != null))
+                {
+                    authorResource.AuthorMetadataId = legacyMetadataIdByAuthorId.TryGetValue(authorResource.Id, out var legacyMetadataId)
+                        ? legacyMetadataId
+                        : authorResource.Id;
+                }
+            }
+
+            return Accepted(resources);
         }
 
         private string GetValidationError(AuthorEditorResource resource, List<RootFolder> rootFolders)
@@ -337,12 +383,21 @@ namespace Chaptarr.Api.V1.Author
                    (mediaType == BookMediaType.Ebook && rootFolder.FolderType == FolderType.Ebook);
         }
 
-        [HttpDelete]
-        public object DeleteAuthor([FromBody] AuthorEditorResource resource)
+        [HttpDelete] // nosemgrep: csharp.dotnet.security.mvc-missing-antiforgery.mvc-missing-antiforgery -- API fallback auth accepts API keys or bearer tokens, never browser cookies.
+        [Consumes("application/json")]
+        public IActionResult DeleteAuthor([FromBody] AuthorEditorResource resource)
         {
-            _authorService.DeleteAuthors(resource.AuthorIds, false);
+            // See AuthorController.DeleteAuthor - a bulk selection can add up to just as many books
+            // as one huge author, so this goes through the same size-gated path instead of always
+            // blocking the request on every synchronous BookDeletedEvent subscriber.
+            var queued = _authorService.DeleteAuthorsSyncOrQueue(resource.AuthorIds, resource.DeleteFiles);
 
-            return new { };
+            if (queued)
+            {
+                return Accepted(new { });
+            }
+
+            return Ok(new { });
         }
     }
 }

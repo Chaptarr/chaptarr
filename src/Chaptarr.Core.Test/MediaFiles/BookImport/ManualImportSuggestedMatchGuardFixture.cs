@@ -149,6 +149,28 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         }
 
         [Test]
+        public void missing_edition_message_should_name_the_accepted_identifiers()
+        {
+            var book = new Book { Id = 10, AuthorId = 7, Title = "Selected Book" };
+
+            ManualImportService.ManualEditionSelectionMatchesBook(null, book, 0, out var rejectionReason);
+
+            Assert.That(rejectionReason, Does.Contain("editionId").And.Contain("foreignEditionId"));
+        }
+
+        [Test]
+        public void foreign_edition_should_only_resolve_when_it_belongs_to_the_selected_book()
+        {
+            var book = new Book { Id = 10, Title = "Selected Book" };
+            var own = new Edition { Id = 44, BookId = 10, ForeignEditionId = "e-44" };
+            var other = new Edition { Id = 45, BookId = 11, ForeignEditionId = "e-45" };
+
+            Assert.That(ManualImportService.SelectEditionOfBook(own, book), Is.SameAs(own));
+            Assert.That(ManualImportService.SelectEditionOfBook(other, book), Is.Null);
+            Assert.That(ManualImportService.SelectEditionOfBook(null, book), Is.Null);
+        }
+
+        [Test]
         public void should_reject_manual_selection_when_selected_edition_belongs_to_different_book()
         {
             var book = new Book { Id = 10, AuthorId = 7, Title = "Selected Book" };

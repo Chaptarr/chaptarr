@@ -14,3 +14,12 @@
   opacity: 0;
   pointer-events: none;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .wrapper,
+  .transitioning {
+    transition: none;
+    opacity: 1;
+    pointer-events: auto;
+  }
+}

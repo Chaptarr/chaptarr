@@ -13,6 +13,17 @@
   padding: 0 4px;
 }
 
+.formatLink {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  color: var(--textColor);
+
+  &:hover {
+    color: var(--linkHoverColor);
+  }
+}
+
 .bookType {
   padding: 0 4px;
   border-width: 0 1px;

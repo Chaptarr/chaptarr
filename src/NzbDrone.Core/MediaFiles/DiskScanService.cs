@@ -26,6 +26,7 @@ using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.ProgressMessaging;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.MediaFiles
 {
@@ -52,6 +53,7 @@ namespace NzbDrone.Core.MediaFiles
 
         private readonly IConfigService _configService;
         private readonly IDiskProvider _diskProvider;
+        private readonly IMediaFileAttributeService _mediaFileAttributeService;
         private readonly ICalibreProxy _calibre;
         private readonly IMediaFileService _mediaFileService;
         private readonly IMetadataTagService _metadataTagService;
@@ -67,6 +69,7 @@ namespace NzbDrone.Core.MediaFiles
         public DiskScanService(
             IConfigService configService,
             IDiskProvider diskProvider,
+            IMediaFileAttributeService mediaFileAttributeService,
             ICalibreProxy calibre,
             IMediaFileService mediaFileService,
             IMetadataTagService metadataTagService,
@@ -81,6 +84,7 @@ namespace NzbDrone.Core.MediaFiles
         {
             _configService = configService;
             _diskProvider = diskProvider;
+            _mediaFileAttributeService = mediaFileAttributeService;
             _calibre = calibre;
             _mediaFileService = mediaFileService;
             _metadataTagService = metadataTagService;
@@ -94,6 +98,20 @@ namespace NzbDrone.Core.MediaFiles
             _logger = logger;
         }
 
+        // Initial imports report through ImportStageProgressEvent, and a command message would interfere with
+        // that display. Every other scan has no stage events, so surface the folder as the command message.
+        internal void ReportFolderProgress(int index, int total, string folder, bool isInitialImport)
+        {
+            if (isInitialImport)
+            {
+                _logger.Debug("Scanning folder {0}/{1}: {2}", index, total, folder);
+            }
+            else
+            {
+                _logger.ProgressInfo("Scanning folder {0}/{1}: {2}", index, total, folder);
+            }
+        }
+
         public void Scan(List<string> folders = null, FilterFilesType filter = FilterFilesType.Known, List<int> authorIds = null, bool isInitialImport = false, CancellationToken cancellationToken = default)
         {
             _logger.Debug("[DISK-SCAN] Starting scan - folders: [{0}], filter: {1}",
@@ -104,6 +122,14 @@ namespace NzbDrone.Core.MediaFiles
             {
                 folders = _rootFolderService.All().Select(x => x.Path).ToList();
             }
+
+            var createEmptyAuthorFolders = _configService?.CreateEmptyAuthorFolders == true;
+            var createEmptyEbookAuthorFolders = _configService?.CreateEmptyEbookAuthorFolders == true;
+            var authorsToCreateFoldersFor = createEmptyAuthorFolders || createEmptyEbookAuthorFolders
+                ? authorIds != null && authorIds.Any()
+                    ? _authorService.GetAuthors(authorIds)
+                    : _authorService.GetAllAuthors()
+                : new List<Author>();
 
             LogMemorySnapshot("Disk scan start ({0} folders)", folders.Count);
 
@@ -135,6 +161,12 @@ namespace NzbDrone.Core.MediaFiles
                     continue;
                 }
 
+                if (authorsToCreateFoldersFor.Count > 0 && _diskProvider.FolderExists(rootFolder.Path))
+                {
+                    CreateEmptyAuthorFolders(folder, rootFolder, authorsToCreateFoldersFor,
+                        createEmptyAuthorFolders, createEmptyEbookAuthorFolders);
+                }
+
                 if (!_diskProvider.FolderExists(folder))
                 {
                     if (!_diskProvider.FolderExists(rootFolder.Path))
@@ -143,15 +175,14 @@ namespace NzbDrone.Core.MediaFiles
                     }
                     else
                     {
-                        _logger.Debug("Skipping scan for absent folder {0}; root folder {1} is available.", folder, rootFolder.Path);
+                        _logger.Info("Folder {0} no longer exists but root folder {1} is available; cleaning up its tracked files.", folder, rootFolder.Path);
+                        CleanMediaFiles(folder, new List<string>(), rootFolder);
                     }
 
                     continue;
                 }
 
-                // Don't show scanning folder notification - it interferes with import progress display
-                // _logger.ProgressInfo("Scanning folder {0}/{1}: {2}", processedFolders + 1, folders.Count, folder);
-                _logger.Debug("Scanning folder {0}/{1}: {2}", processedFolders + 1, folders.Count, folder);
+                ReportFolderProgress(processedFolders + 1, folders.Count, folder, isInitialImport);
                 LogMemorySnapshot("Disk scan folder start {0}/{1}: {2}", processedFolders + 1, folders.Count, folder);
 
                 try
@@ -185,7 +216,21 @@ namespace NzbDrone.Core.MediaFiles
                     }
                     else if (!result.ScannedFilePaths.Any())
                     {
-                        _logger.Warn("Skipping scan cleanup for {0} because the scan found no media files. This avoids wiping tracked files when a mount is visible but empty.", folder);
+                        // An empty result means either a dropped mount or a genuine delete;
+                        // only a root-level scan can still be a dropped mount.
+                        var subfolderOfHealthyRoot = !rootFolder.Path.PathEquals(folder) &&
+                            _diskProvider.FolderExists(rootFolder.Path) &&
+                            _diskProvider.GetDirectories(rootFolder.Path).Any();
+
+                        if (subfolderOfHealthyRoot)
+                        {
+                            _logger.Debug("Scan of {0} found no media files but root folder {1} is populated; cleaning up files tracked under it", folder, rootFolder.Path);
+                            CleanMediaFiles(folder, result.ScannedFilePaths, rootFolder);
+                        }
+                        else
+                        {
+                            _logger.Warn("Skipping scan cleanup for {0} because the scan found no media files. This avoids wiping tracked files when a mount is visible but empty.", folder);
+                        }
                     }
                     else
                     {
@@ -241,6 +286,50 @@ namespace NzbDrone.Core.MediaFiles
             _eventAggregator.PublishEvent(doneEvt);
 
             CompactAfterLargeScanIfNeeded(totalScannedFiles, scanStopwatch.Elapsed);
+        }
+
+        private void CreateEmptyAuthorFolders(
+            string folder,
+            RootFolder rootFolder,
+            IEnumerable<Author> authors,
+            bool createLegacyAuthorFolders,
+            bool createEbookAuthorFolders)
+        {
+            foreach (var author in authors)
+            {
+                if (author == null)
+                {
+                    continue;
+                }
+
+                var authorPaths = new List<string>();
+                if (createLegacyAuthorFolders && author.Path.IsNotNullOrWhiteSpace())
+                {
+                    authorPaths.Add(author.Path);
+                }
+
+                if (createEbookAuthorFolders && author.EbookPath.IsNotNullOrWhiteSpace())
+                {
+                    authorPaths.Add(author.EbookPath);
+                }
+
+                foreach (var authorPath in authorPaths.Distinct(PathEqualityComparer.Instance))
+                {
+                    var authorIsInRoot = PathEqualityComparer.Instance.Equals(authorPath, rootFolder.Path) ||
+                        rootFolder.Path.IsParentPath(authorPath);
+                    var authorIsInScannedFolder = PathEqualityComparer.Instance.Equals(authorPath, folder) ||
+                        folder.IsParentPath(authorPath);
+
+                    if (!authorIsInRoot || !authorIsInScannedFolder || _diskProvider.FolderExists(authorPath))
+                    {
+                        continue;
+                    }
+
+                    _logger.Debug("Creating missing author folder {0}", authorPath);
+                    _diskProvider.EnsureFolder(authorPath);
+                    _mediaFileAttributeService.SetFolderPermissions(authorPath);
+                }
+            }
         }
 
         private void LogMemorySnapshot(string message, params object[] args)
@@ -483,21 +572,21 @@ namespace NzbDrone.Core.MediaFiles
 
             if (rootFolder != null && rootFolder.IsCalibreLibrary && rootFolder.CalibreSettings != null)
             {
-                _logger.Info("Getting book list from calibre for {0}", path);
+                _logger.InfoSafe("Getting book list from calibre for {0}", path);
                 var paths = _calibre.GetAllBookFilePaths(rootFolder.CalibreSettings);
                 var folderPaths = paths.Where(x => path.IsParentPath(x));
                 filesOnDisk = folderPaths.Select(x => _diskProvider.GetFileInfo(x));
             }
             else
             {
-                _logger.Debug("Scanning '{0}' for book files", path);
+                _logger.DebugSafe("Scanning '{0}' for book files", path);
                 filesOnDisk = _diskProvider.GetFileInfos(path, allDirectories);
             }
 
             var mediaFileList = filesOnDisk.Where(file => MediaFileExtensions.AllExtensions.Contains(file.Extension))
                 .ToArray();
 
-            _logger.Debug("{0} book files found in {1}", mediaFileList.Length, path);
+            _logger.DebugSafe("{0} book files found in {1}", mediaFileList.Length, path);
             return mediaFileList;
         }
 
@@ -711,6 +800,11 @@ namespace NzbDrone.Core.MediaFiles
                     group => group.Select(file => file.Reason).LastOrDefault(reason => !string.IsNullOrWhiteSpace(reason)),
                     PathEqualityComparer.Instance);
 
+            var remoteSearchTimeByPath = unmappedFiles
+                .Where(file => !string.IsNullOrWhiteSpace(file?.FilePath))
+                .GroupBy(file => file.FilePath, PathEqualityComparer.Instance)
+                .ToDictionary(group => group.Key, group => group.First().LastRemoteSearchTime, PathEqualityComparer.Instance);
+
             var filePaths = unmappedFiles
                 .Select(f => f?.FilePath)
                 .Where(path => !string.IsNullOrWhiteSpace(path))
@@ -798,6 +892,14 @@ namespace NzbDrone.Core.MediaFiles
                                 changed = true;
                             }
 
+                            if (remoteSearchTimeByPath.TryGetValue(filePath, out var existingRemoteSearchTime) &&
+                                existingRemoteSearchTime.HasValue &&
+                                existingFile.LastRemoteSearchTime != existingRemoteSearchTime)
+                            {
+                                existingFile.LastRemoteSearchTime = existingRemoteSearchTime;
+                                changed = true;
+                            }
+
                             if (changed)
                             {
                                 updatedUnmappedFiles.Add(existingFile);
@@ -830,7 +932,10 @@ namespace NzbDrone.Core.MediaFiles
                         Quality = qualityModel,
                         MediaInfo = new MediaInfoModel(), // Initialize MediaInfo to prevent null constraint errors
                         MediaType = BookFile.DetermineMediaType(qualityModel), // Set correct MediaType based on file extension/quality
-                        MatchDetails = newReason
+                        MatchDetails = newReason,
+                        LastRemoteSearchTime = remoteSearchTimeByPath.TryGetValue(filePath, out var newRemoteSearchTime)
+                            ? newRemoteSearchTime
+                            : null
                     };
 
                     TryHydrateUnmappedMetadata(bookFile, fileInfo);

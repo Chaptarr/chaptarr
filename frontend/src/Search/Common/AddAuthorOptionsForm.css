@@ -2,6 +2,17 @@
   margin-left: 8px;
 }
 
+.advancedOptions {
+  margin-top: 12px;
+}
+
+.advancedOptions summary {
+  margin-bottom: 10px;
+  color: var(--helpTextColor);
+  font-size: 14px;
+  cursor: pointer;
+}
+
 .hideMetadataProfile {
   composes: group from '~Components/Form/FormGroup.css';
 

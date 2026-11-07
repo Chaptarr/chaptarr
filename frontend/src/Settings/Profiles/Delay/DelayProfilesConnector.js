@@ -1,4 +1,6 @@
-import _ from 'lodash';
+import find from 'lodash/find';
+import reject from 'lodash/reject';
+import sortBy from 'lodash/sortBy';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -12,8 +14,8 @@ function createMapStateToProps() {
     (state) => state.settings.delayProfiles,
     createTagsSelector(),
     (delayProfiles, tagList) => {
-      const defaultProfile = _.find(delayProfiles.items, { id: 1 });
-      const items = _.sortBy(_.reject(delayProfiles.items, { id: 1 }), ['order']);
+      const defaultProfile = find(delayProfiles.items, { id: 1 });
+      const items = sortBy(reject(delayProfiles.items, { id: 1 }), ['order']);
 
       return {
         defaultProfile,

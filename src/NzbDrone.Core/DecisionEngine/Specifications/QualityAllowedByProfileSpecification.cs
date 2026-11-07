@@ -1,17 +1,21 @@
 using System.Linq;
 using NLog;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.DecisionEngine.Specifications
 {
     public class QualityAllowedByProfileSpecification : IDecisionEngineSpecification
     {
         private readonly Logger _logger;
+        private readonly IConfigService _configService;
 
-        public QualityAllowedByProfileSpecification(Logger logger)
+        public QualityAllowedByProfileSpecification(IConfigService configService, Logger logger)
         {
             _logger = logger;
+            _configService = configService;
         }
 
         public SpecificationPriority Priority => SpecificationPriority.Default;
@@ -22,7 +26,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             if (_logger.IsTraceEnabled)
             {
                 _logger.Trace("[QUALITY_PROFILE_CHECK] ===== QUALITY PROFILE CHECK STARTED =====");
-                _logger.Trace("[QUALITY_PROFILE_CHECK] Release: '{0}'", subject.Release?.Title ?? "NULL");
+                _logger.TraceSafe("[QUALITY_PROFILE_CHECK] Release: '{0}'", subject.Release?.Title ?? "NULL");
                 _logger.Trace("[QUALITY_PROFILE_CHECK] Author: '{0}' (ID: {1})", subject.Author?.Name ?? "NULL", subject.Author?.Id ?? -1);
                 _logger.Trace("[QUALITY_PROFILE_CHECK] Quality being checked: '{0}' (ID: {1})",
                     subject.ParsedBookInfo.Quality.Quality.Name,
@@ -56,7 +60,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 _logger.Trace("[QUALITY_PROFILE_CHECK] Creating SOFT FILTER rejection");
 
                 // Make this a soft filter so users can bypass it and see what's available
-                return Decision.RejectSoftFilter("No quality profile configured for {0} files", "Quality", subject.ParsedBookInfo.Quality.Quality.Name);
+                return RejectQualityRestriction("No quality profile configured for {0} files", subject.ParsedBookInfo.Quality.Quality.Name);
             }
 
             _logger.Trace("[QUALITY_PROFILE_CHECK] Found profile: '{0}' (ID: {1})", profile.Name, profile.Id);
@@ -81,11 +85,21 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 _logger.Trace("[QUALITY_PROFILE_CHECK] QualityOrGroup at index {0}: Allowed={1}, Name={2}", qualityIndex.Index, qualityOrGroup.Allowed, qualityOrGroup.Name ?? qualityOrGroup.Quality?.Name ?? "Unknown");
 
                 // Soft filter: Quality profile restrictions can be bypassed
-                return Decision.RejectSoftFilter("{0} is not wanted in profile", "Quality", subject.ParsedBookInfo.Quality.Quality);
+                return RejectQualityRestriction("{0} is not wanted in profile", subject.ParsedBookInfo.Quality.Quality);
             }
 
             _logger.Trace("[QUALITY_PROFILE_CHECK] Quality {0} ACCEPTED - allowed in profile", subject.ParsedBookInfo.Quality);
             return Decision.Accept();
+        }
+
+        private Decision RejectQualityRestriction(string reason, params object[] args)
+        {
+            if (_configService?.BookshelfMatchCompatibility == true)
+            {
+                return Decision.Reject(reason, args);
+            }
+
+            return Decision.RejectSoftFilter(reason, "Quality", args);
         }
     }
 }

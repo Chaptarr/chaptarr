@@ -1,0 +1,77 @@
+[
+  {
+    "name": "RefreshMonitoredDownloads",
+    "id": "ui.task.refreshMonitoredDownloads",
+    "source": "Refresh Monitored Downloads"
+  },
+  {
+    "name": "MessagingCleanup",
+    "id": "ui.task.messagingCleanup",
+    "source": "Messaging Cleanup"
+  },
+  {
+    "name": "ApplicationUpdateCheck",
+    "id": "ui.task.applicationUpdateCheck",
+    "source": "Application Update Check"
+  },
+  {
+    "name": "CheckHealth",
+    "id": "ui.task.checkHealth",
+    "source": "Check Health"
+  },
+  {
+    "name": "RefreshMyAnonaMouseAccountStatus",
+    "id": "ui.task.refreshMyAnonaMouseAccountStatus",
+    "source": "Refresh My Anona Mouse Account Status"
+  },
+  {
+    "name": "RefreshAuthor",
+    "id": "RefreshAuthor",
+    "source": "Refresh Author"
+  },
+  {
+    "name": "RescanFolders",
+    "id": "UnmappedFilesRescanFolders",
+    "source": "Rescan Folders"
+  },
+  {
+    "name": "Housekeeping",
+    "id": "ui.task.housekeeping",
+    "source": "Housekeeping"
+  },
+  {
+    "name": "RepairAuthorMediaCovers",
+    "id": "ui.task.repairAuthorMediaCovers",
+    "source": "Repair Author Media Covers"
+  },
+  {
+    "name": "Backup",
+    "id": "Backup",
+    "source": "Backup"
+  },
+  {
+    "name": "ImportListSync",
+    "id": "ui.task.importListSync",
+    "source": "Import List Sync"
+  },
+  {
+    "name": "HardcoverLibrarySync",
+    "id": "ui.task.hardcoverLibrarySync",
+    "source": "Hardcover Library Sync"
+  },
+  {
+    "name": "RssSync",
+    "id": "RSSSync",
+    "source": "RSS Sync"
+  },
+  {
+    "name": "MissingBookSearch",
+    "id": "ui.task.missingBookSearch",
+    "source": "Missing Book Search"
+  },
+  {
+    "name": "ProcessPendingImports",
+    "id": "ui.task.processPendingImports",
+    "source": "Process Pending Imports"
+  }
+]

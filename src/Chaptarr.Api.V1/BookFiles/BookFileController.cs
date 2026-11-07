@@ -5,8 +5,10 @@ using System.IO.Abstractions;
 using System.Linq;
 using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http;
+using Chaptarr.Http.Middleware;
 using Chaptarr.Http.REST;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.StaticFiles;
 using NLog;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore.Events;
@@ -21,6 +23,8 @@ using NzbDrone.Http.REST.Attributes;
 using NzbDrone.SignalR;
 using BadRequestException = NzbDrone.Core.Exceptions.BadRequestException;
 using HttpStatusCode = System.Net.HttpStatusCode;
+using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.BookFiles
 {
@@ -39,6 +43,7 @@ namespace Chaptarr.Api.V1.BookFiles
         private readonly IMetadataTagService _metadataTagService;
         private readonly IAuthorService _authorService;
         private readonly IBookService _bookService;
+        private readonly IBookshelfLegacyIdentityMapService _bookshelfLegacyIdentityMapService;
 	        private readonly IUpgradableSpecification _upgradableSpecification;
 	        private readonly IRootFolderService _rootFolderService;
 	        private readonly Logger _logger;
@@ -55,7 +60,8 @@ namespace Chaptarr.Api.V1.BookFiles
                                IBookService bookService,
                                IUpgradableSpecification upgradableSpecification,
                                IRootFolderService rootFolderService,
-                               Logger logger)
+                               Logger logger,
+                               IBookshelfLegacyIdentityMapService bookshelfLegacyIdentityMapService = null)
             : base(signalRBroadcaster)
         {
             _mediaFileService = mediaFileService;
@@ -66,18 +72,76 @@ namespace Chaptarr.Api.V1.BookFiles
             _upgradableSpecification = upgradableSpecification;
             _rootFolderService = rootFolderService;
             _logger = logger;
+            _bookshelfLegacyIdentityMapService = bookshelfLegacyIdentityMapService;
         }
 
         private BookFileResource MapToResource(BookFile bookFile)
         {
+            BookFileResource resource;
             if (bookFile.EditionId > 0 && bookFile.Author != null)
             {
-                return bookFile.ToResource(bookFile.Author, _upgradableSpecification);
+                resource = bookFile.ToResource(bookFile.Author, _upgradableSpecification, HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true);
             }
             else
             {
-                return bookFile.ToResource();
+                resource = bookFile.ToResource(HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true);
             }
+
+            ProjectLegacyBookFileResource(resource);
+            return resource;
+        }
+
+        private BookFileResource MapToResource(BookFile bookFile, NzbDrone.Core.Books.Author author)
+        {
+            var resource = bookFile.ToResource(author, _upgradableSpecification, HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true);
+            ProjectLegacyBookFileResource(resource);
+            return resource;
+        }
+
+        private void ProjectLegacyBookFileResource(BookFileResource resource)
+        {
+            if (resource == null || HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility != true ||
+                _bookshelfLegacyIdentityMapService == null)
+            {
+                return;
+            }
+
+            var fileMapping = _bookshelfLegacyIdentityMapService
+                .GetMappingsByTargetIds("BookFile", new[] { resource.Id })
+                .FirstOrDefault();
+            if (fileMapping != null)
+            {
+                resource.Id = fileMapping.SourceId;
+            }
+
+            var bookMapping = _bookshelfLegacyIdentityMapService
+                .GetMappingsByTargetIds("Book", new[] { resource.BookId })
+                .FirstOrDefault();
+            if (bookMapping != null)
+            {
+                resource.BookId = bookMapping.SourceId;
+            }
+        }
+
+        private int ResolveLegacyBookFileId(int sourceId)
+        {
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility != true ||
+                _bookshelfLegacyIdentityMapService == null)
+            {
+                return sourceId;
+            }
+
+            return _bookshelfLegacyIdentityMapService.GetMappings("BookFile", new[] { sourceId })
+                .FirstOrDefault()?.TargetId ?? sourceId;
+        }
+
+        private List<int> ResolveLegacyBookFileIds(IEnumerable<int> sourceIds)
+        {
+            return (sourceIds ?? Enumerable.Empty<int>())
+                .Where(id => id > 0)
+                .Distinct()
+                .Select(ResolveLegacyBookFileId)
+                .ToList();
         }
 
         private List<BookFileResource> MapUnmappedResources(List<BookFile> files)
@@ -181,42 +245,156 @@ namespace Chaptarr.Api.V1.BookFiles
 
         protected override BookFileResource GetResourceById(int id)
         {
-            var bookFile = _mediaFileService.Get(id);
+            var bookFile = _mediaFileService.Get(ResolveLegacyBookFileId(id));
             var resource = MapToResource(bookFile);
             if (resource == null || string.IsNullOrWhiteSpace(resource.Path))
             {
                 return resource;
             }
 
-            // Prefer persisted tags from DB; fall back to disk read for legacy files without AllTags
+            // Prefer persisted tags from DB; fall back to disk read for legacy files without AllTags.
+            // Keep the private Bookshelf compatibility projection available to AudioTags while
+            // omitting it from the field-agnostic public Tags map.
+            Dictionary<string, List<string>> audioTags;
             if (bookFile?.AllTags != null && bookFile.AllTags.Count > 0)
             {
-                resource.Tags = bookFile.AllTags;
+                audioTags = bookFile.AllTags;
             }
             else
             {
                 try
                 {
-                    var fileInfo = new global::System.IO.Abstractions.FileSystem().FileInfo.FromFileName(resource.Path);
-                    resource.Tags = fileInfo.Exists
+                    var fileInfo = new global::System.IO.Abstractions.FileSystem().FileInfo.New(resource.Path);
+                    audioTags = fileInfo.Exists
                         ? _metadataTagService.ReadAllTags(fileInfo) ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
                         : new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
                 }
                 catch (Exception ex)
                 {
                     _logger.Warn(ex, "Failed to read tags for book file: {0}", resource.Path);
-                    resource.Tags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+                    audioTags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
                 }
             }
 
+            resource.Tags = TagExclusionPolicy.ToPublicTags(audioTags);
+
+            // Keep the BookshelfNG v1 response field for existing clients while the richer
+            // field-agnostic tag map remains available through Tags.
+            resource.AudioTags = BookshelfAudioTagsCompatibilityMapper.ToParsedTrackInfo(bookFile, audioTags);
+
             return resource;
+        }
+
+        protected override bool ShouldBroadcastSyncForResourceId(int id)
+        {
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+            {
+                return true;
+            }
+
+            return _bookshelfLegacyIdentityMapService?.GetMappingsByTargetIds("BookFile", new[] { id }).Count > 0;
+        }
+
+        [HttpGet("{id:int}/download")]
+        public ActionResult DownloadBookFile(int id)
+        {
+            var bookFile = _mediaFileService.Get(ResolveLegacyBookFileId(id));
+
+            if (bookFile == null || bookFile.Path.IsNullOrWhiteSpace())
+            {
+                return NotFound();
+            }
+
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(bookFile.Path);
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                return NotFound();
+            }
+
+            if (!IsInsideRootFolder(fullPath))
+            {
+                _logger.Warn("Refusing to serve book file {0}: path is outside every root folder", id);
+                return StatusCode((int)HttpStatusCode.Forbidden);
+            }
+
+            var info = new FileInfo(fullPath);
+            if (!info.Exists)
+            {
+                return NotFound();
+            }
+
+            // Links anywhere in the path (file or parent directories) must not expose
+            // anything outside the library.
+            var rootPath = _rootFolderService.GetBestRootFolder(fullPath).Path;
+            var realRoot = ResolveRealPath(Path.GetFullPath(rootPath));
+            var realFile = ResolveRealPath(fullPath);
+
+            if (realRoot == null || realFile == null ||
+                !realFile.StartsWith(realRoot.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+                !new FileInfo(realFile).Exists)
+            {
+                _logger.Warn("Refusing to serve book file {0}: resolved path is outside its root folder", id);
+                return StatusCode((int)HttpStatusCode.Forbidden);
+            }
+
+            if (!new FileExtensionContentTypeProvider().TryGetContentType(fullPath, out var contentType))
+            {
+                contentType = "application/octet-stream";
+            }
+
+            return PhysicalFile(realFile, contentType, Path.GetFileName(fullPath), enableRangeProcessing: true);
+        }
+
+        private static string ResolveRealPath(string fullPath)
+        {
+            try
+            {
+                var current = Path.GetPathRoot(fullPath);
+                var rest = fullPath.Substring(current.Length);
+
+                foreach (var segment in rest.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    current = Path.Combine(current, segment);
+                    var info = new FileInfo(current);
+
+                    if (info.LinkTarget != null)
+                    {
+                        var target = info.ResolveLinkTarget(true);
+                        if (target == null)
+                        {
+                            return null;
+                        }
+
+                        current = target.FullName;
+                    }
+                }
+
+                return current;
+            }
+            catch (IOException)
+            {
+                return null;
+            }
+        }
+
+        private bool IsInsideRootFolder(string fullPath)
+        {
+            return _rootFolderService?.GetBestRootFolder(fullPath) != null;
         }
 
         [HttpGet]
         public List<BookFileResource> GetBookFiles(int? authorId, [FromQuery] List<int> bookFileIds, [FromQuery(Name = "bookId")] List<int> bookIds, bool? unmapped, string mediaType = null)
         {
-            _logger.Debug($"[BOOKFILE-API] GetBookFiles called - authorId: {authorId}, bookIds: [{string.Join(",", bookIds)}], bookFileIds: [{string.Join(",", bookFileIds)}], unmapped: {unmapped}, mediaType: {mediaType}");
-            var normalizedMediaType = MediaTypeParameterParser.NormalizeOptional(mediaType);
+            mediaType ??= HttpContext?.GetReadarrFacadeContext()?.MediaType;
+            bookFileIds ??= new List<int>();
+            bookIds ??= new List<int>();
+            _logger.DebugSafe($"[BOOKFILE-API] GetBookFiles called - authorId: {authorId}, bookIds: [{string.Join(",", bookIds)}], bookFileIds: [{string.Join(",", bookFileIds)}], unmapped: {unmapped}, mediaType: {mediaType}");
+            var parsedMediaType = MediaTypeParameterParser.ParseOptional(mediaType);
+            var normalizedMediaType = parsedMediaType.HasValue ? MediaTypeParameterParser.ToApiValue(parsedMediaType.Value) : null;
             
             if (!authorId.HasValue && !bookFileIds.Any() && !bookIds.Any() && !unmapped.HasValue)
             {
@@ -238,22 +416,28 @@ namespace Chaptarr.Api.V1.BookFiles
                 // Use mediaType filtering if provided
                 if (normalizedMediaType != null)
                 {
-                    return _mediaFileService.GetFilesByAuthorAndMediaType(authorId.Value, normalizedMediaType).ConvertAll(f => f.ToResource(author, _upgradableSpecification));
+                    return _mediaFileService.GetFilesByAuthorAndMediaType(authorId.Value, normalizedMediaType).ConvertAll(f => MapToResource(f, author));
                 }
 
-                return _mediaFileService.GetFilesByAuthor(authorId.Value).ConvertAll(f => f.ToResource(author, _upgradableSpecification));
+                return _mediaFileService.GetFilesByAuthor(authorId.Value).ConvertAll(f => MapToResource(f, author));
             }
 
             if (bookIds.Any())
             {
                 var result = new List<BookFileResource>();
-                foreach (var bookId in bookIds)
+                var resolvedBookIds = HttpContext.ResolveBookshelfLegacyBookIds(_bookshelfLegacyIdentityMapService, bookIds, parsedMediaType);
+                foreach (var bookId in resolvedBookIds)
                 {
                     var book = _bookService.GetBook(bookId);
+                    if (book == null || (parsedMediaType.HasValue && book.MediaType != parsedMediaType.Value))
+                    {
+                        continue;
+                    }
+
                     var bookAuthor = _authorService.GetAuthor(book.AuthorId);
                     var bookFiles = _mediaFileService.GetFilesByBook(book.Id);
                     _logger.Debug($"[BOOKFILE-API] Found {bookFiles.Count} files for bookId: {bookId} (Book: {book.Title} by {bookAuthor?.Name})");
-                    result.AddRange(bookFiles.ConvertAll(f => f.ToResource(bookAuthor, _upgradableSpecification)));
+                    result.AddRange(bookFiles.ConvertAll(f => MapToResource(f, bookAuthor)));
                 }
 
                 _logger.Debug($"[BOOKFILE-API] Returning {result.Count} total files for {bookIds.Count} books");
@@ -262,7 +446,7 @@ namespace Chaptarr.Api.V1.BookFiles
             else
             {
                 // trackfiles will come back with the author already populated
-                var bookFiles = _mediaFileService.Get(bookFileIds);
+                var bookFiles = _mediaFileService.Get(ResolveLegacyBookFileIds(bookFileIds));
                 return bookFiles.ConvertAll(e => MapToResource(e));
             }
         }
@@ -270,16 +454,27 @@ namespace Chaptarr.Api.V1.BookFiles
         [RestPutById]
         public ActionResult<BookFileResource> SetQuality([FromBody] BookFileResource bookFileResource)
         {
-            var bookFile = _mediaFileService.Get(bookFileResource.Id);
+            var sourceFileId = bookFileResource.Id;
+            var bookFile = _mediaFileService.Get(ResolveLegacyBookFileId(sourceFileId));
             bookFile.Quality = bookFileResource.Quality;
             _mediaFileService.Update(bookFile);
+
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+            {
+                var resource = MapToResource(_mediaFileService.Get(bookFile.Id));
+                return AcceptedAtAction(
+                    nameof(GetResourceByIdWithErrorHandler),
+                    new { id = sourceFileId },
+                    resource);
+            }
+
             return Accepted(bookFile.Id);
         }
 
         [HttpPut("editor")]
         public IActionResult SetQuality([FromBody] BookFileListResource resource)
         {
-            var bookFiles = _mediaFileService.Get(resource.BookFileIds);
+            var bookFiles = _mediaFileService.Get(ResolveLegacyBookFileIds(resource.BookFileIds));
 
             foreach (var bookFile in bookFiles)
             {
@@ -291,13 +486,13 @@ namespace Chaptarr.Api.V1.BookFiles
 
             _mediaFileService.Update(bookFiles);
 
-            return Accepted(bookFiles.ConvertAll(f => f.ToResource(bookFiles.First().Author, _upgradableSpecification)));
+            return Accepted(bookFiles.ConvertAll(f => MapToResource(f, bookFiles.First().Author)));
         }
 
         [RestDeleteById]
         public void DeleteBookFile(int id)
         {
-            var bookFile = _mediaFileService.Get(id);
+            var bookFile = _mediaFileService.Get(ResolveLegacyBookFileId(id));
 
             if (bookFile == null)
             {
@@ -317,7 +512,7 @@ namespace Chaptarr.Api.V1.BookFiles
         [HttpDelete("bulk")]
         public object DeleteTrackFiles([FromBody] BookFileListResource resource)
         {
-            var bookFiles = _mediaFileService.Get(resource.BookFileIds);
+            var bookFiles = _mediaFileService.Get(ResolveLegacyBookFileIds(resource.BookFileIds));
 
             foreach (var bookFile in bookFiles)
             {

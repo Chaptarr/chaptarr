@@ -15,6 +15,8 @@ const QUICKSTART_PROGRESS_VERSION = 1;
 
 export const defaultState = {
   interactions: {
+    guidedSetup: false,
+    mediaScope: false,
     optionalConnections: false,
     audioBookShelf: false,
     indexers: false,
@@ -24,7 +26,8 @@ export const defaultState = {
     enhancedSearching: false,
     metadataProfiles: false,
     matching: false,
-    rootFolders: false
+    rootFolders: false,
+    quickstartReview: false
   },
   // Track install ID to detect fresh installs
   installId: null

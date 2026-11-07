@@ -1,5 +1,5 @@
 import { push } from 'connected-react-router';
-import _ from 'lodash';
+import findIndex from 'lodash/findIndex';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -8,10 +8,10 @@ import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import NotFound from 'Components/NotFound';
 import PageContent from 'Components/Page/PageContent';
 import PageContentBody from 'Components/Page/PageContentBody';
-import getErrorMessage from 'Utilities/Object/getErrorMessage';
-import translate from 'Utilities/String/translate';
 import { fetchAuthor } from 'Store/Actions/authorActions';
 import { setAuthorDetailsFilterValue } from 'Store/Actions/authorDetailsActions';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
+import translate from 'Utilities/String/translate';
 import AuthorDetailsConnector from './AuthorDetailsConnector';
 import styles from './AuthorDetails.css';
 
@@ -20,7 +20,7 @@ function createMapStateToProps() {
     (state, { match }) => match,
     (state) => state.authors,
     (match, authors) => {
-      const authorId = parseInt(match.params.id, 10);
+      const authorId = parseInt(match.params.id);
       const {
         isFetching,
         isPopulated,
@@ -28,7 +28,7 @@ function createMapStateToProps() {
         items
       } = authors;
 
-      const authorIndex = _.findIndex(items, { id: authorId });
+      const authorIndex = findIndex(items, { id: authorId });
 
       if (authorIndex > -1) {
         return {
@@ -109,7 +109,7 @@ class AuthorDetailsPageConnector extends Component {
     if (!isFetching && !!error) {
       return (
         <div className={styles.errorMessage}>
-          {getErrorMessage(error, 'Failed to load author from API')}
+          {getErrorMessage(error, translate('ErrorPageAuthorUnavailable'))}
         </div>
       );
     }

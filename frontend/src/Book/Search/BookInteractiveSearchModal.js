@@ -8,7 +8,10 @@ function BookInteractiveSearchModal(props) {
   const {
     isOpen,
     bookId,
+    seriesId,
+    authorId,
     bookTitle,
+    seriesTitle,
     authorName,
     selectedMediaType,
     onModalClose
@@ -23,7 +26,10 @@ function BookInteractiveSearchModal(props) {
     >
       <BookInteractiveSearchModalContent
         bookId={bookId}
+        seriesId={seriesId}
+        authorId={authorId}
         bookTitle={bookTitle}
+        seriesTitle={seriesTitle}
         authorName={authorName}
         selectedMediaType={selectedMediaType}
         onModalClose={onModalClose}
@@ -34,11 +40,19 @@ function BookInteractiveSearchModal(props) {
 
 BookInteractiveSearchModal.propTypes = {
   isOpen: PropTypes.bool.isRequired,
-  bookId: PropTypes.number.isRequired,
-  bookTitle: PropTypes.string.isRequired,
+  bookId: PropTypes.number,
+  seriesId: PropTypes.number,
+  authorId: PropTypes.number,
+  bookTitle: PropTypes.string,
+  seriesTitle: PropTypes.string,
   authorName: PropTypes.string.isRequired,
   selectedMediaType: PropTypes.string,
   onModalClose: PropTypes.func.isRequired
+};
+
+BookInteractiveSearchModal.defaultProps = {
+  bookId: null,
+  bookTitle: ''
 };
 
 export default BookInteractiveSearchModal;

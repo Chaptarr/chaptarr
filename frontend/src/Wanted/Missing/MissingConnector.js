@@ -79,6 +79,10 @@ class MissingConnector extends Component {
     this.props.fetchMissing();
   };
 
+  onRetryPress = () => {
+    this.repopulate();
+  };
+
   //
   // Listeners
 
@@ -157,6 +161,7 @@ class MissingConnector extends Component {
         onSearchSelectedPress={this.onSearchSelectedPress}
         onToggleSelectedPress={this.onToggleSelectedPress}
         onSearchAllMissingPress={this.onSearchAllMissingPress}
+        onRetryPress={this.onRetryPress}
         {...this.props}
       />
     );

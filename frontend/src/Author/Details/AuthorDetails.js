@@ -18,6 +18,7 @@ import PageToolbarButton from 'Components/Page/Toolbar/PageToolbarButton';
 import PageToolbarSection from 'Components/Page/Toolbar/PageToolbarSection';
 import PageToolbarSeparator from 'Components/Page/Toolbar/PageToolbarSeparator';
 import SwipeHeaderConnector from 'Components/Swipe/SwipeHeaderConnector';
+import ConvertPreviewModalConnector from 'Convert/ConvertPreviewModalConnector';
 import { align, icons, kinds } from 'Helpers/Props';
 import InteractiveSearchFilterMenuConnector from 'InteractiveSearch/InteractiveSearchFilterMenuConnector';
 import InteractiveSearchTable from 'InteractiveSearch/InteractiveSearchTable';
@@ -55,6 +56,7 @@ class AuthorDetails extends Component {
     this.state = {
       isOrganizeModalOpen: false,
       isRetagModalOpen: false,
+      isConvertModalOpen: false,
       isEditAuthorModalOpen: false,
       isSelectRootFolderModalOpen: false,
       selectRootFolderMediaType: 'audiobook',
@@ -128,6 +130,14 @@ class AuthorDetails extends Component {
 
   onRetagModalClose = () => {
     this.setState({ isRetagModalOpen: false });
+  };
+
+  onConvertPress = () => {
+    this.setState({ isConvertModalOpen: true });
+  };
+
+  onConvertModalClose = () => {
+    this.setState({ isConvertModalOpen: false });
   };
 
   onInteractiveImportPress = () => {
@@ -259,6 +269,8 @@ class AuthorDetails extends Component {
       saveError,
       isDeleting,
       deleteError,
+      isDeletingAuthor,
+      isDeleteAuthorQueued,
       statistics = {},
       selectedMediaType,
       onMediaTypeChange,
@@ -281,6 +293,7 @@ class AuthorDetails extends Component {
 	    const {
 	      isOrganizeModalOpen,
 	      isRetagModalOpen,
+      isConvertModalOpen,
 	      isEditAuthorModalOpen,
 	      isSelectRootFolderModalOpen,
 	      selectRootFolderMediaType,
@@ -346,6 +359,13 @@ class AuthorDetails extends Component {
             />
 
             <PageToolbarButton
+              label={translate('ConvertFiles')}
+              iconName={icons.CONVERT}
+              isDisabled={!hasBookFiles}
+              onPress={this.onConvertPress}
+            />
+
+            <PageToolbarButton
               label={translate('ManualImport')}
               iconName={icons.INTERACTIVE}
               onPress={this.onInteractiveImportPress}
@@ -368,6 +388,7 @@ class AuthorDetails extends Component {
             <PageToolbarButton
               label={translate('Delete')}
               iconName={icons.DELETE}
+              isDisabled={!!isDeletingAuthor}
               onPress={this.onDeleteAuthorPress}
             />
 
@@ -412,6 +433,18 @@ class AuthorDetails extends Component {
           className={styles.contentBody}
           innerClassName={styles.innerContentBody}
         >
+          {
+            isDeletingAuthor ?
+              <Alert kind={kinds.INFO}>
+                {
+                  isDeleteAuthorQueued ?
+                    translate('AuthorDeletionQueued') :
+                    translate('AuthorDeletionInProgress')
+                }
+              </Alert> :
+              null
+          }
+
           <SwipeHeaderConnector
             className={styles.header}
             nextLink={`/author/${nextAuthor.id}`}
@@ -592,6 +625,7 @@ class AuthorDetails extends Component {
                   <TabPanel>
                     <AuthorHistoryTable
                       authorId={id}
+                      mediaType={selectedMediaType}
                     />
                   </TabPanel>
 
@@ -634,6 +668,12 @@ class AuthorDetails extends Component {
             authorId={id}
             mediaType={selectedMediaType}
             onModalClose={this.onRetagModalClose}
+          />
+
+          <ConvertPreviewModalConnector
+            isOpen={isConvertModalOpen}
+            authorId={id}
+            onModalClose={this.onConvertModalClose}
           />
 
 	          <EditAuthorModalConnector
@@ -737,6 +777,8 @@ AuthorDetails.propTypes = {
   saveError: PropTypes.object,
   isDeleting: PropTypes.bool.isRequired,
   deleteError: PropTypes.object,
+  isDeletingAuthor: PropTypes.bool,
+  isDeleteAuthorQueued: PropTypes.bool,
   onSaveSelected: PropTypes.func.isRequired
 };
 

@@ -1,0 +1,54 @@
+# ng-runner-policy: trusted-hosted-or-private-jit-v1
+name: Trivy filesystem scan
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' &&
+      format('action:{0}:pool:{1}', inputs.action, inputs.runner_pool) || github.workflow }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Run trusted source security scanning
+        required: true
+        type: choice
+        options:
+          - scan
+      runner_pool:
+        description: Select compatible GitHub-hosted or private JIT runners
+        required: true
+        type: choice
+        default: public
+        options:
+          - public
+          - private
+permissions:
+  contents: read
+
+concurrency:
+  group: ng-scan-trivy-filesystem-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  trivy:
+    env:
+      TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2
+    name: Trivy source, dependency, and configuration scan
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.action == 'scan' && (inputs.runner_pool == 'public' || inputs.runner_pool == 'private') && github.ref == 'refs/heads/main'
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-trivy"]}}', github.run_id)) }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the latest Trivy release
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # latest
+        with:
+          version: latest
+          token: ${{ github.token }}
+
+      - name: Scan applicable repository files
+        run: ./scripts/security-scan-local.sh --trivy-only --ci
+

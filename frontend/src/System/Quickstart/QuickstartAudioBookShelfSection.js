@@ -20,7 +20,8 @@ class QuickstartAudioBookShelfSection extends Component {
       isEditNotificationModalOpen: false,
       isDeleteNotificationModalOpen: false,
       pendingOpenAudioBookShelf: false,
-      schemaSelectionError: false
+      schemaSelectionError: false,
+      connectionStatus: null
     };
   }
 
@@ -141,11 +142,19 @@ class QuickstartAudioBookShelfSection extends Component {
   };
 
   onTestConnectionSuccess = () => {
+    this.setState({ connectionStatus: 'tested' });
+    this.props.onConnectionTestSuccess?.();
     // Mark this section as interacted when test connection succeeds
     const { markSectionInteracted } = this.props;
     if (markSectionInteracted) {
       markSectionInteracted({ section: 'audioBookShelf' });
     }
+
+  };
+
+  onTestConnectionFailure = (error) => {
+    this.setState({ connectionStatus: 'failed' });
+    this.props.onConnectionTestFailure?.(error);
   };
 
   //
@@ -154,14 +163,16 @@ class QuickstartAudioBookShelfSection extends Component {
   render() {
     const {
       hasActiveAudioBookShelf,
-      audioBookShelfNotification
+      audioBookShelfNotification,
+      wasSkipped
     } = this.props;
 
     const {
       isEditNotificationModalOpen,
       isDeleteNotificationModalOpen,
       pendingOpenAudioBookShelf,
-      schemaSelectionError
+      schemaSelectionError,
+      connectionStatus
     } = this.state;
 
     const buttonText = audioBookShelfNotification ?
@@ -171,6 +182,20 @@ class QuickstartAudioBookShelfSection extends Component {
       (this.props.notificationsState.isSchemaFetching || pendingOpenAudioBookShelf);
     const schemaError = !this.props.notificationsState.isSchemaFetching &&
       (this.props.notificationsState.schemaError || schemaSelectionError);
+    let statusKey = 'QuickstartConnectionNotConfigured';
+
+    if (wasSkipped) {
+      statusKey = 'QuickstartConnectionSkipped';
+    }
+    if (audioBookShelfNotification) {
+      statusKey = 'QuickstartConnectionConfigured';
+    }
+    if (connectionStatus === 'tested') {
+      statusKey = 'QuickstartConnectionTested';
+    }
+    if (connectionStatus === 'failed') {
+      statusKey = 'QuickstartConnectionFailed';
+    }
 
     if (this.props.compact) {
       return (
@@ -183,6 +208,9 @@ class QuickstartAudioBookShelfSection extends Component {
             >
               {buttonText}
             </button>
+          </div>
+          <div className={styles.quickstartConnectionStatus} aria-live="polite">
+            {translate(statusKey)}
           </div>
 
           {
@@ -198,6 +226,7 @@ class QuickstartAudioBookShelfSection extends Component {
             onModalClose={this.onEditNotificationModalClose}
             onDeleteNotificationPress={this.onDeleteNotificationPress}
             onTestConnectionSuccess={this.onTestConnectionSuccess}
+            onTestConnectionFailure={this.onTestConnectionFailure}
           />
 
           <ConfirmModal
@@ -233,6 +262,9 @@ class QuickstartAudioBookShelfSection extends Component {
             {buttonText}
           </button>
         </div>
+        <div className={styles.quickstartConnectionStatus} aria-live="polite">
+          {translate(statusKey)}
+        </div>
 
         {
           schemaError &&
@@ -247,6 +279,7 @@ class QuickstartAudioBookShelfSection extends Component {
           onModalClose={this.onEditNotificationModalClose}
           onDeleteNotificationPress={this.onDeleteNotificationPress}
           onTestConnectionSuccess={this.onTestConnectionSuccess}
+          onTestConnectionFailure={this.onTestConnectionFailure}
         />
 
         <ConfirmModal
@@ -267,6 +300,9 @@ QuickstartAudioBookShelfSection.propTypes = {
   hasActiveAudioBookShelf: PropTypes.bool,
   audioBookShelfNotification: PropTypes.object,
   compact: PropTypes.bool,
+  wasSkipped: PropTypes.bool,
+  onConnectionTestSuccess: PropTypes.func,
+  onConnectionTestFailure: PropTypes.func,
   notificationsState: PropTypes.object.isRequired,
   fetchNotificationSchema: PropTypes.func.isRequired,
   selectNotificationSchema: PropTypes.func.isRequired,

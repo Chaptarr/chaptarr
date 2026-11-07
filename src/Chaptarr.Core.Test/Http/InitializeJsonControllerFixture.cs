@@ -60,7 +60,7 @@ namespace Chaptarr.Core.Test.Http
         public void should_disable_cache_and_serialize_expected_initialize_shape()
         {
             var controller = new InitializeJsonController(
-                ConfigFileProviderProxy.Create("/chaptarr", "api-key", "Library", "dark", "DEVELOP"))
+                ConfigFileProviderProxy.Create("/chaptarr", "api-key", "Library", "dark", "main"))
             {
                 ControllerContext = new ControllerContext
                 {
@@ -82,7 +82,7 @@ namespace Chaptarr.Core.Test.Http
             Assert.That(root.GetProperty("ApiKey").GetString(), Is.EqualTo("api-key"));
             Assert.That(root.GetProperty("InstanceName").GetString(), Is.EqualTo("Library"));
             Assert.That(root.GetProperty("Theme").GetString(), Is.EqualTo("dark"));
-            Assert.That(root.GetProperty("Branch").GetString(), Is.EqualTo("develop"));
+            Assert.That(root.GetProperty("Branch").GetString(), Is.EqualTo("main"));
             Assert.That(root.GetProperty("UrlBase").GetString(), Is.EqualTo("/chaptarr"));
             Assert.That(root.GetProperty("UserHash").GetString(), Is.Not.Empty);
 

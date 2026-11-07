@@ -125,6 +125,7 @@ namespace NzbDrone.Core.Datastore
 
             Mapper.Entity<PendingAuthorImport>("PendingAuthorImport").RegisterModel();
             Mapper.Entity<ImportListBookIdentityCache>("ImportListBookIdentityCache").RegisterModel();
+            Mapper.Entity<ImportListSyncHistory>("ImportListSyncHistory").RegisterModel();
             Mapper.Entity<PendingImport>("PendingImport").RegisterModel();
 
             Mapper.Entity<Series>("Series").RegisterModel()
@@ -287,7 +288,13 @@ namespace NzbDrone.Core.Datastore
             SqlMapper.RemoveTypeMap(typeof(Guid));
             SqlMapper.RemoveTypeMap(typeof(Guid?));
             SqlMapper.AddTypeHandler(new GuidConverter());
-            SqlMapper.AddTypeHandler(new CommandConverter());
+            var commandConverter = new CommandConverter();
+            SqlMapper.AddTypeHandler(commandConverter);
+            foreach (var commandType in CommandConverter.ConcreteCommandTypes)
+            {
+                SqlMapper.AddTypeHandler(commandType, commandConverter);
+            }
+
             SqlMapper.AddTypeHandler(new SystemVersionConverter());
             SqlMapper.AddTypeHandler(new FolderTypeIntConverter());
         }

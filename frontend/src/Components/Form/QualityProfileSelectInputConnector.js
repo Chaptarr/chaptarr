@@ -1,10 +1,9 @@
-import _ from 'lodash';
+import map from 'lodash/map';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
-import { createSelector } from 'reselect';
-import createAjaxRequest from 'Utilities/createAjaxRequest';
 import sortByName from 'Utilities/Array/sortByName';
+import createAjaxRequest from 'Utilities/createAjaxRequest';
 import translate from 'Utilities/String/translate';
 import SelectInput from './SelectInput';
 
@@ -31,7 +30,7 @@ class QualityProfileSelectInputConnector extends Component {
     if (prevProps.profileType !== this.props.profileType) {
       this.fetchProfiles();
     }
-    
+
     // Re-check if value changed or profiles list changed
     if (prevProps.value !== this.props.value) {
       this.checkAndSetDefaultValue();
@@ -40,51 +39,51 @@ class QualityProfileSelectInputConnector extends Component {
 
   fetchProfiles = () => {
     const { profileType } = this.props;
-    
+
     this.setState({ isFetching: true });
-    
+
     let url = '/qualityprofile';
     if (profileType) {
       url += `?mediaType=${encodeURIComponent(profileType)}`;
     }
-    
+
     const { request } = createAjaxRequest({
       url,
       traditional: true
     });
 
-    request.done((profiles) => {
+    request.then((profiles) => {
       this.setState({
         profiles: profiles.sort(sortByName),
-        isFetching: false 
+        isFetching: false
       }, this.checkAndSetDefaultValue);
     });
 
-    request.fail((xhr) => {
+    request.catch((xhr) => {
       console.error('Failed to fetch quality profiles:', xhr);
       this.setState({ isFetching: false });
     });
   };
-  
+
   checkAndSetDefaultValue = () => {
     const {
       name,
       value,
-      includeNone
+      includeNone,
+      noneValue
     } = this.props;
-    
-    const { profiles } = this.state;
+
     const values = this.getSelectValues();
 
     // Don't auto-select if includeNone is true and value is explicitly set
-    if (includeNone && (value === null || value === undefined || value === 'none')) {
+    if (includeNone && (value === null || value === undefined || value === noneValue)) {
       return;
     }
 
     // Check if value exists in the values array (handle both string and number comparisons)
     const valueStr = value?.toString();
     const valueExists = values.some((option) => {
-      return option.key === valueStr || option.key === value || 
+      return option.key === valueStr || option.key === value ||
              (typeof value === 'number' && parseInt(option.key) === value);
     });
 
@@ -103,12 +102,13 @@ class QualityProfileSelectInputConnector extends Component {
       includeNoChangeDisabled = true,
       includeMixed,
       includeNone,
-      noneLabel
+      noneLabel,
+      noneDisabled = false
     } = this.props;
 
     const { profiles } = this.state;
-    
-    const values = _.map(profiles, (qualityProfile) => {
+
+    const values = map(profiles, (qualityProfile) => {
       return {
         key: qualityProfile.id.toString(),
         value: qualityProfile.name
@@ -118,7 +118,8 @@ class QualityProfileSelectInputConnector extends Component {
     if (includeNone) {
       values.unshift({
         key: 'none',
-        value: noneLabel || translate('None')
+        value: noneLabel || translate('None'),
+        isDisabled: noneDisabled
       });
     }
 
@@ -133,7 +134,7 @@ class QualityProfileSelectInputConnector extends Component {
     if (includeMixed) {
       values.unshift({
         key: 'mixed',
-        value: '(Mixed)',
+        value: `(${translate('Mixed')})`,
         isDisabled: true
       });
     }
@@ -145,8 +146,10 @@ class QualityProfileSelectInputConnector extends Component {
   // Listeners
 
   onChange = ({ name, value }) => {
-    if (value === 'noChange' || value === 'none') {
+    if (value === 'noChange') {
       this.props.onChange({ name, value });
+    } else if (value === 'none') {
+      this.props.onChange({ name, value: this.props.noneValue });
     } else {
       this.props.onChange({ name, value: parseInt(value) });
     }
@@ -156,29 +159,17 @@ class QualityProfileSelectInputConnector extends Component {
   // Render
 
   render() {
-    const {
-      className,
-      name,
-      value,
-      values,
-      hasError,
-      hasWarning,
-      ...otherProps
-    } = this.props;
-
     const { isFetching } = this.state;
+    const { includeNone, noneValue, value } = this.props;
+    const selectValue = includeNone && (value == null || value === noneValue) ? 'none' : value;
 
     return (
       <SelectInput
-        className={className}
-        name={name}
-        value={value}
+        {...this.props}
+        value={selectValue}
         values={this.getSelectValues()}
-        hasError={hasError}
-        hasWarning={hasWarning}
         onChange={this.onChange}
-        isDisabled={isFetching}
-        {...otherProps}
+        isDisabled={this.props.isDisabled || isFetching}
       />
     );
   }
@@ -191,11 +182,14 @@ QualityProfileSelectInputConnector.propTypes = {
   values: PropTypes.arrayOf(PropTypes.object),
   hasError: PropTypes.bool,
   hasWarning: PropTypes.bool,
+  isDisabled: PropTypes.bool,
   includeNoChange: PropTypes.bool.isRequired,
   includeNoChangeDisabled: PropTypes.bool,
   includeMixed: PropTypes.bool.isRequired,
   includeNone: PropTypes.bool.isRequired,
   noneLabel: PropTypes.string,
+  noneDisabled: PropTypes.bool,
+  noneValue: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   profileType: PropTypes.string,
   onChange: PropTypes.func.isRequired
 };
@@ -203,7 +197,8 @@ QualityProfileSelectInputConnector.propTypes = {
 QualityProfileSelectInputConnector.defaultProps = {
   includeNoChange: false,
   includeMixed: false,
-  includeNone: false
+  includeNone: false,
+  noneValue: 'none'
 };
 
 export default connect()(QualityProfileSelectInputConnector);

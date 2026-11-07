@@ -40,6 +40,14 @@ namespace Chaptarr.Core.Test.Api
                 return "/MediaCoverProxy/test/" + System.IO.Path.GetFileName(new Uri(url).AbsolutePath);
             }
 
+            public bool IsProxyUrl(string url) => false;
+
+            public bool TryResolveProxyUrl(string url, out string resolved)
+            {
+                resolved = null;
+                return false;
+            }
+
             public void ProxyRemoteUrls(IEnumerable<NzbDrone.Core.MediaCover.MediaCover> covers)
             {
                 foreach (var cover in covers ?? Enumerable.Empty<NzbDrone.Core.MediaCover.MediaCover>())
@@ -50,6 +58,46 @@ namespace Chaptarr.Core.Test.Api
 
             public string GetUrl(string hash) => throw new NotImplementedException();
             public byte[] GetImage(string hash) => throw new NotImplementedException();
+        }
+
+        private sealed class SearchProxyStub : ISearchForNewBook
+        {
+            public BookMediaType? RequestedMediaType { get; private set; }
+            public int SearchCalls { get; private set; }
+
+            public List<Book> SearchForNewBook(string title, string author, bool getAllEditions = true, BookMediaType? mediaType = null)
+            {
+                SearchCalls++;
+                RequestedMediaType = mediaType;
+
+                return new List<Book>
+                {
+                    new Book
+                    {
+                        Title = title,
+                        MediaType = mediaType ?? BookMediaType.Audiobook,
+                        GoodreadsWorkId = "gr:123",
+                        Author = new Author
+                        {
+                            Name = "Test Author",
+                            GoodreadsAuthorId = "gr:456"
+                        },
+                        Editions = new List<Edition>
+                        {
+                            new Edition
+                            {
+                                ForeignEditionId = "gr:789",
+                                Title = title,
+                                Monitored = true
+                            }
+                        }
+                    }
+                };
+            }
+
+            public List<Book> SearchByIsbn(string isbn) => throw new NotImplementedException();
+            public List<Book> SearchByAsin(string asin) => throw new NotImplementedException();
+            public List<Book> SearchByGoodreadsBookId(int goodreadsId, bool getAllEditions) => throw new NotImplementedException();
         }
 
         private class BookServiceProxy : DispatchProxy
@@ -111,15 +159,82 @@ namespace Chaptarr.Core.Test.Api
         }
 
         [Test]
+        public void should_include_author_and_editions_in_remote_lookup_results()
+        {
+            var controller = new BookLookupController(
+                searchProxy: new SearchProxyStub(),
+                coverMapper: new CoverMapperStub(),
+                bookService: null,
+                editionService: null,
+                mediaFileService: null,
+                mediaCoverProxy: new MediaCoverProxyStub(),
+                providerAliasService: null);
+
+            var result = controller.Search("hobbit").Value;
+
+            Assert.That(result, Has.Count.EqualTo(1));
+            Assert.That(result[0].Author, Is.Not.Null);
+            Assert.That(result[0].Author.ForeignAuthorId, Is.EqualTo("gr:456"));
+            Assert.That(result[0].Editions, Has.Count.EqualTo(1));
+            Assert.That(result[0].Editions[0].ForeignEditionId, Is.EqualTo("gr:789"));
+            Assert.That(result[0].Editions[0].Monitored, Is.True);
+        }
+
+        [Test]
         public void should_normalize_work_terms_by_readarr_facade_dialect_only()
         {
-            var native = ReadarrFacadeProviderIdTranslator.NormalizeWorkTerm("work:123", null);
-            var hc = ReadarrFacadeProviderIdTranslator.NormalizeWorkTerm("work:123", new ReadarrFacadeContext("hc", "audiobook", "/readarr/hc/audiobook"));
-            var gr = ReadarrFacadeProviderIdTranslator.NormalizeWorkTerm("work:123", new ReadarrFacadeContext("gr", "ebook", "/readarr/gr/ebook"));
+            var native = ReadarrFacadeProviderIdTranslator.NormalizeLookupTerm("work:123", null);
+            var hc = ReadarrFacadeProviderIdTranslator.NormalizeLookupTerm("work:123", new ReadarrFacadeContext("hc", "audiobook", "/readarr/hc/audiobook"));
+            var gr = ReadarrFacadeProviderIdTranslator.NormalizeLookupTerm("work:123", new ReadarrFacadeContext("gr", "ebook", "/readarr/gr/ebook"));
+            var bareHc = ReadarrFacadeProviderIdTranslator.NormalizeLookupTerm("123", new ReadarrFacadeContext("hc", "audiobook", "/readarr/hc/audiobook"));
+            var bareGr = ReadarrFacadeProviderIdTranslator.NormalizeLookupTerm(" 123 ", new ReadarrFacadeContext("gr", "ebook", "/readarr/gr/ebook"));
+            var title = ReadarrFacadeProviderIdTranslator.NormalizeLookupTerm("  Dune  ", new ReadarrFacadeContext("hc", "ebook", "/readarr/hc/ebook"));
 
             Assert.That(native, Is.EqualTo("work:123"));
             Assert.That(hc, Is.EqualTo("hc:123"));
             Assert.That(gr, Is.EqualTo("gr:123"));
+            Assert.That(bareHc, Is.EqualTo("hc:123"));
+            Assert.That(bareGr, Is.EqualTo("gr:123"));
+            Assert.That(title, Is.EqualTo("  Dune  "), "Title search terms should keep their original whitespace.");
+        }
+
+        [Test]
+        public void should_lookup_a_raw_numeric_id_as_a_hardcover_work_on_the_readarr_facade()
+        {
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            var bookProxy = (BookServiceProxy)(object)bookService;
+            var editionService = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+            var mediaFileService = DispatchProxy.Create<IMediaFileService, MediaFileServiceProxy>();
+            var searchProxy = new SearchProxyStub();
+            var controller = new BookLookupController(
+                searchProxy: searchProxy,
+                coverMapper: new CoverMapperStub(),
+                bookService: bookService,
+                editionService: editionService,
+                mediaFileService: mediaFileService,
+                mediaCoverProxy: new MediaCoverProxyStub(),
+                providerAliasService: null)
+            {
+                ControllerContext = new ControllerContext
+                {
+                    HttpContext = new DefaultHttpContext()
+                }
+            };
+            controller.HttpContext.Items[ReadarrFacadeContext.ItemKey] =
+                new ReadarrFacadeContext("hc", "audiobook", "/readarr/hc/audiobook");
+
+            var result = controller.Search("2459845", "audiobook");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Result, Is.Null);
+                Assert.That(result.Value, Has.Count.EqualTo(1));
+                Assert.That(result.Value.Single().Id, Is.EqualTo(1));
+                Assert.That(result.Value.Single().MediaType, Is.EqualTo("audiobook"));
+                Assert.That(searchProxy.SearchCalls, Is.Zero, "A facade numeric ID should resolve locally before title search.");
+                Assert.That(bookProxy.FindAllCalls.Any(call =>
+                    call.Provider == "hc" && call.ProviderId == "hc:2459845" && call.MediaType == BookMediaType.Audiobook), Is.True);
+            });
         }
 
         [Test]
@@ -143,6 +258,29 @@ namespace Chaptarr.Core.Test.Api
             var result = controller.Search("work:123");
 
             Assert.That(result.Result, Is.TypeOf<BadRequestObjectResult>());
+        }
+
+        [Test]
+        public void should_pass_requested_media_type_to_remote_lookup()
+        {
+            var searchProxy = new SearchProxyStub();
+            var controller = new BookLookupController(
+                searchProxy: searchProxy,
+                coverMapper: new CoverMapperStub(),
+                bookService: null,
+                editionService: null,
+                mediaFileService: null,
+                mediaCoverProxy: new MediaCoverProxyStub(),
+                providerAliasService: null);
+
+            var result = controller.Search("dune", "ebook");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(searchProxy.RequestedMediaType, Is.EqualTo(BookMediaType.Ebook));
+                Assert.That(result.Value, Has.Count.EqualTo(1));
+                Assert.That(result.Value.Single().MediaType, Is.EqualTo("ebook"));
+            });
         }
 
         [Test]

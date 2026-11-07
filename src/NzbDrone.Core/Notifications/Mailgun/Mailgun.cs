@@ -71,8 +71,8 @@ namespace NzbDrone.Core.Notifications.Mailgun
 
             try
             {
-                const string title = "Test Notification";
-                const string body = "This is a test message from Chaptarr, though Mailgun.";
+                var title = Localize("notification.test.title", "Test Notification");
+                var body = Localize("notification.test.mailgunBody", "This is a test message from Chaptarr through Mailgun.");
 
                 _proxy.SendNotification(title, body, Settings);
                 _logger.Info("Successsfully sent email though Mailgun.");

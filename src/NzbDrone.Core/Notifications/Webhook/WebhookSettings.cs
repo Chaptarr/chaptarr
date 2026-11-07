@@ -96,10 +96,10 @@ namespace NzbDrone.Core.Notifications.Webhook
             Method = Convert.ToInt32(WebhookMethod.POST);
         }
 
-        [FieldDefinition(0, Label = "URL", Type = FieldType.Url, Privacy = PrivacyLevel.ApiKey)]
+        [FieldDefinition(0, Label = "provider.field.fe7a241debad5", Type = FieldType.Url, Privacy = PrivacyLevel.ApiKey)]
         public string Url { get; set; }
 
-        [FieldDefinition(1, Label = "Method", Type = FieldType.Select, SelectOptions = typeof(WebhookMethod), HelpText = "Which HTTP method to use submit to the Webservice")]
+        [FieldDefinition(1, Label = "provider.field.f52a0f9b65b27", Type = FieldType.Select, SelectOptions = typeof(WebhookMethod), HelpText = "provider.field.f3d863105b354")]
         public int Method { get; set; }
 
         [FieldDefinition(2, Label = "Username", Privacy = PrivacyLevel.UserName)]
@@ -107,6 +107,9 @@ namespace NzbDrone.Core.Notifications.Webhook
 
         [FieldDefinition(3, Label = "Password", Type = FieldType.Password, Privacy = PrivacyLevel.Password)]
         public string Password { get; set; }
+
+        [FieldDefinition(4, Label = "WebhookIncludeCanonicalEvents", Type = FieldType.Checkbox, HelpText = "WebhookIncludeCanonicalEventsHelpText")]
+        public bool IncludeCanonicalEvents { get; set; }
 
         public NzbDroneValidationResult Validate()
         {

@@ -1,5 +1,4 @@
 using System;
-using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -54,9 +53,14 @@ namespace NzbDrone.SysTray
             return Task.CompletedTask;
         }
 
-        protected override void OnClosing(CancelEventArgs e)
+        protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            DisposeTrayIcon();
+            base.OnFormClosing(e);
+
+            if (!e.Cancel)
+            {
+                DisposeTrayIcon();
+            }
         }
 
         protected override void OnLoad(EventArgs e)

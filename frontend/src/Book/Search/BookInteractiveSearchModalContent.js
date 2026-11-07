@@ -46,7 +46,10 @@ class BookInteractiveSearchModalContent extends Component {
   render() {
     const {
       bookId,
+      seriesId,
+      authorId,
       bookTitle,
+      seriesTitle,
       authorName,
       onModalClose
     } = this.props;
@@ -55,23 +58,30 @@ class BookInteractiveSearchModalContent extends Component {
       activeBookId,
       activeMediaType
     } = this.state;
+    const hasSeries = seriesId !== null && seriesId !== undefined;
+    const hasBook = bookId !== null;
+    const searchPayload = hasSeries ?
+      { seriesId, authorId } :
+      { bookId: activeBookId, initialMediaType: activeMediaType };
+
+    let modalHeader = translate('InteractiveSearchModalHeader');
+
+    if (hasSeries) {
+      modalHeader = translate('InteractiveSearchModalHeaderSeriesAuthor', { seriesTitle, authorName });
+    } else if (hasBook) {
+      modalHeader = translate('InteractiveSearchModalHeaderBookAuthor', { bookTitle, authorName });
+    }
 
     return (
       <ModalContent onModalClose={onModalClose}>
         <ModalHeader>
-          {bookId === null ?
-            translate('InteractiveSearchModalHeader') :
-            translate('InteractiveSearchModalHeaderBookAuthor', { bookTitle, authorName })
-          }
+          {modalHeader}
         </ModalHeader>
 
         <ModalBody scrollDirection={scrollDirections.BOTH}>
           <InteractiveSearchConnector
             type="book"
-            searchPayload={{
-              bookId: activeBookId,
-              initialMediaType: activeMediaType
-            }}
+            searchPayload={searchPayload}
             onMediaTypeChange={this.onMediaTypeChange}
           />
         </ModalBody>
@@ -87,11 +97,18 @@ class BookInteractiveSearchModalContent extends Component {
 }
 
 BookInteractiveSearchModalContent.propTypes = {
-  bookId: PropTypes.number.isRequired,
-  bookTitle: PropTypes.string.isRequired,
+  bookId: PropTypes.number,
+  seriesId: PropTypes.number,
+  authorId: PropTypes.number,
+  bookTitle: PropTypes.string,
+  seriesTitle: PropTypes.string,
   authorName: PropTypes.string.isRequired,
   selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook']),
   onModalClose: PropTypes.func.isRequired
+};
+
+BookInteractiveSearchModalContent.defaultProps = {
+  bookId: null
 };
 
 export default BookInteractiveSearchModalContent;

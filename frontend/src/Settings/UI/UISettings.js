@@ -1,3 +1,4 @@
+import classNames from 'classnames';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
@@ -12,41 +13,178 @@ import PageContentBody from 'Components/Page/PageContentBody';
 import { inputTypes, kinds } from 'Helpers/Props';
 import SettingsToolbarConnector from 'Settings/SettingsToolbarConnector';
 import themes from 'Styles/Themes';
+import intlFormatters from 'Utilities/Localization/formatters.cjs';
+import {
+  applyDocumentLocale,
+  getLocale,
+  getUiLocaleById,
+  getUiLocaleOptionLabel,
+  SUPPORTED_UI_LOCALE_IDS,
+  SUPPORTED_UI_LOCALES
+} from 'Utilities/Localization/locale';
 import titleCase from 'Utilities/String/titleCase';
-import translate from 'Utilities/String/translate';
+import translate, { translateWithFallback } from 'Utilities/String/translate';
+import styles from './UISettings.css';
 
-export const firstDayOfWeekOptions = [
-  { key: 0, value: 'Sunday' },
-  { key: 1, value: 'Monday' }
-];
+const { formatDate, formatDateParts } = intlFormatters;
 
-export const weekColumnOptions = [
-  { key: 'ddd M/D', value: 'Tue 3/25', hint: 'ddd M/D' },
-  { key: 'ddd MM/DD', value: 'Tue 03/25', hint: 'ddd MM/DD' },
-  { key: 'ddd D/M', value: 'Tue 25/3', hint: 'ddd D/M' },
-  { key: 'ddd DD/MM', value: 'Tue 25/03', hint: 'ddd DD/MM' }
-];
+function getDateParts(options) {
+  const date = new Date(Date.UTC(2014, 2, 25, 17, 0));
 
-const shortDateFormatOptions = [
-  { key: 'MMM D YYYY', value: 'Mar 25 2014', hint: 'MMM D YYYY' },
-  { key: 'DD MMM YYYY', value: '25 Mar 2014', hint: 'DD MMM YYYY' },
-  { key: 'MM/D/YYYY', value: '03/25/2014', hint: 'MM/D/YYYY' },
-  { key: 'MM/DD/YYYY', value: '03/25/2014', hint: 'MM/DD/YYYY' },
-  { key: 'DD/MM/YYYY', value: '25/03/2014', hint: 'DD/MM/YYYY' },
-  { key: 'YYYY-MM-DD', value: '2014-03-25', hint: 'YYYY-MM-DD' }
-];
+  return formatDateParts(date, {
+    timeZone: 'UTC',
+    ...options
+  }, getLocale());
+}
 
-const longDateFormatOptions = [
-  { key: 'dddd, MMMM D YYYY', value: 'Tuesday, March 25, 2014' },
-  { key: 'dddd, D MMMM YYYY', value: 'Tuesday, 25 March, 2014' }
-];
+function getTime(hour, minute, hour12) {
+  const date = new Date(Date.UTC(2014, 2, 25, hour, minute));
+  return formatDate(date, {
+    timeZone: 'UTC',
+    hour: 'numeric',
+    minute: minute ? '2-digit' : undefined,
+    hour12
+  }, getLocale());
+}
 
-export const timeFormatOptions = [
-  { key: 'h(:mm)a', value: '5pm/5:30pm' },
-  { key: 'HH:mm', value: '17:00/17:30' }
-];
+export function getFirstDayOfWeekOptions() {
+  return [
+    { key: 0, value: translate('Sunday') },
+    { key: 1, value: translate('Monday') }
+  ];
+}
+
+export function getWeekColumnOptions() {
+  const { weekday, month, day } = getDateParts({
+    weekday: 'short',
+    month: 'numeric',
+    day: 'numeric'
+  });
+  const { month: paddedMonth, day: paddedDay } = getDateParts({
+    month: '2-digit',
+    day: '2-digit'
+  });
+
+  return [
+    { key: 'ddd M/D', value: `${weekday} ${month}/${day}`, hint: 'ddd M/D' },
+    {
+      key: 'ddd MM/DD',
+      value: `${weekday} ${paddedMonth}/${paddedDay}`,
+      hint: 'ddd MM/DD'
+    },
+    { key: 'ddd D/M', value: `${weekday} ${day}/${month}`, hint: 'ddd D/M' },
+    {
+      key: 'ddd DD/MM',
+      value: `${weekday} ${paddedDay}/${paddedMonth}`,
+      hint: 'ddd DD/MM'
+    }
+  ];
+}
+
+function getShortDateFormatOptions() {
+  const monthShort = getDateParts({ month: 'short' }).month;
+  const numeric = getDateParts({
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric'
+  });
+
+  return [
+    {
+      key: 'MMM D YYYY',
+      value: `${monthShort} ${numeric.day} ${numeric.year}`,
+      hint: 'MMM D YYYY'
+    },
+    {
+      key: 'DD MMM YYYY',
+      value: `${numeric.day} ${monthShort} ${numeric.year}`,
+      hint: 'DD MMM YYYY'
+    },
+    {
+      key: 'MM/D/YYYY',
+      value: `${numeric.month}/${numeric.day}/${numeric.year}`,
+      hint: 'MM/D/YYYY'
+    },
+    {
+      key: 'MM/DD/YYYY',
+      value: `${numeric.month}/${numeric.day}/${numeric.year}`,
+      hint: 'MM/DD/YYYY'
+    },
+    {
+      key: 'DD/MM/YYYY',
+      value: `${numeric.day}/${numeric.month}/${numeric.year}`,
+      hint: 'DD/MM/YYYY'
+    },
+    {
+      key: 'YYYY-MM-DD',
+      value: `${numeric.year}-${numeric.month}-${numeric.day}`,
+      hint: 'YYYY-MM-DD'
+    }
+  ];
+}
+
+function getLongDateFormatOptions() {
+  const first = getDateParts({
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric'
+  });
+  const second = getDateParts({
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric'
+  });
+
+  return [
+    {
+      key: 'dddd, MMMM D YYYY',
+      value: `${first.weekday}, ${first.month} ${first.day}, ${first.year}`
+    },
+    {
+      key: 'dddd, D MMMM YYYY',
+      value: `${first.weekday}, ${second.day} ${second.month}, ${second.year}`
+    }
+  ];
+}
+
+export function getTimeFormatOptions() {
+  return [
+    {
+      key: 'h(:mm)a',
+      value: `${getTime(17, 0, true)}/${getTime(17, 30, true)}`,
+      hint: 'h(:mm)a'
+    },
+    {
+      key: 'HH:mm',
+      value: `${getTime(17, 0, false)}/${getTime(17, 30, false)}`,
+      hint: 'HH:mm'
+    }
+  ];
+}
 
 class UISettings extends Component {
+  componentDidMount() {
+    const uiLanguage = this.props.settings && this.props.settings.uiLanguage;
+    const selectedLocale = uiLanguage && getUiLocaleById(uiLanguage.value);
+    if (selectedLocale) {
+      applyDocumentLocale(selectedLocale.tag);
+    }
+  }
+
+  componentDidUpdate(previousProps) {
+    const previousLanguage = previousProps.settings.uiLanguage &&
+      previousProps.settings.uiLanguage.value;
+    const currentLanguage = this.props.settings.uiLanguage &&
+      this.props.settings.uiLanguage.value;
+
+    if (currentLanguage !== previousLanguage) {
+      const selectedLocale = getUiLocaleById(currentLanguage);
+      if (selectedLocale) {
+        applyDocumentLocale(selectedLocale.tag);
+      }
+    }
+  }
 
   //
   // Render
@@ -63,183 +201,264 @@ class UISettings extends Component {
       ...otherProps
     } = this.props;
 
-    const uiLanguages = languages.filter((item) => item.value !== 'Original');
-    const themeOptions = Object.keys(themes)
-      .map((theme) => ({ key: theme, value: titleCase(theme) }));
+    const uiLanguages = SUPPORTED_UI_LOCALES.map((locale) => ({
+      key: locale.id,
+      value: getUiLocaleOptionLabel(locale)
+    }));
+    const currentUiLanguageId = Number(settings.uiLanguage && settings.uiLanguage.value);
+    const currentLegacyLanguage = languages.find((language) =>
+      language.key === currentUiLanguageId && language.value !== 'Original'
+    );
+
+    if (!SUPPORTED_UI_LOCALE_IDS.has(currentUiLanguageId) && currentLegacyLanguage) {
+      const currentLegacyLocale = getUiLocaleById(currentUiLanguageId);
+      uiLanguages.push({
+        ...currentLegacyLanguage,
+        value: currentLegacyLocale ?
+          getUiLocaleOptionLabel(currentLegacyLocale) :
+          currentLegacyLanguage.value
+      });
+    }
+    const defaultMediaTypeSetting = settings.addNewDefaultMediaType || {
+      value: 'audiobook'
+    };
+    const themeOptions = Object.keys(themes).map((theme) => ({
+      key: theme,
+      value:
+        theme === 'auto' ? translate('Automatic') : translate(titleCase(theme))
+    }));
+    const mediaTypeOptions = [
+      { key: 'audiobook', value: translate('AudiobookLabel') },
+      { key: 'ebook', value: translate('EbookLabel') },
+      { key: 'both', value: translate('AudiobooksAndEbooks') }
+    ];
+    const experienceModeOptions = [
+      {
+        key: 'simple',
+        label: translate('SimpleExperience'),
+        description: translate('SimpleExperienceDescription')
+      },
+      {
+        key: 'advanced',
+        label: translate('AdvancedExperience'),
+        description: translate('AdvancedExperienceDescription')
+      }
+    ];
+    const experienceModeSetting = settings.experienceMode || {};
+    const experienceMode = experienceModeSetting.value || 'advanced';
 
     return (
       <PageContent title={translate('UISettings')}>
-        <SettingsToolbarConnector
-          {...otherProps}
-          onSavePress={onSavePress}
-        />
+        <SettingsToolbarConnector {...otherProps} onSavePress={onSavePress} />
 
         <PageContentBody>
-          {
-            isFetching &&
-              <LoadingIndicator />
-          }
+          {isFetching && <LoadingIndicator />}
 
-          {
-            !isFetching && error &&
-              <Alert kind={kinds.DANGER}>
-                {translate('UnableToLoadUISettings')}
-              </Alert>
-          }
+          {!isFetching && error && (
+            <Alert kind={kinds.DANGER}>
+              {translate('UnableToLoadUISettings')}
+            </Alert>
+          )}
 
-          {
-            hasSettings && !isFetching && !error &&
-              <Form
-                id="uiSettings"
-                {...otherProps}
-              >
-                <FieldSet legend={translate('Calendar')}>
-                  <FormGroup>
-                    <FormLabel>
-                      {translate('FirstDayOfWeek')}
-                    </FormLabel>
+          {hasSettings && !isFetching && !error && (
+            <Form id="uiSettings" {...otherProps}>
+              <FieldSet legend={translate('ExperienceMode')}>
+                <FormGroup>
+                  <p id="experience-mode-help" className={styles.experienceModeHelpText}>
+                    {translate('ExperienceModeHelpText')}
+                  </p>
 
-                    <FormInputGroup
-                      type={inputTypes.SELECT}
-                      name="firstDayOfWeek"
-                      values={firstDayOfWeekOptions}
-                      onChange={onInputChange}
-                      {...settings.firstDayOfWeek}
-                    />
-                  </FormGroup>
+                  <div className={styles.experienceModeOptions}>
+                    {experienceModeOptions.map((option) => {
+                      const labelId = `experience-mode-${option.key}-label`;
+                      const descriptionId = `experience-mode-${option.key}-description`;
 
-                  <FormGroup>
-                    <FormLabel>
-                      {translate('WeekColumnHeader')}
-                    </FormLabel>
+                      return (
+                        <label
+                          key={option.key}
+                          className={classNames(
+                            styles.experienceModeOption,
+                            experienceMode === option.key && styles.isSelected
+                          )}
+                        >
+                          <input
+                            id={`experience-mode-${option.key}`}
+                            className={styles.experienceModeRadio}
+                            type="radio"
+                            name="experienceMode"
+                            value={option.key}
+                            checked={experienceMode === option.key}
+                            aria-labelledby={labelId}
+                            aria-describedby={`experience-mode-help ${descriptionId}`}
+                            onChange={() => {
+                              onInputChange({ name: 'experienceMode', value: option.key });
+                            }}
+                          />
 
-                    <FormInputGroup
-                      type={inputTypes.SELECT}
-                      name="calendarWeekColumnHeader"
-                      values={weekColumnOptions}
-                      onChange={onInputChange}
-                      helpText={translate('CalendarWeekColumnHeaderHelpText')}
-                      {...settings.calendarWeekColumnHeader}
-                    />
-                  </FormGroup>
-                </FieldSet>
+                          <span className={styles.experienceModeText}>
+                            <span id={labelId} className={styles.experienceModeTitle}>
+                              {option.label}
+                            </span>
 
-                <FieldSet
-                  legend={translate('Dates')}
-                >
-                  <FormGroup>
-                    <FormLabel>
-                      {translate('ShortDateFormat')}
-                    </FormLabel>
+                            <span id={descriptionId} className={styles.experienceModeDescription}>
+                              {option.description}
+                            </span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </FormGroup>
+              </FieldSet>
 
-                    <FormInputGroup
-                      type={inputTypes.SELECT}
-                      name="shortDateFormat"
-                      values={shortDateFormatOptions}
-                      onChange={onInputChange}
-                      {...settings.shortDateFormat}
-                    />
-                  </FormGroup>
+              <FieldSet legend={translate('AddNewItem')}>
+                <FormGroup>
+                  <FormLabel name="addNewDefaultMediaType">{translate('DefaultFormatForNewItems')}</FormLabel>
+                  <FormInputGroup
+                    type={inputTypes.SELECT}
+                    name="addNewDefaultMediaType"
+                    values={mediaTypeOptions}
+                    helpText={translate('DefaultFormatForNewItemsHelpText')}
+                    onChange={onInputChange}
+                    {...defaultMediaTypeSetting}
+                    value={defaultMediaTypeSetting.value || 'audiobook'}
+                  />
+                </FormGroup>
+              </FieldSet>
 
-                  <FormGroup>
-                    <FormLabel>
-                      {translate('LongDateFormat')}
-                    </FormLabel>
+              <FieldSet legend={translate('Calendar')}>
+                <FormGroup>
+                  <FormLabel name="firstDayOfWeek">{translate('FirstDayOfWeek')}</FormLabel>
 
-                    <FormInputGroup
-                      type={inputTypes.SELECT}
-                      name="longDateFormat"
-                      values={longDateFormatOptions}
-                      onChange={onInputChange}
-                      {...settings.longDateFormat}
-                    />
-                  </FormGroup>
+                  <FormInputGroup
+                    type={inputTypes.SELECT}
+                    name="firstDayOfWeek"
+                    values={getFirstDayOfWeekOptions()}
+                    onChange={onInputChange}
+                    {...settings.firstDayOfWeek}
+                  />
+                </FormGroup>
 
-                  <FormGroup>
-                    <FormLabel>
-                      {translate('TimeFormat')}
-                    </FormLabel>
+                <FormGroup>
+                  <FormLabel name="calendarWeekColumnHeader">{translate('WeekColumnHeader')}</FormLabel>
 
-                    <FormInputGroup
-                      type={inputTypes.SELECT}
-                      name="timeFormat"
-                      values={timeFormatOptions}
-                      onChange={onInputChange}
-                      {...settings.timeFormat}
-                    />
-                  </FormGroup>
+                  <FormInputGroup
+                    type={inputTypes.SELECT}
+                    name="calendarWeekColumnHeader"
+                    values={getWeekColumnOptions()}
+                    onChange={onInputChange}
+                    helpText={translate('CalendarWeekColumnHeaderHelpText')}
+                    {...settings.calendarWeekColumnHeader}
+                  />
+                </FormGroup>
+              </FieldSet>
 
-                  <FormGroup>
-                    <FormLabel>
-                      {translate('ShowRelativeDates')}
-                    </FormLabel>
-                    <FormInputGroup
-                      type={inputTypes.CHECK}
-                      name="showRelativeDates"
-                      helpText={translate('ShowRelativeDatesHelpText')}
-                      onChange={onInputChange}
-                      {...settings.showRelativeDates}
-                    />
-                  </FormGroup>
-                </FieldSet>
+              <FieldSet legend={translate('Dates')}>
+                <FormGroup>
+                  <FormLabel name="shortDateFormat">{translate('ShortDateFormat')}</FormLabel>
 
-                <FieldSet
-                  legend={translate('Style')}
-                >
-                  <FormGroup>
-                    <FormLabel>{translate('Theme')}</FormLabel>
-                    <FormInputGroup
-                      type={inputTypes.SELECT}
-                      name="theme"
-                      helpText={translate('ThemeHelpText')}
-                      values={themeOptions}
-                      onChange={onInputChange}
-                      {...settings.theme}
-                    />
-                  </FormGroup>
+                  <FormInputGroup
+                    type={inputTypes.SELECT}
+                    name="shortDateFormat"
+                    values={getShortDateFormatOptions()}
+                    onChange={onInputChange}
+                    {...settings.shortDateFormat}
+                  />
+                </FormGroup>
 
-                  <FormGroup>
-                    <FormLabel>
-                      {translate('EnableColorImpairedMode')}
-                    </FormLabel>
-                    <FormInputGroup
-                      type={inputTypes.CHECK}
-                      name="enableColorImpairedMode"
-                      helpText={translate('EnableColorImpairedModeHelpText')}
-                      onChange={onInputChange}
-                      {...settings.enableColorImpairedMode}
-                    />
-                  </FormGroup>
-                </FieldSet>
+                <FormGroup>
+                  <FormLabel name="longDateFormat">{translate('LongDateFormat')}</FormLabel>
 
-                <FieldSet legend={translate('Language')}>
-                  <FormGroup>
-                    <FormLabel>{translate('UILanguage')}</FormLabel>
-                    <FormInputGroup
-                      type={inputTypes.SELECT}
-                      name="uiLanguage"
-                      values={uiLanguages}
-                      helpText={translate('UILanguageHelpText')}
-                      helpTextWarning={translate('UILanguageHelpTextWarning')}
-                      onChange={onInputChange}
-                      {...settings.uiLanguage}
-                      errors={
-                        languages.some((language) => language.key === settings.uiLanguage.value) ?
-                          settings.uiLanguage.errors :
-                          [
-                            ...settings.uiLanguage.errors,
-                            { message: translate('InvalidUILanguage') }
-                          ]}
-                    />
-                  </FormGroup>
-                </FieldSet>
-              </Form>
-          }
+                  <FormInputGroup
+                    type={inputTypes.SELECT}
+                    name="longDateFormat"
+                    values={getLongDateFormatOptions()}
+                    onChange={onInputChange}
+                    {...settings.longDateFormat}
+                  />
+                </FormGroup>
+
+                <FormGroup>
+                  <FormLabel name="timeFormat">{translate('TimeFormat')}</FormLabel>
+
+                  <FormInputGroup
+                    type={inputTypes.SELECT}
+                    name="timeFormat"
+                    values={getTimeFormatOptions()}
+                    onChange={onInputChange}
+                    {...settings.timeFormat}
+                  />
+                </FormGroup>
+
+                <FormGroup>
+                  <FormLabel name="showRelativeDates">{translate('ShowRelativeDates')}</FormLabel>
+                  <FormInputGroup
+                    type={inputTypes.CHECK}
+                    name="showRelativeDates"
+                    helpText={translate('ShowRelativeDatesHelpText')}
+                    onChange={onInputChange}
+                    {...settings.showRelativeDates}
+                  />
+                </FormGroup>
+              </FieldSet>
+
+              <FieldSet legend={translate('Style')}>
+                <FormGroup>
+                  <FormLabel name="theme">{translate('Theme')}</FormLabel>
+                  <FormInputGroup
+                    type={inputTypes.SELECT}
+                    name="theme"
+                    helpText={translate('ThemeHelpText')}
+                    values={themeOptions}
+                    onChange={onInputChange}
+                    {...settings.theme}
+                  />
+                </FormGroup>
+
+                <FormGroup>
+                  <FormLabel name="enableColorImpairedMode">{translate('EnableColorImpairedMode')}</FormLabel>
+                  <FormInputGroup
+                    type={inputTypes.CHECK}
+                    name="enableColorImpairedMode"
+                    helpText={translate('EnableColorImpairedModeHelpText')}
+                    onChange={onInputChange}
+                    {...settings.enableColorImpairedMode}
+                  />
+                </FormGroup>
+              </FieldSet>
+
+              <FieldSet legend={translate('Language')}>
+                <FormGroup>
+                  <FormLabel name="uiLanguage">{translate('UILanguage')}</FormLabel>
+                  <FormInputGroup
+                    type={inputTypes.SELECT}
+                    name="uiLanguage"
+                    values={uiLanguages}
+                    helpText={`${translate('UILanguageHelpText')} ${translateWithFallback(
+                      'ui.language.inheritedFallbackNotice',
+                      'Untranslated labels use English until a translation is added.'
+                    )}`}
+                    helpTextWarning={translate('UILanguageHelpTextWarning')}
+                    onChange={onInputChange}
+                    {...settings.uiLanguage}
+                    errors={
+                      SUPPORTED_UI_LOCALE_IDS.has(Number(settings.uiLanguage.value)) ||
+                      !!currentLegacyLanguage ?
+                        settings.uiLanguage.errors :
+                        [
+                          ...settings.uiLanguage.errors,
+                          { message: translate('InvalidUILanguage') }
+                        ]
+                    }
+                  />
+                </FormGroup>
+              </FieldSet>
+            </Form>
+          )}
         </PageContentBody>
       </PageContent>
     );
   }
-
 }
 
 UISettings.propTypes = {

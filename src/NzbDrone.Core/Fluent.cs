@@ -99,6 +99,11 @@ namespace NzbDrone.Core
 
         public static string Truncate(this string s, int maxLength)
         {
+            if (string.IsNullOrEmpty(s))
+            {
+                return s;
+            }
+
             if (Encoding.UTF8.GetByteCount(s) <= maxLength)
             {
                 return s;
@@ -110,7 +115,7 @@ namespace NzbDrone.Core
             while (i < cs.Length)
             {
                 var charSize = 1;
-                if (i < (cs.Length - 1) && char.IsSurrogate(cs[i]))
+                if (i < (cs.Length - 1) && char.IsSurrogatePair(cs[i], cs[i + 1]))
                 {
                     charSize = 2;
                 }

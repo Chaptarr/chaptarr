@@ -148,83 +148,198 @@ namespace NzbDrone.Core.MediaFiles
                 }
                 else
                 {
-                    _calibre.DeleteBook(bookFile, rootFolder.CalibreSettings);
+                    if (bookFile.CalibreId == 0)
+                    {
+                        bookFile.CalibreId = _calibre.GetCalibreIdForPath(bookFile.Path, rootFolder.CalibreSettings);
+                    }
+
+                    if (bookFile.CalibreId != 0)
+                    {
+                        var format = System.IO.Path.GetExtension(bookFile.Path).TrimStart('.');
+                        var calibreBook = _calibre.GetBook(bookFile.CalibreId, rootFolder.CalibreSettings);
+
+                        if (format.IsNotNullOrWhiteSpace() && calibreBook?.Formats?.Count > 1)
+                        {
+                            // Deleting one of several formats must not remove the whole book
+                            _calibre.RemoveFormats(bookFile.CalibreId, new[] { format }, rootFolder.CalibreSettings);
+                        }
+                        else
+                        {
+                            _calibre.DeleteBook(bookFile, rootFolder.CalibreSettings);
+                        }
+                    }
+                    else if (_diskProvider.FileExistsCanonical(bookFile.Path))
+                    {
+                        _logger.Warn("Calibre does not know book file ({0}), deleting it from disk instead.", bookFile.Path);
+                        _recycleBinProvider.DeleteFile(bookFile.Path, subfolder);
+                    }
                 }
             }
             catch (Exception e)
             {
+                if (bookFile?.Path != null && !_diskProvider.FileExistsCanonical(bookFile.Path))
+                {
+                    _logger.Debug(e, "Book file was already removed: {0}", bookFile.Path);
+                    return;
+                }
+
                 _logger.Error(e, "Unable to delete book file");
                 throw new NzbDroneClientException(HttpStatusCode.InternalServerError, "Unable to delete book file");
             }
         }
 
+        // Shared by both handlers below so a Calibre-routed path gets exactly the same refusal
+        // checks as a plain recycle-bin path - it used to skip them entirely, which only mattered
+        // for the single legacy Path but now applies to up to three paths per author.
+        // allAuthorsCache is fetched lazily, once per method call, only if some path actually needs
+        // it - an author whose only path(s) are already refused as unsafe should never touch it.
+        // Uses AllAuthorMediaPaths (Path + AudiobookPath + EbookPath), not the legacy single-path
+        // AllAuthorPaths - otherwise a dual-format author's AudiobookPath could collide with another
+        // author's separately-configured EbookPath and never be caught.
+        private bool ShouldRefuseToDeletePath(string path, Author author, ref List<KeyValuePair<int, string>> allAuthorsCache)
+        {
+            if (IsPathUnsafeToDelete(path))
+            {
+                _logger.Error("Refusing to delete '{0}' for author '{1}' because it matches or contains a configured root folder. This indicates the author path was misconfigured and deleting would risk data loss.",
+                    path, author.Name);
+                return true;
+            }
+
+            allAuthorsCache ??= _authorService.AllAuthorMediaPaths();
+
+            foreach (var s in allAuthorsCache)
+            {
+                if (s.Key == author.Id)
+                {
+                    continue;
+                }
+
+                if (path.IsParentPath(s.Value))
+                {
+                    _logger.Error("Author path: '{0}' is a parent of another author, not deleting files.", path);
+                    return true;
+                }
+
+                if (path.PathEquals(s.Value))
+                {
+                    _logger.Error("Author path: '{0}' is the same as another author, not deleting files.", path);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         [EventHandleOrder(EventHandleOrder.First)]
         public void Handle(AuthorDeletedEvent message)
         {
-            if (message.DeleteFiles)
+            if (!message.DeleteFiles)
             {
-                var author = message.Author;
+                return;
+            }
 
-                var rootFolder = _rootFolderService.GetBestRootFolder(message.Author.Path);
-                var isCalibre = rootFolder?.IsCalibreLibrary == true && rootFolder.CalibreSettings != null;
+            var author = message.Author;
+            List<KeyValuePair<int, string>> allAuthors = null;
 
-                if (isCalibre)
+            foreach (var path in ExtraFilePathHelper.GetAuthorBasePaths(author))
+            {
+                if (ShouldRefuseToDeletePath(path, author, ref allAuthors))
                 {
-                    // use authorId for the query
-                    var books = _mediaFileService.GetFilesByAuthor(author.Id);
-                    _calibre.DeleteBooks(books, rootFolder.CalibreSettings);
+                    continue;
                 }
+
+                var rootFolder = _rootFolderService.GetBestRootFolder(path);
+                if (rootFolder?.IsCalibreLibrary != true || rootFolder.CalibreSettings == null)
+                {
+                    continue;
+                }
+
+                DeleteCalibreBooksUnderPath(path, rootFolder.CalibreSettings, author);
             }
         }
 
         public void HandleAsync(AuthorDeletedEvent message)
         {
-            if (message.DeleteFiles)
+            if (!message.DeleteFiles)
             {
-                var author = message.Author;
+                return;
+            }
 
-                var rootFolder = _rootFolderService.GetBestRootFolder(message.Author.Path);
-                var isCalibre = rootFolder?.IsCalibreLibrary == true && rootFolder.CalibreSettings != null;
+            var author = message.Author;
+            List<KeyValuePair<int, string>> allAuthors = null;
 
-                if (!isCalibre)
+            foreach (var path in ExtraFilePathHelper.GetAuthorBasePaths(author))
+            {
+                if (ShouldRefuseToDeletePath(path, author, ref allAuthors))
                 {
-                    if (IsPathUnsafeToDelete(author.Path))
-                    {
-                        _logger.Error("Refusing to delete '{0}' for author '{1}' because it matches or contains a configured root folder. This indicates the author path was misconfigured and deleting would risk data loss.",
-                            author.Path, author.Name);
-                        _eventAggregator.PublishEvent(new DeleteCompletedEvent());
-                        return;
-                    }
-
-                    var allAuthors = _authorService.AllAuthorPaths();
-
-                    foreach (var s in allAuthors)
-                    {
-                        if (s.Key == author.Id)
-                        {
-                            continue;
-                        }
-
-                        if (author.Path.IsParentPath(s.Value))
-                        {
-                            _logger.Error("Author path: '{0}' is a parent of another author, not deleting files.", author.Path);
-                            return;
-                        }
-
-                        if (author.Path.PathEquals(s.Value))
-                        {
-                            _logger.Error("Author path: '{0}' is the same as another author, not deleting files.", author.Path);
-                            return;
-                        }
-                    }
-
-                    if (_diskProvider.FolderExists(message.Author.Path))
-                    {
-                        _recycleBinProvider.DeleteFolder(message.Author.Path);
-                    }
-
-                    _eventAggregator.PublishEvent(new DeleteCompletedEvent());
+                    continue;
                 }
+
+                var rootFolder = _rootFolderService.GetBestRootFolder(path);
+                if (rootFolder?.IsCalibreLibrary == true)
+                {
+                    // The synchronous handler deletes tracked Calibre records before the author
+                    // rows are removed. Do not repeat the external deletion or recycle the library folder.
+                    continue;
+                }
+
+                try
+                {
+                    if (_diskProvider.FolderExists(path))
+                    {
+                        _recycleBinProvider.DeleteFolder(path);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, "Failed to delete '{0}' for author '{1}'.", path, author.Name);
+                }
+            }
+
+            // Flush external library refresh queues once even when a path is refused or a disk
+            // operation fails; queued handlers are harmless when there is nothing to process.
+            _eventAggregator.PublishEvent(new DeleteCompletedEvent());
+        }
+
+        private void DeleteCalibreBooksUnderPath(string path, CalibreSettings settings, Author author)
+        {
+            if (_calibre == null || settings == null)
+            {
+                return;
+            }
+
+            var files = _mediaFileService.GetFilesWithBasePath(path) ?? new List<BookFile>();
+            foreach (var file in files.Where(file => file.CalibreId == 0 && file.Path.IsNotNullOrWhiteSpace()))
+            {
+                try
+                {
+                    file.CalibreId = _calibre.GetCalibreIdForPath(file.Path, settings);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug(ex, "Could not resolve Calibre id for {0}", file.Path);
+                }
+            }
+
+            var calibreBooks = files
+                .Where(file => file.CalibreId > 0)
+                .GroupBy(file => file.CalibreId)
+                .Select(group => group.First())
+                .ToList();
+
+            if (!calibreBooks.Any())
+            {
+                return;
+            }
+
+            try
+            {
+                _logger.Info("Deleting {0} Calibre books for author {1} under {2}", calibreBooks.Count, author?.Name, path);
+                _calibre.DeleteBooks(calibreBooks, settings);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to delete Calibre books at '{0}' for author '{1}'.", path, author?.Name);
             }
         }
 
@@ -262,7 +377,7 @@ namespace NzbDrone.Core.MediaFiles
 
         public void HandleAsync(BookDeletedEvent message)
         {
-            if (!message.DeleteFiles)
+            if (!message.DeleteFiles || message.PartOfAuthorDelete)
             {
                 return;
             }
@@ -305,6 +420,10 @@ namespace NzbDrone.Core.MediaFiles
             {
                 CleanupEmptyFolders(author, folder);
             }
+
+            // Providers queue work on OnBookDelete and drain it on this event; author
+            // deletes already publish it.
+            _eventAggregator.PublishEvent(new DeleteCompletedEvent());
         }
 
         private static void CollectFolder(List<string> folders, string folder)

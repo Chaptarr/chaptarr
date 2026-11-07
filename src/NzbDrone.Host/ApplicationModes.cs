@@ -7,6 +7,13 @@ namespace NzbDrone.Host
         InstallService,
         UninstallService,
         Service,
-        RegisterUrl
+        RegisterUrl,
+        MigrateBookshelf,
+        CheckBookshelfMigration,
+        RestoreBookshelf,
+        CheckBookshelfPostgresBackup,
+        PreviewBookshelfPostgresRestore,
+        BackupBookshelfPostgres,
+        RestoreBookshelfPostgres
     }
 }

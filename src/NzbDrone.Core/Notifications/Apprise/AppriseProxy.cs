@@ -3,6 +3,7 @@ using System.Linq;
 using System.Net;
 using FluentValidation.Results;
 using NLog;
+using NzbDrone.Core.Localization;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Common.Serializer;
@@ -19,11 +20,13 @@ namespace NzbDrone.Core.Notifications.Apprise
     {
         private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
+        private readonly NotificationText _notificationText;
 
-        public AppriseProxy(IHttpClient httpClient, Logger logger)
+        public AppriseProxy(IHttpClient httpClient, ILocalizationService localizationService, Logger logger)
         {
             _httpClient = httpClient;
             _logger = logger;
+            _notificationText = new NotificationText(localizationService);
         }
 
         public void SendNotification(string title, string message, AppriseSettings settings)
@@ -80,8 +83,8 @@ namespace NzbDrone.Core.Notifications.Apprise
 
         public ValidationFailure Test(AppriseSettings settings)
         {
-            const string title = "Chaptarr - Test Notification";
-            const string body = "Success! You have properly configured your apprise notification settings.";
+            var title = "Chaptarr - " + _notificationText.Get("notification.test.title", "Test Notification");
+            var body = _notificationText.Get("notification.test.appriseConfigured", "Success! You have properly configured your Apprise notification settings.");
 
             try
             {

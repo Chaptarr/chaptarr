@@ -285,13 +285,22 @@ namespace NzbDrone.Core.Extras.Metadata.Consumers.AudioBookShelf
 
         private static List<string> GetSeries(Book book)
         {
-            if (book.SeriesName.IsNullOrWhiteSpace())
+            var preferredSeries = book.Author?.GetMetadataProfileFor(book.MediaType)?.PreferredSeries;
+            var (seriesName, seriesPosition) = BookSeriesLabel.Resolve(book.SeriesLinks, preferredSeries);
+
+            if (seriesName.IsNullOrWhiteSpace())
+            {
+                seriesName = book.SeriesName;
+                seriesPosition = book.SeriesPosition;
+            }
+
+            if (seriesName.IsNullOrWhiteSpace())
             {
                 return new List<string>();
             }
 
-            var position = book.SeriesPosition.IsNotNullOrWhiteSpace() ? $" #{book.SeriesPosition}" : string.Empty;
-            return new List<string> { book.SeriesName + position };
+            var position = seriesPosition.IsNotNullOrWhiteSpace() ? $" #{seriesPosition}" : string.Empty;
+            return new List<string> { seriesName + position };
         }
 
         private static MediaCoverModel SelectCover(Edition edition)

@@ -1,6 +1,7 @@
-import _ from 'lodash';
+import uniq from 'lodash/uniq';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import BookInteractiveSearchModalConnector from 'Book/Search/BookInteractiveSearchModalConnector';
 import Icon from 'Components/Icon';
 import IconButton from 'Components/Link/IconButton';
 import Link from 'Components/Link/Link';
@@ -25,6 +26,7 @@ class AuthorDetailsSeries extends Component {
     this.state = {
       isOrganizeModalOpen: false,
       isManageBooksOpen: false,
+      isSeriesPackSearchOpen: false,
       lastToggledBook: null
     };
   }
@@ -86,6 +88,14 @@ class AuthorDetailsSeries extends Component {
     this.props.onExpandPress(id, !isExpanded);
   };
 
+  onSeriesPackSearchPress = () => {
+    this.setState({ isSeriesPackSearchOpen: true });
+  };
+
+  onSeriesPackSearchModalClose = () => {
+    this.setState({ isSeriesPackSearchOpen: false });
+  };
+
   onMonitorBookPress = (bookId, monitored, { shiftKey }) => {
     const lastToggled = this.state.lastToggledBook;
     const bookIds = [bookId];
@@ -101,13 +111,13 @@ class AuthorDetailsSeries extends Component {
 
     this.setState({ lastToggledBook: bookId });
 
-    this.props.onMonitorBookPress(_.uniq(bookIds), monitored);
+    this.props.onMonitorBookPress(uniq(bookIds), monitored);
   };
 
   onMonitorSeriesPress = (monitored, { shiftKey }) => {
     const bookIds = this.props.items.map((book) => book.id);
 
-    this.props.onMonitorBookPress(_.uniq(bookIds), monitored);
+    this.props.onMonitorBookPress(uniq(bookIds), monitored);
   };
 
   //
@@ -115,6 +125,7 @@ class AuthorDetailsSeries extends Component {
 
   render() {
     const {
+      id,
       label,
       items,
       positionMap,
@@ -125,7 +136,9 @@ class AuthorDetailsSeries extends Component {
       onSortPress,
       isSmallScreen,
       onTableOptionChange,
-      selectedMediaType
+      selectedMediaType,
+      authorId,
+      authorName
     } = this.props;
     const tableColumns = columns.map((column) => ({
       ...column,
@@ -142,6 +155,13 @@ class AuthorDetailsSeries extends Component {
             monitored={this.isSeriesMonitored(this.props)}
             isSaving={this.isSeriesSaving(this.props)}
             onPress={this.onMonitorSeriesPress}
+          />
+
+          <IconButton
+            name={icons.SEARCH}
+            title={translate('SearchSeriesPack')}
+            aria-label={translate('SearchSeriesPack')}
+            onPress={this.onSeriesPackSearchPress}
           />
 
           <Link
@@ -222,6 +242,17 @@ class AuthorDetailsSeries extends Component {
               </div>
           }
         </div>
+
+        <BookInteractiveSearchModalConnector
+          isOpen={this.state.isSeriesPackSearchOpen}
+          bookId={null}
+          seriesId={id}
+          authorId={authorId}
+          seriesTitle={label}
+          authorName={authorName}
+          selectedMediaType={selectedMediaType}
+          onModalClose={this.onSeriesPackSearchModalClose}
+        />
       </div>
     );
   }
@@ -230,6 +261,7 @@ class AuthorDetailsSeries extends Component {
 AuthorDetailsSeries.propTypes = {
   id: PropTypes.number.isRequired,
   authorId: PropTypes.number.isRequired,
+  authorName: PropTypes.string.isRequired,
   label: PropTypes.string.isRequired,
   sortKey: PropTypes.string,
   sortDirection: PropTypes.oneOf(sortDirections.all),

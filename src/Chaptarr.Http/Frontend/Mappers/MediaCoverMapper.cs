@@ -35,13 +35,10 @@ namespace Chaptarr.Http.Frontend.Mappers
             if (!_diskProvider.FileExists(resourcePath) || _diskProvider.GetFileSize(resourcePath) == 0)
             {
                 var baseResourcePath = MediaCoverRendition.GetOriginalPath(resourcePath);
-                if (baseResourcePath != resourcePath)
+                if (baseResourcePath != resourcePath &&
+                    _diskProvider.FileExists(baseResourcePath) && _diskProvider.GetFileSize(baseResourcePath) > 0)
                 {
-                    // Only fallback to originals for books; author originals are deleted after resize.
-                    if (resourceUrl.Contains("/MediaCover/Books/"))
-                    {
-                        return baseResourcePath;
-                    }
+                    return baseResourcePath;
                 }
             }
 

@@ -19,27 +19,27 @@ import styles from './AuthorHistoryRow.css';
 function getTitle(eventType) {
   switch (eventType) {
     case 'grabbed':
-      return 'Grabbed';
+      return translate('HistoryGrabbedTitle');
     case 'downloadImported':
-      return 'Download Completed';
+      return translate('HistoryDownloadCompletedTitle');
     case 'bookFileImported':
-      return 'Book Imported';
+      return translate('BookImported');
     case 'bookFileConverted':
-      return 'Book Converted';
+      return translate('BookConverted');
     case 'bookFileConversionFailed':
-      return 'Book Conversion Failed';
+      return translate('HistoryBookConversionFailedTitle');
     case 'downloadFailed':
-      return 'Download Failed';
+      return translate('DownloadFailed');
     case 'bookFileDeleted':
-      return 'Book File Deleted';
+      return translate('HistoryBookFileDeletedTitle');
     case 'bookFileRenamed':
-      return 'Book File Renamed';
+      return translate('HistoryBookFileRenamedTitle');
     case 'bookFileRetagged':
-      return 'Book File Tags Updated';
+      return translate('HistoryBookFileTagsUpdatedTitle');
     case 'bookImportIncomplete':
-      return 'Book Import Incomplete';
+      return translate('HistoryBookImportIncompleteTitle');
     default:
-      return 'Unknown';
+      return translate('Unknown');
   }
 }
 

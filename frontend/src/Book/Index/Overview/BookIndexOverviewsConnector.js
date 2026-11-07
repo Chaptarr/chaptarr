@@ -4,7 +4,7 @@ import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
 import BookIndexOverviews from './BookIndexOverviews';
 
-function createMapStateToProps() {
+export function createMapStateToProps() {
   return createSelector(
     (state) => state.authorIndex.overviewOptions,
     createUISettingsSelector(),

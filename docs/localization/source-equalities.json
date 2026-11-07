@@ -1,0 +1,1990 @@
+{
+  "version": 1,
+  "review": "Agent contextual equality audit; does not claim qualified native review. Invariants are product/provider names, identifiers, acronyms, examples, numeric templates or technical labels. Native equivalents are identical local words or established loanwords in the given locale.",
+  "entries": {
+    "es": {
+      "ASIN": {
+        "sourceFingerprint": "6bca9fee7183aebd403f4febe7887d2816ff93bc8de1dac2e89aefcf960c2230",
+        "category": "invariant"
+      },
+      "AbsMappingsAudioSlotLabel": {
+        "sourceFingerprint": "63bdd8b6c1ff5da7c0b6afbda13797ebb02b6aff00544a1e21494f30ead4ec75",
+        "category": "native-equivalent"
+      },
+      "AudibleMarketplaceAu": {
+        "sourceFingerprint": "02d6fdcb9dc76e557688a826d45ca49d544ebeb7a46d28a96e468686fa4e4a1c",
+        "category": "native-equivalent"
+      },
+      "AudibleMarketplaceIn": {
+        "sourceFingerprint": "898b61ae950570eb32d25902bef7b8dacd7ab2cff1e556f20d2cbf2f8710740b",
+        "category": "native-equivalent"
+      },
+      "AuthOidc": {
+        "sourceFingerprint": "fce3dcef22bc9b6abca31156b6c2e808357d45780e53bdbd5208390c2b79c01b",
+        "category": "invariant"
+      },
+      "AuthPlex": {
+        "sourceFingerprint": "7da497c53585afcbdc437054f3d6cb8acb5f4be87c783ddee4b5da2b5aa4dc01",
+        "category": "invariant"
+      },
+      "BookQualityProperBadge": {
+        "sourceFingerprint": "f0609a6320e418f2496d2ff3b213de205c2514424987fbafb7ff304e1ade7696",
+        "category": "invariant"
+      },
+      "BookQualityRepackBadge": {
+        "sourceFingerprint": "c39380dd7d67cfe2c93ff0e15ee28ee7e7e007dd7730d9acdc9b51047c26b259",
+        "category": "invariant"
+      },
+      "Discord": {
+        "sourceFingerprint": "36e87ee26dd58a2803f5e1416125f45ffa16db582f4c7639f9843bf3add74b11",
+        "category": "invariant"
+      },
+      "Docker": {
+        "sourceFingerprint": "e4fe73facbddf0c0f2fa0b9ef784e430cbb9e4c469aa681584dc78ec3dc6a2a3",
+        "category": "invariant"
+      },
+      "DonationsKofiLabel": {
+        "sourceFingerprint": "0584ee1cc0e15949f7baa03a0ba08a986af6522758b6a1370d9927cc04f35405",
+        "category": "invariant"
+      },
+      "Error": {
+        "sourceFingerprint": "9160f189dea2ac91ffabce46d9e169d3d6aa8f8ed845c261e1930c47da77ba3b",
+        "category": "native-equivalent"
+      },
+      "FileBrowserFaqLinkText": {
+        "sourceFingerprint": "7237ac5a0033c5299a7c319b091c5ad36ea491af3fc9caf479ddd852bff1e9e7",
+        "category": "invariant"
+      },
+      "General": {
+        "sourceFingerprint": "e3ad45ab961d529a1a9b59ad2e41ae769e88181970a2c50c3b0542cc2450f84f",
+        "category": "native-equivalent"
+      },
+      "Global": {
+        "sourceFingerprint": "876318c36f1b2ada33cda004487f66e04371a40a55463c13427213f63a36492a",
+        "category": "native-equivalent"
+      },
+      "Hardcover": {
+        "sourceFingerprint": "f70b78a60559a80480f169643613bf479367bf406d6a450986439c488c61b684",
+        "category": "invariant"
+      },
+      "ISBN": {
+        "sourceFingerprint": "e06d03e7b2115f2c890d4a40a9a5367bd9a01d9e05089bb07cfb2fc57b9a7570",
+        "category": "invariant"
+      },
+      "Local": {
+        "sourceFingerprint": "3ddcd8afed46af94398e7e7bd882cff634151c54a2f1fbc8aeb896aade8b36e2",
+        "category": "native-equivalent"
+      },
+      "Manual": {
+        "sourceFingerprint": "c2fce87ec1f9129069b6552121738806789c07ff5489caf16b4e7c9df5b1cacc",
+        "category": "native-equivalent"
+      },
+      "EvidenceNeutral": {
+        "sourceFingerprint": "daf2f8a705f8677c86d311541c2622b9b630194bdc3ee6982332fb61f367346c",
+        "category": "native-equivalent"
+      },
+      "MyAnonaMouseStatus": {
+        "sourceFingerprint": "7215089d9a57f5a967332759b57af878acd7775fd5dc721bc2655d363e26f57f",
+        "category": "invariant"
+      },
+      "NETCore": {
+        "sourceFingerprint": "78358a63c65ac6843dafa909ada103637abc58112f49d43b1b51b9b9c9a77b92",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorNameExample": {
+        "sourceFingerprint": "db8bba6bc3ed5e595c5e46376fbf1e4df82aa63a5cdf144894b23101ff2c75de",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorsExample": {
+        "sourceFingerprint": "6526b18a3e376ef2976962d25851b1eaa33809e88e428eed4b3ae41d51c5f266",
+        "category": "invariant"
+      },
+      "NarratorDetailsSeriesTab": {
+        "sourceFingerprint": "bfa788467d9f4e1892cd46aed03ccbeda50bae606c47731773f87d0834e19fc8",
+        "category": "native-equivalent"
+      },
+      "NarratorRatingFraction": {
+        "sourceFingerprint": "99eb156177c7a6088fdc5705992eb9ff952218b32ba3a822bc13869b789f8ae2",
+        "category": "invariant"
+      },
+      "No": {
+        "sourceFingerprint": "00a99014515cca1c565bdc821fca39d384c5541d2380cb766029ad86c486a90e",
+        "category": "native-equivalent"
+      },
+      "Original": {
+        "sourceFingerprint": "e4bef6b1e5dbb50e398346dcd3a721b8c7236b7e9cd5f8b3bcb8a9610f5d26a9",
+        "category": "native-equivalent"
+      },
+      "Proper": {
+        "sourceFingerprint": "a04f180c05bfacd4623e86428262da8bfa9d1eed2a55f08e5ed4c295b20f5a90",
+        "category": "invariant"
+      },
+      "Proxy": {
+        "sourceFingerprint": "2d47db5934c67af5b972ba6f33fa3c6323ba9680eee8ab7376901e91e17f76be",
+        "category": "native-equivalent"
+      },
+      "RSS": {
+        "sourceFingerprint": "c40854603c6204f3d35aa38097cd80480f0ffc54982f6514fb667af6e6d47618",
+        "category": "invariant"
+      },
+      "Real": {
+        "sourceFingerprint": "dce19eda8ee09e1d964be25f294da5c0658662fe32947d6c6824f25b3a2ab27d",
+        "category": "invariant"
+      },
+      "Reddit": {
+        "sourceFingerprint": "e68570f8697c3a9c6ad5f5009ac45fad94a79d7856909e360038e2f78513f2af",
+        "category": "invariant"
+      },
+      "SearchFilterSeriesCount": {
+        "sourceFingerprint": "d3880920ba23b83767ed374ac2a44ea25131c1c31cd892d2b70b2fbd1f87d2ac",
+        "category": "native-equivalent"
+      },
+      "SeriesCountMessage": {
+        "sourceFingerprint": "848b4b21f521706a358693c1da2f201e883ef3197a1301323f3f24a7be15ed0b",
+        "category": "native-equivalent"
+      },
+      "UMask": {
+        "sourceFingerprint": "e5de8f23c3b26e4e51f19c6909bac18e7a6c36966a0232b810d7d87bfee57a44",
+        "category": "invariant"
+      },
+      "Usenet": {
+        "sourceFingerprint": "8eaf5db051164651d5c9b541886ba7b7bb7a076ae45f2e66c69fe6ea00a0072f",
+        "category": "invariant"
+      },
+      "Wiki": {
+        "sourceFingerprint": "4c4e5fe24da227f01188c170e1fc8c9c03b36e5f338dc5eb4f10368cef2cbb8d",
+        "category": "invariant"
+      },
+      "Seeders": {
+        "sourceFingerprint": "1d69d42425dec97d05c578331f1a4e43000d409b5ca75ba8abc119bd03eb1748",
+        "category": "native-equivalent"
+      },
+      "Fatal": {
+        "sourceFingerprint": "d478d4f998f727c5a946c28b32624a06eff66b30aa89c23e79b49cf5e3f0be4b",
+        "category": "invariant"
+      },
+      "OneSeeder": {
+        "sourceFingerprint": "b73f9c0f53a9f57f228016a35b35f8f211cba9a98ec247b9f16cacd89e5ba700",
+        "category": "native-equivalent"
+      },
+      "SeedersCount": {
+        "sourceFingerprint": "018cb8dd04e3ae59ad9f0bd5af2bad6b03fbef8e6b1f7c4906c69ef060263d76",
+        "category": "native-equivalent"
+      },
+      "OneLeecher": {
+        "sourceFingerprint": "2b80e880912b86adac7ae14c37b740675328096a96f85cc2a772f27f45e641c7",
+        "category": "native-equivalent"
+      },
+      "LeechersCount": {
+        "sourceFingerprint": "989b9fb83073c5b6109f3bb1a47a3404b4f8998534c9dc3845c90b3f98406549",
+        "category": "native-equivalent"
+      },
+      "InteractiveImportLocalLabel": {
+        "sourceFingerprint": "8a7b5c6d7be7980c684acafe374e8b7dede90f782e57d5354e97da335803d5f9",
+        "category": "native-equivalent"
+      },
+      "OpenLibrary": {
+        "sourceFingerprint": "724e1ac6986e432a1fb53ee3e39002b92862b4cd31483defb010faf5c5c54fe9",
+        "category": "invariant"
+      },
+      "GoogleBooks": {
+        "sourceFingerprint": "3d052f61e7765c38cac255a5d79ebef33e985eda06a015b679eb13dff21f7cce",
+        "category": "invariant"
+      },
+      "LibraryOfCongress": {
+        "sourceFingerprint": "e05da88164345de76065f353111e45af66de4a948e572487a554cb4dfb134245",
+        "category": "invariant"
+      },
+      "Gutendex": {
+        "sourceFingerprint": "553c6b669547028c574257bee63d8e30b0de881e02032bc000d1c5cf474ce44a",
+        "category": "invariant"
+      },
+      "InternetArchive": {
+        "sourceFingerprint": "e7d592f40efc8d754dcd39b8e94310bba71299cec0845ca441ffcfa5bc22ac61",
+        "category": "invariant"
+      },
+      "NdlSearch": {
+        "sourceFingerprint": "966c0965320647596a667c6bc6193d148e6f1299351d3e79fcf62314b4cd9717",
+        "category": "invariant"
+      },
+      "Europeana": {
+        "sourceFingerprint": "6beb16cfd7f1c730ece835990595c804226e2ce6beff46d9e82665d86541c138",
+        "category": "invariant"
+      }
+    },
+    "zh-Hans": {
+      "ASIN": {
+        "sourceFingerprint": "6bca9fee7183aebd403f4febe7887d2816ff93bc8de1dac2e89aefcf960c2230",
+        "category": "invariant"
+      },
+      "AuthPlex": {
+        "sourceFingerprint": "7da497c53585afcbdc437054f3d6cb8acb5f4be87c783ddee4b5da2b5aa4dc01",
+        "category": "invariant"
+      },
+      "BookQualityProperBadge": {
+        "sourceFingerprint": "f0609a6320e418f2496d2ff3b213de205c2514424987fbafb7ff304e1ade7696",
+        "category": "invariant"
+      },
+      "BookQualityRepackBadge": {
+        "sourceFingerprint": "c39380dd7d67cfe2c93ff0e15ee28ee7e7e007dd7730d9acdc9b51047c26b259",
+        "category": "invariant"
+      },
+      "Discord": {
+        "sourceFingerprint": "36e87ee26dd58a2803f5e1416125f45ffa16db582f4c7639f9843bf3add74b11",
+        "category": "invariant"
+      },
+      "Docker": {
+        "sourceFingerprint": "e4fe73facbddf0c0f2fa0b9ef784e430cbb9e4c469aa681584dc78ec3dc6a2a3",
+        "category": "invariant"
+      },
+      "DonationsKofiLabel": {
+        "sourceFingerprint": "0584ee1cc0e15949f7baa03a0ba08a986af6522758b6a1370d9927cc04f35405",
+        "category": "invariant"
+      },
+      "FileBrowserFaqLinkText": {
+        "sourceFingerprint": "7237ac5a0033c5299a7c319b091c5ad36ea491af3fc9caf479ddd852bff1e9e7",
+        "category": "invariant"
+      },
+      "Hardcover": {
+        "sourceFingerprint": "f70b78a60559a80480f169643613bf479367bf406d6a450986439c488c61b684",
+        "category": "invariant"
+      },
+      "ISBN": {
+        "sourceFingerprint": "e06d03e7b2115f2c890d4a40a9a5367bd9a01d9e05089bb07cfb2fc57b9a7570",
+        "category": "invariant"
+      },
+      "MyAnonaMouseStatus": {
+        "sourceFingerprint": "7215089d9a57f5a967332759b57af878acd7775fd5dc721bc2655d363e26f57f",
+        "category": "invariant"
+      },
+      "NETCore": {
+        "sourceFingerprint": "78358a63c65ac6843dafa909ada103637abc58112f49d43b1b51b9b9c9a77b92",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorNameExample": {
+        "sourceFingerprint": "db8bba6bc3ed5e595c5e46376fbf1e4df82aa63a5cdf144894b23101ff2c75de",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorsExample": {
+        "sourceFingerprint": "6526b18a3e376ef2976962d25851b1eaa33809e88e428eed4b3ae41d51c5f266",
+        "category": "invariant"
+      },
+      "NarratorRatingFraction": {
+        "sourceFingerprint": "99eb156177c7a6088fdc5705992eb9ff952218b32ba3a822bc13869b789f8ae2",
+        "category": "invariant"
+      },
+      "Proper": {
+        "sourceFingerprint": "a04f180c05bfacd4623e86428262da8bfa9d1eed2a55f08e5ed4c295b20f5a90",
+        "category": "invariant"
+      },
+      "RSS": {
+        "sourceFingerprint": "c40854603c6204f3d35aa38097cd80480f0ffc54982f6514fb667af6e6d47618",
+        "category": "invariant"
+      },
+      "Real": {
+        "sourceFingerprint": "dce19eda8ee09e1d964be25f294da5c0658662fe32947d6c6824f25b3a2ab27d",
+        "category": "invariant"
+      },
+      "Reddit": {
+        "sourceFingerprint": "e68570f8697c3a9c6ad5f5009ac45fad94a79d7856909e360038e2f78513f2af",
+        "category": "invariant"
+      },
+      "UMask": {
+        "sourceFingerprint": "e5de8f23c3b26e4e51f19c6909bac18e7a6c36966a0232b810d7d87bfee57a44",
+        "category": "invariant"
+      },
+      "Ui": {
+        "sourceFingerprint": "46a5c72c16a3457a8d574c4f61bb2d5013fef3d2e9b4fa6956742dcbaacd58dc",
+        "category": "invariant"
+      },
+      "Usenet": {
+        "sourceFingerprint": "8eaf5db051164651d5c9b541886ba7b7bb7a076ae45f2e66c69fe6ea00a0072f",
+        "category": "invariant"
+      },
+      "OpenLibrary": {
+        "sourceFingerprint": "724e1ac6986e432a1fb53ee3e39002b92862b4cd31483defb010faf5c5c54fe9",
+        "category": "invariant"
+      },
+      "GoogleBooks": {
+        "sourceFingerprint": "3d052f61e7765c38cac255a5d79ebef33e985eda06a015b679eb13dff21f7cce",
+        "category": "invariant"
+      },
+      "LibraryOfCongress": {
+        "sourceFingerprint": "e05da88164345de76065f353111e45af66de4a948e572487a554cb4dfb134245",
+        "category": "invariant"
+      },
+      "Gutendex": {
+        "sourceFingerprint": "553c6b669547028c574257bee63d8e30b0de881e02032bc000d1c5cf474ce44a",
+        "category": "invariant"
+      },
+      "InternetArchive": {
+        "sourceFingerprint": "e7d592f40efc8d754dcd39b8e94310bba71299cec0845ca441ffcfa5bc22ac61",
+        "category": "invariant"
+      },
+      "NdlSearch": {
+        "sourceFingerprint": "966c0965320647596a667c6bc6193d148e6f1299351d3e79fcf62314b4cd9717",
+        "category": "invariant"
+      },
+      "Europeana": {
+        "sourceFingerprint": "6beb16cfd7f1c730ece835990595c804226e2ce6beff46d9e82665d86541c138",
+        "category": "invariant"
+      }
+    },
+    "hi": {
+      "ASIN": {
+        "sourceFingerprint": "6bca9fee7183aebd403f4febe7887d2816ff93bc8de1dac2e89aefcf960c2230",
+        "category": "invariant"
+      },
+      "AuthPlex": {
+        "sourceFingerprint": "7da497c53585afcbdc437054f3d6cb8acb5f4be87c783ddee4b5da2b5aa4dc01",
+        "category": "invariant"
+      },
+      "BookQualityProperBadge": {
+        "sourceFingerprint": "f0609a6320e418f2496d2ff3b213de205c2514424987fbafb7ff304e1ade7696",
+        "category": "invariant"
+      },
+      "BookQualityRepackBadge": {
+        "sourceFingerprint": "c39380dd7d67cfe2c93ff0e15ee28ee7e7e007dd7730d9acdc9b51047c26b259",
+        "category": "invariant"
+      },
+      "Discord": {
+        "sourceFingerprint": "36e87ee26dd58a2803f5e1416125f45ffa16db582f4c7639f9843bf3add74b11",
+        "category": "invariant"
+      },
+      "Docker": {
+        "sourceFingerprint": "e4fe73facbddf0c0f2fa0b9ef784e430cbb9e4c469aa681584dc78ec3dc6a2a3",
+        "category": "invariant"
+      },
+      "FileBrowserFaqLinkText": {
+        "sourceFingerprint": "7237ac5a0033c5299a7c319b091c5ad36ea491af3fc9caf479ddd852bff1e9e7",
+        "category": "invariant"
+      },
+      "Hardcover": {
+        "sourceFingerprint": "f70b78a60559a80480f169643613bf479367bf406d6a450986439c488c61b684",
+        "category": "invariant"
+      },
+      "ISBN": {
+        "sourceFingerprint": "e06d03e7b2115f2c890d4a40a9a5367bd9a01d9e05089bb07cfb2fc57b9a7570",
+        "category": "invariant"
+      },
+      "MyAnonaMouseStatus": {
+        "sourceFingerprint": "7215089d9a57f5a967332759b57af878acd7775fd5dc721bc2655d363e26f57f",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorNameExample": {
+        "sourceFingerprint": "db8bba6bc3ed5e595c5e46376fbf1e4df82aa63a5cdf144894b23101ff2c75de",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorsExample": {
+        "sourceFingerprint": "6526b18a3e376ef2976962d25851b1eaa33809e88e428eed4b3ae41d51c5f266",
+        "category": "invariant"
+      },
+      "NarratorRatingFraction": {
+        "sourceFingerprint": "99eb156177c7a6088fdc5705992eb9ff952218b32ba3a822bc13869b789f8ae2",
+        "category": "invariant"
+      },
+      "Proper": {
+        "sourceFingerprint": "a04f180c05bfacd4623e86428262da8bfa9d1eed2a55f08e5ed4c295b20f5a90",
+        "category": "invariant"
+      },
+      "RSS": {
+        "sourceFingerprint": "c40854603c6204f3d35aa38097cd80480f0ffc54982f6514fb667af6e6d47618",
+        "category": "invariant"
+      },
+      "Real": {
+        "sourceFingerprint": "dce19eda8ee09e1d964be25f294da5c0658662fe32947d6c6824f25b3a2ab27d",
+        "category": "invariant"
+      },
+      "SearchHintGoodreadsLinkText": {
+        "sourceFingerprint": "99c3852e0fdbd5fc75ee7d45a88f90413404da2b1b6b2baa223df47dac2da257",
+        "category": "invariant"
+      },
+      "SettingsRestoreFileOption": {
+        "sourceFingerprint": "fff0fc0a822377d006cd910eb31e79d86ee767442dd2121d46a2f6b05124b6b5",
+        "category": "invariant"
+      },
+      "Usenet": {
+        "sourceFingerprint": "8eaf5db051164651d5c9b541886ba7b7bb7a076ae45f2e66c69fe6ea00a0072f",
+        "category": "invariant"
+      },
+      "OpenLibrary": {
+        "sourceFingerprint": "724e1ac6986e432a1fb53ee3e39002b92862b4cd31483defb010faf5c5c54fe9",
+        "category": "invariant"
+      },
+      "GoogleBooks": {
+        "sourceFingerprint": "3d052f61e7765c38cac255a5d79ebef33e985eda06a015b679eb13dff21f7cce",
+        "category": "invariant"
+      },
+      "LibraryOfCongress": {
+        "sourceFingerprint": "e05da88164345de76065f353111e45af66de4a948e572487a554cb4dfb134245",
+        "category": "invariant"
+      },
+      "Gutendex": {
+        "sourceFingerprint": "553c6b669547028c574257bee63d8e30b0de881e02032bc000d1c5cf474ce44a",
+        "category": "invariant"
+      },
+      "InternetArchive": {
+        "sourceFingerprint": "e7d592f40efc8d754dcd39b8e94310bba71299cec0845ca441ffcfa5bc22ac61",
+        "category": "invariant"
+      },
+      "NdlSearch": {
+        "sourceFingerprint": "966c0965320647596a667c6bc6193d148e6f1299351d3e79fcf62314b4cd9717",
+        "category": "invariant"
+      },
+      "Europeana": {
+        "sourceFingerprint": "6beb16cfd7f1c730ece835990595c804226e2ce6beff46d9e82665d86541c138",
+        "category": "invariant"
+      }
+    },
+    "de": {
+      "ASIN": {
+        "sourceFingerprint": "6bca9fee7183aebd403f4febe7887d2816ff93bc8de1dac2e89aefcf960c2230",
+        "category": "invariant"
+      },
+      "AbsMappingsAudioSlotLabel": {
+        "sourceFingerprint": "63bdd8b6c1ff5da7c0b6afbda13797ebb02b6aff00544a1e21494f30ead4ec75",
+        "category": "native-equivalent"
+      },
+      "AudibleMarketplaceJp": {
+        "sourceFingerprint": "394e584f5a964661049bb313687cebbbcf93c1c64d2de41743e4fa46c9ae6c1d",
+        "category": "native-equivalent"
+      },
+      "AuthOidc": {
+        "sourceFingerprint": "fce3dcef22bc9b6abca31156b6c2e808357d45780e53bdbd5208390c2b79c01b",
+        "category": "invariant"
+      },
+      "AuthPlex": {
+        "sourceFingerprint": "7da497c53585afcbdc437054f3d6cb8acb5f4be87c783ddee4b5da2b5aa4dc01",
+        "category": "invariant"
+      },
+      "BookQualityProperBadge": {
+        "sourceFingerprint": "f0609a6320e418f2496d2ff3b213de205c2514424987fbafb7ff304e1ade7696",
+        "category": "invariant"
+      },
+      "BookQualityRepackBadge": {
+        "sourceFingerprint": "c39380dd7d67cfe2c93ff0e15ee28ee7e7e007dd7730d9acdc9b51047c26b259",
+        "category": "invariant"
+      },
+      "Branch": {
+        "sourceFingerprint": "dc93c7b12e78ff95847c8bb4ab1b3b6b2af5cc422d62e5e1c42e706e4c65f724",
+        "category": "native-equivalent"
+      },
+      "Cover": {
+        "sourceFingerprint": "338698a0516c04d8d32e041b94e003e1bba0b2b12b967efddaf13d585b70df6f",
+        "category": "native-equivalent"
+      },
+      "Discord": {
+        "sourceFingerprint": "36e87ee26dd58a2803f5e1416125f45ffa16db582f4c7639f9843bf3add74b11",
+        "category": "invariant"
+      },
+      "Docker": {
+        "sourceFingerprint": "e4fe73facbddf0c0f2fa0b9ef784e430cbb9e4c469aa681584dc78ec3dc6a2a3",
+        "category": "invariant"
+      },
+      "DonationsKofiLabel": {
+        "sourceFingerprint": "0584ee1cc0e15949f7baa03a0ba08a986af6522758b6a1370d9927cc04f35405",
+        "category": "invariant"
+      },
+      "ErrorPageVersion": {
+        "sourceFingerprint": "e128323ebdacdad41117b2ad49b7ce3592ac736ca31a712ae36cf8c483f0c39b",
+        "category": "native-equivalent"
+      },
+      "FileBrowserFaqLinkText": {
+        "sourceFingerprint": "7237ac5a0033c5299a7c319b091c5ad36ea491af3fc9caf479ddd852bff1e9e7",
+        "category": "invariant"
+      },
+      "Genres": {
+        "sourceFingerprint": "b41a5aa8fb30f4787d26c6992a54d7d309c1870f83787d30bf3fab008f9d46db",
+        "category": "native-equivalent"
+      },
+      "Hardcover": {
+        "sourceFingerprint": "f70b78a60559a80480f169643613bf479367bf406d6a450986439c488c61b684",
+        "category": "invariant"
+      },
+      "Host": {
+        "sourceFingerprint": "63e177b2369966d4d9a673fb0803ab6433ba6678cd567f21c0536ad3c8118e17",
+        "category": "native-equivalent"
+      },
+      "Hostname": {
+        "sourceFingerprint": "f902a18bf46bfbd3d81de230eeadc0c277b7352886af2db493b4a1f0016da714",
+        "category": "native-equivalent"
+      },
+      "ISBN": {
+        "sourceFingerprint": "e06d03e7b2115f2c890d4a40a9a5367bd9a01d9e05089bb07cfb2fc57b9a7570",
+        "category": "invariant"
+      },
+      "Links": {
+        "sourceFingerprint": "41a6c7b67deafadb9a2dcf3953088f4b7edf674976a23e714566c7768ffa3a34",
+        "category": "native-equivalent"
+      },
+      "Matcher": {
+        "sourceFingerprint": "574034cdee260541a6343869c19632d8c355acdaa1d31b49b1d8486c0b6ad6f2",
+        "category": "native-equivalent"
+      },
+      "EvidenceNeutral": {
+        "sourceFingerprint": "daf2f8a705f8677c86d311541c2622b9b630194bdc3ee6982332fb61f367346c",
+        "category": "native-equivalent"
+      },
+      "Format": {
+        "sourceFingerprint": "49b425320f3c460af9900820fc3299c917e7c62ab9d8e5a6a8df5f20a2cdbc84",
+        "category": "native-equivalent"
+      },
+      "Medium": {
+        "sourceFingerprint": "bea4b4207d5ede997a71a5c68407e6c075e78cc107184eba5cc5e5c776e97815",
+        "category": "native-equivalent"
+      },
+      "MyAnonaMouseStatus": {
+        "sourceFingerprint": "7215089d9a57f5a967332759b57af878acd7775fd5dc721bc2655d363e26f57f",
+        "category": "invariant"
+      },
+      "NETCore": {
+        "sourceFingerprint": "78358a63c65ac6843dafa909ada103637abc58112f49d43b1b51b9b9c9a77b92",
+        "category": "invariant"
+      },
+      "Name": {
+        "sourceFingerprint": "395fbd90ee6e7e507b6dfae2915d2a51446039e2346d70f94f684f396a3acb13",
+        "category": "native-equivalent"
+      },
+      "NamingTokenNarratorNameExample": {
+        "sourceFingerprint": "db8bba6bc3ed5e595c5e46376fbf1e4df82aa63a5cdf144894b23101ff2c75de",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorsExample": {
+        "sourceFingerprint": "6526b18a3e376ef2976962d25851b1eaa33809e88e428eed4b3ae41d51c5f266",
+        "category": "invariant"
+      },
+      "NarratorRatingFraction": {
+        "sourceFingerprint": "99eb156177c7a6088fdc5705992eb9ff952218b32ba3a822bc13869b789f8ae2",
+        "category": "invariant"
+      },
+      "Original": {
+        "sourceFingerprint": "e4bef6b1e5dbb50e398346dcd3a721b8c7236b7e9cd5f8b3bcb8a9610f5d26a9",
+        "category": "native-equivalent"
+      },
+      "Pause": {
+        "sourceFingerprint": "700757c8b26da4f4ee79d96d2bd08bc2e7058514bb698e3593020622a15cec04",
+        "category": "native-equivalent"
+      },
+      "Port": {
+        "sourceFingerprint": "8753fb97c59b96902c485c9366c4d82551a1a89717d3ed6eafed29a8988abcd9",
+        "category": "native-equivalent"
+      },
+      "Proper": {
+        "sourceFingerprint": "a04f180c05bfacd4623e86428262da8bfa9d1eed2a55f08e5ed4c295b20f5a90",
+        "category": "invariant"
+      },
+      "Proxy": {
+        "sourceFingerprint": "2d47db5934c67af5b972ba6f33fa3c6323ba9680eee8ab7376901e91e17f76be",
+        "category": "native-equivalent"
+      },
+      "RSS": {
+        "sourceFingerprint": "c40854603c6204f3d35aa38097cd80480f0ffc54982f6514fb667af6e6d47618",
+        "category": "invariant"
+      },
+      "Real": {
+        "sourceFingerprint": "dce19eda8ee09e1d964be25f294da5c0658662fe32947d6c6824f25b3a2ab27d",
+        "category": "invariant"
+      },
+      "Reddit": {
+        "sourceFingerprint": "e68570f8697c3a9c6ad5f5009ac45fad94a79d7856909e360038e2f78513f2af",
+        "category": "invariant"
+      },
+      "Route": {
+        "sourceFingerprint": "16c5182cc9fece84e1c73d94326dda1ae4f2bcb121fa849e5a6e1a1e42206c92",
+        "category": "native-equivalent"
+      },
+      "SettingsBackupPassphrase": {
+        "sourceFingerprint": "26029841540c9bb3ec9eff42453d9fc57511f759fed6f439df2ab3d9bc43364f",
+        "category": "native-equivalent"
+      },
+      "SettingsRestoreFileOption": {
+        "sourceFingerprint": "fff0fc0a822377d006cd910eb31e79d86ee767442dd2121d46a2f6b05124b6b5",
+        "category": "invariant"
+      },
+      "Status": {
+        "sourceFingerprint": "7c6f7141d85eba316af619cf644bcaf7118b874f7358b1c010bbd5245817f9f6",
+        "category": "native-equivalent"
+      },
+      "System": {
+        "sourceFingerprint": "501e18cf75dee9ac0a51d58834952b67922fd5f1f0340f0282f6014af7295176",
+        "category": "native-equivalent"
+      },
+      "Torrents": {
+        "sourceFingerprint": "f4855291959cbe7d58a5930ad91eb247cdf8e4efc1f037bb3e219d471bc3de10",
+        "category": "native-equivalent"
+      },
+      "Usenet": {
+        "sourceFingerprint": "8eaf5db051164651d5c9b541886ba7b7bb7a076ae45f2e66c69fe6ea00a0072f",
+        "category": "invariant"
+      },
+      "Wiki": {
+        "sourceFingerprint": "4c4e5fe24da227f01188c170e1fc8c9c03b36e5f338dc5eb4f10368cef2cbb8d",
+        "category": "invariant"
+      },
+      "Filter": {
+        "sourceFingerprint": "336b172d2fa668253f3b81e8c76ac391180f9aa93a16fde329c6105f48386bb6",
+        "category": "native-equivalent"
+      },
+      "Trace": {
+        "sourceFingerprint": "44e031825cbe4afbadc59b90ae579583b003050e1780da7a03873679330c59b0",
+        "category": "invariant"
+      },
+      "Debug": {
+        "sourceFingerprint": "bd25f0be4951da0c0936812c2430fc84ed3090e22c2d22a0d283e291e7cb0be1",
+        "category": "invariant"
+      },
+      "Fatal": {
+        "sourceFingerprint": "d478d4f998f727c5a946c28b32624a06eff66b30aa89c23e79b49cf5e3f0be4b",
+        "category": "invariant"
+      },
+      "OpenLibrary": {
+        "sourceFingerprint": "724e1ac6986e432a1fb53ee3e39002b92862b4cd31483defb010faf5c5c54fe9",
+        "category": "invariant"
+      },
+      "GoogleBooks": {
+        "sourceFingerprint": "3d052f61e7765c38cac255a5d79ebef33e985eda06a015b679eb13dff21f7cce",
+        "category": "invariant"
+      },
+      "LibraryOfCongress": {
+        "sourceFingerprint": "e05da88164345de76065f353111e45af66de4a948e572487a554cb4dfb134245",
+        "category": "invariant"
+      },
+      "Gutendex": {
+        "sourceFingerprint": "553c6b669547028c574257bee63d8e30b0de881e02032bc000d1c5cf474ce44a",
+        "category": "invariant"
+      },
+      "InternetArchive": {
+        "sourceFingerprint": "e7d592f40efc8d754dcd39b8e94310bba71299cec0845ca441ffcfa5bc22ac61",
+        "category": "invariant"
+      },
+      "NdlSearch": {
+        "sourceFingerprint": "966c0965320647596a667c6bc6193d148e6f1299351d3e79fcf62314b4cd9717",
+        "category": "invariant"
+      },
+      "Europeana": {
+        "sourceFingerprint": "6beb16cfd7f1c730ece835990595c804226e2ce6beff46d9e82665d86541c138",
+        "category": "invariant"
+      },
+      "MetadataCoverSourcePreference": {
+        "sourceFingerprint": "d9d3b84adace4fceb1f9ab45a64b729e89df15c5c70825888b6a4e56de26ee5a",
+        "category": "native-equivalent"
+      },
+      "MetadataGenresSourcePreference": {
+        "sourceFingerprint": "4a3ae189dc63fa449f41192a93111936b98b0abe029ee3763a80d36b10486ea7",
+        "category": "native-equivalent"
+      }
+    },
+    "ja": {
+      "ASIN": {
+        "sourceFingerprint": "6bca9fee7183aebd403f4febe7887d2816ff93bc8de1dac2e89aefcf960c2230",
+        "category": "invariant"
+      },
+      "AuthPlex": {
+        "sourceFingerprint": "7da497c53585afcbdc437054f3d6cb8acb5f4be87c783ddee4b5da2b5aa4dc01",
+        "category": "invariant"
+      },
+      "BookQualityProperBadge": {
+        "sourceFingerprint": "f0609a6320e418f2496d2ff3b213de205c2514424987fbafb7ff304e1ade7696",
+        "category": "invariant"
+      },
+      "BookQualityRepackBadge": {
+        "sourceFingerprint": "c39380dd7d67cfe2c93ff0e15ee28ee7e7e007dd7730d9acdc9b51047c26b259",
+        "category": "invariant"
+      },
+      "Discord": {
+        "sourceFingerprint": "36e87ee26dd58a2803f5e1416125f45ffa16db582f4c7639f9843bf3add74b11",
+        "category": "invariant"
+      },
+      "Docker": {
+        "sourceFingerprint": "e4fe73facbddf0c0f2fa0b9ef784e430cbb9e4c469aa681584dc78ec3dc6a2a3",
+        "category": "invariant"
+      },
+      "FileBrowserFaqLinkText": {
+        "sourceFingerprint": "7237ac5a0033c5299a7c319b091c5ad36ea491af3fc9caf479ddd852bff1e9e7",
+        "category": "invariant"
+      },
+      "Hardcover": {
+        "sourceFingerprint": "f70b78a60559a80480f169643613bf479367bf406d6a450986439c488c61b684",
+        "category": "invariant"
+      },
+      "ISBN": {
+        "sourceFingerprint": "e06d03e7b2115f2c890d4a40a9a5367bd9a01d9e05089bb07cfb2fc57b9a7570",
+        "category": "invariant"
+      },
+      "MyAnonaMouseStatus": {
+        "sourceFingerprint": "7215089d9a57f5a967332759b57af878acd7775fd5dc721bc2655d363e26f57f",
+        "category": "invariant"
+      },
+      "NETCore": {
+        "sourceFingerprint": "78358a63c65ac6843dafa909ada103637abc58112f49d43b1b51b9b9c9a77b92",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorNameExample": {
+        "sourceFingerprint": "db8bba6bc3ed5e595c5e46376fbf1e4df82aa63a5cdf144894b23101ff2c75de",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorsExample": {
+        "sourceFingerprint": "6526b18a3e376ef2976962d25851b1eaa33809e88e428eed4b3ae41d51c5f266",
+        "category": "invariant"
+      },
+      "NarratorRatingFraction": {
+        "sourceFingerprint": "99eb156177c7a6088fdc5705992eb9ff952218b32ba3a822bc13869b789f8ae2",
+        "category": "invariant"
+      },
+      "Proper": {
+        "sourceFingerprint": "a04f180c05bfacd4623e86428262da8bfa9d1eed2a55f08e5ed4c295b20f5a90",
+        "category": "invariant"
+      },
+      "RSS": {
+        "sourceFingerprint": "c40854603c6204f3d35aa38097cd80480f0ffc54982f6514fb667af6e6d47618",
+        "category": "invariant"
+      },
+      "Real": {
+        "sourceFingerprint": "dce19eda8ee09e1d964be25f294da5c0658662fe32947d6c6824f25b3a2ab27d",
+        "category": "invariant"
+      },
+      "Reddit": {
+        "sourceFingerprint": "e68570f8697c3a9c6ad5f5009ac45fad94a79d7856909e360038e2f78513f2af",
+        "category": "invariant"
+      },
+      "SearchHintGoodreadsLinkText": {
+        "sourceFingerprint": "99c3852e0fdbd5fc75ee7d45a88f90413404da2b1b6b2baa223df47dac2da257",
+        "category": "invariant"
+      },
+      "SettingsRestoreFileOption": {
+        "sourceFingerprint": "fff0fc0a822377d006cd910eb31e79d86ee767442dd2121d46a2f6b05124b6b5",
+        "category": "invariant"
+      },
+      "Ui": {
+        "sourceFingerprint": "46a5c72c16a3457a8d574c4f61bb2d5013fef3d2e9b4fa6956742dcbaacd58dc",
+        "category": "invariant"
+      },
+      "Usenet": {
+        "sourceFingerprint": "8eaf5db051164651d5c9b541886ba7b7bb7a076ae45f2e66c69fe6ea00a0072f",
+        "category": "invariant"
+      },
+      "Wiki": {
+        "sourceFingerprint": "4c4e5fe24da227f01188c170e1fc8c9c03b36e5f338dc5eb4f10368cef2cbb8d",
+        "category": "invariant"
+      },
+      "OpenLibrary": {
+        "sourceFingerprint": "724e1ac6986e432a1fb53ee3e39002b92862b4cd31483defb010faf5c5c54fe9",
+        "category": "invariant"
+      },
+      "GoogleBooks": {
+        "sourceFingerprint": "3d052f61e7765c38cac255a5d79ebef33e985eda06a015b679eb13dff21f7cce",
+        "category": "invariant"
+      },
+      "LibraryOfCongress": {
+        "sourceFingerprint": "e05da88164345de76065f353111e45af66de4a948e572487a554cb4dfb134245",
+        "category": "invariant"
+      },
+      "Gutendex": {
+        "sourceFingerprint": "553c6b669547028c574257bee63d8e30b0de881e02032bc000d1c5cf474ce44a",
+        "category": "invariant"
+      },
+      "InternetArchive": {
+        "sourceFingerprint": "e7d592f40efc8d754dcd39b8e94310bba71299cec0845ca441ffcfa5bc22ac61",
+        "category": "invariant"
+      },
+      "NdlSearch": {
+        "sourceFingerprint": "966c0965320647596a667c6bc6193d148e6f1299351d3e79fcf62314b4cd9717",
+        "category": "invariant"
+      },
+      "Europeana": {
+        "sourceFingerprint": "6beb16cfd7f1c730ece835990595c804226e2ce6beff46d9e82665d86541c138",
+        "category": "invariant"
+      }
+    },
+    "fr": {
+      "ASIN": {
+        "sourceFingerprint": "6bca9fee7183aebd403f4febe7887d2816ff93bc8de1dac2e89aefcf960c2230",
+        "category": "invariant"
+      },
+      "AbsMappingsAudioSlotLabel": {
+        "sourceFingerprint": "63bdd8b6c1ff5da7c0b6afbda13797ebb02b6aff00544a1e21494f30ead4ec75",
+        "category": "native-equivalent"
+      },
+      "Actions": {
+        "sourceFingerprint": "a0b0e9e9b58ef2a9362013db687dd60a71e6305342fbec4344e4f541bbedcbe7",
+        "category": "native-equivalent"
+      },
+      "AudibleMarketplaceFr": {
+        "sourceFingerprint": "72c65fb577b3d26f0e50be82365698ffb1f502cd7cac400de5f5e15de617221a",
+        "category": "native-equivalent"
+      },
+      "AudibleMarketplaceCa": {
+        "sourceFingerprint": "eb2d608593f9420e6fbb38f932b8263ceff7f652fd9b06466df4edb7a582cbb6",
+        "category": "native-equivalent"
+      },
+      "AuthOidc": {
+        "sourceFingerprint": "fce3dcef22bc9b6abca31156b6c2e808357d45780e53bdbd5208390c2b79c01b",
+        "category": "invariant"
+      },
+      "AuthPlex": {
+        "sourceFingerprint": "7da497c53585afcbdc437054f3d6cb8acb5f4be87c783ddee4b5da2b5aa4dc01",
+        "category": "invariant"
+      },
+      "BookMatchingStrictnessStrict": {
+        "sourceFingerprint": "c8f6913cf28429afa4ed1e8af797e39ab1366bf66119aaa4129a1af2087fb502",
+        "category": "native-equivalent"
+      },
+      "BookQualityProperBadge": {
+        "sourceFingerprint": "f0609a6320e418f2496d2ff3b213de205c2514424987fbafb7ff304e1ade7696",
+        "category": "invariant"
+      },
+      "BookQualityRepackBadge": {
+        "sourceFingerprint": "c39380dd7d67cfe2c93ff0e15ee28ee7e7e007dd7730d9acdc9b51047c26b259",
+        "category": "invariant"
+      },
+      "EditionProduction": {
+        "sourceFingerprint": "711078365babd08c8742c7ab8a03758a76c7651063c991bedd49d68f02176d83",
+        "category": "native-equivalent"
+      },
+      "Conditions": {
+        "sourceFingerprint": "05ca5726eb02f0758c694764b15568f7637e2efeb5e3fea215322276eacc2b97",
+        "category": "native-equivalent"
+      },
+      "Conversion": {
+        "sourceFingerprint": "893fc5b8dce65e53ddc87dd05a5aa261b1b7995fa877ffb0d89794f4de3cb4fc",
+        "category": "native-equivalent"
+      },
+      "Date": {
+        "sourceFingerprint": "d29a5fd73e391c5701209dab2c8e0b59b6b5b7c94017d720ce966f1d02efe081",
+        "category": "native-equivalent"
+      },
+      "Dates": {
+        "sourceFingerprint": "1dc930f68f6a2426f18db5ecc8f5c33abf5d139bc121068b72a3756608c22452",
+        "category": "native-equivalent"
+      },
+      "Description": {
+        "sourceFingerprint": "9674f653882462489f7b779eb68995cb192a6a2078fbb99609c3065fedb2a88e",
+        "category": "native-equivalent"
+      },
+      "Discord": {
+        "sourceFingerprint": "36e87ee26dd58a2803f5e1416125f45ffa16db582f4c7639f9843bf3add74b11",
+        "category": "invariant"
+      },
+      "Docker": {
+        "sourceFingerprint": "e4fe73facbddf0c0f2fa0b9ef784e430cbb9e4c469aa681584dc78ec3dc6a2a3",
+        "category": "invariant"
+      },
+      "DonationsKofiLabel": {
+        "sourceFingerprint": "0584ee1cc0e15949f7baa03a0ba08a986af6522758b6a1370d9927cc04f35405",
+        "category": "invariant"
+      },
+      "ErrorPageVersion": {
+        "sourceFingerprint": "e128323ebdacdad41117b2ad49b7ce3592ac736ca31a712ae36cf8c483f0c39b",
+        "category": "native-equivalent"
+      },
+      "Exception": {
+        "sourceFingerprint": "bf9bd76f8b79eea9cef5cde11a1609d1265663d81169724bd4e41e37c5b7f268",
+        "category": "native-equivalent"
+      },
+      "FileBrowserFaqLinkText": {
+        "sourceFingerprint": "7237ac5a0033c5299a7c319b091c5ad36ea491af3fc9caf479ddd852bff1e9e7",
+        "category": "invariant"
+      },
+      "FormatAgeMinute": {
+        "sourceFingerprint": "ea9687d8c849361c3526cd54a34fdfc5b42953cd4a7b45e468443d22437ea673",
+        "category": "native-equivalent"
+      },
+      "FormatAgeMinutes": {
+        "sourceFingerprint": "789dcf00ba378a9eee34136676344b531437817fa48be7b67c41190ae4da665c",
+        "category": "native-equivalent"
+      },
+      "Formats": {
+        "sourceFingerprint": "f0abcc526222c23b8eb4213393006d029d998ec30b3b9d4c6bce3e8c05325feb",
+        "category": "native-equivalent"
+      },
+      "Genres": {
+        "sourceFingerprint": "b41a5aa8fb30f4787d26c6992a54d7d309c1870f83787d30bf3fab008f9d46db",
+        "category": "native-equivalent"
+      },
+      "Hardcover": {
+        "sourceFingerprint": "f70b78a60559a80480f169643613bf479367bf406d6a450986439c488c61b684",
+        "category": "invariant"
+      },
+      "ISBN": {
+        "sourceFingerprint": "e06d03e7b2115f2c890d4a40a9a5367bd9a01d9e05089bb07cfb2fc57b9a7570",
+        "category": "invariant"
+      },
+      "Images": {
+        "sourceFingerprint": "ddb5e5ecdf9e4799967e0e26b32ee9865c5b2291f568f0a607eb85c0779e5e7c",
+        "category": "native-equivalent"
+      },
+      "LinkNameImageSuffix": {
+        "sourceFingerprint": "2b5ea3d04211f6e07559d94c148dca3914e4ae88b4da83bc331e875bcf543faf",
+        "category": "native-equivalent"
+      },
+      "Format": {
+        "sourceFingerprint": "49b425320f3c460af9900820fc3299c917e7c62ab9d8e5a6a8df5f20a2cdbc84",
+        "category": "native-equivalent"
+      },
+      "Message": {
+        "sourceFingerprint": "0ebcb63a3dba15ca30916ac9acd37524a3d096c21a51d5e6e43d8add22e683d6",
+        "category": "native-equivalent"
+      },
+      "Mode": {
+        "sourceFingerprint": "5be8a3febdc2bdbf26c1f9d79349096ca98f7fcbb00ceb93e8a5b83e6ab718d5",
+        "category": "native-equivalent"
+      },
+      "MyAnonaMouseStatus": {
+        "sourceFingerprint": "7215089d9a57f5a967332759b57af878acd7775fd5dc721bc2655d363e26f57f",
+        "category": "invariant"
+      },
+      "NETCore": {
+        "sourceFingerprint": "78358a63c65ac6843dafa909ada103637abc58112f49d43b1b51b9b9c9a77b92",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorNameExample": {
+        "sourceFingerprint": "db8bba6bc3ed5e595c5e46376fbf1e4df82aa63a5cdf144894b23101ff2c75de",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorsExample": {
+        "sourceFingerprint": "6526b18a3e376ef2976962d25851b1eaa33809e88e428eed4b3ae41d51c5f266",
+        "category": "invariant"
+      },
+      "NarratorRatingFraction": {
+        "sourceFingerprint": "99eb156177c7a6088fdc5705992eb9ff952218b32ba3a822bc13869b789f8ae2",
+        "category": "invariant"
+      },
+      "Options": {
+        "sourceFingerprint": "d93705d8b65bbd7de09cb8d10417bf75f3ad1fe632487a0260a68678b51e58eb",
+        "category": "native-equivalent"
+      },
+      "Original": {
+        "sourceFingerprint": "e4bef6b1e5dbb50e398346dcd3a721b8c7236b7e9cd5f8b3bcb8a9610f5d26a9",
+        "category": "native-equivalent"
+      },
+      "Pause": {
+        "sourceFingerprint": "700757c8b26da4f4ee79d96d2bd08bc2e7058514bb698e3593020622a15cec04",
+        "category": "native-equivalent"
+      },
+      "Port": {
+        "sourceFingerprint": "8753fb97c59b96902c485c9366c4d82551a1a89717d3ed6eafed29a8988abcd9",
+        "category": "native-equivalent"
+      },
+      "Proper": {
+        "sourceFingerprint": "a04f180c05bfacd4623e86428262da8bfa9d1eed2a55f08e5ed4c295b20f5a90",
+        "category": "invariant"
+      },
+      "Proxy": {
+        "sourceFingerprint": "2d47db5934c67af5b972ba6f33fa3c6323ba9680eee8ab7376901e91e17f76be",
+        "category": "native-equivalent"
+      },
+      "QuickstartReviewFormats": {
+        "sourceFingerprint": "86e3a9d3e6153a3276651cc17feaa44a61db1c7b00b8edf575710383f31d859a",
+        "category": "native-equivalent"
+      },
+      "RSS": {
+        "sourceFingerprint": "c40854603c6204f3d35aa38097cd80480f0ffc54982f6514fb667af6e6d47618",
+        "category": "invariant"
+      },
+      "Real": {
+        "sourceFingerprint": "dce19eda8ee09e1d964be25f294da5c0658662fe32947d6c6824f25b3a2ab27d",
+        "category": "invariant"
+      },
+      "Reddit": {
+        "sourceFingerprint": "e68570f8697c3a9c6ad5f5009ac45fad94a79d7856909e360038e2f78513f2af",
+        "category": "invariant"
+      },
+      "Score": {
+        "sourceFingerprint": "84e86e8ee23756adef4068a9f2f84aa2b41eb465ea253d314ee21d98f63c7755",
+        "category": "native-equivalent"
+      },
+      "Source": {
+        "sourceFingerprint": "53dbe15a5879980cc2aada92265477b1d12e45903c3ff4c0b1653e0a28e1d119",
+        "category": "native-equivalent"
+      },
+      "Style": {
+        "sourceFingerprint": "5433038cc7cd119245c51e131323dc9a2110b5e28d2d62fe1e6807062f405313",
+        "category": "native-equivalent"
+      },
+      "TagDetailsRestrictionsCount": {
+        "sourceFingerprint": "31af648c190e07d866d15d479b5123b24d4b526e4817fbea434aa15312a1d783",
+        "category": "native-equivalent"
+      },
+      "Torrents": {
+        "sourceFingerprint": "f4855291959cbe7d58a5930ad91eb247cdf8e4efc1f037bb3e219d471bc3de10",
+        "category": "native-equivalent"
+      },
+      "Type": {
+        "sourceFingerprint": "766d64b7a6f205d6e710645cef246aa2df5cb5bafd06af15764169629c98f1b1",
+        "category": "native-equivalent"
+      },
+      "UMask": {
+        "sourceFingerprint": "e5de8f23c3b26e4e51f19c6909bac18e7a6c36966a0232b810d7d87bfee57a44",
+        "category": "invariant"
+      },
+      "Usenet": {
+        "sourceFingerprint": "8eaf5db051164651d5c9b541886ba7b7bb7a076ae45f2e66c69fe6ea00a0072f",
+        "category": "invariant"
+      },
+      "Version": {
+        "sourceFingerprint": "efd4073261330560e3ce840d968401f587d2f86e72487fb04615cf7b40eb4abb",
+        "category": "native-equivalent"
+      },
+      "Wiki": {
+        "sourceFingerprint": "4c4e5fe24da227f01188c170e1fc8c9c03b36e5f338dc5eb4f10368cef2cbb8d",
+        "category": "invariant"
+      },
+      "Action": {
+        "sourceFingerprint": "2de22efd70b8bd21f25de249812c3e130e3a97ed1d4116d9aab6e019f301f804",
+        "category": "native-equivalent"
+      },
+      "Seeders": {
+        "sourceFingerprint": "1d69d42425dec97d05c578331f1a4e43000d409b5ca75ba8abc119bd03eb1748",
+        "category": "native-equivalent"
+      },
+      "Pages": {
+        "sourceFingerprint": "8e75bb38c40e0b593c0614e1e2f3e06a149ad5b9851868d0b1f4623a5a8bdd9f",
+        "category": "native-equivalent"
+      },
+      "Fatal": {
+        "sourceFingerprint": "d478d4f998f727c5a946c28b32624a06eff66b30aa89c23e79b49cf5e3f0be4b",
+        "category": "invariant"
+      },
+      "Condition": {
+        "sourceFingerprint": "de306c34f0ac6a8485034cd9915da1aa23c73a8661af15df85fef059f1a4f118",
+        "category": "native-equivalent"
+      },
+      "OneSeeder": {
+        "sourceFingerprint": "b73f9c0f53a9f57f228016a35b35f8f211cba9a98ec247b9f16cacd89e5ba700",
+        "category": "native-equivalent"
+      },
+      "SeedersCount": {
+        "sourceFingerprint": "018cb8dd04e3ae59ad9f0bd5af2bad6b03fbef8e6b1f7c4906c69ef060263d76",
+        "category": "native-equivalent"
+      },
+      "OneLeecher": {
+        "sourceFingerprint": "2b80e880912b86adac7ae14c37b740675328096a96f85cc2a772f27f45e641c7",
+        "category": "native-equivalent"
+      },
+      "LeechersCount": {
+        "sourceFingerprint": "989b9fb83073c5b6109f3bb1a47a3404b4f8998534c9dc3845c90b3f98406549",
+        "category": "native-equivalent"
+      },
+      "InteractiveImportLocalLabel": {
+        "sourceFingerprint": "8a7b5c6d7be7980c684acafe374e8b7dede90f782e57d5354e97da335803d5f9",
+        "category": "native-equivalent"
+      },
+      "OpenLibrary": {
+        "sourceFingerprint": "724e1ac6986e432a1fb53ee3e39002b92862b4cd31483defb010faf5c5c54fe9",
+        "category": "invariant"
+      },
+      "GoogleBooks": {
+        "sourceFingerprint": "3d052f61e7765c38cac255a5d79ebef33e985eda06a015b679eb13dff21f7cce",
+        "category": "invariant"
+      },
+      "LibraryOfCongress": {
+        "sourceFingerprint": "e05da88164345de76065f353111e45af66de4a948e572487a554cb4dfb134245",
+        "category": "invariant"
+      },
+      "Gutendex": {
+        "sourceFingerprint": "553c6b669547028c574257bee63d8e30b0de881e02032bc000d1c5cf474ce44a",
+        "category": "invariant"
+      },
+      "InternetArchive": {
+        "sourceFingerprint": "e7d592f40efc8d754dcd39b8e94310bba71299cec0845ca441ffcfa5bc22ac61",
+        "category": "invariant"
+      },
+      "NdlSearch": {
+        "sourceFingerprint": "966c0965320647596a667c6bc6193d148e6f1299351d3e79fcf62314b4cd9717",
+        "category": "invariant"
+      },
+      "Europeana": {
+        "sourceFingerprint": "6beb16cfd7f1c730ece835990595c804226e2ce6beff46d9e82665d86541c138",
+        "category": "invariant"
+      },
+      "MetadataDescriptionSourcePreference": {
+        "sourceFingerprint": "a4b92ecfbb271a45e542961d211ab5b0c918e43dca3e50489e632cefa084c718",
+        "category": "native-equivalent"
+      },
+      "MetadataGenresSourcePreference": {
+        "sourceFingerprint": "4a3ae189dc63fa449f41192a93111936b98b0abe029ee3763a80d36b10486ea7",
+        "category": "native-equivalent"
+      }
+    },
+    "pt-BR": {
+      "ASIN": {
+        "sourceFingerprint": "6bca9fee7183aebd403f4febe7887d2816ff93bc8de1dac2e89aefcf960c2230",
+        "category": "invariant"
+      },
+      "Agenda": {
+        "sourceFingerprint": "5d7af7df3718caf15349b1667db7186524bc940fa2ed3083078bde0d6cb2bf37",
+        "category": "native-equivalent"
+      },
+      "AuthOidc": {
+        "sourceFingerprint": "fce3dcef22bc9b6abca31156b6c2e808357d45780e53bdbd5208390c2b79c01b",
+        "category": "invariant"
+      },
+      "AuthPlex": {
+        "sourceFingerprint": "7da497c53585afcbdc437054f3d6cb8acb5f4be87c783ddee4b5da2b5aa4dc01",
+        "category": "invariant"
+      },
+      "Backup": {
+        "sourceFingerprint": "01602066a7bff05708353b2f3bd4f6b0dfef0737bd36a73acf3081faca746dd5",
+        "category": "native-equivalent"
+      },
+      "Backups": {
+        "sourceFingerprint": "da61b377ca061c2ec4d91185a7b3fa0870be5196939aed15aca2cb3e5cecbdb7",
+        "category": "native-equivalent"
+      },
+      "NamingBuilderGroupItem": {
+        "sourceFingerprint": "a8cbe43b5bb2db7bdfd8a125b999e9efefc8e3c34f512d68631fa8d1ee5db0b2",
+        "category": "native-equivalent"
+      },
+      "BookQualityProperBadge": {
+        "sourceFingerprint": "f0609a6320e418f2496d2ff3b213de205c2514424987fbafb7ff304e1ade7696",
+        "category": "invariant"
+      },
+      "BookQualityRepackBadge": {
+        "sourceFingerprint": "c39380dd7d67cfe2c93ff0e15ee28ee7e7e007dd7730d9acdc9b51047c26b259",
+        "category": "invariant"
+      },
+      "Discord": {
+        "sourceFingerprint": "36e87ee26dd58a2803f5e1416125f45ffa16db582f4c7639f9843bf3add74b11",
+        "category": "invariant"
+      },
+      "Docker": {
+        "sourceFingerprint": "e4fe73facbddf0c0f2fa0b9ef784e430cbb9e4c469aa681584dc78ec3dc6a2a3",
+        "category": "invariant"
+      },
+      "DonationsKofiLabel": {
+        "sourceFingerprint": "0584ee1cc0e15949f7baa03a0ba08a986af6522758b6a1370d9927cc04f35405",
+        "category": "invariant"
+      },
+      "FileBrowserFaqLinkText": {
+        "sourceFingerprint": "7237ac5a0033c5299a7c319b091c5ad36ea491af3fc9caf479ddd852bff1e9e7",
+        "category": "invariant"
+      },
+      "Global": {
+        "sourceFingerprint": "876318c36f1b2ada33cda004487f66e04371a40a55463c13427213f63a36492a",
+        "category": "native-equivalent"
+      },
+      "Hardcover": {
+        "sourceFingerprint": "f70b78a60559a80480f169643613bf479367bf406d6a450986439c488c61b684",
+        "category": "invariant"
+      },
+      "ISBN": {
+        "sourceFingerprint": "e06d03e7b2115f2c890d4a40a9a5367bd9a01d9e05089bb07cfb2fc57b9a7570",
+        "category": "invariant"
+      },
+      "Local": {
+        "sourceFingerprint": "3ddcd8afed46af94398e7e7bd882cff634151c54a2f1fbc8aeb896aade8b36e2",
+        "category": "native-equivalent"
+      },
+      "Manual": {
+        "sourceFingerprint": "c2fce87ec1f9129069b6552121738806789c07ff5489caf16b4e7c9df5b1cacc",
+        "category": "native-equivalent"
+      },
+      "MyAnonaMouseStatus": {
+        "sourceFingerprint": "7215089d9a57f5a967332759b57af878acd7775fd5dc721bc2655d363e26f57f",
+        "category": "invariant"
+      },
+      "NETCore": {
+        "sourceFingerprint": "78358a63c65ac6843dafa909ada103637abc58112f49d43b1b51b9b9c9a77b92",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorNameExample": {
+        "sourceFingerprint": "db8bba6bc3ed5e595c5e46376fbf1e4df82aa63a5cdf144894b23101ff2c75de",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorsExample": {
+        "sourceFingerprint": "6526b18a3e376ef2976962d25851b1eaa33809e88e428eed4b3ae41d51c5f266",
+        "category": "invariant"
+      },
+      "NarratorRatingFraction": {
+        "sourceFingerprint": "99eb156177c7a6088fdc5705992eb9ff952218b32ba3a822bc13869b789f8ae2",
+        "category": "invariant"
+      },
+      "Original": {
+        "sourceFingerprint": "e4bef6b1e5dbb50e398346dcd3a721b8c7236b7e9cd5f8b3bcb8a9610f5d26a9",
+        "category": "native-equivalent"
+      },
+      "Proper": {
+        "sourceFingerprint": "a04f180c05bfacd4623e86428262da8bfa9d1eed2a55f08e5ed4c295b20f5a90",
+        "category": "invariant"
+      },
+      "RSS": {
+        "sourceFingerprint": "c40854603c6204f3d35aa38097cd80480f0ffc54982f6514fb667af6e6d47618",
+        "category": "invariant"
+      },
+      "Real": {
+        "sourceFingerprint": "dce19eda8ee09e1d964be25f294da5c0658662fe32947d6c6824f25b3a2ab27d",
+        "category": "invariant"
+      },
+      "Reddit": {
+        "sourceFingerprint": "e68570f8697c3a9c6ad5f5009ac45fad94a79d7856909e360038e2f78513f2af",
+        "category": "invariant"
+      },
+      "SettingsRestoreFileOption": {
+        "sourceFingerprint": "fff0fc0a822377d006cd910eb31e79d86ee767442dd2121d46a2f6b05124b6b5",
+        "category": "invariant"
+      },
+      "Status": {
+        "sourceFingerprint": "7c6f7141d85eba316af619cf644bcaf7118b874f7358b1c010bbd5245817f9f6",
+        "category": "native-equivalent"
+      },
+      "UMask": {
+        "sourceFingerprint": "e5de8f23c3b26e4e51f19c6909bac18e7a6c36966a0232b810d7d87bfee57a44",
+        "category": "invariant"
+      },
+      "Usenet": {
+        "sourceFingerprint": "8eaf5db051164651d5c9b541886ba7b7bb7a076ae45f2e66c69fe6ea00a0072f",
+        "category": "invariant"
+      },
+      "Wiki": {
+        "sourceFingerprint": "4c4e5fe24da227f01188c170e1fc8c9c03b36e5f338dc5eb4f10368cef2cbb8d",
+        "category": "invariant"
+      },
+      "Seeders": {
+        "sourceFingerprint": "1d69d42425dec97d05c578331f1a4e43000d409b5ca75ba8abc119bd03eb1748",
+        "category": "native-equivalent"
+      },
+      "Fatal": {
+        "sourceFingerprint": "d478d4f998f727c5a946c28b32624a06eff66b30aa89c23e79b49cf5e3f0be4b",
+        "category": "invariant"
+      },
+      "OneSeeder": {
+        "sourceFingerprint": "b73f9c0f53a9f57f228016a35b35f8f211cba9a98ec247b9f16cacd89e5ba700",
+        "category": "native-equivalent"
+      },
+      "SeedersCount": {
+        "sourceFingerprint": "018cb8dd04e3ae59ad9f0bd5af2bad6b03fbef8e6b1f7c4906c69ef060263d76",
+        "category": "native-equivalent"
+      },
+      "OneLeecher": {
+        "sourceFingerprint": "2b80e880912b86adac7ae14c37b740675328096a96f85cc2a772f27f45e641c7",
+        "category": "native-equivalent"
+      },
+      "LeechersCount": {
+        "sourceFingerprint": "989b9fb83073c5b6109f3bb1a47a3404b4f8998534c9dc3845c90b3f98406549",
+        "category": "native-equivalent"
+      },
+      "InteractiveImportLocalLabel": {
+        "sourceFingerprint": "8a7b5c6d7be7980c684acafe374e8b7dede90f782e57d5354e97da335803d5f9",
+        "category": "native-equivalent"
+      },
+      "OpenLibrary": {
+        "sourceFingerprint": "724e1ac6986e432a1fb53ee3e39002b92862b4cd31483defb010faf5c5c54fe9",
+        "category": "invariant"
+      },
+      "GoogleBooks": {
+        "sourceFingerprint": "3d052f61e7765c38cac255a5d79ebef33e985eda06a015b679eb13dff21f7cce",
+        "category": "invariant"
+      },
+      "LibraryOfCongress": {
+        "sourceFingerprint": "e05da88164345de76065f353111e45af66de4a948e572487a554cb4dfb134245",
+        "category": "invariant"
+      },
+      "Gutendex": {
+        "sourceFingerprint": "553c6b669547028c574257bee63d8e30b0de881e02032bc000d1c5cf474ce44a",
+        "category": "invariant"
+      },
+      "InternetArchive": {
+        "sourceFingerprint": "e7d592f40efc8d754dcd39b8e94310bba71299cec0845ca441ffcfa5bc22ac61",
+        "category": "invariant"
+      },
+      "NdlSearch": {
+        "sourceFingerprint": "966c0965320647596a667c6bc6193d148e6f1299351d3e79fcf62314b4cd9717",
+        "category": "invariant"
+      },
+      "Europeana": {
+        "sourceFingerprint": "6beb16cfd7f1c730ece835990595c804226e2ce6beff46d9e82665d86541c138",
+        "category": "invariant"
+      }
+    },
+    "ar": {
+      "ASIN": {
+        "sourceFingerprint": "6bca9fee7183aebd403f4febe7887d2816ff93bc8de1dac2e89aefcf960c2230",
+        "category": "invariant"
+      },
+      "AuthPlex": {
+        "sourceFingerprint": "7da497c53585afcbdc437054f3d6cb8acb5f4be87c783ddee4b5da2b5aa4dc01",
+        "category": "invariant"
+      },
+      "BookQualityProperBadge": {
+        "sourceFingerprint": "f0609a6320e418f2496d2ff3b213de205c2514424987fbafb7ff304e1ade7696",
+        "category": "invariant"
+      },
+      "BookQualityRepackBadge": {
+        "sourceFingerprint": "c39380dd7d67cfe2c93ff0e15ee28ee7e7e007dd7730d9acdc9b51047c26b259",
+        "category": "invariant"
+      },
+      "Discord": {
+        "sourceFingerprint": "36e87ee26dd58a2803f5e1416125f45ffa16db582f4c7639f9843bf3add74b11",
+        "category": "invariant"
+      },
+      "Docker": {
+        "sourceFingerprint": "e4fe73facbddf0c0f2fa0b9ef784e430cbb9e4c469aa681584dc78ec3dc6a2a3",
+        "category": "invariant"
+      },
+      "FileBrowserFaqLinkText": {
+        "sourceFingerprint": "7237ac5a0033c5299a7c319b091c5ad36ea491af3fc9caf479ddd852bff1e9e7",
+        "category": "invariant"
+      },
+      "Hardcover": {
+        "sourceFingerprint": "f70b78a60559a80480f169643613bf479367bf406d6a450986439c488c61b684",
+        "category": "invariant"
+      },
+      "ISBN": {
+        "sourceFingerprint": "e06d03e7b2115f2c890d4a40a9a5367bd9a01d9e05089bb07cfb2fc57b9a7570",
+        "category": "invariant"
+      },
+      "NETCore": {
+        "sourceFingerprint": "78358a63c65ac6843dafa909ada103637abc58112f49d43b1b51b9b9c9a77b92",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorNameExample": {
+        "sourceFingerprint": "db8bba6bc3ed5e595c5e46376fbf1e4df82aa63a5cdf144894b23101ff2c75de",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorsExample": {
+        "sourceFingerprint": "6526b18a3e376ef2976962d25851b1eaa33809e88e428eed4b3ae41d51c5f266",
+        "category": "invariant"
+      },
+      "NarratorRatingFraction": {
+        "sourceFingerprint": "99eb156177c7a6088fdc5705992eb9ff952218b32ba3a822bc13869b789f8ae2",
+        "category": "invariant"
+      },
+      "Proper": {
+        "sourceFingerprint": "a04f180c05bfacd4623e86428262da8bfa9d1eed2a55f08e5ed4c295b20f5a90",
+        "category": "invariant"
+      },
+      "RSS": {
+        "sourceFingerprint": "c40854603c6204f3d35aa38097cd80480f0ffc54982f6514fb667af6e6d47618",
+        "category": "invariant"
+      },
+      "Real": {
+        "sourceFingerprint": "dce19eda8ee09e1d964be25f294da5c0658662fe32947d6c6824f25b3a2ab27d",
+        "category": "invariant"
+      },
+      "Reddit": {
+        "sourceFingerprint": "e68570f8697c3a9c6ad5f5009ac45fad94a79d7856909e360038e2f78513f2af",
+        "category": "invariant"
+      },
+      "UMask": {
+        "sourceFingerprint": "e5de8f23c3b26e4e51f19c6909bac18e7a6c36966a0232b810d7d87bfee57a44",
+        "category": "invariant"
+      },
+      "Usenet": {
+        "sourceFingerprint": "8eaf5db051164651d5c9b541886ba7b7bb7a076ae45f2e66c69fe6ea00a0072f",
+        "category": "invariant"
+      },
+      "OpenLibrary": {
+        "sourceFingerprint": "724e1ac6986e432a1fb53ee3e39002b92862b4cd31483defb010faf5c5c54fe9",
+        "category": "invariant"
+      },
+      "GoogleBooks": {
+        "sourceFingerprint": "3d052f61e7765c38cac255a5d79ebef33e985eda06a015b679eb13dff21f7cce",
+        "category": "invariant"
+      },
+      "LibraryOfCongress": {
+        "sourceFingerprint": "e05da88164345de76065f353111e45af66de4a948e572487a554cb4dfb134245",
+        "category": "invariant"
+      },
+      "Gutendex": {
+        "sourceFingerprint": "553c6b669547028c574257bee63d8e30b0de881e02032bc000d1c5cf474ce44a",
+        "category": "invariant"
+      },
+      "InternetArchive": {
+        "sourceFingerprint": "e7d592f40efc8d754dcd39b8e94310bba71299cec0845ca441ffcfa5bc22ac61",
+        "category": "invariant"
+      },
+      "NdlSearch": {
+        "sourceFingerprint": "966c0965320647596a667c6bc6193d148e6f1299351d3e79fcf62314b4cd9717",
+        "category": "invariant"
+      },
+      "Europeana": {
+        "sourceFingerprint": "6beb16cfd7f1c730ece835990595c804226e2ce6beff46d9e82665d86541c138",
+        "category": "invariant"
+      }
+    },
+    "ko": {
+      "ASIN": {
+        "sourceFingerprint": "6bca9fee7183aebd403f4febe7887d2816ff93bc8de1dac2e89aefcf960c2230",
+        "category": "invariant"
+      },
+      "AuthPlex": {
+        "sourceFingerprint": "7da497c53585afcbdc437054f3d6cb8acb5f4be87c783ddee4b5da2b5aa4dc01",
+        "category": "invariant"
+      },
+      "BookQualityProperBadge": {
+        "sourceFingerprint": "f0609a6320e418f2496d2ff3b213de205c2514424987fbafb7ff304e1ade7696",
+        "category": "invariant"
+      },
+      "BookQualityRepackBadge": {
+        "sourceFingerprint": "c39380dd7d67cfe2c93ff0e15ee28ee7e7e007dd7730d9acdc9b51047c26b259",
+        "category": "invariant"
+      },
+      "Discord": {
+        "sourceFingerprint": "36e87ee26dd58a2803f5e1416125f45ffa16db582f4c7639f9843bf3add74b11",
+        "category": "invariant"
+      },
+      "Docker": {
+        "sourceFingerprint": "e4fe73facbddf0c0f2fa0b9ef784e430cbb9e4c469aa681584dc78ec3dc6a2a3",
+        "category": "invariant"
+      },
+      "DonationsKofiLabel": {
+        "sourceFingerprint": "0584ee1cc0e15949f7baa03a0ba08a986af6522758b6a1370d9927cc04f35405",
+        "category": "invariant"
+      },
+      "FileBrowserFaqLinkText": {
+        "sourceFingerprint": "7237ac5a0033c5299a7c319b091c5ad36ea491af3fc9caf479ddd852bff1e9e7",
+        "category": "invariant"
+      },
+      "Hardcover": {
+        "sourceFingerprint": "f70b78a60559a80480f169643613bf479367bf406d6a450986439c488c61b684",
+        "category": "invariant"
+      },
+      "ISBN": {
+        "sourceFingerprint": "e06d03e7b2115f2c890d4a40a9a5367bd9a01d9e05089bb07cfb2fc57b9a7570",
+        "category": "invariant"
+      },
+      "MyAnonaMouseStatus": {
+        "sourceFingerprint": "7215089d9a57f5a967332759b57af878acd7775fd5dc721bc2655d363e26f57f",
+        "category": "invariant"
+      },
+      "NETCore": {
+        "sourceFingerprint": "78358a63c65ac6843dafa909ada103637abc58112f49d43b1b51b9b9c9a77b92",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorNameExample": {
+        "sourceFingerprint": "db8bba6bc3ed5e595c5e46376fbf1e4df82aa63a5cdf144894b23101ff2c75de",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorsExample": {
+        "sourceFingerprint": "6526b18a3e376ef2976962d25851b1eaa33809e88e428eed4b3ae41d51c5f266",
+        "category": "invariant"
+      },
+      "NarratorRatingFraction": {
+        "sourceFingerprint": "99eb156177c7a6088fdc5705992eb9ff952218b32ba3a822bc13869b789f8ae2",
+        "category": "invariant"
+      },
+      "Proper": {
+        "sourceFingerprint": "a04f180c05bfacd4623e86428262da8bfa9d1eed2a55f08e5ed4c295b20f5a90",
+        "category": "invariant"
+      },
+      "RSS": {
+        "sourceFingerprint": "c40854603c6204f3d35aa38097cd80480f0ffc54982f6514fb667af6e6d47618",
+        "category": "invariant"
+      },
+      "Real": {
+        "sourceFingerprint": "dce19eda8ee09e1d964be25f294da5c0658662fe32947d6c6824f25b3a2ab27d",
+        "category": "invariant"
+      },
+      "Reddit": {
+        "sourceFingerprint": "e68570f8697c3a9c6ad5f5009ac45fad94a79d7856909e360038e2f78513f2af",
+        "category": "invariant"
+      },
+      "SearchHintGoodreadsLinkText": {
+        "sourceFingerprint": "99c3852e0fdbd5fc75ee7d45a88f90413404da2b1b6b2baa223df47dac2da257",
+        "category": "invariant"
+      },
+      "SettingsRestoreFileOption": {
+        "sourceFingerprint": "fff0fc0a822377d006cd910eb31e79d86ee767442dd2121d46a2f6b05124b6b5",
+        "category": "invariant"
+      },
+      "UMask": {
+        "sourceFingerprint": "e5de8f23c3b26e4e51f19c6909bac18e7a6c36966a0232b810d7d87bfee57a44",
+        "category": "invariant"
+      },
+      "Ui": {
+        "sourceFingerprint": "46a5c72c16a3457a8d574c4f61bb2d5013fef3d2e9b4fa6956742dcbaacd58dc",
+        "category": "invariant"
+      },
+      "Usenet": {
+        "sourceFingerprint": "8eaf5db051164651d5c9b541886ba7b7bb7a076ae45f2e66c69fe6ea00a0072f",
+        "category": "invariant"
+      },
+      "OpenLibrary": {
+        "sourceFingerprint": "724e1ac6986e432a1fb53ee3e39002b92862b4cd31483defb010faf5c5c54fe9",
+        "category": "invariant"
+      },
+      "GoogleBooks": {
+        "sourceFingerprint": "3d052f61e7765c38cac255a5d79ebef33e985eda06a015b679eb13dff21f7cce",
+        "category": "invariant"
+      },
+      "LibraryOfCongress": {
+        "sourceFingerprint": "e05da88164345de76065f353111e45af66de4a948e572487a554cb4dfb134245",
+        "category": "invariant"
+      },
+      "Gutendex": {
+        "sourceFingerprint": "553c6b669547028c574257bee63d8e30b0de881e02032bc000d1c5cf474ce44a",
+        "category": "invariant"
+      },
+      "InternetArchive": {
+        "sourceFingerprint": "e7d592f40efc8d754dcd39b8e94310bba71299cec0845ca441ffcfa5bc22ac61",
+        "category": "invariant"
+      },
+      "NdlSearch": {
+        "sourceFingerprint": "966c0965320647596a667c6bc6193d148e6f1299351d3e79fcf62314b4cd9717",
+        "category": "invariant"
+      },
+      "Europeana": {
+        "sourceFingerprint": "6beb16cfd7f1c730ece835990595c804226e2ce6beff46d9e82665d86541c138",
+        "category": "invariant"
+      }
+    },
+    "zh-Hant": {
+      "ASIN": {
+        "sourceFingerprint": "6bca9fee7183aebd403f4febe7887d2816ff93bc8de1dac2e89aefcf960c2230",
+        "category": "invariant"
+      },
+      "AuthPlex": {
+        "sourceFingerprint": "7da497c53585afcbdc437054f3d6cb8acb5f4be87c783ddee4b5da2b5aa4dc01",
+        "category": "invariant"
+      },
+      "BookQualityProperBadge": {
+        "sourceFingerprint": "f0609a6320e418f2496d2ff3b213de205c2514424987fbafb7ff304e1ade7696",
+        "category": "invariant"
+      },
+      "BookQualityRepackBadge": {
+        "sourceFingerprint": "c39380dd7d67cfe2c93ff0e15ee28ee7e7e007dd7730d9acdc9b51047c26b259",
+        "category": "invariant"
+      },
+      "Discord": {
+        "sourceFingerprint": "36e87ee26dd58a2803f5e1416125f45ffa16db582f4c7639f9843bf3add74b11",
+        "category": "invariant"
+      },
+      "Docker": {
+        "sourceFingerprint": "e4fe73facbddf0c0f2fa0b9ef784e430cbb9e4c469aa681584dc78ec3dc6a2a3",
+        "category": "invariant"
+      },
+      "DonationsKofiLabel": {
+        "sourceFingerprint": "0584ee1cc0e15949f7baa03a0ba08a986af6522758b6a1370d9927cc04f35405",
+        "category": "invariant"
+      },
+      "FileBrowserFaqLinkText": {
+        "sourceFingerprint": "7237ac5a0033c5299a7c319b091c5ad36ea491af3fc9caf479ddd852bff1e9e7",
+        "category": "invariant"
+      },
+      "Hardcover": {
+        "sourceFingerprint": "f70b78a60559a80480f169643613bf479367bf406d6a450986439c488c61b684",
+        "category": "invariant"
+      },
+      "ISBN": {
+        "sourceFingerprint": "e06d03e7b2115f2c890d4a40a9a5367bd9a01d9e05089bb07cfb2fc57b9a7570",
+        "category": "invariant"
+      },
+      "MyAnonaMouseStatus": {
+        "sourceFingerprint": "7215089d9a57f5a967332759b57af878acd7775fd5dc721bc2655d363e26f57f",
+        "category": "invariant"
+      },
+      "NETCore": {
+        "sourceFingerprint": "78358a63c65ac6843dafa909ada103637abc58112f49d43b1b51b9b9c9a77b92",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorNameExample": {
+        "sourceFingerprint": "db8bba6bc3ed5e595c5e46376fbf1e4df82aa63a5cdf144894b23101ff2c75de",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorsExample": {
+        "sourceFingerprint": "6526b18a3e376ef2976962d25851b1eaa33809e88e428eed4b3ae41d51c5f266",
+        "category": "invariant"
+      },
+      "NarratorRatingFraction": {
+        "sourceFingerprint": "99eb156177c7a6088fdc5705992eb9ff952218b32ba3a822bc13869b789f8ae2",
+        "category": "invariant"
+      },
+      "Proper": {
+        "sourceFingerprint": "a04f180c05bfacd4623e86428262da8bfa9d1eed2a55f08e5ed4c295b20f5a90",
+        "category": "invariant"
+      },
+      "RSS": {
+        "sourceFingerprint": "c40854603c6204f3d35aa38097cd80480f0ffc54982f6514fb667af6e6d47618",
+        "category": "invariant"
+      },
+      "Real": {
+        "sourceFingerprint": "dce19eda8ee09e1d964be25f294da5c0658662fe32947d6c6824f25b3a2ab27d",
+        "category": "invariant"
+      },
+      "Reddit": {
+        "sourceFingerprint": "e68570f8697c3a9c6ad5f5009ac45fad94a79d7856909e360038e2f78513f2af",
+        "category": "invariant"
+      },
+      "SettingsRestoreFileOption": {
+        "sourceFingerprint": "fff0fc0a822377d006cd910eb31e79d86ee767442dd2121d46a2f6b05124b6b5",
+        "category": "invariant"
+      },
+      "UMask": {
+        "sourceFingerprint": "e5de8f23c3b26e4e51f19c6909bac18e7a6c36966a0232b810d7d87bfee57a44",
+        "category": "invariant"
+      },
+      "Ui": {
+        "sourceFingerprint": "46a5c72c16a3457a8d574c4f61bb2d5013fef3d2e9b4fa6956742dcbaacd58dc",
+        "category": "invariant"
+      },
+      "Usenet": {
+        "sourceFingerprint": "8eaf5db051164651d5c9b541886ba7b7bb7a076ae45f2e66c69fe6ea00a0072f",
+        "category": "invariant"
+      },
+      "OpenLibrary": {
+        "sourceFingerprint": "724e1ac6986e432a1fb53ee3e39002b92862b4cd31483defb010faf5c5c54fe9",
+        "category": "invariant"
+      },
+      "GoogleBooks": {
+        "sourceFingerprint": "3d052f61e7765c38cac255a5d79ebef33e985eda06a015b679eb13dff21f7cce",
+        "category": "invariant"
+      },
+      "LibraryOfCongress": {
+        "sourceFingerprint": "e05da88164345de76065f353111e45af66de4a948e572487a554cb4dfb134245",
+        "category": "invariant"
+      },
+      "Gutendex": {
+        "sourceFingerprint": "553c6b669547028c574257bee63d8e30b0de881e02032bc000d1c5cf474ce44a",
+        "category": "invariant"
+      },
+      "InternetArchive": {
+        "sourceFingerprint": "e7d592f40efc8d754dcd39b8e94310bba71299cec0845ca441ffcfa5bc22ac61",
+        "category": "invariant"
+      },
+      "NdlSearch": {
+        "sourceFingerprint": "966c0965320647596a667c6bc6193d148e6f1299351d3e79fcf62314b4cd9717",
+        "category": "invariant"
+      },
+      "Europeana": {
+        "sourceFingerprint": "6beb16cfd7f1c730ece835990595c804226e2ce6beff46d9e82665d86541c138",
+        "category": "invariant"
+      }
+    },
+    "vi": {
+      "ASIN": {
+        "sourceFingerprint": "6bca9fee7183aebd403f4febe7887d2816ff93bc8de1dac2e89aefcf960c2230",
+        "category": "invariant"
+      },
+      "AudibleMarketplaceCa": {
+        "sourceFingerprint": "eb2d608593f9420e6fbb38f932b8263ceff7f652fd9b06466df4edb7a582cbb6",
+        "category": "native-equivalent"
+      },
+      "AudibleMarketplaceBr": {
+        "sourceFingerprint": "a101a84f18d9c69a1d229fcadbaf7a7ef57d7fb8f01fe66949eeb7b443bf440a",
+        "category": "native-equivalent"
+      },
+      "AuthOidc": {
+        "sourceFingerprint": "fce3dcef22bc9b6abca31156b6c2e808357d45780e53bdbd5208390c2b79c01b",
+        "category": "invariant"
+      },
+      "AuthPlex": {
+        "sourceFingerprint": "7da497c53585afcbdc437054f3d6cb8acb5f4be87c783ddee4b5da2b5aa4dc01",
+        "category": "invariant"
+      },
+      "BookQualityProperBadge": {
+        "sourceFingerprint": "f0609a6320e418f2496d2ff3b213de205c2514424987fbafb7ff304e1ade7696",
+        "category": "invariant"
+      },
+      "BookQualityRepackBadge": {
+        "sourceFingerprint": "c39380dd7d67cfe2c93ff0e15ee28ee7e7e007dd7730d9acdc9b51047c26b259",
+        "category": "invariant"
+      },
+      "Discord": {
+        "sourceFingerprint": "36e87ee26dd58a2803f5e1416125f45ffa16db582f4c7639f9843bf3add74b11",
+        "category": "invariant"
+      },
+      "Docker": {
+        "sourceFingerprint": "e4fe73facbddf0c0f2fa0b9ef784e430cbb9e4c469aa681584dc78ec3dc6a2a3",
+        "category": "invariant"
+      },
+      "DonationsKofiLabel": {
+        "sourceFingerprint": "0584ee1cc0e15949f7baa03a0ba08a986af6522758b6a1370d9927cc04f35405",
+        "category": "invariant"
+      },
+      "FileBrowserFaqLinkText": {
+        "sourceFingerprint": "7237ac5a0033c5299a7c319b091c5ad36ea491af3fc9caf479ddd852bff1e9e7",
+        "category": "invariant"
+      },
+      "Hardcover": {
+        "sourceFingerprint": "f70b78a60559a80480f169643613bf479367bf406d6a450986439c488c61b684",
+        "category": "invariant"
+      },
+      "ISBN": {
+        "sourceFingerprint": "e06d03e7b2115f2c890d4a40a9a5367bd9a01d9e05089bb07cfb2fc57b9a7570",
+        "category": "invariant"
+      },
+      "MyAnonaMouseStatus": {
+        "sourceFingerprint": "7215089d9a57f5a967332759b57af878acd7775fd5dc721bc2655d363e26f57f",
+        "category": "invariant"
+      },
+      "NETCore": {
+        "sourceFingerprint": "78358a63c65ac6843dafa909ada103637abc58112f49d43b1b51b9b9c9a77b92",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorNameExample": {
+        "sourceFingerprint": "db8bba6bc3ed5e595c5e46376fbf1e4df82aa63a5cdf144894b23101ff2c75de",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorsExample": {
+        "sourceFingerprint": "6526b18a3e376ef2976962d25851b1eaa33809e88e428eed4b3ae41d51c5f266",
+        "category": "invariant"
+      },
+      "NarratorRatingFraction": {
+        "sourceFingerprint": "99eb156177c7a6088fdc5705992eb9ff952218b32ba3a822bc13869b789f8ae2",
+        "category": "invariant"
+      },
+      "Proper": {
+        "sourceFingerprint": "a04f180c05bfacd4623e86428262da8bfa9d1eed2a55f08e5ed4c295b20f5a90",
+        "category": "invariant"
+      },
+      "Proxy": {
+        "sourceFingerprint": "2d47db5934c67af5b972ba6f33fa3c6323ba9680eee8ab7376901e91e17f76be",
+        "category": "native-equivalent"
+      },
+      "RSS": {
+        "sourceFingerprint": "c40854603c6204f3d35aa38097cd80480f0ffc54982f6514fb667af6e6d47618",
+        "category": "invariant"
+      },
+      "Real": {
+        "sourceFingerprint": "dce19eda8ee09e1d964be25f294da5c0658662fe32947d6c6824f25b3a2ab27d",
+        "category": "invariant"
+      },
+      "Reddit": {
+        "sourceFingerprint": "e68570f8697c3a9c6ad5f5009ac45fad94a79d7856909e360038e2f78513f2af",
+        "category": "invariant"
+      },
+      "SettingsRestoreFileOption": {
+        "sourceFingerprint": "fff0fc0a822377d006cd910eb31e79d86ee767442dd2121d46a2f6b05124b6b5",
+        "category": "invariant"
+      },
+      "Usenet": {
+        "sourceFingerprint": "8eaf5db051164651d5c9b541886ba7b7bb7a076ae45f2e66c69fe6ea00a0072f",
+        "category": "invariant"
+      },
+      "Wiki": {
+        "sourceFingerprint": "4c4e5fe24da227f01188c170e1fc8c9c03b36e5f338dc5eb4f10368cef2cbb8d",
+        "category": "invariant"
+      },
+      "OneSeeder": {
+        "sourceFingerprint": "b73f9c0f53a9f57f228016a35b35f8f211cba9a98ec247b9f16cacd89e5ba700",
+        "category": "native-equivalent"
+      },
+      "OneLeecher": {
+        "sourceFingerprint": "2b80e880912b86adac7ae14c37b740675328096a96f85cc2a772f27f45e641c7",
+        "category": "native-equivalent"
+      },
+      "OpenLibrary": {
+        "sourceFingerprint": "724e1ac6986e432a1fb53ee3e39002b92862b4cd31483defb010faf5c5c54fe9",
+        "category": "invariant"
+      },
+      "GoogleBooks": {
+        "sourceFingerprint": "3d052f61e7765c38cac255a5d79ebef33e985eda06a015b679eb13dff21f7cce",
+        "category": "invariant"
+      },
+      "LibraryOfCongress": {
+        "sourceFingerprint": "e05da88164345de76065f353111e45af66de4a948e572487a554cb4dfb134245",
+        "category": "invariant"
+      },
+      "Gutendex": {
+        "sourceFingerprint": "553c6b669547028c574257bee63d8e30b0de881e02032bc000d1c5cf474ce44a",
+        "category": "invariant"
+      },
+      "InternetArchive": {
+        "sourceFingerprint": "e7d592f40efc8d754dcd39b8e94310bba71299cec0845ca441ffcfa5bc22ac61",
+        "category": "invariant"
+      },
+      "NdlSearch": {
+        "sourceFingerprint": "966c0965320647596a667c6bc6193d148e6f1299351d3e79fcf62314b4cd9717",
+        "category": "invariant"
+      },
+      "Europeana": {
+        "sourceFingerprint": "6beb16cfd7f1c730ece835990595c804226e2ce6beff46d9e82665d86541c138",
+        "category": "invariant"
+      }
+    },
+    "id": {
+      "ASIN": {
+        "sourceFingerprint": "6bca9fee7183aebd403f4febe7887d2816ff93bc8de1dac2e89aefcf960c2230",
+        "category": "invariant"
+      },
+      "AbsMappingsAudioSlotLabel": {
+        "sourceFingerprint": "63bdd8b6c1ff5da7c0b6afbda13797ebb02b6aff00544a1e21494f30ead4ec75",
+        "category": "native-equivalent"
+      },
+      "Agenda": {
+        "sourceFingerprint": "5d7af7df3718caf15349b1667db7186524bc940fa2ed3083078bde0d6cb2bf37",
+        "category": "native-equivalent"
+      },
+      "AudibleMarketplaceAu": {
+        "sourceFingerprint": "02d6fdcb9dc76e557688a826d45ca49d544ebeb7a46d28a96e468686fa4e4a1c",
+        "category": "native-equivalent"
+      },
+      "AudibleMarketplaceIn": {
+        "sourceFingerprint": "898b61ae950570eb32d25902bef7b8dacd7ab2cff1e556f20d2cbf2f8710740b",
+        "category": "native-equivalent"
+      },
+      "AuthOidc": {
+        "sourceFingerprint": "fce3dcef22bc9b6abca31156b6c2e808357d45780e53bdbd5208390c2b79c01b",
+        "category": "invariant"
+      },
+      "AuthPlex": {
+        "sourceFingerprint": "7da497c53585afcbdc437054f3d6cb8acb5f4be87c783ddee4b5da2b5aa4dc01",
+        "category": "invariant"
+      },
+      "NamingBuilderGroupItem": {
+        "sourceFingerprint": "a8cbe43b5bb2db7bdfd8a125b999e9efefc8e3c34f512d68631fa8d1ee5db0b2",
+        "category": "native-equivalent"
+      },
+      "BookQualityProperBadge": {
+        "sourceFingerprint": "f0609a6320e418f2496d2ff3b213de205c2514424987fbafb7ff304e1ade7696",
+        "category": "invariant"
+      },
+      "BookQualityRepackBadge": {
+        "sourceFingerprint": "c39380dd7d67cfe2c93ff0e15ee28ee7e7e007dd7730d9acdc9b51047c26b259",
+        "category": "invariant"
+      },
+      "Discord": {
+        "sourceFingerprint": "36e87ee26dd58a2803f5e1416125f45ffa16db582f4c7639f9843bf3add74b11",
+        "category": "invariant"
+      },
+      "Docker": {
+        "sourceFingerprint": "e4fe73facbddf0c0f2fa0b9ef784e430cbb9e4c469aa681584dc78ec3dc6a2a3",
+        "category": "invariant"
+      },
+      "DonationsKofiLabel": {
+        "sourceFingerprint": "0584ee1cc0e15949f7baa03a0ba08a986af6522758b6a1370d9927cc04f35405",
+        "category": "invariant"
+      },
+      "FileBrowserFaqLinkText": {
+        "sourceFingerprint": "7237ac5a0033c5299a7c319b091c5ad36ea491af3fc9caf479ddd852bff1e9e7",
+        "category": "invariant"
+      },
+      "Global": {
+        "sourceFingerprint": "876318c36f1b2ada33cda004487f66e04371a40a55463c13427213f63a36492a",
+        "category": "native-equivalent"
+      },
+      "Hardcover": {
+        "sourceFingerprint": "f70b78a60559a80480f169643613bf479367bf406d6a450986439c488c61b684",
+        "category": "invariant"
+      },
+      "ISBN": {
+        "sourceFingerprint": "e06d03e7b2115f2c890d4a40a9a5367bd9a01d9e05089bb07cfb2fc57b9a7570",
+        "category": "invariant"
+      },
+      "Label": {
+        "sourceFingerprint": "851c38f9ec6949b121e6a646eb04c7a0e76118d62078f0dc46c68accc50ab522",
+        "category": "native-equivalent"
+      },
+      "Manual": {
+        "sourceFingerprint": "c2fce87ec1f9129069b6552121738806789c07ff5489caf16b4e7c9df5b1cacc",
+        "category": "native-equivalent"
+      },
+      "Format": {
+        "sourceFingerprint": "49b425320f3c460af9900820fc3299c917e7c62ab9d8e5a6a8df5f20a2cdbc84",
+        "category": "native-equivalent"
+      },
+      "Metadata": {
+        "sourceFingerprint": "70a98ecf699722751051e814d9b0020001cbb632e520affac38089146772360f",
+        "category": "native-equivalent"
+      },
+      "Mode": {
+        "sourceFingerprint": "5be8a3febdc2bdbf26c1f9d79349096ca98f7fcbb00ceb93e8a5b83e6ab718d5",
+        "category": "native-equivalent"
+      },
+      "MyAnonaMouseStatus": {
+        "sourceFingerprint": "7215089d9a57f5a967332759b57af878acd7775fd5dc721bc2655d363e26f57f",
+        "category": "invariant"
+      },
+      "NETCore": {
+        "sourceFingerprint": "78358a63c65ac6843dafa909ada103637abc58112f49d43b1b51b9b9c9a77b92",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorNameExample": {
+        "sourceFingerprint": "db8bba6bc3ed5e595c5e46376fbf1e4df82aa63a5cdf144894b23101ff2c75de",
+        "category": "invariant"
+      },
+      "NamingTokenNarratorsExample": {
+        "sourceFingerprint": "6526b18a3e376ef2976962d25851b1eaa33809e88e428eed4b3ae41d51c5f266",
+        "category": "invariant"
+      },
+      "NarratorRatingFraction": {
+        "sourceFingerprint": "99eb156177c7a6088fdc5705992eb9ff952218b32ba3a822bc13869b789f8ae2",
+        "category": "invariant"
+      },
+      "Port": {
+        "sourceFingerprint": "8753fb97c59b96902c485c9366c4d82551a1a89717d3ed6eafed29a8988abcd9",
+        "category": "native-equivalent"
+      },
+      "Proper": {
+        "sourceFingerprint": "a04f180c05bfacd4623e86428262da8bfa9d1eed2a55f08e5ed4c295b20f5a90",
+        "category": "invariant"
+      },
+      "RSS": {
+        "sourceFingerprint": "c40854603c6204f3d35aa38097cd80480f0ffc54982f6514fb667af6e6d47618",
+        "category": "invariant"
+      },
+      "Real": {
+        "sourceFingerprint": "dce19eda8ee09e1d964be25f294da5c0658662fe32947d6c6824f25b3a2ab27d",
+        "category": "invariant"
+      },
+      "Reddit": {
+        "sourceFingerprint": "e68570f8697c3a9c6ad5f5009ac45fad94a79d7856909e360038e2f78513f2af",
+        "category": "invariant"
+      },
+      "SettingsRestoreFileOption": {
+        "sourceFingerprint": "fff0fc0a822377d006cd910eb31e79d86ee767442dd2121d46a2f6b05124b6b5",
+        "category": "invariant"
+      },
+      "Status": {
+        "sourceFingerprint": "7c6f7141d85eba316af619cf644bcaf7118b874f7358b1c010bbd5245817f9f6",
+        "category": "native-equivalent"
+      },
+      "Ui": {
+        "sourceFingerprint": "46a5c72c16a3457a8d574c4f61bb2d5013fef3d2e9b4fa6956742dcbaacd58dc",
+        "category": "invariant"
+      },
+      "Usenet": {
+        "sourceFingerprint": "8eaf5db051164651d5c9b541886ba7b7bb7a076ae45f2e66c69fe6ea00a0072f",
+        "category": "invariant"
+      },
+      "Wiki": {
+        "sourceFingerprint": "4c4e5fe24da227f01188c170e1fc8c9c03b36e5f338dc5eb4f10368cef2cbb8d",
+        "category": "invariant"
+      },
+      "Debug": {
+        "sourceFingerprint": "bd25f0be4951da0c0936812c2430fc84ed3090e22c2d22a0d283e291e7cb0be1",
+        "category": "invariant"
+      },
+      "Fatal": {
+        "sourceFingerprint": "d478d4f998f727c5a946c28b32624a06eff66b30aa89c23e79b49cf5e3f0be4b",
+        "category": "invariant"
+      },
+      "OneSeeder": {
+        "sourceFingerprint": "b73f9c0f53a9f57f228016a35b35f8f211cba9a98ec247b9f16cacd89e5ba700",
+        "category": "native-equivalent"
+      },
+      "OneLeecher": {
+        "sourceFingerprint": "2b80e880912b86adac7ae14c37b740675328096a96f85cc2a772f27f45e641c7",
+        "category": "native-equivalent"
+      },
+      "OpenLibrary": {
+        "sourceFingerprint": "724e1ac6986e432a1fb53ee3e39002b92862b4cd31483defb010faf5c5c54fe9",
+        "category": "invariant"
+      },
+      "GoogleBooks": {
+        "sourceFingerprint": "3d052f61e7765c38cac255a5d79ebef33e985eda06a015b679eb13dff21f7cce",
+        "category": "invariant"
+      },
+      "LibraryOfCongress": {
+        "sourceFingerprint": "e05da88164345de76065f353111e45af66de4a948e572487a554cb4dfb134245",
+        "category": "invariant"
+      },
+      "Gutendex": {
+        "sourceFingerprint": "553c6b669547028c574257bee63d8e30b0de881e02032bc000d1c5cf474ce44a",
+        "category": "invariant"
+      },
+      "InternetArchive": {
+        "sourceFingerprint": "e7d592f40efc8d754dcd39b8e94310bba71299cec0845ca441ffcfa5bc22ac61",
+        "category": "invariant"
+      },
+      "NdlSearch": {
+        "sourceFingerprint": "966c0965320647596a667c6bc6193d148e6f1299351d3e79fcf62314b4cd9717",
+        "category": "invariant"
+      },
+      "Europeana": {
+        "sourceFingerprint": "6beb16cfd7f1c730ece835990595c804226e2ce6beff46d9e82665d86541c138",
+        "category": "invariant"
+      }
+    }
+  }
+}

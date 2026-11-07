@@ -38,13 +38,14 @@ namespace NzbDrone.Core.MetadataSource.Goodreads
                 .CreateFactory();
         }
 
-        public SeriesResource GetSeriesInfo(int foreignSeriesId, bool useCache = true)
+        public SeriesResource GetSeriesInfo(int foreignSeriesId, int page = 1, bool useCache = true)
         {
             _logger.Debug("Getting Series with GoodreadsId of {0}", foreignSeriesId);
 
             var httpRequest = _requestBuilder.Create()
                 .SetSegment("route", $"series/{foreignSeriesId}")
                 .AddQueryParam("format", "xml")
+                .AddQueryParam("page", page)
                 .Build();
 
             httpRequest.AllowAutoRedirect = true;

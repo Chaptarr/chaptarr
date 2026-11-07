@@ -106,6 +106,44 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(command.ForceRefresh, Is.True);
         }
 
+        [TestCase("audiobook")]
+        [TestCase("ebook")]
+        public void should_force_refresh_when_media_specific_metadata_profile_changes(string mediaType)
+        {
+            var commandQueue = new RecordingCommandQueue();
+            var subject = new AuthorEditedService(commandQueue, LogManager.GetCurrentClassLogger());
+            var oldAuthor = new Author
+            {
+                Id = 1,
+                Name = "Martha Wells",
+                MetadataProfileId = 10,
+                AudiobookMetadataProfileId = 20,
+                EbookMetadataProfileId = 30,
+                AudiobookRootFolderPath = "/library/audiobooks",
+                EbookRootFolderPath = "/library/ebooks"
+            };
+            var author = new Author
+            {
+                Id = oldAuthor.Id,
+                Name = oldAuthor.Name,
+                MetadataProfileId = oldAuthor.MetadataProfileId,
+                AudiobookMetadataProfileId = mediaType == "audiobook" ? 21 : oldAuthor.AudiobookMetadataProfileId,
+                EbookMetadataProfileId = mediaType == "ebook" ? 31 : oldAuthor.EbookMetadataProfileId,
+                AudiobookRootFolderPath = oldAuthor.AudiobookRootFolderPath,
+                EbookRootFolderPath = oldAuthor.EbookRootFolderPath
+            };
+
+            subject.Handle(new AuthorEditedEvent(author, oldAuthor));
+
+            var command = commandQueue.PushedCommands.Single().Body as RefreshAuthorCommand;
+
+            Assert.That(command, Is.Not.Null);
+            Assert.That(command.AuthorId, Is.EqualTo(1));
+            Assert.That(command.RefreshMetadata, Is.True);
+            Assert.That(command.RescanFolders, Is.False);
+            Assert.That(command.ForceRefresh, Is.True);
+        }
+
 
         private sealed class RecordingCommandQueue : IManageCommandQueue
         {

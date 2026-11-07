@@ -41,10 +41,29 @@ namespace NzbDrone.Core.Update
             _logger = logger;
         }
 
+        private bool ShouldUseGitHubUpdates(string branch)
+        {
+            // ChaptarrNG owns the main release channel. Preserve an operator's
+            // explicit choice, while new installs without this setting avoid
+            // depending on Readarr's update service for ChaptarrNG releases.
+            return ShouldUseGitHubUpdateRoute(
+                _configService.IsDefined(nameof(IConfigService.UseGitHubUpdates)),
+                _configService.UseGitHubUpdates,
+                branch);
+        }
+
+        internal static bool ShouldUseGitHubUpdateRoute(bool hasExplicitChoice, bool explicitChoice, string branch)
+        {
+            return hasExplicitChoice
+                ? explicitChoice
+                : string.Equals(branch, "main", StringComparison.OrdinalIgnoreCase);
+        }
+
         public UpdatePackage GetLatestUpdate(string branch, Version currentVersion)
         {
-            // Use GitHub if configured
-            if (_configService.UseGitHubUpdates)
+            // Use the maintained ChaptarrNG route for main unless an explicit
+            // operator setting selects the legacy update service.
+            if (ShouldUseGitHubUpdates(branch))
             {
                 _logger.Debug("Using GitHub for update check");
                 var gitHubUpdate = _gitHubUpdateProvider.GetLatestUpdate(branch, currentVersion);
@@ -135,8 +154,8 @@ namespace NzbDrone.Core.Update
 
         public List<UpdatePackage> GetRecentUpdates(string branch, Version currentVersion, Version previousVersion)
         {
-            // Use GitHub if configured
-            if (_configService.UseGitHubUpdates)
+            // Keep changelog lookup on the same route as update checks.
+            if (ShouldUseGitHubUpdates(branch))
             {
                 _logger.Debug("Using GitHub for recent updates check");
                 var gitHubUpdates = _gitHubUpdateProvider.GetRecentUpdates(branch, currentVersion, previousVersion);
@@ -237,7 +256,7 @@ namespace NzbDrone.Core.Update
                 {
                     Version = currentVersion,
                     ReleaseDate = DateTime.UtcNow,
-                    Branch = "chaptarr",
+                    Branch = "main",
                     Changes = new UpdateChanges
                     {
                         Fixed = new List<string>

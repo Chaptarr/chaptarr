@@ -9,6 +9,7 @@ namespace Chaptarr.Api.V1.Config
         public int MaximumSize { get; set; }
         public int Retention { get; set; }
         public int RssSyncInterval { get; set; }
+        public int MissingBookSearchInterval { get; set; }
     }
 
     public static class IndexerConfigResourceMapper
@@ -21,6 +22,7 @@ namespace Chaptarr.Api.V1.Config
                 MaximumSize = model.MaximumSize,
                 Retention = model.Retention,
                 RssSyncInterval = model.RssSyncInterval,
+                MissingBookSearchInterval = model.MissingBookSearchInterval,
             };
         }
     }

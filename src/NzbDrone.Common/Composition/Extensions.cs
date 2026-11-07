@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using DryIoc;
 using NzbDrone.Common.EnvironmentInfo;
@@ -21,9 +22,16 @@ namespace NzbDrone.Common.Composition.Extensions
             return container;
         }
 
-        public static IContainer AutoAddServices(this IContainer container, List<string> assemblyNames)
+        public static IContainer AutoAddServices(this IContainer container, List<string> assemblyNames, IEnumerable<string> optionalAssemblyPaths = null)
         {
-            var assemblies = AssemblyLoader.Load(assemblyNames);
+            var assemblies = AssemblyLoader.Load(assemblyNames).ToList();
+
+            if (optionalAssemblyPaths != null)
+            {
+                assemblies.AddRange(optionalAssemblyPaths
+                    .Where(File.Exists)
+                    .Select(AssemblyLoader.LoadOptional));
+            }
 
             container.RegisterMany(assemblies,
                 serviceTypeCondition: type => type.IsInterface && !string.IsNullOrWhiteSpace(type.FullName) && !type.FullName.StartsWith("System"),

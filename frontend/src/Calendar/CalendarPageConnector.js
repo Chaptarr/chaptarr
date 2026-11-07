@@ -1,5 +1,4 @@
 /* eslint max-params: 0 */
-import moment from 'moment';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import withCurrentPage from 'Components/withCurrentPage';
@@ -8,6 +7,7 @@ import createAuthorCountSelector from 'Store/Selectors/createAuthorCountSelector
 import createCommandsSelector from 'Store/Selectors/createCommandsSelector';
 import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
 import { isCommandExecuting } from 'Utilities/Command';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import isBefore from 'Utilities/Date/isBefore';
 import CalendarPage from './CalendarPage';
 
@@ -24,8 +24,8 @@ function createMissingBookIdsSelector() {
 
         if (
           percentOfBooks < 100 &&
-          moment(releaseDate).isAfter(start) &&
-          moment(releaseDate).isBefore(end) &&
+          dayjs(releaseDate).isAfter(start) &&
+          dayjs(releaseDate).isBefore(end) &&
           isBefore(book.releaseDate) &&
           !queueDetails.some((details) => !!details.book && details.book.id === book.id)
         ) {

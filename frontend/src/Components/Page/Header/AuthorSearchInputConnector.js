@@ -2,21 +2,29 @@ import { push } from 'connected-react-router';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import { showMessage } from 'Store/Actions/appActions';
+import { fetchMetadataProvider } from 'Store/Actions/settingsActions';
+import translate from 'Utilities/String/translate';
 import AuthorSearchInput from './AuthorSearchInput';
 
 function createMapStateToProps() {
   return createSelector(
     (state) => state.settings.hardcoverConfig,
-    (hardcoverConfig) => {
+    (state) => state.settings.metadataProvider,
+    (hardcoverConfig, metadataProviderConfig) => {
       const { isPopulated, error, item } = hardcoverConfig;
       let isHardcoverConfigured = null;
 
       if (isPopulated || error) {
-        isHardcoverConfigured = !!(item?.enabled && item?.hasToken);
+        const metadataProviderItem = metadataProviderConfig?.item || {};
+        const legacyCatalogEnabled = metadataProviderConfig?.isPopulated &&
+          !metadataProviderConfig.error && metadataProviderItem.enableHardcover?.value;
+        const hasHardcoverToken = item?.hasToken || metadataProviderItem.hasHardcoverAuth?.value;
+        isHardcoverConfigured = !!((item?.enabled || legacyCatalogEnabled) && hasHardcoverToken);
       }
 
       return {
-        isHardcoverConfigured
+        isHardcoverConfigured,
+        metadataProviderConfig
       };
     }
   );
@@ -24,6 +32,10 @@ function createMapStateToProps() {
 
 function createMapDispatchToProps(dispatch, props) {
   return {
+    fetchMetadataProvider() {
+      dispatch(fetchMetadataProvider());
+    },
+
     onGoToAuthor(authorId) {
       dispatch(push(`${window.Chaptarr.urlBase}/author/${authorId}`));
     },
@@ -41,7 +53,7 @@ function createMapDispatchToProps(dispatch, props) {
     onHardcoverSetupRequired() {
       dispatch(showMessage({
         id: `hardcover-setup-${Date.now()}`,
-        message: 'Hardcover search is disabled until you connect your Hardcover account in Quickstart.',
+        message: translate('HardcoverSearchRequiresQuickstart'),
         type: 'warning',
         hideAfter: 10,
         clickable: true,

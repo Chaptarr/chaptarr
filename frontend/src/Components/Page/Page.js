@@ -7,6 +7,7 @@ import SignalRConnector from 'Components/SignalRConnector';
 import AuthenticationRequiredModal from 'FirstRun/AuthenticationRequiredModal';
 import AuthorFolderPickerModalConnector from 'Author/AuthorFolderPickerModalConnector';
 import locationShape from 'Helpers/Props/Shapes/locationShape';
+import translate from 'Utilities/String/translate';
 import PageHeader from './Header/PageHeader';
 import PageSidebar from './Sidebar/PageSidebar';
 import PageTransitionWrapper from './PageTransitionWrapper';
@@ -43,6 +44,16 @@ class Page extends Component {
     if (prevProps.isDisconnected !== isDisconnected) {
       this.setState({ isConnectionLostModalOpen: isDisconnected });
     }
+
+    if (prevProps.location.pathname !== this.props.location.pathname) {
+      const mainContent = document.getElementById('main-content');
+      const portalRoot = document.getElementById('portal-root');
+      const modalHasFocus = portalRoot && portalRoot.contains(document.activeElement);
+
+      if (mainContent && !modalHasFocus) {
+        mainContent.focus();
+      }
+    }
   }
 
   componentWillUnmount() {
@@ -78,6 +89,7 @@ class Page extends Component {
       isSmallScreen,
       isSidebarVisible,
       enableColorImpairedMode,
+      experienceMode,
       authenticationEnabled,
       onSidebarToggle,
       onSidebarVisibleChange
@@ -86,10 +98,16 @@ class Page extends Component {
     return (
       <ColorImpairedContext.Provider value={enableColorImpairedMode}>
         <div className={className}>
+          <a className={styles.skipLink} href="#main-content">
+            {translate('SkipToMainContent')}
+          </a>
+
           <SignalRConnector />
 
           <PageHeader
             onSidebarToggle={onSidebarToggle}
+            isSidebarVisible={isSidebarVisible}
+            experienceMode={experienceMode}
           />
 
           <div className={styles.main}>
@@ -97,12 +115,19 @@ class Page extends Component {
               location={location}
               isSmallScreen={isSmallScreen}
               isSidebarVisible={isSidebarVisible}
+              experienceMode={experienceMode}
               onSidebarVisibleChange={onSidebarVisibleChange}
             />
 
-            <PageTransitionWrapper>
-              {children}
-            </PageTransitionWrapper>
+            <main
+              id="main-content"
+              className={styles.mainContent}
+              tabIndex={-1}
+            >
+              <PageTransitionWrapper>
+                {children}
+              </PageTransitionWrapper>
+            </main>
           </div>
 
           <AppUpdatedModalConnector
@@ -135,6 +160,7 @@ Page.propTypes = {
   isUpdated: PropTypes.bool.isRequired,
   isDisconnected: PropTypes.bool.isRequired,
   enableColorImpairedMode: PropTypes.bool.isRequired,
+  experienceMode: PropTypes.oneOf(['simple', 'advanced']).isRequired,
   authenticationEnabled: PropTypes.bool.isRequired,
   onResize: PropTypes.func.isRequired,
   onSidebarToggle: PropTypes.func.isRequired,

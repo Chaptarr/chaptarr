@@ -1,10 +1,12 @@
-import _ from 'lodash';
+import filter from 'lodash/filter';
+import last from 'lodash/last';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
 import bookEntities from 'Book/bookEntities';
 import { sortDirections } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
+import translate from 'Utilities/String/translate';
 import { removeItem, set, updateItem } from './baseActions';
 import createFetchHandler from './Creators/createFetchHandler';
 import createHandleActions from './Creators/createHandleActions';
@@ -13,7 +15,6 @@ import createClearReducer from './Creators/Reducers/createClearReducer';
 import createSetClientSideCollectionSortReducer from './Creators/Reducers/createSetClientSideCollectionSortReducer';
 import createSetTableOptionReducer from './Creators/Reducers/createSetTableOptionReducer';
 import styles from '../../BookFile/Editor/BookFileEditorSharedStyles.css';
-
 //
 // Variables
 
@@ -44,7 +45,7 @@ export const defaultState = {
   columns: [
     {
       name: 'select',
-      columnLabel: 'Select',
+      columnLabel: () => translate('Select'),
       isSortable: false,
       isVisible: true,
       isModifiable: false,
@@ -52,7 +53,7 @@ export const defaultState = {
     },
     {
       name: 'path',
-      label: 'Path',
+      label: () => translate('Path'),
       isSortable: true,
       isVisible: true,
       isModifiable: false,
@@ -60,35 +61,35 @@ export const defaultState = {
     },
     {
       name: 'size',
-      label: 'Size',
+      label: () => translate('Size'),
       isSortable: true,
       isVisible: true,
       className: styles.size
     },
     {
       name: 'dateAdded',
-      label: 'Date Added',
+      label: () => translate('DateAdded'),
       isSortable: true,
       isVisible: true,
       className: styles.dateAdded
     },
     {
       name: 'mediaType',
-      label: 'Type',
+      label: () => translate('Type'),
       isSortable: false,
       isVisible: true,
       className: styles.mediaType
     },
     {
       name: 'quality',
-      label: 'Quality',
+      label: () => translate('Quality'),
       isSortable: true,
       isVisible: true,
       className: styles.quality
     },
     {
       name: 'actions',
-      columnLabel: 'Actions',
+      columnLabel: () => translate('Actions'),
       isVisible: true,
       isModifiable: false
     }
@@ -139,12 +140,12 @@ export const actionHandlers = handleThunks({
       bookEntity: bookEntity = bookEntities.BOOKS
     } = payload;
 
-    const bookSection = _.last(bookEntity.split('.'));
+    const bookSection = last(bookEntity.split('.'));
     const deletePromise = deleteBookFileHelper(getState, payload, dispatch);
 
-    deletePromise.done(() => {
+    deletePromise.then(() => {
       const books = getState().books.items;
-      const booksWithRemovedFiles = _.filter(books, { bookFileId });
+      const booksWithRemovedFiles = filter(books, { bookFileId });
 
       dispatch(batchActions([
         ...booksWithRemovedFiles.map((book) => {
@@ -173,10 +174,10 @@ export const actionHandlers = handleThunks({
       data: JSON.stringify({ bookFileIds })
     }).request;
 
-    promise.done(() => {
+    promise.then(() => {
       const books = getState().books.items;
       const booksWithRemovedFiles = bookFileIds.reduce((acc, bookFileId) => {
-        acc.push(..._.filter(books, { bookFileId }));
+        acc.push(...filter(books, { bookFileId }));
 
         return acc;
       }, []);
@@ -203,7 +204,7 @@ export const actionHandlers = handleThunks({
       ]));
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       dispatch(set({
         section,
         isDeleting: false,
@@ -235,7 +236,7 @@ export const actionHandlers = handleThunks({
       data: JSON.stringify(requestData)
     }).request;
 
-    promise.done((data) => {
+    promise.then((data) => {
       dispatch(batchActions([
         ...bookFileIds.map((id) => {
           const props = {};
@@ -259,7 +260,7 @@ export const actionHandlers = handleThunks({
       ]));
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       dispatch(set({
         section,
         isSaving: false,

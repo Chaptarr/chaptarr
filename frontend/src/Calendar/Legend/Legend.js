@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import React from 'react';
 import { icons, kinds } from 'Helpers/Props';
+import translate from 'Utilities/String/translate';
 import LegendIconItem from './LegendIconItem';
 import LegendItem from './LegendItem';
 import styles from './Legend.css';
@@ -16,10 +17,10 @@ function Legend(props) {
   if (showCutoffUnmetIcon) {
     iconsToShow.push(
       <LegendIconItem
-        name="Cutoff Not Met"
+        name={translate('CutoffNotMetLabel')}
         icon={icons.TRACK_FILE}
         kind={kinds.WARNING}
-        tooltip="Quality cutoff has not been met"
+        tooltip={translate('QualityCutoffHasNotBeenMet')}
       />
     );
   }
@@ -29,13 +30,13 @@ function Legend(props) {
       <div>
         <LegendItem
           status="downloading"
-          tooltip="Book is currently downloading"
+          tooltip={translate('BookCurrentlyDownloading')}
           colorImpairedMode={colorImpairedMode}
         />
 
         <LegendItem
           status="downloaded"
-          tooltip="Book was downloaded and sorted"
+          tooltip={translate('BookDownloadedAndSorted')}
           colorImpairedMode={colorImpairedMode}
         />
       </div>
@@ -43,13 +44,13 @@ function Legend(props) {
       <div>
         <LegendItem
           status="unreleased"
-          tooltip="Book hasn't released yet"
+          tooltip={translate('BookNotReleasedYet')}
           colorImpairedMode={colorImpairedMode}
         />
 
         <LegendItem
           status="partial"
-          tooltip="Book was partially downloaded"
+          tooltip={translate('BookPartiallyDownloaded')}
           colorImpairedMode={colorImpairedMode}
         />
       </div>
@@ -57,13 +58,13 @@ function Legend(props) {
       <div>
         <LegendItem
           status="unmonitored"
-          tooltip="Book is unmonitored"
+          tooltip={translate('BookIsUnmonitored')}
           colorImpairedMode={colorImpairedMode}
         />
 
         <LegendItem
           status="missing"
-          tooltip="Book file has not been found"
+          tooltip={translate('BookFileNotFound')}
           colorImpairedMode={colorImpairedMode}
         />
       </div>

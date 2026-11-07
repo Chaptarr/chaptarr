@@ -96,6 +96,9 @@
   justify-content: space-between;
   min-width: 0;
   width: 100%;
+  /* Keep guided targets clickable with a small gap in the content scroller. */
+  scroll-margin-top: 12px;
+
   padding: 0;
   border: 0;
   background: none;
@@ -416,6 +419,11 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.quickstartConnectionStatus {
+  color: var(--helpTextColor);
+  font-size: 12px;
 }
 
 .hardcoverAvatar {
@@ -748,5 +756,24 @@
 @media only screen and (max-width: $breakpointSmall) {
   .quickstartHeaderNextButton {
     min-width: 96px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progressContainer,
+  .section,
+  .checkIcon,
+  .downloadClientItem {
+    animation: none;
+  }
+
+  .section {
+    opacity: 1;
+  }
+
+  .progressFill,
+  .collapsedSection,
+  .downloadClientItem {
+    transition: none;
   }
 }

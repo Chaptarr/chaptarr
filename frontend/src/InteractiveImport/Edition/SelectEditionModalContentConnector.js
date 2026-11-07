@@ -58,6 +58,10 @@ class SelectEditionModalContentConnector extends Component {
     this.props.fetchEditions({ bookId });
   };
 
+  onRetryPress = () => {
+    this.populate();
+  };
+
   unpopulate = () => {
     this.props.clearEditions();
   };
@@ -92,6 +96,7 @@ class SelectEditionModalContentConnector extends Component {
       <SelectEditionModalContent
         {...this.props}
         onEditionSelect={this.onEditionSelect}
+        onRetryPress={this.onRetryPress}
       />
     );
   }

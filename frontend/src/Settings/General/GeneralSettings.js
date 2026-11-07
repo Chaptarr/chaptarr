@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import some from 'lodash/some';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
@@ -59,7 +59,7 @@ class GeneralSettings extends Component {
 
     const prevSettings = prevProps.settings;
 
-    const pendingRestart = _.some(requiresRestartKeys, (key) => {
+    const pendingRestart = some(requiresRestartKeys, (key) => {
       const setting = settings[key];
       const prevSetting = prevSettings[key];
 
@@ -185,9 +185,9 @@ class GeneralSettings extends Component {
           isOpen={this.state.isRestartRequiredModalOpen}
           kind={kinds.DANGER}
           title={translate('RestartChaptarr')}
-          message={
-            `Chaptarr requires a restart to apply changes, do you want to restart now? ${isWindowsService ? 'Depending which user is running the Chaptarr service you may need to restart Chaptarr as admin once before the service will start automatically.' : ''}`
-          }
+          message={isWindowsService ?
+            `${translate('RestartChangesPrompt')} ${translate('WindowsServiceRestartNote')}` :
+            translate('RestartChangesPrompt')}
           cancelLabel={translate('IllRestartLater')}
           confirmLabel={translate('RestartNow')}
           onConfirm={this.onConfirmRestart}

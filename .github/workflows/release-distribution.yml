@@ -1,0 +1,801 @@
+# ng-runner-policy: private-jit-only-v1
+# packer-windows-jit-v1
+name: Publish package-manager channels
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' &&
+      format('action:{0}:pool:{1}', inputs.action, inputs.runner_pool) || github.workflow }}
+
+on:
+  workflow_call:
+    inputs:
+      action:
+        required: true
+        type: string
+      runner_pool:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      legacy_bridge_enabled:
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      AUR_SSH_KEY:
+        required: false
+      COPR_WEBHOOK_URL:
+        required: false
+      BOOKSHELFNG_COPR_WEBHOOK_URL:
+        required: false
+      GPG_PRIVATE_KEY:
+        required: false
+      CHOCOLATEY_API_KEY:
+        required: false
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Admit this publisher workflow to the private JIT broker
+        required: true
+        type: choice
+        options:
+          - publish
+      runner_pool:
+        description: Select the private ephemeral JIT pool
+        required: true
+        type: choice
+        options:
+          - private
+      tag:
+        description: Published stable release tag to retry
+        required: true
+        type: string
+      version:
+        description: Matching MAJOR.MINOR.PATCH version
+        required: true
+        type: string
+      legacy_bridge_enabled:
+        description: Also publish BookshelfNG package identities after retirement acceptance; requires both release-readiness repository variables.
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  release-target:
+    name: Validate published release target
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'publish' &&
+      inputs.runner_pool == 'private' &&
+      (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-release-target"]}}', github.run_id)) }}
+    outputs:
+      tag: ${{ steps.target.outputs.tag }}
+      version: ${{ steps.target.outputs.version }}
+      legacy_bridge_enabled: ${{ steps.target.outputs.legacy_bridge_enabled }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: main
+        persist-credentials: false
+
+    - uses: ./.github/actions/setup-github-cli
+
+    - name: Require retirement release readiness
+      env:
+        CHAPTARRNG_RELEASE_READY: ${{ vars.CHAPTARRNG_RELEASE_READY }}
+        BOOKSHELFNG_RELEASE_READY: ${{ vars.BOOKSHELFNG_RELEASE_READY }}
+      run: ./packaging/scripts/require-release-readiness.sh
+
+    - id: target
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ inputs.tag }}
+        VERSION: ${{ inputs.version }}
+        EVENT_NAME: ${{ github.event_name }}
+        REF: ${{ github.ref }}
+        ACTION: ${{ inputs.action }}
+        RUNNER_POOL: ${{ inputs.runner_pool }}
+        REQUESTED_LEGACY_BRIDGE: ${{ inputs.legacy_bridge_enabled }}
+        MIGRATION_BRIDGE_GATE: ${{ vars.CHAPTARRNG_MIGRATION_BRIDGE_ENABLED || 'false' }}
+        BOOKSHELFNG_RELEASE_READY: ${{ vars.BOOKSHELFNG_RELEASE_READY || 'false' }}
+      run: |
+        set -euo pipefail
+        [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]
+        [[ "$TAG" == "v${VERSION}" ]]
+        [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+        if [[ "$REF" != refs/heads/main || "$ACTION" != publish || "$RUNNER_POOL" != private ]]; then
+          echo 'Package publishing requires action=publish, pool=private, and a main-branch workflow run.' >&2
+          exit 1
+        fi
+        if [[ "$EVENT_NAME" != workflow_dispatch && "$EVENT_NAME" != workflow_call ]]; then
+          echo 'Package publishing requires an explicit private dispatch or release workflow call.' >&2
+          exit 1
+        fi
+        git fetch --no-tags origin "refs/tags/${TAG}:refs/tags/${TAG}" refs/heads/main:refs/remotes/origin/main
+        release_sha="$(git rev-parse "${TAG}^{commit}")"
+        if ! git merge-base --is-ancestor "$release_sha" refs/remotes/origin/main; then
+          echo "Package tag $TAG must point to a commit on main." >&2
+          exit 1
+        fi
+        legacy_bridge_enabled=false
+        if [[ "${REQUESTED_LEGACY_BRIDGE,,}" == true && "${MIGRATION_BRIDGE_GATE,,}" == true && "${BOOKSHELFNG_RELEASE_READY,,}" == true ]]; then
+          legacy_bridge_enabled=true
+        elif [[ "${REQUESTED_LEGACY_BRIDGE,,}" == true ]]; then
+          echo 'Legacy BookshelfNG publishing was requested, but both CHAPTARRNG_MIGRATION_BRIDGE_ENABLED and BOOKSHELFNG_RELEASE_READY must be true; legacy publishing remains disabled.' >> "$GITHUB_STEP_SUMMARY"
+        fi
+        state="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease)"
+        echo "$state" | jq -e '.isDraft == false and .isPrerelease == false' >/dev/null
+        {
+          echo "tag=$TAG"
+          echo "version=$VERSION"
+          echo "legacy_bridge_enabled=$legacy_bridge_enabled"
+        } >> "$GITHUB_OUTPUT"
+
+  credentials:
+    name: Check optional publisher credentials
+    needs: [release-target]
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'publish' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        true
+      )
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-credentials"]}}', github.run_id)) }}
+    outputs:
+      aur: ${{ steps.check.outputs.aur }}
+      copr: ${{ steps.check.outputs.copr }}
+      bookshelfng_copr: ${{ steps.check.outputs.bookshelfng_copr }}
+      ppa: ${{ steps.check.outputs.ppa }}
+      ppa_series: ${{ steps.check.outputs.ppa_series }}
+      chocolatey: ${{ steps.check.outputs.chocolatey }}
+    steps:
+    - id: check
+      env:
+        AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        COPR_WEBHOOK_URL: ${{ secrets.COPR_WEBHOOK_URL }}
+        BOOKSHELFNG_COPR_WEBHOOK_URL: ${{ secrets.BOOKSHELFNG_COPR_WEBHOOK_URL }}
+        GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        LAUNCHPAD_PPA: ${{ vars.LAUNCHPAD_PPA }}
+        LAUNCHPAD_SERIES: ${{ vars.LAUNCHPAD_SERIES }}
+        CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+      run: bash packaging/scripts/validate-release-publisher-config.sh publishers
+
+  build-legacy-ppa:
+    name: Build signed BookshelfNG PPA source package (${{ matrix.series.codename }})
+    needs: [credentials, release-target]
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'publish' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        needs.credentials.outputs.ppa == 'true' && needs.release-target.outputs.legacy_bridge_enabled == 'true'
+      )
+    strategy:
+      fail-fast: false
+      matrix:
+        series: ${{ fromJSON(needs.credentials.outputs.ppa_series) }}
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-{1}-build-legacy-ppa"]}}', github.run_id, strategy.job-index)) }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.tag }}
+        persist-credentials: false
+
+    - uses: ./.github/actions/setup-github-cli
+
+    - name: Verify Debian source packaging tools were installed by the private JIT broker
+      run: |
+        set -euo pipefail
+        command -v dpkg-buildpackage >/dev/null 2>&1
+        command -v gpg >/dev/null 2>&1
+
+    - name: Download and verify the release archive
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ inputs.tag }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        asset="ChaptarrNG-${VERSION}-linux-x64.tar.gz"
+        gh release download "$TAG" --pattern "$asset" --pattern "$asset.sha256" --dir "$RUNNER_TEMP"
+        (cd "$RUNNER_TEMP" && sha256sum --check "$asset.sha256")
+
+    - name: Build and sign the source package for this Ubuntu series
+      env:
+        GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        SERIES: ${{ matrix.series.codename }}
+        SERIES_VERSION: ${{ matrix.series.version }}
+        VERSION: ${{ inputs.version }}
+        ARCHIVE_PATH: ${{ runner.temp }}/ChaptarrNG-${{ inputs.version }}-linux-x64.tar.gz
+        OUTPUT_DIR: ${{ runner.temp }}/bookshelfng-ppa/${{ matrix.series.codename }}
+      run: bash packaging/scripts/build-bookshelfng-ppa-source.sh
+
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: bookshelfng-ppa-source-${{ matrix.series.codename }}
+        path: ${{ runner.temp }}/bookshelfng-ppa/${{ matrix.series.codename }}/
+        retention-days: 7
+        if-no-files-found: error
+
+  publish-legacy-ppa:
+    name: Upload gated BookshelfNG source packages to Launchpad
+    needs: [credentials, release-target, build-legacy-ppa]
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'publish' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        needs.credentials.outputs.ppa == 'true' && needs.release-target.outputs.legacy_bridge_enabled == 'true'
+      )
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-publish-legacy-ppa"]}}', github.run_id)) }}
+    steps:
+    - name: Verify the Launchpad upload tool was installed by the private JIT broker
+      run: |
+        set -euo pipefail
+        command -v dput >/dev/null 2>&1 || {
+          echo 'dput must be installed by the private JIT broker before this job starts.' >&2
+          exit 1
+        }
+
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        pattern: bookshelfng-ppa-source-*
+        path: ${{ runner.temp }}/bookshelfng-ppa-packages
+
+    - name: Upload each signed source package
+      env:
+        LAUNCHPAD_PPA: ${{ vars.LAUNCHPAD_PPA }}
+      run: |
+        set -euo pipefail
+        mapfile -d '' changes_files < <(find "$RUNNER_TEMP/bookshelfng-ppa-packages" -type f -name '*_source.changes' -print0)
+        ((${#changes_files[@]} > 0))
+        for changes in "${changes_files[@]}"; do
+          dput "$LAUNCHPAD_PPA" "$changes"
+        done
+
+  build-aur:
+    name: Validate new and legacy AUR recipes
+    needs: [release-target]
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'publish' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        true
+      )
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-build-aur"]}}', github.run_id)) }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.tag }}
+        persist-credentials: false
+
+    - uses: ./.github/actions/setup-github-cli
+
+    - name: Download and verify the release archive
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ inputs.tag }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        asset="ChaptarrNG-${VERSION}-linux-x64.tar.gz"
+        gh release download "$TAG" --pattern "$asset" --pattern "$asset.sha256" --dir "$RUNNER_TEMP"
+        (cd "$RUNNER_TEMP" && sha256sum --check "$asset.sha256")
+
+    - name: Build both AUR package identities from the same release asset
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        asset="ChaptarrNG-${VERSION}-linux-x64.tar.gz"
+        sha="$(awk 'NR == 1 { print $1 }' "$RUNNER_TEMP/$asset.sha256")"
+        ARCHIVE_SHA256="$sha" VERSION="$VERSION" \
+          SOURCE_ARCHIVE_PATH="$RUNNER_TEMP/$asset" \
+          OUTPUT_DIR="$RUNNER_TEMP/aur-output" \
+          bash packaging/scripts/build-aur-recipes.sh
+
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: chaptarrng-aur-recipes
+        path: ${{ runner.temp }}/aur-output/
+        include-hidden-files: true
+        retention-days: 7
+        if-no-files-found: error
+
+  publish-aur:
+    name: Publish ChaptarrNG and BookshelfNG AUR identities
+    needs: [credentials, release-target, build-aur]
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'publish' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        needs.credentials.outputs.aur == 'true'
+      )
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-publish-aur"]}}', github.run_id)) }}
+    steps:
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: chaptarrng-aur-recipes
+        path: ${{ runner.temp }}/aur-packages
+
+    - name: Push the tested package recipes
+      env:
+        AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        LEGACY_BRIDGE_ENABLED: ${{ needs.release-target.outputs.legacy_bridge_enabled }}
+      run: |
+        set -euo pipefail
+        work="$RUNNER_TEMP/aur-packages"
+        key="$RUNNER_TEMP/aur-key"
+        printf '%s\n' "$AUR_SSH_KEY" > "$key"
+        chmod 0600 "$key"
+        install -d -m 0700 ~/.ssh
+        install -m 0600 "$key" ~/.ssh/aur
+        cat > ~/.ssh/known_hosts <<'EOF'
+        aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN
+        EOF
+        expected='SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4'
+        actual="$(ssh-keygen -lf ~/.ssh/known_hosts -E sha256 | awk '{print $2}')"
+        [[ "$actual" == "$expected" ]]
+        cat > ~/.ssh/config <<'EOF'
+        Host aur.archlinux.org
+          User aur
+          IdentityFile ~/.ssh/aur
+          IdentitiesOnly yes
+          StrictHostKeyChecking yes
+          UserKnownHostsFile ~/.ssh/known_hosts
+          GlobalKnownHostsFile /dev/null
+          BatchMode yes
+        EOF
+        chmod 0600 ~/.ssh/config ~/.ssh/known_hosts
+        pkg_bases=(chaptarrng-bin)
+        if [[ "${LEGACY_BRIDGE_ENABLED,,}" == true ]]; then
+          pkg_bases+=(bookshelfng-bin)
+        else
+          echo 'BookshelfNG AUR identity publishing is disabled until the migration bridge gate is enabled.' >> "$GITHUB_STEP_SUMMARY"
+        fi
+        for pkgbase in "${pkg_bases[@]}"; do
+          package_dir="$work/$pkgbase"
+          repo="$RUNNER_TEMP/aur-repo-$pkgbase"
+          if git ls-remote "https://aur.archlinux.org/${pkgbase}.git" HEAD >/dev/null 2>&1; then
+            git clone "https://aur.archlinux.org/${pkgbase}.git" "$repo"
+            git -C "$repo" remote set-url --push origin "ssh://aur@aur.archlinux.org/${pkgbase}.git"
+          else
+            mkdir "$repo"
+            git -C "$repo" init --initial-branch=master
+            git -C "$repo" remote add origin "ssh://aur@aur.archlinux.org/${pkgbase}.git"
+          fi
+          cp -R "$package_dir/." "$repo/"
+          git -C "$repo" config user.name 'ChaptarrNG Release Automation'
+          git -C "$repo" config user.email 'noreply@github.com'
+          git -C "$repo" add -A
+          if ! git -C "$repo" diff --cached --quiet; then
+            git -C "$repo" commit -m "Update ${pkgbase} package"
+            git -C "$repo" push origin HEAD:master
+          fi
+        done
+
+    - name: Remove AUR SSH credentials
+      if: always()
+      run: rm -f -- ~/.ssh/aur ~/.ssh/config ~/.ssh/known_hosts
+
+  build-chocolatey:
+    name: Build and validate the Chocolatey package
+    needs: [release-target]
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'publish' &&
+      inputs.runner_pool == 'private'
+    runs-on: ${{ fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","ChaptarrNG","gha-{0}-build-chocolatey"]}}', github.run_id)) }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+
+    - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+      with:
+        dotnet-version: 10.0.403
+
+    - name: Download and verify the release archive
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG: ${{ inputs.tag }}
+        VERSION: ${{ inputs.version }}
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $archive = "ChaptarrNG-$env:VERSION-win-x64.zip"
+        $tagPath = [System.Uri]::EscapeDataString($env:TAG)
+        $headers = @{
+          Accept = 'application/vnd.github+json'
+          Authorization = "Bearer $env:GH_TOKEN"
+          'X-GitHub-Api-Version' = '2022-11-28'
+        }
+        $releaseUri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$tagPath"
+        $release = Invoke-RestMethod -Method Get -Uri $releaseUri -Headers $headers
+        if ($release.tag_name -ne $env:TAG -or $release.draft -or $release.prerelease) {
+          throw 'The Windows package job requires the matching published stable release.'
+        }
+        foreach ($assetName in @($archive, "$archive.sha256")) {
+          $assets = @($release.assets | Where-Object {
+            $_.name -ceq $assetName -and $_.state -eq 'uploaded' -and $_.size -gt 0
+          })
+          if ($assets.Count -ne 1) { throw "Expected exactly one uploaded release asset: $assetName" }
+          $apiUri = [System.Uri]$assets[0].url
+          if ($apiUri.Scheme -ne 'https' -or $apiUri.Host -ne 'api.github.com') {
+            throw "The release asset API URL is not an HTTPS GitHub API download: $assetName"
+          }
+          $destination = Join-Path $env:RUNNER_TEMP $assetName
+          $assetHeaders = @{
+            Accept = 'application/octet-stream'
+            Authorization = "Bearer $env:GH_TOKEN"
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          Invoke-WebRequest -Uri $apiUri.AbsoluteUri -Headers $assetHeaders -OutFile $destination
+          if ((Get-Item $destination).Length -ne [int64]$assets[0].size) {
+            throw "The downloaded release asset size does not match GitHub metadata: $assetName"
+          }
+        }
+        $sidecar = Get-Content (Join-Path $env:RUNNER_TEMP "$archive.sha256") -Raw
+        $expected = ($sidecar -split '\s+')[0]
+        $actual = (Get-FileHash (Join-Path $env:RUNNER_TEMP $archive) -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $expected) { throw 'The Windows archive checksum does not match its release sidecar.' }
+
+    - name: Render and pack Chocolatey package
+      env:
+        VERSION: ${{ inputs.version }}
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $packageDir = Join-Path $env:RUNNER_TEMP 'chaptarrng-chocolatey'
+        $toolsDir = Join-Path $packageDir 'tools'
+        New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
+        Copy-Item packaging/chocolatey/chaptarrng.nuspec.in (Join-Path $packageDir 'chaptarrng.nuspec')
+        Copy-Item packaging/chocolatey/tools/chocolateyinstall.ps1.in (Join-Path $toolsDir 'chocolateyinstall.ps1')
+        Copy-Item packaging/chocolatey/tools/chocolateyuninstall.ps1 (Join-Path $toolsDir 'chocolateyuninstall.ps1')
+        $archive = "ChaptarrNG-$env:VERSION-win-x64.zip"
+        $checksum = (Get-FileHash (Join-Path $env:RUNNER_TEMP $archive) -Algorithm SHA256).Hash.ToLowerInvariant()
+        $nuspec = Join-Path $packageDir 'chaptarrng.nuspec'
+        $nuspecText = (Get-Content $nuspec -Raw).Replace('__VERSION__', $env:VERSION)
+        [System.IO.File]::WriteAllText($nuspec, $nuspecText, [System.Text.UTF8Encoding]::new($false))
+        $installScript = Join-Path $toolsDir 'chocolateyinstall.ps1'
+        $scriptText = (Get-Content $installScript -Raw).Replace('__VERSION__', $env:VERSION).Replace('__ARCHIVE_SHA256__', $checksum)
+        if ($scriptText.Contains('__VERSION__') -or $scriptText.Contains('__ARCHIVE_SHA256__')) {
+          throw 'The install script has an unresolved release placeholder.'
+        }
+        $tokens = $null; $parseErrors = $null
+        [System.Management.Automation.Language.Parser]::ParseInput($scriptText, [ref]$tokens, [ref]$parseErrors) | Out-Null
+        if ($parseErrors.Count -gt 0) { throw ($parseErrors | Out-String) }
+        [System.IO.File]::WriteAllText($installScript, $scriptText, [System.Text.UTF8Encoding]::new($false))
+        [xml]$parsedNuspec = Get-Content $nuspec -Raw
+        $namespace = [System.Xml.XmlNamespaceManager]::new($parsedNuspec.NameTable)
+        $namespace.AddNamespace('n', 'http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd')
+        $packageId = $parsedNuspec.SelectSingleNode('/n:package/n:metadata/n:id', $namespace).InnerText
+        $packageVersion = $parsedNuspec.SelectSingleNode('/n:package/n:metadata/n:version', $namespace).InnerText
+        if ($packageId -ne 'chaptarrng' -or $packageVersion -ne $env:VERSION) {
+          throw 'Rendered Chocolatey package identity or version is incorrect.'
+        }
+        choco pack $nuspec --outputdirectory $packageDir
+        $nupkg = Get-ChildItem $packageDir -Filter 'chaptarrng.*.nupkg' | Select-Object -First 1
+        if (-not $nupkg) { throw 'Chocolatey did not produce the ChaptarrNG package.' }
+
+        $legacyPackageDir = Join-Path $env:RUNNER_TEMP 'bookshelfng-chocolatey'
+        $legacyToolsDir = Join-Path $legacyPackageDir 'tools'
+        New-Item -ItemType Directory -Force -Path $legacyToolsDir | Out-Null
+        Copy-Item packaging/legacy/chocolatey/bookshelfng.nuspec.in (Join-Path $legacyPackageDir 'bookshelfng.nuspec')
+        Copy-Item packaging/legacy/chocolatey/tools/chocolateyinstall.ps1.in (Join-Path $legacyToolsDir 'chocolateyinstall.ps1')
+        Copy-Item packaging/legacy/chocolatey/tools/chocolateyuninstall.ps1 (Join-Path $legacyToolsDir 'chocolateyuninstall.ps1')
+        Copy-Item packaging/legacy/chocolatey/tools/bookshelfng-startup-recovery.ps1 (Join-Path $legacyToolsDir 'bookshelfng-startup-recovery.ps1')
+        $legacyNuspec = Join-Path $legacyPackageDir 'bookshelfng.nuspec'
+        $legacyNuspecText = (Get-Content $legacyNuspec -Raw).Replace('__VERSION__', $env:VERSION)
+        [System.IO.File]::WriteAllText($legacyNuspec, $legacyNuspecText, [System.Text.UTF8Encoding]::new($false))
+        $legacyInstallScript = Join-Path $legacyToolsDir 'chocolateyinstall.ps1'
+        $legacyScriptText = (Get-Content $legacyInstallScript -Raw).Replace('__VERSION__', $env:VERSION).Replace('__ARCHIVE_SHA256__', $checksum)
+        if ($legacyScriptText.Contains('__VERSION__') -or $legacyScriptText.Contains('__ARCHIVE_SHA256__')) {
+          throw 'The legacy Chocolatey install script has an unresolved release placeholder.'
+        }
+        $tokens = $null; $parseErrors = $null
+        [System.Management.Automation.Language.Parser]::ParseInput($legacyScriptText, [ref]$tokens, [ref]$parseErrors) | Out-Null
+        if ($parseErrors.Count -gt 0) { throw ($parseErrors | Out-String) }
+        [System.IO.File]::WriteAllText($legacyInstallScript, $legacyScriptText, [System.Text.UTF8Encoding]::new($false))
+        [xml]$legacyParsedNuspec = Get-Content $legacyNuspec -Raw
+        $legacyNamespace = [System.Xml.XmlNamespaceManager]::new($legacyParsedNuspec.NameTable)
+        $legacyNamespace.AddNamespace('n', 'http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd')
+        $legacyPackageId = $legacyParsedNuspec.SelectSingleNode('/n:package/n:metadata/n:id', $legacyNamespace).InnerText
+        $legacyPackageVersion = $legacyParsedNuspec.SelectSingleNode('/n:package/n:metadata/n:version', $legacyNamespace).InnerText
+        if ($legacyPackageId -ne 'bookshelfng' -or $legacyPackageVersion -ne $env:VERSION) {
+          throw 'Rendered legacy Chocolatey package identity or version is incorrect.'
+        }
+        choco pack $legacyNuspec --outputdirectory $legacyPackageDir
+        $legacyNupkg = Get-ChildItem $legacyPackageDir -Filter 'bookshelfng.*.nupkg' | Select-Object -First 1
+        if (-not $legacyNupkg) { throw 'Chocolatey did not produce the legacy BookshelfNG package bridge.' }
+
+        $source = "$packageDir;https://community.chocolatey.org/api/v2/"
+        choco install chaptarrng --source "$source" --yes --no-progress
+        if ($LASTEXITCODE -ne 0) { throw 'Chocolatey could not install the freshly built package.' }
+        $service = Get-Service -Name 'ChaptarrNG' -ErrorAction Stop
+        $service.WaitForStatus('Running', [TimeSpan]::FromSeconds(90))
+        $ready = $false
+        for ($attempt = 0; $attempt -lt 45; $attempt++) {
+          try {
+            $response = Invoke-WebRequest -Uri 'http://127.0.0.1:8789/ping' -UseBasicParsing -TimeoutSec 2
+            if ($response.StatusCode -eq 200) { $ready = $true; break }
+          } catch { }
+          Start-Sleep -Seconds 2
+        }
+        if (-not $ready) { throw 'The Chocolatey-installed service did not answer /ping.' }
+
+        $dataDir = Join-Path $env:ProgramData 'ChaptarrNG\data'
+        New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+        $marker = Join-Path $dataDir 'chocolatey-uninstall-preserves-data.test'
+        Set-Content -Path $marker -Value 'preserve'
+        choco upgrade chaptarrng --source "$source" --yes --no-progress --force
+        if ($LASTEXITCODE -ne 0) { throw 'Chocolatey could not upgrade its installed smoke-test package.' }
+        $service = Get-Service -Name 'ChaptarrNG' -ErrorAction Stop
+        $service.WaitForStatus('Running', [TimeSpan]::FromSeconds(90))
+        if (-not (Test-Path $marker)) { throw 'Chocolatey upgrade removed persistent application data.' }
+        choco uninstall chaptarrng --yes --no-progress
+        if ($LASTEXITCODE -ne 0) { throw 'Chocolatey could not uninstall its smoke-test package.' }
+        if (-not (Test-Path $marker)) { throw 'Chocolatey uninstall removed persistent application data.' }
+        if (Test-Path (Join-Path $env:ProgramFiles 'ChaptarrNG\app')) {
+          throw 'Chocolatey uninstall left the application payload behind.'
+        }
+
+        $candidateArchive = Join-Path $env:RUNNER_TEMP ("ChaptarrNG-$($env:VERSION)-win-x64.zip")
+        $candidatePackage = Join-Path $env:RUNNER_TEMP ("bookshelfng-chocolatey\bookshelfng.$($env:VERSION).nupkg")
+        ./packaging/scripts/test-chocolatey-bookshelfng-handoff.ps1 `
+          -Version $env:VERSION `
+          -ArchivePath $candidateArchive `
+          -PackagePath $candidatePackage
+
+        $output = Join-Path $env:RUNNER_TEMP 'chaptarrng-chocolatey-output'
+        New-Item -ItemType Directory -Force -Path $output | Out-Null
+        Copy-Item $nupkg.FullName $output
+        Copy-Item $legacyNupkg.FullName $output
+
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: chaptarrng-chocolatey-packages
+        path: ${{ runner.temp }}/chaptarrng-chocolatey-output/*.nupkg
+        retention-days: 7
+        if-no-files-found: error
+
+  publish-chocolatey:
+    name: Publish new and legacy Chocolatey package identities
+    needs: [credentials, release-target, build-chocolatey]
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'publish' &&
+      inputs.runner_pool == 'private' &&
+      needs.credentials.outputs.chocolatey == 'true'
+    runs-on: ${{ fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","ChaptarrNG","gha-{0}-publish-chocolatey"]}}', github.run_id)) }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: chaptarrng-chocolatey-packages
+        path: ${{ runner.temp }}/chaptarrng-chocolatey-output
+
+    - name: Publish new and eligible legacy package identities
+      env:
+        CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        LEGACY_BRIDGE_ENABLED: ${{ needs.release-target.outputs.legacy_bridge_enabled }}
+      shell: pwsh
+      run: ./packaging/scripts/publish-chocolatey-packages.ps1
+
+  trigger-copr:
+    name: Trigger COPR build
+    needs: [credentials, release-target]
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'publish' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        needs.credentials.outputs.copr == 'true'
+      )
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-trigger-copr"]}}', github.run_id)) }}
+    steps:
+    - name: Submit verified release tag to the ChaptarrNG COPR webhook
+      env:
+        COPR_WEBHOOK_URL: ${{ secrets.COPR_WEBHOOK_URL }}
+        TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+        url="$COPR_WEBHOOK_URL"
+        if [[ "$url" != https://*chaptarrng/ || "$url" =~ [[:space:]] ]]; then
+          echo 'COPR_WEBHOOK_URL must be the package-scoped HTTPS webhook for chaptarrng.' >&2
+          exit 1
+        fi
+        curl --fail --location --silent --show-error \
+          --output "$RUNNER_TEMP/copr-response.txt" \
+          --header 'Content-Type: text/plain' \
+          --data "$TAG" \
+          "$url"
+        test -s "$RUNNER_TEMP/copr-response.txt"
+        echo "COPR accepted the ${TAG} build trigger."
+
+  trigger-legacy-copr:
+    name: Trigger legacy bookshelfng COPR package
+    needs: [credentials, release-target]
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'publish' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        needs.credentials.outputs.bookshelfng_copr == 'true' && needs.release-target.outputs.legacy_bridge_enabled == 'true'
+      )
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-trigger-legacy-copr"]}}', github.run_id)) }}
+    steps:
+    - name: Submit the release tag to the existing bookshelfng COPR package
+      env:
+        BOOKSHELFNG_COPR_WEBHOOK_URL: ${{ secrets.BOOKSHELFNG_COPR_WEBHOOK_URL }}
+        TAG: ${{ inputs.tag }}
+      run: |
+        set -euo pipefail
+        url="$BOOKSHELFNG_COPR_WEBHOOK_URL"
+        if [[ "$url" != https://*bookshelfng/ || "$url" =~ [[:space:]] ]]; then
+          echo 'BOOKSHELFNG_COPR_WEBHOOK_URL must be the package-scoped HTTPS webhook for the existing bookshelfng package.' >&2
+          exit 1
+        fi
+        curl --fail --location --silent --show-error \
+          --output "$RUNNER_TEMP/copr-bookshelfng-response.txt" \
+          --header 'Content-Type: text/plain' \
+          --data "$TAG" \
+          "$url"
+        test -s "$RUNNER_TEMP/copr-bookshelfng-response.txt"
+        echo "COPR accepted the ${TAG} legacy package build trigger."
+
+  publish-legacy-helm-bridge:
+    name: Publish the BookshelfNG Helm chart identity
+    needs: [release-target]
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'publish' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        needs.release-target.outputs.legacy_bridge_enabled == 'true' && vars.CHAPTARRNG_MIGRATION_BRIDGE_ENABLED == 'true' && vars.BOOKSHELFNG_RELEASE_READY == 'true'
+      )
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-publish-legacy-helm-bridge"]}}', github.run_id)) }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.tag }}
+        persist-credentials: false
+
+    - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+      with:
+        version: v3.20.0
+
+    - name: Inspect the standard ChaptarrNG release image
+      id: image
+      env:
+        VERSION: ${{ needs.release-target.outputs.version }}
+      run: |
+        set -euo pipefail
+        command -v skopeo >/dev/null 2>&1 || {
+          echo 'Skopeo must be installed by the private JIT broker before this job starts.' >&2
+          exit 1
+        }
+        image="ghcr.io/snapetech-org/chaptarrng:${VERSION}"
+        digest="$(skopeo inspect --format '{{.Digest}}' "docker://${image}")"
+        [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+        echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+    - name: Build and validate the versioned legacy chart
+      env:
+        VERSION: ${{ needs.release-target.outputs.version }}
+        IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        OUTPUT_DIR: ${{ runner.temp }}/bookshelfng-helm-bridge
+      run: bash packaging/scripts/build-bookshelfng-helm-bridge.sh
+
+    - name: Publish the chart to the existing OCI identity
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        GITHUB_ACTOR: ${{ github.actor }}
+        VERSION: ${{ needs.release-target.outputs.version }}
+        IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        CHART_PACKAGE: ${{ runner.temp }}/bookshelfng-helm-bridge/bookshelfng-${{ needs.release-target.outputs.version }}.tgz
+      run: bash packaging/scripts/publish-bookshelfng-helm-bridge.sh
+
+  distribution-summary:
+    name: Report package channel results
+    if: >-
+      always() &&
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'publish' &&
+      inputs.runner_pool == 'private'
+    needs: [release-target, credentials, build-aur, publish-aur, build-chocolatey, publish-chocolatey, build-legacy-ppa, publish-legacy-ppa, trigger-copr, trigger-legacy-copr, publish-legacy-helm-bridge]
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-distribution-summary"]}}', github.run_id)) }}
+    steps:
+    - name: Write channel results
+      env:
+        AUR_CONFIGURED: ${{ needs.credentials.outputs.aur }}
+        AUR_BUILD: ${{ needs.build-aur.result }}
+        AUR_PUSH: ${{ needs.publish-aur.result }}
+        COPR_CONFIGURED: ${{ needs.credentials.outputs.copr }}
+        COPR_TRIGGER: ${{ needs.trigger-copr.result }}
+        LEGACY_COPR_CONFIGURED: ${{ needs.credentials.outputs.bookshelfng_copr }}
+        LEGACY_COPR_TRIGGER: ${{ needs.trigger-legacy-copr.result }}
+        PPA_CONFIGURED: ${{ needs.credentials.outputs.ppa }}
+        PPA_BUILD: ${{ needs.build-legacy-ppa.result }}
+        PPA_UPLOAD: ${{ needs.publish-legacy-ppa.result }}
+        CHOCOLATEY_CONFIGURED: ${{ needs.credentials.outputs.chocolatey }}
+        LEGACY_BRIDGE_ENABLED: ${{ needs.release-target.outputs.legacy_bridge_enabled }}
+        CHOCOLATEY_BUILD: ${{ needs.build-chocolatey.result }}
+        CHOCOLATEY_PUSH: ${{ needs.publish-chocolatey.result }}
+        LEGACY_HELM_PUBLISH: ${{ needs.publish-legacy-helm-bridge.result }}
+      run: |
+        {
+          echo '### ChaptarrNG package channels'
+          echo "- AUR recipe/build: ${AUR_BUILD}; publisher configured: ${AUR_CONFIGURED}; push: ${AUR_PUSH}"
+          echo "- ChaptarrNG COPR publisher configured: ${COPR_CONFIGURED}; trigger: ${COPR_TRIGGER}"
+          echo "- Legacy bookshelfng COPR bridge configured: ${LEGACY_COPR_CONFIGURED}; trigger: ${LEGACY_COPR_TRIGGER}"
+          echo "- Legacy BookshelfNG PPA source package configured: ${PPA_CONFIGURED}; build: ${PPA_BUILD}; upload: ${PPA_UPLOAD}"
+          echo "- Chocolatey package build: ${CHOCOLATEY_BUILD}; publisher configured: ${CHOCOLATEY_CONFIGURED}; push: ${CHOCOLATEY_PUSH}"
+          echo "- Legacy BookshelfNG Helm chart publish: ${LEGACY_HELM_PUBLISH}"
+          echo "- BookshelfNG legacy package bridge enabled: ${LEGACY_BRIDGE_ENABLED:-false}"
+          if [[ "${LEGACY_BRIDGE_ENABLED:-false}" == true ]]; then
+            echo 'The legacy package bridge is enabled; eligible old identities use the same standard ChaptarrNG release assets.'
+          else
+            echo 'Only ChaptarrNG package identities are eligible for publication; BookshelfNG package identities remain unchanged.'
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"

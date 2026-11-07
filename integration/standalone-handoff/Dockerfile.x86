@@ -1,0 +1,6 @@
+FROM i386/debian:bookworm-slim@sha256:abd54731664e83f582c92db7581fb65a7bb81498c8b7001101844301bf6efe36
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 bash procps curl ca-certificates libicu72 libssl3 libstdc++6 libgcc-s1 zlib1g libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /repo
+ENTRYPOINT ["python3", "/repo/packaging/scripts/test-bookshelf-standalone-handoff.py"]

@@ -1,0 +1,78 @@
+{
+  "base": "a029e3b7d179b8ba516eb6537ef11dce78726a24",
+  "sourceIds": 2950,
+  "reviewedDecisionCells": 35400,
+  "changedValues": 7388,
+  "perLocaleChangedValues": {
+    "ar": 998,
+    "de": 471,
+    "es": 479,
+    "fr": 377,
+    "hi": 659,
+    "id": 513,
+    "ja": 691,
+    "ko": 937,
+    "vi": 754,
+    "zh-Hans": 514,
+    "pt-BR": 347,
+    "zh-Hant": 648
+  },
+  "catalogSha256": {
+    "src/NzbDrone.Core/Localization/Core/ar.json": "809c5b414461bb1db704b82b1b541c332705e9e9ef5932b919c5164a029f21c5",
+    "src/NzbDrone.Core/Localization/Core/de.json": "6993f0c5a1af14f02d5cb427040f8ad8c4ab348aae814c350b5edda6d916e79d",
+    "src/NzbDrone.Core/Localization/Core/es.json": "740f749c551cd68b57c669639e2d5adde6428ce2c71dc1add2ada69b3c39eab7",
+    "src/NzbDrone.Core/Localization/Core/fr.json": "ee1c1936266cb7b7c4ae00e7af8392b82a00f36fb5c24a5ac0e7ee82659fffa0",
+    "src/NzbDrone.Core/Localization/Core/hi.json": "563044fbab886a708440fb82743d4b154902dde84d36d1345f5080c8512f2d0f",
+    "src/NzbDrone.Core/Localization/Core/id.json": "db7313818e35bbf5258c4b1c46775e0b01f3799b93718cbd40f1a85d13a0ad77",
+    "src/NzbDrone.Core/Localization/Core/ja.json": "032c801d26af116ef0f5608ab2b1adf1d0988f882f24e1fac074bc39b484c5b2",
+    "src/NzbDrone.Core/Localization/Core/ko.json": "4e910a831e5bab48d465edfb257c7329357bef9903ca7863cb2d54c9503de306",
+    "src/NzbDrone.Core/Localization/Core/vi.json": "0e7229548878ffbaa4b045401e713aacd21d35c200220174abfcee543abb2290",
+    "src/NzbDrone.Core/Localization/Core/zh_CN.json": "2e4ac6d39eaf4d9a7ce6c134606af2376bc60ceb15f6865db2c1febeab052eb0",
+    "src/NzbDrone.Core/Localization/Core/pt_BR.json": "1d9972b4df8dddc63cfcc540a9462370d5a476f898ca5c9d0b50761e11dd84b2",
+    "src/NzbDrone.Core/Localization/Core/zh_TW.json": "1dacb4a2003303822eb6d6d0ab1d8f65af81b6d40387d5183f1da7c5dffee58f"
+  },
+  "qualifiedNativeSignoff": false,
+  "method": {
+    "model": "Local Qwen semantic review, then agent contextual correction review",
+    "batchCount": 1020,
+    "fullDecisionValidation": "35400 unique source/locale pairs; placeholders, protected literals and complete coverage validated",
+    "recoveredNoOpBatches": 5,
+    "contextualOverrides": 190,
+    "styleProposalsReviewed": 148,
+    "pureStyleChangesRejected": 30,
+    "sourceCopyEdits": 5,
+    "sourceEqualExactClassifications": 490,
+    "pendingScope": [
+      "Fixed server/API and persisted notification coverage",
+      "Outbound notification copy",
+      "Final headed Agentic VM review"
+    ]
+  },
+  "artifacts": {
+    "semantic-review-core-vetted-audit-v6.json": {
+      "sha256": "3d91dbfa08ecf9121719f2017b6c07373cbe7ae4ee6d4e1472586b57b5735db7",
+      "bytes": 2966481
+    },
+    "manual-review-overrides-v5.json": {
+      "sha256": "98d7a1592deb43924997dfa42379688287e169c9c940d04751268b5efe86f1ad",
+      "bytes": 112170
+    },
+    "style-proposal-vetting-v1.json": {
+      "sha256": "098af44e627933240ed17aac32128f643761f0fbb982dee7042f834c47ea620f",
+      "bytes": 110084
+    },
+    "source-copy-delta-v2.json": {
+      "sha256": "c06c6c6c0d40152705b7cfb1930aee82140a06895b60c03e35ddcbb060dc56a9",
+      "bytes": 4772
+    },
+    "final-core-label-delta-v1.json": {
+      "sha256": "91cda19e7d6d74679b9ec95a9aebde2efc68833366a845d130de7e9ad3be5ce5",
+      "bytes": 5631
+    },
+    "semantic-review-schema-recovery-v3/recovery-ledger.json": {
+      "sha256": "01b3bffd12c1c9ea7200294fbb7d3ef010089e71a77e69f3a0eb86be1261858c",
+      "bytes": 7033
+    }
+  },
+  "retainedEvidencePath": "/mnt/disks/scratch/task-worktrees/localization-20261030/chaptarrng-artifacts"
+}

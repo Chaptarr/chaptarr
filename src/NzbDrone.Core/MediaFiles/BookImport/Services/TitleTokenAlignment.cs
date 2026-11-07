@@ -34,6 +34,17 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             "a", "an", "the"
         };
 
+        private static readonly HashSet<string> VolumeMarkerGapTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "part", "book", "volume", "vol", "no",
+            "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x", "xi", "xii"
+        };
+
+        private static readonly HashSet<string> VolumeMarkerWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "part", "book", "volume", "vol", "no"
+        };
+
         public static bool IsStructuralGlueToken(string token)
         {
             return !string.IsNullOrWhiteSpace(token) && StructuralGlueTokens.Contains(token.Trim());
@@ -46,9 +57,20 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             bool allowTransposition,
             out TitleTokenAlignmentResult result)
         {
+            return TryAlignStructural(requiredTokens, fieldTokens, allowNearExact, allowTransposition, allowVolumeMarkerGaps: false, out result);
+        }
+
+        public static bool TryAlignStructural(
+            IReadOnlyList<string> requiredTokens,
+            IReadOnlyList<string> fieldTokens,
+            bool allowNearExact,
+            bool allowTransposition,
+            bool allowVolumeMarkerGaps,
+            out TitleTokenAlignmentResult result)
+        {
             result = null;
 
-            if (requiredTokens == null || requiredTokens.Count == 0)
+            if (requiredTokens == null || requiredTokens.Count == 0 || fieldTokens == null)
             {
                 return false;
             }
@@ -59,45 +81,87 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                     !(index > 0 && index < requiredTokens.Count - 1 && IsStructuralGlueToken(token)))
                 .ToList();
 
-            if (!TryAlignOrdered(
-                    identityTokens,
-                    fieldTokens,
-                    allowNearExact,
-                    allowTransposition,
-                    out result))
+            var searchStart = 0;
+
+            while (searchStart < fieldTokens.Count)
             {
-                if (!allowNearExact ||
-                    identityTokens.Count <= 1 ||
-                    !OptionalLeadingArticles.Contains(identityTokens[0]) ||
-                    !TryAlignOrdered(
-                        identityTokens.Skip(1).ToList(),
+                TitleTokenAlignmentResult attempt;
+
+                if (!TryAlignOrdered(
+                        identityTokens,
                         fieldTokens,
-                        allowNearExact: true,
+                        searchStart,
+                        allowNearExact,
                         allowTransposition,
-                        out var tolerantResult))
+                        out attempt))
                 {
-                    return false;
+                    if (!allowNearExact ||
+                        identityTokens.Count <= 1 ||
+                        !OptionalLeadingArticles.Contains(identityTokens[0]) ||
+                        !TryAlignOrdered(
+                            identityTokens.Skip(1).ToList(),
+                            fieldTokens,
+                            searchStart,
+                            allowNearExact: true,
+                            allowTransposition,
+                            out var tolerantResult))
+                    {
+                        return false;
+                    }
+
+                    attempt = new TitleTokenAlignmentResult(
+                        tolerantResult.ConsumedFieldIndexes,
+                        usedNearExact: true,
+                        tolerantResult.UsedTransposition);
                 }
 
-                result = new TitleTokenAlignmentResult(
-                    tolerantResult.ConsumedFieldIndexes,
-                    usedNearExact: true,
-                    tolerantResult.UsedTransposition);
+                var consumed = new HashSet<int>(attempt.ConsumedFieldIndexes);
+                var first = attempt.ConsumedFieldIndexes.Min();
+                var last = attempt.ConsumedFieldIndexes.Max();
+                var gapIsClean = true;
+
+                for (var index = first + 1; index < last; index++)
+                {
+                    if (!consumed.Contains(index) &&
+                        !IsStructuralGlueToken(fieldTokens[index]) &&
+                        !(allowVolumeMarkerGaps && IsVolumeMarkerGapToken(fieldTokens, index)))
+                    {
+                        gapIsClean = false;
+                        break;
+                    }
+                }
+
+                if (gapIsClean)
+                {
+                    result = attempt;
+                    return true;
+                }
+
+                searchStart = first + 1;
             }
 
-            var consumed = new HashSet<int>(result.ConsumedFieldIndexes);
-            var first = result.ConsumedFieldIndexes.Min();
-            var last = result.ConsumedFieldIndexes.Max();
-            for (var index = first + 1; index < last; index++)
+            return false;
+        }
+
+        private static bool IsVolumeMarkerGapToken(IReadOnlyList<string> fieldTokens, int index)
+        {
+            if (fieldTokens == null || index < 0 || index >= fieldTokens.Count || string.IsNullOrWhiteSpace(fieldTokens[index]))
             {
-                if (!consumed.Contains(index) && !IsStructuralGlueToken(fieldTokens[index]))
-                {
-                    result = null;
-                    return false;
-                }
+                return false;
             }
 
-            return true;
+            var trimmed = fieldTokens[index].Trim();
+            if (VolumeMarkerGapTokens.Contains(trimmed))
+            {
+                return true;
+            }
+
+            // A number is a harmless gap only when it is attached to an explicit marker
+            // such as "Book 3" or "Vol. 2". An unrelated number between title tokens can
+            // be a conflicting series position and must remain visible to title matching.
+            return trimmed.All(char.IsDigit) &&
+                   ((index > 0 && VolumeMarkerWords.Contains(fieldTokens[index - 1])) ||
+                    (index + 1 < fieldTokens.Count && VolumeMarkerWords.Contains(fieldTokens[index + 1])));
         }
 
         public static bool TokensMatchExactOrSynonym(string requiredToken, string fieldToken)
@@ -188,6 +252,17 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             bool allowTransposition,
             out TitleTokenAlignmentResult result)
         {
+            return TryAlignOrdered(requiredTokens, fieldTokens, 0, allowNearExact, allowTransposition, out result);
+        }
+
+        public static bool TryAlignOrdered(
+            IReadOnlyList<string> requiredTokens,
+            IReadOnlyList<string> fieldTokens,
+            int startFieldIndex,
+            bool allowNearExact,
+            bool allowTransposition,
+            out TitleTokenAlignmentResult result)
+        {
             result = null;
 
             if (requiredTokens == null || fieldTokens == null || requiredTokens.Count == 0 || fieldTokens.Count == 0)
@@ -196,7 +271,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             var consumed = new List<int>();
-            var nextFieldIndex = 0;
+            var nextFieldIndex = Math.Max(0, startFieldIndex);
             var nearExactCount = 0;
             var usedTransposition = false;
 

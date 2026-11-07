@@ -60,10 +60,10 @@
 .indexer {
   composes: cell;
 
-  width: 82px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  width: 180px;
+  overflow-wrap: anywhere;
+
+  white-space: normal;
 }
 
 .quality {

@@ -12,6 +12,7 @@ using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.MediaFiles.BookImport.Identification;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Qualities;
 
 namespace Chaptarr.Core.Test.MediaFiles.BookImport
 {
@@ -40,6 +41,36 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement IMetadataTagService.{targetMethod?.Name}");
+            }
+        }
+
+        private class SlowCountingTagServiceProxy : DispatchProxy
+        {
+            private int _current;
+            private int _max;
+            private int _calls;
+
+            public int MaxConcurrent => _max;
+            public int Calls => _calls;
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name != nameof(IMetadataTagService.ReadAllTagsAndDuration))
+                {
+                    throw new NotImplementedException($"Test proxy does not implement IMetadataTagService.{targetMethod?.Name}");
+                }
+
+                var now = System.Threading.Interlocked.Increment(ref _current);
+                System.Threading.Interlocked.Increment(ref _calls);
+                int seen;
+                while (now > (seen = _max))
+                {
+                    System.Threading.Interlocked.CompareExchange(ref _max, now, seen);
+                }
+
+                System.Threading.Thread.Sleep(100);
+                System.Threading.Interlocked.Decrement(ref _current);
+                return (new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) { ["title"] = new List<string> { "T" } }, (int?)null);
             }
         }
 
@@ -158,6 +189,131 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             }
         }
 
+        private class MediaFileServiceProxy : DispatchProxy
+        {
+            public List<BookFile> BookFiles { get; set; } = new List<BookFile>();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name == nameof(IMediaFileService.GetFilesByBook))
+                {
+                    return BookFiles;
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IMediaFileService.{targetMethod?.Name}");
+            }
+        }
+
+        private class PrefetchThreadCountingTagServiceProxy : DispatchProxy
+        {
+            private int _prefetchThreadCalls;
+            public int TestThreadId { get; set; }
+            public int PrefetchThreadCalls => _prefetchThreadCalls;
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod?.Name != nameof(IMetadataTagService.ReadAllTagsAndDuration))
+                {
+                    throw new NotImplementedException($"Test proxy does not implement IMetadataTagService.{targetMethod?.Name}");
+                }
+
+                if (System.Threading.Thread.CurrentThread.ManagedThreadId != TestThreadId)
+                {
+                    System.Threading.Interlocked.Increment(ref _prefetchThreadCalls);
+                }
+
+                return (new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) { ["title"] = new List<string> { "T" } }, (int?)null);
+            }
+        }
+
+        [Test]
+        public void multi_file_preview_should_not_prefetch_more_files_than_the_tag_cache_can_hold()
+        {
+            // The tag cache clears itself entirely past 1,000 entries, so warming more files than that wipes
+            // its own work mid-prefetch and every file is read again by the loop.
+            var dir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"prefetch-cap-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(dir);
+
+            try
+            {
+                var files = Enumerable.Range(0, 1200).Select(i =>
+                {
+                    var p = Path.Combine(dir, $"part-{i}.mp3");
+                    File.WriteAllText(p, "audio");
+                    return (IFileInfo)new FileSystem().FileInfo.New(p);
+                }).ToList();
+
+                var tagService = DispatchProxy.Create<IMetadataTagService, PrefetchThreadCountingTagServiceProxy>();
+                var counting = (PrefetchThreadCountingTagServiceProxy)(object)tagService;
+                counting.TestThreadId = System.Threading.Thread.CurrentThread.ManagedThreadId;
+                var sut = new SimpleImportDecisionMaker(
+                    metadataTagService: tagService,
+                    fileMatchingService: DispatchProxy.Create<IFileMatchingService, FileMatchingServiceProxy>(),
+                    authorService: DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
+                    bookService: DispatchProxy.Create<IBookService, ThrowingProxy<IBookService>>(),
+                    editionService: DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(),
+                    mediaFileService: DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
+                    logger: LogManager.GetCurrentClassLogger());
+
+                sut.GetImportDecisions(
+                    files,
+                    idOverrides: null,
+                    itemInfo: new ImportDecisionMakerInfo(),
+                    config: new ImportDecisionMakerConfig { Filter = FilterFilesType.None, NewDownload = true, IncludeExisting = true });
+
+                Assert.That(counting.PrefetchThreadCalls, Is.LessThanOrEqualTo(SimpleImportDecisionMaker.TagPrefetchMaxFiles));
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Test]
+        public void multi_file_preview_should_prefetch_tags_in_parallel()
+        {
+            var dir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"prefetch-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(dir);
+
+            try
+            {
+                var files = Enumerable.Range(0, 8).Select(i =>
+                {
+                    var p = Path.Combine(dir, $"part-{i}.mp3");
+                    File.WriteAllText(p, "audio");
+                    return (IFileInfo)new FileSystem().FileInfo.New(p);
+                }).ToList();
+
+                var tagService = DispatchProxy.Create<IMetadataTagService, SlowCountingTagServiceProxy>();
+                var sut = new SimpleImportDecisionMaker(
+                    metadataTagService: tagService,
+                    fileMatchingService: DispatchProxy.Create<IFileMatchingService, FileMatchingServiceProxy>(),
+                    authorService: DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
+                    bookService: DispatchProxy.Create<IBookService, ThrowingProxy<IBookService>>(),
+                    editionService: DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(),
+                    mediaFileService: DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
+                    logger: LogManager.GetCurrentClassLogger());
+
+                var decisions = sut.GetImportDecisions(
+                    files,
+                    idOverrides: null,
+                    itemInfo: new ImportDecisionMakerInfo(),
+                    config: new ImportDecisionMakerConfig { Filter = FilterFilesType.None, NewDownload = true, IncludeExisting = true });
+
+                var counting = (SlowCountingTagServiceProxy)(object)tagService;
+                Assert.Multiple(() =>
+                {
+                    Assert.That(decisions, Has.Count.EqualTo(8));
+                    Assert.That(counting.MaxConcurrent, Is.GreaterThan(1), "the prefetch should read tags concurrently");
+                    Assert.That(counting.Calls, Is.GreaterThanOrEqualTo(8));
+                });
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
         [Test]
         public void manual_preview_should_preserve_yellow_suggestion_without_a_late_per_file_rematch()
         {
@@ -186,7 +342,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     mediaFileService: DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
                     logger: LogManager.GetCurrentClassLogger());
 
-                var file = new FileSystem().FileInfo.FromFileName(path);
+                var file = new FileSystem().FileInfo.New(path);
                 var decisions = sut.GetImportDecisions(
                     new List<IFileInfo> { file },
                     idOverrides: null,
@@ -272,7 +428,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     mediaFileService: DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
                     logger: LogManager.GetCurrentClassLogger());
 
-                var file = new FileSystem().FileInfo.FromFileName(path);
+                var file = new FileSystem().FileInfo.New(path);
                 var decisions = sut.GetImportDecisions(
                     new List<IFileInfo> { file },
                     idOverrides: null,
@@ -358,7 +514,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     mediaFileService: DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
                     logger: LogManager.GetCurrentClassLogger());
 
-                var file = new FileSystem().FileInfo.FromFileName(path);
+                var file = new FileSystem().FileInfo.New(path);
                 var decisions = sut.GetImportDecisions(
                     new List<IFileInfo> { file },
                     idOverrides: null,
@@ -387,6 +543,121 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     File.Delete(path);
                 }
             }
+        }
+
+        [Test]
+        public void migrated_manual_preview_should_reject_a_same_size_compatible_existing_file()
+        {
+            var path = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"manual-preview-same-size-{Guid.NewGuid():N}.epub");
+            const string content = "same size";
+            File.WriteAllText(path, content);
+
+            try
+            {
+                var localAuthor = new Author { Id = 42, Name = "Suggested Author" };
+                var localEdition = new Edition { Id = 200, BookId = 100, Title = "Local Matched Edition" };
+                var localMatchedBook = new Book
+                {
+                    Id = 100,
+                    Title = "Local Matched Book",
+                    Author = localAuthor,
+                    Editions = new List<Edition> { localEdition }
+                };
+                var existingPath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "existing-other-edition.epub");
+                var mediaFileService = DispatchProxy.Create<IMediaFileService, MediaFileServiceProxy>();
+                ((MediaFileServiceProxy)(object)mediaFileService).BookFiles = new List<BookFile>
+                {
+                    new BookFile
+                    {
+                        Path = existingPath,
+                        Size = new FileInfo(path).Length,
+                        Quality = new QualityModel(Quality.EPUB)
+                    }
+                };
+
+                var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+                ((AuthorServiceProxy)(object)authorService).LocalAuthor = localAuthor;
+                var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+                ((BookServiceProxy)(object)bookService).Book = localMatchedBook;
+                var fileMatchingService = DispatchProxy.Create<IFileMatchingService, FileMatchingServiceProxy>();
+                ((FileMatchingServiceProxy)(object)fileMatchingService).GroupedResult = new FileMatch
+                {
+                    AuthorId = localAuthor.Id,
+                    AuthorName = localAuthor.Name,
+                    BookId = localMatchedBook.Id,
+                    BookTitle = localMatchedBook.Title,
+                    EditionId = localEdition.Id
+                };
+
+                var sut = new SimpleImportDecisionMaker(
+                    metadataTagService: DispatchProxy.Create<IMetadataTagService, MetadataTagServiceProxy>(),
+                    fileMatchingService: fileMatchingService,
+                    authorService: authorService,
+                    bookService: bookService,
+                    editionService: DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(),
+                    mediaFileService: mediaFileService,
+                    logger: LogManager.GetCurrentClassLogger(),
+                    configService: ConfigServiceTestProxy.Create(bookshelfMatchCompatibility: true));
+
+                var decisions = sut.GetImportDecisions(
+                    new List<IFileInfo> { new FileSystem().FileInfo.New(path) },
+                    idOverrides: null,
+                    itemInfo: new ImportDecisionMakerInfo(),
+                    config: new ImportDecisionMakerConfig { Filter = FilterFilesType.None, NewDownload = true, IncludeExisting = true });
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(decisions, Has.Count.EqualTo(1));
+                    Assert.That(decisions[0].Approved, Is.False);
+                    Assert.That(decisions[0].Rejections.Select(rejection => rejection.Reason),
+                        Does.Contain(BookshelfSameFileCompatibility.RejectionReason));
+                });
+            }
+            finally
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+        }
+
+        [Test]
+        public void vanished_file_should_be_rejected_without_an_error_level_log()
+        {
+            var target = new NLog.Targets.MemoryTarget { Layout = "${level}|${message}|${exception}" };
+            var factory = new LogFactory();
+            var logConfig = new NLog.Config.LoggingConfiguration(factory);
+            logConfig.AddRule(NLog.LogLevel.Trace, NLog.LogLevel.Fatal, target);
+            factory.Configuration = logConfig;
+
+            var missing = new FileSystem().FileInfo.New(
+                Path.Combine(TestContext.CurrentContext.WorkDirectory, $"vanished-{Guid.NewGuid():N}.mp3"));
+
+            var sut = new SimpleImportDecisionMaker(
+                metadataTagService: DispatchProxy.Create<IMetadataTagService, MetadataTagServiceProxy>(),
+                fileMatchingService: DispatchProxy.Create<IFileMatchingService, FileMatchingServiceProxy>(),
+                authorService: DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
+                bookService: DispatchProxy.Create<IBookService, ThrowingProxy<IBookService>>(),
+                editionService: DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(),
+                mediaFileService: DispatchProxy.Create<IMediaFileService, ThrowingProxy<IMediaFileService>>(),
+                logger: factory.GetCurrentClassLogger());
+
+            var decisions = sut.GetImportDecisions(
+                new List<IFileInfo> { missing },
+                idOverrides: null,
+                itemInfo: new ImportDecisionMakerInfo(),
+                config: new ImportDecisionMakerConfig { Filter = FilterFilesType.None, NewDownload = true, IncludeExisting = true });
+
+            var logs = target.Logs.ToList();
+            Assert.Multiple(() =>
+            {
+                Assert.That(decisions, Has.Count.EqualTo(1));
+                Assert.That(decisions.Single().Approved, Is.False);
+                Assert.That(decisions.Single().Rejections.Single().Reason, Does.StartWith("Failed to process file"));
+                Assert.That(logs.Any(l => l.StartsWith("Error|") || l.StartsWith("Fatal|")), Is.False, string.Join("\n", logs));
+                Assert.That(logs.Any(l => l.StartsWith("Warn|")), Is.True);
+            });
         }
     }
 }

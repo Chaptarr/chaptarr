@@ -71,6 +71,27 @@ namespace Chaptarr.Core.Test.MediaFiles
             });
         }
 
+        [Test]
+        public void insert_many_ignore_duplicate_paths_should_persist_remote_search_time()
+        {
+            WithRepository((repository, connectionString) =>
+            {
+                var searchedAt = new DateTime(2026, 1, 4, 5, 6, 7, DateTimeKind.Utc);
+                var file = NewFile("/library/unmapped.epub");
+                file.Size = 123;
+                file.LastRemoteSearchTime = searchedAt;
+
+                Assert.That(repository.InsertManyIgnoreDuplicatePaths(new List<BookFile> { file }), Is.EqualTo(1));
+
+                using var connection = new SqliteConnection(connectionString);
+                connection.Open();
+                var persisted = connection.ExecuteScalar<DateTime?>(
+                    "SELECT \"LastRemoteSearchTime\" FROM \"BookFiles\" WHERE \"Path\" = @path;",
+                    new { path = file.Path });
+                Assert.That(persisted, Is.EqualTo(searchedAt));
+            });
+        }
+
         private static BookFile NewFile(string path)
         {
             return new BookFile

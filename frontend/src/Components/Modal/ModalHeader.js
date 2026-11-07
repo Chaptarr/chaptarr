@@ -15,6 +15,8 @@ class ModalHeader extends Component {
 
     return (
       <div
+        role="heading"
+        aria-level={2}
         className={styles.modalHeader}
         {...otherProps}
       >

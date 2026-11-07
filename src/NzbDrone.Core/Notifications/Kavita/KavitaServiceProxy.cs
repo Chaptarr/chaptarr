@@ -11,7 +11,7 @@ namespace NzbDrone.Core.Notifications.Kavita;
 public interface IKavitaServiceProxy
 {
     string GetBaseUrl(KavitaSettings settings, string relativePath = null);
-    void Notify(KavitaSettings settings, string message);
+    void Notify(KavitaSettings settings, string folderPath);
     string GetToken(KavitaSettings settings);
 }
 

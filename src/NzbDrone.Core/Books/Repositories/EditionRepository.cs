@@ -12,7 +12,8 @@ namespace NzbDrone.Core.Books
 {
     public interface IEditionRepository : IBasicRepository<Edition>
     {
-        List<Edition> GetAllMonitoredEditions();
+        List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType);
+        List<Edition> GetMonitoredEditionsForAuthors(IEnumerable<int> authorIds, BookMediaType mediaType) => throw new NotImplementedException();
         Edition FindByForeignEditionId(string foreignEditionId);
         List<Edition> FindAllByForeignEditionId(string foreignEditionId);
         Edition FindByHardcoverEditionId(string hardcoverEditionId);
@@ -41,18 +42,66 @@ namespace NzbDrone.Core.Books
     public class EditionRepository : BasicRepository<Edition>, IEditionRepository
     {
         private readonly Logger _logger;
+        private readonly string _bookListColumns;
 
         public EditionRepository(IMainDatabase database, IEventAggregator eventAggregator)
             : base(database, eventAggregator)
         {
             _logger = LogManager.GetCurrentClassLogger();
+            _bookListColumns = BuildBookListColumns();
         }
 
-        public List<Edition> GetAllMonitoredEditions()
+        public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType)
         {
             // WhereBuilderSqlite requires a concrete value; avoid boolean-expression simplification.
             var monitored = true;
-            return Query(x => x.Monitored == monitored);
+            var builder = Builder()
+                .Select(_bookListColumns)
+                .Where<Edition>(e => e.Monitored == monitored);
+
+            if (mediaType.HasValue)
+            {
+                var bookMediaType = mediaType.Value;
+                builder = builder.Join<Edition, Book>((e, b) => e.BookId == b.Id)
+                    .Where<Book>(b => b.MediaType == bookMediaType);
+            }
+
+            var sql = builder.AddSelectTemplate(typeof(Edition));
+            return _database.Query<Edition>(sql.RawSql, sql.Parameters).ToList();
+        }
+
+        public List<Edition> GetMonitoredEditionsForAuthors(IEnumerable<int> authorIds, BookMediaType mediaType)
+        {
+            var uniqueAuthorIds = authorIds?.Distinct().ToArray() ?? Array.Empty<int>();
+            if (uniqueAuthorIds.Length == 0)
+            {
+                return new List<Edition>();
+            }
+
+            var monitored = true;
+            var builder = Builder()
+                .Select(_bookListColumns)
+                .Join<Edition, Book>((edition, book) => edition.BookId == book.Id)
+                .Where<Edition>(edition => edition.Monitored == monitored)
+                .Where<Book>(book => Enumerable.Contains(uniqueAuthorIds, book.AuthorId) && book.MediaType == mediaType);
+
+            var sql = builder.AddSelectTemplate(typeof(Edition));
+            return _database.Query<Edition>(sql.RawSql, sql.Parameters).ToList();
+        }
+
+        // Book lists never read Chapters, and on large libraries it is most of the Editions table.
+        private string BuildBookListColumns()
+        {
+            var excluded = TableMapping.Mapper.ExcludeProperties(typeof(Edition))
+                .Select(x => x.Name)
+                .ToHashSet();
+            excluded.Add(nameof(Edition.Chapters));
+
+            var columns = typeof(Edition).GetProperties()
+                .Where(x => x.IsMappableProperty() && !excluded.Contains(x.Name))
+                .Select(x => $"\"{_table}\".\"{x.Name}\"");
+
+            return string.Join(", ", columns);
         }
 
         public int CountMissingMatchingTitles()
@@ -179,8 +228,11 @@ namespace NzbDrone.Core.Books
                 return new List<Edition>();
             }
 
-            // populate the books, author metadata, and author also
-            // this hopefully speeds up the track matching a lot
+            // Keep one parent graph per identity for this result. A joined
+            // author can have thousands of editions; retaining a full author
+            // and book object for every row exhausts small-container heaps.
+            var booksById = new Dictionary<int, Book>();
+            var authorsById = new Dictionary<int, Author>();
             List<Edition> QueryForBookIds(int[] chunkBookIds)
             {
                 var builder = new SqlBuilder(_database.DatabaseType)
@@ -192,8 +244,24 @@ namespace NzbDrone.Core.Books
                         {
                             if (book != null)
                             {
-                                book.Author = author;
-                                edition.Book = book;
+                                if (!booksById.TryGetValue(book.Id, out var parent))
+                                {
+                                    if (author != null)
+                                    {
+                                        if (!authorsById.TryGetValue(author.Id, out var sharedAuthor))
+                                        {
+                                            sharedAuthor = author;
+                                            authorsById.Add(author.Id, author);
+                                        }
+
+                                        book.Author = sharedAuthor;
+                                    }
+
+                                    parent = book;
+                                    booksById.Add(book.Id, book);
+                                }
+
+                                edition.Book = parent;
                             }
 
                             return edition;

@@ -23,6 +23,7 @@ namespace NzbDrone.Core.MediaFiles
                     editionGroup.ToList(),
                     file => IsAudiobookFile(file.Path, file.MediaType, file.Quality),
                     file => file.Path ?? string.Empty,
+                    file => file.AllTags,
                     file => file.Part,
                     (file, value) => file.Part = value,
                     (file, value) => file.PartCount = value);
@@ -42,6 +43,7 @@ namespace NzbDrone.Core.MediaFiles
                     editionGroup.ToList(),
                     file => IsAudiobookFile(file.Path, null, file.Quality),
                     file => file.Path ?? string.Empty,
+                    file => file.RawTags?.AllTags,
                     file => file.Part,
                     (file, value) => file.Part = value,
                     (file, value) => file.PartCount = value);
@@ -50,6 +52,15 @@ namespace NzbDrone.Core.MediaFiles
 
         public static IReadOnlyDictionary<string, (int Part, int PartCount)> BuildPathAssignmentsByEdition(
             IEnumerable<(string Path, int? EditionId)> files,
+            int defaultEditionId)
+        {
+            return BuildPathAssignmentsByEdition(
+                files?.Select(file => (file.Path, file.EditionId, (Dictionary<string, List<string>>)null)),
+                defaultEditionId);
+        }
+
+        public static IReadOnlyDictionary<string, (int Part, int PartCount)> BuildPathAssignmentsByEdition(
+            IEnumerable<(string Path, int? EditionId, Dictionary<string, List<string>> AllTags)> files,
             int defaultEditionId)
         {
             var assignments = new Dictionary<string, (int Part, int PartCount)>(StringComparer.OrdinalIgnoreCase);
@@ -63,8 +74,8 @@ namespace NzbDrone.Core.MediaFiles
                 var groupFiles = editionGroup.ToList();
                 var audioFiles = groupFiles
                     .Where(file => IsAudiobookFile(file.Path))
-                    .OrderBy(file => file.Path ?? string.Empty, NaturalSortComparer.Instance)
                     .ToList();
+                audioFiles = OrderAudioFiles(audioFiles, file => file.Path ?? string.Empty, file => file.AllTags);
 
                 if (audioFiles.Count > 1)
                 {
@@ -125,14 +136,12 @@ namespace NzbDrone.Core.MediaFiles
             List<T> groupFiles,
             Func<T, bool> isAudiobook,
             Func<T, string> getSortKey,
+            Func<T, Dictionary<string, List<string>>> getTags,
             Func<T, int> getPart,
             Action<T, int> setPart,
             Action<T, int> setPartCount)
         {
-            var audioFiles = groupFiles
-                .Where(isAudiobook)
-                .OrderBy(getSortKey, NaturalSortComparer.Instance)
-                .ToList();
+            var audioFiles = OrderAudioFiles(groupFiles.Where(isAudiobook).ToList(), getSortKey, getTags);
 
             if (audioFiles.Count > 1)
             {
@@ -172,6 +181,125 @@ namespace NzbDrone.Core.MediaFiles
                 setPart(file, 1);
                 setPartCount(file, 1);
             }
+        }
+
+        private static List<T> OrderAudioFiles<T>(
+            List<T> files,
+            Func<T, string> getSortKey,
+            Func<T, Dictionary<string, List<string>>> getTags)
+        {
+            if (files.Count < 2 || getTags == null)
+            {
+                return files.OrderBy(getSortKey, NaturalSortComparer.Instance).ToList();
+            }
+
+            var trackNumbers = new List<(T File, int Disc, int Track)>();
+            var identities = new HashSet<(int Disc, int Track)>();
+            bool? hasDiscNumbers = null;
+            foreach (var file in files)
+            {
+                var tags = getTags(file);
+                if (!TryGetTagNumber(tags, out var track, "TRACKNUMBER", "TRACK", "TRCK") ||
+                    !TryGetOptionalTagNumber(tags, out var disc, out var hasDiscNumber, "DISCNUMBER", "DISC", "TPOS"))
+                {
+                    return files.OrderBy(getSortKey, NaturalSortComparer.Instance).ToList();
+                }
+
+                if (hasDiscNumbers.HasValue && hasDiscNumbers.Value != hasDiscNumber)
+                {
+                    // A partial disc sequence cannot establish the intended order reliably.
+                    return files.OrderBy(getSortKey, NaturalSortComparer.Instance).ToList();
+                }
+
+                hasDiscNumbers = hasDiscNumber;
+
+                var identity = (disc, track);
+                if (!identities.Add(identity))
+                {
+                    // Repeated track numbers without a unique disc/track identity are ambiguous.
+                    // Keep the established natural-path order in that case.
+                    return files.OrderBy(getSortKey, NaturalSortComparer.Instance).ToList();
+                }
+
+                trackNumbers.Add((file, disc, track));
+            }
+
+            return trackNumbers
+                .OrderBy(item => item.Disc)
+                .ThenBy(item => item.Track)
+                .ThenBy(item => getSortKey(item.File), NaturalSortComparer.Instance)
+                .Select(item => item.File)
+                .ToList();
+        }
+
+        private static bool TryGetOptionalTagNumber(
+            Dictionary<string, List<string>> tags,
+            out int number,
+            out bool hasNumber,
+            params string[] keys)
+        {
+            number = 0;
+            hasNumber = false;
+            if (!TryGetTagNumber(tags, out var parsed, keys))
+            {
+                return tags == null || !HasAnyTag(tags, keys);
+            }
+
+            number = parsed;
+            hasNumber = true;
+            return true;
+        }
+
+        private static bool TryGetTagNumber(
+            Dictionary<string, List<string>> tags,
+            out int number,
+            params string[] keys)
+        {
+            number = 0;
+            if (tags == null)
+            {
+                return false;
+            }
+
+            foreach (var key in keys)
+            {
+                if (!tags.TryGetValue(key, out var values))
+                {
+                    var matching = tags.FirstOrDefault(tag => string.Equals(tag.Key, key, StringComparison.OrdinalIgnoreCase));
+                    values = matching.Value;
+                }
+
+                if (values == null || values.Count == 0)
+                {
+                    continue;
+                }
+
+                if (values.Count != 1)
+                {
+                    return false;
+                }
+
+                var value = values[0]?.Trim();
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    return false;
+                }
+
+                var separator = value.IndexOf('/');
+                if (separator >= 0)
+                {
+                    value = value.Substring(0, separator).Trim();
+                }
+
+                return int.TryParse(value, out number) && number > 0;
+            }
+
+            return false;
+        }
+
+        private static bool HasAnyTag(Dictionary<string, List<string>> tags, params string[] keys)
+        {
+            return tags.Keys.Any(tagKey => keys.Any(key => string.Equals(tagKey, key, StringComparison.OrdinalIgnoreCase)));
         }
     }
 }

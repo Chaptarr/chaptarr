@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import find from 'lodash/find';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -56,7 +56,7 @@ class SelectQualityModalContentConnector extends Component {
       dispatchSaveInteractiveImportItems
     } = this.props;
 
-    const quality = _.find(this.props.items,
+    const quality = find(this.props.items,
       (item) => item.id === qualityId);
 
     const revision = {
@@ -77,6 +77,10 @@ class SelectQualityModalContentConnector extends Component {
     this.props.onModalClose(true);
   };
 
+  onRetryPress = () => {
+    this.props.dispatchFetchQualityProfileSchema();
+  };
+
   //
   // Render
 
@@ -85,6 +89,7 @@ class SelectQualityModalContentConnector extends Component {
       <SelectQualityModalContent
         {...this.props}
         onQualitySelect={this.onQualitySelect}
+        onRetryPress={this.onRetryPress}
       />
     );
   }

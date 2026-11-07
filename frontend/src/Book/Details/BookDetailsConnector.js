@@ -1,5 +1,9 @@
 /* eslint max-params: 0 */
-import _ from 'lodash';
+import filter from 'lodash/filter';
+import first from 'lodash/first';
+import isEqual from 'lodash/isEqual';
+import last from 'lodash/last';
+import map from 'lodash/map';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -11,6 +15,8 @@ import { executeCommand } from 'Store/Actions/commandActions';
 import { clearEditions, fetchEditions } from 'Store/Actions/editionActions';
 import { clearQueueDetails, fetchQueueDetails } from 'Store/Actions/queueActions';
 import { cancelFetchReleases, clearReleases } from 'Store/Actions/releaseActions';
+import { fetchRootFolders } from 'Store/Actions/Settings/rootFolders';
+import { fetchNotifications } from 'Store/Actions/settingsActions';
 import createAllAuthorSelector from 'Store/Selectors/createAllAuthorsSelector';
 import createCommandsSelector from 'Store/Selectors/createCommandsSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
@@ -18,6 +24,34 @@ import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
 import { findCommand, isCommandExecuting } from 'Utilities/Command';
 import { registerPagePopulator, unregisterPagePopulator } from 'Utilities/pagePopulator';
 import BookDetails from './BookDetails';
+
+function buildGrimmoryPreview(book, author, edition) {
+  const identifiers = [];
+
+  if (edition?.isbn13) {
+    identifiers.push(`isbn: ${edition.isbn13}`);
+  }
+
+  if (edition?.asin) {
+    identifiers.push(`asin: ${edition.asin}`);
+  }
+
+  if (edition?.foreignEditionId) {
+    identifiers.push(`goodreads: ${edition.foreignEditionId}`);
+  }
+
+  return {
+    title: edition?.title || book.title,
+    authors: author.authorName,
+    series: book.seriesTitle,
+    description: edition?.overview || book.overview,
+    publisher: edition?.publisher,
+    publisheddate: book.releaseDate,
+    language: edition?.language,
+    tags: (book.genres || []).join(', '),
+    identifiers: identifiers.join(', ')
+  };
+}
 
 const selectBookFiles = createSelector(
   (state) => state.bookFiles,
@@ -41,6 +75,55 @@ const selectBookFiles = createSelector(
   }
 );
 
+function titleCase(value) {
+  return String(value).replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function isUnderPath(childPath, parentPath) {
+  if (!childPath || !parentPath) {
+    return false;
+  }
+
+  if (childPath === parentPath) {
+    return true;
+  }
+
+  const separator = parentPath.includes('\\') ? '\\' : '/';
+  const parent = parentPath.endsWith(separator) ? parentPath : `${parentPath}${separator}`;
+
+  return childPath.startsWith(parent);
+}
+
+function buildCalibrePreview(book, author, edition) {
+  const text = (value) => (value == null || value === '' ? null : String(value));
+  const identifiers = [];
+
+  if (edition?.isbn13) {
+    identifiers.push(`isbn: ${edition.isbn13}`);
+  }
+
+  if (edition?.asin || book.asin) {
+    identifiers.push(`asin: ${edition?.asin || book.asin}`);
+  }
+
+  if (edition?.foreignEditionId || book.foreignEditionId) {
+    identifiers.push(`goodreads: ${edition?.foreignEditionId || book.foreignEditionId}`);
+  }
+
+  return {
+    title: text(edition?.title || book.title),
+    authors: text(author.authorName),
+    series: text(book.seriesTitle),
+    comments: text(edition?.overview || book.overview),
+    publisher: text(edition?.publisher),
+    pubdate: book.releaseDate ? String(book.releaseDate).substring(0, 10) : null,
+    languages: text(edition?.language),
+    tags: (book.genres && book.genres.length) ? book.genres.map(titleCase).join(', ') : null,
+    rating: edition?.ratings?.value ? String(Math.trunc(edition.ratings.value * 2)) : null,
+    identifiers: identifiers.length ? identifiers.join(', ') : null
+  };
+}
+
 function createMapStateToProps() {
   return createSelector(
     (state, { bookId }) => bookId,
@@ -51,7 +134,9 @@ function createMapStateToProps() {
     createCommandsSelector(),
     createUISettingsSelector(),
     createDimensionsSelector(),
-    (bookId, bookFiles, books, editions, authors, commands, uiSettings, dimensions) => {
+    (state) => state.settings.notifications.items,
+    (state) => state.settings.rootFolders.items,
+    (bookId, bookFiles, books, editions, authors, commands, uiSettings, dimensions, notifications, rootFolders) => {
       try {
         const book = books.items.find((b) => b.id === bookId);
 
@@ -88,8 +173,8 @@ function createMapStateToProps() {
           bookFiles: bookFileItems
         } = bookFiles;
 
-        const previousBook = sortedBooks[bookIndex - 1] || _.last(sortedBooks) || book;
-        const nextBook = sortedBooks[bookIndex + 1] || _.first(sortedBooks) || book;
+        const previousBook = sortedBooks[bookIndex - 1] || last(sortedBooks) || book;
+        const nextBook = sortedBooks[bookIndex + 1] || first(sortedBooks) || book;
         const hasBookNavigation = sortedBooks.length > 1 && bookIndex !== -1;
         const isRefreshingCommand = findCommand(commands, { name: commandNames.REFRESH_BOOK });
         const isRefreshing = (
@@ -106,6 +191,28 @@ function createMapStateToProps() {
         isSearchingCommand.body.bookIds &&
         isSearchingCommand.body.bookIds.indexOf(book.id) > -1
         );
+        const rePushCommand = findCommand(commands, { name: commandNames.REPUSH_BOOK });
+        const isRePushing = !!(
+          rePushCommand &&
+        isCommandExecuting(rePushCommand) &&
+        rePushCommand.body &&
+        rePushCommand.body.bookId === book.id
+        );
+        const pushCommand = findCommand(commands, { name: commandNames.PUSH_CALIBRE_METADATA });
+        const isPushingToCalibre = !!(
+          pushCommand &&
+        isCommandExecuting(pushCommand) &&
+        pushCommand.body &&
+        (pushCommand.body.bookIds || []).includes(book.id)
+        );
+        const grimmoryPushCommand = findCommand(commands, { name: commandNames.PUSH_GRIMMORY_METADATA });
+        const isPushingToGrimmory = !!(
+          grimmoryPushCommand &&
+        isCommandExecuting(grimmoryPushCommand) &&
+        grimmoryPushCommand.body &&
+        (grimmoryPushCommand.body.bookIds || []).includes(book.id)
+        );
+        const showPushToGrimmory = notifications.some((n) => n.implementation === 'Grimmory');
         const isRenamingFiles = isCommandExecuting(findCommand(commands, { name: commandNames.RENAME_FILES, authorId: author.id }));
         const isRenamingAuthorCommand = findCommand(commands, { name: commandNames.RENAME_AUTHOR });
         const isRenamingAuthor = (
@@ -136,10 +243,19 @@ function createMapStateToProps() {
 
         return {
           ...book,
+          bookRecord: book,
           shortDateFormat: uiSettings.shortDateFormat,
           author,
+          calibrePreview: buildCalibrePreview(book, author, selectedEdition),
+          showPushToCalibre: rootFolders.some((f) => f.isCalibreLibrary && isUnderPath(author.path || '', f.path)),
+          isPushingToCalibre,
           isRefreshing,
           isSearching,
+          isRePushing,
+          showRePush: notifications.some((n) => n.implementation === 'CalibreContentServer'),
+          showPushToGrimmory,
+          isPushingToGrimmory,
+          grimmoryPreview: buildGrimmoryPreview(book, author, selectedEdition),
           isRenamingFiles,
           isRenamingAuthor,
           isFetching,
@@ -163,6 +279,8 @@ function createMapStateToProps() {
 
 const mapDispatchToProps = {
   executeCommand,
+  fetchNotifications,
+  fetchRootFolders,
   fetchBookFiles,
   clearBookFiles,
   fetchEditions,
@@ -175,7 +293,7 @@ const mapDispatchToProps = {
 };
 
 function getMonitoredEditions(props) {
-  return _.map(_.filter(props.editions, { monitored: true }), 'id').sort();
+  return map(filter(props.editions, { monitored: true }), 'id').sort();
 }
 
 class BookDetailsConnector extends Component {
@@ -198,7 +316,7 @@ class BookDetailsConnector extends Component {
       (prevProps.isRefreshing && !isRefreshing) ||
       (prevProps.isRenamingFiles && !isRenamingFiles) ||
       (prevProps.isRenamingAuthor && !isRenamingAuthor) ||
-      !_.isEqual(getMonitoredEditions(prevProps), getMonitoredEditions(this.props)) ||
+      !isEqual(getMonitoredEditions(prevProps), getMonitoredEditions(this.props)) ||
       (prevProps.anyReleaseOk === false && anyReleaseOk === true)
     ) {
       this.unpopulate();
@@ -224,10 +342,13 @@ class BookDetailsConnector extends Component {
 
   populate = () => {
     const bookId = this.props.id;
+    const mediaType = this.props.mediaType;
 
-    this.props.fetchBookFiles({ bookId });
-    this.props.fetchEditions({ bookId });
-    this.props.fetchQueueDetails({ bookIds: [bookId] });
+    this.props.fetchBookFiles({ bookId, mediaType });
+    this.props.fetchEditions({ bookId, mediaType });
+    this.props.fetchQueueDetails({ bookIds: [bookId], mediaType });
+    this.props.fetchNotifications();
+    this.props.fetchRootFolders();
   };
 
   unpopulate = () => {
@@ -244,7 +365,15 @@ class BookDetailsConnector extends Component {
   onMonitorTogglePress = (monitored) => {
     this.props.toggleBooksMonitored({
       bookIds: [this.props.id],
+      mediaType: this.props.mediaType,
       monitored
+    });
+  };
+
+  onRePushPress = () => {
+    this.props.executeCommand({
+      name: commandNames.REPUSH_BOOK,
+      bookId: this.props.id
     });
   };
 
@@ -262,6 +391,22 @@ class BookDetailsConnector extends Component {
     });
   };
 
+  onPushToCalibrePress = (fields) => {
+    this.props.executeCommand({
+      name: commandNames.PUSH_CALIBRE_METADATA,
+      bookIds: [this.props.id],
+      fields
+    });
+  };
+
+  onPushToGrimmoryPress = (fields) => {
+    this.props.executeCommand({
+      name: commandNames.PUSH_GRIMMORY_METADATA,
+      bookIds: [this.props.id],
+      fields
+    });
+  };
+
   //
   // Render
 
@@ -271,7 +416,10 @@ class BookDetailsConnector extends Component {
         {...this.props}
         onMonitorTogglePress={this.onMonitorTogglePress}
         onRefreshPress={this.onRefreshPress}
+        onRePushPress={this.onRePushPress}
         onSearchPress={this.onSearchPress}
+        onPushToCalibrePress={this.onPushToCalibrePress}
+        onPushToGrimmoryPress={this.onPushToGrimmoryPress}
       />
     );
   }
@@ -279,6 +427,9 @@ class BookDetailsConnector extends Component {
 
 BookDetailsConnector.propTypes = {
   id: PropTypes.number,
+  mediaType: PropTypes.oneOf(['audiobook', 'ebook']),
+  bookRecord: PropTypes.object,
+  fetchRootFolders: PropTypes.func.isRequired,
   anyReleaseOk: PropTypes.bool,
   isRefreshing: PropTypes.bool.isRequired,
   isRenamingFiles: PropTypes.bool.isRequired,
@@ -286,6 +437,7 @@ BookDetailsConnector.propTypes = {
   isBookFetching: PropTypes.bool,
   isBookPopulated: PropTypes.bool,
   bookId: PropTypes.number.isRequired,
+  fetchNotifications: PropTypes.func.isRequired,
   fetchBookFiles: PropTypes.func.isRequired,
   clearBookFiles: PropTypes.func.isRequired,
   fetchEditions: PropTypes.func.isRequired,

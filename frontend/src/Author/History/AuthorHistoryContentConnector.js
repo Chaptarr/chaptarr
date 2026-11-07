@@ -27,12 +27,14 @@ class AuthorHistoryContentConnector extends Component {
   componentDidMount() {
     const {
       authorId,
-      bookId
+      bookId,
+      mediaType
     } = this.props;
 
     this.props.fetchAuthorHistory({
       authorId,
-      bookId
+      bookId,
+      mediaType
     });
   }
 
@@ -40,19 +42,29 @@ class AuthorHistoryContentConnector extends Component {
     this.props.clearAuthorHistory();
   }
 
+  onRetryPress = () => {
+    this.props.fetchAuthorHistory({
+      authorId: this.props.authorId,
+      bookId: this.props.bookId,
+      mediaType: this.props.mediaType
+    });
+  };
+
   //
   // Listeners
 
   onMarkAsFailedPress = (historyId) => {
     const {
       authorId,
-      bookId
+      bookId,
+      mediaType
     } = this.props;
 
     this.props.authorHistoryMarkAsFailed({
       historyId,
       authorId,
-      bookId
+      bookId,
+      mediaType
     });
   };
 
@@ -68,6 +80,7 @@ class AuthorHistoryContentConnector extends Component {
     return (
       <ViewComponent
         {...otherProps}
+        onRetryPress={this.onRetryPress}
         onMarkAsFailedPress={this.onMarkAsFailedPress}
       />
     );
@@ -78,6 +91,7 @@ AuthorHistoryContentConnector.propTypes = {
   component: PropTypes.elementType.isRequired,
   authorId: PropTypes.number.isRequired,
   bookId: PropTypes.number,
+  mediaType: PropTypes.oneOf(['audiobook', 'ebook']),
   fetchAuthorHistory: PropTypes.func.isRequired,
   clearAuthorHistory: PropTypes.func.isRequired,
   authorHistoryMarkAsFailed: PropTypes.func.isRequired

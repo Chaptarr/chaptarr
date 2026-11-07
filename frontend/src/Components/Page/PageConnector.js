@@ -8,13 +8,14 @@ import { fetchAuthor } from 'Store/Actions/authorActions';
 import { fetchCommands } from 'Store/Actions/commandActions';
 import { fetchCustomFilters } from 'Store/Actions/customFilterActions';
 import {
-  fetchImportLists,
   fetchHardcoverConfig,
+  fetchImportLists,
   fetchIndexerFlags,
   fetchLanguages,
   fetchMetadataProfiles,
   fetchQualityProfiles,
-  fetchUISettings
+  fetchUISettings,
+  setAdvancedSettings
 } from 'Store/Actions/settingsActions';
 import { fetchStatus } from 'Store/Actions/systemActions';
 import { fetchTags } from 'Store/Actions/tagActions';
@@ -134,6 +135,7 @@ const selectErrors = createSelector(
 
     return {
       hasError,
+      authorError: authorsError,
       customFiltersError,
       tagsError,
       uiSettingsError,
@@ -150,14 +152,18 @@ const selectErrors = createSelector(
 
 function createMapStateToProps() {
   return createSelector(
+    (state) => state.settings.advancedSettings,
     (state) => state.settings.ui.item.enableColorImpairedMode,
+    (state) => state.settings.ui.item.experienceMode,
     selectIsPopulated,
     selectErrors,
     selectAppProps,
     createDimensionsSelector(),
     createSystemStatusSelector(),
     (
+      advancedSettings,
       enableColorImpairedMode,
+      experienceMode,
       isPopulated,
       errors,
       app,
@@ -170,7 +176,9 @@ function createMapStateToProps() {
         isPopulated,
         isSmallScreen: dimensions.isSmallScreen,
         authenticationEnabled: systemStatus.authentication !== 'none',
-        enableColorImpairedMode
+        enableColorImpairedMode,
+        advancedSettings,
+        experienceMode: experienceMode || 'advanced'
       };
     }
   );
@@ -222,6 +230,9 @@ function createMapDispatchToProps(dispatch, props) {
     },
     onSidebarVisibleChange(isSidebarVisible) {
       dispatch(setIsSidebarVisible({ isSidebarVisible }));
+    },
+    onAdvancedSettingsChange(advancedSettings) {
+      dispatch(setAdvancedSettings(advancedSettings));
     }
   };
 }
@@ -261,29 +272,76 @@ class PageConnector extends Component {
   //
   // Listeners
 
+  componentDidUpdate(prevProps) {
+    if (prevProps.experienceMode !== this.props.experienceMode) {
+      this.props.onAdvancedSettingsChange(this.props.experienceMode === 'advanced');
+    } else if (this.props.experienceMode === 'simple' && this.props.advancedSettings) {
+      this.props.onAdvancedSettingsChange(false);
+    }
+  }
+
   onSidebarToggle = () => {
     this.props.onSidebarVisibleChange(!this.props.isSidebarVisible);
+  };
+
+  onRetryPress = () => {
+    if (this.props.authorError) {
+      this.props.dispatchFetchAuthor();
+    }
+    if (this.props.customFiltersError) {
+      this.props.dispatchFetchCustomFilters();
+    }
+    if (this.props.tagsError) {
+      this.props.dispatchFetchTags();
+    }
+    if (this.props.languagesError) {
+      this.props.dispatchFetchLanguages();
+    }
+    if (this.props.qualityProfilesError) {
+      this.props.dispatchFetchQualityProfiles();
+    }
+    if (this.props.metadataProfilesError) {
+      this.props.dispatchFetchMetadataProfiles();
+    }
+    if (this.props.importListsError) {
+      this.props.dispatchFetchImportLists();
+    }
+    if (this.props.indexerFlagsError) {
+      this.props.dispatchFetchIndexerFlags();
+    }
+    if (this.props.uiSettingsError) {
+      this.props.dispatchFetchUISettings();
+    }
+    if (this.props.systemStatusError) {
+      this.props.dispatchFetchStatus();
+    }
+    if (this.props.translationsError) {
+      this.props.dispatchFetchTranslations();
+    }
   };
 
   //
   // Render
 
   render() {
-	    const {
-	      isPopulated,
-	      hasError,
-	      dispatchFetchAuthor,
-	      dispatchFetchCommands,
-	      dispatchFetchTags,
-	      dispatchFetchLanguages,
-	      dispatchFetchQualityProfiles,
+    const {
+      isPopulated,
+      hasError,
+      dispatchFetchAuthor,
+      dispatchFetchCommands,
+      dispatchFetchCustomFilters,
+      dispatchFetchTags,
+      dispatchFetchLanguages,
+      dispatchFetchQualityProfiles,
       dispatchFetchMetadataProfiles,
       dispatchFetchImportLists,
-	      dispatchFetchIndexerFlags,
-	      dispatchFetchUISettings,
-	      dispatchFetchStatus,
-	      dispatchFetchTranslations,
-        dispatchFetchHardcoverConfig,
+      dispatchFetchIndexerFlags,
+      dispatchFetchUISettings,
+      dispatchFetchStatus,
+      dispatchFetchTranslations,
+      dispatchFetchHardcoverConfig,
+      advancedSettings,
+      onAdvancedSettingsChange,
       ...otherProps
     } = this.props;
 
@@ -292,6 +350,7 @@ class PageConnector extends Component {
         <ErrorPage
           {...this.state}
           {...otherProps}
+          onRetryPress={this.onRetryPress}
         />
       );
     }
@@ -311,15 +370,26 @@ class PageConnector extends Component {
   }
 }
 
-	PageConnector.propTypes = {
-	  isPopulated: PropTypes.bool.isRequired,
-	  hasError: PropTypes.bool.isRequired,
-	  isSidebarVisible: PropTypes.bool.isRequired,
-	  dispatchFetchAuthor: PropTypes.func.isRequired,
-	  dispatchFetchCommands: PropTypes.func.isRequired,
-	  dispatchFetchCustomFilters: PropTypes.func.isRequired,
-	  dispatchFetchTags: PropTypes.func.isRequired,
-	  dispatchFetchLanguages: PropTypes.func.isRequired,
+PageConnector.propTypes = {
+  authorError: PropTypes.object,
+  customFiltersError: PropTypes.object,
+  tagsError: PropTypes.object,
+  languagesError: PropTypes.object,
+  qualityProfilesError: PropTypes.object,
+  metadataProfilesError: PropTypes.object,
+  importListsError: PropTypes.object,
+  indexerFlagsError: PropTypes.object,
+  uiSettingsError: PropTypes.object,
+  systemStatusError: PropTypes.object,
+  translationsError: PropTypes.object,
+  isPopulated: PropTypes.bool.isRequired,
+  hasError: PropTypes.bool.isRequired,
+  isSidebarVisible: PropTypes.bool.isRequired,
+  dispatchFetchAuthor: PropTypes.func.isRequired,
+  dispatchFetchCommands: PropTypes.func.isRequired,
+  dispatchFetchCustomFilters: PropTypes.func.isRequired,
+  dispatchFetchTags: PropTypes.func.isRequired,
+  dispatchFetchLanguages: PropTypes.func.isRequired,
   dispatchFetchQualityProfiles: PropTypes.func.isRequired,
   dispatchFetchMetadataProfiles: PropTypes.func.isRequired,
   dispatchFetchImportLists: PropTypes.func.isRequired,
@@ -328,7 +398,10 @@ class PageConnector extends Component {
   dispatchFetchStatus: PropTypes.func.isRequired,
   dispatchFetchTranslations: PropTypes.func.isRequired,
   dispatchFetchHardcoverConfig: PropTypes.func.isRequired,
-  onSidebarVisibleChange: PropTypes.func.isRequired
+  onSidebarVisibleChange: PropTypes.func.isRequired,
+  advancedSettings: PropTypes.bool.isRequired,
+  experienceMode: PropTypes.oneOf(['simple', 'advanced']).isRequired,
+  onAdvancedSettingsChange: PropTypes.func.isRequired
 };
 
 export default withRouter(

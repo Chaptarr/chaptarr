@@ -1,0 +1,109 @@
+services:
+  prepare-books-root:
+    image: busybox:1.37.0
+    user: "0:0"
+    volumes:
+      - chaptarrng-smoke-books:/books
+      - chaptarrng-smoke-books:/library
+    command: ["sh", "-ec", "chown 99:100 /books /library && chmod 0775 /books /library"]
+
+  prepare-bookshelf-source:
+    image: python:3.13-slim
+    depends_on:
+      prepare-books-root:
+        condition: service_completed_successfully
+    volumes:
+      - chaptarrng-smoke-config:/config
+      - chaptarrng-smoke-books:/library
+      - type: bind
+        source: ../src/Chaptarr.Core.Test/Datastore/Fixtures/BookshelfNG.Schema.158.sql
+        target: /fixture/schema.sql
+        read_only: true
+      - type: bind
+        source: ../src/Chaptarr.Core.Test/Datastore/Fixtures/BookshelfNG.PopulatedMigration158.sql
+        target: /fixture/seed.sql
+        read_only: true
+      - type: bind
+        source: ./prepare-bookshelfng-smoke.py
+        target: /fixture/prepare.py
+        read_only: true
+    command: ["python", "/fixture/prepare.py"]
+
+  metadata-mock:
+    image: node:24.22.1-bookworm-slim
+    command:
+      - node
+      - -e
+      - |
+        const http = require('node:http');
+        http.createServer((request, response) => {
+          const authorUnavailable = request.url.startsWith('/api/v5/author');
+          response.writeHead(200, {
+            'content-type': 'application/json',
+          });
+          response.end(JSON.stringify(authorUnavailable
+            ? { Author: null, Summary: null, Pagination: null, Books: [], Series: [] }
+            : {}));
+        }).listen(8765, '0.0.0.0');
+
+  chaptarrng:
+    image: chaptarrng-seerrng-smoke:local
+    depends_on:
+      prepare-books-root:
+        condition: service_completed_successfully
+      prepare-bookshelf-source:
+        condition: service_completed_successfully
+      metadata-mock:
+        condition: service_started
+    build:
+      context: ..
+      dockerfile: Dockerfile.build
+    environment:
+      CHAPTARR__AUTH__APIKEY: ${CHAPTARR_GLOBAL_API_KEY:?Set CHAPTARR_GLOBAL_API_KEY}
+      CHAPTARR__AUTH__SEERRAPIKEY: ${CHAPTARR_SEERR_API_KEY:?Set CHAPTARR_SEERR_API_KEY}
+      CHAPTARR__SERVER__PORT: "8789"
+      METADATA_URL: http://metadata-mock:8765
+      HARDCOVER: "true"
+      PUID: "99"
+      PGID: "100"
+    volumes:
+      - chaptarrng-smoke-config:/config
+      - chaptarrng-smoke-books:/books
+      - chaptarrng-smoke-books:/library
+
+  smoke:
+    image: node:24.22.1-bookworm-slim
+    working_dir: /seerrng
+    depends_on:
+      - chaptarrng
+    environment:
+      CHAPTARR_API_URL: http://chaptarrng:8789/api/v1
+      CHAPTARR_GLOBAL_API_KEY: ${CHAPTARR_GLOBAL_API_KEY:?Set CHAPTARR_GLOBAL_API_KEY}
+      CHAPTARR_SEERR_API_KEY: ${CHAPTARR_SEERR_API_KEY:?Set CHAPTARR_SEERR_API_KEY}
+      CONFIG_DIRECTORY: /tmp/seerrng-smoke-config
+      SEERR_EXTERNAL_CONFIG: '{"clientId":"integration-smoke","main":{},"plex":{},"jellyfin":{},"oidc":{},"tautulli":{},"notifications":{"agents":{}},"network":{},"radarr":[],"sonarr":[],"lidarr":[],"readarr":[]}'
+    volumes:
+      - type: bind
+        source: ${SEERRNG_SOURCE:?Set SEERRNG_SOURCE to the SeerrNG checkout}
+        target: /seerrng
+        read_only: true
+      - type: bind
+        source: ${SEERRNG_NODE_MODULES:?Set SEERRNG_NODE_MODULES to the installed SeerrNG node_modules directory}
+        target: /seerrng/node_modules
+        read_only: true
+      - type: bind
+        source: .
+        target: /chaptarrng-integration
+        read_only: true
+    command:
+      - sh
+      - -lc
+      - node scripts/chaptarrng-integration-smoke.mjs && node /chaptarrng-integration/seerrng-request-lifecycle.mjs
+
+volumes:
+  chaptarrng-smoke-config:
+  chaptarrng-smoke-books:
+
+networks:
+  default:
+    internal: true

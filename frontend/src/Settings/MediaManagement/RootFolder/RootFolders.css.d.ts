@@ -4,6 +4,8 @@ interface CssExports {
   'actionsHeader': string;
   'addRootFolderContainer': string;
   'addRootFolderIcon': string;
+  'backfillError': string;
+  'backfillRootFoldersButton': string;
   'freeSpaceHeader': string;
   'metadataProfileHeader': string;
   'nameHeader': string;

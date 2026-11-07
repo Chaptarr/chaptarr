@@ -178,12 +178,15 @@ namespace NzbDrone.Core.Books.Services
                 ? author.AudiobookRootFolderPath
                 : author.EbookRootFolderPath;
 
-            return IsUnsafePath(author.Path, rootFolders) ||
+            var hasExplicitSplitPathsInSharedRoot = AuthorPathBuilder.HasDistinctSafeMediaPathsInsideSharedRoot(author, rootFolders);
+            var authorPathIsItsExplicitSharedRoot = hasExplicitSplitPathsInSharedRoot && author.Path.PathEquals(primaryRoot);
+
+            return (!authorPathIsItsExplicitSharedRoot && IsUnsafePath(author.Path, rootFolders)) ||
                    (hasAudiobookRoot && IsUnsafePath(author.AudiobookPath, rootFolders)) ||
                    (!hasAudiobookRoot && author.AudiobookPath.IsNotNullOrWhiteSpace()) ||
                    (hasEbookRoot && IsUnsafePath(author.EbookPath, rootFolders)) ||
                    (!hasEbookRoot && author.EbookPath.IsNotNullOrWhiteSpace()) ||
-                   (primaryRoot.IsNotNullOrWhiteSpace() && author.Path.IsNotNullOrWhiteSpace() && !primaryRoot.IsParentPath(author.Path)) ||
+                   (!authorPathIsItsExplicitSharedRoot && primaryRoot.IsNotNullOrWhiteSpace() && author.Path.IsNotNullOrWhiteSpace() && !primaryRoot.IsParentPath(author.Path)) ||
                    (author.AudiobookRootFolderPath.IsNotNullOrWhiteSpace() && author.AudiobookPath.IsNotNullOrWhiteSpace() && !author.AudiobookRootFolderPath.IsParentPath(author.AudiobookPath)) ||
                    (author.EbookRootFolderPath.IsNotNullOrWhiteSpace() && author.EbookPath.IsNotNullOrWhiteSpace() && !author.EbookRootFolderPath.IsParentPath(author.EbookPath)) ||
                    (author.AudiobookRootFolderPath.IsNotNullOrWhiteSpace() && author.AudiobookPath.PathEquals(author.AudiobookRootFolderPath)) ||

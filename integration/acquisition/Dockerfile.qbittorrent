@@ -1,0 +1,3 @@
+FROM python@sha256:ae14d4ce8771606477a81446e7ef429edd6762305fc50c84507c1041fa8285d1
+RUN apt-get update && apt-get install -y --no-install-recommends qbittorrent-nox && rm -rf /var/lib/apt/lists/*
+ENTRYPOINT ["qbittorrent-nox"]

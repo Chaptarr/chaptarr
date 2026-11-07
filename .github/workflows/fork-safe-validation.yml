@@ -1,0 +1,54 @@
+# ng-runner-policy: private-jit-only-v1
+name: ChaptarrNG fork-safe release-note validation
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  release-notes:
+    name: Release-note contract
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.fork == true &&
+      github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name &&
+      github.event.pull_request.base.repo.full_name == 'snapetech-org/chaptarrng' &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on:
+      group: public-fork-jit
+      labels: [self-hosted, linux, x64, public-pr-chaptarrng, "ng-public-run-${{ github.run_id }}"]
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.12.1
+          package-manager-cache: false
+      - name: Validate release-note fragment or explicit opt-out
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "refs/pull/$PR_NUMBER/head:refs/remotes/pull/$PR_NUMBER/head"
+          if ! git cat-file -e "$HEAD_SHA^{commit}"; then
+            echo "::error::Pull request head is unavailable after fetching its PR ref" >&2
+            exit 1
+          fi
+          body_file="$RUNNER_TEMP/pr-body.md"
+          printf '%s' "$PR_BODY" > "$body_file"
+          node --test scripts/release-notes.test.mjs
+          node scripts/check-release-notes.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --pr-body "$body_file" --summary-file "$GITHUB_STEP_SUMMARY"
+          node scripts/preview-release-notes.mjs --base "$BASE_SHA" --head "$HEAD_SHA" | tee -a "$GITHUB_STEP_SUMMARY"

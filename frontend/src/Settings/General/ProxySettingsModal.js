@@ -356,7 +356,9 @@ class ProxySettingsModal extends Component {
       >
         <ModalContent onModalClose={onModalClose}>
           <ModalHeader>
-            {this.props.selectedProxy ? `Configure Proxy - ${this.props.selectedProxy.name}` : 'Add Proxy'}
+            {this.props.selectedProxy ?
+              translate('ConfigureProxy', [this.props.selectedProxy.name]) :
+              translate('AddProxy')}
           </ModalHeader>
 
           <ModalBody>

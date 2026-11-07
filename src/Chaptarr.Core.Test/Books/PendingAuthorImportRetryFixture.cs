@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
+using Newtonsoft.Json;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Messaging;
@@ -298,6 +300,74 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(repositoryProxy.Active.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.None));
             Assert.That(repositoryProxy.Active.EbookBooksToSearch, Is.EqualTo("[\"gr:2001\"]"));
             Assert.That(repositoryProxy.Active.SearchForMissingBooks, Is.True);
+        }
+
+        [Test]
+        public async Task pending_import_should_preserve_and_merge_selected_remote_editions()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var repositoryProxy = (RepositoryProxy)repository;
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            var subject = new PendingAuthorImportService(
+                repository,
+                authorService,
+                new RecordingEventAggregator(),
+                LogManager.GetCurrentClassLogger());
+
+            await subject.EnqueueAsync(
+                "gr:123",
+                new MonitoringConfig
+                {
+                    CreateAudiobook = true,
+                    CreateEbook = false,
+                    AudiobookBooksToMonitor = new List<string> { "gr:3001" },
+                    SelectedRemoteEditions = new List<UserSelectedRemoteEdition>
+                    {
+                        new()
+                        {
+                            AuthorProviderId = "gr:123",
+                            WorkProviderId = "gr:3001",
+                            EditionProviderId = "gr:9001",
+                            EditionTitle = "The First Edition",
+                            MediaType = BookMediaType.Audiobook,
+                            QueueIfUnavailable = true
+                        }
+                    }
+                },
+                "test");
+
+            repositoryProxy.Active = repositoryProxy.Inserted;
+            await subject.EnqueueAsync(
+                "gr:123",
+                new MonitoringConfig
+                {
+                    CreateAudiobook = true,
+                    CreateEbook = true,
+                    AudiobookBooksToMonitor = new List<string> { "gr:3001" },
+                    EbookBooksToMonitor = new List<string> { "gr:3002" },
+                    SelectedRemoteEditions = new List<UserSelectedRemoteEdition>
+                    {
+                        new()
+                        {
+                            AuthorProviderId = "gr:123",
+                            WorkProviderId = "gr:3002",
+                            EditionProviderId = "gr:9002",
+                            EditionTitle = "The Second Edition",
+                            MediaType = BookMediaType.Ebook,
+                            QueueIfUnavailable = true
+                        }
+                    }
+                },
+                "test");
+
+            var selections = JsonConvert.DeserializeObject<List<UserSelectedRemoteEdition>>(repositoryProxy.Active.SelectedRemoteEditions);
+            Assert.Multiple(() =>
+            {
+                Assert.That(selections, Has.Count.EqualTo(2));
+                Assert.That(selections.Select(selection => selection.WorkProviderId), Is.EqualTo(new[] { "gr:3001", "gr:3002" }));
+                Assert.That(selections.Select(selection => selection.EditionProviderId), Is.EqualTo(new[] { "gr:9001", "gr:9002" }));
+                Assert.That(selections.Select(selection => selection.MediaType), Is.EqualTo(new[] { BookMediaType.Audiobook, BookMediaType.Ebook }));
+            });
         }
 
         [Test]

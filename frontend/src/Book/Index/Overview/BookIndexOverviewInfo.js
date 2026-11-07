@@ -64,7 +64,7 @@ function getInfoRowProps(row, props) {
   const { name } = row;
 
   if (name === 'monitored') {
-    const isMonitored = props.audiobookMonitored || props.ebookMonitored;
+    const isMonitored = props.mediaType === 'ebook' ? props.ebookMonitored : props.audiobookMonitored;
     const monitoredText = translate(isMonitored ? 'Monitored' : 'Unmonitored');
 
     return {
@@ -92,7 +92,7 @@ function getInfoRowProps(row, props) {
     } = props;
 
     return {
-      title: `ReleaseDate: ${formatDateTime(releaseDate, longDateFormat, timeFormat)}`,
+      title: `${translate('ReleaseDate')}: ${formatDateTime(releaseDate, longDateFormat, timeFormat)}`,
       iconName: icons.CALENDAR,
       label: getRelativeDate(
         releaseDate,
@@ -116,7 +116,7 @@ function getInfoRowProps(row, props) {
     } = props;
 
     return {
-      title: `Added: ${formatDateTime(added, longDateFormat, timeFormat)}`,
+      title: `${translate('Added')}: ${formatDateTime(added, longDateFormat, timeFormat)}`,
       iconName: icons.ADD,
       label: getRelativeDate(
         added,
@@ -132,7 +132,7 @@ function getInfoRowProps(row, props) {
 
   if (name === 'path') {
     return {
-      title: 'Path',
+      title: translate('Path'),
       iconName: icons.FOLDER,
       label: getBookAuthorPath(props)
     };
@@ -140,7 +140,7 @@ function getInfoRowProps(row, props) {
 
   if (name === 'sizeOnDisk') {
     return {
-      title: 'Size on Disk',
+      title: translate('SizeOnDisk'),
       iconName: icons.DRIVE,
       label: formatBytes(props.sizeOnDisk)
     };

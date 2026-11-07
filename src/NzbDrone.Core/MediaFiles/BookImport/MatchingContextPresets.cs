@@ -23,6 +23,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             return new MatchingContext
             {
                 AllowV5Identification = true,
+                AllowCatalogSearch = true,
                 AllowAuthorImport = false,
                 DeferUnmatchedToAuthorReady = false,
                 AllowUnscopedFallback = false,
@@ -36,12 +37,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             return new MatchingContext
             {
                 AllowV5Identification = true,
+                AllowCatalogSearch = true,
                 AllowAuthorImport = false,
                 DeferUnmatchedToAuthorReady = false,
                 AllowUnscopedFallback = false,
                 DisablePathFallback = !allowPathFallback,
                 PerFileMatching = true,
-                AllowGroupedV5Suggestions = true
+                AllowGroupedV5Suggestions = true,
+                SuppressNegativeUnitCache = true
             };
         }
 
@@ -63,6 +66,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             var context = new MatchingContext
             {
                 AllowV5Identification = allowV5Identification,
+                AllowCatalogSearch = allowV5Identification,
                 AllowAuthorImport = false,
                 DeferUnmatchedToAuthorReady = false,
                 AllowUnscopedFallback = false,
@@ -79,6 +83,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             return new MatchingContext
             {
                 AllowV5Identification = true,
+                AllowCatalogSearch = true,
                 AllowAuthorImport = true,
                 DeferUnmatchedToAuthorReady = false,
                 AllowUnscopedFallback = false,
@@ -92,6 +97,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             return new MatchingContext
             {
                 AllowV5Identification = true,
+                AllowCatalogSearch = true,
                 AllowAuthorImport = true,
                 DeferUnmatchedToAuthorReady = true,
                 AllowUnscopedFallback = true,

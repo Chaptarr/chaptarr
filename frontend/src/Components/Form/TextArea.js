@@ -116,6 +116,7 @@ class TextArea extends Component {
       placeholder,
       name,
       value,
+      ariaDescribedBy,
       hasError,
       hasWarning,
       onBlur
@@ -134,6 +135,10 @@ class TextArea extends Component {
           hasWarning && styles.hasWarning
         )}
         name={name}
+        id={name}
+        dir="auto"
+        aria-describedby={ariaDescribedBy}
+        aria-invalid={hasError || undefined}
         value={value}
         onChange={this.onChange}
         onFocus={this.onFocus}
@@ -153,6 +158,7 @@ TextArea.propTypes = {
   placeholder: PropTypes.string,
   name: PropTypes.string.isRequired,
   value: PropTypes.oneOfType([PropTypes.string, PropTypes.number, PropTypes.array]).isRequired,
+  ariaDescribedBy: PropTypes.string,
   hasError: PropTypes.bool,
   hasWarning: PropTypes.bool,
   onChange: PropTypes.func.isRequired,

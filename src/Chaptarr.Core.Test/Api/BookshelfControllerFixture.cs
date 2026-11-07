@@ -15,7 +15,7 @@ namespace Chaptarr.Core.Test.Api
     public class BookshelfControllerFixture
     {
         [Test]
-        public void should_treat_an_empty_monitoring_object_as_no_command()
+        public void should_keep_bookshelf_default_all_monitoring_for_an_empty_options_object()
         {
             var request = STJson.Deserialize<BookshelfResource>(
                 "{\"authors\":[{\"id\":42}],\"monitoringOptions\":{}}");
@@ -24,10 +24,12 @@ namespace Chaptarr.Core.Test.Api
             var controller = new BookshelfController(authorService, monitoredService);
 
             var result = controller.UpdateAll(request);
+            var calls = GetMonitoredServiceProxy(monitoredService).Calls;
 
             Assert.That(result, Is.TypeOf<AcceptedResult>());
-            Assert.That(GetMonitoredServiceProxy(monitoredService).Calls, Is.Empty);
-            Assert.That(GetAuthorServiceProxy(authorService).GetAuthorsCallCount, Is.Zero);
+            Assert.That(calls, Has.Count.EqualTo(1));
+            Assert.That(calls[0].Options.Monitor, Is.EqualTo(MonitorTypes.All));
+            Assert.That(GetAuthorServiceProxy(authorService).GetAuthorsCallCount, Is.EqualTo(1));
         }
 
         [Test]
@@ -65,20 +67,115 @@ namespace Chaptarr.Core.Test.Api
         }
 
         [Test]
-        public void should_preserve_specific_book_requests_without_an_explicit_monitor_enum()
+        public void should_expand_split_legacy_ids_for_specific_book_monitoring()
         {
             var request = STJson.Deserialize<BookshelfResource>(
                 "{\"authors\":[{\"id\":42}],\"monitoringOptions\":{\"booksToMonitor\":[\"123\"]}}");
             var authorService = CreateAuthorService(new Author { Id = 42, Name = "Martha Wells" });
             var monitoredService = CreateRecordingMonitoredService();
-            var controller = new BookshelfController(authorService, monitoredService);
+            var identityMap = CreateLegacyIdentityMapService();
+            GetLegacyIdentityMapProxy(identityMap).ResolvedBookIds = new List<int> { 123, 124 };
+            var controller = new BookshelfController(authorService, monitoredService, identityMap);
 
             var result = controller.UpdateAll(request);
             var call = GetMonitoredServiceProxy(monitoredService).Calls.Single();
 
             Assert.That(result, Is.TypeOf<AcceptedResult>());
             Assert.That(call.Options.Monitor, Is.EqualTo(MonitorTypes.SpecificBook));
-            Assert.That(call.Options.BooksToMonitor, Is.EqualTo(new[] { "123" }));
+            Assert.That(call.Options.BooksToMonitor, Is.EqualTo(new[] { "123", "124" }));
+        }
+
+        [Test]
+        public void should_return_persisted_legacy_identity_mappings_for_requested_ids()
+        {
+            var identityMap = CreateLegacyIdentityMapService();
+            GetLegacyIdentityMapProxy(identityMap).Mappings = new List<BookshelfLegacyIdentityMapEntry>
+            {
+                new BookshelfLegacyIdentityMapEntry
+                {
+                    Source = "BookshelfNG",
+                    EntityType = "Book",
+                    SourceId = 30,
+                    TargetId = 30,
+                    MediaType = (int)BookMediaType.Audiobook
+                },
+                new BookshelfLegacyIdentityMapEntry
+                {
+                    Source = "BookshelfNG",
+                    EntityType = "Book",
+                    SourceId = 30,
+                    TargetId = 31,
+                    MediaType = (int)BookMediaType.Ebook
+                }
+            };
+            var controller = new BookshelfController(
+                CreateAuthorService(new Author { Id = 42, Name = "Martha Wells" }),
+                CreateRecordingMonitoredService(),
+                identityMap);
+
+            var result = controller.GetLegacyIdentities("Book", new List<int> { 30 });
+            var mappings = ((OkObjectResult)result).Value as List<BookshelfLegacyIdentityResource>;
+
+            Assert.That(mappings.Select(mapping => (mapping.SourceId, mapping.TargetId, mapping.MediaType)), Is.EqualTo(new[]
+            {
+                (30, 30, "audiobook"),
+                (30, 31, "ebook")
+            }));
+        }
+
+        [Test]
+        public void should_return_author_metadata_identity_mappings_for_compatibility()
+        {
+            var identityMap = CreateLegacyIdentityMapService();
+            GetLegacyIdentityMapProxy(identityMap).Mappings = new List<BookshelfLegacyIdentityMapEntry>
+            {
+                new BookshelfLegacyIdentityMapEntry
+                {
+                    Source = "BookshelfNG",
+                    EntityType = "AuthorMetadata",
+                    SourceId = 10,
+                    TargetId = 20
+                }
+            };
+            var controller = new BookshelfController(
+                CreateAuthorService(new Author { Id = 42, Name = "Martha Wells" }),
+                CreateRecordingMonitoredService(),
+                identityMap);
+
+            var result = controller.GetLegacyIdentities("AuthorMetadata", new List<int> { 10 });
+            var mappings = ((OkObjectResult)result).Value as List<BookshelfLegacyIdentityResource>;
+
+            Assert.That(mappings.Select(mapping => (mapping.EntityType, mapping.SourceId, mapping.TargetId)), Is.EqualTo(new[]
+            {
+                ("AuthorMetadata", 10, 20)
+            }));
+        }
+
+        [TestCase("Series")]
+        [TestCase("")]
+        public void should_reject_unsupported_legacy_identity_entity_types(string entityType)
+        {
+            var controller = new BookshelfController(
+                CreateAuthorService(new Author { Id = 42, Name = "Martha Wells" }),
+                CreateRecordingMonitoredService(),
+                CreateLegacyIdentityMapService());
+
+            var result = controller.GetLegacyIdentities(entityType, new List<int> { 30 });
+
+            Assert.That(result, Is.TypeOf<BadRequestObjectResult>());
+        }
+
+        [Test]
+        public void should_reject_legacy_identity_requests_over_the_batch_limit()
+        {
+            var controller = new BookshelfController(
+                CreateAuthorService(new Author { Id = 42, Name = "Martha Wells" }),
+                CreateRecordingMonitoredService(),
+                CreateLegacyIdentityMapService());
+
+            var result = controller.GetLegacyIdentities("Book", Enumerable.Range(1, 501).ToList());
+
+            Assert.That(result, Is.TypeOf<BadRequestObjectResult>());
         }
 
         [TestCase("{\"authors\":[{\"id\":42}],\"monitoringOptions\":{\"monitor\":\"specificBook\"}}")]
@@ -221,6 +318,11 @@ namespace Chaptarr.Core.Test.Api
             return DispatchProxy.Create<IBookMonitoredService, BookMonitoredServiceProxy>();
         }
 
+        private static IBookshelfLegacyIdentityMapService CreateLegacyIdentityMapService()
+        {
+            return DispatchProxy.Create<IBookshelfLegacyIdentityMapService, LegacyIdentityMapServiceProxy>();
+        }
+
         private static AuthorServiceProxy GetAuthorServiceProxy(IAuthorService service)
         {
             return (AuthorServiceProxy)(object)service;
@@ -234,6 +336,11 @@ namespace Chaptarr.Core.Test.Api
         private static BookMonitoredServiceProxy GetMonitoredServiceProxy(IBookMonitoredService service)
         {
             return (BookMonitoredServiceProxy)(object)service;
+        }
+
+        private static LegacyIdentityMapServiceProxy GetLegacyIdentityMapProxy(IBookshelfLegacyIdentityMapService service)
+        {
+            return (LegacyIdentityMapServiceProxy)(object)service;
         }
 
         private class AuthorServiceProxy : DispatchProxy
@@ -300,6 +407,23 @@ namespace Chaptarr.Core.Test.Api
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement {targetMethod?.Name}");
+            }
+        }
+
+        private class LegacyIdentityMapServiceProxy : DispatchProxy
+        {
+            public List<int> ResolvedBookIds { get; set; } = new();
+            public List<BookshelfLegacyIdentityMapEntry> Mappings { get; set; } = new();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                return targetMethod?.Name switch
+                {
+                    nameof(IBookshelfLegacyIdentityMapService.ResolveBookIds) => ResolvedBookIds,
+                    nameof(IBookshelfLegacyIdentityMapService.GetMappings) => Mappings,
+                    nameof(IBookshelfLegacyIdentityMapService.GetMappingsByTargetIds) => Mappings,
+                    _ => throw new NotImplementedException($"Test proxy does not implement {targetMethod?.Name}")
+                };
             }
         }
     }

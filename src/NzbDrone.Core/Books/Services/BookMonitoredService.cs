@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using NzbDrone.Common.Instrumentation;
 using NLog;
 
 namespace NzbDrone.Core.Books
@@ -27,7 +28,7 @@ namespace NzbDrone.Core.Books
         {
             if (monitoringOptions != null)
             {
-                _logger.Debug("[{0}] Setting book monitored status.", author.Name);
+                _logger.Debug("[{0}] Setting book monitored status.", CleanseLogMessage.Cleanse(author.Name));
 
                 var allBooks = _bookService.GetBooksByAuthor(author.Id);
                 var books = allBooks;
@@ -111,6 +112,9 @@ namespace NzbDrone.Core.Books
                         case MonitorTypes.First:
                             ToggleBooksMonitoredState(books, false);
                             ToggleBooksMonitoredState(books.OrderBy(e => e.ReleaseDate).Take(1), true);
+                            break;
+                        case MonitorTypes.SpecificBook:
+                            _logger.Debug("Specific-book add: book rows were monitored by provider ID when inserted, leaving them unchanged");
                             break;
                         default:
                             throw new ArgumentOutOfRangeException();

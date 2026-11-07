@@ -8,6 +8,7 @@ namespace NzbDrone.Core.IndexerSearch
         public List<int> BookIds { get; set; }
 
         public override bool SendUpdatesToClient => true;
+        public override bool RequiresLibraryState => true;
 
         public BookSearchCommand()
         {

@@ -17,10 +17,10 @@ namespace NzbDrone.Core.Notifications.Simplepush
     {
         private static readonly SimplepushSettingsValidator Validator = new SimplepushSettingsValidator();
 
-        [FieldDefinition(0, Label = "Key", Privacy = PrivacyLevel.ApiKey, HelpLink = "https://simplepush.io/features")]
+        [FieldDefinition(0, Label = "provider.field.f99a52df3ff3d", Privacy = PrivacyLevel.ApiKey, HelpLink = "https://simplepush.io/features")]
         public string Key { get; set; }
 
-        [FieldDefinition(1, Label = "Event", HelpText = "Customize the behavior of push notifications", HelpLink = "https://simplepush.io/features")]
+        [FieldDefinition(1, Label = "provider.field.f4e1f49a9c8ae", HelpText = "provider.field.fa4361126b6b0", HelpLink = "https://simplepush.io/features")]
         public string Event { get; set; }
 
         public bool IsValid => !string.IsNullOrWhiteSpace(Key);

@@ -1,0 +1,94 @@
+$ErrorActionPreference = 'Stop'
+
+$installRoot = Join-Path $env:ProgramFiles 'ChaptarrNG'
+$appDir = Join-Path $installRoot 'app'
+$stageDir = Join-Path $installRoot 'app.new'
+$backupDir = Join-Path $installRoot 'app.previous'
+$binDir = Join-Path $appDir 'bin'
+$dataDir = Join-Path $env:ProgramData 'ChaptarrNG\data'
+$exePath = Join-Path $binDir 'Chaptarr.Console.exe'
+$archivePath = Join-Path $installRoot 'ChaptarrNG-__VERSION__-win-x64.zip'
+$archiveUrl = 'https://github.com/snapetech/chaptarrng/releases/download/v__VERSION__/ChaptarrNG-__VERSION__-win-x64.zip'
+
+$nssm = Get-Command nssm.exe -ErrorAction Stop
+
+New-Item -ItemType Directory -Force -Path $installRoot, $dataDir | Out-Null
+if (Test-Path $backupDir) {
+  throw "A prior ChaptarrNG package rollback directory exists at $backupDir. Restore or remove it before retrying."
+}
+if (Test-Path $stageDir) { Remove-Item -Recurse -Force $stageDir }
+New-Item -ItemType Directory -Force -Path (Join-Path $stageDir 'bin') | Out-Null
+
+Get-ChocolateyWebFile -PackageName 'chaptarrng' -FileFullPath $archivePath `
+  -Url $archiveUrl -Checksum '__ARCHIVE_SHA256__' -ChecksumType 'sha256'
+Expand-Archive -LiteralPath $archivePath -DestinationPath (Join-Path $stageDir 'bin') -Force
+if (-not (Test-Path (Join-Path $stageDir 'bin\Chaptarr.Console.exe')) -or
+    -not (Test-Path (Join-Path $stageDir 'bin\UI\index.html'))) {
+  throw 'The verified ChaptarrNG archive is missing its executable or web UI.'
+}
+@(
+  'UpdateMethod=External',
+  'UpdateMethodMessage=Use Chocolatey to update ChaptarrNG.',
+  'Branch=main'
+) | Set-Content -Encoding ascii -Path (Join-Path $stageDir 'package_info')
+
+$service = Get-Service -Name 'ChaptarrNG' -ErrorAction SilentlyContinue
+$hadService = $null -ne $service
+$wasRunning = $hadService -and $service.Status -ne 'Stopped'
+$hadApp = Test-Path $appDir
+$createdService = $false
+
+if ($wasRunning) {
+  Stop-Service -Name 'ChaptarrNG' -Force
+  $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+}
+if ($hadApp) { Move-Item -LiteralPath $appDir -Destination $backupDir }
+
+try {
+  Move-Item -LiteralPath $stageDir -Destination $appDir
+  if (-not $hadService) {
+    & $nssm.Source install ChaptarrNG $exePath
+    if ($LASTEXITCODE -ne 0) { throw 'NSSM could not install the ChaptarrNG service.' }
+    $createdService = $true
+    & $nssm.Source set ChaptarrNG AppDirectory $binDir
+    if ($LASTEXITCODE -ne 0) { throw 'NSSM could not set the ChaptarrNG working directory.' }
+    & $nssm.Source set ChaptarrNG AppParameters "/nobrowser -data=$dataDir"
+    if ($LASTEXITCODE -ne 0) { throw 'NSSM could not set ChaptarrNG service parameters.' }
+    & $nssm.Source set ChaptarrNG Start SERVICE_AUTO_START
+    if ($LASTEXITCODE -ne 0) { throw 'NSSM could not configure automatic service start.' }
+    & $nssm.Source start ChaptarrNG
+    if ($LASTEXITCODE -ne 0) { throw 'NSSM could not start ChaptarrNG.' }
+    $service = Get-Service -Name 'ChaptarrNG' -ErrorAction Stop
+    $service.WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+  } elseif ($wasRunning) {
+    Start-Service -Name 'ChaptarrNG'
+    (Get-Service -Name 'ChaptarrNG').WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+  }
+
+  if (Test-Path $backupDir) {
+    try { Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction Stop }
+    catch { Write-Warning "ChaptarrNG is installed, but the previous app files remain at $backupDir." }
+  }
+} catch {
+  $currentService = Get-Service -Name 'ChaptarrNG' -ErrorAction SilentlyContinue
+  if ($currentService -and $currentService.Status -ne 'Stopped') {
+    try {
+      Stop-Service -Name 'ChaptarrNG' -Force
+      $currentService.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+    } catch { Write-Warning 'Could not stop the failed ChaptarrNG service during rollback.' }
+  }
+  if ($createdService) {
+    & $nssm.Source remove ChaptarrNG confirm | Out-Null
+  }
+  if (Test-Path $appDir) { Remove-Item -Recurse -Force $appDir }
+  if (Test-Path $backupDir) { Move-Item -LiteralPath $backupDir -Destination $appDir }
+  if ($hadService -and $wasRunning) {
+    try { Start-Service -Name 'ChaptarrNG' } catch { Write-Warning 'Could not restart the previous ChaptarrNG service after rollback.' }
+  }
+  throw
+} finally {
+  if (Test-Path $stageDir) { Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue }
+  if (Test-Path $archivePath) { Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue }
+}
+
+Write-Host 'ChaptarrNG package payload installed; the existing service state was preserved.'

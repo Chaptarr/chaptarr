@@ -25,10 +25,10 @@ import { coerceFolderType, FolderType } from 'Helpers/Props/folderTypes';
 import monitorNewItemsOptions from 'Utilities/Author/monitorNewItemsOptions';
 import monitorOptions from 'Utilities/Author/monitorOptions';
 import translate from 'Utilities/String/translate';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import styles from './EditRootFolderModalContent.css';
 
-// Temporary toggle: hide Calibre controls in the GUI until Calibre support is restored.
-const SHOW_CALIBRE_UI = false;
+const SHOW_CALIBRE_UI = true;
 
 class EditRootFolderModalContent extends Component {
   constructor(props, context) {
@@ -79,6 +79,16 @@ class EditRootFolderModalContent extends Component {
     this.setState(newState);
   };
 
+  getImportMixedContentHelpText = (isFolderTypeLocked, isMixed) => {
+    if (isFolderTypeLocked) {
+      return translate('ImportMixedContentLockedHelpText');
+    }
+
+    return isMixed ?
+      translate('ImportMixedContentEnabledHelpText') :
+      translate('ImportMixedContentDisabledHelpText');
+  };
+
   onAcceptsMixedContentChange = ({ value }) => {
     if (this.isFolderTypeFixed()) {
       return;
@@ -107,15 +117,15 @@ class EditRootFolderModalContent extends Component {
   getSaveButtonText = () => {
     const folderTypeValue = this.props.item?.folderType?.value;
     const rootFolderId = this.props.item?.id?.value;
-    const verb = rootFolderId ? 'Update' : 'Save';
+    const isUpdating = Boolean(rootFolderId);
 
     if (folderTypeValue === FolderType.Mixed) {
-      return `${verb} Mixed Folder`;
+      return translate(isUpdating ? 'UpdateMixedFolder' : 'SaveMixedFolder');
     }
 
     return this.state.selectedMediaType === 'audiobook' ?
-      `${verb} Audiobook Folder` :
-      `${verb} Ebook Folder`;
+      translate(isUpdating ? 'UpdateAudiobookFolder' : 'SaveAudiobookFolder') :
+      translate(isUpdating ? 'UpdateEbookFolder' : 'SaveEbookFolder');
   };
 
   onSmartSavePress = () => {
@@ -138,16 +148,16 @@ class EditRootFolderModalContent extends Component {
     const { saveError } = this.props;
 
     if (saveError.message) {
-      return saveError.message;
+      return translateServerMessage(saveError.message);
     }
 
     if (saveError.responseJSON && saveError.responseJSON.length > 0) {
-      return saveError.responseJSON[0].errorMessage ||
-        saveError.responseJSON[0].message ||
-        'An error occurred while saving the root folder';
+      return translateServerMessage(saveError.responseJSON[0].errorMessage ||
+        saveError.responseJSON[0].message) ||
+        translate('RootFolderSaveError');
     }
 
-    return 'An error occurred while saving the root folder';
+    return translate('RootFolderSaveError');
   };
 
   render() {
@@ -177,9 +187,12 @@ class EditRootFolderModalContent extends Component {
       name,
       path,
       folderType,
+      hasAssignedAuthors,
       placeEbooksWithAudiobooks,
       defaultSyncMonitoredAcrossFormats,
       isCalibreLibrary,
+      reapCalibreDuplicates,
+      autoPushCalibreMetadata,
       host,
       port,
       urlBase,
@@ -209,6 +222,8 @@ class EditRootFolderModalContent extends Component {
 
     const rootFolderId = item?.id?.value;
     const isFolderTypeFixed = this.isFolderTypeFixed();
+    const hasAssignedAuthorsValue = hasAssignedAuthors?.value ?? false;
+    const isFolderTypeLocked = !!rootFolderId && hasAssignedAuthorsValue;
     const folderTypeValue = folderType?.value;
     const allowBothMediaTabs = !rootFolderId || folderTypeValue === FolderType.Mixed;
     const hasAudiobookTab = allowBothMediaTabs || folderTypeValue === FolderType.Audiobook;
@@ -219,12 +234,12 @@ class EditRootFolderModalContent extends Component {
     const { selectedMediaType } = this.state;
 
     const outputProfileValue = outputProfile?.value ?? 'default';
-    const profileHelpText = calibreProfiles.options.find((x) => x.key === outputProfileValue)?.description || '';
+    const profileHelpText = calibreProfiles.getOptions().find((x) => x.key === outputProfileValue)?.description || '';
 
     return (
       <ModalContent onModalClose={onModalClose}>
         <ModalHeader>
-          {rootFolderId ? 'Edit Root Folder' : 'Add Root Folder'}
+          {translate(rootFolderId ? 'EditRootFolder' : 'AddRootFolder')}
         </ModalHeader>
 
         <ModalBody>
@@ -283,11 +298,8 @@ class EditRootFolderModalContent extends Component {
                           type={inputTypes.CHECK}
                           name="folderType"
                           value={folderType?.value === FolderType.Mixed}
-                          helpText={
-                            folderType?.value === FolderType.Mixed ?
-                              translate('ImportMixedContentEnabledHelpText') :
-                              translate('ImportMixedContentDisabledHelpText')
-                          }
+                          isDisabled={isFolderTypeLocked}
+                          helpText={this.getImportMixedContentHelpText(isFolderTypeLocked, folderType?.value === FolderType.Mixed)}
                           onChange={this.onAcceptsMixedContentChange}
                         />
                       </FormGroup>
@@ -674,7 +686,7 @@ class EditRootFolderModalContent extends Component {
                 </FieldSet>
 
                 {
-                  SHOW_CALIBRE_UI &&
+                  SHOW_CALIBRE_UI && supportsEbookDefaults &&
                     <FieldSet legend={translate('CalibreSettings')}>
                       <Alert>
                         {translate('CalibreNotCalibreWeb')}
@@ -710,6 +722,35 @@ class EditRootFolderModalContent extends Component {
                       {
                         isCalibreLibrary?.value &&
                           <div>
+
+                            <FormGroup>
+                              <FormLabel>
+                                {translate('AutoPushCalibreMetadata')}
+                              </FormLabel>
+
+                              <FormInputGroup
+                                type={inputTypes.CHECK}
+                                name="autoPushCalibreMetadata"
+                                helpText={translate('AutoPushCalibreMetadataHelpText')}
+                                {...autoPushCalibreMetadata}
+                                onChange={onInputChange}
+                              />
+                            </FormGroup>
+
+                            <FormGroup>
+                              <FormLabel>
+                                {translate('ReapCalibreDuplicates')}
+                              </FormLabel>
+
+                              <FormInputGroup
+                                type={inputTypes.CHECK}
+                                name="reapCalibreDuplicates"
+                                helpText={translate('ReapCalibreDuplicatesHelpText')}
+                                {...reapCalibreDuplicates}
+                                onChange={onInputChange}
+                              />
+                            </FormGroup>
+
                             <FormGroup>
                               <FormLabel>
                                 {translate('CalibreHost')}
@@ -808,7 +849,7 @@ class EditRootFolderModalContent extends Component {
                                     />
                                   }
                                   title={translate('CalibreOutputFormat')}
-                                  body="Specify the output format. Options are: MOBI, EPUB, AZW3, DOCX, FB2, HTMLZ, LIT, LRF, PDB, PDF, PMLZ, RB, RTF, SNB, TCR, TXT, TXTZ, ZIP"
+                                  body={translate('CalibreOutputFormatTooltip')}
                                   position={tooltipPositions.RIGHT}
                                 />
                               </FormLabel>
@@ -833,7 +874,7 @@ class EditRootFolderModalContent extends Component {
                                     />
                                   }
                                   title={translate('CalibreOutputProfile')}
-                                  body="Specify the output profile. The output profile tells the Calibre conversion system how to optimize the created document for the specified device (such as by resizing images for the device screen size). In some cases, an output profile can be used to optimize the output for a particular device, but this is rarely necessary."
+                                  body={translate('CalibreOutputProfileTooltip')}
                                   position={tooltipPositions.RIGHT}
                                 />
                               </FormLabel>
@@ -841,7 +882,7 @@ class EditRootFolderModalContent extends Component {
                               <FormInputGroup
                                 type={inputTypes.SELECT}
                                 name="outputProfile"
-                                values={calibreProfiles.options}
+                                values={calibreProfiles.getOptions()}
                                 helpText={profileHelpText}
                                 {...outputProfile}
                                 onChange={onInputChange}
@@ -876,7 +917,7 @@ class EditRootFolderModalContent extends Component {
                 {this.getSaveErrorMessage()}
                 {
                   saveError.message && saveError.message.toLowerCase().includes('permission') &&
-                    ' Please check that the Docker container has read permissions for this directory.'
+                    ` ${translate('RootFolderDockerReadPermissionHelpText')}`
                 }
               </Alert>
           }

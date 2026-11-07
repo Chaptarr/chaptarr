@@ -58,13 +58,13 @@ class LogFiles extends Component {
     } = this.props;
 
     const logLevelOptions = [
-      { key: 'trace', value: 'Trace' },
-      { key: 'debug', value: 'Debug' },
-      { key: 'info', value: 'Info' },
-      { key: 'warn', value: 'Warn' },
-      { key: 'error', value: 'Error' },
-      { key: 'fatal', value: 'Fatal' },
-      { key: 'off', value: 'Off' }
+      { key: 'trace', value: translate('Trace') },
+      { key: 'debug', value: translate('Debug') },
+      { key: 'info', value: translate('Information') },
+      { key: 'warn', value: translate('Warning') },
+      { key: 'error', value: translate('Error') },
+      { key: 'fatal', value: translate('Fatal') },
+      { key: 'off', value: translate('Off') }
     ];
 
     return (

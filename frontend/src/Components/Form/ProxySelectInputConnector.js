@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import map from 'lodash/map';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -34,20 +34,20 @@ function createMapStateToProps() {
       if (includeNone) {
         values.push({
           key: 'null',
-          value: isProxyEnabled ? 'Use default proxy' : 'Proxy disabled'
+          value: translate(isProxyEnabled ? 'ProxyUseDefault' : 'ProxyDisabled')
         });
       }
 
       if (includeDirectConnection) {
         values.push({
           key: -1,
-          value: 'Direct connection',
-          hint: 'Do not use a proxy for this indexer'
+          value: translate('ProxyDirectConnection'),
+          hint: translate('ProxyDirectConnectionHint')
         });
       }
 
       if (isProxyEnabled && proxies && proxies.items && proxies.items.length > 0) {
-        const proxyValues = _.map([...proxies.items].sort(sortByName), (proxy) => {
+        const proxyValues = map([...proxies.items].sort(sortByName), (proxy) => {
           return {
             key: proxy.id,
             value: proxy.name,

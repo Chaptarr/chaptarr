@@ -13,6 +13,7 @@ interface CssExports {
   'searchContainer': string;
   'searchIconContainer': string;
   'searchInput': string;
+  'searchOptions': string;
   'searchResults': string;
 }
 export const cssExports: CssExports;

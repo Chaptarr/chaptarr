@@ -1,6 +1,6 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
-import { DragLayer } from 'react-dnd';
+import { useDragLayer } from 'react-dnd';
 import DragPreviewLayer from 'Components/DragPreviewLayer';
 import { QUALITY_PROFILE_ITEM } from 'Helpers/dragTypes';
 import dimensions from 'Styles/Variables/dimensions.js';
@@ -20,7 +20,7 @@ function collectDragLayer(monitor) {
   };
 }
 
-class QualityProfileItemDragPreview extends Component {
+class QualityProfileItemDragPreviewView extends Component {
 
   //
   // Render
@@ -80,7 +80,7 @@ class QualityProfileItemDragPreview extends Component {
   }
 }
 
-QualityProfileItemDragPreview.propTypes = {
+QualityProfileItemDragPreviewView.propTypes = {
   item: PropTypes.object,
   itemType: PropTypes.string,
   currentOffset: PropTypes.shape({
@@ -89,4 +89,15 @@ QualityProfileItemDragPreview.propTypes = {
   })
 };
 
-export default DragLayer(collectDragLayer)(QualityProfileItemDragPreview);
+function QualityProfileItemDragPreview(props) {
+  const dragLayerProps = useDragLayer(collectDragLayer);
+
+  return (
+    <QualityProfileItemDragPreviewView
+      {...props}
+      {...dragLayerProps}
+    />
+  );
+}
+
+export default QualityProfileItemDragPreview;

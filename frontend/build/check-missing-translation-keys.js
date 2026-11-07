@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Scan frontend for translate('Key') calls and report any keys missing from en.json.
+ * Scan frontend translation helper calls and report any keys missing from en.json.
  *
  * Usage:
  *   yarn check-translations             # scan all .js/.jsx/.ts/.tsx in frontend/src
@@ -20,7 +20,7 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const EN_JSON = path.join(REPO_ROOT, 'src', 'NzbDrone.Core', 'Localization', 'Core', 'en.json');
 const FRONTEND_SRC = path.join(REPO_ROOT, 'frontend', 'src');
 const EXTS = new Set(['.js', '.jsx', '.ts', '.tsx']);
-const KEY_RE = /translate\(['"]([^'"]+)['"]/g;
+const KEY_RE = /(translateWithFallback|translatePlural|translateSelect|translate)\(['"]([^'"]+)['"]/g;
 
 function walk(dir) {
   const out = [];
@@ -57,20 +57,22 @@ function main() {
     let m;
     KEY_RE.lastIndex = 0;
     while ((m = KEY_RE.exec(text)) !== null) {
-      const key = m[1];
-      if (existing.has(key)) {
+      const helper = m[1];
+      const key = m[2];
+      const requiredKey = helper === 'translatePlural' || helper === 'translateSelect' ? `${key}.other` : key;
+      if (existing.has(requiredKey)) {
         continue;
       }
       const rel = path.relative(REPO_ROOT, f);
-      if (!missing.has(key)) {
-        missing.set(key, []);
+      if (!missing.has(requiredKey)) {
+        missing.set(requiredKey, []);
       }
-      missing.get(key).push(rel);
+      missing.get(requiredKey).push(rel);
     }
   }
 
   if (missing.size === 0) {
-    console.log(`OK: all translate() keys exist in en.json (${files.length} files scanned)`);
+    console.log(`OK: all translation helper keys exist in en.json (${files.length} files scanned)`);
     process.exit(0);
   }
 

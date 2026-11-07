@@ -62,5 +62,59 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(result, Is.SameAs(grabbed));
             Assert.That(proxy.FindByDownloadIdCalls, Is.EqualTo(new[] { "ABC" }));
         }
+
+        [Test]
+        public void should_preserve_bookless_imported_download_state()
+        {
+            var repository = DispatchProxy.Create<IDownloadHistoryRepository, DownloadHistoryRepositoryProxy>();
+            var proxy = (DownloadHistoryRepositoryProxy)(object)repository;
+            var imported = new DownloadHistory
+            {
+                AuthorId = 12,
+                BookId = 0,
+                DownloadId = "ABC",
+                EventType = DownloadHistoryEventType.DownloadImported,
+                Date = DateTime.UtcNow
+            };
+            proxy.ByDownloadId["ABC"] = new List<DownloadHistory> { imported };
+
+            var historyService = DispatchProxy.Create<IHistoryService, ThrowingProxy<IHistoryService>>();
+            var service = new DownloadHistoryService(repository, historyService);
+
+            Assert.That(service.DownloadAlreadyImported("abc"), Is.True);
+            Assert.That(proxy.FindByDownloadIdCalls, Is.EqualTo(new[] { "ABC" }));
+        }
+
+        [Test]
+        public void should_allow_a_newer_bookless_grab_to_supersede_an_older_import()
+        {
+            var repository = DispatchProxy.Create<IDownloadHistoryRepository, DownloadHistoryRepositoryProxy>();
+            var proxy = (DownloadHistoryRepositoryProxy)(object)repository;
+            proxy.ByDownloadId["ABC"] = new List<DownloadHistory>
+            {
+                new DownloadHistory
+                {
+                    AuthorId = 12,
+                    BookId = 0,
+                    DownloadId = "ABC",
+                    EventType = DownloadHistoryEventType.DownloadGrabbed,
+                    Date = DateTime.UtcNow
+                },
+                new DownloadHistory
+                {
+                    AuthorId = 12,
+                    BookId = 0,
+                    DownloadId = "ABC",
+                    EventType = DownloadHistoryEventType.DownloadImported,
+                    Date = DateTime.UtcNow.AddMinutes(-1)
+                }
+            };
+
+            var historyService = DispatchProxy.Create<IHistoryService, ThrowingProxy<IHistoryService>>();
+            var service = new DownloadHistoryService(repository, historyService);
+
+            Assert.That(service.DownloadAlreadyImported("abc"), Is.False);
+            Assert.That(proxy.FindByDownloadIdCalls, Is.EqualTo(new[] { "ABC" }));
+        }
     }
 }

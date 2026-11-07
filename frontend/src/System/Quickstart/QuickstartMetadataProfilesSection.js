@@ -219,7 +219,8 @@ class QuickstartMetadataProfilesSection extends Component {
       isFetching,
       isPopulated,
       isDeleting,
-      profiles
+      profiles,
+      mediaTypes
     } = this.props;
 
     const {
@@ -248,48 +249,54 @@ class QuickstartMetadataProfilesSection extends Component {
     // Separate profiles by ProfileType
     const audiobookProfiles = profiles.filter((p) => p.profileType === 1); // Audiobook
     const ebookProfiles = profiles.filter((p) => p.profileType === 2); // Ebook
+    const showAudiobooks = mediaTypes.includes('audiobook');
+    const showEbooks = mediaTypes.includes('ebook');
     const deleteProfile = profiles.find((profile) => profile.id === deleteProfileId);
 
     return (
       <div className={styles.profilesContainer}>
         <div className={styles.profilesTwoColumn}>
-          <div className={styles.profileColumn}>
-            <h3 className={styles.columnHeader}>{translate('AudiobookMetadataProfiles')}</h3>
-            {
-              audiobookProfiles.map((profile) => this.renderMetadataProfile(profile))
-            }
-            <Card
-              className={styles.addProfileCard}
-              onPress={() => this.onAddProfilePress(1)}
-            >
-              <div className={styles.addProfileContent}>
-                <Icon
-                  name={icons.ADD}
-                  size={45}
-                />
-                <div className={styles.addProfileText}>{translate('AddAudiobookProfile')}</div>
-              </div>
-            </Card>
-          </div>
+          {showAudiobooks && (
+            <div className={styles.profileColumn}>
+              <h3 className={styles.columnHeader}>{translate('AudiobookMetadataProfiles')}</h3>
+              {
+                audiobookProfiles.map((profile) => this.renderMetadataProfile(profile))
+              }
+              <Card
+                className={styles.addProfileCard}
+                onPress={() => this.onAddProfilePress(1)}
+              >
+                <div className={styles.addProfileContent}>
+                  <Icon
+                    name={icons.ADD}
+                    size={45}
+                  />
+                  <div className={styles.addProfileText}>{translate('AddAudiobookProfile')}</div>
+                </div>
+              </Card>
+            </div>
+          )}
 
-          <div className={styles.profileColumn}>
-            <h3 className={styles.columnHeader}>{translate('EbookMetadataProfiles')}</h3>
-            {
-              ebookProfiles.map((profile) => this.renderMetadataProfile(profile))
-            }
-            <Card
-              className={styles.addProfileCard}
-              onPress={() => this.onAddProfilePress(2)}
-            >
-              <div className={styles.addProfileContent}>
-                <Icon
-                  name={icons.ADD}
-                  size={45}
-                />
-                <div className={styles.addProfileText}>{translate('AddEbookProfile')}</div>
-              </div>
-            </Card>
-          </div>
+          {showEbooks && (
+            <div className={styles.profileColumn}>
+              <h3 className={styles.columnHeader}>{translate('EbookMetadataProfiles')}</h3>
+              {
+                ebookProfiles.map((profile) => this.renderMetadataProfile(profile))
+              }
+              <Card
+                className={styles.addProfileCard}
+                onPress={() => this.onAddProfilePress(2)}
+              >
+                <div className={styles.addProfileContent}>
+                  <Icon
+                    name={icons.ADD}
+                    size={45}
+                  />
+                  <div className={styles.addProfileText}>{translate('AddEbookProfile')}</div>
+                </div>
+              </Card>
+            </div>
+          )}
         </div>
 
         <EditMetadataProfileModalConnector
@@ -324,7 +331,8 @@ QuickstartMetadataProfilesSection.propTypes = {
   fetchMetadataProfiles: PropTypes.func.isRequired,
   deleteMetadataProfile: PropTypes.func.isRequired,
   cloneMetadataProfile: PropTypes.func.isRequired,
-  markSectionInteracted: PropTypes.func
+  markSectionInteracted: PropTypes.func,
+  mediaTypes: PropTypes.arrayOf(PropTypes.oneOf(['audiobook', 'ebook'])).isRequired
 };
 
 export default connect(createMapStateToProps, mapDispatchToProps)(QuickstartMetadataProfilesSection);

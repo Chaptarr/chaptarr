@@ -9,10 +9,20 @@ namespace NzbDrone.Core.Datastore.Migration
         protected override void MainDbUpgrade()
         {
             // Edition-level subtitle support (distinct from Books.Subtitle)
-            if (!Schema.Table("Editions").Column("Subtitle").Exists())
+            // PostgreSQL's Schema.Table(...).Column(...).Exists() resolves an omitted
+            // schema to public, even when this migration is running in a staging schema.
+            // Add the column through the active search_path so isolated migration targets
+            // do not mistake a public.Editions column for the staging column.
+            IfPostgres().Execute.Sql(
+                "ALTER TABLE \"Editions\" ADD COLUMN IF NOT EXISTS \"Subtitle\" character varying;");
+
+            IfDatabase("SQLite").Delegate(() =>
             {
-                Alter.Table("Editions").AddColumn("Subtitle").AsString().Nullable();
-            }
+                if (!Schema.Table("Editions").Column("Subtitle").Exists())
+                {
+                    Alter.Table("Editions").AddColumn("Subtitle").AsString().Nullable();
+                }
+            });
 
             // SQLite FTS: add Subtitle to edition_fts so matching can use it without baking it into Title/MatchingTitle.
             // This table is contentless and is maintained via triggers (see migrations 008/009).

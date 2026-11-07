@@ -208,7 +208,10 @@ function ManageIndexersModalContent(props: ManageIndexersModalContentProps) {
     [items, setSelectState]
   );
 
-  const errorMessage = getErrorMessage(error, 'Unable to load indexers.');
+  const errorMessage = getErrorMessage(
+    error,
+    translate('UnableToLoadIndexers')
+  );
   const anySelected = selectedCount > 0;
 
   return (

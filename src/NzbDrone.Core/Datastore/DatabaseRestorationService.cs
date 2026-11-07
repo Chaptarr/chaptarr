@@ -31,12 +31,12 @@ namespace NzbDrone.Core.Datastore
 
         public void Validate(string path)
         {
-            var connectionString = new SqliteConnectionStringBuilder
+            var connectionString = DatabaseLineageGuard.CreateSafeReadOnlyConnectionString(new SqliteConnectionStringBuilder
             {
                 DataSource = path,
                 Mode = SqliteOpenMode.ReadOnly,
                 Pooling = false
-            }.ToString();
+            }.ToString());
 
             using var connection = new SqliteConnection(connectionString);
             connection.Open();
@@ -51,13 +51,22 @@ namespace NzbDrone.Core.Datastore
                 }
             }
 
-            // These dual-root columns are present in Chaptarr's earliest schema as well as current
-            // databases, but not upstream Readarr. Later monitoring columns are intentionally not
-            // required so an old, legitimate Chaptarr/AudioArr backup can still migrate forward.
-            if (!ColumnExists(connection, "Authors", "AudiobookRootFolderPath") ||
-                !ColumnExists(connection, "Authors", "EbookRootFolderPath"))
+            var lineage = DatabaseLineageGuard.Detect(connection, DatabaseType.SQLite);
+            if (lineage == DatabaseLineage.BookshelfNG)
             {
-                throw new InvalidDataException("The restore database is not a Chaptarr database.");
+                // BookshelfNG archives are a supported restore source. Normal startup converts
+                // the staged database after restore; validate its version and table boundary
+                // here without modifying the archive's database.
+                BookshelfDatabaseImporter.ValidateSourceBackup(connection);
+                return;
+            }
+
+            // The dual-root columns are present in Chaptarr's earliest schema but not upstream
+            // Readarr. Later monitoring columns are intentionally not required so older
+            // Chaptarr/AudioArr databases can still migrate forward.
+            if (lineage != DatabaseLineage.Chaptarr)
+            {
+                throw new InvalidDataException("The restore database is not a supported Chaptarr or BookshelfNG database.");
             }
         }
 
@@ -117,25 +126,6 @@ namespace NzbDrone.Core.Datastore
             }
 
             MoveDatabaseFiles(previousDatabasePath, dbPath);
-        }
-
-        private static bool ColumnExists(SqliteConnection connection, string tableName, string columnName)
-        {
-            using var command = connection.CreateCommand();
-            command.CommandText = $"PRAGMA table_info(\"{tableName}\");";
-
-            using var reader = command.ExecuteReader();
-            var nameOrdinal = reader.GetOrdinal("name");
-
-            while (reader.Read())
-            {
-                if (string.Equals(reader.GetString(nameOrdinal), columnName, StringComparison.Ordinal))
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         private void RecoverInterruptedRestore(string dbPath, string previousDatabasePath)

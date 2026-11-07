@@ -1,3 +1,5 @@
+using NzbDrone.Core.Annotations;
+
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -25,6 +27,7 @@ namespace NzbDrone.Core.Parser.Model
         public string Indexer { get; set; }
         public string Author { get; set; }
         public string Book { get; set; }
+        public string Isbn { get; set; }
         public int IndexerPriority { get; set; }
         public DownloadProtocol DownloadProtocol { get; set; }
         public DateTime PublishDate { get; set; }
@@ -104,14 +107,23 @@ namespace NzbDrone.Core.Parser.Model
     [Flags]
     public enum IndexerFlags
     {
+        [FieldOption(Label = "provider.option.o294a0c3d28c4")]
         Freeleech = 1, // General
+        [FieldOption(Label = "provider.option.o11d78e4024e8")]
         Halfleech = 2, // General, only 1/2 of download counted
+        [FieldOption(Label = "provider.option.o7b375cf123e1")]
         DoubleUpload = 4, // General
+        [FieldOption(Label = "provider.option.o2ea1842b445b")]
         Internal = 8, // General, uploader is an internal release group
+        [FieldOption(Label = "provider.option.o477e5af2fd7e")]
         Scene = 16, // General, the torrent comes from a "scene" group
+        [FieldOption(Label = "provider.option.oc97537256ada")]
         Freeleech75 = 32, // Signifies a torrent counts towards 75 percent of your download quota.
+        [FieldOption(Label = "provider.option.odb5f7e5b90f2")]
         Freeleech25 = 64, // Signifies a torrent counts towards 25 percent of your download quota.
+        [FieldOption(Label = "provider.option.of44c2676f52a")]
         VipExclusive = 128, // Torrent is only accessible to VIP users.
+        [FieldOption(Label = "provider.option.oc4b0cebd57bf")]
         VipFreeleech = 256 // VIP-only torrent is freeleech for the current VIP user.
     }
 }

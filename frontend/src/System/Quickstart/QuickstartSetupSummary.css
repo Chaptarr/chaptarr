@@ -1,0 +1,51 @@
+.quickstartSetupSummary {
+  margin-top: 36px;
+  padding: 20px;
+  border: 1px solid var(--inputBorderColor);
+  border-radius: 4px;
+  background-color: var(--inputBackgroundColor);
+}
+
+.quickstartSetupSummaryTitle {
+  margin: 0 0 18px;
+  color: var(--textColor);
+  font-weight: 600;
+  font-size: 20px;
+}
+
+.quickstartSetupSummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 20px;
+}
+
+.quickstartSetupSummaryGroup h3 {
+  margin: 0 0 8px;
+  color: var(--textColor);
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.quickstartSetupSummaryGroup p {
+  margin: 0;
+  color: var(--helpTextColor);
+}
+
+.quickstartSetupSummaryList {
+  margin: 0;
+  padding: 0;
+  color: var(--textColor);
+  list-style: none;
+}
+
+.quickstartSetupSummaryList li + li {
+  margin-top: 6px;
+}
+
+.quickstartSetupSummaryHelp {
+  color: var(--helpTextColor);
+}
+
+.quickstartSetupSummaryStatus {
+  color: var(--helpTextColor);
+}

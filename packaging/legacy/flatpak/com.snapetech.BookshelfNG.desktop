@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=ChaptarrNG
+Comment=Standalone book library manager and download automation server
+Exec=bookshelfng-wrapper
+Icon=com.snapetech.BookshelfNG
+Terminal=true
+Categories=Utility;Network;
+StartupNotify=false

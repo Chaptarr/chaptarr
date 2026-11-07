@@ -403,15 +403,19 @@ namespace NzbDrone.Core.Download
             if (allItemsImported)
             {
                 _logger.Debug("All books were imported for {0}", trackedDownload.DownloadItem.Title);
-                trackedDownload.State = TrackedDownloadState.Imported;
                 _downloadClientFileSnapshotService.Delete(trackedDownload.DownloadItem);
                 _downloadClientFileSnapshotService.Delete(trackedDownload.ImportItem);
-                PublishTrackedDownloadUpdated(trackedDownload);
 
                 var importedAuthorIds = importResults.Where(x => x.Result == ImportResultType.Imported)
                     .Select(c => c.ImportDecision.Item?.Author?.Id ?? c.ImportDecision.Item?.Book?.AuthorId ?? 0);
 
+                // Keep the cached item in Importing while the synchronous completion handlers
+                // record DownloadImported history. A concurrent client refresh must not mistake
+                // the preceding Grabbed row for a re-grab and discard this completed item.
                 _eventAggregator.PublishEvent(new DownloadCompletedEvent(trackedDownload, ResolveCompletedAuthorId(trackedDownload, importedAuthorIds)));
+
+                trackedDownload.State = TrackedDownloadState.Imported;
+                PublishTrackedDownloadUpdated(trackedDownload);
                 return true;
             }
 
@@ -456,11 +460,11 @@ namespace NzbDrone.Core.Download
                            .Log();
                 }
 
-                trackedDownload.State = TrackedDownloadState.Imported;
                 _downloadClientFileSnapshotService.Delete(trackedDownload.DownloadItem);
                 _downloadClientFileSnapshotService.Delete(trackedDownload.ImportItem);
-                PublishTrackedDownloadUpdated(trackedDownload);
 
+                // Apply the same ordering as the direct-success path so a refresh cannot
+                // discard the cached item before its durable completion history is written.
                 _eventAggregator.PublishEvent(new DownloadCompletedEvent(
                     trackedDownload,
                     ResolveCompletedAuthorId(
@@ -468,6 +472,8 @@ namespace NzbDrone.Core.Download
                         historyItems.Where(x => x.EventType == EntityHistoryEventType.BookFileImported).Select(x => x.AuthorId),
                         historyItems.Select(x => x.AuthorId))));
 
+                trackedDownload.State = TrackedDownloadState.Imported;
+                PublishTrackedDownloadUpdated(trackedDownload);
                 return true;
             }
 

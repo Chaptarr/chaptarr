@@ -3,6 +3,14 @@
   margin-bottom: 10px;
 }
 
+.searchOptions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  gap: 10px;
+}
+
 .searchIconContainer {
   width: 58px;
   height: 46px;
@@ -20,6 +28,7 @@
   composes: input from '~Components/Form/TextInput.css';
 
   flex: 1;
+  min-width: 0;
 
   height: 46px;
   border-radius: 0;
@@ -122,4 +131,25 @@
   border-color: var(--themeLightColor) !important;
   background-color: var(--themeLightColor) !important;
   color: var(--white) !important;
+}
+
+@media only screen and (max-width: $breakpointSmall) {
+  .searchContainer {
+    flex-wrap: wrap;
+  }
+
+  .providerSelectContainer {
+    flex: 1 1 100%;
+    margin-top: 10px;
+    margin-left: 0;
+  }
+
+  .providerSelect {
+    width: 100%;
+  }
+
+  .searchOptions {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
 }

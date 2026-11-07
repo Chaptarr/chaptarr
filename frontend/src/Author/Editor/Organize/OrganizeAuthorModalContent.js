@@ -13,14 +13,14 @@ import styles from './OrganizeAuthorModalContent.css';
 
 function getScopeLabel(selectedMediaType) {
   if (selectedMediaType === 'ebook') {
-    return 'eBook files';
+    return translate('OrganizeScopeEbookFiles');
   }
 
   if (selectedMediaType === 'audiobook') {
-    return 'audiobook files';
+    return translate('OrganizeScopeAudiobookFiles');
   }
 
-  return 'files';
+  return translate('Files');
 }
 
 function OrganizeAuthorModalContent(props) {

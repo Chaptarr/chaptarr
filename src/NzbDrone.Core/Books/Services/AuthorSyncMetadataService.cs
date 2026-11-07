@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using NLog;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Books
 {
@@ -61,7 +62,7 @@ namespace NzbDrone.Core.Books
                 // Keep the row for the author being refreshed and remove the conflicting external mapping.
                 if (existingByExternal != null && existingByExternal.Id != existingByAuthor.Id)
                 {
-                    _logger.Warn("[SYNC-METADATA] ExternalAuthorId '{0}' is already mapped to AuthorId={1}. " +
+                    _logger.WarnSafe("[SYNC-METADATA] ExternalAuthorId '{0}' is already mapped to AuthorId={1}. " +
                                  "AuthorId={2} is attempting to claim the same external id; deleting the conflicting sync-metadata row (Id={3}).",
                         externalAuthorId,
                         existingByExternal.AuthorId,
@@ -74,7 +75,7 @@ namespace NzbDrone.Core.Books
                     }
                     catch (Exception ex)
                     {
-                        _logger.Error(ex, "[SYNC-METADATA] Failed deleting conflicting sync-metadata row for ExternalAuthorId '{0}' (Id={1})",
+                        _logger.ErrorSafe(ex, "[SYNC-METADATA] Failed deleting conflicting sync-metadata row for ExternalAuthorId '{0}' (Id={1})",
                             externalAuthorId, existingByExternal.Id);
                         throw;
                     }
@@ -96,7 +97,7 @@ namespace NzbDrone.Core.Books
             {
                 if (existingByExternal.AuthorId != authorId)
                 {
-                    _logger.Warn("[SYNC-METADATA] ExternalAuthorId '{0}' is already mapped to AuthorId={1}. " +
+                    _logger.WarnSafe("[SYNC-METADATA] ExternalAuthorId '{0}' is already mapped to AuthorId={1}. " +
                                  "Reassigning sync-metadata row (Id={2}) to AuthorId={3}.",
                         externalAuthorId,
                         existingByExternal.AuthorId,

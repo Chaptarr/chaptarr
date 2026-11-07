@@ -19,7 +19,7 @@ class Donations extends Component {
 
           <div className={styles.donationButtons}>
             <Link
-              to="https://ko-fi.com/chaptarr"
+              to="https://ko-fi.com/snapetech"
               className={styles.donationButton}
               title={translate('DonationsKofiTitle')}
             >

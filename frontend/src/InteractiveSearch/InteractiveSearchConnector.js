@@ -102,6 +102,7 @@ class InteractiveSearchConnector extends Component {
 
     return [
       `book:${searchPayload.bookId ?? ''}`,
+      `series:${searchPayload.seriesId ?? ''}`,
       `author:${searchPayload.authorId ?? ''}`,
       `mediaType:${searchPayload.initialMediaType ?? ''}`,
       `bypass:${bypassFilters ? 1 : 0}`
@@ -147,6 +148,10 @@ class InteractiveSearchConnector extends Component {
     props.dispatchFetchReleases(props.searchPayload);
   }
 
+  onRetryPress = () => {
+    this.props.dispatchFetchReleases(this.props.searchPayload);
+  };
+
   render() {
     const {
       dispatchFetchReleases,
@@ -158,6 +163,7 @@ class InteractiveSearchConnector extends Component {
     return (
       <InteractiveSearch
         {...otherProps}
+        onRetryPress={this.onRetryPress}
       />
     );
   }

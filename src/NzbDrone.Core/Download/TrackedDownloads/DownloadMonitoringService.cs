@@ -6,6 +6,8 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Common.TPL;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore.Events;
+using NzbDrone.Core.Download.Clients.Direct;
+using NzbDrone.Core.Indexers;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
@@ -29,6 +31,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
         private readonly IFailedDownloadService _failedDownloadService;
         private readonly ICompletedDownloadService _completedDownloadService;
         private readonly ITrackedDownloadService _trackedDownloadService;
+        private readonly IInternalDirectClientProvider _internalDirectClientProvider;
         private readonly Logger _logger;
         private readonly Debouncer _refreshDebounce;
 
@@ -40,7 +43,8 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                                          IFailedDownloadService failedDownloadService,
                                          ICompletedDownloadService completedDownloadService,
                                          ITrackedDownloadService trackedDownloadService,
-                                         Logger logger)
+                                         Logger logger,
+                                         IInternalDirectClientProvider internalDirectClientProvider = null)
         {
             _downloadClientStatusService = downloadClientStatusService;
             _downloadClientFactory = downloadClientFactory;
@@ -50,6 +54,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             _failedDownloadService = failedDownloadService;
             _completedDownloadService = completedDownloadService;
             _trackedDownloadService = trackedDownloadService;
+            _internalDirectClientProvider = internalDirectClientProvider;
             _logger = logger;
 
             _refreshDebounce = new Debouncer(QueueRefresh, TimeSpan.FromSeconds(5));
@@ -66,6 +71,18 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             try
             {
                 var downloadClients = _downloadClientFactory.DownloadHandlingEnabled();
+
+                // When no user-configured Direct client exists, include the internal
+                // Direct client so its downloads appear in queue/activity tracking.
+                if (_internalDirectClientProvider != null &&
+                    !downloadClients.Any(c => c.Protocol == DownloadProtocol.Direct))
+                {
+                    var internalClient = _internalDirectClientProvider.GetClient();
+                    if (internalClient != null)
+                    {
+                        downloadClients.Add(internalClient);
+                    }
+                }
 
                 var trackedDownloads = new List<TrackedDownload>();
 

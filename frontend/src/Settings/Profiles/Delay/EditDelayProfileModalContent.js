@@ -49,7 +49,7 @@ function EditDelayProfileModalContent(props) {
   return (
     <ModalContent onModalClose={onModalClose}>
       <ModalHeader>
-        {id ? 'Edit Delay Profile' : 'Add Delay Profile'}
+        {translate(id ? 'EditDelayProfileTitle' : 'AddDelayProfileTitle')}
       </ModalHeader>
 
       <ModalBody>

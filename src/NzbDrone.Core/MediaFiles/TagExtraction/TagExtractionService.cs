@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using NLog;
+using NzbDrone.Core.MediaFiles;
 
 namespace NzbDrone.Core.MediaFiles.TagExtraction
 {
@@ -96,8 +98,10 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                     }
 
                     tags ??= new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+                    PreserveBookshelfAudioTagFields(bestNonEvidence?.Tags, tags);
                     RemoveEncodeKeys(tags);
                     TagCanonicalizer.AddCanonicalKeys(tags);
+                    EnsureBookshelfAudioTagFields(path, tags);
 
                     if (!durationSeconds.HasValue && extractedDuration.HasValue && extractedDuration.Value > 0)
                     {
@@ -178,6 +182,65 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             }
 
             throw new TagExtractionException(path, result?.Error);
+        }
+
+        private static void PreserveBookshelfAudioTagFields(
+            IReadOnlyDictionary<string, List<string>> earlierTags,
+            IDictionary<string, List<string>> laterTags)
+        {
+            if (earlierTags == null || laterTags == null)
+            {
+                return;
+            }
+
+            foreach (var key in new[] { BookshelfAudioTagFields.Book, BookshelfAudioTagFields.Title })
+            {
+                var entry = earlierTags.FirstOrDefault(pair => string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase));
+                if (entry.Key != null && !laterTags.Keys.Any(candidate => string.Equals(candidate, key, StringComparison.OrdinalIgnoreCase)))
+                {
+                    laterTags[key] = entry.Value?.ToList() ?? new List<string> { string.Empty };
+                }
+            }
+        }
+
+        private static void EnsureBookshelfAudioTagFields(string path, IDictionary<string, List<string>> tags)
+        {
+            if (tags == null ||
+                !MediaFileExtensions.AudioExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (!tags.Keys.Any(key => string.Equals(key, BookshelfAudioTagFields.Book, StringComparison.OrdinalIgnoreCase)))
+            {
+                tags[BookshelfAudioTagFields.Book] = new List<string>
+                {
+                    GetFirstTagValue(tags, "ALBUM", "ALBUMSORT", "ALBUM_SORT", "ALBUM SORT", "ID3v2:TSOA", "MP4:soal", "XIPH:ALBUMSORT") ?? string.Empty
+                };
+            }
+
+            if (!tags.Keys.Any(key => string.Equals(key, BookshelfAudioTagFields.Title, StringComparison.OrdinalIgnoreCase)))
+            {
+                tags[BookshelfAudioTagFields.Title] = new List<string>
+                {
+                    GetFirstTagValue(tags, "TITLE", "TITLESORT", "TITLE_SORT", "TITLE SORT", "ID3v2:TSOT", "MP4:sonm", "XIPH:TITLESORT") ?? string.Empty
+                };
+            }
+        }
+
+        private static string GetFirstTagValue(IDictionary<string, List<string>> tags, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                var pair = tags.FirstOrDefault(entry => string.Equals(entry.Key, name, StringComparison.OrdinalIgnoreCase));
+                var value = pair.Value?.FirstOrDefault();
+                if (value != null)
+                {
+                    return value;
+                }
+            }
+
+            return null;
         }
 
         // Remove any tag entries whose key contains "encode" (case-insensitive)

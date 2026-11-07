@@ -1,0 +1,22 @@
+{
+  "id": "tech.snapetech.bookshelfng",
+  "title": "ChaptarrNG",
+  "author": "Snapetech",
+  "description": "ChaptarrNG migration candidate for existing BookshelfNG Cloudron installations.",
+  "tagline": "Ebook and audiobook collection manager",
+  "version": "0.4.22",
+  "upstreamVersion": "chaptarrng-bookshelf-compatibility-candidate",
+  "healthCheckPath": "/ping",
+  "httpPort": 8787,
+  "addons": {"localstorage": {}},
+  "persistentDirs": ["/config", "/books", "/downloads"],
+  "minBoxVersion": "9.1.0",
+  "backupCommand": "/usr/local/bin/chaptarr-cloudron-backup",
+  "restoreCommand": "/usr/local/bin/chaptarr-cloudron-restore",
+  "manifestVersion": 2,
+  "website": "https://github.com/snapetech-org/chaptarrng",
+  "documentationUrl": "https://github.com/snapetech-org/chaptarrng/blob/main/docs/MIGRATE_FROM_BOOKSHELFNG.md",
+  "packageUrl": "https://github.com/snapetech-org/chaptarrng",
+  "iconUrl": "https://raw.githubusercontent.com/snapetech-org/chaptarrng/main/Logo/512.png",
+  "tags": ["books", "ebooks", "audiobooks", "automation"]
+}

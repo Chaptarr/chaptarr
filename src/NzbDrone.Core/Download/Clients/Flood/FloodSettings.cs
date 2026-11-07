@@ -43,10 +43,10 @@ namespace NzbDrone.Core.Download.Clients.Flood
         [FieldDefinition(1, Label = "Port", Type = FieldType.Textbox)]
         public int Port { get; set; }
 
-        [FieldDefinition(2, Label = "Use SSL", Type = FieldType.Checkbox, HelpText = "Use secure connection when connecting to Flood")]
+        [FieldDefinition(2, Label = "UseSSL", Type = FieldType.Checkbox, HelpText = "provider.field.f1bb8647b253d")]
         public bool UseSsl { get; set; }
 
-        [FieldDefinition(3, Label = "Url Base", Type = FieldType.Textbox, HelpText = "Optionally adds a prefix to Flood API, such as [protocol]://[host]:[port]/[urlBase]api")]
+        [FieldDefinition(3, Label = "provider.field.fafbbcc619aac", Type = FieldType.Textbox, HelpText = "provider.field.fcba7a5944e56")]
         public string UrlBase { get; set; }
 
         [FieldDefinition(4, Label = "Username", Type = FieldType.Textbox, Privacy = PrivacyLevel.UserName)]
@@ -55,17 +55,17 @@ namespace NzbDrone.Core.Download.Clients.Flood
         [FieldDefinition(5, Label = "Password", Type = FieldType.Password, Privacy = PrivacyLevel.Password)]
         public string Password { get; set; }
 
-        [FieldDefinition(6, Label = "Destination", Type = FieldType.Textbox, HelpText = "Manually specifies download destination")]
+        [FieldDefinition(6, Label = "provider.field.f293d404a500f", Type = FieldType.Textbox, HelpText = "provider.field.f27ef4d05f33c")]
         public string Destination { get; set; }
 
-        [FieldDefinition(7, Label = "Audiobook Tags", Type = FieldType.Tag, HelpText = "Initial tags of a download. To be recognized, a download must have all initial tags. This avoids conflicts with unrelated downloads.")]
+        [FieldDefinition(7, Label = "AudiobookTags", Type = FieldType.Tag, HelpText = "provider.field.f634ff14e26d8")]
         public IEnumerable<string> AudiobookTags
         {
             get => _audiobookTags ?? Tags;
             set => _audiobookTags = value;
         }
 
-        [FieldDefinition(8, Label = "Ebook Tags", Type = FieldType.Tag, HelpText = "Initial tags of a download. To be recognized, a download must have all initial tags. This avoids conflicts with unrelated downloads.")]
+        [FieldDefinition(8, Label = "EbookTags", Type = FieldType.Tag, HelpText = "provider.field.f634ff14e26d8")]
         public IEnumerable<string> EbookTags
         {
             get => _ebookTags ?? Tags;
@@ -75,13 +75,13 @@ namespace NzbDrone.Core.Download.Clients.Flood
         [FieldDefinition(100, Label = "Tags", Type = FieldType.Tag, Hidden = HiddenType.Hidden)]
         public IEnumerable<string> Tags { get; set; }
 
-        [FieldDefinition(9, Label = "Post-Import Tags", Type = FieldType.Tag, HelpText = "Appends tags after a download is imported.", Advanced = true)]
+        [FieldDefinition(9, Label = "provider.field.f82974f95fded", Type = FieldType.Tag, HelpText = "provider.field.f05cfbd3ed92f", Advanced = true)]
         public IEnumerable<string> PostImportTags { get; set; }
 
-        [FieldDefinition(10, Label = "Additional Tags", Type = FieldType.Select, SelectOptions = typeof(AdditionalTags), HelpText = "Adds properties of media as tags. Hints are examples.", Advanced = true)]
+        [FieldDefinition(10, Label = "provider.field.fa3d105e2ffb9", Type = FieldType.Select, SelectOptions = typeof(AdditionalTags), HelpText = "provider.field.f1cbe5ac7e066", Advanced = true)]
         public IEnumerable<int> AdditionalTags { get; set; }
 
-        [FieldDefinition(11, Label = "Add Paused", Type = FieldType.Checkbox)]
+        [FieldDefinition(11, Label = "provider.field.fee2bb4b2e037", Type = FieldType.Checkbox)]
         public bool AddPaused { get; set; }
 
         public NzbDroneValidationResult Validate()

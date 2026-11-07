@@ -5,6 +5,8 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <ErrorOnDuplicatePublishOutputFiles>true</ErrorOnDuplicatePublishOutputFiles>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- Allow Linux/macOS tools to restore projects with Windows-specific target frameworks. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
 
     <PlatformTarget>AnyCPU</PlatformTarget>
     <TargetLatestRuntimePatch>true</TargetLatestRuntimePatch>
@@ -42,8 +44,10 @@
   <PropertyGroup>
     <Configuration Condition="'$(Configuration)'==''">Release</Configuration>
     <!-- Centralize intermediate and default outputs -->
-    <BaseIntermediateOutputPath>$(ChaptarrRootDir)_temp\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
-    <IntermediateOutputPath>$(ChaptarrRootDir)_temp\obj\$(MSBuildProjectName)\$(Configuration)\</IntermediateOutputPath>
+    <ChaptarrIntermediateRoot Condition="'$(ChaptarrStandaloneIntermediateRoot)'!=''">$(ChaptarrStandaloneIntermediateRoot)</ChaptarrIntermediateRoot>
+    <ChaptarrIntermediateRoot Condition="'$(ChaptarrIntermediateRoot)'==''">$(ChaptarrRootDir)_temp\obj</ChaptarrIntermediateRoot>
+    <BaseIntermediateOutputPath>$(ChaptarrIntermediateRoot)\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <IntermediateOutputPath>$(ChaptarrIntermediateRoot)\$(MSBuildProjectName)\$(Configuration)\</IntermediateOutputPath>
     <OutputPath>$(ChaptarrRootDir)_temp\bin\$(Configuration)\$(MSBuildProjectName)\</OutputPath>
 
     <!-- Output to _output and _tests respectively -->
@@ -74,9 +78,9 @@
     <Copyright>Copyright 2017-$([System.DateTime]::Now.ToString('yyyy')) chaptarr.com (GNU General Public v3)</Copyright>
 
     <!-- Chaptarr Development Version -->
-    <AssemblyVersion>0.9.965.0</AssemblyVersion>
-    <AssemblyFileVersion>0.9.965.0</AssemblyFileVersion>
-    <AssemblyInformationalVersion>0.9.965-chaptarr-dev</AssemblyInformationalVersion>
+    <AssemblyVersion>0.9.978.0</AssemblyVersion>
+    <AssemblyFileVersion>0.9.978.0</AssemblyFileVersion>
+    <AssemblyInformationalVersion>0.9.976-chaptarr-dev</AssemblyInformationalVersion>
     <AssemblyConfiguration>$(Configuration)-chaptarr-dev</AssemblyConfiguration>
     <NeutralLanguage>en</NeutralLanguage>
 
@@ -101,8 +105,12 @@
     <RootNamespace Condition="'$(ChaptarrProject)'=='true'">$(MSBuildProjectName.Replace('Chaptarr','NzbDrone'))</RootNamespace>
   </PropertyGroup>
 
-  <!-- Use the SDK's built-in Source Link; an explicit package overrides its serviced
-       Git tasks and can reintroduce vulnerable build tooling. -->
+  <ItemGroup Condition="'$(TestProject)'!='true'">
+    <!-- Annotates .NET assemblies with repository information including SHA -->
+    <!-- Sentry uses this to link directly to GitHub at the exact version/file/line -->
+    <!-- This is built-in on .NET 8 and can be removed once the project is updated -->
+    <PackageReference Include="Microsoft.SourceLink.GitHub" />
+  </ItemGroup>
 
   <!-- Sentry specific configuration: Only in Release mode -->
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">

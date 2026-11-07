@@ -3,15 +3,29 @@ import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import { showMessage } from 'Store/Actions/appActions';
-import { addAuthor, resetAddState, setAuthorAddDefault } from 'Store/Actions/searchActions';
+import {
+  addAuthor,
+  resetAddState,
+  setAuthorAddDefault
+} from 'Store/Actions/searchActions';
 import { fetchRootFolders } from 'Store/Actions/Settings/rootFolders';
-import { saveUISettings, setUISettingsValue } from 'Store/Actions/settingsActions';
+import {
+  saveUISettings,
+  setUISettingsValue
+} from 'Store/Actions/settingsActions';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createRootFolderDefaultsSelector from 'Store/Selectors/createRootFolderDefaultsSelector';
 import createSystemStatusSelector from 'Store/Selectors/createSystemStatusSelector';
 import selectSettings from 'Store/Selectors/selectSettings';
-import { normalizeMonitorNewItemsOption, resolveMonitorNewItemsOptionValue } from 'Utilities/Author/monitorNewItemsOptions';
-import { resolveMonitorOption, resolveMonitorOptionValue } from 'Utilities/Author/monitorOptions';
+import {
+  normalizeMonitorNewItemsOption,
+  resolveMonitorNewItemsOptionValue
+} from 'Utilities/Author/monitorNewItemsOptions';
+import {
+  resolveMonitorOption,
+  resolveMonitorOptionValue
+} from 'Utilities/Author/monitorOptions';
+import translate from 'Utilities/String/translate';
 import AddNewAuthorModalContent from './AddNewAuthorModalContent';
 
 const rootDerivedAuthorDefaults = {
@@ -33,8 +47,9 @@ function getRootDerivedDefaultsForMediaType(mediaType) {
   const prefix = mediaType === 'ebook' ? 'ebook' : 'audiobook';
 
   return Object.fromEntries(
-    Object.entries(rootDerivedAuthorDefaults)
-      .filter(([key]) => key.startsWith(prefix))
+    Object.entries(rootDerivedAuthorDefaults).filter(([key]) =>
+      key.startsWith(prefix)
+    )
   );
 }
 
@@ -62,7 +77,16 @@ function createMapStateToProps() {
     createRootFolderDefaultsSelector(),
     createDimensionsSelector(),
     createSystemStatusSelector(),
-    (searchState, metadataProfiles, qualityProfiles, rootFoldersState, uiState, rootFolderDefaults, dimensions, systemStatus) => {
+    (
+      searchState,
+      metadataProfiles,
+      qualityProfiles,
+      rootFoldersState,
+      uiState,
+      rootFolderDefaults,
+      dimensions,
+      systemStatus
+    ) => {
       const {
         isAdding,
         isAdded,
@@ -72,21 +96,27 @@ function createMapStateToProps() {
         authorDefaults
       } = searchState;
 
-      const {
-        settings,
-        validationErrors,
-        validationWarnings
-      } = selectSettings(authorDefaults, {}, addError);
+      const { settings, validationErrors, validationWarnings } = selectSettings(
+        authorDefaults,
+        {},
+        addError
+      );
 
       // Apply smart defaults if root folders are empty
       if (rootFoldersState.isPopulated) {
-        if (!settings.audiobookRootFolderPath || !settings.audiobookRootFolderPath.value) {
+        if (
+          !settings.audiobookRootFolderPath ||
+          !settings.audiobookRootFolderPath.value
+        ) {
           settings.audiobookRootFolderPath = {
             ...(settings.audiobookRootFolderPath || {}),
             value: rootFolderDefaults.audiobookRootFolderPath
           };
         }
-        if (!settings.ebookRootFolderPath || !settings.ebookRootFolderPath.value) {
+        if (
+          !settings.ebookRootFolderPath ||
+          !settings.ebookRootFolderPath.value
+        ) {
           settings.ebookRootFolderPath = {
             ...(settings.ebookRootFolderPath || {}),
             value: rootFolderDefaults.ebookRootFolderPath
@@ -98,7 +128,9 @@ function createMapStateToProps() {
         const audiobookRoot = settings.audiobookRootFolderPath?.value;
         const ebookRoot = settings.ebookRootFolderPath?.value;
 
-        const audiobookRootFolder = rootFolders.find((f) => f.path === audiobookRoot);
+        const audiobookRootFolder = rootFolders.find(
+          (f) => f.path === audiobookRoot
+        );
         const ebookRootFolder = rootFolders.find((f) => f.path === ebookRoot);
 
         // Inherit defaults from the selected root folder (per media type). Users can override by changing the fields.
@@ -118,10 +150,15 @@ function createMapStateToProps() {
           };
         }
 
-        if (settings.audiobookMonitorNewItems?.value == null && audiobookRootFolder) {
+        if (
+          settings.audiobookMonitorNewItems?.value == null &&
+          audiobookRootFolder
+        ) {
           settings.audiobookMonitorNewItems = {
             ...(settings.audiobookMonitorNewItems || {}),
-            value: normalizeMonitorNewItemsOption(audiobookRootFolder.audiobookMonitorNewItems)
+            value: normalizeMonitorNewItemsOption(
+              audiobookRootFolder.audiobookMonitorNewItems
+            )
           };
         }
 
@@ -144,41 +181,94 @@ function createMapStateToProps() {
         if (settings.ebookMonitorNewItems?.value == null && ebookRootFolder) {
           settings.ebookMonitorNewItems = {
             ...(settings.ebookMonitorNewItems || {}),
-            value: normalizeMonitorNewItemsOption(ebookRootFolder.ebookMonitorNewItems)
+            value: normalizeMonitorNewItemsOption(
+              ebookRootFolder.ebookMonitorNewItems
+            )
           };
         }
 
-        const audiobookQualityFromRootFolder = audiobookRootFolder?.audiobookQualityProfileId || audiobookRootFolder?.audiobook?.qualityProfileId;
-        const audiobookMetadataFromRootFolder = audiobookRootFolder?.audiobookMetadataProfileId || audiobookRootFolder?.audiobook?.metadataProfileId;
-        const ebookQualityFromRootFolder = ebookRootFolder?.ebookQualityProfileId || ebookRootFolder?.ebook?.qualityProfileId;
-        const ebookMetadataFromRootFolder = ebookRootFolder?.ebookMetadataProfileId || ebookRootFolder?.ebook?.metadataProfileId;
-        const audiobookTagsFromRootFolder = audiobookRootFolder?.audiobookTags || audiobookRootFolder?.audiobook?.tags;
-        const ebookTagsFromRootFolder = ebookRootFolder?.ebookTags || ebookRootFolder?.ebook?.tags;
+        const audiobookQualityFromRootFolder =
+          audiobookRootFolder?.audiobookQualityProfileId ||
+          audiobookRootFolder?.audiobook?.qualityProfileId;
+        const audiobookMetadataFromRootFolder =
+          audiobookRootFolder?.audiobookMetadataProfileId ||
+          audiobookRootFolder?.audiobook?.metadataProfileId;
+        const ebookQualityFromRootFolder =
+          ebookRootFolder?.ebookQualityProfileId ||
+          ebookRootFolder?.ebook?.qualityProfileId;
+        const ebookMetadataFromRootFolder =
+          ebookRootFolder?.ebookMetadataProfileId ||
+          ebookRootFolder?.ebook?.metadataProfileId;
+        const audiobookTagsFromRootFolder =
+          audiobookRootFolder?.audiobookTags ||
+          audiobookRootFolder?.audiobook?.tags;
+        const ebookTagsFromRootFolder =
+          ebookRootFolder?.ebookTags || ebookRootFolder?.ebook?.tags;
 
         // Inherit profile defaults from the selected root folder when unset.
-        if ((!settings.audiobookQualityProfileId || settings.audiobookQualityProfileId.value === 0) && audiobookQualityFromRootFolder) {
-          settings.audiobookQualityProfileId = { ...(settings.audiobookQualityProfileId || {}), value: audiobookQualityFromRootFolder };
+        if (
+          (!settings.audiobookQualityProfileId ||
+            settings.audiobookQualityProfileId.value === 0) &&
+          audiobookQualityFromRootFolder
+        ) {
+          settings.audiobookQualityProfileId = {
+            ...(settings.audiobookQualityProfileId || {}),
+            value: audiobookQualityFromRootFolder
+          };
         }
 
-        if ((!settings.audiobookMetadataProfileId || settings.audiobookMetadataProfileId.value === 0) && audiobookMetadataFromRootFolder) {
-          settings.audiobookMetadataProfileId = { ...(settings.audiobookMetadataProfileId || {}), value: audiobookMetadataFromRootFolder };
+        if (
+          (!settings.audiobookMetadataProfileId ||
+            settings.audiobookMetadataProfileId.value === 0) &&
+          audiobookMetadataFromRootFolder
+        ) {
+          settings.audiobookMetadataProfileId = {
+            ...(settings.audiobookMetadataProfileId || {}),
+            value: audiobookMetadataFromRootFolder
+          };
         }
 
-        if ((!settings.ebookQualityProfileId || settings.ebookQualityProfileId.value === 0) && ebookQualityFromRootFolder) {
-          settings.ebookQualityProfileId = { ...(settings.ebookQualityProfileId || {}), value: ebookQualityFromRootFolder };
+        if (
+          (!settings.ebookQualityProfileId ||
+            settings.ebookQualityProfileId.value === 0) &&
+          ebookQualityFromRootFolder
+        ) {
+          settings.ebookQualityProfileId = {
+            ...(settings.ebookQualityProfileId || {}),
+            value: ebookQualityFromRootFolder
+          };
         }
 
-        if ((!settings.ebookMetadataProfileId || settings.ebookMetadataProfileId.value === 0) && ebookMetadataFromRootFolder) {
-          settings.ebookMetadataProfileId = { ...(settings.ebookMetadataProfileId || {}), value: ebookMetadataFromRootFolder };
+        if (
+          (!settings.ebookMetadataProfileId ||
+            settings.ebookMetadataProfileId.value === 0) &&
+          ebookMetadataFromRootFolder
+        ) {
+          settings.ebookMetadataProfileId = {
+            ...(settings.ebookMetadataProfileId || {}),
+            value: ebookMetadataFromRootFolder
+          };
         }
 
         // Inherit tag defaults from the selected root folder when unset.
-        if (settings.audiobookTags?.value == null && audiobookTagsFromRootFolder != null) {
-          settings.audiobookTags = { ...(settings.audiobookTags || {}), value: audiobookTagsFromRootFolder };
+        if (
+          settings.audiobookTags?.value == null &&
+          audiobookTagsFromRootFolder != null
+        ) {
+          settings.audiobookTags = {
+            ...(settings.audiobookTags || {}),
+            value: audiobookTagsFromRootFolder
+          };
         }
 
-        if (settings.ebookTags?.value == null && ebookTagsFromRootFolder != null) {
-          settings.ebookTags = { ...(settings.ebookTags || {}), value: ebookTagsFromRootFolder };
+        if (
+          settings.ebookTags?.value == null &&
+          ebookTagsFromRootFolder != null
+        ) {
+          settings.ebookTags = {
+            ...(settings.ebookTags || {}),
+            value: ebookTagsFromRootFolder
+          };
         }
       }
 
@@ -201,37 +291,65 @@ function createMapStateToProps() {
 
       // Set quality profile defaults to first available instead of "None"
       if (qualityProfiles.isPopulated && qualityProfiles.items.length > 0) {
-        const audiobookProfiles = qualityProfiles.items.filter((p) =>
-          p.profileType === 1 || p.profileType === 'audiobook'
+        const audiobookProfiles = qualityProfiles.items.filter(
+          (p) => p.profileType === 1 || p.profileType === 'audiobook'
         );
-        const ebookProfiles = qualityProfiles.items.filter((p) =>
-          p.profileType === 2 || p.profileType === 'ebook'
+        const ebookProfiles = qualityProfiles.items.filter(
+          (p) => p.profileType === 2 || p.profileType === 'ebook'
         );
 
-        if ((!settings.audiobookQualityProfileId || settings.audiobookQualityProfileId.value === 0) && audiobookProfiles.length > 0) {
-          settings.audiobookQualityProfileId = { ...(settings.audiobookQualityProfileId || {}), value: audiobookProfiles[0].id };
+        if (
+          (!settings.audiobookQualityProfileId ||
+            settings.audiobookQualityProfileId.value === 0) &&
+          audiobookProfiles.length > 0
+        ) {
+          settings.audiobookQualityProfileId = {
+            ...(settings.audiobookQualityProfileId || {}),
+            value: audiobookProfiles[0].id
+          };
         }
 
-        if ((!settings.ebookQualityProfileId || settings.ebookQualityProfileId.value === 0) && ebookProfiles.length > 0) {
-          settings.ebookQualityProfileId = { ...(settings.ebookQualityProfileId || {}), value: ebookProfiles[0].id };
+        if (
+          (!settings.ebookQualityProfileId ||
+            settings.ebookQualityProfileId.value === 0) &&
+          ebookProfiles.length > 0
+        ) {
+          settings.ebookQualityProfileId = {
+            ...(settings.ebookQualityProfileId || {}),
+            value: ebookProfiles[0].id
+          };
         }
       }
 
       // Set metadata profile defaults to first available instead of "None"
       if (metadataProfiles.isPopulated && metadataProfiles.items.length > 0) {
-        const audiobookMetaProfiles = metadataProfiles.items.filter((p) =>
-          p.profileType === 1 || p.profileType === 'audiobook'
+        const audiobookMetaProfiles = metadataProfiles.items.filter(
+          (p) => p.profileType === 1 || p.profileType === 'audiobook'
         );
-        const ebookMetaProfiles = metadataProfiles.items.filter((p) =>
-          p.profileType === 2 || p.profileType === 'ebook'
+        const ebookMetaProfiles = metadataProfiles.items.filter(
+          (p) => p.profileType === 2 || p.profileType === 'ebook'
         );
 
-        if ((!settings.audiobookMetadataProfileId || settings.audiobookMetadataProfileId.value === 0) && audiobookMetaProfiles.length > 0) {
-          settings.audiobookMetadataProfileId = { ...(settings.audiobookMetadataProfileId || {}), value: audiobookMetaProfiles[0].id };
+        if (
+          (!settings.audiobookMetadataProfileId ||
+            settings.audiobookMetadataProfileId.value === 0) &&
+          audiobookMetaProfiles.length > 0
+        ) {
+          settings.audiobookMetadataProfileId = {
+            ...(settings.audiobookMetadataProfileId || {}),
+            value: audiobookMetaProfiles[0].id
+          };
         }
 
-        if ((!settings.ebookMetadataProfileId || settings.ebookMetadataProfileId.value === 0) && ebookMetaProfiles.length > 0) {
-          settings.ebookMetadataProfileId = { ...(settings.ebookMetadataProfileId || {}), value: ebookMetaProfiles[0].id };
+        if (
+          (!settings.ebookMetadataProfileId ||
+            settings.ebookMetadataProfileId.value === 0) &&
+          ebookMetaProfiles.length > 0
+        ) {
+          settings.ebookMetadataProfileId = {
+            ...(settings.ebookMetadataProfileId || {}),
+            value: ebookMetaProfiles[0].id
+          };
         }
       }
 
@@ -256,6 +374,8 @@ function createMapStateToProps() {
         validationWarnings,
         isWindows: systemStatus.isWindows,
         rootFoldersPopulated: rootFoldersState.isPopulated,
+        rootFoldersFetching: rootFoldersState.isFetching,
+        rootFoldersError: rootFoldersState.error,
         ...settings
       };
     }
@@ -273,7 +393,6 @@ const mapDispatchToProps = {
 };
 
 class AddNewAuthorModalContentConnector extends Component {
-
   //
   // Lifecycle
 
@@ -281,7 +400,8 @@ class AddNewAuthorModalContentConnector extends Component {
     super(props, context);
 
     this.state = {
-      selectedMediaType: normalizeDefaultMediaType(props.defaultMediaType, true) ?? 'audiobook'
+      selectedMediaType:
+        normalizeDefaultMediaType(props.defaultMediaType, true) ?? 'audiobook'
     };
 
     this._didUserSelectMediaType = false;
@@ -298,7 +418,7 @@ class AddNewAuthorModalContentConnector extends Component {
     this.props.setAuthorAddDefault(rootDerivedAuthorDefaults);
 
     // Ensure root folders are loaded
-    if (!this.props.rootFoldersPopulated) {
+    if (!this.props.rootFoldersPopulated && !this.props.rootFoldersFetching) {
       this.props.fetchRootFolders();
     }
   }
@@ -312,20 +432,30 @@ class AddNewAuthorModalContentConnector extends Component {
     }
 
     if (!this._didUserSelectMediaType) {
-      const prevDefault = normalizeDefaultMediaType(prevProps.defaultMediaType, true);
-      const currDefault = normalizeDefaultMediaType(this.props.defaultMediaType, true);
+      const prevDefault = normalizeDefaultMediaType(
+        prevProps.defaultMediaType,
+        true
+      );
+      const currDefault = normalizeDefaultMediaType(
+        this.props.defaultMediaType,
+        true
+      );
 
       if (prevDefault !== currDefault && currDefault) {
         this.setState({ selectedMediaType: currDefault });
       }
     }
 
-    if (this._pendingDefaultSave && prevProps.isSavingDefaultMediaType && !this.props.isSavingDefaultMediaType) {
+    if (
+      this._pendingDefaultSave &&
+      prevProps.isSavingDefaultMediaType &&
+      !this.props.isSavingDefaultMediaType
+    ) {
       if (!this.props.uiSaveError) {
         this.props.showMessage({
           id: `add-new-default-media-type-saved-${Date.now()}`,
           name: 'AddNewDefaultMediaTypeSaved',
-          message: 'Saved default media type',
+          message: translate('DefaultMediaTypeSaved'),
           type: 'success',
           hideAfter: 5
         });
@@ -333,7 +463,9 @@ class AddNewAuthorModalContentConnector extends Component {
         this.props.showMessage({
           id: `add-new-default-media-type-save-failed-${Date.now()}`,
           name: 'AddNewDefaultMediaTypeSaveFailed',
-          message: this.props.uiSaveError?.responseJSON?.message || 'Unable to save default media type',
+          message:
+            this.props.uiSaveError?.responseJSON?.message ||
+            translate('UnableToSaveDefaultMediaType'),
           type: 'error',
           hideAfter: 8
         });
@@ -373,7 +505,10 @@ class AddNewAuthorModalContentConnector extends Component {
 
   onSetDefaultMediaType = (mediaType) => {
     this._pendingDefaultSave = true;
-    this.props.setUISettingsValue({ name: 'addNewDefaultMediaType', value: mediaType });
+    this.props.setUISettingsValue({
+      name: 'addNewDefaultMediaType',
+      value: mediaType
+    });
     this.props.saveUISettings();
   };
 
@@ -401,30 +536,49 @@ class AddNewAuthorModalContentConnector extends Component {
     } = this.props;
 
     const { selectedMediaType } = this.state;
-    const addAudiobooks = selectedMediaType === 'audiobook' || selectedMediaType === 'both';
-    const addEbooks = selectedMediaType === 'ebook' || selectedMediaType === 'both';
+    const addAudiobooks =
+      selectedMediaType === 'audiobook' || selectedMediaType === 'both';
+    const addEbooks =
+      selectedMediaType === 'ebook' || selectedMediaType === 'both';
 
     // Validate only the media side(s) the user is actually adding. Values shown
     // on another visited tab are previews and must not make this add valid.
     const audiobookProfile = audiobookQualityProfileId?.value;
     const ebookProfile = ebookQualityProfileId?.value;
-    const audiobookProfileMissing = !audiobookProfile || audiobookProfile === 'none';
+    const audiobookProfileMissing =
+      !audiobookProfile || audiobookProfile === 'none';
     const ebookProfileMissing = !ebookProfile || ebookProfile === 'none';
 
-    if ((addAudiobooks && audiobookProfileMissing) ||
-        (addEbooks && ebookProfileMissing)) {
+    if (
+      (addAudiobooks && audiobookProfileMissing) ||
+      (addEbooks && ebookProfileMissing)
+    ) {
       // This should be handled by validation, but as a safety check
-      console.error('A quality profile must be selected for each media type being added');
+      console.error(
+        'A quality profile must be selected for each media type being added'
+      );
       return;
     }
 
     // The UI stores media-type-specific monitor values under audiobookMonitor/ebookMonitor.
     // Fall back to the legacy monitor/monitorNewItems fields when the specific ones haven't been touched.
-    const audiobookMonitorValue = resolveMonitorOptionValue(audiobookMonitor?.value, monitor?.value);
-    const ebookMonitorValue = resolveMonitorOptionValue(ebookMonitor?.value, monitor?.value);
+    const audiobookMonitorValue = resolveMonitorOptionValue(
+      audiobookMonitor?.value,
+      monitor?.value
+    );
+    const ebookMonitorValue = resolveMonitorOptionValue(
+      ebookMonitor?.value,
+      monitor?.value
+    );
 
-    const audiobookMonitorNewItemsValue = resolveMonitorNewItemsOptionValue(audiobookMonitorNewItems?.value, monitorNewItems?.value);
-    const ebookMonitorNewItemsValue = resolveMonitorNewItemsOptionValue(ebookMonitorNewItems?.value, monitorNewItems?.value);
+    const audiobookMonitorNewItemsValue = resolveMonitorNewItemsOptionValue(
+      audiobookMonitorNewItems?.value,
+      monitorNewItems?.value
+    );
+    const ebookMonitorNewItemsValue = resolveMonitorNewItemsOptionValue(
+      ebookMonitorNewItems?.value,
+      monitorNewItems?.value
+    );
 
     let selectedMonitor = audiobookMonitorValue;
     let selectedMonitorNewItems = audiobookMonitorNewItemsValue;
@@ -440,24 +594,36 @@ class AddNewAuthorModalContentConnector extends Component {
 
     this.props.addAuthor({
       foreignAuthorId,
-      audiobookRootFolderPath: addAudiobooks ? audiobookRootFolderPath?.value : null,
+      audiobookRootFolderPath: addAudiobooks ?
+        audiobookRootFolderPath?.value :
+        null,
       ebookRootFolderPath: addEbooks ? ebookRootFolderPath?.value : null,
       mediaType: selectedMediaType,
       monitor: selectedMonitor,
-      audiobookMonitorExistingMode: addAudiobooks ? audiobookMonitorValue : null,
+      audiobookMonitorExistingMode: addAudiobooks ?
+        audiobookMonitorValue :
+        null,
       ebookMonitorExistingMode: addEbooks ? ebookMonitorValue : null,
       monitorNewItems: selectedMonitorNewItems,
-      audiobookMonitored: addAudiobooks ? audiobookMonitored?.value !== false : null,
+      audiobookMonitored: addAudiobooks ?
+        audiobookMonitored?.value !== false :
+        null,
       ebookMonitored: addEbooks ? ebookMonitored?.value !== false : null,
       // Provide per-type monitor values so the thunk can submit both requests correctly
       audiobookMonitor: addAudiobooks ? audiobookMonitorValue : null,
       ebookMonitor: addEbooks ? ebookMonitorValue : null,
-      audiobookMonitorNewItems: addAudiobooks ? audiobookMonitorNewItemsValue : null,
+      audiobookMonitorNewItems: addAudiobooks ?
+        audiobookMonitorNewItemsValue :
+        null,
       ebookMonitorNewItems: addEbooks ? ebookMonitorNewItemsValue : null,
-      audiobookQualityProfileId: addAudiobooks && audiobookProfile !== 'none' ? audiobookProfile : null,
-      ebookQualityProfileId: addEbooks && ebookProfile !== 'none' ? ebookProfile : null,
+      audiobookQualityProfileId:
+        addAudiobooks && audiobookProfile !== 'none' ? audiobookProfile : null,
+      ebookQualityProfileId:
+        addEbooks && ebookProfile !== 'none' ? ebookProfile : null,
       // Pass per-type metadata profile IDs so the thunk can choose correctly
-      audiobookMetadataProfileId: addAudiobooks ? audiobookMetadataProfileId?.value : null,
+      audiobookMetadataProfileId: addAudiobooks ?
+        audiobookMetadataProfileId?.value :
+        null,
       ebookMetadataProfileId: addEbooks ? ebookMetadataProfileId?.value : null,
       metadataProfileId: metadataProfileId.value,
       // The native import endpoint accepts one media side per request. Keep the
@@ -510,6 +676,8 @@ AddNewAuthorModalContentConnector.propTypes = {
   audiobookTags: PropTypes.object,
   ebookTags: PropTypes.object,
   rootFoldersPopulated: PropTypes.bool.isRequired,
+  rootFoldersFetching: PropTypes.bool.isRequired,
+  rootFoldersError: PropTypes.object,
   isAdded: PropTypes.bool.isRequired,
   onModalClose: PropTypes.func.isRequired,
   setAuthorAddDefault: PropTypes.func.isRequired,
@@ -521,4 +689,7 @@ AddNewAuthorModalContentConnector.propTypes = {
   showMessage: PropTypes.func.isRequired
 };
 
-export default connect(createMapStateToProps, mapDispatchToProps)(AddNewAuthorModalContentConnector);
+export default connect(
+  createMapStateToProps,
+  mapDispatchToProps
+)(AddNewAuthorModalContentConnector);

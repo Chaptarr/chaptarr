@@ -113,7 +113,7 @@ class TextInput extends Component {
   };
 
   onWheel = () => {
-    if (this.props.type === 'number') {
+    if (this.props.type === 'number' || this.props.role === 'spinbutton') {
       this._input.blur();
     }
   };
@@ -129,6 +129,16 @@ class TextInput extends Component {
       autoFocus,
       placeholder,
       name,
+      id,
+      dir,
+      inputMode,
+      ariaDescribedBy,
+      role,
+      ariaValueMin,
+      ariaValueMax,
+      ariaValueNow,
+      ariaValueText,
+      onKeyDown,
       value,
       hasError,
       hasWarning,
@@ -155,11 +165,22 @@ class TextInput extends Component {
           hasButton && styles.hasButton
         )}
         name={name}
+        id={id || name}
+        dir={dir || 'auto'}
+        inputMode={inputMode}
+        aria-describedby={ariaDescribedBy}
+        aria-invalid={hasError || undefined}
+        role={role}
+        aria-valuemin={ariaValueMin}
+        aria-valuemax={ariaValueMax}
+        aria-valuenow={ariaValueNow}
+        aria-valuetext={ariaValueText}
         value={value}
         step={step}
         min={min}
         max={max}
         onChange={this.onChange}
+        onKeyDown={onKeyDown}
         onFocus={this.onFocus}
         onBlur={onBlur}
         onCopy={onCopy}
@@ -180,6 +201,15 @@ TextInput.propTypes = {
   autoFocus: PropTypes.bool,
   placeholder: PropTypes.string,
   name: PropTypes.string.isRequired,
+  id: PropTypes.string,
+  dir: PropTypes.string,
+  inputMode: PropTypes.string,
+  ariaDescribedBy: PropTypes.string,
+  role: PropTypes.string,
+  ariaValueMin: PropTypes.number,
+  ariaValueMax: PropTypes.number,
+  ariaValueNow: PropTypes.number,
+  ariaValueText: PropTypes.string,
   value: PropTypes.oneOfType([PropTypes.string, PropTypes.number, PropTypes.array]).isRequired,
   hasError: PropTypes.bool,
   hasWarning: PropTypes.bool,
@@ -188,6 +218,7 @@ TextInput.propTypes = {
   min: PropTypes.number,
   max: PropTypes.number,
   onChange: PropTypes.func.isRequired,
+  onKeyDown: PropTypes.func,
   onFocus: PropTypes.func,
   onBlur: PropTypes.func,
   onCopy: PropTypes.func,

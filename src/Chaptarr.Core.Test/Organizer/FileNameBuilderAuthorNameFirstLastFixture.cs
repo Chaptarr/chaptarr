@@ -55,7 +55,8 @@ namespace Chaptarr.Core.Test.Organizer
                 new StubQualityDefinitionService(),
                 cacheManager,
                 new StubCustomFormatCalculationService(),
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(),
+                null);
 
             var author = new Author
             {

@@ -64,7 +64,7 @@ function KeyboardShortcutsModalContent(props) {
                 </div>
 
                 <div>
-                  {shortcut.name}
+                  {translate(shortcut.name)}
                 </div>
               </div>
             );

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using NzbDrone.Core.MediaFiles;
 
 namespace NzbDrone.Core.MediaFiles.TagExtraction
 {
@@ -49,7 +50,7 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             }
 
             return tags.Any(pair =>
-                    !TagExclusionPolicy.IsExcludedFromMatching(pair.Key) &&
+                    (!TagExclusionPolicy.IsExcludedFromMatching(pair.Key) || BookshelfAudioTagFields.IsPrivate(pair.Key)) &&
                     pair.Value != null &&
                     pair.Value.Any(value => !string.IsNullOrWhiteSpace(value)))
                 ? TagExtractionDisposition.Evidence

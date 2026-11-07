@@ -1,0 +1,6 @@
+Switch the existing BookshelfNG recipe identity to the ChaptarrNG compatibility
+image. The first start can migrate the existing database automatically while
+preserving the recipe, stack, service, volume, port, and provider-mode settings.
+Create an independent Co-op Cloud backup before upgrading. Review the migration
+result and keep the prior application artifact available until the installed
+upgrade and recovery path has been accepted.

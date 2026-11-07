@@ -120,6 +120,13 @@
   pointer-events: all;
 }
 
+.notAddableMessage {
+  margin-top: 4px;
+  color: var(--textColor);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .overview {
   overflow: hidden;
   margin-top: 20px;

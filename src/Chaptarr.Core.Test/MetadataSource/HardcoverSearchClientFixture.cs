@@ -5,15 +5,18 @@ using System.Net;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Cache;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
-using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.MetadataSource.BookInfo;
 using NzbDrone.Core.MetadataSource.Hardcover;
 
 namespace Chaptarr.Core.Test.MetadataSource
 {
     [TestFixture]
+    [NonParallelizable]
     public class HardcoverSearchClientFixture
     {
         private const string EmptySearchPayload = @"{
@@ -159,10 +162,63 @@ namespace Chaptarr.Core.Test.MetadataSource
             }
         }
 
+        private string _previousHardcover;
+        private string _previousNativeMode;
+        private string _previousAuth;
+        private string _previousApiKey;
+        private string _previousApiUrl;
+
+        [SetUp]
+        public void SetUp()
+        {
+            ResetRateLimitState();
+            _previousHardcover = Environment.GetEnvironmentVariable("HARDCOVER");
+            _previousNativeMode = Environment.GetEnvironmentVariable("HARDCOVER_NATIVE");
+            _previousAuth = Environment.GetEnvironmentVariable("HARDCOVER_AUTH");
+            _previousApiKey = Environment.GetEnvironmentVariable("HARDCOVER_API_KEY");
+            _previousApiUrl = Environment.GetEnvironmentVariable("HARDCOVER_API_URL");
+            Environment.SetEnvironmentVariable("HARDCOVER", null);
+            Environment.SetEnvironmentVariable("HARDCOVER_NATIVE", null);
+            Environment.SetEnvironmentVariable("HARDCOVER_AUTH", null);
+            Environment.SetEnvironmentVariable("HARDCOVER_API_KEY", null);
+            Environment.SetEnvironmentVariable("HARDCOVER_API_URL", null);
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            ResetRateLimitState();
+            Environment.SetEnvironmentVariable("HARDCOVER", _previousHardcover);
+            Environment.SetEnvironmentVariable("HARDCOVER_NATIVE", _previousNativeMode);
+            Environment.SetEnvironmentVariable("HARDCOVER_AUTH", _previousAuth);
+            Environment.SetEnvironmentVariable("HARDCOVER_API_KEY", _previousApiKey);
+            Environment.SetEnvironmentVariable("HARDCOVER_API_URL", _previousApiUrl);
+        }
+
         private static HardcoverSearchClient CreateClient(IHttpClient httpClient)
         {
             var configService = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
-            return new HardcoverSearchClient(httpClient, configService);
+            var metadataProxy = new HardcoverMetadataProxy(httpClient, LogManager.GetCurrentClassLogger(), new CacheManager(), configService);
+            return new HardcoverSearchClient(configService, metadataProxy);
+        }
+
+        private static void ResetRateLimitState()
+        {
+            const BindingFlags Flags = BindingFlags.NonPublic | BindingFlags.Static;
+            var type = typeof(HardcoverMetadataProxy);
+            type.GetField("_rateLimitPauseUntilUtc", Flags).SetValue(null, DateTime.MinValue);
+            type.GetField("_dailyRateLimitLimit", Flags).SetValue(null, -1L);
+            type.GetField("_dailyRateLimitRemaining", Flags).SetValue(null, -1L);
+            type.GetField("_dailyRateLimitResetAtUtc", Flags).SetValue(null, DateTime.MinValue);
+        }
+
+        private static void SetDailyRateLimitState(long limit, long remaining, DateTime resetAtUtc)
+        {
+            const BindingFlags Flags = BindingFlags.NonPublic | BindingFlags.Static;
+            var type = typeof(HardcoverMetadataProxy);
+            type.GetField("_dailyRateLimitLimit", Flags).SetValue(null, limit);
+            type.GetField("_dailyRateLimitRemaining", Flags).SetValue(null, remaining);
+            type.GetField("_dailyRateLimitResetAtUtc", Flags).SetValue(null, resetAtUtc);
         }
 
         private static HttpResponse JsonResponse(HttpRequest request, string content, HttpStatusCode statusCode = HttpStatusCode.OK)
@@ -201,26 +257,24 @@ namespace Chaptarr.Core.Test.MetadataSource
         }
 
         [Test]
-        public void should_surface_a_forbidden_search_contract_verbatim_without_retrying()
+        public void should_not_retry_a_forbidden_search_contract()
         {
             var httpClient = new RecordingHttpClient(request =>
             {
-                var response = JsonResponse(request,
+                return JsonResponse(request,
                     @"{""errors"":[""top_level_limit_exceeded"",""top_level_search_limit_exceeded""]}",
                     HttpStatusCode.Forbidden);
-                throw new HttpException(request, response);
             });
             var client = CreateClient(httpClient);
 
-            var ex = Assert.Throws<NzbDroneClientException>(() => client.Search("matt dinniman"));
+            var ex = Assert.Throws<BookInfoException>(() => client.Search("matt dinniman"));
 
-            Assert.That(ex.Message, Does.Contain("403"));
-            Assert.That(ex.Message, Does.Contain("top_level_search_limit_exceeded"));
+            Assert.That(ex.Message, Does.Contain("Forbidden"));
             Assert.That(httpClient.Requests, Has.Count.EqualTo(1));
         }
 
         [Test]
-        public void should_surface_a_bare_string_graphql_error_verbatim()
+        public void should_not_merge_a_partial_graphql_error_response()
         {
             const string PartialErrorPayload = @"{
                 ""errors"": [""top_level_search_limit_exceeded""],
@@ -229,10 +283,68 @@ namespace Chaptarr.Core.Test.MetadataSource
             var httpClient = new RecordingHttpClient(request => JsonResponse(request, PartialErrorPayload));
             var client = CreateClient(httpClient);
 
-            var ex = Assert.Throws<NzbDroneClientException>(() => client.Search("matt dinniman"));
+            var ex = Assert.Throws<BookInfoException>(() => client.Search("matt dinniman"));
 
-            Assert.That(ex.Message, Does.Contain("top_level_search_limit_exceeded"));
+            Assert.That(ex.Message, Does.Contain("GraphQL request failed"));
             Assert.That(httpClient.Requests, Has.Count.EqualTo(1));
+        }
+
+        [Test]
+        public void should_share_retry_after_pause_between_fallback_and_native_hardcover_searches()
+        {
+            var httpClient = new RecordingHttpClient(request => new HttpResponse(
+                request,
+                new HttpHeader { { "Retry-After", "120" } },
+                "{}",
+                HttpStatusCode.TooManyRequests));
+            var configService = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
+            var metadataProxy = new HardcoverMetadataProxy(
+                httpClient,
+                LogManager.GetCurrentClassLogger(),
+                new CacheManager(),
+                configService);
+            var client = new HardcoverSearchClient(configService, metadataProxy);
+
+            var first = Assert.Throws<BookInfoException>(() => client.Search("first query", interactiveSearch: true));
+            var second = Assert.Throws<BookInfoException>(() => metadataProxy.Search("second query", interactiveSearch: true));
+
+            Assert.That(first.Message, Does.Contain("rate limit reached"));
+            Assert.That(second.Message, Does.Contain("no request was sent"));
+            Assert.That(httpClient.Requests, Has.Count.EqualTo(1));
+        }
+
+        [Test]
+        public void should_keep_interactive_quota_for_every_fallback_search_query()
+        {
+            SetDailyRateLimitState(100, 10, DateTime.UtcNow.AddHours(1));
+            var httpClient = new RecordingHttpClient(request =>
+            {
+                using var payload = JsonDocument.Parse(Encoding.UTF8.GetString(request.ContentData));
+                var root = payload.RootElement;
+                var query = root.GetProperty("query").GetString();
+
+                if (root.GetProperty("variables").TryGetProperty("query_type", out var queryTypeElement))
+                {
+                    return queryTypeElement.GetString() switch
+                    {
+                        "Author" => JsonResponse(request, AuthorSearchPayload),
+                        _ => JsonResponse(request, EmptySearchPayload)
+                    };
+                }
+
+                if (query.Contains("BooksByAuthors", StringComparison.Ordinal))
+                {
+                    return JsonResponse(request, AuthorBooksPayload);
+                }
+
+                return JsonResponse(request, EnrichmentPayload);
+            });
+            var client = CreateClient(httpClient);
+
+            var results = client.Search("Matt Dinniman", interactiveSearch: true);
+
+            Assert.That(results, Is.Not.Null.And.Not.Empty);
+            Assert.That(httpClient.Requests, Has.Count.EqualTo(5));
         }
 
         [Test]
@@ -554,8 +666,7 @@ namespace Chaptarr.Core.Test.MetadataSource
                 requestCount++;
                 if (requestCount == 1)
                 {
-                    var response = JsonResponse(request, @"{""errors"":[""temporary""]}", HttpStatusCode.InternalServerError);
-                    throw new HttpException(request, response);
+                    return JsonResponse(request, @"{""errors"":[""temporary""]}", HttpStatusCode.InternalServerError);
                 }
 
                 return JsonResponse(request, EmptySearchPayload);

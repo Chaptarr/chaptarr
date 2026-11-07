@@ -36,6 +36,19 @@ namespace Chaptarr.Http.ClientSchema
             foreach (var mapping in mappings)
             {
                 var field = mapping.Field.Clone();
+                var labelId = field.Label;
+                field.Label = Localize(field.Label, GetTokens(mapping.DeclaringType, labelId, TokenField.Label));
+                field.HelpText = Localize(field.HelpText, GetTokens(mapping.DeclaringType, labelId, TokenField.HelpText));
+                field.HelpTextWarning = Localize(field.HelpTextWarning, GetTokens(mapping.DeclaringType, labelId, TokenField.HelpTextWarning));
+                field.SelectOptions = field.SelectOptions?.Select(option => new SelectOption
+                {
+                    Value = option.Value,
+                    Order = option.Order,
+                    Name = Localize(option.Name),
+                    // Unmapped numeric hints and example data stay verbatim.
+                    Hint = option.Hint?.StartsWith("provider.option.", StringComparison.Ordinal) == true
+                        ? Localize(option.Hint) : option.Hint
+                }).ToList();
                 var value = mapping.GetterFunc(model);
 
                 field.Value = mapping.IsSensitive && value != null && !value.Equals(string.Empty)
@@ -114,26 +127,13 @@ namespace Chaptarr.Http.ClientSchema
                 {
                     var fieldAttribute = property.Item2;
 
-                    var label = fieldAttribute.Label.IsNotNullOrWhiteSpace()
-                        ? _localizationService.GetLocalizedString(fieldAttribute.Label,
-                            GetTokens(type, fieldAttribute.Label, TokenField.Label))
-                        : fieldAttribute.Label;
-                    var helpText = fieldAttribute.HelpText.IsNotNullOrWhiteSpace()
-                        ? _localizationService.GetLocalizedString(fieldAttribute.HelpText,
-                            GetTokens(type, fieldAttribute.Label, TokenField.HelpText))
-                        : fieldAttribute.HelpText;
-                    var helpTextWarning = fieldAttribute.HelpTextWarning.IsNotNullOrWhiteSpace()
-                        ? _localizationService.GetLocalizedString(fieldAttribute.HelpTextWarning,
-                            GetTokens(type, fieldAttribute.Label, TokenField.HelpTextWarning))
-                        : fieldAttribute.HelpTextWarning;
-
                     var field = new Field
                     {
                         Name = prefix + GetCamelCaseName(propertyInfo.Name),
-                        Label = label,
+                        Label = fieldAttribute.Label,
                         Unit = fieldAttribute.Unit,
-                        HelpText = helpText,
-                        HelpTextWarning = helpTextWarning,
+                        HelpText = fieldAttribute.HelpText,
+                        HelpTextWarning = fieldAttribute.HelpTextWarning,
                         HelpLink = fieldAttribute.HelpLink,
                         Order = fieldAttribute.Order,
                         Advanced = fieldAttribute.Advanced,
@@ -176,6 +176,7 @@ namespace Chaptarr.Http.ClientSchema
                     result.Add(new FieldMapping
                     {
                         Field = field,
+                        DeclaringType = type,
                         PropertyType = propertyInfo.PropertyType,
                         IsSensitive = isSensitive,
                         GetterFunc = t => propertyInfo.GetValue(targetSelector(t), null),
@@ -198,6 +199,12 @@ namespace Chaptarr.Http.ClientSchema
                 .Where(v => v.Item2 != null)
                 .OrderBy(v => v.Item2.Order)
                 .ToArray();
+        }
+
+        private static string Localize(string id, Dictionary<string, object> tokens = null)
+        {
+            return string.IsNullOrWhiteSpace(id) ? id :
+                _localizationService.GetLocalizedString(id, tokens ?? new Dictionary<string, object>());
         }
 
         private static Dictionary<string, object> GetTokens(Type type, string label, TokenField field)
@@ -258,7 +265,22 @@ namespace Chaptarr.Http.ClientSchema
 
         private static Func<object, object> GetValueConverter(Type propertyType)
         {
-            if (propertyType == typeof(int))
+            if (propertyType == typeof(string))
+            {
+                return fieldValue => fieldValue switch
+                {
+                    null => null,
+                    JsonElement element when element.ValueKind == JsonValueKind.String => element.GetString(),
+                    JsonElement element when element.ValueKind == JsonValueKind.Array => string.Join(
+                        Environment.NewLine,
+                        element.EnumerateArray().Select(value => value.ValueKind == JsonValueKind.String
+                            ? value.GetString()
+                            : value.GetRawText())),
+                    JsonElement element => element.GetRawText(),
+                    _ => fieldValue.ToString()
+                };
+            }
+            else if (propertyType == typeof(int))
             {
                 return fieldValue => fieldValue?.ToString().ParseInt32() ?? 0;
             }

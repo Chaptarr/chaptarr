@@ -6,6 +6,8 @@ using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.ImportLists.Exclusions;
 
+using NzbDrone.Core.Validation;
+
 namespace Chaptarr.Core.Test.ImportLists
 {
     [TestFixture]

@@ -1,0 +1,18 @@
+apiVersion: v2
+name: bookshelfng
+description: Candidate in-place Helm handoff from BookshelfNG to ChaptarrNG
+type: application
+version: 0.2.0-retirement-candidate.3
+appVersion: "0.9.978.0"
+home: https://github.com/snapetech-org/chaptarrng
+icon: https://raw.githubusercontent.com/snapetech-org/chaptarrng/main/frontend/src/Content/Images/logo.svg
+sources:
+  - https://github.com/snapetech-org/chaptarrng
+maintainers:
+  - name: Snapetech
+    url: https://github.com/snapetech
+keywords:
+  - books
+  - chaptarrng
+  - bookshelfng
+  - migration

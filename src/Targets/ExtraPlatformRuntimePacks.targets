@@ -1,0 +1,25 @@
+<Project>
+  <!-- The community-built packs are supplied through a scoped NuGet source.
+       Extend this project's SDK item metadata instead of replacing the build
+       SDK's binaries, manifests or bundled-version files with a target SDK. -->
+  <Target Name="ConfigureChaptarrExtraPlatformRuntimePacks"
+          BeforeTargets="ProcessFrameworkReferences"
+          Condition="'$(ChaptarrExtraPlatformRuntimePacks)' == 'true' and
+                        '$(TargetFramework)' == 'net10.0' and
+                        '$(RuntimeFrameworkVersion)' == '10.0.12' and
+                        ('$(RuntimeIdentifier)' == 'linux-x86' or '$(RuntimeIdentifier)' == 'freebsd-x64')">
+    <ItemGroup>
+      <KnownFrameworkReference Update="Microsoft.NETCore.App;Microsoft.AspNetCore.App"
+                               Condition="'%(KnownFrameworkReference.TargetFramework)' == 'net10.0' and
+                                          ('%(KnownFrameworkReference.Identity)' == 'Microsoft.NETCore.App' or
+                                           '%(KnownFrameworkReference.Identity)' == 'Microsoft.AspNetCore.App')">
+        <RuntimePackRuntimeIdentifiers>%(KnownFrameworkReference.RuntimePackRuntimeIdentifiers);$(RuntimeIdentifier)</RuntimePackRuntimeIdentifiers>
+      </KnownFrameworkReference>
+      <KnownAppHostPack Update="Microsoft.NETCore.App"
+                        Condition="'%(KnownAppHostPack.TargetFramework)' == 'net10.0' and
+                                   '%(KnownAppHostPack.Identity)' == 'Microsoft.NETCore.App'">
+        <AppHostRuntimeIdentifiers>%(KnownAppHostPack.AppHostRuntimeIdentifiers);$(RuntimeIdentifier)</AppHostRuntimeIdentifiers>
+      </KnownAppHostPack>
+    </ItemGroup>
+  </Target>
+</Project>

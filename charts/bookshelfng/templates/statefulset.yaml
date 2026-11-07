@@ -1,0 +1,104 @@
+{{- if ne .Values.bookshelfMigration.confirmed true }}
+{{- fail "bookshelfMigration.confirmed must be true after migration and channel checks are complete" }}
+{{- end }}
+{{- if and (ne .Values.image.repository "ghcr.io/snapetech-org/chaptarrng") (ne .Values.image.allowCustomRepository true) }}
+{{- fail "image.repository must be the ChaptarrNG image; set image.allowCustomRepository=true only for a verified mirror" }}
+{{- end }}
+{{- $imageDigest := required "image.digest must be set to a validated ChaptarrNG sha256 digest" .Values.image.digest }}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" $imageDigest) }}
+{{- fail "image.digest must have the form sha256:<64 lowercase hexadecimal characters>" }}
+{{- end }}
+{{- if or (gt (int .Values.replicaCount) 1) (lt (int .Values.replicaCount) 0) }}
+{{- fail "replicaCount must be 0 or 1 while the BookshelfNG SQLite source is migrated" }}
+{{- end }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "bookshelfng.fullname" . }}
+  labels:
+    {{- include "bookshelfng.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "bookshelfng.fullname" . }}
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "bookshelfng.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "bookshelfng.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      terminationGracePeriodSeconds: 30600
+      serviceAccountName: {{ if .Values.serviceAccount.create }}{{ default (include "bookshelfng.fullname" .) .Values.serviceAccount.name }}{{ else }}{{ default "default" .Values.serviceAccount.name }}{{ end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: bookshelfng
+          image: "{{ .Values.image.repository }}@{{ $imageDigest }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          {{- with .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            {{- include "bookshelfng.containerEnv" . | nindent 12 }}
+          startupProbe:
+            exec:
+              command:
+                - /usr/local/bin/chaptarr-bookshelf-liveness
+            # Keep kubelet from restarting a slow first launch; the supervisor
+            # keeps liveness successful while it is migrating or recovering.
+            failureThreshold: 1470
+            periodSeconds: 10
+            timeoutSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - /usr/local/bin/chaptarr-healthcheck
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - /usr/local/bin/chaptarr-bookshelf-liveness
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: config
+          {{- if or .Values.persistence.enabled .Values.persistence.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-config" (include "bookshelfng.fullname" .)) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

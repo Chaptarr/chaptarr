@@ -1,4 +1,5 @@
 import { createSelector } from 'reselect';
+import translate from 'Utilities/String/translate';
 
 function createHealthCheckSelector() {
   return createSelector(
@@ -11,7 +12,7 @@ function createHealthCheckSelector() {
         items.push({
           source: 'UI',
           type: 'warning',
-          message: 'Could not connect to SignalR, UI won\'t update',
+          message: translate('HealthSignalRDisconnected'),
           wikiUrl: 'https://discord.gg/nqFGsGUug2'
         });
       }

@@ -6,6 +6,7 @@ using NLog;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Validation;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.Books
 {
@@ -18,6 +19,20 @@ namespace Chaptarr.Api.V1.Books
             if (edition == null)
             {
                 return null;
+            }
+
+            if (facadeContext?.IsBookshelfCompatibility == true)
+            {
+                var facadeEditionId = facadeContext.IsGoodreads
+                    ? BookEditionIdentity.GetReadarrFacadeGoodreadsEditionId(edition)
+                    : facadeContext.IsHardcover
+                        ? BookEditionIdentity.GetReadarrFacadeHardcoverEditionId(edition)
+                        : null;
+
+                // BookshelfNG returned its stored edition identity even when an edition came
+                // from a provider other than the selected work provider. Preserve that typed
+                // identity during migrated API calls when no facade-specific ID is available.
+                return facadeEditionId ?? BuildNativeForeignEditionId(edition);
             }
 
             if (facadeContext?.IsGoodreads == true)
@@ -54,7 +69,7 @@ namespace Chaptarr.Api.V1.Books
 
             if (!string.IsNullOrWhiteSpace(foreignEditionId))
             {
-                Logger.Warn("[NativeIdentity] Omitting bare foreign edition ID from native response. localEditionId={0} title='{1}' foreignEditionId='{2}'.",
+                Logger.WarnSafe("[NativeIdentity] Omitting bare foreign edition ID from native response. localEditionId={0} title='{1}' foreignEditionId='{2}'.",
                     edition.Id,
                     edition.Title ?? string.Empty,
                     foreignEditionId);
@@ -99,7 +114,7 @@ namespace Chaptarr.Api.V1.Books
         public static List<Edition> FilterAddressableEditions(IEnumerable<Edition> editions, ReadarrFacadeContext facadeContext, string source)
         {
             var editionList = editions?.Where(e => e != null).ToList() ?? new List<Edition>();
-            if (facadeContext == null)
+            if (facadeContext == null || facadeContext.IsBookshelfCompatibility)
             {
                 return editionList;
             }
@@ -116,7 +131,7 @@ namespace Chaptarr.Api.V1.Books
                 }
 
                 omittedCount++;
-                Logger.Debug("[ReadarrFacade] Cannot emit edition identity in {0} dialect for localEditionId={1} title='{2}'. Omitting edition row.",
+                Logger.DebugSafe("[ReadarrFacade] Cannot emit edition identity in {0} dialect for localEditionId={1} title='{2}'. Omitting edition row.",
                     facadeContext.Dialect,
                     edition.Id,
                     edition.Title ?? string.Empty);

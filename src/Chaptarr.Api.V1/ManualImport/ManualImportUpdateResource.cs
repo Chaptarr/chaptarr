@@ -12,6 +12,7 @@ namespace Chaptarr.Api.V1.ManualImport
         public int? AuthorId { get; set; }
         public int? BookId { get; set; }
         public int? EditionId { get; set; }
+        public string ForeignEditionId { get; set; }
         public string SuggestedForeignAuthorId { get; set; }
         public string SuggestedAuthorName { get; set; }
         public string SuggestedForeignBookId { get; set; }

@@ -9,9 +9,11 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Common.EnsureThat;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser;
+using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
 
 namespace NzbDrone.Core.Organizer
@@ -28,8 +30,10 @@ namespace NzbDrone.Core.Organizer
     public class FileNameBuilder : IBuildFileNames
     {
         private readonly INamingConfigService _namingConfigService;
+        private readonly IConfigService _configService;
         private readonly IQualityDefinitionService _qualityDefinitionService;
         private readonly ICustomFormatCalculationService _formatCalculator;
+        private readonly IMediaInfoExtractor _mediaInfoExtractor;
         private readonly ICached<BookFormat[]> _trackFormatCache;
         private readonly Logger _logger;
 
@@ -38,6 +42,9 @@ namespace NzbDrone.Core.Organizer
 
         public static readonly Regex PartRegex = new Regex(@"\{(?<prefix>[^{]*?)(?<token1>PartNumber|PartCount)(?::(?<customFormat1>[a-z0-9]+))?(?<separator>.*(?=PartNumber|PartCount))?((?<token2>PartNumber|PartCount)(?::(?<customFormat2>[a-z0-9]+))?)?(?<suffix>[^}]*)\}",
                                                             RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+        private static readonly Regex LeadingIntegerRegex = new Regex(@"^\s*(?<number>\d+)(?<rest>.*)$",
+                                                                      RegexOptions.Compiled | RegexOptions.Singleline);
 
         public static readonly Regex SeasonEpisodePatternRegex = new Regex(@"(?<separator>(?<=})[- ._]+?)?(?<seasonEpisode>s?{season(?:\:0+)?}(?<episodeSeparator>[- ._]?[ex])(?<episode>{episode(?:\:0+)?}))(?<separator>[- ._]+?(?={))?",
                                                                             RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -60,11 +67,15 @@ namespace NzbDrone.Core.Organizer
                                IQualityDefinitionService qualityDefinitionService,
                                ICacheManager cacheManager,
                                ICustomFormatCalculationService formatCalculator,
-                               Logger logger)
+                               Logger logger,
+                               IMediaInfoExtractor mediaInfoExtractor,
+                               IConfigService configService = null)
         {
             _namingConfigService = namingConfigService;
+            _configService = configService;
             _qualityDefinitionService = qualityDefinitionService;
             _formatCalculator = formatCalculator;
+            _mediaInfoExtractor = mediaInfoExtractor;
             _trackFormatCache = cacheManager.GetCache<BookFormat[]>(GetType(), "bookFormat");
             _logger = logger;
         }
@@ -86,6 +97,11 @@ namespace NzbDrone.Core.Organizer
 
             var renameBooks = namingConfig.RenameBooks;
             var originalFileName = GetOriginalFileName(bookFile);
+            var compatibility = _configService?.BookshelfMatchCompatibility == true;
+            if (compatibility && !renameBooks)
+            {
+                return originalFileName;
+            }
 
             if (namingConfig.StandardBookFormat.IsNullOrWhiteSpace())
             {
@@ -151,13 +167,28 @@ namespace NzbDrone.Core.Organizer
             // If the naming pattern doesn't include any per-file disambiguator (PartNumber / Original Filename),
             // all tracks would be renamed to the same destination and only the first one would import.
             // Default to preserving the original filename for the final path component in that case.
-            if (bookFile.PartCount > 1 &&
+            if (!compatibility && bookFile.PartCount > 1 &&
                 !pattern.Contains("PartNumber", StringComparison.InvariantCultureIgnoreCase) &&
                 !pattern.Contains("Original Filename", StringComparison.InvariantCultureIgnoreCase) &&
                 !pattern.Contains("Original Title", StringComparison.InvariantCultureIgnoreCase) &&
                 components.Count > 0)
             {
                 components[^1] = CleanFileName(originalFileName, namingConfig);
+            }
+
+            // Pieces of a book that was published as several releases each arrive as their own set of
+            // files, so two pieces can easily share a file name. Unless the pattern already tells them
+            // apart, mark the piece in the file name so a later piece cannot land on an earlier one.
+            if (bookFile.ReleasePart > 0 &&
+                components.Count > 0 &&
+                !pattern.Contains("ReleasePart", StringComparison.InvariantCultureIgnoreCase) &&
+                !pattern.Contains("Original Filename", StringComparison.InvariantCultureIgnoreCase) &&
+                !pattern.Contains("Original Title", StringComparison.InvariantCultureIgnoreCase))
+            {
+                var marker = bookFile.ReleasePartCount >= bookFile.ReleasePart
+                    ? $"(Part {bookFile.ReleasePart} of {bookFile.ReleasePartCount})"
+                    : $"(Part {bookFile.ReleasePart})";
+                components[^1] = $"{components[^1]} {marker}";
             }
 
             return Path.Combine(components.ToArray());
@@ -407,6 +438,8 @@ namespace NzbDrone.Core.Organizer
             return segmentCount > 0;
         }
 
+        private const string AudibleAsinToken = "{Edition AudibleAsin}";
+
         private void AddBookTokens(Dictionary<string, Func<TokenMatch, string>> tokenHandlers, Edition edition)
         {
             tokenHandlers["{Book Title}"] = m => edition.Title;
@@ -424,31 +457,28 @@ namespace NzbDrone.Core.Organizer
             tokenHandlers["{Book CleanSubtitle}"] = m => CleanTitle(subtitle);
             tokenHandlers["{Book SubtitleThe}"] = m => TitleThe(subtitle);
 
-            // Series tokens - automatically handle "if applicable" logic
-            var seriesName = edition.Book?.SeriesName;
-            var seriesPosition = edition.Book?.SeriesPosition;
+            // Series tokens - automatically handle "if applicable" logic.
+            // The links are the authoritative membership, so name and position are taken from the
+            // display link as a pair: the stored pair may be stale until the next refresh rewrites it,
+            // and filling one half from each source can put one series' number on another's title.
+            var book = edition.Book;
+            var preferredSeries = book?.Author?.GetMetadataProfileFor(book.MediaType)?.PreferredSeries;
+            var (seriesName, seriesPosition) = BookSeriesLabel.Resolve(book?.SeriesLinks, preferredSeries);
 
-            // Fall back to SeriesLinks if present (not always loaded during renaming).
-            var seriesLinks = edition.Book?.SeriesLinks;
-            var primarySeries = seriesLinks?.OrderBy(x => x.SeriesPosition).FirstOrDefault();
-
+            // Fall back to the stored pair when no link resolves (not always loaded during renaming).
             if (seriesName.IsNullOrWhiteSpace())
             {
-                seriesName = primarySeries?.Series?.Value?.Title;
+                seriesName = book?.SeriesName;
+                seriesPosition = book?.SeriesPosition;
             }
 
-            if (seriesPosition.IsNullOrWhiteSpace())
-            {
-                seriesPosition = primarySeries?.Position;
-            }
-            
             // Series name only (returns empty if no series)
             tokenHandlers["{Book Series}"] = m => 
                 seriesName ?? m.DefaultValue("");
             
-            // Series position only (e.g., "3" or "2.5")
-            tokenHandlers["{Book SeriesPosition}"] = m => 
-                seriesPosition ?? m.DefaultValue("");
+            // Series position only (e.g., "3" or "2.5"); {Book SeriesPosition:00} pads the leading integer
+            tokenHandlers["{Book SeriesPosition}"] = m =>
+                FormatSeriesPositionToken(seriesPosition, m.CustomFormat) ?? m.DefaultValue("");
             
             // Combined series with position (e.g., "Dresden Files #3")
             tokenHandlers["{Book SeriesTitle}"] = m => 
@@ -494,6 +524,10 @@ namespace NzbDrone.Core.Organizer
                 return bookTitle;
             };
 
+            // Audible ASIN of the selected edition only (never an ISBN or a non-Audible ASIN; Edition.Asin may hold ISBN-10).
+            // Empty when missing so conditional brackets such as {[Edition AudibleAsin]} collapse.
+            tokenHandlers[AudibleAsinToken] = m => (edition.AudibleASIN ?? string.Empty).Trim().ToUpperInvariant();
+
             if (edition.Disambiguation != null)
             {
                 tokenHandlers["{Book Disambiguation}"] = m => edition.Disambiguation;
@@ -509,7 +543,7 @@ namespace NzbDrone.Core.Organizer
             }
             else
             {
-                tokenHandlers["{Release Year}"] = m => "Unknown";
+                tokenHandlers["{Release Year}"] = m => m.DefaultValue("");
             }
 
             if (edition.ReleaseDate.HasValue)
@@ -658,7 +692,24 @@ namespace NzbDrone.Core.Organizer
         {
             tokenHandlers["{Original Title}"] = m => GetOriginalTitle(bookFile);
             tokenHandlers["{Original Filename}"] = m => GetOriginalFileName(bookFile);
-            tokenHandlers["{Release Group}"] = m => bookFile.ReleaseGroup ?? m.DefaultValue("Chaptarr");
+            tokenHandlers["{Release Group}"] = m => bookFile.ReleaseGroup ??
+                m.DefaultValue(_configService?.BookshelfMatchCompatibility == true ? "Readarr" : "Chaptarr");
+
+            if (bookFile.ReleasePart > 0)
+            {
+                tokenHandlers["{ReleasePart}"] = m => FormatPartToken(
+                    bookFile.ReleasePart,
+                    Math.Max(bookFile.ReleasePart, bookFile.ReleasePartCount),
+                    m.CustomFormat);
+
+                if (bookFile.ReleasePartCount >= bookFile.ReleasePart)
+                {
+                    tokenHandlers["{ReleaseParts}"] = m => FormatPartToken(
+                        bookFile.ReleasePartCount,
+                        bookFile.ReleasePartCount,
+                        m.CustomFormat);
+                }
+            }
 
             if (bookFile.PartCount > 1)
             {
@@ -685,6 +736,32 @@ namespace NzbDrone.Core.Organizer
             return value.ToString(paddedFormat);
         }
 
+        // SeriesPosition is free text ("3", "2.5", "2, Part 1", "1-3"), so only the leading integer
+        // is formatted and the remainder is kept as-is: with ":00", "2.5" -> "02.5", "1-3" -> "01-3".
+        private static string FormatSeriesPositionToken(string position, string customFormat)
+        {
+            if (position.IsNullOrWhiteSpace() || customFormat.IsNullOrWhiteSpace())
+            {
+                return position;
+            }
+
+            var match = LeadingIntegerRegex.Match(position);
+
+            if (!match.Success || !long.TryParse(match.Groups["number"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var number))
+            {
+                return position;
+            }
+
+            try
+            {
+                return number.ToString(customFormat, CultureInfo.InvariantCulture) + match.Groups["rest"].Value;
+            }
+            catch (FormatException)
+            {
+                return position;
+            }
+        }
+
         private void AddQualityTokens(Dictionary<string, Func<TokenMatch, string>> tokenHandlers, Author author, BookFile bookFile)
         {
             var qualityTitle = _qualityDefinitionService.Get(bookFile.Quality.Quality).Title;
@@ -700,24 +777,75 @@ namespace NzbDrone.Core.Organizer
 
         private void AddMediaInfoTokens(Dictionary<string, Func<TokenMatch, string>> tokenHandlers, BookFile bookFile)
         {
-            if (bookFile.MediaInfo == null)
+            if (bookFile == null)
             {
                 _logger.Trace("Media info is unavailable for {0}", bookFile);
 
                 return;
             }
 
-            var audioCodec = MediaInfoFormatter.FormatAudioCodec(bookFile.MediaInfo);
-            var audioChannels = MediaInfoFormatter.FormatAudioChannels(bookFile.MediaInfo);
-            var audioChannelsFormatted = audioChannels > 0 ?
-                                audioChannels.ToString("F1", CultureInfo.InvariantCulture) :
-                                string.Empty;
+            var mediaInfo = bookFile.MediaInfo;
+            var mediaInfoResolved = false;
 
-            tokenHandlers["{MediaInfo AudioCodec}"] = m => audioCodec;
-            tokenHandlers["{MediaInfo AudioChannels}"] = m => audioChannelsFormatted;
-            tokenHandlers["{MediaInfo AudioBitRate}"] = m => MediaInfoFormatter.FormatAudioBitrate(bookFile.MediaInfo);
-            tokenHandlers["{MediaInfo AudioBitsPerSample}"] = m => MediaInfoFormatter.FormatAudioBitsPerSample(bookFile.MediaInfo);
-            tokenHandlers["{MediaInfo AudioSampleRate}"] = m => MediaInfoFormatter.FormatAudioSampleRate(bookFile.MediaInfo);
+            MediaInfoModel GetMediaInfo(Func<MediaInfoModel, bool> isMissing)
+            {
+                if (!mediaInfoResolved && isMissing(mediaInfo))
+                {
+                    mediaInfoResolved = true;
+
+                    if (_mediaInfoExtractor != null && !string.IsNullOrWhiteSpace(bookFile.Path))
+                    {
+                        var extracted = _mediaInfoExtractor.ExtractMediaInfo(bookFile.Path);
+                        mediaInfo = MediaDuration.MergeMediaInfo(mediaInfo, extracted);
+                    }
+                }
+
+                return mediaInfo;
+            }
+
+            tokenHandlers["{MediaInfo AudioCodec}"] = m =>
+            {
+                var resolved = GetMediaInfo(info => string.IsNullOrWhiteSpace(info?.AudioFormat) ||
+                    string.Equals(info.AudioFormat, "Unknown", StringComparison.OrdinalIgnoreCase));
+                if (string.IsNullOrWhiteSpace(resolved?.AudioFormat))
+                {
+                    return m.DefaultValue("");
+                }
+
+                var codec = MediaInfoFormatter.FormatAudioCodec(resolved);
+                return string.Equals(codec, "Unknown", StringComparison.OrdinalIgnoreCase)
+                    ? m.DefaultValue("")
+                    : codec;
+            };
+            tokenHandlers["{MediaInfo AudioChannels}"] = m =>
+            {
+                var resolved = GetMediaInfo(info => info == null || info.AudioChannels <= 0);
+                var channels = resolved == null ? 0 : MediaInfoFormatter.FormatAudioChannels(resolved);
+                return channels > 0
+                    ? channels.ToString("F1", CultureInfo.InvariantCulture)
+                    : m.DefaultValue("");
+            };
+            tokenHandlers["{MediaInfo AudioBitRate}"] = m =>
+            {
+                var resolved = GetMediaInfo(info => info == null || info.AudioBitrate <= 0);
+                return resolved != null && resolved.AudioBitrate > 0
+                    ? MediaInfoFormatter.FormatAudioBitrate(resolved)
+                    : m.DefaultValue("");
+            };
+            tokenHandlers["{MediaInfo AudioBitsPerSample}"] = m =>
+            {
+                var resolved = GetMediaInfo(info => info == null || info.AudioBits <= 0);
+                return resolved != null && resolved.AudioBits > 0
+                    ? MediaInfoFormatter.FormatAudioBitsPerSample(resolved)
+                    : m.DefaultValue("");
+            };
+            tokenHandlers["{MediaInfo AudioSampleRate}"] = m =>
+            {
+                var resolved = GetMediaInfo(info => info == null || info.AudioSampleRate <= 0);
+                return resolved != null && resolved.AudioSampleRate > 0
+                    ? MediaInfoFormatter.FormatAudioSampleRate(resolved)
+                    : m.DefaultValue("");
+            };
         }
 
         private void AddGraphicAudioTokens(Dictionary<string, Func<TokenMatch, string>> tokenHandlers, Edition edition, BookFile bookFile)
@@ -788,7 +916,11 @@ namespace NzbDrone.Core.Organizer
 
             var replacementText = tokenHandler(tokenMatch).Trim();
 
-            if (tokenMatch.Token.All(t => !char.IsLetter(t) || char.IsLower(t)))
+            if (FileNameBuilderTokenEqualityComparer.Instance.Equals(tokenMatch.Token, AudibleAsinToken))
+            {
+                // ASINs must stay uppercase ([A-Z0-9]{10}); do not mirror the token spelling's case.
+            }
+            else if (tokenMatch.Token.All(t => !char.IsLetter(t) || char.IsLower(t)))
             {
                 replacementText = replacementText.ToLower();
             }

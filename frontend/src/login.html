@@ -328,11 +328,11 @@
       <div class="content">
         <div class="panel">
           <div class="panel-header">
-            <img src="/Content/Images/chaptarr-logo.svg" alt="Chaptarr Logo" class="logo" />
+            <img src="/Content/Images/chaptarr-logo.svg" alt="Chaptarr logo" class="logo" />
           </div>
 
           <div class="panel-body">
-            <div class="sign-in">
+            <div id="sign-in-prompt" class="sign-in">
               SIGN IN TO CONTINUE
             </div>
 
@@ -353,7 +353,7 @@
                   autocomplete="off"
                   pattern=".{1,}"
                   required
-                  title="User name is required"
+                  title="Username is required"
                   autoFocus="true"
                   autoCapitalize="false"
                 />
@@ -377,21 +377,25 @@
                     id="rememberMe"
                     checked="checked"
                   />
-                  <label for="rememberMe">Remember Me</label>
+                  <label id="remember-me-label" for="rememberMe">Remember me</label>
                 </span>
 
               </div>
-              <button type="submit" class="button">Login</button>
+              <button id="login-button" type="submit" class="button">Login</button>
 
-              <div id="login-failed" class="login-failed hidden">
-                Incorrect Username or Password
+              <div id="login-failed" class="login-failed hidden" role="alert" aria-live="assertive">
+                Incorrect username or password
               </div>
-              <div id="sso-failed" class="login-failed hidden"></div>
+              <div id="sso-failed" class="login-failed hidden" role="alert" aria-live="assertive"></div>
             </form>
 
             <div id="sso-container" class="sso-container hidden">
               <a id="plex-login" class="button button-plex hidden" href="#">Continue with Plex</a>
-              <a id="oidc-login" class="button hidden" href="#">Continue with SSO</a>
+              <a id="oidc-login" class="button hidden" href="#">
+                <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24"><use id="oidc-login-icon" href="#"></use></svg>
+                <span id="oidc-login-label">Continue with SSO</span>
+              </a>
+              <a id="oidc-provider-help" class="hidden" href="#" target="_blank" rel="noopener noreferrer" style="display:block;text-align:center;margin-top:8px;font-size:12px;">Provider setup guide</a>
               <div id="sso-note" class="sso-note hidden">
                 You will be redirected to your identity provider to sign in.
               </div>
@@ -422,6 +426,27 @@
 
     var authMethod = "__AUTH_METHOD__";
     var urlBase = "__URL_BASE__";
+    var oidcProviderId = "__OIDC_PROVIDER__";
+    var oidcProviders = {
+      generic: ["identity provider", "generic", "https://openid.net/developers/how-connect-works/"],
+      google: ["Google", "google", "https://developers.google.com/identity/openid-connect/openid-connect"],
+      "microsoft-entra": ["Microsoft Entra ID", "microsoft", "https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc"],
+      okta: ["Okta", "okta", "https://developer.okta.com/docs/guides/implement-grant-type/authcodepkce/main/"],
+      auth0: ["Auth0", "auth0", "https://auth0.com/docs/get-started/authentication-and-authorization-flow/authorization-code-flow"],
+      keycloak: ["Keycloak", "keycloak", "https://www.keycloak.org/docs/latest/server_admin/"],
+      authentik: ["authentik", "authentik", "https://docs.goauthentik.io/add-secure-apps/providers/oauth2/create-oauth2-provider/"],
+      zitadel: ["ZITADEL", "zitadel", "https://zitadel.com/docs/guides/integrate/login/oidc/oauth-recommended-flows"],
+      "amazon-cognito": ["Amazon Cognito", "amazon-cognito", "https://docs.aws.amazon.com/cognito/latest/developerguide/federation-endpoints.html"],
+      "apple-sign-in": ["Apple", "apple", "https://developer.apple.com/documentation/signinwithapple/configuring-your-environment-for-sign-in-with-apple"],
+      gitlab: ["GitLab", "gitlab", "https://docs.gitlab.com/integration/openid_connect_provider/"],
+      "fusionauth": ["FusionAuth", "fusionauth", "https://fusionauth.io/docs/lifecycle/authenticate-users/oauth/"],
+      "onelogin": ["OneLogin", "onelogin", "https://developers.onelogin.com/docs/openid-connect/connect-to-onelogin/"],
+      "pingone": ["PingOne", "pingone", "https://docs.pingidentity.com/pingone/applications/p1_edit_application_oidc.html"],
+      "jumpcloud": ["JumpCloud", "jumpcloud", "https://jumpcloud.com/support/sso-with-oidc"]
+    };
+    var oidcProvider = Object.prototype.hasOwnProperty.call(oidcProviders, oidcProviderId)
+      ? oidcProviders[oidcProviderId]
+      : oidcProviders.generic;
 
     var ssoContainer = document.getElementById("sso-container");
     var plexLoginLink = document.getElementById("plex-login");
@@ -430,6 +455,61 @@
     var ssoNote = document.getElementById("sso-note");
     var localLoginToggleContainer = document.getElementById("local-login-toggle-container");
     var localLoginToggle = document.getElementById("local-login-toggle");
+    var translations = {};
+
+    function translate(key, fallback) {
+      return translations[key] || fallback;
+    }
+
+    function updateSsoFailureMessage() {
+      var messages = {
+        oidc_discovery_unreachable: ["AuthOidcDiscoveryUnreachable", "SSO sign-in failed. Chaptarr could not retrieve the OpenID Connect discovery document from your identity provider. Check DNS, proxy, and firewall access from the server or container. If required, configure the proxy to route all traffic."],
+        oidc_backchannel_timeout: ["AuthOidcBackchannelTimeout", "SSO sign-in failed. Chaptarr timed out while contacting your identity provider. Check DNS, proxy, and firewall access from the server or container. If required, configure the proxy to route all traffic."],
+        missing_callback_parameters: ["AuthMissingCallbackParameters", "SSO sign-in failed. The callback URL was reached without the expected parameters. Check your identity provider's authorization code flow and reverse proxy settings."],
+        cookie_or_proxy_issue: ["AuthCookieOrProxyIssue", "SSO sign-in failed. This is often caused by blocked cookies or a reverse proxy misconfiguration."],
+        oidc_email_missing: ["AuthOidcEmailMissing", "SSO sign-in failed. Your identity provider did not send an email claim, which Chaptarr needs to check its email allow-list. Make sure the email scope is granted."],
+        oidc_email_not_verified: ["AuthOidcEmailNotVerified", "SSO sign-in failed. Your identity provider reported that this account's email is not verified. Chaptarr cannot match unverified email addresses against its allow-list; verify the address with your identity provider."],
+        oidc_user_not_allowed: ["AuthOidcUserNotAllowed", "SSO sign-in failed. This account's email is not in Chaptarr's allowed email addresses or domains."]
+      };
+      var message = messages[ssoError];
+      ssoFailedDiv.textContent = message ? translate(message[0], message[1]) : translate("AuthSsoSignInFailed", "SSO sign-in failed.");
+    }
+
+    function applyTranslations(localization) {
+      translations = localization.Strings || {};
+      if (localization.Locale) {
+        var locale = localization.Locale.replace(/_/g, "-");
+        var language = locale.toLowerCase().split("-", 1)[0];
+        document.documentElement.lang = locale;
+        document.documentElement.dir = ["dv", "fa", "he", "ku", "ps", "sd", "ug", "ur", "yi"].includes(language)
+          ? "rtl"
+          : "ltr";
+      }
+
+      document.title = translate("AuthLoginTitle", "Login - Chaptarr");
+      document.querySelector(".logo").alt = translate("AuthLoginLogoAlt", "Chaptarr logo");
+      document.getElementById("sign-in-prompt").textContent = translate("AuthSignInPrompt", "Sign in to continue");
+      var usernameInput = document.querySelector("input[name='username']");
+      usernameInput.placeholder = translate("Username", "Username");
+      usernameInput.title = translate("UsernameRequired", "Username is required");
+      document.querySelector("input[name='password']").placeholder = translate("Password", "Password");
+      document.getElementById("remember-me-label").textContent = translate("RememberMe", "Remember me");
+      document.getElementById("login-button").textContent = translate("Login", "Login");
+      document.getElementById("login-failed").textContent = translate("AuthIncorrectCredentials", "Incorrect username or password");
+      plexLoginLink.textContent = translate("AuthContinueWithPlex", "Continue with Plex");
+      document.getElementById("oidc-login-label").textContent = "Continue with " + oidcProvider[0];
+      localLoginToggle.textContent = translate("AuthUseLocalAccountInstead", "Use a local account instead");
+
+      if (authMethod === "plex") {
+        ssoNote.textContent = translate("AuthPlexSignInNote", "You will be redirected to Plex to sign in.");
+      } else if (authMethod === "oidc") {
+        ssoNote.textContent = translate("AuthIdentityProviderSignInNote", "You will be redirected to your identity provider to sign in.");
+      }
+
+      if (ssoFailed) {
+        updateSsoFailureMessage();
+      }
+    }
 
     var urlParams = new URLSearchParams(window.location.search);
     var loginFailed = urlParams.get("loginFailed") === "true";
@@ -443,24 +523,8 @@
 
     if (ssoFailed) {
       var ssoFailedDiv = document.getElementById("sso-failed");
-      var message = "SSO sign-in failed.";
-
-      if (ssoError === "oidc_discovery_unreachable") {
-        message =
-          "SSO sign-in failed. Chaptarr could not retrieve the OpenID Connect discovery document from your identity provider. Check DNS/proxy/firewall from the server/container. If you require a proxy, set Chaptarr Proxy Mode to 'Proxy Everything'.";
-      } else if (ssoError === "oidc_backchannel_timeout") {
-        message =
-          "SSO sign-in failed. Chaptarr timed out while contacting your identity provider. Check DNS/proxy/firewall from the server/container. If you require a proxy, set Chaptarr Proxy Mode to 'Proxy Everything'.";
-      } else if (ssoError === "missing_callback_parameters") {
-        message =
-          "SSO sign-in failed. The callback URL was reached without the expected parameters. Check your identity provider flow (Authorization Code) and reverse proxy settings.";
-      } else if (ssoError === "cookie_or_proxy_issue") {
-        message =
-          "SSO sign-in failed. This is often caused by blocked cookies or a reverse proxy misconfiguration.";
-      }
-
-      ssoFailedDiv.textContent = message;
       ssoFailedDiv.classList.remove("hidden");
+      updateSsoFailureMessage();
     }
 
     var returnUrl = urlParams.get("returnUrl") || "/";
@@ -490,6 +554,12 @@
       oidcLoginLink.classList.remove("hidden");
       ssoNote.classList.remove("hidden");
       oidcLoginLink.href = urlBase + "/auth/oidc?returnUrl=" + encodeURIComponent(returnUrl);
+      document.getElementById("oidc-login-icon").setAttribute("href", urlBase + "/Content/Images/oidc-provider-icons.svg#oidc-" + oidcProvider[1]);
+      var oidcProviderHelp = document.getElementById("oidc-provider-help");
+      oidcProviderHelp.href = oidcProvider[2];
+      oidcProviderHelp.textContent = "Setup guide for " + oidcProvider[0] + " ↗";
+      oidcProviderHelp.setAttribute("aria-label", oidcProvider[0] + " identity provider setup guide (opens in a new tab)");
+      oidcProviderHelp.classList.remove("hidden");
       ssoNote.textContent = "You will be redirected to your identity provider to sign in.";
 
       if (!showLocalLogin) {
@@ -497,5 +567,17 @@
         localLoginToggleContainer.classList.remove("hidden");
       }
     }
+
+    fetch(urlBase + "/api/v1/localization", { credentials: "same-origin", headers: { "X-ChaptarrNG-Client": "native" } })
+      .then(function (response) {
+        if (!response.ok) {
+          throw new Error("Localization request failed");
+        }
+        return response.json();
+      })
+      .then(applyTranslations)
+      .catch(function () {
+        // The English copy in the page remains available if localization cannot be loaded.
+      });
   </script>
 </html>

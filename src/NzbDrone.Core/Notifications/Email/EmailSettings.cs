@@ -40,13 +40,13 @@ namespace NzbDrone.Core.Notifications.Email
             Bcc = Array.Empty<string>();
         }
 
-        [FieldDefinition(0, Label = "Server", HelpText = "Hostname or IP of Email server")]
+        [FieldDefinition(0, Label = "provider.field.faef7de28d529", HelpText = "provider.field.fd7f4ba9ed2d0")]
         public string Server { get; set; }
 
         [FieldDefinition(1, Label = "Port")]
         public int Port { get; set; }
 
-        [FieldDefinition(2, Label = "Require Encryption", HelpText = "Require SSL (Port 465 only) or StartTLS (any other port)", Type = FieldType.Checkbox)]
+        [FieldDefinition(2, Label = "provider.field.f79e669c0dcf4", HelpText = "provider.field.f895167b520ae", Type = FieldType.Checkbox)]
         public bool RequireEncryption { get; set; }
 
         [FieldDefinition(3, Label = "Username", Privacy = PrivacyLevel.UserName)]
@@ -55,19 +55,19 @@ namespace NzbDrone.Core.Notifications.Email
         [FieldDefinition(4, Label = "Password", Type = FieldType.Password, Privacy = PrivacyLevel.Password)]
         public string Password { get; set; }
 
-        [FieldDefinition(5, Label = "From Address")]
+        [FieldDefinition(5, Label = "provider.field.f60643eae6376")]
         public string From { get; set; }
 
-        [FieldDefinition(6, Label = "Recipient Address(es)", HelpText = "Comma seperated list of email recipients")]
+        [FieldDefinition(6, Label = "provider.field.f72382eeea71e", HelpText = "provider.field.f0d6ced609bf9")]
         public IEnumerable<string> To { get; set; }
 
-        [FieldDefinition(7, Label = "CC Address(es)", HelpText = "Comma seperated list of email cc recipients", Advanced = true)]
+        [FieldDefinition(7, Label = "provider.field.f83b271834ed3", HelpText = "provider.field.f99bfb9cfd585", Advanced = true)]
         public IEnumerable<string> Cc { get; set; }
 
-        [FieldDefinition(8, Label = "BCC Address(es)", HelpText = "Comma seperated list of email bcc recipients", Advanced = true)]
+        [FieldDefinition(8, Label = "provider.field.f981e30ee295e", HelpText = "provider.field.faf4d131c5dbd", Advanced = true)]
         public IEnumerable<string> Bcc { get; set; }
 
-        [FieldDefinition(9, Label = "Attach Books", HelpText = "Add books as an attachment on import", Type = FieldType.Checkbox)]
+        [FieldDefinition(9, Label = "provider.field.ff91546a4f56f", HelpText = "provider.field.fab071934a5ed", Type = FieldType.Checkbox)]
         public bool AttachFiles { get; set; }
 
         public NzbDroneValidationResult Validate()

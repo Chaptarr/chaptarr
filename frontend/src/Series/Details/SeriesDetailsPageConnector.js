@@ -1,5 +1,5 @@
 import { push } from 'connected-react-router';
-import _ from 'lodash';
+import findIndex from 'lodash/findIndex';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -27,7 +27,7 @@ function createMapStateToProps() {
         items
       } = series;
 
-      const seriesIndex = _.findIndex(items, { localSeriesId: requestedLocalSeriesId });
+      const seriesIndex = findIndex(items, { localSeriesId: requestedLocalSeriesId });
 
       if (seriesIndex > -1) {
         return {
@@ -126,7 +126,7 @@ class SeriesDetailsPageConnector extends Component {
     if (!isFetching && !!error) {
       return (
         <div className={styles.errorMessage}>
-          {getErrorMessage(error, 'Failed to load series from API')}
+          {getErrorMessage(error, translate('ErrorPageSeriesUnavailable'))}
         </div>
       );
     }

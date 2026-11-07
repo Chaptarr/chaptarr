@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using NzbDrone.Core.MetadataSource;
 
 namespace NzbDrone.Core.Books
@@ -115,6 +117,13 @@ namespace NzbDrone.Core.Books
             {
                 normalized = normalized.ToUpperInvariant();
             }
+            else if (provider == "meta")
+            {
+                // meta IDs encode source-specific identifiers and can exceed the
+                // ProviderAliasIndex column length. Hash the opaque suffix so all
+                // add, refresh, and lookup paths use a bounded, deterministic key.
+                normalized = "sha256-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)));
+            }
 
             return (provider, normalized);
         }
@@ -145,6 +154,15 @@ namespace NzbDrone.Core.Books
                 case "audible":
                 case "audnexus":
                     return "az";
+                case "rn":
+                case "ranobedb":
+                    return "rn";
+                case "rnr":
+                case "ranobedb-release":
+                    return "rnr";
+                case "meta":
+                case "supplemental-metadata":
+                    return "meta";
                 default:
                     return null;
             }

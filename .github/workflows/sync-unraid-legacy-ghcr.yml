@@ -1,0 +1,123 @@
+name: Sync Unraid GHCR compatibility aliases
+
+run-name: >-
+  ${{ format('action:{0}:pool:{1}:tag:{2}', inputs.action, inputs.runner_pool, inputs.release_tag) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Required manual workflow action
+        type: choice
+        options:
+          - publish
+        required: true
+      runner_pool:
+        description: Required private JIT runner pool
+        type: choice
+        options:
+          - private
+        required: true
+      release_tag:
+        description: Exact stable release whose image aliases should be synchronized
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chaptarrng-unraid-ghcr-aliases
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'publish' &&
+          inputs.runner_pool == 'private' &&
+          inputs.release_tag != ''
+        )
+      ) &&
+      (
+        github.repository == 'snapetech-org/chaptarrng' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+      )
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-sync"]}}', github.run_id)) }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify selected stable release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$RELEASE_TAG^{commit}" origin/main
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease |
+            jq -e --arg tag "$RELEASE_TAG" '.tagName == $tag and .isDraft == false and .isPrerelease == false' >/dev/null
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to the personal GHCR package
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: snapetech
+          password: ${{ secrets.GHCR_LEGACY_TOKEN }}
+
+      - name: Align legacy stable tags to the organization image
+        shell: bash
+        env:
+          SOURCE_IMAGE: ghcr.io/snapetech-org/chaptarrng
+          TARGET_IMAGE: ghcr.io/snapetech/chaptarrng
+          SOURCE_TAG: ${{ inputs.release_tag }}
+          ALIASES: latest main master stable
+        run: |
+          set -euo pipefail
+          digest_for() {
+            local image="$1" output digest
+            if ! output="$(docker buildx imagetools inspect "$image" 2>&1)"; then
+              printf 'Could not inspect %s:\n%s\n' "$image" "$output" >&2
+              return 1
+            fi
+            digest="$(awk '$1 == "Digest:" { print $2; exit }' <<< "$output")"
+            if [[ ! "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+              printf 'No valid manifest digest in inspect output for %s:\n%s\n' "$image" "$output" >&2
+              return 1
+            fi
+            printf '%s\n' "$digest"
+          }
+
+          source_ref="${SOURCE_IMAGE}:${SOURCE_TAG}"
+          if ! expected_digest="$(digest_for "$source_ref")"; then
+            echo "Could not resolve the published stable image $source_ref." >&2
+            exit 1
+          fi
+
+          for alias in $ALIASES; do
+            target_ref="${TARGET_IMAGE}:${alias}"
+            if ! create_output="$(docker buildx imagetools create --tag "$target_ref" "$source_ref" 2>&1)"; then
+              printf 'Could not copy %s to %s:\n%s\n' "$source_ref" "$target_ref" "$create_output" >&2
+              exit 1
+            fi
+            if ! actual_digest="$(digest_for "$target_ref")"; then
+              printf 'Could not verify destination image %s.\n' "$target_ref" >&2
+              exit 1
+            fi
+            if [[ "$actual_digest" != "$expected_digest" ]]; then
+              echo "$target_ref points to $actual_digest; expected $expected_digest." >&2
+              exit 1
+            fi
+          done
+          echo "Mirrored the verified stable manifest to $TARGET_IMAGE ($expected_digest)." >> "$GITHUB_STEP_SUMMARY"

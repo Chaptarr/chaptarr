@@ -1,6 +1,11 @@
 .title {
   composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
+  overflow-wrap: anywhere;
+
   text-align: left;
+  /* Cells don't wrap on narrow screens, but the fixed-layout table can't widen to fit a long title */
+  white-space: normal;
 }
 
 .narrator {
@@ -16,30 +21,19 @@
 }
 
 @media only screen and (max-width: 768px) {
-  .narrator {
-    display: none;
-  }
-  
-  .position,
-  .rating,
-  .status {
+  .position {
     min-width: 60px;
     width: 80px;
   }
-  
+
   .releaseDate {
     min-width: 80px;
     width: 100px;
   }
-  
+
   .pageCount {
     min-width: 50px;
     width: 60px;
-  }
-  
-  .duration {
-    min-width: 60px;
-    width: 70px;
   }
 }
 
@@ -47,17 +41,6 @@
   .position,
   .rating {
     display: none;
-  }
-  
-  .status {
-    min-width: 50px;
-    width: 60px;
-  }
-  
-  .pageCount,
-  .duration {
-    min-width: 45px;
-    width: 55px;
   }
 }
 

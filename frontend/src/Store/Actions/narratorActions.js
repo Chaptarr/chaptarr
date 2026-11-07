@@ -1,10 +1,8 @@
 import { createAction } from 'redux-actions';
-import * as commandNames from 'Commands/commandNames';
 import { createThunk, handleThunks } from 'Store/thunks';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import translate from 'Utilities/String/translate';
 import { set } from './baseActions';
-import { executeCommand } from './commandActions';
 import createHandleActions from './Creators/createHandleActions';
 
 //
@@ -88,6 +86,7 @@ export const actionHandlers = handleThunks({
 
   [FETCH_NARRATOR_DISCOVERY]: function(getState, payload, dispatch) {
     const { bookId } = payload;
+    const selectedBook = getState().books.items.find((item) => item.id === bookId);
 
     dispatch(set({
       section,
@@ -96,7 +95,8 @@ export const actionHandlers = handleThunks({
     }));
 
     // Use editions endpoint to get narrator variants
-    const endpoint = `/edition?bookId=${bookId}`;
+    const mediaTypeQuery = selectedBook?.mediaType ? `&mediaType=${encodeURIComponent(selectedBook.mediaType)}` : '';
+    const endpoint = `/edition?bookId=${bookId}${mediaTypeQuery}`;
 
     const promise = createAjaxRequest({
       url: endpoint,
@@ -251,97 +251,33 @@ export const actionHandlers = handleThunks({
       (narrator.editionId || narrator.EditionId) :
       null;
 
-    // Check if the current book has any physical files
-    const hasFiles = currentBook.statistics?.bookFileCount > 0;
-
     if (selectedEditionId) {
-      if (hasFiles) {
-        // Book already has audio files: do NOT modify it. Create a separate wanted instance pinned to the selected edition.
-        const promise = createAjaxRequest({
-          url: `/book/${bookId}/editions/wanted`,
-          method: 'POST',
-          data: JSON.stringify({ editionId: selectedEditionId, searchForNewBook: payload.searchForNewBook === true }),
-          contentType: 'application/json'
-        }).request;
-
-        promise.done((data) => {
-          dispatch(set({
-            section,
-            isSettingPreferred: false,
-            discovery: optimisticallyMoveNarrator(getState(), bookId, narrator)
-          }));
-          if (payload.onSuccess) {
-            payload.onSuccess(data);
-          }
-        });
-
-        promise.fail((xhr) => {
-          dispatch(set({
-            section,
-            isSettingPreferred: false,
-            error: xhr
-          }));
-        });
-
-        return;
-      }
-
-      // Missing instance (no files): pin the selected edition as the monitored/manual one.
-      // This uses the existing ManualAdd mechanism so imports won't override the user's choice.
-      const editionsPromise = createAjaxRequest({
-        url: `/edition?bookId=${bookId}`,
-        method: 'GET'
+      // Track this narration alongside whatever the book already wants rather than
+      // replacing it. The server decides whether a separate row is needed and returns
+      // the existing one when this narrator is already tracked.
+      const promise = createAjaxRequest({
+        url: `/book/${bookId}/editions/wanted${currentBook.mediaType ? `?mediaType=${encodeURIComponent(currentBook.mediaType)}` : ''}`,
+        method: 'POST',
+        data: JSON.stringify({
+          editionId: selectedEditionId,
+          searchForNewBook: payload.searchForNewBook === true,
+          asNewVariant: true
+        }),
+        contentType: 'application/json'
       }).request;
 
-      editionsPromise.done((editions) => {
-        const updatedEditions = (editions || []).map((e) => {
-          const isSelected = e.id === selectedEditionId;
-          return {
-            ...e,
-            monitored: isSelected,
-            manualAdd: isSelected
-          };
-        });
-
-        const promise = createAjaxRequest({
-          url: `/book/${bookId}`,
-          method: 'PUT',
-          data: JSON.stringify({
-            ...currentBook,
-            monitored: true,
-            anyEditionOk: false,
-            editions: updatedEditions
-          }),
-          contentType: 'application/json'
-        }).request;
-
-        promise.done((data) => {
-          dispatch(set({
-            section,
-            isSettingPreferred: false,
-            discovery: optimisticallyMoveNarrator(getState(), bookId, narrator)
-          }));
-          if (payload.searchForNewBook === true) {
-            dispatch(executeCommand({
-              name: commandNames.BOOK_SEARCH,
-              bookIds: [bookId]
-            }));
-          }
-          if (payload.onSuccess) {
-            payload.onSuccess(data);
-          }
-        });
-
-        promise.fail((xhr) => {
-          dispatch(set({
-            section,
-            isSettingPreferred: false,
-            error: xhr
-          }));
-        });
+      promise.done((data) => {
+        dispatch(set({
+          section,
+          isSettingPreferred: false,
+          discovery: optimisticallyMoveNarrator(getState(), bookId, narrator)
+        }));
+        if (payload.onSuccess) {
+          payload.onSuccess(data);
+        }
       });
 
-      editionsPromise.fail((xhr) => {
+      promise.fail((xhr) => {
         dispatch(set({
           section,
           isSettingPreferred: false,

@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';import {createRequire} from 'node:module';
+import {readFileSync} from 'node:fs';
+const fixture=JSON.parse(readFileSync('/fixture/manifest.json'));
+process.env.CONFIG_DIRECTORY='/tmp/seerrng-acquisition-probe';process.env.SEERR_EXTERNAL_CONFIG=JSON.stringify({clientId:'isolated-acquisition-probe',main:{},plex:{},jellyfin:{},oidc:{},tautulli:{},notifications:{agents:{}},network:{},radarr:[],sonarr:[],lidarr:[],readarr:[]});
+const require=createRequire(import.meta.url),{default:ReadarrAPI}=require('/app/dist/api/servarr/readarr.js');
+const api=new ReadarrAPI({url:'http://127.0.0.1:8789/api/v1',apiKey:'synthetic-e2e-restricted-key-20261105',mediaType:fixture.mediaType});
+const before=await api.getBook(fixture.bookId);assert.equal(before.statistics.bookFileCount,0);assert.equal(before.monitored,false);
+console.log(JSON.stringify({phase:'before-request',bookId:before.id,monitored:before.monitored,fileCount:before.statistics.bookFileCount}));
+const result=await api.addBook({id:fixture.bookId,author:before.author,title:'Fixture Book',foreignBookId:'30',qualityProfileId:fixture.qualityProfileId,metadataProfileId:fixture.metadataProfileId,rootFolderPath:'/library',monitored:true,editions:[{id:fixture.editionId,bookId:fixture.bookId,foreignEditionId:String(fixture.editionId),title:fixture.editionTitle,isEbook:fixture.mediaType==='ebook',monitored:true}],addOptions:{searchForNewBook:true}});
+console.log(JSON.stringify({phase:'request-submitted',bookId:result.id,monitored:result.monitored,createdBook:result.createdBook}));assert.equal(result.monitored,true);

@@ -111,11 +111,13 @@ export const persistState = [
 // Actions Types
 
 export const TOGGLE_ADVANCED_SETTINGS = 'settings/toggleAdvancedSettings';
+export const SET_ADVANCED_SETTINGS = 'settings/setAdvancedSettings';
 
 //
 // Action Creators
 
 export const toggleAdvancedSettings = createAction(TOGGLE_ADVANCED_SETTINGS);
+export const setAdvancedSettings = createAction(SET_ADVANCED_SETTINGS, (advancedSettings) => ({ advancedSettings }));
 
 //
 // Action Handlers
@@ -159,6 +161,10 @@ export const reducers = createHandleActions({
 
   [TOGGLE_ADVANCED_SETTINGS]: (state, { payload }) => {
     return Object.assign({}, state, { advancedSettings: !state.advancedSettings });
+  },
+
+  [SET_ADVANCED_SETTINGS]: (state, { payload }) => {
+    return Object.assign({}, state, { advancedSettings: payload.advancedSettings });
   },
 
   ...conversion.reducers,

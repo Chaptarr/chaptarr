@@ -1,6 +1,6 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
-import { DragLayer } from 'react-dnd';
+import { useDragLayer } from 'react-dnd';
 import DragPreviewLayer from 'Components/DragPreviewLayer';
 import { DELAY_PROFILE } from 'Helpers/dragTypes';
 import dimensions from 'Styles/Variables/dimensions.js';
@@ -17,7 +17,7 @@ function collectDragLayer(monitor) {
   };
 }
 
-class DelayProfileDragPreview extends Component {
+class DelayProfileDragPreviewView extends Component {
 
   //
   // Render
@@ -65,7 +65,7 @@ class DelayProfileDragPreview extends Component {
   }
 }
 
-DelayProfileDragPreview.propTypes = {
+DelayProfileDragPreviewView.propTypes = {
   width: PropTypes.number.isRequired,
   item: PropTypes.object,
   itemType: PropTypes.string,
@@ -75,4 +75,15 @@ DelayProfileDragPreview.propTypes = {
   })
 };
 
-export default DragLayer(collectDragLayer)(DelayProfileDragPreview);
+function DelayProfileDragPreview(props) {
+  const dragLayerProps = useDragLayer(collectDragLayer);
+
+  return (
+    <DelayProfileDragPreviewView
+      {...props}
+      {...dragLayerProps}
+    />
+  );
+}
+
+export default DelayProfileDragPreview;

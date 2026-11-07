@@ -1,7 +1,9 @@
 import PropTypes from 'prop-types';
 import React from 'react';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
+import intlFormatters from 'Utilities/Localization/formatters.cjs';
 import translate from 'Utilities/String/translate';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import styles from './PendingImportStatus.css';
 
 function PendingImportStatus(props) {
@@ -16,31 +18,32 @@ function PendingImportStatus(props) {
     return null;
   }
 
-  return (
-    <div className={styles.pendingImportStatus}>
-      {status === 'pending' || status === 'processing' ? (
-        <div className={styles.processing}>
-          <LoadingIndicator size={20} />
-          <span className={styles.message}>
-            {message || 'Processing import...'}
+  let content = null;
+  if (status === 'pending' || status === 'processing') {
+    content = (
+      <div className={styles.processing}>
+        <LoadingIndicator size={20} />
+        <span className={styles.message}>
+          {translateServerMessage(message) || translate('PendingImportProcessing')}
+        </span>
+        {progress > 0 && (
+          <span className={styles.progress}>
+            {intlFormatters.formatNumber(progress / 100, { style: 'percent', maximumFractionDigits: 0 })}
           </span>
-          {progress > 0 && (
-            <span className={styles.progress}>
-              {progress}%
-            </span>
-          )}
-        </div>
-      ) : status === 'completed' ? (
-        <div className={styles.success}>
-          {translate('PendingImportCompleted')}
-        </div>
-      ) : status === 'failed' ? (
-        <div className={styles.error}>
-          ✗ {error || translate('PendingImportFailed')}
-        </div>
-      ) : null}
-    </div>
-  );
+        )}
+      </div>
+    );
+  } else if (status === 'completed') {
+    content = <div className={styles.success}>{translate('PendingImportCompleted')}</div>;
+  } else if (status === 'failed') {
+    content = (
+      <div className={styles.error}>
+        ✗ {translateServerMessage(error) || translate('PendingImportFailed')}
+      </div>
+    );
+  }
+
+  return <div className={styles.pendingImportStatus}>{content}</div>;
 }
 
 PendingImportStatus.propTypes = {

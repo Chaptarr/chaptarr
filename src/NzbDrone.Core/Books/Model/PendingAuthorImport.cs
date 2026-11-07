@@ -63,6 +63,7 @@ namespace NzbDrone.Core.Books
 
         // Common fields
         public string Tags { get; set; } // JSON serialized HashSet<int>
+        public string SelectedRemoteEditions { get; set; } // JSON serialized List<UserSelectedRemoteEdition>
         public bool SearchForMissingBooks { get; set; }
         public string LastSelectedMediaType { get; set; }
 

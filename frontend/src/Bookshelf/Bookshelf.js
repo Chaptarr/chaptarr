@@ -1,8 +1,9 @@
-import _ from 'lodash';
+import reduce from 'lodash/reduce';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { CellMeasurer, CellMeasurerCache } from 'react-virtualized';
 import MediaTypeToggle from 'Author/Details/MediaTypeToggle';
+import Button from 'Components/Link/Button';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import FilterMenu from 'Components/Menu/FilterMenu';
 import PageContent from 'Components/Page/PageContent';
@@ -12,7 +13,7 @@ import PageToolbar from 'Components/Page/Toolbar/PageToolbar';
 import PageToolbarSection from 'Components/Page/Toolbar/PageToolbarSection';
 import VirtualTable from 'Components/Table/VirtualTable';
 import VirtualTableRow from 'Components/Table/VirtualTableRow';
-import { align, sortDirections } from 'Helpers/Props';
+import { align, kinds, sortDirections } from 'Helpers/Props';
 import getIndexOfFirstCharacter from 'Utilities/Array/getIndexOfFirstCharacter';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
@@ -21,6 +22,7 @@ import selectAll from 'Utilities/Table/selectAll';
 import toggleSelected from 'Utilities/Table/toggleSelected';
 import BookStudioFilterModalConnector from './BookshelfFilterModalConnector';
 import BookshelfFooter from './BookshelfFooter';
+import BookshelfFormatGroupingHelp from './BookshelfFormatGroupingHelp';
 import BookStudioRowConnector from './BookshelfRowConnector';
 import BookshelfTableHeader from './BookshelfTableHeader';
 import styles from './Bookshelf.css';
@@ -32,13 +34,13 @@ const columns = [
   },
   {
     name: 'sortName',
-    label: 'Name',
+    label: () => translate('Name'),
     isSortable: true,
     isVisible: true
   },
   {
     name: 'bookCount',
-    label: 'Books',
+    label: () => translate('Books'),
     isSortable: false,
     isVisible: true
   }
@@ -140,7 +142,7 @@ class Bookshelf extends Component {
       return;
     }
 
-    const characters = _.reduce(items, (acc, item) => {
+    const characters = reduce(items, (acc, item) => {
       let char = item.sortName.charAt(0);
 
       if (!isNaN(char)) {
@@ -253,7 +255,7 @@ class Bookshelf extends Component {
         columnIndex={0}
         rowIndex={rowIndex}
       >
-        {({ registerChild }) => (
+        {({ measure, registerChild }) => (
           <VirtualTableRow
             ref={registerChild}
             style={style}
@@ -262,6 +264,7 @@ class Bookshelf extends Component {
               key={item.id}
               authorId={item.id}
               selectedMediaType={selectedMediaType}
+              onBooksLoaded={measure}
               isSelected={selectedState[item.id]}
               onSelectedChange={this.onSelectedChange}
             />
@@ -291,7 +294,7 @@ class Bookshelf extends Component {
   onUpdateSelectedPress = (changes) => {
     this.props.onUpdateSelectedPress({
       authorIds: this.getSelectedIds(),
-      mediaType: this.props.selectedMediaType,
+      mediaType: this.props.selectedMediaType === 'both' ? null : this.props.selectedMediaType,
       ...changes
     });
   };
@@ -337,7 +340,8 @@ class Bookshelf extends Component {
       selectedMediaType,
       onSortPress,
       onFilterSelect,
-      onMediaTypeChange
+      onMediaTypeChange,
+      onRetryPress
     } = this.props;
 
     const {
@@ -353,6 +357,8 @@ class Bookshelf extends Component {
 
     if (totalItems > 0) {
       emptyMessage = translate('AllResultsAreHiddenByTheAppliedFilter');
+    } else if (selectedMediaType === 'both') {
+      emptyMessage = translate('BookshelfNoFormats');
     } else if (selectedMediaType === 'ebook') {
       emptyMessage = translate('BookshelfNoEbooks');
     }
@@ -361,10 +367,17 @@ class Bookshelf extends Component {
       <PageContent title={translate('BookStudio')}>
         <PageToolbar>
           <PageToolbarSection>
-            <MediaTypeToggle
-              selectedMediaType={selectedMediaType}
-              onMediaTypeChange={onMediaTypeChange}
-            />
+            <div className={styles.formatToolbarGroup}>
+              <MediaTypeToggle
+                selectedMediaType={selectedMediaType}
+                includeBoth={true}
+                onMediaTypeChange={onMediaTypeChange}
+              />
+              <BookshelfFormatGroupingHelp
+                selectedMediaType={selectedMediaType}
+                className={styles.formatGroupingHelp}
+              />
+            </div>
           </PageToolbarSection>
           <PageToolbarSection alignContent={align.RIGHT}>
             <FilterMenu
@@ -391,7 +404,12 @@ class Bookshelf extends Component {
 
             {
               !isFetching && !!error &&
-                <div>{getErrorMessage(error, 'Failed to load author from API')}</div>
+                <div className={styles.emptyMessage}>
+                  <div>{getErrorMessage(error, translate('ErrorPageBooksUnavailable'))}</div>
+                  <Button onPress={onRetryPress}>
+                    {translate('Retry')}
+                  </Button>
+                </div>
             }
 
             {
@@ -430,6 +448,15 @@ class Bookshelf extends Component {
               !error && isPopulated && !items.length &&
                 <div className={styles.emptyMessage}>
                   {emptyMessage}
+                  {
+                    totalItems === 0 &&
+                      <Button
+                        to="/add/search"
+                        kind={kinds.PRIMARY}
+                      >
+                        {translate('AddNew')}
+                      </Button>
+                  }
                 </div>
             }
           </PageContentBody>
@@ -445,6 +472,7 @@ class Bookshelf extends Component {
 
         <BookshelfFooter
           selectedCount={this.getSelectedIds().length}
+          selectedMediaType={selectedMediaType}
           isSaving={isSaving}
           saveError={saveError}
           onUpdateSelectedPress={this.onUpdateSelectedPress}
@@ -461,7 +489,7 @@ Bookshelf.propTypes = {
   totalItems: PropTypes.number.isRequired,
   items: PropTypes.arrayOf(PropTypes.object).isRequired,
   bookCount: PropTypes.number.isRequired,
-  selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook']).isRequired,
+  selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook', 'both']).isRequired,
   sortKey: PropTypes.string,
   sortDirection: PropTypes.oneOf(sortDirections.all),
   selectedFilterKey: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
@@ -472,6 +500,7 @@ Bookshelf.propTypes = {
   isSmallScreen: PropTypes.bool.isRequired,
   onSortPress: PropTypes.func.isRequired,
   onFilterSelect: PropTypes.func.isRequired,
+  onRetryPress: PropTypes.func.isRequired,
   onMediaTypeChange: PropTypes.func.isRequired,
   onUpdateSelectedPress: PropTypes.func.isRequired
 };

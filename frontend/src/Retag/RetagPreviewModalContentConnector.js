@@ -51,6 +51,16 @@ class RetagPreviewModalContentConnector extends Component {
   //
   // Listeners
 
+  onRetryPress = () => {
+    const {
+      authorId,
+      bookId,
+      mediaType
+    } = this.props;
+
+    this.props.fetchRetagPreview({ authorId, bookId, mediaType });
+  };
+
   onRetagPress = (files, updateCovers, embedMetadata) => {
     this.props.executeCommand({
       name: commandNames.RETAG_FILES,
@@ -70,6 +80,7 @@ class RetagPreviewModalContentConnector extends Component {
     return (
       <RetagPreviewModalContent
         {...this.props}
+        onRetryPress={this.onRetryPress}
         onRetagPress={this.onRetagPress}
       />
     );

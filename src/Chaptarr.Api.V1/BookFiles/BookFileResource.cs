@@ -23,18 +23,20 @@ namespace Chaptarr.Api.V1.BookFiles
         public MediaInfoResource MediaInfo { get; set; }
         public string MediaType { get; set; }
         public string Narrator { get; set; }
+        public bool IsGraphicAudio { get; set; }
+        public string AudioProductionType { get; set; }
         public Dictionary<string, List<string>> Tags { get; set; }
         public MatchProvenance MatchProvenance { get; set; }
         public string ImportUnitKey { get; set; }
         public string ImportUnitRoot { get; set; }
+        public ParsedTrackInfo AudioTags { get; set; }
 
         public bool QualityCutoffNotMet { get; set; }
-        // Removed: ParsedTrackInfo AudioTags (field-agnostic import no longer exposes tags here)
     }
 
     public static class BookFileResourceMapper
     {
-        private static int QualityWeight(QualityModel quality)
+        private static int QualityWeight(QualityModel quality, bool bookshelfDefaultWeights = false)
         {
             if (quality == null)
             {
@@ -42,12 +44,28 @@ namespace Chaptarr.Api.V1.BookFiles
             }
 
             var qualityWeight = Quality.DefaultQualityDefinitions.Single(q => q.Quality == quality.Quality).Weight;
+            if (bookshelfDefaultWeights)
+            {
+                qualityWeight = quality.Quality.Id switch
+                {
+                    10 => 100,
+                    11 => 110,
+                    12 => 105,
+                    _ => qualityWeight
+                };
+            }
+
             qualityWeight += quality.Revision.Real * 10;
             qualityWeight += quality.Revision.Version;
             return qualityWeight;
         }
 
         public static BookFileResource ToResource(this BookFile model)
+        {
+            return ToResource(model, false);
+        }
+
+        public static BookFileResource ToResource(this BookFile model, bool bookshelfDefaultWeights)
         {
             if (model == null)
             {
@@ -62,17 +80,19 @@ namespace Chaptarr.Api.V1.BookFiles
                 Size = model.Size,
                 DateAdded = model.DateAdded,
                 Quality = model.Quality,
-                QualityWeight = QualityWeight(model.Quality),
+                QualityWeight = QualityWeight(model.Quality, bookshelfDefaultWeights),
                 MediaInfo = model.MediaInfo.ToResource(),
                 MediaType = model.MediaType,
                 Narrator = model.Narrator,
+                IsGraphicAudio = model.IsGraphicAudio,
+                AudioProductionType = model.AudioProductionType,
                 MatchProvenance = model.MatchProvenance,
                 ImportUnitKey = model.EditionId == 0 ? BookImportUnitGroupingService.BuildFallbackUnitKey(model) : null,
                 ImportUnitRoot = model.EditionId == 0 ? BookImportUnitGroupingService.GetFallbackUnitRoot(model.Path) : null
             };
         }
 
-        public static BookFileResource ToResource(this BookFile model, NzbDrone.Core.Books.Author author, IUpgradableSpecification upgradableSpecification)
+        public static BookFileResource ToResource(this BookFile model, NzbDrone.Core.Books.Author author, IUpgradableSpecification upgradableSpecification, bool bookshelfDefaultWeights = false)
         {
             if (model == null)
             {
@@ -89,10 +109,12 @@ namespace Chaptarr.Api.V1.BookFiles
                 Size = model.Size,
                 DateAdded = model.DateAdded,
                 Quality = model.Quality,
-                QualityWeight = QualityWeight(model.Quality),
+                QualityWeight = QualityWeight(model.Quality, bookshelfDefaultWeights),
                 MediaInfo = model.MediaInfo.ToResource(),
                 MediaType = model.MediaType,
                 Narrator = model.Narrator,
+                IsGraphicAudio = model.IsGraphicAudio,
+                AudioProductionType = model.AudioProductionType,
                 MatchProvenance = model.MatchProvenance,
                 QualityCutoffNotMet = author.GetQualityProfileForQuality(model.Quality.Quality) != null ? upgradableSpecification.QualityCutoffNotMet(author.GetQualityProfileForQuality(model.Quality.Quality), model.Quality) : false,
                 IndexerFlags = (int)model.IndexerFlags,

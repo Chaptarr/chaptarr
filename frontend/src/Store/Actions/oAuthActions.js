@@ -7,6 +7,7 @@ import createAjaxRequest from 'Utilities/createAjaxRequest';
 import requestAction from 'Utilities/requestAction';
 import getSectionState from 'Utilities/State/getSectionState';
 import updateSectionState from 'Utilities/State/updateSectionState';
+import translate from 'Utilities/String/translate';
 import createHandleActions from './Creators/createHandleActions';
 
 //
@@ -78,7 +79,7 @@ function openOAuthWindow(url, payload, windowName) {
     typeof newWindow.closed == 'undefined'
   ) {
     return {
-      error: createOAuthError(payload, 'Pop-ups are being blocked by your browser')
+      error: createOAuthError(payload, translate('OAuthPopupsBlocked'))
     };
   }
 
@@ -152,7 +153,7 @@ function showOAuthWindow(url, payload) {
     if (newWindow.closed) {
       clearInterval(poll);
 
-      deferred.reject(createOAuthError(payload, 'OAuth window was closed before authorization completed'));
+      deferred.reject(createOAuthError(payload, translate('ui.oauth.windowClosed')));
       return;
     }
 
@@ -164,7 +165,7 @@ function showOAuthWindow(url, payload) {
         // Ignore window close errors
       }
 
-      deferred.reject(createOAuthError(payload, 'OAuth timed out waiting for authorization'));
+      deferred.reject(createOAuthError(payload, translate('ui.oauth.authorizationTimedOut')));
     }
   }, pollIntervalMs);
 
@@ -206,7 +207,7 @@ function showPollingOAuthWindow(response, payload, requestPayload) {
     if (Date.now() - startTime > timeoutMs) {
       stopped = true;
       closeWindow();
-      deferred.reject(createOAuthError(payload, 'OAuth timed out waiting for authorization'));
+      deferred.reject(createOAuthError(payload, translate('ui.oauth.authorizationTimedOut')));
       return;
     }
 
@@ -233,7 +234,7 @@ function showPollingOAuthWindow(response, payload, requestPayload) {
 
         if (Date.now() - closedTime > closedGraceMs) {
           stopped = true;
-          deferred.reject(createOAuthError(payload, 'OAuth window was closed before authorization completed'));
+          deferred.reject(createOAuthError(payload, translate('ui.oauth.windowClosed')));
           return;
         }
       } else {

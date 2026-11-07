@@ -1,0 +1,5363 @@
+[
+  {
+    "id": "AuthIncorrectCredentials",
+    "source": "Incorrect username or password",
+    "parameters": [],
+    "patterns": [
+      "Incorrect username or password"
+    ]
+  },
+  {
+    "id": "CancellingConversion",
+    "source": "Cancelling conversion",
+    "parameters": [],
+    "patterns": [
+      "Cancelling conversion"
+    ]
+  },
+  {
+    "id": "ConversionCancelled",
+    "source": "Conversion cancelled",
+    "parameters": [],
+    "patterns": [
+      "Conversion cancelled"
+    ]
+  },
+  {
+    "id": "NamingBuilderErrorConsecutiveFolderSeparators",
+    "source": "Cannot have consecutive folder separators",
+    "parameters": [],
+    "patterns": [
+      "Cannot have consecutive folder separators"
+    ]
+  },
+  {
+    "id": "UsernameRequired",
+    "source": "Username is required",
+    "parameters": [],
+    "patterns": [
+      "Username is required"
+    ]
+  },
+  {
+    "id": "WaitingToConvert",
+    "source": "Waiting to convert",
+    "parameters": [],
+    "patterns": [
+      "Waiting to convert"
+    ]
+  },
+  {
+    "id": "notification.failure.detected",
+    "source": "Failed download detected",
+    "parameters": [],
+    "patterns": [
+      "Failed download detected"
+    ]
+  },
+  {
+    "id": "notification.failure.encrypted",
+    "source": "Encrypted download detected",
+    "parameters": [],
+    "patterns": [
+      "Encrypted download detected"
+    ]
+  },
+  {
+    "id": "notification.failure.manuallyFailed",
+    "source": "Manually marked as failed",
+    "parameters": [],
+    "patterns": [
+      "Manually marked as failed"
+    ]
+  },
+  {
+    "id": "notification.failure.profileDisallowed",
+    "source": "No file in this download is in a format allowed by the quality profile ({value0})",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{0}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "No file in this download is in a format allowed by the quality profile ({value0})"
+    ]
+  },
+  {
+    "id": "server.message.m006b305414e1",
+    "source": "Cannot use Category and Directory",
+    "parameters": [],
+    "patterns": [
+      "Cannot use Category and Directory"
+    ]
+  },
+  {
+    "id": "server.message.m00ca141bf2d2",
+    "source": "HTTP Auth credentials are invalid: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "HTTP Auth credentials are invalid: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m00dbcd234174",
+    "source": "Failed to import author: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Failed to import author: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m020b4d34d19f",
+    "source": "uTorrent is reporting an error",
+    "parameters": [],
+    "patterns": [
+      "uTorrent is reporting an error"
+    ]
+  },
+  {
+    "id": "server.message.m021ed535c3dc",
+    "source": "At least one Music library is required",
+    "parameters": [],
+    "patterns": [
+      "At least one Music library is required"
+    ]
+  },
+  {
+    "id": "server.message.m0361790e2e4b",
+    "source": "Unable to reach metadata server: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to reach metadata server: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m047b7ef4b291",
+    "source": "Proxy authentication failed (HTTP 407). Check username/password.",
+    "parameters": [],
+    "patterns": [
+      "Proxy authentication failed (HTTP 407). Check username/password."
+    ]
+  },
+  {
+    "id": "server.message.m05b73e4fe269",
+    "source": "Home Assistant discovery prefix must be a valid MQTT topic prefix.",
+    "parameters": [],
+    "patterns": [
+      "Home Assistant discovery prefix must be a valid MQTT topic prefix."
+    ]
+  },
+  {
+    "id": "server.message.m060675d5700c",
+    "source": "This logical field proved the identifier candidate's book or edition title.",
+    "parameters": [],
+    "patterns": [
+      "This logical field proved the identifier candidate's book or edition title."
+    ]
+  },
+  {
+    "id": "server.message.m06254ce94096",
+    "source": "rTorrent version should be at least 0.9.0. Version reported is {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{0}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "rTorrent version should be at least 0.9.0. Version reported is {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m064135c5401a",
+    "source": "Path '{value0}' does not exist",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Path '{value0}' does not exist"
+    ]
+  },
+  {
+    "id": "server.message.m064256735f51",
+    "source": "qBittorrent is configured to remove torrents when they reach their Share Ratio Limit",
+    "parameters": [],
+    "patterns": [
+      "qBittorrent is configured to remove torrents when they reach their Share Ratio Limit"
+    ]
+  },
+  {
+    "id": "server.message.m06db6f0a8993",
+    "source": "Profile type must be General, Audiobook, or Ebook",
+    "parameters": [],
+    "patterns": [
+      "Profile type must be General, Audiobook, or Ebook"
+    ]
+  },
+  {
+    "id": "server.message.m083b31b1f1e6",
+    "source": "Failed to connect to prowl, please check your settings.",
+    "parameters": [],
+    "patterns": [
+      "Failed to connect to prowl, please check your settings."
+    ]
+  },
+  {
+    "id": "server.message.m08504a962fa8",
+    "source": "Selected foreign edition '{value0}' does not belong to selected book {value1}.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Selected foreign edition '{value0}' does not belong to selected book {value1}."
+    ]
+  },
+  {
+    "id": "server.message.m086efea7640e",
+    "source": "Invalid token",
+    "parameters": [],
+    "patterns": [
+      "Invalid token"
+    ]
+  },
+  {
+    "id": "server.message.m08c2a9255642",
+    "source": "{value0} MonitorNewItems must be All, New, or None",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "{value0} MonitorNewItems must be All, New, or None"
+    ]
+  },
+  {
+    "id": "server.message.m09734a3e9cf9",
+    "source": "No embedded tag value supplied author evidence; the folder path supplied it.",
+    "parameters": [],
+    "patterns": [
+      "No embedded tag value supplied author evidence; the folder path supplied it."
+    ]
+  },
+  {
+    "id": "server.message.m09853a3933ba",
+    "source": "No enabled {value0} download client is configured. Add and enable a {value1}-capable download client, then retry.",
+    "parameters": [
+      {
+        "name": "value0"
+      },
+      {
+        "name": "value1"
+      }
+    ],
+    "patterns": [
+      "No enabled {value0} download client is configured. Add and enable a {value1}-capable download client, then retry."
+    ]
+  },
+  {
+    "id": "server.message.m0a31f17e7748",
+    "source": "File '{value0}' does not exist",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "File '{value0}' does not exist"
+    ]
+  },
+  {
+    "id": "server.message.m0a3d9d1876f5",
+    "source": "Unknown download state: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{torrent.State}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unknown download state: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m0a5e4e3a7626",
+    "source": "Goodreads user ID must be a numeric ID (or a profile URL containing it)",
+    "parameters": [],
+    "patterns": [
+      "Goodreads user ID must be a numeric ID (or a profile URL containing it)"
+    ]
+  },
+  {
+    "id": "server.message.m0ab424875b06",
+    "source": "Transmission version not supported, should be 2.40 or higher.",
+    "parameters": [],
+    "patterns": [
+      "Transmission version not supported, should be 2.40 or higher."
+    ]
+  },
+  {
+    "id": "server.message.m0b40b0984817",
+    "source": "Verify SSL settings",
+    "parameters": [],
+    "patterns": [
+      "Verify SSL settings"
+    ]
+  },
+  {
+    "id": "server.message.m0b8f5729c27f",
+    "source": "Category is not supported",
+    "parameters": [],
+    "patterns": [
+      "Category is not supported"
+    ]
+  },
+  {
+    "id": "server.message.m0bd4ca44f88d",
+    "source": "Label plugin not activated",
+    "parameters": [],
+    "patterns": [
+      "Label plugin not activated"
+    ]
+  },
+  {
+    "id": "server.message.m0c585b47781f",
+    "source": "This logical field proved the pinned book author.",
+    "parameters": [],
+    "patterns": [
+      "This logical field proved the pinned book author."
+    ]
+  },
+  {
+    "id": "server.message.m0df8751db78b",
+    "source": "Selected root folder '{value0}' is missing a {value1} quality profile default",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Selected root folder '{value0}' is missing a {value1} quality profile default"
+    ]
+  },
+  {
+    "id": "server.message.m0e1553e44547",
+    "source": "Page size must be between 1 and 1000",
+    "parameters": [],
+    "patterns": [
+      "Page size must be between 1 and 1000"
+    ]
+  },
+  {
+    "id": "server.message.m0e29ebd40f6c",
+    "source": "qBittorrent cannot resolve magnet link with DHT disabled",
+    "parameters": [],
+    "patterns": [
+      "qBittorrent cannot resolve magnet link with DHT disabled"
+    ]
+  },
+  {
+    "id": "server.message.m0e8c0447c3c8",
+    "source": "QueryParam state invalid.",
+    "parameters": [],
+    "patterns": [
+      "QueryParam state invalid."
+    ]
+  },
+  {
+    "id": "server.message.m0ffa12a85bcc",
+    "source": "The content server returned {value0} to a Calibre API request",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "The content server returned {value0} to a Calibre API request"
+    ]
+  },
+  {
+    "id": "server.message.m100ee5f8c87f",
+    "source": "Host is required",
+    "parameters": [],
+    "patterns": [
+      "Host is required"
+    ]
+  },
+  {
+    "id": "server.message.m1041bbcba071",
+    "source": "Unable to send test message",
+    "parameters": [],
+    "patterns": [
+      "Unable to send test message"
+    ]
+  },
+  {
+    "id": "server.message.m123c31b11b23",
+    "source": "Near-exact title evidence accepted by the active matcher mode.",
+    "parameters": [],
+    "patterns": [
+      "Near-exact title evidence accepted by the active matcher mode."
+    ]
+  },
+  {
+    "id": "server.message.m12739b954cdf",
+    "source": "QueryParam pinId invalid.",
+    "parameters": [],
+    "patterns": [
+      "QueryParam pinId invalid."
+    ]
+  },
+  {
+    "id": "server.message.m12f378d7ddc5",
+    "source": "Connection test failed: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Connection test failed: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m1342cc36e68f",
+    "source": "No tag names a narrator; the length matched the pinned edition. Difference {value0} seconds; matching tolerance {value1} seconds.",
+    "parameters": [
+      {
+        "name": "value0"
+      },
+      {
+        "name": "value1"
+      }
+    ],
+    "patterns": [
+      "No tag names a narrator; the length matched the pinned edition. Difference {value0} seconds; matching tolerance {value1} seconds."
+    ]
+  },
+  {
+    "id": "server.message.m139ce1eff485",
+    "source": "Set preferred narrator '{value0}' for series {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Set preferred narrator '{value0}' for series {value1}"
+    ]
+  },
+  {
+    "id": "server.message.m14e388dff559",
+    "source": "Unable to Import. Path matches client base download directory, it's possible 'Keep top-level folder' is disabled for this torrent or 'Torrent Content Layout' is NOT set to 'Original' or 'Create Subfolder'?",
+    "parameters": [],
+    "patterns": [
+      "Unable to Import. Path matches client base download directory, it's possible 'Keep top-level folder' is disabled for this torrent or 'Torrent Content Layout' is NOT set to 'Original' or 'Create Subfolder'?"
+    ]
+  },
+  {
+    "id": "server.message.m1656774009b1",
+    "source": "Unable to connect to NZBGet",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to NZBGet"
+    ]
+  },
+  {
+    "id": "server.message.m17a00dbb4f2a",
+    "source": "Stateless URLs do not support tags",
+    "parameters": [],
+    "patterns": [
+      "Stateless URLs do not support tags"
+    ]
+  },
+  {
+    "id": "server.message.m1825009cc54d",
+    "source": "The download is stalled with no connections",
+    "parameters": [],
+    "patterns": [
+      "The download is stalled with no connections"
+    ]
+  },
+  {
+    "id": "server.message.m18d87dc2b7fc",
+    "source": "Hardcover is not enabled or API token is missing",
+    "parameters": [],
+    "patterns": [
+      "Hardcover is not enabled or API token is missing"
+    ]
+  },
+  {
+    "id": "server.message.m196287d492ed",
+    "source": "Cannot add book: the selected result does not contain an author provider ID.",
+    "parameters": [],
+    "patterns": [
+      "Cannot add book: the selected result does not contain an author provider ID."
+    ]
+  },
+  {
+    "id": "server.message.m1976888bd4be",
+    "source": "Folder '{value0}' is not accessible. An error occurred while checking folder permissions.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Folder '{value0}' is not accessible. An error occurred while checking folder permissions."
+    ]
+  },
+  {
+    "id": "server.message.m1a28032cdce5",
+    "source": "Connection refused",
+    "parameters": [],
+    "patterns": [
+      "Connection refused"
+    ]
+  },
+  {
+    "id": "server.message.m1b9eb5de4d01",
+    "source": "Successfully deleted series variant {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Successfully deleted series variant {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m1bfba8b6e38c",
+    "source": "Invalid provider ID. Expected one of {value0} with an alphanumeric id.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Invalid provider ID. Expected one of {value0} with an alphanumeric id."
+    ]
+  },
+  {
+    "id": "server.message.m1c09d17ff717",
+    "source": "Selected edition {value0} could not be found.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Selected edition {value0} could not be found."
+    ]
+  },
+  {
+    "id": "server.message.m1c54b76925b1",
+    "source": "At least one quality profile must be selected",
+    "parameters": [],
+    "patterns": [
+      "At least one quality profile must be selected"
+    ]
+  },
+  {
+    "id": "server.message.m1cb06fc96c2e",
+    "source": "An exact ASIN/Audible ASIN lookup selected this edition candidate.",
+    "parameters": [],
+    "patterns": [
+      "An exact ASIN/Audible ASIN lookup selected this edition candidate."
+    ]
+  },
+  {
+    "id": "server.message.m1dbdb2eaa5fb",
+    "source": "Groups must have a unique ID",
+    "parameters": [],
+    "patterns": [
+      "Groups must have a unique ID"
+    ]
+  },
+  {
+    "id": "server.message.m1ee10c16dbff",
+    "source": "No {value0} edition survived metadata profile filtering for this book.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "No {value0} edition survived metadata profile filtering for this book."
+    ]
+  },
+  {
+    "id": "server.message.m1ee41f485c1e",
+    "source": "Authentication failed, check the username and password",
+    "parameters": [],
+    "patterns": [
+      "Authentication failed, check the username and password"
+    ]
+  },
+  {
+    "id": "server.message.m1efcd1818dd4",
+    "source": "Edition provider must match book provider when a specific edition is provided.",
+    "parameters": [],
+    "patterns": [
+      "Edition provider must match book provider when a specific edition is provided."
+    ]
+  },
+  {
+    "id": "server.message.m1f70cc839b57",
+    "source": "Select at least one media type to monitor",
+    "parameters": [],
+    "patterns": [
+      "Select at least one media type to monitor"
+    ]
+  },
+  {
+    "id": "server.message.m1fa8a2df256c",
+    "source": "Invalid audiobook channel mode",
+    "parameters": [],
+    "patterns": [
+      "Invalid audiobook channel mode"
+    ]
+  },
+  {
+    "id": "server.message.m2024314e8436",
+    "source": "The MQTT broker rejected the connection ({value0}).",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "The MQTT broker rejected the connection ({value0})."
+    ]
+  },
+  {
+    "id": "server.message.m2100caf34ba0",
+    "source": "Bad port. This is the container's remote Calibre GUI, not the Calibre content server.  Try mapping port 8081.",
+    "parameters": [],
+    "patterns": [
+      "Bad port. This is the container's remote Calibre GUI, not the Calibre content server.  Try mapping port 8081."
+    ]
+  },
+  {
+    "id": "server.message.m21af9489276f",
+    "source": "No results were returned from your import list, please check your settings.",
+    "parameters": [],
+    "patterns": [
+      "No results were returned from your import list, please check your settings."
+    ]
+  },
+  {
+    "id": "server.message.m21d2e06bbd89",
+    "source": "Unable to connect to BookLore. Check the URL, credentials, and logs.",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to BookLore. Check the URL, credentials, and logs."
+    ]
+  },
+  {
+    "id": "server.message.m220530e7c89a",
+    "source": "API Key is required when username/password are not configured",
+    "parameters": [],
+    "patterns": [
+      "API Key is required when username/password are not configured"
+    ]
+  },
+  {
+    "id": "server.message.m23e7ac60ea9c",
+    "source": "Path '{value0}' is the configured recycle bin folder",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{path}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Path '{value0}' is set to configured recycle bin folder"
+    ]
+  },
+  {
+    "id": "server.message.m23e7ac60ea9c.child",
+    "source": "Path '{value0}' is inside the configured recycle bin folder",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{path}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Path '{value0}' is child of configured recycle bin folder"
+    ]
+  },
+  {
+    "id": "server.message.m2546d2b6166c",
+    "source": "Not a valid Calibre content server.  See https://manual.calibre-ebook.com/server.html",
+    "parameters": [],
+    "patterns": [
+      "Not a valid Calibre content server.  See https://manual.calibre-ebook.com/server.html"
+    ]
+  },
+  {
+    "id": "server.message.m261f5494dc87",
+    "source": "Unexpected metadata server protocol {value0} (expected {value1})",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unexpected metadata server protocol {value0} (expected {value1})"
+    ]
+  },
+  {
+    "id": "server.message.m262dfad1709a",
+    "source": "Goodreads did not return an account ID for the authenticated user.",
+    "parameters": [],
+    "patterns": [
+      "Goodreads did not return an account ID for the authenticated user."
+    ]
+  },
+  {
+    "id": "server.message.m2651c4cafa4d",
+    "source": "Test was aborted due to an error: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Test was aborted due to an error: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m2689d50f7d87",
+    "source": "QueryParam code invalid.",
+    "parameters": [],
+    "patterns": [
+      "QueryParam code invalid."
+    ]
+  },
+  {
+    "id": "server.message.m27001fadea37",
+    "source": "Unable to connect to uTorrent",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to uTorrent"
+    ]
+  },
+  {
+    "id": "server.message.m275c683c036e",
+    "source": "Unable to connect to indexer connection failure. Check your connection to the indexer's server and DNS.{value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to connect to indexer connection failure. Check your connection to the indexer's server and DNS.{value0}"
+    ]
+  },
+  {
+    "id": "server.message.m27c2ccd962c2",
+    "source": "Unknown error",
+    "parameters": [],
+    "patterns": [
+      "Unknown error"
+    ]
+  },
+  {
+    "id": "server.message.m2878ab0d8e93",
+    "source": "Token key cannot be empty",
+    "parameters": [],
+    "patterns": [
+      "Token key cannot be empty"
+    ]
+  },
+  {
+    "id": "server.message.m290e1a4f50ba",
+    "source": "No usable narrator evidence was present for this edition.",
+    "parameters": [],
+    "patterns": [
+      "No usable narrator evidence was present for this edition."
+    ]
+  },
+  {
+    "id": "server.message.m2924c85ce471",
+    "source": "Author IDs must be unique.",
+    "parameters": [],
+    "patterns": [
+      "Author IDs must be unique."
+    ]
+  },
+  {
+    "id": "server.message.m295a56699382",
+    "source": "Queued '{value0}' for import. Will retry every {value1} minutes until available.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{book.Title}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{RETRY_DELAY_MINUTES}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Queued '{value0}' for import. Will retry every {value1} minutes until available."
+    ]
+  },
+  {
+    "id": "server.message.m297f7c6b4e4b",
+    "source": "unmappedFiles.bookFileIds must be provided when scope is 'selected'",
+    "parameters": [],
+    "patterns": [
+      "unmappedFiles.bookFileIds must be provided when scope is 'selected'"
+    ]
+  },
+  {
+    "id": "server.message.m299a901c9c37",
+    "source": "Invalid Hardcover API key",
+    "parameters": [],
+    "patterns": [
+      "Invalid Hardcover API key"
+    ]
+  },
+  {
+    "id": "server.message.m2a7569aef017",
+    "source": "Foreign series ID is required",
+    "parameters": [],
+    "patterns": [
+      "Foreign series ID is required"
+    ]
+  },
+  {
+    "id": "server.message.m2b0ea0852cd0",
+    "source": "No Hardcover API token is configured (set one on this import list or in Settings)",
+    "parameters": [],
+    "patterns": [
+      "No Hardcover API token is configured (set one on this import list or in Settings)"
+    ]
+  },
+  {
+    "id": "server.message.m2b42676aee32",
+    "source": "Unable to connect to import list. {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to connect to import list. {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m2b75c50f32f3",
+    "source": "Proxy connection successful via {value0}. Response time: {value1}ms",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{testUrl}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{responseTime.TotalMilliseconds:F0}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Proxy connection successful via {value0}. Response time: {value1}ms"
+    ]
+  },
+  {
+    "id": "server.message.m2bf18c3eddf8",
+    "source": "Disable Movie Sorting",
+    "parameters": [],
+    "patterns": [
+      "Disable Movie Sorting"
+    ]
+  },
+  {
+    "id": "server.message.m2dffb9a40e48",
+    "source": "Path '{value0}' is an ancestor of an existing author",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Path '{value0}' is an ancestor of an existing author"
+    ]
+  },
+  {
+    "id": "server.message.m2e04fe8133c7",
+    "source": "Protocol version not supported, use Vuze 5.0.0.0 or higher with Vuze Web Remote plugin.",
+    "parameters": [],
+    "patterns": [
+      "Protocol version not supported, use Vuze 5.0.0.0 or higher with Vuze Web Remote plugin."
+    ]
+  },
+  {
+    "id": "server.message.m2e0b4a7d6c73",
+    "source": "Connection timed out",
+    "parameters": [],
+    "patterns": [
+      "Connection timed out"
+    ]
+  },
+  {
+    "id": "server.message.m2e1832187375",
+    "source": "Publisher tokens corroborated this edition.",
+    "parameters": [],
+    "patterns": [
+      "Publisher tokens corroborated this edition."
+    ]
+  },
+  {
+    "id": "server.message.m2e3799b32682",
+    "source": "Sabnzbd develop version, assuming version 3.0.0 or higher.",
+    "parameters": [],
+    "patterns": [
+      "Sabnzbd develop version, assuming version 3.0.0 or higher."
+    ]
+  },
+  {
+    "id": "server.message.m2ea9dfe7a1b2",
+    "source": "Cannot edit root folder path",
+    "parameters": [],
+    "patterns": [
+      "Cannot edit root folder path"
+    ]
+  },
+  {
+    "id": "server.message.m2ebae1c36a6c",
+    "source": "Arguments are no longer supported for custom scripts",
+    "parameters": [],
+    "patterns": [
+      "Arguments are no longer supported for custom scripts"
+    ]
+  },
+  {
+    "id": "server.message.m301553d117f5",
+    "source": "Folder '{value0}' is not readable by user '{value1}'. Permission denied - please ensure the Chaptarr process has read access to this directory and its subdirectories.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Folder '{value0}' is not readable by user '{value1}'. Permission denied - please ensure the Chaptarr process has read access to this directory and its subdirectories."
+    ]
+  },
+  {
+    "id": "server.message.m301553d117f5.environment",
+    "source": "Folder '{value0}' is not readable by user '{value1}'. Permission denied - please ensure the Chaptarr process has read access to this directory and its subdirectories. (Environment: {value2})",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value2",
+        "sourceToken": "{dockerEnv}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Folder '{value0}' is not readable by user '{value1}'. Permission denied - please ensure the Chaptarr process has read access to this directory and its subdirectories. (env: {value2})"
+    ]
+  },
+  {
+    "id": "server.message.m30241a539efa",
+    "source": "Could not retrieve Hardcover library data",
+    "parameters": [],
+    "patterns": [
+      "Could not retrieve Hardcover library data"
+    ]
+  },
+  {
+    "id": "server.message.m303e725e2fc6",
+    "source": "Failed to download selected photo",
+    "parameters": [],
+    "patterns": [
+      "Failed to download selected photo"
+    ]
+  },
+  {
+    "id": "server.message.m305661a25dbf",
+    "source": "Root folder is required",
+    "parameters": [],
+    "patterns": [
+      "Root folder is required"
+    ]
+  },
+  {
+    "id": "server.message.m3152a88fbafe",
+    "source": "Nzbget version too low, need 12.0 or higher",
+    "parameters": [],
+    "patterns": [
+      "Nzbget version too low, need 12.0 or higher"
+    ]
+  },
+  {
+    "id": "server.message.m31cb36e78963",
+    "source": "Cutoff must be an allowed quality or group",
+    "parameters": [],
+    "patterns": [
+      "Cutoff must be an allowed quality or group"
+    ]
+  },
+  {
+    "id": "server.message.m33f2c35d1a7a",
+    "source": "Download Station API version not supported, should be at least 2. It supports from {value0} to {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Download Station API version not supported, should be at least 2. It supports from {value0} to {value1}"
+    ]
+  },
+  {
+    "id": "server.message.m34173ff9d338",
+    "source": "No media type is configured (audiobook/ebook). Configure at least one root folder + quality profile for this instance.",
+    "parameters": [],
+    "patterns": [
+      "No media type is configured (audiobook/ebook). Configure at least one root folder + quality profile for this instance."
+    ]
+  },
+  {
+    "id": "server.message.m34456428fa23",
+    "source": "Specific-book monitoring requires at least one book ID.",
+    "parameters": [],
+    "patterns": [
+      "Specific-book monitoring requires at least one book ID."
+    ]
+  },
+  {
+    "id": "server.message.m34a9bd831bbe",
+    "source": "Sync monitored across formats requires both audiobook and ebook root folders to be configured for this author.",
+    "parameters": [],
+    "patterns": [
+      "Sync monitored across formats requires both audiobook and ebook root folders to be configured for this author."
+    ]
+  },
+  {
+    "id": "server.message.m354806fe14c2",
+    "source": "AudioBookShelf requires an admin user to create API keys. Sign in as an admin, or create an API key manually in AudioBookShelf and paste it here.",
+    "parameters": [],
+    "patterns": [
+      "AudioBookShelf requires an admin user to create API keys. Sign in as an admin, or create an API key manually in AudioBookShelf and paste it here."
+    ]
+  },
+  {
+    "id": "server.message.m355b8bd914c7",
+    "source": "Invalid ebook conversion target format",
+    "parameters": [],
+    "patterns": [
+      "Invalid ebook conversion target format"
+    ]
+  },
+  {
+    "id": "server.message.m35c921a37b2e",
+    "source": "Indexer does not support required search parameters",
+    "parameters": [],
+    "patterns": [
+      "Indexer does not support required search parameters"
+    ]
+  },
+  {
+    "id": "server.message.m36deea7300fe",
+    "source": "String is not a valid Guid",
+    "parameters": [],
+    "patterns": [
+      "String is not a valid Guid"
+    ]
+  },
+  {
+    "id": "server.message.m36ef1c9d5ed4",
+    "source": "Invalid Hardcover series ID",
+    "parameters": [],
+    "patterns": [
+      "Invalid Hardcover series ID"
+    ]
+  },
+  {
+    "id": "server.message.m36ff1c2553cc",
+    "source": "Under {value0} leads to H&R",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{discographySeedTimeMinimum}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Under {value0} leads to H&R"
+    ]
+  },
+  {
+    "id": "server.message.m380e19583eca",
+    "source": "Multiple audiobook editions were available, but the file supplied no usable narrator or full-book duration evidence to distinguish them. Chaptarr selected a native audiobook using its normal deterministic edition order.",
+    "parameters": [],
+    "patterns": [
+      "Multiple audiobook editions were available, but the file supplied no usable narrator or full-book duration evidence to distinguish them. Chaptarr selected a native audiobook using its normal deterministic edition order."
+    ]
+  },
+  {
+    "id": "server.message.m382a86feb870",
+    "source": "Metadata server ping did not return ok=true",
+    "parameters": [],
+    "patterns": [
+      "Metadata server ping did not return ok=true"
+    ]
+  },
+  {
+    "id": "server.message.m39858dcc08fa",
+    "source": "BookOrbit rejected the login. Check the credentials and password-login policy.",
+    "parameters": [],
+    "patterns": [
+      "BookOrbit rejected the login. Check the credentials and password-login policy."
+    ]
+  },
+  {
+    "id": "server.message.m3a3a39354b92",
+    "source": "MAM account status is unavailable or stale. Cannot verify unsatisfied-slot protection.",
+    "parameters": [],
+    "patterns": [
+      "MAM account status is unavailable or stale. Cannot verify unsatisfied-slot protection."
+    ]
+  },
+  {
+    "id": "server.message.m3adf1dd9c9f2",
+    "source": "Invalid Url: '{value0}'",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Invalid Url: '{value0}'"
+    ]
+  },
+  {
+    "id": "server.message.m3b822d69ada8",
+    "source": "Audiobook metadata profile is not set for this author (audiobooks are disabled). Set an audiobook metadata profile to add audiobook books.",
+    "parameters": [],
+    "patterns": [
+      "Audiobook metadata profile is not set for this author (audiobooks are disabled). Set an audiobook metadata profile to add audiobook books."
+    ]
+  },
+  {
+    "id": "server.message.m3baad96fe463",
+    "source": "Must contain a valid Unix permissions octal",
+    "parameters": [],
+    "patterns": [
+      "Must contain a valid Unix permissions octal"
+    ]
+  },
+  {
+    "id": "server.message.m3c9d3d8a7bc2",
+    "source": "Shared folder does not exist",
+    "parameters": [],
+    "patterns": [
+      "Shared folder does not exist"
+    ]
+  },
+  {
+    "id": "server.message.m3cccd15ff3c8",
+    "source": "A passphrase with at least {value0} characters and no more than {value1} UTF-8 bytes is required.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "A passphrase with at least {value0} characters and no more than {value1} UTF-8 bytes is required."
+    ]
+  },
+  {
+    "id": "server.message.m3cf56d0a60c2",
+    "source": "moveToCanonicalAuthorFolder is only supported for author-level previews; omit bookId.",
+    "parameters": [],
+    "patterns": [
+      "moveToCanonicalAuthorFolder is only supported for author-level previews; omit bookId."
+    ]
+  },
+  {
+    "id": "server.message.m3d6ccbefd6f9",
+    "source": "No active conversion found for this queue item",
+    "parameters": [],
+    "patterns": [
+      "No active conversion found for this queue item"
+    ]
+  },
+  {
+    "id": "server.message.m3d7da3083483",
+    "source": "A valid {value0} metadata profile is required",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{mediaLabel}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "A valid {value0} metadata profile is required"
+    ]
+  },
+  {
+    "id": "server.message.m3defe1f8a1b2",
+    "source": "Username must be empty when using API Key.",
+    "parameters": [],
+    "patterns": [
+      "Username must be empty when using API Key."
+    ]
+  },
+  {
+    "id": "server.message.m3e949d41e2c8",
+    "source": "Qualities can only be used once",
+    "parameters": [],
+    "patterns": [
+      "Qualities can only be used once"
+    ]
+  },
+  {
+    "id": "server.message.m3f41c8ff49b3",
+    "source": "authorId is required.",
+    "parameters": [],
+    "patterns": [
+      "authorId is required."
+    ]
+  },
+  {
+    "id": "server.message.m4091c9160593",
+    "source": "Audiobook-only folders cannot have ebook settings",
+    "parameters": [],
+    "patterns": [
+      "Audiobook-only folders cannot have ebook settings"
+    ]
+  },
+  {
+    "id": "server.message.m415b9b0835fe",
+    "source": "Goodreads user ID must be numeric or a Goodreads profile URL containing a numeric ID.",
+    "parameters": [],
+    "patterns": [
+      "Goodreads user ID must be numeric or a Goodreads profile URL containing a numeric ID."
+    ]
+  },
+  {
+    "id": "server.message.m4292967cbf4d",
+    "source": "Proxy is set to ProxyEverything. This should work but IndexerOnly is recommended for better performance.",
+    "parameters": [],
+    "patterns": [
+      "Proxy is set to ProxyEverything. This should work but IndexerOnly is recommended for better performance."
+    ]
+  },
+  {
+    "id": "server.message.m42d5ddf06dd0",
+    "source": "Disable Date Sorting",
+    "parameters": [],
+    "patterns": [
+      "Disable Date Sorting"
+    ]
+  },
+  {
+    "id": "server.message.m42e93ada21fc",
+    "source": "Series {value0} not found",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Series {value0} not found"
+    ]
+  },
+  {
+    "id": "server.message.m43ae665db439",
+    "source": "Failed to apply narrator to all books in series",
+    "parameters": [],
+    "patterns": [
+      "Failed to apply narrator to all books in series"
+    ]
+  },
+  {
+    "id": "server.message.m43c9baeb5bdb",
+    "source": "Metadata server URL must start with http:// or https://",
+    "parameters": [],
+    "patterns": [
+      "Metadata server URL must start with http:// or https://"
+    ]
+  },
+  {
+    "id": "server.message.m43d6f014b47d",
+    "source": "Cannot re-add author because the metadata refresh preflight failed. The existing author was not deleted.",
+    "parameters": [],
+    "patterns": [
+      "Cannot re-add author because the metadata refresh preflight failed. The existing author was not deleted."
+    ]
+  },
+  {
+    "id": "server.message.m43edb49bfa4c",
+    "source": "The file has no usable duration.",
+    "parameters": [],
+    "patterns": [
+      "The file has no usable duration."
+    ]
+  },
+  {
+    "id": "server.message.m44064e27b666",
+    "source": "Unable to send text message: {value0}",
+    "parameters": [
+      {
+        "name": "value0"
+      }
+    ],
+    "patterns": [
+      "Unable to send text message: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m4410286171ba",
+    "source": "qBittorrent is reporting an error",
+    "parameters": [],
+    "patterns": [
+      "qBittorrent is reporting an error"
+    ]
+  },
+  {
+    "id": "server.message.m44eab1fb9fa7",
+    "source": "Unable to connect to import list: {value0}. Check the log surrounding this error for details.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to connect to import list: {value0}. Check the log surrounding this error for details."
+    ]
+  },
+  {
+    "id": "server.message.m451006253bc3",
+    "source": "Failed to get the list of torrents: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Failed to get the list of torrents: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m453c42aa8de5",
+    "source": "NzbGet setting KeepHistory should be less than 25000",
+    "parameters": [],
+    "patterns": [
+      "NzbGet setting KeepHistory should be less than 25000"
+    ]
+  },
+  {
+    "id": "server.message.m45461e168bdc",
+    "source": "Selected root folder is Ebook-only; choose an Audiobook or Mixed root folder",
+    "parameters": [],
+    "patterns": [
+      "Selected root folder is Ebook-only; choose an Audiobook or Mixed root folder"
+    ]
+  },
+  {
+    "id": "server.message.m4588c1c26dfc",
+    "source": "Could not retrieve Goodreads bookshelf. Check the user ID and that shelves are public.",
+    "parameters": [],
+    "patterns": [
+      "Could not retrieve Goodreads bookshelf. Check the user ID and that shelves are public."
+    ]
+  },
+  {
+    "id": "server.message.m45d06dda48d1",
+    "source": "must be valid Host without http://",
+    "parameters": [],
+    "patterns": [
+      "must be valid Host without http://"
+    ]
+  },
+  {
+    "id": "server.message.m460fd8e957c3",
+    "source": "SSL seems to be required",
+    "parameters": [],
+    "patterns": [
+      "SSL seems to be required"
+    ]
+  },
+  {
+    "id": "server.message.m46149c6c2146",
+    "source": "AudioBookShelf did not return an API key.",
+    "parameters": [],
+    "patterns": [
+      "AudioBookShelf did not return an API key."
+    ]
+  },
+  {
+    "id": "server.message.m467034a6f197",
+    "source": "Unable to connect to Subsonic Server",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to Subsonic Server"
+    ]
+  },
+  {
+    "id": "server.message.m475d30ecce8d",
+    "source": "Must be 0 to disable or between 10 and 120 minutes",
+    "parameters": [],
+    "patterns": [
+      "Must be 0 to disable or between 10 and 120 minutes"
+    ]
+  },
+  {
+    "id": "server.message.m476ad43ed2ca",
+    "source": "Pass between 1 and 500 positive sourceIds.",
+    "parameters": [],
+    "patterns": [
+      "Pass between 1 and 500 positive sourceIds."
+    ]
+  },
+  {
+    "id": "server.message.m47ae9dc63c7a",
+    "source": "API token is required",
+    "parameters": [],
+    "patterns": [
+      "API token is required"
+    ]
+  },
+  {
+    "id": "server.message.m47cc7c36cc3a",
+    "source": "Old uTorrent client with unsupported API, need 3.0 or higher",
+    "parameters": [],
+    "patterns": [
+      "Old uTorrent client with unsupported API, need 3.0 or higher"
+    ]
+  },
+  {
+    "id": "server.message.m48c9cd18eeef",
+    "source": "pattern is required",
+    "parameters": [],
+    "patterns": [
+      "pattern is required"
+    ]
+  },
+  {
+    "id": "server.message.m4a0e0348191a",
+    "source": "Route id does not match resource id",
+    "parameters": [],
+    "patterns": [
+      "Route id does not match resource id"
+    ]
+  },
+  {
+    "id": "server.message.m4abee5a92d01",
+    "source": "Unable to connect to Transmission",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to Transmission"
+    ]
+  },
+  {
+    "id": "server.message.m4b0072b05f0b",
+    "source": "Embedded author evidence corroborated the path-selected candidate.",
+    "parameters": [],
+    "patterns": [
+      "Embedded author evidence corroborated the path-selected candidate."
+    ]
+  },
+  {
+    "id": "server.message.m4b31cd0afb3b",
+    "source": "Folder '{value0}' does not exist. Please create the directory first or check the path.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Folder '{value0}' does not exist. Please create the directory first or check the path."
+    ]
+  },
+  {
+    "id": "server.message.m4ba2d178c305",
+    "source": "Must be a valid absolute URL",
+    "parameters": [],
+    "patterns": [
+      "Must be a valid absolute URL"
+    ]
+  },
+  {
+    "id": "server.message.m4bbe30648055",
+    "source": "Folder does not exist",
+    "parameters": [],
+    "patterns": [
+      "Folder does not exist"
+    ]
+  },
+  {
+    "id": "server.message.m4c39fed9b779",
+    "source": "Failed to import author from provider",
+    "parameters": [],
+    "patterns": [
+      "Failed to import author from provider"
+    ]
+  },
+  {
+    "id": "server.message.m4c93d9a5340f",
+    "source": "Could not get series data",
+    "parameters": [],
+    "patterns": [
+      "Could not get series data"
+    ]
+  },
+  {
+    "id": "server.message.m4d485e3d4216",
+    "source": "Request body can't be empty",
+    "parameters": [],
+    "patterns": [
+      "Request body can't be empty"
+    ]
+  },
+  {
+    "id": "server.message.m4d53a6152d2c",
+    "source": "Preview the move before starting it.",
+    "parameters": [],
+    "patterns": [
+      "Preview the move before starting it."
+    ]
+  },
+  {
+    "id": "server.message.m4d72bec4a155",
+    "source": "API Key Incorrect",
+    "parameters": [],
+    "patterns": [
+      "API Key Incorrect"
+    ]
+  },
+  {
+    "id": "server.message.m4d95930d7f57",
+    "source": "AudioBookShelf did not return a valid access token.",
+    "parameters": [],
+    "patterns": [
+      "AudioBookShelf did not return a valid access token."
+    ]
+  },
+  {
+    "id": "server.message.m4e3c9ff3f17f",
+    "source": "entityType must be Author, AuthorMetadata, Book, Edition, or BookFile.",
+    "parameters": [],
+    "patterns": [
+      "entityType must be Author, AuthorMetadata, Book, Edition, or BookFile."
+    ]
+  },
+  {
+    "id": "server.message.m4e7b049867d0",
+    "source": "Proxy test failed via {value0} with status code: {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{testUrl}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{response.StatusCode}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Proxy test failed via {value0} with status code: {value1}"
+    ]
+  },
+  {
+    "id": "server.message.m4f132daa439b",
+    "source": "Authentication failed. Check the API key and server type.",
+    "parameters": [],
+    "patterns": [
+      "Authentication failed. Check the API key and server type."
+    ]
+  },
+  {
+    "id": "server.message.m4f860894ff1b",
+    "source": "Metadata server ping response was not valid JSON: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Metadata server ping response was not valid JSON: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m4fb2bd070194",
+    "source": "AudioBookShelf did not return any cookies for the OIDC session.",
+    "parameters": [],
+    "patterns": [
+      "AudioBookShelf did not return any cookies for the OIDC session."
+    ]
+  },
+  {
+    "id": "server.message.m50abcbe9b4b1",
+    "source": "Only Hardcover series IDs are currently supported (expected hc:{id})",
+    "parameters": [],
+    "patterns": [
+      "Only Hardcover series IDs are currently supported (expected hc:{id})"
+    ]
+  },
+  {
+    "id": "server.message.m50b0fb9b570d",
+    "source": "Metadata server URL is required",
+    "parameters": [],
+    "patterns": [
+      "Metadata server URL is required"
+    ]
+  },
+  {
+    "id": "server.message.m512fa7acd5fa",
+    "source": "Unable to connect to Emby/Jellyfin: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to connect to Emby/Jellyfin: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m5269a817943e",
+    "source": "Authenticate with Plex.tv first",
+    "parameters": [],
+    "patterns": [
+      "Authenticate with Plex.tv first"
+    ]
+  },
+  {
+    "id": "server.message.m52a644e8b0f9",
+    "source": "selectedBooks must include foreignAuthorId values",
+    "parameters": [],
+    "patterns": [
+      "selectedBooks must include foreignAuthorId values"
+    ]
+  },
+  {
+    "id": "server.message.m5314fa3dfe04",
+    "source": "Embedded title evidence corroborated the candidate selected from the folder and filename.",
+    "parameters": [],
+    "patterns": [
+      "Embedded title evidence corroborated the candidate selected from the folder and filename."
+    ]
+  },
+  {
+    "id": "server.message.m532212ccb76d",
+    "source": "Image downloaded successfully",
+    "parameters": [],
+    "patterns": [
+      "Image downloaded successfully"
+    ]
+  },
+  {
+    "id": "server.message.m535af50a7541",
+    "source": "Must contain chaptarr",
+    "parameters": [],
+    "patterns": [
+      "Must contain chaptarr"
+    ]
+  },
+  {
+    "id": "server.message.m537621bd08c4",
+    "source": "Image not found in author metadata",
+    "parameters": [],
+    "patterns": [
+      "Image not found in author metadata"
+    ]
+  },
+  {
+    "id": "server.message.m54f76bea32a1",
+    "source": "must start with http:// or https://",
+    "parameters": [],
+    "patterns": [
+      "must start with http:// or https://"
+    ]
+  },
+  {
+    "id": "server.message.m54fc8a254d62",
+    "source": "Image download in progress",
+    "parameters": [],
+    "patterns": [
+      "Image download in progress"
+    ]
+  },
+  {
+    "id": "server.message.m55acf0a44748",
+    "source": "Invalid selectedMediaType (expected 'audiobook' or 'ebook')",
+    "parameters": [],
+    "patterns": [
+      "Invalid selectedMediaType (expected 'audiobook' or 'ebook')"
+    ]
+  },
+  {
+    "id": "server.message.m5659b793dc5f",
+    "source": "Selected edition does not match the requested media type.",
+    "parameters": [],
+    "patterns": [
+      "Selected edition does not match the requested media type."
+    ]
+  },
+  {
+    "id": "server.message.m57a345f27938",
+    "source": "Incorrect ApiKey",
+    "parameters": [],
+    "patterns": [
+      "Incorrect ApiKey"
+    ]
+  },
+  {
+    "id": "server.message.m580ff695754e",
+    "source": "Unable to connect to SABnzbd",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to SABnzbd"
+    ]
+  },
+  {
+    "id": "server.message.m584bfe0a179c",
+    "source": "Quality Profile does not exist",
+    "parameters": [],
+    "patterns": [
+      "Quality Profile does not exist"
+    ]
+  },
+  {
+    "id": "server.message.m5932f2bdbcc6",
+    "source": "Unable to connect to AudioBookShelf: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to connect to AudioBookShelf: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m596c52f1eb65",
+    "source": "Connection failed",
+    "parameters": [],
+    "patterns": [
+      "Connection failed"
+    ]
+  },
+  {
+    "id": "server.message.m5aa6a41c72ca",
+    "source": "This logical field proved the identifier candidate's author.",
+    "parameters": [],
+    "patterns": [
+      "This logical field proved the identifier candidate's author."
+    ]
+  },
+  {
+    "id": "server.message.m5b6d7aa6820c",
+    "source": "Retry scheduled",
+    "parameters": [],
+    "patterns": [
+      "Retry scheduled"
+    ]
+  },
+  {
+    "id": "server.message.m5b910b94aba9",
+    "source": "Failed to download image",
+    "parameters": [],
+    "patterns": [
+      "Failed to download image"
+    ]
+  },
+  {
+    "id": "server.message.m5c7dc17c0c8a",
+    "source": "Mapped Network Drive and Windows Service",
+    "parameters": [],
+    "patterns": [
+      "Mapped Network Drive and Windows Service"
+    ]
+  },
+  {
+    "id": "server.message.m5e5d2164fab5",
+    "source": "Invalid provider ID format. Expected 'provider:id'.",
+    "parameters": [],
+    "patterns": [
+      "Invalid provider ID format. Expected 'provider:id'."
+    ]
+  },
+  {
+    "id": "server.message.m5e7b4e24492a",
+    "source": "The content server does not accept anonymous changes, a username and password are required to push books",
+    "parameters": [],
+    "patterns": [
+      "The content server does not accept anonymous changes, a username and password are required to push books"
+    ]
+  },
+  {
+    "id": "server.message.m5fb9cde07f1e",
+    "source": "Cannot combine file deletion with re-add.",
+    "parameters": [],
+    "patterns": [
+      "Cannot combine file deletion with re-add."
+    ]
+  },
+  {
+    "id": "server.message.m6009908a8660",
+    "source": "The author isn't available yet on the metadata server. Chaptarr has queued the import and will automatically add them when they become available (you can visit the chaptarrbot channel in our discord to ask for updates).",
+    "parameters": [],
+    "patterns": [
+      "The author isn't available yet on the metadata server. Chaptarr has queued the import and will automatically add them when they become available (you can visit the chaptarrbot channel in our discord to ask for updates)."
+    ]
+  },
+  {
+    "id": "server.message.m6026247dc0f2",
+    "source": "Download client rejected release: {value0}",
+    "parameters": [
+      {
+        "name": "value0"
+      }
+    ],
+    "patterns": [
+      "Download client rejected release: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m609ed5f60975",
+    "source": "Cannot re-add author: the author is not available on the metadata server.",
+    "parameters": [],
+    "patterns": [
+      "Cannot re-add author: the author is not available on the metadata server."
+    ]
+  },
+  {
+    "id": "server.message.m611d3cc87d4d",
+    "source": "Path '{value0}' is already configured for another author",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Path '{value0}' is already configured for another author"
+    ]
+  },
+  {
+    "id": "server.message.m6139d49128ce",
+    "source": "CloudFlare CAPTCHA token expired, please Refresh.",
+    "parameters": [],
+    "patterns": [
+      "CloudFlare CAPTCHA token expired, please Refresh."
+    ]
+  },
+  {
+    "id": "server.message.m61760b3f62ff",
+    "source": "Username must not be empty.",
+    "parameters": [],
+    "patterns": [
+      "Username must not be empty."
+    ]
+  },
+  {
+    "id": "server.message.m61c0ddf68a65",
+    "source": "This field's position conflicted, so Strict did not use that field as title proof.",
+    "parameters": [],
+    "patterns": [
+      "This field's position conflicted, so Strict did not use that field as title proof."
+    ]
+  },
+  {
+    "id": "server.message.m61c49aa34607",
+    "source": "Unable to connect to indexer, indexer's server is unavailable. Try again later. {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to connect to indexer, indexer's server is unavailable. Try again later. {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m61da366a8aae",
+    "source": "Indexer feed is not supported: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Indexer feed is not supported: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m623b1093a9c9",
+    "source": "Unable to connect to Torrent Download Station",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to Torrent Download Station"
+    ]
+  },
+  {
+    "id": "server.message.m629e576013e4",
+    "source": "No default destination",
+    "parameters": [],
+    "patterns": [
+      "No default destination"
+    ]
+  },
+  {
+    "id": "server.message.m62fb6085c79e",
+    "source": "Unable to connect to Plex Media Server",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to Plex Media Server"
+    ]
+  },
+  {
+    "id": "server.message.m63cf73c14226",
+    "source": "Library mappings are invalid",
+    "parameters": [],
+    "patterns": [
+      "Library mappings are invalid"
+    ]
+  },
+  {
+    "id": "server.message.m6472be787d0d",
+    "source": "This torrent is protected by the permanent seeding/download preservation policy. Choose 'Ignore Download' (API: removeFromClient=false) to remove it from Chaptarr without deleting it from the client. To delete the torrent and its files, remove it directly in your download client.",
+    "parameters": [],
+    "patterns": [
+      "This torrent is protected by the permanent seeding/download preservation policy. Choose 'Ignore Download' (API: removeFromClient=false) to remove it from Chaptarr without deleting it from the client. To delete the torrent and its files, remove it directly in your download client."
+    ]
+  },
+  {
+    "id": "server.message.m648eddf3f253",
+    "source": "Category is recommended",
+    "parameters": [],
+    "patterns": [
+      "Category is recommended"
+    ]
+  },
+  {
+    "id": "server.message.m64f4a104ceb4",
+    "source": "Use either Configuration Key or Stateless URLs",
+    "parameters": [],
+    "patterns": [
+      "Use either Configuration Key or Stateless URLs"
+    ]
+  },
+  {
+    "id": "server.message.m65fe7c1758c8",
+    "source": "Goodreads authentication error: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Goodreads authentication error: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m661c5d4d3f03",
+    "source": "Category does not exist",
+    "parameters": [],
+    "patterns": [
+      "Category does not exist"
+    ]
+  },
+  {
+    "id": "server.message.m66985c5dac1d",
+    "source": "Authorization is required",
+    "parameters": [],
+    "patterns": [
+      "Authorization is required"
+    ]
+  },
+  {
+    "id": "server.message.m6849ebee10e9",
+    "source": "This torrent is already present in {value0} as '{value1}'.",
+    "parameters": [
+      {
+        "name": "value0"
+      },
+      {
+        "name": "value1"
+      }
+    ],
+    "patterns": [
+      "This torrent is already present in {value0} as '{value1}'."
+    ]
+  },
+  {
+    "id": "server.message.m685f5e4db612",
+    "source": "ids must be provided",
+    "parameters": [],
+    "patterns": [
+      "ids must be provided"
+    ]
+  },
+  {
+    "id": "server.message.m6928cb52f90a",
+    "source": "AudioBookShelf OIDC redirect missing Location header.",
+    "parameters": [],
+    "patterns": [
+      "AudioBookShelf OIDC redirect missing Location header."
+    ]
+  },
+  {
+    "id": "server.message.m6a4ba853f563",
+    "source": "Failed to generate test request. Check your settings.",
+    "parameters": [],
+    "patterns": [
+      "Failed to generate test request. Check your settings."
+    ]
+  },
+  {
+    "id": "server.message.m6a53e8d74c29",
+    "source": "Goodreads returned shelf '{value0}' for requested shelf '{value1}'. Verify the shelf name and that shelves are public.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Goodreads returned shelf '{value0}' for requested shelf '{value1}'. Verify the shelf name and that shelves are public."
+    ]
+  },
+  {
+    "id": "server.message.m6b5f4e5a738f",
+    "source": "NzbGet setting KeepHistory should be greater than 0",
+    "parameters": [],
+    "patterns": [
+      "NzbGet setting KeepHistory should be greater than 0"
+    ]
+  },
+  {
+    "id": "server.message.m6b84bc76853e",
+    "source": "Path '{value0}' is an ancestor of an existing root folder",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Path '{value0}' is an ancestor of an existing root folder"
+    ]
+  },
+  {
+    "id": "server.message.m6c1fa02a292a",
+    "source": "Unsupported client version",
+    "parameters": [],
+    "patterns": [
+      "Unsupported client version"
+    ]
+  },
+  {
+    "id": "server.message.m6c603ef38ec7",
+    "source": "The author isn't available yet on the metadata server.",
+    "parameters": [],
+    "patterns": [
+      "The author isn't available yet on the metadata server."
+    ]
+  },
+  {
+    "id": "server.message.m6d50cedf6d28",
+    "source": "Cannot be set to '/'",
+    "parameters": [],
+    "patterns": [
+      "Cannot be set to '/'"
+    ]
+  },
+  {
+    "id": "server.message.m6d69cc1ffcc4",
+    "source": "Audiobook root folder is required when monitoring audiobooks",
+    "parameters": [],
+    "patterns": [
+      "Audiobook root folder is required when monitoring audiobooks"
+    ]
+  },
+  {
+    "id": "server.message.m6db923fcd485",
+    "source": "Root folder '{value0}' is not configured in Chaptarr",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Root folder '{value0}' is not configured in Chaptarr"
+    ]
+  },
+  {
+    "id": "server.message.m6e47fb747806",
+    "source": "Unable to connect to indexer. {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to connect to indexer. {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m6eacf3f8c517",
+    "source": "bookFileIds must belong to one import unit",
+    "parameters": [],
+    "patterns": [
+      "bookFileIds must belong to one import unit"
+    ]
+  },
+  {
+    "id": "server.message.m6f4b44ab4677",
+    "source": "Regex Pattern must not be empty",
+    "parameters": [],
+    "patterns": [
+      "Regex Pattern must not be empty"
+    ]
+  },
+  {
+    "id": "server.message.m6f5afb1bfba0",
+    "source": "Max CPU threads must be greater than or equal to concurrent conversions",
+    "parameters": [],
+    "patterns": [
+      "Max CPU threads must be greater than or equal to concurrent conversions"
+    ]
+  },
+  {
+    "id": "server.message.m6f6371d18348",
+    "source": "Invalid edition ID format. Expected 'provider:id' or '0'",
+    "parameters": [],
+    "patterns": [
+      "Invalid edition ID format. Expected 'provider:id' or '0'"
+    ]
+  },
+  {
+    "id": "server.message.m712918a2c28f",
+    "source": "Configuration of label failed",
+    "parameters": [],
+    "patterns": [
+      "Configuration of label failed"
+    ]
+  },
+  {
+    "id": "server.message.m7132fb6d87f4",
+    "source": "selectedBooks is required",
+    "parameters": [],
+    "patterns": [
+      "selectedBooks is required"
+    ]
+  },
+  {
+    "id": "server.message.m72a9cf77e4de",
+    "source": "Enable Job folders",
+    "parameters": [],
+    "patterns": [
+      "Enable Job folders"
+    ]
+  },
+  {
+    "id": "server.message.m730e082c3d8d",
+    "source": "Must contain Author name",
+    "parameters": [],
+    "patterns": [
+      "Must contain Author name"
+    ]
+  },
+  {
+    "id": "server.message.m736b5fe15618",
+    "source": "This logical field proved the pinned edition title.",
+    "parameters": [],
+    "patterns": [
+      "This logical field proved the pinned edition title."
+    ]
+  },
+  {
+    "id": "server.message.m750a8cd4307a",
+    "source": "Authenticate app.",
+    "parameters": [],
+    "patterns": [
+      "Authenticate app."
+    ]
+  },
+  {
+    "id": "server.message.m7549882d4eb5",
+    "source": "Author IDs must be positive numbers.",
+    "parameters": [],
+    "patterns": [
+      "Author IDs must be positive numbers."
+    ]
+  },
+  {
+    "id": "server.message.m755b576eb46b",
+    "source": "Must match Password",
+    "parameters": [],
+    "patterns": [
+      "Must match Password"
+    ]
+  },
+  {
+    "id": "server.message.m7599301a1c84",
+    "source": "file must be provided",
+    "parameters": [],
+    "patterns": [
+      "file must be provided"
+    ]
+  },
+  {
+    "id": "server.message.m760d3d8feb20",
+    "source": "Chaptarr URL is invalid, are you missing a URL base?",
+    "parameters": [],
+    "patterns": [
+      "Chaptarr URL is invalid, are you missing a URL base?"
+    ]
+  },
+  {
+    "id": "server.message.m770a27077301",
+    "source": "Path '{value0}' is already configured as a root folder",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Path '{value0}' is already configured as a root folder"
+    ]
+  },
+  {
+    "id": "server.message.m7731b01b80f7",
+    "source": "Unable to connect to Kavita Server",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to Kavita Server"
+    ]
+  },
+  {
+    "id": "server.message.m77e713c55a04",
+    "source": "Goodreads user ID or existing OAuth credentials are required",
+    "parameters": [],
+    "patterns": [
+      "Goodreads user ID or existing OAuth credentials are required"
+    ]
+  },
+  {
+    "id": "server.message.m78052ec2df88",
+    "source": "Converting to M4B (CPU threads: {value0})",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{tokenBudget}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Converting to M4B ({value0} CPU thread)",
+      "Converting to M4B ({value0} CPU threads)"
+    ]
+  },
+  {
+    "id": "server.message.m783307436ce0",
+    "source": "Disable 'Check before download' option in Sabnbzd",
+    "parameters": [],
+    "patterns": [
+      "Disable 'Check before download' option in Sabnbzd"
+    ]
+  },
+  {
+    "id": "server.message.m78430e265616",
+    "source": "Folder '{value0}' is not writable by user '{value1}'. Permission denied - please ensure the Chaptarr process has write access to this directory and its subdirectories. Chaptarr determines this by attempting to create and delete a temporary file in the folder.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Folder '{value0}' is not writable by user '{value1}'. Permission denied - please ensure the Chaptarr process has write access to this directory and its subdirectories. Chaptarr determines this by attempting to create and delete a temporary file in the folder."
+    ]
+  },
+  {
+    "id": "server.message.m78430e265616.environment",
+    "source": "Folder '{value0}' is not writable by user '{value1}'. Permission denied - please ensure the Chaptarr process has write access to this directory and its subdirectories. (Environment: {value2}) Chaptarr determines this by attempting to create and delete a temporary file in the folder.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value2",
+        "sourceToken": "{dockerEnv}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Folder '{value0}' is not writable by user '{value1}'. Permission denied - please ensure the Chaptarr process has write access to this directory and its subdirectories. (env: {value2}) Chaptarr determines this by attempting to create and delete a temporary file in the folder."
+    ]
+  },
+  {
+    "id": "server.message.m794b67a4d3b9",
+    "source": "API Key is required",
+    "parameters": [],
+    "patterns": [
+      "API Key is required"
+    ]
+  },
+  {
+    "id": "server.message.m7973f38eea7b",
+    "source": "A valid {value0} quality profile is required",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{mediaLabel}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "A valid {value0} quality profile is required"
+    ]
+  },
+  {
+    "id": "server.message.m79dd817b4295",
+    "source": "Invalid directory",
+    "parameters": [],
+    "patterns": [
+      "Invalid directory"
+    ]
+  },
+  {
+    "id": "server.message.m7a3bf57a5ad5",
+    "source": "Ebook root folder is required when monitoring ebooks",
+    "parameters": [],
+    "patterns": [
+      "Ebook root folder is required when monitoring ebooks"
+    ]
+  },
+  {
+    "id": "server.message.m7ab62ae2fee8",
+    "source": "foreignBookId and foreignAuthorId are required",
+    "parameters": [],
+    "patterns": [
+      "foreignBookId and foreignAuthorId are required"
+    ]
+  },
+  {
+    "id": "server.message.m7aeae1412484",
+    "source": "Password is required",
+    "parameters": [],
+    "patterns": [
+      "Password is required"
+    ]
+  },
+  {
+    "id": "server.message.m7b1828c8a2bc",
+    "source": "PAR Status: {value0} - Unpack Status: {value1} - Move Status: {value2} - Script Status: {value3} - Delete Status: {value4} - Mark Status: {value5}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{item.ParStatus}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{item.UnpackStatus}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value2",
+        "sourceToken": "{item.MoveStatus}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value3",
+        "sourceToken": "{item.ScriptStatus}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value4",
+        "sourceToken": "{item.DeleteStatus}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value5",
+        "sourceToken": "{item.MarkStatus}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "PAR Status: {value0} - Unpack Status: {value1} - Move Status: {value2} - Script Status: {value3} - Delete Status: {value4} - Mark Status: {value5}"
+    ]
+  },
+  {
+    "id": "server.message.m7b1e864e07d8",
+    "source": "Unable to connect to Apprise API. Server connection failed: ({value0}) {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to connect to Apprise API. Server connection failed: ({value0}) {value1}"
+    ]
+  },
+  {
+    "id": "server.message.m7b4ba97e5a80",
+    "source": "Script exited with code: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Script exited with code: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m7b950bff047b",
+    "source": "Proxy mode must be Disabled, IndexerOnly, or ProxyEverything",
+    "parameters": [],
+    "patterns": [
+      "Proxy mode must be Disabled, IndexerOnly, or ProxyEverything"
+    ]
+  },
+  {
+    "id": "server.message.m7bbc018da582",
+    "source": "Login/Password invalid",
+    "parameters": [],
+    "patterns": [
+      "Login/Password invalid"
+    ]
+  },
+  {
+    "id": "server.message.m7be856d3afbe",
+    "source": "Unable to connect to Join API. Please try again later.",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to Join API. Please try again later."
+    ]
+  },
+  {
+    "id": "server.message.m7c3fbbf71490",
+    "source": "QueryParam oauth_verifier invalid.",
+    "parameters": [],
+    "patterns": [
+      "QueryParam oauth_verifier invalid."
+    ]
+  },
+  {
+    "id": "server.message.m7c5d7fa17f19",
+    "source": "The selected ebook library was not found in Grimmory",
+    "parameters": [],
+    "patterns": [
+      "The selected ebook library was not found in Grimmory"
+    ]
+  },
+  {
+    "id": "server.message.m7c8622692c56",
+    "source": "The library changed after this preview. Preview the move again.",
+    "parameters": [],
+    "patterns": [
+      "The library changed after this preview. Preview the move again."
+    ]
+  },
+  {
+    "id": "server.message.m7c8c07fd057d",
+    "source": "Ebook-only folders cannot have audiobook settings",
+    "parameters": [],
+    "patterns": [
+      "Ebook-only folders cannot have audiobook settings"
+    ]
+  },
+  {
+    "id": "server.message.m7d07b7873b14",
+    "source": "Could not retrieve current Hardcover user",
+    "parameters": [],
+    "patterns": [
+      "Could not retrieve current Hardcover user"
+    ]
+  },
+  {
+    "id": "server.message.m7d348cf76a7f",
+    "source": "Chaptarr is starting up, please try again later",
+    "parameters": [],
+    "patterns": [
+      "Chaptarr is starting up, please try again later"
+    ]
+  },
+  {
+    "id": "server.message.m7d3d73f7deeb",
+    "source": "At least one library is required",
+    "parameters": [],
+    "patterns": [
+      "At least one library is required"
+    ]
+  },
+  {
+    "id": "server.message.m7d60eb7d5d9a",
+    "source": "term is required",
+    "parameters": [],
+    "patterns": [
+      "term is required"
+    ]
+  },
+  {
+    "id": "server.message.m7daa93712844",
+    "source": "This logical field supplied title containment proof.",
+    "parameters": [],
+    "patterns": [
+      "This logical field supplied title containment proof."
+    ]
+  },
+  {
+    "id": "server.message.m7db986dd5235",
+    "source": "File does not exist",
+    "parameters": [],
+    "patterns": [
+      "File does not exist"
+    ]
+  },
+  {
+    "id": "server.message.m7de0a09b7503",
+    "source": "Aria2 version should be at least 1.34.0. Version reported is {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{0}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Aria2 version should be at least 1.34.0. Version reported is {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m7dedb6f7c9ac",
+    "source": "Invalid output formats",
+    "parameters": [],
+    "patterns": [
+      "Invalid output formats"
+    ]
+  },
+  {
+    "id": "server.message.m7e0e0494a488",
+    "source": "Unable to connect to BookOrbit. Check the URL, credentials, and logs.",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to BookOrbit. Check the URL, credentials, and logs."
+    ]
+  },
+  {
+    "id": "server.message.m7e14e7c3c085",
+    "source": "Goodreads shelf '{value0}' was not found for this user. Verify the shelf name and that shelves are public.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Goodreads shelf '{value0}' was not found for this user. Verify the shelf name and that shelves are public."
+    ]
+  },
+  {
+    "id": "server.message.m7ec433f562a8",
+    "source": "Not a Synology or synoindex not available",
+    "parameters": [],
+    "patterns": [
+      "Not a Synology or synoindex not available"
+    ]
+  },
+  {
+    "id": "server.message.m7f3f90a53f61",
+    "source": "request body is required",
+    "parameters": [],
+    "patterns": [
+      "request body is required"
+    ]
+  },
+  {
+    "id": "server.message.m8003f71f999e",
+    "source": "One of authorId or bookId must be specified",
+    "parameters": [],
+    "patterns": [
+      "One of authorId or bookId must be specified"
+    ]
+  },
+  {
+    "id": "server.message.m8017aa9b7412",
+    "source": "Selected edition {value0} could not be found: {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Selected edition {value0} could not be found: {value1}"
+    ]
+  },
+  {
+    "id": "server.message.m80830c01b9f4",
+    "source": "Topic prefix must be a valid MQTT topic prefix.",
+    "parameters": [],
+    "patterns": [
+      "Topic prefix must be a valid MQTT topic prefix."
+    ]
+  },
+  {
+    "id": "server.message.m811e40a07580",
+    "source": "Several local records match the selected work. Open the intended record below, then request it from that record.",
+    "parameters": [],
+    "patterns": [
+      "Several local records match the selected work. Open the intended record below, then request it from that record."
+    ]
+  },
+  {
+    "id": "server.message.m81659583b118",
+    "source": "bookFileIds cannot be combined with downloadId",
+    "parameters": [],
+    "patterns": [
+      "bookFileIds cannot be combined with downloadId"
+    ]
+  },
+  {
+    "id": "server.message.m81fa19be5293",
+    "source": "Password must not be empty.",
+    "parameters": [],
+    "patterns": [
+      "Password must not be empty."
+    ]
+  },
+  {
+    "id": "server.message.m82487c220074",
+    "source": "Metadata server is missing required capability '{value0}'",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Metadata server is missing required capability '{value0}'"
+    ]
+  },
+  {
+    "id": "server.message.m826b4cc6c84e",
+    "source": "Could not retrieve Goodreads bookshelf RSS feed. Check the user ID and that shelves are public.",
+    "parameters": [],
+    "patterns": [
+      "Could not retrieve Goodreads bookshelf RSS feed. Check the user ID and that shelves are public."
+    ]
+  },
+  {
+    "id": "server.message.m82b97a21c0a9",
+    "source": "Successfully added '{value0}' to library",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{itemName}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Successfully added '{value0}' to library"
+    ]
+  },
+  {
+    "id": "server.message.m82ecc423019b",
+    "source": "Unexpected metadata server service '{value0}' (expected '{value1}')",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unexpected metadata server service '{value0}' (expected '{value1}')"
+    ]
+  },
+  {
+    "id": "server.message.m82fee98391f9",
+    "source": "API Key is invalid",
+    "parameters": [],
+    "patterns": [
+      "API Key is invalid"
+    ]
+  },
+  {
+    "id": "server.message.m830b47a16041",
+    "source": "mediaType must be 'all', 'audiobook', or 'ebook'{value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "mediaType must be 'all', 'audiobook', or 'ebook'{value0}"
+    ]
+  },
+  {
+    "id": "server.message.m835cd53441fb",
+    "source": "Series-name tokens corroborated this book.",
+    "parameters": [],
+    "patterns": [
+      "Series-name tokens corroborated this book."
+    ]
+  },
+  {
+    "id": "server.message.m8387ff993c50",
+    "source": "Selected photo is a provider placeholder",
+    "parameters": [],
+    "patterns": [
+      "Selected photo is a provider placeholder"
+    ]
+  },
+  {
+    "id": "server.message.m843e64bf5198",
+    "source": "Unable to send test message though Mailgun.",
+    "parameters": [],
+    "patterns": [
+      "Unable to send test message though Mailgun."
+    ]
+  },
+  {
+    "id": "server.message.m847a995ca781",
+    "source": "Password must be empty when using API Key.",
+    "parameters": [],
+    "patterns": [
+      "Password must be empty when using API Key."
+    ]
+  },
+  {
+    "id": "server.message.m8500a62118c5",
+    "source": "foreignSeriesId is required",
+    "parameters": [],
+    "patterns": [
+      "foreignSeriesId is required"
+    ]
+  },
+  {
+    "id": "server.message.m850540ddf332",
+    "source": "Book ID matches both audiobook and ebook. Select an edition or provide a mediaType.",
+    "parameters": [],
+    "patterns": [
+      "Book ID matches both audiobook and ebook. Select an edition or provide a mediaType."
+    ]
+  },
+  {
+    "id": "server.message.m850a1729a9c0",
+    "source": "Proxy type must be Http, Socks4, or Socks5",
+    "parameters": [],
+    "patterns": [
+      "Proxy type must be Http, Socks4, or Socks5"
+    ]
+  },
+  {
+    "id": "server.message.m85babf48e233",
+    "source": "Unable to connect to indexer, check the log for more details",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to indexer, check the log for more details"
+    ]
+  },
+  {
+    "id": "server.message.m861ae28dba4a",
+    "source": "This move has conflicts or no movable files.",
+    "parameters": [],
+    "patterns": [
+      "This move has conflicts or no movable files."
+    ]
+  },
+  {
+    "id": "server.message.m8630b4dd33f2",
+    "source": "Could not connect",
+    "parameters": [],
+    "patterns": [
+      "Could not connect"
+    ]
+  },
+  {
+    "id": "server.message.m8754dce5138b",
+    "source": "Must use https:// unless the provider is running on localhost",
+    "parameters": [],
+    "patterns": [
+      "Must use https:// unless the provider is running on localhost"
+    ]
+  },
+  {
+    "id": "server.message.m87703d685945",
+    "source": "Invalid username or password",
+    "parameters": [],
+    "patterns": [
+      "Invalid username or password"
+    ]
+  },
+  {
+    "id": "server.message.m887410c5e906",
+    "source": "No libraries found on AudioBookShelf server",
+    "parameters": [],
+    "patterns": [
+      "No libraries found on AudioBookShelf server"
+    ]
+  },
+  {
+    "id": "server.message.m88ed453f6f14",
+    "source": "Authentication failed. Check API key",
+    "parameters": [],
+    "patterns": [
+      "Authentication failed. Check API key"
+    ]
+  },
+  {
+    "id": "server.message.m890b9b46edd4",
+    "source": "Failed to get the list of NZBs: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Failed to get the list of NZBs: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m89207b9b6701",
+    "source": "Password is required when API key is not configured",
+    "parameters": [],
+    "patterns": [
+      "Password is required when API key is not configured"
+    ]
+  },
+  {
+    "id": "server.message.m894a1b416dc1",
+    "source": "Only Hardcover provider is currently supported for series lookup",
+    "parameters": [],
+    "patterns": [
+      "Only Hardcover provider is currently supported for series lookup"
+    ]
+  },
+  {
+    "id": "server.message.m89e7654e6a1d",
+    "source": "Invalid SSL certificate file or password",
+    "parameters": [],
+    "patterns": [
+      "Invalid SSL certificate file or password"
+    ]
+  },
+  {
+    "id": "server.message.m8a7981a2ced3",
+    "source": "Group does not exist",
+    "parameters": [],
+    "patterns": [
+      "Group does not exist"
+    ]
+  },
+  {
+    "id": "server.message.m8a882a50edb4",
+    "source": "Narrator name is required",
+    "parameters": [],
+    "patterns": [
+      "Narrator name is required"
+    ]
+  },
+  {
+    "id": "server.message.m8aa8d2b58311",
+    "source": "ProviderId is required",
+    "parameters": [],
+    "patterns": [
+      "ProviderId is required"
+    ]
+  },
+  {
+    "id": "server.message.m8b41f6c44b16",
+    "source": "Invalid folder type: {value0}. Valid values are 0 (Mixed), 1 (Audiobook), 2 (Ebook).",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Invalid folder type: {value0}. Valid values are 0 (Mixed), 1 (Audiobook), 2 (Ebook)."
+    ]
+  },
+  {
+    "id": "server.message.m8bc3ca6c8331",
+    "source": "NZBVortex needs to be updated",
+    "parameters": [],
+    "patterns": [
+      "NZBVortex needs to be updated"
+    ]
+  },
+  {
+    "id": "server.message.m8c2e2bba4683",
+    "source": "Ebook metadata profile is not set for this author (ebooks are disabled). Set an ebook metadata profile to add ebook books.",
+    "parameters": [],
+    "patterns": [
+      "Ebook metadata profile is not set for this author (ebooks are disabled). Set an ebook metadata profile to add ebook books."
+    ]
+  },
+  {
+    "id": "server.message.m8c570858c6ac",
+    "source": "Applies to must be Both, Audiobook, or Ebook.",
+    "parameters": [],
+    "patterns": [
+      "Applies to must be Both, Audiobook, or Ebook."
+    ]
+  },
+  {
+    "id": "server.message.m8ca17be8eb84",
+    "source": "Invalid extension, must be .zip, .db, .xml, .enc or .zip.enc",
+    "parameters": [],
+    "patterns": [
+      "Invalid extension, must be .zip, .db, .xml, .enc or .zip.enc"
+    ]
+  },
+  {
+    "id": "server.message.m8d1c33f25092",
+    "source": "Allowed characters a-z, 0-9 and -",
+    "parameters": [],
+    "patterns": [
+      "Allowed characters a-z, 0-9 and -"
+    ]
+  },
+  {
+    "id": "server.message.m8d4c22034dd2",
+    "source": "Unable to send test message: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to send test message: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m8e5bd7c589bb",
+    "source": "Authentication failed. Verify your mam_id is correct (found under Preferences > Security on MAM). If using a proxy, ensure it's configured in Settings > General > Proxy.",
+    "parameters": [],
+    "patterns": [
+      "Authentication failed. Verify your mam_id is correct (found under Preferences > Security on MAM). If using a proxy, ensure it's configured in Settings > General > Proxy."
+    ]
+  },
+  {
+    "id": "server.message.m90756117dabc",
+    "source": "Group cannot be empty",
+    "parameters": [],
+    "patterns": [
+      "Group cannot be empty"
+    ]
+  },
+  {
+    "id": "server.message.m90e878e6a71d",
+    "source": "Verifying M4B",
+    "parameters": [],
+    "patterns": [
+      "Verifying M4B"
+    ]
+  },
+  {
+    "id": "server.message.m90ee48cf606f",
+    "source": "QueryParam callbackUrl invalid.",
+    "parameters": [],
+    "patterns": [
+      "QueryParam callbackUrl invalid."
+    ]
+  },
+  {
+    "id": "server.message.m91239a59f3b6",
+    "source": "'None' is a reserved profile name",
+    "parameters": [],
+    "patterns": [
+      "'None' is a reserved profile name"
+    ]
+  },
+  {
+    "id": "server.message.m9123e0c2a1bb",
+    "source": "A representative non-native edition was selected because no better native edition was proven.",
+    "parameters": [],
+    "patterns": [
+      "A representative non-native edition was selected because no better native edition was proven."
+    ]
+  },
+  {
+    "id": "server.message.m91368e1b2976",
+    "source": "The UI Language value cannot be less than 1",
+    "parameters": [],
+    "patterns": [
+      "The UI Language value cannot be less than 1"
+    ]
+  },
+  {
+    "id": "server.message.m918d04364ef8",
+    "source": "Mixed root folders must configure at least one media type with quality and metadata profiles",
+    "parameters": [],
+    "patterns": [
+      "Mixed root folders must configure at least one media type with quality and metadata profiles"
+    ]
+  },
+  {
+    "id": "server.message.m93316b25e8e8",
+    "source": "This is a Calibre-Web server, not the required Calibre content server.  See https://manual.calibre-ebook.com/server.html",
+    "parameters": [],
+    "patterns": [
+      "This is a Calibre-Web server, not the required Calibre content server.  See https://manual.calibre-ebook.com/server.html"
+    ]
+  },
+  {
+    "id": "server.message.m9357e7d181e1",
+    "source": "authorIds must contain between 1 and {value0} author IDs",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{MaxBookshelfAuthorIds}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "authorIds must contain between 1 and {value0} author IDs"
+    ]
+  },
+  {
+    "id": "server.message.m93821eb7ce8c",
+    "source": "Authentication failed",
+    "parameters": [],
+    "patterns": [
+      "Authentication failed"
+    ]
+  },
+  {
+    "id": "server.message.m94eb4078c8aa",
+    "source": "Reset complete. Chaptarr is restarting.",
+    "parameters": [],
+    "patterns": [
+      "Reset complete. Chaptarr is restarting."
+    ]
+  },
+  {
+    "id": "server.message.m9513339749ad",
+    "source": "Must contain wildcard (*) or a valid IP Address",
+    "parameters": [],
+    "patterns": [
+      "Must contain wildcard (*) or a valid IP Address"
+    ]
+  },
+  {
+    "id": "server.message.m954e78bbdc02",
+    "source": "API Key Required",
+    "parameters": [],
+    "patterns": [
+      "API Key Required"
+    ]
+  },
+  {
+    "id": "server.message.m95da002ed1ab",
+    "source": "Groups must contain multiple qualities",
+    "parameters": [],
+    "patterns": [
+      "Groups must contain multiple qualities"
+    ]
+  },
+  {
+    "id": "server.message.m95e93a58a893",
+    "source": "Invalid API Key",
+    "parameters": [],
+    "patterns": [
+      "Invalid API Key"
+    ]
+  },
+  {
+    "id": "server.message.m96088c09619f",
+    "source": "Unable to connect to indexer, possibly due to a timeout. Try again or check your network settings. {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to connect to indexer, possibly due to a timeout. Try again or check your network settings. {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m96982c5f8302",
+    "source": "selectedMediaType is required",
+    "parameters": [],
+    "patterns": [
+      "selectedMediaType is required"
+    ]
+  },
+  {
+    "id": "server.message.m96cac189cd5c",
+    "source": "Selected root folder is not configured. Add it in Settings → Media Management.",
+    "parameters": [],
+    "patterns": [
+      "Selected root folder is not configured. Add it in Settings → Media Management."
+    ]
+  },
+  {
+    "id": "server.message.m981756178170",
+    "source": "Pending import cancelled",
+    "parameters": [],
+    "patterns": [
+      "Pending import cancelled"
+    ]
+  },
+  {
+    "id": "server.message.m9817bacf2fda",
+    "source": "Goodreads user ID is required",
+    "parameters": [],
+    "patterns": [
+      "Goodreads user ID is required"
+    ]
+  },
+  {
+    "id": "server.message.m98365a376c5d",
+    "source": "Cannot add book: missing upstream provider book/work ID (Hardcover/Goodreads/OpenLibrary/GoogleBooks).",
+    "parameters": [],
+    "patterns": [
+      "Cannot add book: missing upstream provider book/work ID (Hardcover/Goodreads/OpenLibrary/GoogleBooks)."
+    ]
+  },
+  {
+    "id": "server.message.m98845de47ab9",
+    "source": "Unknown exception: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unknown exception: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.m98a47664009b",
+    "source": "Import list exclusion already exists for this provider ID and media type",
+    "parameters": [],
+    "patterns": [
+      "Import list exclusion already exists for this provider ID and media type"
+    ]
+  },
+  {
+    "id": "server.message.m9a779542e291",
+    "source": "Format must be 'ebook' or 'audiobook'.",
+    "parameters": [],
+    "patterns": [
+      "Format must be 'ebook' or 'audiobook'."
+    ]
+  },
+  {
+    "id": "server.message.m9b346d2de967",
+    "source": "series not found",
+    "parameters": [],
+    "patterns": [
+      "series not found"
+    ]
+  },
+  {
+    "id": "server.message.m9b38eb4dd1c0",
+    "source": "Invalid audiobook tag mode",
+    "parameters": [],
+    "patterns": [
+      "Invalid audiobook tag mode"
+    ]
+  },
+  {
+    "id": "server.message.m9bb5b0761aa3",
+    "source": "Apikey is invalid",
+    "parameters": [],
+    "patterns": [
+      "Apikey is invalid"
+    ]
+  },
+  {
+    "id": "server.message.m9c90e66f400b",
+    "source": "Author identity was present in matchable metadata.",
+    "parameters": [],
+    "patterns": [
+      "Author identity was present in matchable metadata."
+    ]
+  },
+  {
+    "id": "server.message.m9d7030ad5fa8",
+    "source": "Unable to connect to Usenet Download Station",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to Usenet Download Station"
+    ]
+  },
+  {
+    "id": "server.message.m9d8a99c2333e",
+    "source": "List {value0} not found",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "List {value0} not found"
+    ]
+  },
+  {
+    "id": "server.message.m9e8516ddc60e",
+    "source": "Author media moves must be started through the preview-validated author/media-move endpoint.",
+    "parameters": [],
+    "patterns": [
+      "Author media moves must be started through the preview-validated author/media-move endpoint."
+    ]
+  },
+  {
+    "id": "server.message.m9f3baf4b7d39",
+    "source": "Proxy is configured for indexers. Make sure these settings match your torrent client's proxy.",
+    "parameters": [],
+    "patterns": [
+      "Proxy is configured for indexers. Make sure these settings match your torrent client's proxy."
+    ]
+  },
+  {
+    "id": "server.message.m9fa2dc8d8674",
+    "source": "Download Client does not exist",
+    "parameters": [],
+    "patterns": [
+      "Download Client does not exist"
+    ]
+  },
+  {
+    "id": "server.message.ma0102c76d3fd",
+    "source": "Unable to connect to indexer, invalid credentials. {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to connect to indexer, invalid credentials. {value0}"
+    ]
+  },
+  {
+    "id": "server.message.ma055d12bbb41",
+    "source": "{value0} MonitorExisting must be 0 (None), 1 (All), 2 (Selected), or null (unconfigured)",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "{value0} MonitorExisting must be 0 (None), 1 (All), 2 (Selected), or null (unconfigured)"
+    ]
+  },
+  {
+    "id": "server.message.ma0fce9d22095",
+    "source": "Unable to connect to Goodreads, check the log for more details",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to Goodreads, check the log for more details"
+    ]
+  },
+  {
+    "id": "server.message.ma28fc67879dd",
+    "source": "Unable to connect to import list, check the log for more details",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to import list, check the log for more details"
+    ]
+  },
+  {
+    "id": "server.message.ma38b3893e50f",
+    "source": "must be valid URL that starts with http(s)://",
+    "parameters": [],
+    "patterns": [
+      "must be valid URL that starts with http(s)://"
+    ]
+  },
+  {
+    "id": "server.message.ma3917978a8e1",
+    "source": "Unable to connect to Hardcover. Check logs for details.",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to Hardcover. Check logs for details."
+    ]
+  },
+  {
+    "id": "server.message.ma4146c6f3330",
+    "source": "Groups must have a name",
+    "parameters": [],
+    "patterns": [
+      "Groups must have a name"
+    ]
+  },
+  {
+    "id": "server.message.ma4556afba7bb",
+    "source": "Allowed characters a-z and -",
+    "parameters": [],
+    "patterns": [
+      "Allowed characters a-z and -"
+    ]
+  },
+  {
+    "id": "server.message.ma45de3679283",
+    "source": "Provider authorization expired. Please sign in again.",
+    "parameters": [],
+    "patterns": [
+      "Provider authorization expired. Please sign in again."
+    ]
+  },
+  {
+    "id": "server.message.ma4a7539d1468",
+    "source": "Jackett's all endpoint is not supported, please add indexers individually",
+    "parameters": [],
+    "patterns": [
+      "Jackett's all endpoint is not supported, please add indexers individually"
+    ]
+  },
+  {
+    "id": "server.message.ma50860d45729",
+    "source": "mediaType must be either 'audiobook' or 'ebook'",
+    "parameters": [],
+    "patterns": [
+      "mediaType must be either 'audiobook' or 'ebook'"
+    ]
+  },
+  {
+    "id": "server.message.ma5add25e2d2b",
+    "source": "Unable to connect to qBittorrent",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to qBittorrent"
+    ]
+  },
+  {
+    "id": "server.message.ma6e1d81614c2",
+    "source": "AudioBookShelf OIDC did not redirect (status {value0}). Ensure OpenID Connect is enabled and configured on your AudioBookShelf server.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic} {dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "AudioBookShelf OIDC did not redirect (status {value0}). Ensure OpenID Connect is enabled and configured on your AudioBookShelf server."
+    ]
+  },
+  {
+    "id": "server.message.ma74229566030",
+    "source": "Unable to connect to the MQTT broker. Check the host, port, TLS configuration, and credentials.",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to the MQTT broker. Check the host, port, TLS configuration, and credentials."
+    ]
+  },
+  {
+    "id": "server.message.ma78299fc1030",
+    "source": "Unable to connect to Aria2",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to Aria2"
+    ]
+  },
+  {
+    "id": "server.message.ma78a4fddf37c",
+    "source": "Connection failed: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{ex.Message}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Connection failed: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.maa2f02998325",
+    "source": "unmappedFiles.scope must be either 'all' or 'selected'",
+    "parameters": [],
+    "patterns": [
+      "unmappedFiles.scope must be either 'all' or 'selected'"
+    ]
+  },
+  {
+    "id": "server.message.maac9e4a96941",
+    "source": "The selected audiobook library was not found in Grimmory",
+    "parameters": [],
+    "patterns": [
+      "The selected audiobook library was not found in Grimmory"
+    ]
+  },
+  {
+    "id": "server.message.mabe1d95cd244",
+    "source": "Cannot add book because metadata did not provide any editions for it.",
+    "parameters": [],
+    "patterns": [
+      "Cannot add book because metadata did not provide any editions for it."
+    ]
+  },
+  {
+    "id": "server.message.mabf784dde141",
+    "source": "Proxy is disabled. For MyAnonaMouse, set ProxyMode to 'IndexerOnly' and configure your proxy settings to match your torrent client.",
+    "parameters": [],
+    "patterns": [
+      "Proxy is disabled. For MyAnonaMouse, set ProxyMode to 'IndexerOnly' and configure your proxy settings to match your torrent client."
+    ]
+  },
+  {
+    "id": "server.message.mad4403ee2645",
+    "source": "Deluge is reporting an error",
+    "parameters": [],
+    "patterns": [
+      "Deluge is reporting an error"
+    ]
+  },
+  {
+    "id": "server.message.mad4c58282c50",
+    "source": "Bookshelf only changes book monitoring. Use Author Editor to change author or future-book monitoring.",
+    "parameters": [],
+    "patterns": [
+      "Bookshelf only changes book monitoring. Use Author Editor to change author or future-book monitoring."
+    ]
+  },
+  {
+    "id": "server.message.mad57ae259acd",
+    "source": "Failed to link author to folder",
+    "parameters": [],
+    "patterns": [
+      "Failed to link author to folder"
+    ]
+  },
+  {
+    "id": "server.message.mae08de635f3b",
+    "source": "Proxy test failed after all retries",
+    "parameters": [],
+    "patterns": [
+      "Proxy test failed after all retries"
+    ]
+  },
+  {
+    "id": "server.message.mae40d81346d7",
+    "source": "Narrator evidence corroborated this edition.",
+    "parameters": [],
+    "patterns": [
+      "Narrator evidence corroborated this edition."
+    ]
+  },
+  {
+    "id": "server.message.maef426d77944",
+    "source": "must be a valid URL that starts with http:// or https://",
+    "parameters": [],
+    "patterns": [
+      "must be a valid URL that starts with http:// or https://"
+    ]
+  },
+  {
+    "id": "server.message.mafabf0b8cd14",
+    "source": "This logical field proved the pinned edition narrator.",
+    "parameters": [],
+    "patterns": [
+      "This logical field proved the pinned edition narrator."
+    ]
+  },
+  {
+    "id": "server.message.mb014530ef471",
+    "source": "mediaType must be 'all', 'audiobook', or 'ebook'",
+    "parameters": [],
+    "patterns": [
+      "mediaType must be 'all', 'audiobook', or 'ebook'"
+    ]
+  },
+  {
+    "id": "server.message.mb0440371ddd8",
+    "source": "An {value0} metadata profile is required",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{mediaLabel}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "An {value0} metadata profile is required"
+    ]
+  },
+  {
+    "id": "server.message.mb1ace47af8d6",
+    "source": "This Calibre content server already backs the root folder '{value0}'. Chaptarr manages that library directly, so pushing to it again would create duplicates.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "This Calibre content server already backs the root folder '{value0}'. Chaptarr manages that library directly, so pushing to it again would create duplicates."
+    ]
+  },
+  {
+    "id": "server.message.mb22367b08b4b",
+    "source": "{value0} '{value1}' resolves to multiple local authors. Retry with a local author id or a more specific provider identity.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "{value0} '{value1}' resolves to multiple local authors. Retry with a local author id or a more specific provider identity."
+    ]
+  },
+  {
+    "id": "server.message.mb226a7601a47",
+    "source": "The identifier candidate belongs to the caller-restricted author.",
+    "parameters": [],
+    "patterns": [
+      "The identifier candidate belongs to the caller-restricted author."
+    ]
+  },
+  {
+    "id": "server.message.mb2a0b21e8fd0",
+    "source": "The BookOrbit account must have Book Dock Access permission.",
+    "parameters": [],
+    "patterns": [
+      "The BookOrbit account must have Book Dock Access permission."
+    ]
+  },
+  {
+    "id": "server.message.mb2a894bd2c51",
+    "source": "Unable to connect to AudioBookShelf. Status: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to connect to AudioBookShelf. Status: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.mb2b9d54cbbeb",
+    "source": "Import limit must be 0 or greater",
+    "parameters": [],
+    "patterns": [
+      "Import limit must be 0 or greater"
+    ]
+  },
+  {
+    "id": "server.message.mb2cee5ce3cb9",
+    "source": "No rss feed query available. This may be an issue with the indexer or your indexer category settings.",
+    "parameters": [],
+    "patterns": [
+      "No rss feed query available. This may be an issue with the indexer or your indexer category settings."
+    ]
+  },
+  {
+    "id": "server.message.mb38c03c54368",
+    "source": "A {value0} quality profile is required",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{mediaLabel}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "A {value0} quality profile is required"
+    ]
+  },
+  {
+    "id": "server.message.mb4816d4da7e5",
+    "source": "Photo not found",
+    "parameters": [],
+    "patterns": [
+      "Photo not found"
+    ]
+  },
+  {
+    "id": "server.message.mb49aaf2a4025",
+    "source": "Please save the metadata server URL before testing it",
+    "parameters": [],
+    "patterns": [
+      "Please save the metadata server URL before testing it"
+    ]
+  },
+  {
+    "id": "server.message.mb505c36a7cb5",
+    "source": "Goodreads OAuth secret is required when an access token is configured",
+    "parameters": [],
+    "patterns": [
+      "Goodreads OAuth secret is required when an access token is configured"
+    ]
+  },
+  {
+    "id": "server.message.mb53c8e4de88b",
+    "source": "Invalid mediaType. Expected 'audiobook' or 'ebook'.",
+    "parameters": [],
+    "patterns": [
+      "Invalid mediaType. Expected 'audiobook' or 'ebook'."
+    ]
+  },
+  {
+    "id": "server.message.mb5750cd165f2",
+    "source": "Selected root folder is Audiobook-only; choose an Ebook or Mixed root folder",
+    "parameters": [],
+    "patterns": [
+      "Selected root folder is Audiobook-only; choose an Ebook or Mixed root folder"
+    ]
+  },
+  {
+    "id": "server.message.mb6be07fa6182",
+    "source": "Invalid folder type. Valid values are 0 (Mixed), 1 (Audiobook), 2 (Ebook)",
+    "parameters": [],
+    "patterns": [
+      "Invalid folder type. Valid values are 0 (Mixed), 1 (Audiobook), 2 (Ebook)"
+    ]
+  },
+  {
+    "id": "server.message.mb762894b98c4",
+    "source": "This logical field supplied book-title containment proof.",
+    "parameters": [],
+    "patterns": [
+      "This logical field supplied book-title containment proof."
+    ]
+  },
+  {
+    "id": "server.message.mb7acdc796c01",
+    "source": "Narrator tokens corroborated this edition.",
+    "parameters": [],
+    "patterns": [
+      "Narrator tokens corroborated this edition."
+    ]
+  },
+  {
+    "id": "server.message.mb8d345c1fd7e",
+    "source": "Root folder path '{value0}' contains author folder '{value1}'",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Root folder path '{value0}' contains author folder '{value1}'"
+    ]
+  },
+  {
+    "id": "server.message.mb9cbb26f3ba3",
+    "source": "Matching series position corroborated the title-eligible candidate.",
+    "parameters": [],
+    "patterns": [
+      "Matching series position corroborated the title-eligible candidate."
+    ]
+  },
+  {
+    "id": "server.message.mba5771faddc5",
+    "source": "Site protected by CloudFlare CAPTCHA. Valid CAPTCHA token required.",
+    "parameters": [],
+    "patterns": [
+      "Site protected by CloudFlare CAPTCHA. Valid CAPTCHA token required."
+    ]
+  },
+  {
+    "id": "server.message.mbaa43d1af122",
+    "source": "Pattern cannot be empty",
+    "parameters": [],
+    "patterns": [
+      "Pattern cannot be empty"
+    ]
+  },
+  {
+    "id": "server.message.mbadd91901e47",
+    "source": "No usable field-bound series-position evidence was present.",
+    "parameters": [],
+    "patterns": [
+      "No usable field-bound series-position evidence was present."
+    ]
+  },
+  {
+    "id": "server.message.mbb0768d3aacf",
+    "source": "EditionId is required",
+    "parameters": [],
+    "patterns": [
+      "EditionId is required"
+    ]
+  },
+  {
+    "id": "server.message.mbb1b33553dcd",
+    "source": "Device IDs appear invalid.",
+    "parameters": [],
+    "patterns": [
+      "Device IDs appear invalid."
+    ]
+  },
+  {
+    "id": "server.message.mbb360b3a6046",
+    "source": "Process failed to start",
+    "parameters": [],
+    "patterns": [
+      "Process failed to start"
+    ]
+  },
+  {
+    "id": "server.message.mbba4350c84e5",
+    "source": "ImageUrl is required",
+    "parameters": [],
+    "patterns": [
+      "ImageUrl is required"
+    ]
+  },
+  {
+    "id": "server.message.mbbd2e6de2c1a",
+    "source": "The position conflicted, but this mode did not let position override stronger title proof.",
+    "parameters": [],
+    "patterns": [
+      "The position conflicted, but this mode did not let position override stronger title proof."
+    ]
+  },
+  {
+    "id": "server.message.mbc0594f9f5e3",
+    "source": "Chaptarr needs write access. Configure a user or trusted IP in calibre. See https://manual.calibre-ebook.com/server.html",
+    "parameters": [],
+    "patterns": [
+      "Chaptarr needs write access. Configure a user or trusted IP in calibre. See https://manual.calibre-ebook.com/server.html"
+    ]
+  },
+  {
+    "id": "server.message.mbcafeabd6b8d",
+    "source": "Author queued for import",
+    "parameters": [],
+    "patterns": [
+      "Author queued for import"
+    ]
+  },
+  {
+    "id": "server.message.mbcbc641ba38e",
+    "source": "Author tokens corroborated this candidate.",
+    "parameters": [],
+    "patterns": [
+      "Author tokens corroborated this candidate."
+    ]
+  },
+  {
+    "id": "server.message.mbcc5625a5822",
+    "source": "Username is required when API key is not configured",
+    "parameters": [],
+    "patterns": [
+      "Username is required when API key is not configured"
+    ]
+  },
+  {
+    "id": "server.message.mbd726c6fbe70",
+    "source": "Select Emby or Jellyfin",
+    "parameters": [],
+    "patterns": [
+      "Select Emby or Jellyfin"
+    ]
+  },
+  {
+    "id": "server.message.mbdf9bc8e9c84",
+    "source": "BookshelfNG book additions must select exactly one edition; its format determines the catalog entry to add.",
+    "parameters": [],
+    "patterns": [
+      "BookshelfNG book additions must select exactly one edition; its format determines the catalog entry to add."
+    ]
+  },
+  {
+    "id": "server.message.mbe3741e42b3c",
+    "source": "Invalid Path: '{value0}'",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Invalid Path: '{value0}'"
+    ]
+  },
+  {
+    "id": "server.message.mbe8cfdb18d3d",
+    "source": "Metadata field source preference is not supported.",
+    "parameters": [],
+    "patterns": [
+      "Metadata field source preference is not supported."
+    ]
+  },
+  {
+    "id": "server.message.mbefd03741239",
+    "source": "Publication year conflicted with this edition; stronger book identity evidence won.",
+    "parameters": [],
+    "patterns": [
+      "Publication year conflicted with this edition; stronger book identity evidence won."
+    ]
+  },
+  {
+    "id": "server.message.mbf2bef5ba1da",
+    "source": "Must be unique.",
+    "parameters": [],
+    "patterns": [
+      "Must be unique."
+    ]
+  },
+  {
+    "id": "server.message.mc17ea4dfb45f",
+    "source": "Hardcover API token is invalid or expired",
+    "parameters": [],
+    "patterns": [
+      "Hardcover API token is invalid or expired"
+    ]
+  },
+  {
+    "id": "server.message.mc1b539256890",
+    "source": "Select at least one library section to import",
+    "parameters": [],
+    "patterns": [
+      "Select at least one library section to import"
+    ]
+  },
+  {
+    "id": "server.message.mc21c7d5d2843",
+    "source": "RanobeDB release IDs identify editions. Use an rn: work ID for foreignBookId.",
+    "parameters": [],
+    "patterns": [
+      "RanobeDB release IDs identify editions. Use an rn: work ID for foreignBookId."
+    ]
+  },
+  {
+    "id": "server.message.mc30b981283d0",
+    "source": "Unable to send test email",
+    "parameters": [],
+    "patterns": [
+      "Unable to send test email"
+    ]
+  },
+  {
+    "id": "server.message.mc34d917eb83b",
+    "source": "folder must be provided when bookFileIds are used",
+    "parameters": [],
+    "patterns": [
+      "folder must be provided when bookFileIds are used"
+    ]
+  },
+  {
+    "id": "server.message.mc390f9b5f909",
+    "source": "{value0} MonitorExistingMode must be All, Missing, Existing, None, or null (unconfigured)",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "{value0} MonitorExistingMode must be All, Missing, Existing, None, or null (unconfigured)"
+    ]
+  },
+  {
+    "id": "server.message.mc3b239e3eb56",
+    "source": "Must be a valid URL path (ie: '{value0}')",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{example}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Must be a valid URL path (ie: '{value0}')"
+    ]
+  },
+  {
+    "id": "server.message.mc3e41cdbd274",
+    "source": "Chaptarr is restarting after a factory reset, please try again shortly",
+    "parameters": [],
+    "patterns": [
+      "Chaptarr is restarting after a factory reset, please try again shortly"
+    ]
+  },
+  {
+    "id": "server.message.mc41179432177",
+    "source": "Getting release from indexer failed: {value0}",
+    "parameters": [
+      {
+        "name": "value0"
+      }
+    ],
+    "patterns": [
+      "Getting release from indexer failed: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.mc462c3fca43d",
+    "source": "Completed file is missing from the staging folder.",
+    "parameters": [],
+    "patterns": [
+      "Completed file is missing from the staging folder."
+    ]
+  },
+  {
+    "id": "server.message.mc5cf1e747783",
+    "source": "Groups must have an ID",
+    "parameters": [],
+    "patterns": [
+      "Groups must have an ID"
+    ]
+  },
+  {
+    "id": "server.message.mc5e69abdf17a",
+    "source": "Import list feed is not supported: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Import list feed is not supported: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.mc700e6bf21f6",
+    "source": "Calibre library is already configured as a root folder",
+    "parameters": [],
+    "patterns": [
+      "Calibre library is already configured as a root folder"
+    ]
+  },
+  {
+    "id": "server.message.mc76459e52a3e",
+    "source": "Unable to connect: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to connect: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.mc78af077e86e",
+    "source": "Must not be a descendant of '{value0}'",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{systemFolder}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Must not be a descendant of '{value0}'"
+    ]
+  },
+  {
+    "id": "server.message.mc87b96cb40ec",
+    "source": "The content server requires authentication, enter a username and password",
+    "parameters": [],
+    "patterns": [
+      "The content server requires authentication, enter a username and password"
+    ]
+  },
+  {
+    "id": "server.message.mc8b126d79c7b",
+    "source": "The catalog edition has no usable publication year.",
+    "parameters": [],
+    "patterns": [
+      "The catalog edition has no usable publication year."
+    ]
+  },
+  {
+    "id": "server.message.mc9032616fbb4",
+    "source": "QueryParam oauth_token invalid.",
+    "parameters": [],
+    "patterns": [
+      "QueryParam oauth_token invalid."
+    ]
+  },
+  {
+    "id": "server.message.mc9036b7c4f55",
+    "source": "At least one narrator name is required",
+    "parameters": [],
+    "patterns": [
+      "At least one narrator name is required"
+    ]
+  },
+  {
+    "id": "server.message.mc90b09463d1b",
+    "source": "Must be 0 to disable or at least 60 minutes",
+    "parameters": [],
+    "patterns": [
+      "Must be 0 to disable or at least 60 minutes"
+    ]
+  },
+  {
+    "id": "server.message.mc95460cab48b",
+    "source": "Missing requestTokenSecret.",
+    "parameters": [],
+    "patterns": [
+      "Missing requestTokenSecret."
+    ]
+  },
+  {
+    "id": "server.message.mc96c588cf1f8",
+    "source": "Unknown languages",
+    "parameters": [],
+    "patterns": [
+      "Unknown languages"
+    ]
+  },
+  {
+    "id": "server.message.mc9e941eacbbd",
+    "source": "Selected edition {value0} could not be resolved for the requested media type.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Selected edition {value0} could not be resolved for the requested media type."
+    ]
+  },
+  {
+    "id": "server.message.mca68744b8296",
+    "source": "Query successful, but no results in the configured categories were returned from your indexer. This may be an issue with the indexer or your indexer category settings.",
+    "parameters": [],
+    "patterns": [
+      "Query successful, but no results in the configured categories were returned from your indexer. This may be an issue with the indexer or your indexer category settings."
+    ]
+  },
+  {
+    "id": "server.message.mca7536ee5f0c",
+    "source": "The catalog edition has no usable duration.",
+    "parameters": [],
+    "patterns": [
+      "The catalog edition has no usable duration."
+    ]
+  },
+  {
+    "id": "server.message.mca83d096fea2",
+    "source": "Path '{value0}' cannot be the startup folder",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{path}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Path '{value0}' cannot be set to the start up folder"
+    ]
+  },
+  {
+    "id": "server.message.mca83d096fea2.child",
+    "source": "Path '{value0}' cannot be inside the startup folder",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{path}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Path '{value0}' cannot be child of the start up folder"
+    ]
+  },
+  {
+    "id": "server.message.mcb9b05f6a4a0",
+    "source": "authorId, bookId, bookFileIds or unmapped must be provided",
+    "parameters": [],
+    "patterns": [
+      "authorId, bookId, bookFileIds or unmapped must be provided"
+    ]
+  },
+  {
+    "id": "server.message.mccd996f9f042",
+    "source": "Path '{value0}' is the system folder {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{path}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{systemFolder}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Path '{value0}' is set to system folder {value1}"
+    ]
+  },
+  {
+    "id": "server.message.mccd996f9f042.child",
+    "source": "Path '{value0}' is inside the system folder {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{path}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{systemFolder}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Path '{value0}' is child of system folder {value1}"
+    ]
+  },
+  {
+    "id": "server.message.mccef5f1c0beb",
+    "source": "Invalid Hardcover {value0} id: {value1}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Invalid Hardcover {value0} id: {value1}"
+    ]
+  },
+  {
+    "id": "server.message.mcd62354c7d7b",
+    "source": "Disable TV Sorting",
+    "parameters": [],
+    "patterns": [
+      "Disable TV Sorting"
+    ]
+  },
+  {
+    "id": "server.message.mcec1fcaa43a5",
+    "source": "No tag names a narrator; the length matched the pinned edition. Difference {value0} seconds; matching tolerance {value1} seconds; nearest other narration {value2} seconds away.",
+    "parameters": [
+      {
+        "name": "value0"
+      },
+      {
+        "name": "value1"
+      },
+      {
+        "name": "value2"
+      }
+    ],
+    "patterns": [
+      "No tag names a narrator; the length matched the pinned edition. Difference {value0} seconds; matching tolerance {value1} seconds; nearest other narration {value2} seconds away."
+    ]
+  },
+  {
+    "id": "server.message.mced5ab929209",
+    "source": "The download is missing files",
+    "parameters": [],
+    "patterns": [
+      "The download is missing files"
+    ]
+  },
+  {
+    "id": "server.message.mcf68e3f6b8e3",
+    "source": "Not a valid library in calibre",
+    "parameters": [],
+    "patterns": [
+      "Not a valid library in calibre"
+    ]
+  },
+  {
+    "id": "server.message.mcfc8b38e45bf",
+    "source": "No {value0} root folders are configured. Add one in Settings → Media Management.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "No {value0} root folders are configured. Add one in Settings → Media Management."
+    ]
+  },
+  {
+    "id": "server.message.mcfeae8b07694",
+    "source": "No {value0} edition available for this book",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "No {value0} edition available for this book"
+    ]
+  },
+  {
+    "id": "server.message.md0b3139c8f8d",
+    "source": "Must be a Synology",
+    "parameters": [],
+    "patterns": [
+      "Must be a Synology"
+    ]
+  },
+  {
+    "id": "server.message.md0cc5efbe5e0",
+    "source": "URL cannot be empty",
+    "parameters": [],
+    "patterns": [
+      "URL cannot be empty"
+    ]
+  },
+  {
+    "id": "server.message.md0f03bb6aace",
+    "source": "This author has already been added",
+    "parameters": [],
+    "patterns": [
+      "This author has already been added"
+    ]
+  },
+  {
+    "id": "server.message.md11a72264757",
+    "source": "Unable to post payload",
+    "parameters": [],
+    "patterns": [
+      "Unable to post payload"
+    ]
+  },
+  {
+    "id": "server.message.md1438d52738d",
+    "source": "Book ID does not match the requested media type.",
+    "parameters": [],
+    "patterns": [
+      "Book ID does not match the requested media type."
+    ]
+  },
+  {
+    "id": "server.message.md3369b86b4dd",
+    "source": "Book with id {value0} not found",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{bookId}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Book with id {value0} not found"
+    ]
+  },
+  {
+    "id": "server.message.md339df0d44f9",
+    "source": "Hardcover is not enabled (enable it in Settings or set an API token on this import list)",
+    "parameters": [],
+    "patterns": [
+      "Hardcover is not enabled (enable it in Settings or set an API token on this import list)"
+    ]
+  },
+  {
+    "id": "server.message.md4d56753c34d",
+    "source": "Failed to clear API token",
+    "parameters": [],
+    "patterns": [
+      "Failed to clear API token"
+    ]
+  },
+  {
+    "id": "server.message.md4fffc46dcc4",
+    "source": "Cannot add book: the selected result does not contain a stable work-level provider ID.",
+    "parameters": [],
+    "patterns": [
+      "Cannot add book: the selected result does not contain a stable work-level provider ID."
+    ]
+  },
+  {
+    "id": "server.message.md512ba71433e",
+    "source": "At least one bookshelf is required",
+    "parameters": [],
+    "patterns": [
+      "At least one bookshelf is required"
+    ]
+  },
+  {
+    "id": "server.message.md5295352b8ae",
+    "source": "Selected root folder '{value0}' is missing a {value1} metadata profile default",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Selected root folder '{value0}' is missing a {value1} metadata profile default"
+    ]
+  },
+  {
+    "id": "server.message.md657eda9fd8b",
+    "source": "Edition format matches the discovered file type.",
+    "parameters": [],
+    "patterns": [
+      "Edition format matches the discovered file type."
+    ]
+  },
+  {
+    "id": "server.message.md7cf291e278c",
+    "source": "Unable to send test message. Response from API: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to send test message. Response from API: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.md83ae8fb37f8",
+    "source": "Authentication failure",
+    "parameters": [],
+    "patterns": [
+      "Authentication failure"
+    ]
+  },
+  {
+    "id": "server.message.md9111cdedddb",
+    "source": "Unable to determine the library folder for {value0}.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to determine the library folder for {value0}."
+    ]
+  },
+  {
+    "id": "server.message.md91e67950f89",
+    "source": "Refresh interval must be at least {value0} minutes",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{GoodreadsBookshelfImportListSettings.MinimumRefreshIntervalMinutes}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Refresh interval must be at least {value0} minutes"
+    ]
+  },
+  {
+    "id": "server.message.md92a7552538b",
+    "source": "Matching series position was eligible to break a title tie.",
+    "parameters": [],
+    "patterns": [
+      "Matching series position was eligible to break a title tie."
+    ]
+  },
+  {
+    "id": "server.message.md9b3d7c8214b",
+    "source": "The same normalized author span appeared in this physical field throughout the group.",
+    "parameters": [],
+    "patterns": [
+      "The same normalized author span appeared in this physical field throughout the group."
+    ]
+  },
+  {
+    "id": "server.message.mda7cc46933e8",
+    "source": "Cannot re-add author: no provider ID found.",
+    "parameters": [],
+    "patterns": [
+      "Cannot re-add author: no provider ID found."
+    ]
+  },
+  {
+    "id": "server.message.mda7d07b4febc",
+    "source": "Invalid edition ID. Expected {value0} with an alphanumeric id.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Invalid edition ID. Expected {value0} with an alphanumeric id."
+    ]
+  },
+  {
+    "id": "server.message.mda954bbc0eee",
+    "source": "A category is recommended",
+    "parameters": [],
+    "patterns": [
+      "A category is recommended"
+    ]
+  },
+  {
+    "id": "server.message.mdca0d476f941",
+    "source": "Could not get list data",
+    "parameters": [],
+    "patterns": [
+      "Could not get list data"
+    ]
+  },
+  {
+    "id": "server.message.mdd0fed37bc8b",
+    "source": "Unable to connect to Hadouken",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to Hadouken"
+    ]
+  },
+  {
+    "id": "server.message.mdefc6fdd23a6",
+    "source": "Profile type must be Audiobook or Ebook",
+    "parameters": [],
+    "patterns": [
+      "Profile type must be Audiobook or Ebook"
+    ]
+  },
+  {
+    "id": "server.message.mdfcf7eb79131",
+    "source": "title is required",
+    "parameters": [],
+    "patterns": [
+      "title is required"
+    ]
+  },
+  {
+    "id": "server.message.me178a7a2cf25",
+    "source": "Selected edition {value0} does not belong to selected book {value1}.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Selected edition {value0} does not belong to selected book {value1}."
+    ]
+  },
+  {
+    "id": "server.message.me252af6f4c70",
+    "source": "Individual qualities should not be named",
+    "parameters": [],
+    "patterns": [
+      "Individual qualities should not be named"
+    ]
+  },
+  {
+    "id": "server.message.me3d343200bdd",
+    "source": "Should be greater than zero",
+    "parameters": [],
+    "patterns": [
+      "Should be greater than zero"
+    ]
+  },
+  {
+    "id": "server.message.me3e7aa14f3c4",
+    "source": "This field was excluded from fuzzy/content matching by the shared tag policy.",
+    "parameters": [],
+    "patterns": [
+      "This field was excluded from fuzzy/content matching by the shared tag policy."
+    ]
+  },
+  {
+    "id": "server.message.me3f9929f31ad",
+    "source": "Selected foreign edition '{value0}' could not be found.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Selected foreign edition '{value0}' could not be found."
+    ]
+  },
+  {
+    "id": "server.message.me40966162b11",
+    "source": "Unable to connect",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect"
+    ]
+  },
+  {
+    "id": "server.message.me4cb9b13f0b4",
+    "source": "unmappedFiles.scope must be provided",
+    "parameters": [],
+    "patterns": [
+      "unmappedFiles.scope must be provided"
+    ]
+  },
+  {
+    "id": "server.message.me517fdaedf57",
+    "source": "Unable to connect to Hardcover. Check URL/API key and logs for details.",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to Hardcover. Check URL/API key and logs for details."
+    ]
+  },
+  {
+    "id": "server.message.me5225791811a",
+    "source": "Specific-book monitoring requires book provider IDs; use the book add endpoint instead.",
+    "parameters": [],
+    "patterns": [
+      "Specific-book monitoring requires book provider IDs; use the book add endpoint instead."
+    ]
+  },
+  {
+    "id": "server.message.me58ba0bc573d",
+    "source": "Selected root folder is not configured for {value0}.",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Selected root folder is not configured for {value0}."
+    ]
+  },
+  {
+    "id": "server.message.me59dec254c7d",
+    "source": "The matching torrent is no longer available in the selected download client. Search again before grabbing it.",
+    "parameters": [],
+    "patterns": [
+      "The matching torrent is no longer available in the selected download client. Search again before grabbing it."
+    ]
+  },
+  {
+    "id": "server.message.me73b26812f91",
+    "source": "Invalid mediaType parameter: '{value0}'. Valid values are: audiobook, ebook",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{requestedMediaType}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Invalid mediaType parameter: '{value0}'. Valid values are: audiobook, ebook"
+    ]
+  },
+  {
+    "id": "server.message.me74c7bc1f189",
+    "source": "Publication year corroborated this edition.",
+    "parameters": [],
+    "patterns": [
+      "Publication year corroborated this edition."
+    ]
+  },
+  {
+    "id": "server.message.me8703ba3572c",
+    "source": "Selected Plex library could not be found",
+    "parameters": [],
+    "patterns": [
+      "Selected Plex library could not be found"
+    ]
+  },
+  {
+    "id": "server.message.me929c2679b71",
+    "source": "Use Device Names instead",
+    "parameters": [],
+    "patterns": [
+      "Use Device Names instead"
+    ]
+  },
+  {
+    "id": "server.message.me95241776d8a",
+    "source": "Metadata profile does not exist",
+    "parameters": [],
+    "patterns": [
+      "Metadata profile does not exist"
+    ]
+  },
+  {
+    "id": "server.message.mea00d26cbf7a",
+    "source": "Invalid Plex library selection",
+    "parameters": [],
+    "patterns": [
+      "Invalid Plex library selection"
+    ]
+  },
+  {
+    "id": "server.message.mea3737f42d3c",
+    "source": "Invalid hostname",
+    "parameters": [],
+    "patterns": [
+      "Invalid hostname"
+    ]
+  },
+  {
+    "id": "server.message.mea37f4df9a52",
+    "source": "Unable to connect to NZBVortex",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to NZBVortex"
+    ]
+  },
+  {
+    "id": "server.message.meaa282596ccf",
+    "source": "Goodreads access token is required when an OAuth secret is configured",
+    "parameters": [],
+    "patterns": [
+      "Goodreads access token is required when an OAuth secret is configured"
+    ]
+  },
+  {
+    "id": "server.message.meac454bda603",
+    "source": "Process cancelled",
+    "parameters": [],
+    "patterns": [
+      "Process cancelled"
+    ]
+  },
+  {
+    "id": "server.message.meb0aaaf88fff",
+    "source": "Difference {value0} seconds; matching tolerance {value1} seconds.",
+    "parameters": [
+      {
+        "name": "value0"
+      },
+      {
+        "name": "value1"
+      }
+    ],
+    "patterns": [
+      "Difference {value0} seconds; matching tolerance {value1} seconds."
+    ]
+  },
+  {
+    "id": "server.message.meb46390efea0",
+    "source": "Invalid authentication token",
+    "parameters": [],
+    "patterns": [
+      "Invalid authentication token"
+    ]
+  },
+  {
+    "id": "server.message.mebad8a6dd27b",
+    "source": "Must contain at least one allowed quality",
+    "parameters": [],
+    "patterns": [
+      "Must contain at least one allowed quality"
+    ]
+  },
+  {
+    "id": "server.message.mebd5e56ee25f",
+    "source": "Offset must be non-negative",
+    "parameters": [],
+    "patterns": [
+      "Offset must be non-negative"
+    ]
+  },
+  {
+    "id": "server.message.mec15ef07ac20",
+    "source": "These nearby tokens were tolerated by the active matcher mode.",
+    "parameters": [],
+    "patterns": [
+      "These nearby tokens were tolerated by the active matcher mode."
+    ]
+  },
+  {
+    "id": "server.message.mec31555f8838",
+    "source": "qBittorrent is downloading metadata",
+    "parameters": [],
+    "patterns": [
+      "qBittorrent is downloading metadata"
+    ]
+  },
+  {
+    "id": "server.message.mec341ea80e66",
+    "source": "Topic ID must be greater than 1 or empty",
+    "parameters": [],
+    "patterns": [
+      "Topic ID must be greater than 1 or empty"
+    ]
+  },
+  {
+    "id": "server.message.mecf5ccdf0093",
+    "source": "Unable to connect through SSL",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect through SSL"
+    ]
+  },
+  {
+    "id": "server.message.mecf985c120fb",
+    "source": "Unable to connect to rTorrent",
+    "parameters": [],
+    "patterns": [
+      "Unable to connect to rTorrent"
+    ]
+  },
+  {
+    "id": "server.message.mee22efd8ddd1",
+    "source": "BookLore rejected the username or password",
+    "parameters": [],
+    "patterns": [
+      "BookLore rejected the username or password"
+    ]
+  },
+  {
+    "id": "server.message.mee99949d8dea",
+    "source": "Selected edition does not belong to selected book.",
+    "parameters": [],
+    "patterns": [
+      "Selected edition does not belong to selected book."
+    ]
+  },
+  {
+    "id": "server.message.meead9b01a49a",
+    "source": "Old Hadouken client with unsupported API, need 5.1 or higher",
+    "parameters": [],
+    "patterns": [
+      "Old Hadouken client with unsupported API, need 5.1 or higher"
+    ]
+  },
+  {
+    "id": "server.message.mef88db258a46",
+    "source": "Test failed: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Test failed: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.mef9fc1a32869",
+    "source": "Version 0.7.0+ is required, but found: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Version 0.7.0+ is required, but found: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.mefa23f5263d3",
+    "source": "No usable publication year was found in the matchable metadata.",
+    "parameters": [],
+    "patterns": [
+      "No usable publication year was found in the matchable metadata."
+    ]
+  },
+  {
+    "id": "server.message.mefbca50c53e7",
+    "source": "Using Direct Messaging is recommended, or use a private account.",
+    "parameters": [],
+    "patterns": [
+      "Using Direct Messaging is recommended, or use a private account."
+    ]
+  },
+  {
+    "id": "server.message.mf00d6bc38ae8",
+    "source": "Can not contain '', '//', or start/end with '/'",
+    "parameters": [],
+    "patterns": [
+      "Can not contain '', '//', or start/end with '/'"
+    ]
+  },
+  {
+    "id": "server.message.mf12e387b46e1",
+    "source": "RanobeDB metadata is available for eBooks only.",
+    "parameters": [],
+    "patterns": [
+      "RanobeDB metadata is available for eBooks only."
+    ]
+  },
+  {
+    "id": "server.message.mf156eb300353",
+    "source": "Should be unique",
+    "parameters": [],
+    "patterns": [
+      "Should be unique"
+    ]
+  },
+  {
+    "id": "server.message.mf21cf7728117",
+    "source": "No response received from metadata server",
+    "parameters": [],
+    "patterns": [
+      "No response received from metadata server"
+    ]
+  },
+  {
+    "id": "server.message.mf23043f0ad3f",
+    "source": "Indexer does not support the current query. Check if the categories and or searching for seasons/episodes are supported. Check the log for more details.",
+    "parameters": [],
+    "patterns": [
+      "Indexer does not support the current query. Check if the categories and or searching for seasons/episodes are supported. Check the log for more details."
+    ]
+  },
+  {
+    "id": "server.message.mf2463602ee31",
+    "source": "Selected root folder '{value0}' does not have {value1} defaults configured",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Selected root folder '{value0}' does not have {value1} defaults configured"
+    ]
+  },
+  {
+    "id": "server.message.mf302387c1b79",
+    "source": "Invalid monitor value. Expected all, future, missing, existing, first, latest, none, or specificBook.",
+    "parameters": [],
+    "patterns": [
+      "Invalid monitor value. Expected all, future, missing, existing, first, latest, none, or specificBook."
+    ]
+  },
+  {
+    "id": "server.message.mf30786a4727f",
+    "source": "Use Direct Download Url (;download)",
+    "parameters": [],
+    "patterns": [
+      "Use Direct Download Url (;download)"
+    ]
+  },
+  {
+    "id": "server.message.mf32c030ec635",
+    "source": "OIDC session expired. Please try again.",
+    "parameters": [],
+    "patterns": [
+      "OIDC session expired. Please try again."
+    ]
+  },
+  {
+    "id": "server.message.mf32ea06ceff2",
+    "source": "Not a Calibre content server, check the URL",
+    "parameters": [],
+    "patterns": [
+      "Not a Calibre content server, check the URL"
+    ]
+  },
+  {
+    "id": "server.message.mf430ed06c7d4",
+    "source": "Book ID does not match a book in the requested media type.",
+    "parameters": [],
+    "patterns": [
+      "Book ID does not match a book in the requested media type."
+    ]
+  },
+  {
+    "id": "server.message.mf4433d3129ba",
+    "source": "Queueing not enabled",
+    "parameters": [],
+    "patterns": [
+      "Queueing not enabled"
+    ]
+  },
+  {
+    "id": "server.message.mf48700de77d5",
+    "source": "Author not found",
+    "parameters": [],
+    "patterns": [
+      "Author not found"
+    ]
+  },
+  {
+    "id": "server.message.mf4b3a5b30180",
+    "source": "This text was considered but did not support or contradict the selected match.",
+    "parameters": [],
+    "patterns": [
+      "This text was considered but did not support or contradict the selected match."
+    ]
+  },
+  {
+    "id": "server.message.mf558b02f67e3",
+    "source": "ast is required",
+    "parameters": [],
+    "patterns": [
+      "ast is required"
+    ]
+  },
+  {
+    "id": "server.message.mf59d87558dd2",
+    "source": "Unable to retrieve libraries from AudioBookShelf: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to retrieve libraries from AudioBookShelf: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.mf600936551d1",
+    "source": "Invalid topic",
+    "parameters": [],
+    "patterns": [
+      "Invalid topic"
+    ]
+  },
+  {
+    "id": "server.message.mf62e646c6759",
+    "source": "Retrying after error (attempt {value0}/{value1}): {value2}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{attempt}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value1",
+        "sourceToken": "{MaxAttempts}",
+        "kind": "dynamic-data"
+      },
+      {
+        "name": "value2",
+        "sourceToken": "{DirectDownloadGrabUrlResolver.RedactApiKeyFromUrl(ex.Message)}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Retrying after error (attempt {value0}/{value1}): {value2}"
+    ]
+  },
+  {
+    "id": "server.message.mf6eeb6cf6623",
+    "source": "Cannot delete global delay profile",
+    "parameters": [],
+    "patterns": [
+      "Cannot delete global delay profile"
+    ]
+  },
+  {
+    "id": "server.message.mf726e9f7b242",
+    "source": "MetadataProfileId must be greater than 0 if provided",
+    "parameters": [],
+    "patterns": [
+      "MetadataProfileId must be greater than 0 if provided"
+    ]
+  },
+  {
+    "id": "server.message.mf74d744451ed",
+    "source": "Internal server error",
+    "parameters": [],
+    "patterns": [
+      "Internal server error"
+    ]
+  },
+  {
+    "id": "server.message.mf7700d5c96ce",
+    "source": "Webhook URL resolves to a local or private network address. This is allowed, but only use it for internal services you trust.",
+    "parameters": [],
+    "patterns": [
+      "Webhook URL resolves to a local or private network address. This is allowed, but only use it for internal services you trust."
+    ]
+  },
+  {
+    "id": "server.message.mf7f645c8f57a",
+    "source": "Unable to write to folder",
+    "parameters": [],
+    "patterns": [
+      "Unable to write to folder"
+    ]
+  },
+  {
+    "id": "server.message.mf81018a04cff",
+    "source": "Branch name is required, 'main' is the default",
+    "parameters": [],
+    "patterns": [
+      "Branch name is required, 'main' is the default"
+    ]
+  },
+  {
+    "id": "server.message.mf8ac1f8eb475",
+    "source": "Selected edition was not retained for this book.",
+    "parameters": [],
+    "patterns": [
+      "Selected edition was not retained for this book."
+    ]
+  },
+  {
+    "id": "server.message.mf97b04f1dbcf",
+    "source": "Unknown Version: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unknown Version: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.mfa166a34318e",
+    "source": "Request limit reached: {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Request limit reached: {value0}"
+    ]
+  },
+  {
+    "id": "server.message.mfa82f5859e19",
+    "source": "Unable to connect to indexer, check the log above the ValidationFailure for more details. {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to connect to indexer, check the log above the ValidationFailure for more details. {value0}"
+    ]
+  },
+  {
+    "id": "server.message.mfb786c22d100",
+    "source": "Series with id {value0} not found",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{seriesId}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Series with id {value0} not found"
+    ]
+  },
+  {
+    "id": "server.message.mfb797cca63fc",
+    "source": "This file is a multipart track, so its duration was not compared with the full-book edition duration.",
+    "parameters": [],
+    "patterns": [
+      "This file is a multipart track, so its duration was not compared with the full-book edition duration."
+    ]
+  },
+  {
+    "id": "server.message.mfbd0513e376b",
+    "source": "Invalid config contract",
+    "parameters": [],
+    "patterns": [
+      "Invalid config contract"
+    ]
+  },
+  {
+    "id": "server.message.mfc7f1f02c48a",
+    "source": "Select no more than 1,000 authors for a single move.",
+    "parameters": [],
+    "patterns": [
+      "Select no more than 1,000 authors for a single move."
+    ]
+  },
+  {
+    "id": "server.message.mfcc0e5918290",
+    "source": "Must contain Book Title AND PartNumber, OR Original Title",
+    "parameters": [],
+    "patterns": [
+      "Must contain Book Title AND PartNumber, OR Original Title"
+    ]
+  },
+  {
+    "id": "server.message.mfde3b9fa63a8",
+    "source": "Unable to connect to indexer, please check your DNS settings and ensure IPv6 is working or disabled. {value0}",
+    "parameters": [
+      {
+        "name": "value0",
+        "sourceToken": "{dynamic}",
+        "kind": "dynamic-data"
+      }
+    ],
+    "patterns": [
+      "Unable to connect to indexer, please check your DNS settings and ensure IPv6 is working or disabled. {value0}"
+    ]
+  },
+  {
+    "id": "server.message.mffcb31197670",
+    "source": "Failed to save API token. Please try again.",
+    "parameters": [],
+    "patterns": [
+      "Failed to save API token. Please try again."
+    ]
+  }
+]

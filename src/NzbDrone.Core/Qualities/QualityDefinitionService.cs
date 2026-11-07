@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using NLog;
 using NzbDrone.Common.Cache;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
@@ -23,12 +24,14 @@ namespace NzbDrone.Core.Qualities
     {
         private readonly IQualityDefinitionRepository _repo;
         private readonly ICached<Dictionary<Quality, QualityDefinition>> _cache;
+        private readonly IConfigService _configService;
         private readonly Logger _logger;
 
-        public QualityDefinitionService(IQualityDefinitionRepository repo, ICacheManager cacheManager, Logger logger)
+        public QualityDefinitionService(IQualityDefinitionRepository repo, ICacheManager cacheManager, IConfigService configService, Logger logger)
         {
             _repo = repo;
             _cache = cacheManager.GetCache<Dictionary<Quality, QualityDefinition>>(GetType());
+            _configService = configService;
             _logger = logger;
         }
 
@@ -94,9 +97,11 @@ namespace NzbDrone.Core.Qualities
             _cache.Clear();
         }
 
-        private static QualityDefinition WithWeight(QualityDefinition definition)
+        private QualityDefinition WithWeight(QualityDefinition definition)
         {
-            definition.Weight = Quality.DefaultQualityDefinitions.Single(d => d.Quality == definition.Quality).Weight;
+            definition.Weight = _configService?.BookshelfMatchCompatibility == true
+                ? BookshelfQualityCompatibility.GetWeight(definition.Quality)
+                : Quality.DefaultQualityDefinitions.Single(d => d.Quality == definition.Quality).Weight;
 
             return definition;
         }

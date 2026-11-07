@@ -89,8 +89,14 @@ namespace Chaptarr.Core.Test.Datastore
                 context.InitializeDatabase();
 
                 var repository = new IngestQueueRepository(context, LogManager.GetLogger("test"));
-                repository.CompleteItemWithResult(1, "/scan/book.epub", ImportOutcome.AlreadyLinked);
-                Assert.That(repository.GetImportResults().Any(result => result.Outcome == ImportOutcome.AlreadyLinked), Is.True);
+                var searchedAt = new DateTime(2026, 1, 4, 5, 6, 7, DateTimeKind.Utc);
+                repository.CompleteItemWithResult(
+                    1,
+                    "/scan/book.epub",
+                    ImportOutcome.AlreadyLinked,
+                    lastRemoteSearchTime: searchedAt);
+                var recorded = repository.GetImportResults().Single(result => result.Outcome == ImportOutcome.AlreadyLinked);
+                Assert.That(recorded.LastRemoteSearchTimeTicks, Is.EqualTo(searchedAt.Ticks));
 
                 using (var connection = new SqliteConnection(connectionString))
                 {
@@ -105,6 +111,58 @@ namespace Chaptarr.Core.Test.Datastore
                     var outcomes = connection.Query<string>("SELECT outcome FROM import_results ORDER BY id;");
                     Assert.That(outcomes, Is.EquivalentTo(new[] { "imported", "alreadylinked", "ignored" }));
                 }
+            }
+            finally
+            {
+                try
+                {
+                    if (Directory.Exists(appDataFolder))
+                    {
+                        Directory.Delete(appDataFolder, recursive: true);
+                    }
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        [Test]
+        public void initialize_database_should_preserve_remote_search_times_when_rebuilding_old_results_table()
+        {
+            var appDataFolder = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"staging_search_time_repair_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(appDataFolder);
+            var databasePath = Path.Combine(appDataFolder, "staging.db");
+            var connectionString = new SqliteConnectionStringBuilder
+            {
+                DataSource = databasePath,
+                Mode = SqliteOpenMode.ReadWriteCreate,
+                ForeignKeys = true
+            }.ToString();
+            var searchedAt = new DateTime(2026, 1, 4, 5, 6, 7, DateTimeKind.Utc);
+
+            try
+            {
+                using (var connection = new SqliteConnection(connectionString))
+                {
+                    connection.Open();
+                    connection.Execute("PRAGMA foreign_keys=ON;");
+                    CreateOldStagingSchema(connection);
+                    connection.Execute("ALTER TABLE import_results ADD COLUMN last_remote_search_time_ticks INTEGER;");
+                    connection.Execute(@"
+                        INSERT INTO ingest_queue (id, path, mtime_ns, size_bytes, tags_json, status, attempts, created_at, updated_at)
+                        VALUES (1, '/scan/book.epub', 0, 0, '{}', 'done', 0, 1, 1);
+
+                        INSERT INTO import_results (id, queue_item_id, path, outcome, last_remote_search_time_ticks, created_at)
+                        VALUES (1, 1, '/scan/book.epub', 'unmapped', @searchedAt, 1);
+                    ", new { searchedAt = searchedAt.Ticks });
+                }
+
+                var context = new StagingDbContext(new TestAppFolderInfo(appDataFolder), LogManager.GetLogger("test"));
+                context.InitializeDatabase();
+                var result = new IngestQueueRepository(context, LogManager.GetLogger("test")).GetImportResults().Single();
+
+                Assert.That(result.LastRemoteSearchTimeTicks, Is.EqualTo(searchedAt.Ticks));
             }
             finally
             {
@@ -613,13 +671,13 @@ namespace Chaptarr.Core.Test.Datastore
             public FileAttributes GetFileAttributes(string path) => File.GetAttributes(path);
             public void EmptyFolder(string path) => throw new NotImplementedException();
             public string GetVolumeLabel(string path) => throw new NotImplementedException();
-            public FileStream OpenReadStream(string path) => File.OpenRead(path);
-            public FileStream OpenWriteStream(string path) => File.OpenWrite(path);
+            public Stream OpenReadStream(string path) => File.OpenRead(path);
+            public Stream OpenWriteStream(string path) => File.OpenWrite(path);
             public List<IMount> GetMounts() => throw new NotImplementedException();
             public IMount GetMount(string path) => throw new NotImplementedException();
-            public IDirectoryInfo GetDirectoryInfo(string path) => _fileSystem.DirectoryInfo.FromDirectoryName(path);
+            public IDirectoryInfo GetDirectoryInfo(string path) => _fileSystem.DirectoryInfo.New(path);
             public List<IDirectoryInfo> GetDirectoryInfos(string path) => throw new NotImplementedException();
-            public IFileInfo GetFileInfo(string path) => _fileSystem.FileInfo.FromFileName(path);
+            public IFileInfo GetFileInfo(string path) => _fileSystem.FileInfo.New(path);
             public List<IFileInfo> GetFileInfos(string path, bool recursive = false) => throw new NotImplementedException();
             public void RemoveEmptySubfolders(string path) => throw new NotImplementedException();
             public void SaveStream(Stream stream, string path) => throw new NotImplementedException();

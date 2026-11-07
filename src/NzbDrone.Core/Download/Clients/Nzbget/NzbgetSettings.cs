@@ -1,6 +1,7 @@
 using FluentValidation;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Annotations;
+using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.ThingiProvider;
 using NzbDrone.Core.Validation;
 
@@ -26,7 +27,7 @@ namespace NzbDrone.Core.Download.Clients.Nzbget
         }
     }
 
-    public class NzbgetSettings : IProviderConfig
+    public class NzbgetSettings : IProviderConfig, IBookDownloadCategorySettings
     {
         private static readonly NzbgetSettingsValidator Validator = new NzbgetSettingsValidator();
 
@@ -49,10 +50,10 @@ namespace NzbDrone.Core.Download.Clients.Nzbget
         [FieldDefinition(1, Label = "Port", Type = FieldType.Textbox)]
         public int Port { get; set; }
 
-        [FieldDefinition(2, Label = "Use SSL", Type = FieldType.Checkbox, HelpText = "Use secure connection when connecting to NZBGet")]
+        [FieldDefinition(2, Label = "UseSSL", Type = FieldType.Checkbox, HelpText = "provider.field.fa6dda8c6f419")]
         public bool UseSsl { get; set; }
 
-        [FieldDefinition(3, Label = "Url Base", Type = FieldType.Textbox, Advanced = true, HelpText = "Adds a prefix to the nzbget url, e.g. http://[host]:[port]/[urlBase]/jsonrpc")]
+        [FieldDefinition(3, Label = "provider.field.fafbbcc619aac", Type = FieldType.Textbox, Advanced = true, HelpText = "provider.field.f100fa980fa39")]
         public string UrlBase { get; set; }
 
         [FieldDefinition(3, Label = "Username", Type = FieldType.Textbox, Privacy = PrivacyLevel.UserName)]
@@ -61,30 +62,30 @@ namespace NzbDrone.Core.Download.Clients.Nzbget
         [FieldDefinition(5, Label = "Password", Type = FieldType.Password, Privacy = PrivacyLevel.Password)]
         public string Password { get; set; }
 
-        [FieldDefinition(6, Label = "Audiobook Category", Type = FieldType.Textbox, HelpText = "Adding a category specific to Chaptarr avoids conflicts with unrelated non-Chaptarr downloads. Using a category is optional, but strongly recommended.")]
+        [FieldDefinition(6, Label = "provider.field.fb7445013fe90", Type = FieldType.Textbox, HelpText = "provider.field.ffe3afd1a7d4a")]
         public string AudiobookCategory
         {
             get => _audiobookCategory ?? MusicCategory;
             set => _audiobookCategory = value;
         }
 
-        [FieldDefinition(7, Label = "Ebook Category", Type = FieldType.Textbox, HelpText = "Adding a category specific to Chaptarr avoids conflicts with unrelated non-Chaptarr downloads. Using a category is optional, but strongly recommended.")]
+        [FieldDefinition(7, Label = "provider.field.f007be7ed5f4e", Type = FieldType.Textbox, HelpText = "provider.field.ffe3afd1a7d4a")]
         public string EbookCategory
         {
             get => _ebookCategory ?? MusicCategory;
             set => _ebookCategory = value;
         }
 
-        [FieldDefinition(100, Label = "Category", Type = FieldType.Textbox, Hidden = HiddenType.Hidden)]
+        [FieldDefinition(100, Label = "provider.field.f292c06f0045a", Type = FieldType.Textbox, Hidden = HiddenType.Hidden)]
         public string MusicCategory { get; set; }
 
-        [FieldDefinition(8, Label = "Recent Priority", Type = FieldType.Select, SelectOptions = typeof(NzbgetPriority), Advanced = true, HelpText = "Priority to use when grabbing books released within the last 14 days")]
+        [FieldDefinition(8, Label = "provider.field.f1e36708f9861", Type = FieldType.Select, SelectOptions = typeof(NzbgetPriority), Advanced = true, HelpText = "provider.field.fe0303eb76da9")]
         public int RecentTvPriority { get; set; }
 
-        [FieldDefinition(9, Label = "Older Priority", Type = FieldType.Select, SelectOptions = typeof(NzbgetPriority), Advanced = true, HelpText = "Priority to use when grabbing books released over 14 days ago")]
+        [FieldDefinition(9, Label = "provider.field.faabfc5c5d52d", Type = FieldType.Select, SelectOptions = typeof(NzbgetPriority), Advanced = true, HelpText = "provider.field.f0a783e1949cd")]
         public int OlderTvPriority { get; set; }
 
-        [FieldDefinition(10, Label = "Add Paused", Type = FieldType.Checkbox, HelpText = "This option requires at least NzbGet version 16.0")]
+        [FieldDefinition(10, Label = "provider.field.fee2bb4b2e037", Type = FieldType.Checkbox, HelpText = "provider.field.fcbf8b70ead77")]
         public bool AddPaused { get; set; }
 
         public NzbDroneValidationResult Validate()

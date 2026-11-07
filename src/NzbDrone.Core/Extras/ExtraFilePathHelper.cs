@@ -26,6 +26,17 @@ namespace NzbDrone.Core.Extras
             return paths;
         }
 
+        // The author's base paths with `preferredBasePath` (if any) probed first. Extras are written under
+        // GetPreferredBasePath(author, bookFile), so looking there first finds an existing file in one
+        // probe instead of missing under the other formats' folders first.
+        public static List<string> GetAuthorBasePaths(Author author, string preferredBasePath)
+        {
+            var paths = GetAuthorBasePaths(author);
+            PreferBase(paths, preferredBasePath);
+
+            return paths;
+        }
+
         public static string GetPreferredBasePath(Author author, BookFile bookFile)
         {
             if (author == null)

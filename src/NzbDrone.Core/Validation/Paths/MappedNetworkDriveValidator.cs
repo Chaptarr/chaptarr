@@ -4,9 +4,11 @@ using FluentValidation.Validators;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 
+using NzbDrone.Core.Validation;
+
 namespace NzbDrone.Core.Validation.Paths
 {
-    public class MappedNetworkDriveValidator : PropertyValidator
+    public class MappedNetworkDriveValidator : NzbDronePropertyValidator
     {
         private readonly IRuntimeInfo _runtimeInfo;
         private readonly IDiskProvider _diskProvider;
@@ -21,7 +23,7 @@ namespace NzbDrone.Core.Validation.Paths
 
         protected override string GetDefaultMessageTemplate() => "Mapped Network Drive and Windows Service";
 
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue == null)
             {

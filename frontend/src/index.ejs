@@ -50,8 +50,24 @@
       
     </script>
 
-    <% for (key in htmlWebpackPlugin.files.js) { %><script type="text/javascript" src="<%= htmlWebpackPlugin.files.js[key] %>" data-no-hash></script><% } %>
-    <% for (key in htmlWebpackPlugin.files.css) { %><link href="<%= htmlWebpackPlugin.files.css[key] %>" rel="stylesheet"></link><% } %>
+    <% const bundledAssetOrigin = 'https://chaptarr.invalid'; %>
+    <% const safeAssetSource = (asset) => {
+      if (typeof asset !== 'string' || asset.length === 0 || asset.length > 2048) {
+        throw new Error('Invalid bundled asset URL');
+      }
+      let parsed;
+      try {
+        parsed = new URL(asset, `${bundledAssetOrigin}/`);
+      } catch {
+        throw new Error('Invalid bundled asset URL');
+      }
+      if (parsed.origin !== bundledAssetOrigin) {
+        throw new Error('Bundled assets must use a same-origin URL');
+      }
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }; %>
+    <% for (const scriptSource of htmlWebpackPlugin.files.js) { %><script type="text/javascript" src="<%= safeAssetSource(scriptSource) /* nosemgrep: javascript.express.security.audit.xss.ejs.var-in-script-src.var-in-script-src -- safeAssetSource accepts only same-origin build asset URLs and returns a normalized path. */ %>" data-no-hash></script><% } %>
+    <% for (const stylesheetSource of htmlWebpackPlugin.files.css) { %><link href="<%= safeAssetSource(stylesheetSource) %>" rel="stylesheet"></link><% } %>
 
     <title>Chaptarr</title>
 

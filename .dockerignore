@@ -2,6 +2,20 @@
 .github
 .gitignore
 
+# Keep local app data, credentials, and signing material out of image contexts.
+/config
+/secrets
+Config.xml
+config.xml
+.env
+.env.*
+!.env.example
+sixlabors.lic
+*.pem
+*.key
+*.pfx
+*.secret
+
 node_modules
 **/node_modules
 
@@ -11,8 +25,9 @@ _temp
 
 backups
 backup-*
+*.zip
+*.zip.enc
 
 *.db
 *.db-*
 *.log
-

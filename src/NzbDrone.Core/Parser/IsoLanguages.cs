@@ -19,6 +19,7 @@ namespace NzbDrone.Core.Parser
                                                                new IsoLanguage("ja", "", "jpn", "Japanese", Language.Japanese),
                                                                new IsoLanguage("is", "", "isl", "Icelandic", Language.Icelandic),
                                                                new IsoLanguage("zh", "cn", "zho", "Chinese", Language.Chinese),
+                                                               new IsoLanguage("zh", "tw", "zho", "Chinese (Traditional)", Language.ChineseTraditional),
                                                                new IsoLanguage("ru", "", "rus", "Russian", Language.Russian),
                                                                new IsoLanguage("pl", "", "pol", "Polish", Language.Polish),
                                                                new IsoLanguage("vi", "", "vie", "Vietnamese", Language.Vietnamese),
@@ -38,7 +39,8 @@ namespace NzbDrone.Core.Parser
                                                                new IsoLanguage("bg", "", "bul", "Bulgarian", Language.Bulgarian),
                                                                new IsoLanguage("ro", "", "ron", "Romanian", Language.Romanian),
                                                                new IsoLanguage("pt", "br", "", "Portuguese (Brazil)", Language.PortugueseBR),
-                                                               new IsoLanguage("ar", "", "ara", "Arabic", Language.Arabic)
+                                                               new IsoLanguage("ar", "", "ara", "Arabic", Language.Arabic),
+                                                               new IsoLanguage("id", "", "ind", "Indonesian", Language.Indonesian)
                                                            };
 
         public static IsoLanguage Find(string isoCode)
@@ -58,12 +60,16 @@ namespace NzbDrone.Core.Parser
                         isoLanguages.Where(l => l.CountryCode == isoArray[1].ToLower()).ToList() : isoLanguages.Where(l => string.IsNullOrEmpty(l.CountryCode)).ToList();
                 }
 
-                return isoLanguages.FirstOrDefault();
+                return langCode == "zh" && isoArray.Length == 1
+                    ? isoLanguages.FirstOrDefault(l => l.Language == Language.Chinese)
+                    : isoLanguages.FirstOrDefault();
             }
             else if (langCode.Length == 3)
             {
                 //Lookup ISO639-2T code
-                return All.FirstOrDefault(l => l.ThreeLetterCode == langCode);
+                return langCode == "zho"
+                    ? Get(Language.Chinese)
+                    : All.FirstOrDefault(l => l.ThreeLetterCode == langCode);
             }
 
             return null;

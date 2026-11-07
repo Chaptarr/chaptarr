@@ -1,0 +1,84 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/snapetech-org/chaptarrng
+  # Retained only to infer predecessor flavor during --reuse-values; the target
+  # image is selected by digest and this tag is never used for the pull.
+  tag: hardcover
+  allowCustomRepository: false
+  # A validated ChaptarrNG multi-architecture image digest must be supplied explicitly.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# Production cutover is not ready until the migration and update-channel checks
+# pass. Rendering also requires explicit operator confirmation.
+bookshelfMigration:
+  confirmed: false
+  # Leave empty to infer the source runtime mode from readable HARDCOVER and
+  # HARDCOVER_NATIVE values, then the retained old image.tag (default hardcover).
+  # Set explicitly when a Secret or unknown image tag makes the mode ambiguous.
+  providerMode: ""
+  # retry is an explicit re-attempt after a clean rollback; intervention-required
+  # states still need operator recovery.
+  mode: automatic
+  rollback:
+    # Enable only after scaling the StatefulSet to zero and waiting for its pod
+    # to stop. The Job restores the retained source database before a Helm
+    # rollback reopens the prior BookshelfNG chart revision.
+    enabled: false
+    confirmed: false
+    # Set to sqlite or postgresql for an explicit rollback attempt.
+    databaseType: ""
+    # PostgreSQL only: path relative to /config for the verified independent
+    # postgres-main/log/cache dumps created by the first-start handoff.
+    postgresBackupPath: ""
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: false
+  annotations: {}
+  name: ""
+  automountServiceAccountToken: false
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+
+service:
+  type: ClusterIP
+  port: 8787
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: bookshelfng.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi
+  annotations: {}
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Keep credentials in Kubernetes Secrets and reference them with valueFrom.
+extraEnv: []

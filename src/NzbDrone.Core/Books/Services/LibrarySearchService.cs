@@ -7,6 +7,7 @@ using NLog;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using MediaCoverModel = NzbDrone.Core.MediaCover.MediaCover;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Books.Services
 {
@@ -43,11 +44,13 @@ namespace NzbDrone.Core.Books.Services
         public string GoogleBooksId { get; set; }
         public string ASIN { get; set; }
         public string AudibleASIN { get; set; }
+        public string RanobeDbBookId { get; set; }
         public string HardcoverAuthorId { get; set; }
         public string GoodreadsAuthorId { get; set; }
         public string OpenLibraryAuthorId { get; set; }
         public string GoogleBooksAuthorId { get; set; }
         public string AudnexusAuthorId { get; set; }
+        public string RanobeDbAuthorId { get; set; }
         public List<LibrarySearchBookInstance> LocalAudiobookBooks { get; set; } = new();
         public List<LibrarySearchBookInstance> LocalEbookBooks { get; set; } = new();
     }
@@ -82,11 +85,13 @@ namespace NzbDrone.Core.Books.Services
         public string GoogleBooksId { get; set; }
         public string ASIN { get; set; }
         public string AudibleASIN { get; set; }
+        public string RanobeDbBookId { get; set; }
         public string HardcoverAuthorId { get; set; }
         public string GoodreadsAuthorId { get; set; }
         public string OpenLibraryAuthorId { get; set; }
         public string GoogleBooksAuthorId { get; set; }
         public string AudnexusAuthorId { get; set; }
+        public string RanobeDbAuthorId { get; set; }
         public string Narrator { get; set; }
         public double Score { get; set; }
     }
@@ -129,7 +134,7 @@ namespace NzbDrone.Core.Books.Services
             }
             catch (Exception ex)
             {
-                _logger.Warn(ex, "[LIBRARY-SEARCH] Failed searching for '{0}'", trimmed);
+                _logger.WarnSafe(ex, "[LIBRARY-SEARCH] Failed searching for '{0}'", trimmed);
                 return new LibrarySearchResult();
             }
         }
@@ -205,11 +210,13 @@ WITH matches AS (
         b.GoogleBooksId AS GoogleBooksId,
         b.ASIN AS ASIN,
         b.AudibleASIN AS AudibleASIN,
+        b.RanobeDbBookId AS RanobeDbBookId,
         a.HardcoverAuthorId AS HardcoverAuthorId,
         a.GoodreadsAuthorId AS GoodreadsAuthorId,
         a.OpenLibraryAuthorId AS OpenLibraryAuthorId,
         a.GoogleBooksAuthorId AS GoogleBooksAuthorId,
         a.AudnexusAuthorId AS AudnexusAuthorId,
+        a.RanobeDbAuthorId AS RanobeDbAuthorId,
         b.Narrator AS Narrator,
         bm25(edition_fts) AS Score
     FROM edition_fts
@@ -242,11 +249,13 @@ SELECT
     GoogleBooksId,
     ASIN,
     AudibleASIN,
+    RanobeDbBookId,
     HardcoverAuthorId,
     GoodreadsAuthorId,
     OpenLibraryAuthorId,
     GoogleBooksAuthorId,
     AudnexusAuthorId,
+    RanobeDbAuthorId,
     Narrator,
     Score
 FROM ranked
@@ -301,11 +310,13 @@ SELECT
     b.""GoogleBooksId"" AS GoogleBooksId,
     b.""ASIN"" AS ASIN,
     b.""AudibleASIN"" AS AudibleASIN,
+    b.""RanobeDbBookId"" AS RanobeDbBookId,
     a.""HardcoverAuthorId"" AS HardcoverAuthorId,
     a.""GoodreadsAuthorId"" AS GoodreadsAuthorId,
     a.""OpenLibraryAuthorId"" AS OpenLibraryAuthorId,
     a.""GoogleBooksAuthorId"" AS GoogleBooksAuthorId,
     a.""AudnexusAuthorId"" AS AudnexusAuthorId,
+    a.""RanobeDbAuthorId"" AS RanobeDbAuthorId,
     b.""Narrator"" AS Narrator,
     0 AS Score
 FROM ""Books"" b
@@ -366,13 +377,15 @@ LIMIT @rowLimit";
                             ("ol", primary.OpenLibraryWorkId),
                             ("gb", primary.GoogleBooksId),
                             ("az", primary.AudibleASIN),
-                            ("az", primary.ASIN)),
+                            ("az", primary.ASIN),
+                            ("rn", primary.RanobeDbBookId)),
                         ForeignAuthorId = FirstProviderId(
                             ("hc", primary.HardcoverAuthorId),
                             ("gr", primary.GoodreadsAuthorId),
                             ("ol", primary.OpenLibraryAuthorId),
                             ("gb", primary.GoogleBooksAuthorId),
-                            ("az", primary.AudnexusAuthorId)),
+                            ("az", primary.AudnexusAuthorId),
+                            ("rn", primary.RanobeDbAuthorId)),
                         HardcoverBookId = primary.HardcoverBookId,
                         GoodreadsBookId = primary.GoodreadsBookId,
                         GoodreadsWorkId = primary.GoodreadsWorkId,
@@ -380,11 +393,13 @@ LIMIT @rowLimit";
                         GoogleBooksId = primary.GoogleBooksId,
                         ASIN = primary.ASIN,
                         AudibleASIN = primary.AudibleASIN,
+                        RanobeDbBookId = primary.RanobeDbBookId,
                         HardcoverAuthorId = primary.HardcoverAuthorId,
                         GoodreadsAuthorId = primary.GoodreadsAuthorId,
                         OpenLibraryAuthorId = primary.OpenLibraryAuthorId,
                         GoogleBooksAuthorId = primary.GoogleBooksAuthorId,
                         AudnexusAuthorId = primary.AudnexusAuthorId,
+                        RanobeDbAuthorId = primary.RanobeDbAuthorId,
                         LocalAudiobookBooks = groupRows
                             .Where(r => r.MediaTypeInt == (int)BookMediaType.Audiobook)
                             .Select(ToLocalInstance)
@@ -421,6 +436,7 @@ LIMIT @rowLimit";
                 row.GoodreadsWorkId,
                 row.OpenLibraryWorkId,
                 row.GoogleBooksId,
+                row.RanobeDbBookId,
                 row.AudibleASIN,
                 row.ASIN);
 

@@ -2,6 +2,7 @@ using NLog;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.DecisionEngine.Specifications
 {
@@ -28,14 +29,20 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             switch (detection.Verdict)
             {
                 case ReleasePackDetectionVerdict.MultipleBooks:
-                    _logger.Trace("Release {0} rejected as multi-book pack. Type={1}, Match={2}",
+                    if (DiscographySpecification.AllBooksReleased(subject))
+                    {
+                        _logger.TraceSafe("Allowing published discography release {0}.", subject.Release?.Title);
+                        return Decision.Accept();
+                    }
+
+                    _logger.TraceSafe("Release {0} rejected as multi-book pack. Type={1}, Match={2}",
                         subject.Release?.Title,
                         detection.PackType,
                         detection.MatchedValue);
                     return Decision.RejectHardFilter("Release appears to contain multiple books", "Pack");
 
                 case ReleasePackDetectionVerdict.AudiobookFragment:
-                    _logger.Trace("Release {0} soft-rejected as audiobook fragment. Type={1}, Match={2}",
+                    _logger.TraceSafe("Release {0} soft-rejected as audiobook fragment. Type={1}, Match={2}",
                         subject.Release?.Title,
                         detection.PackType,
                         detection.MatchedValue);

@@ -12,6 +12,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
         public string Title { get; set; }
         public string Language { get; set; }
         public string Format { get; set; }
+        public int ReadingFormatId { get; set; }
         public string EditionInformation { get; set; }
         public string Publisher { get; set; }
         public string ImageUrl { get; set; }
@@ -21,6 +22,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
         public double AverageRating { get; set; }
         public string Url { get; set; }
         public DateTime? ReleaseDate { get; set; }
+        public List<string> NarratorNames { get; set; } = new List<string>();
 
         public List<ContributorResource> Contributors { get; set; } = new List<ContributorResource>();
     }

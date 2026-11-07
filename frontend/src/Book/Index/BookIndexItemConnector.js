@@ -37,7 +37,7 @@ function createMapStateToProps() {
   const selectQualityProfile = createBookQualityProfileSelector();
   const selectShowSearch = selectShowSearchAction();
   const selectExecutingCommands = createExecutingCommandsSelector();
-  
+
   // Stable empty result to avoid prop shape changes
   const EMPTY_RESULT = {};
 
@@ -57,12 +57,12 @@ function createMapStateToProps() {
   return (state, ownProps) => {
     // Get book from props or state (compute only once)
     const bookId = ownProps.bookId ?? ownProps.id;
-    const book = ownProps.book || (bookId != null ? selectBook(state, { bookId }) : undefined);
-    
+    const book = ownProps.book || selectBook(state, { bookId });
+
     if (!book) {
       return EMPTY_RESULT;
     }
-    
+
     // Get dependent data using cached selectors
     const authorFromStore = selectAuthor(state, { authorId: book.authorId });
     const author = book.author ?? authorFromStore ?? {
@@ -71,13 +71,16 @@ function createMapStateToProps() {
       path: '',
       titleSlug: undefined
     };
-    const qualityProfile = selectQualityProfile(state, { bookId: book.id });
+    // Server-paged book rows aren't inserted into the legacy books collection,
+    // so pass the row and its author through to the selector for the right
+    // format-specific profile.
+    const qualityProfile = selectQualityProfile(state, { bookId: book.id, book, author });
     const showSearchAction = selectShowSearch(state, ownProps);
     const executingCommands = selectExecutingCommands(state);
-    
+
     // Safe command checking with proper guards
     const commands = Array.isArray(executingCommands) ? executingCommands : [];
-    
+
     const isRefreshingBook = commands.some((command) => {
       return (
         (command.name === commandNames.REFRESH_AUTHOR &&
@@ -86,7 +89,7 @@ function createMapStateToProps() {
           command.body?.bookId === book.id)
       );
     });
-    
+
     const isSearchingBook = commands.some((command) => {
       if (command.name === commandNames.AUTHOR_SEARCH) {
         return command.body?.authorId === book.authorId;
@@ -97,10 +100,11 @@ function createMapStateToProps() {
       }
       return false;
     });
-    
+
     // Component expects flattened book fields via spread
     return {
       ...book,
+      selectedMediaType: state.bookIndex.selectedMediaType,
       author,
       qualityProfile,
       showSearchAction,
@@ -148,13 +152,13 @@ class BookIndexItemConnector extends Component {
     }
 
     return (
-        <ItemComponent
-          {...otherProps}
-          id={id}
-          onRefreshBookPress={this.onRefreshBookPress}
-          onSearchPress={this.onSearchPress}
-        />
-      );
+      <ItemComponent
+        {...otherProps}
+        id={id}
+        onRefreshBookPress={this.onRefreshBookPress}
+        onSearchPress={this.onSearchPress}
+      />
+    );
   }
 }
 

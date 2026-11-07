@@ -23,12 +23,20 @@ namespace NzbDrone.Core.Profiles.Metadata
         public bool SkipOmnibus { get; set; }
         public bool SkipMissingAsin { get; set; }
         public string AllowedLanguages { get; set; }
+        public string PreferredEditionTerms { get; set; }
+        public string PreferredSeries { get; set; }
         public int MinPages { get; set; }
         public List<string> Ignored { get; set; }
+
+        // Exact, case-insensitive match against any tag in Book.Genres (as returned by the metadata
+        // source, e.g. Hardcover) - "Comics", "Graphic novels", etc. Kept separate from the free-text
+        // Ignored title-term list since genre tags are discrete values, not text to pattern-match.
+        public List<string> IgnoredGenres { get; set; }
 
         public MetadataProfile()
         {
             Ignored = new List<string>();
+            IgnoredGenres = new List<string>();
             // Don't override ProfileType - let it be set by the database or caller
         }
     }

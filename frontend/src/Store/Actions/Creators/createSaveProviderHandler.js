@@ -1,5 +1,7 @@
 import $ from 'jquery';
-import _ from 'lodash';
+import difference from 'lodash/difference';
+import isEqual from 'lodash/isEqual';
+import map from 'lodash/map';
 import { batchActions } from 'redux-batched-actions';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import getProviderState from 'Utilities/State/getProviderState';
@@ -34,7 +36,7 @@ function createSaveProviderHandler(section, url, options = {}, removeStale = fal
     // If the user is re-saving the same provider without changes
     // force it to be saved.
 
-    if (_.isEqual(saveData, lastSaveData)) {
+    if (isEqual(saveData, lastSaveData)) {
       params.forceSave = true;
     }
 
@@ -59,7 +61,7 @@ function createSaveProviderHandler(section, url, options = {}, removeStale = fal
         data = [data];
       }
 
-      const toRemove = removeStale && Array.isArray(id) ? _.difference(id, _.map(data, 'id')) : [];
+      const toRemove = removeStale && Array.isArray(id) ? difference(id, map(data, 'id')) : [];
 
       dispatch(batchActions(
         data.map((item) => updateItem({ section, ...item })).concat(

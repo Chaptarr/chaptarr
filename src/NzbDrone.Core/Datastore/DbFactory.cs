@@ -47,7 +47,15 @@ namespace NzbDrone.Core.Datastore
             Dapper.SqlMapper.AddTypeHandler(typeof(DateTime), new SqliteUtcDateTimeHandler());
             Dapper.SqlMapper.AddTypeHandler(typeof(DateTime?), new SqliteNullableUtcDateTimeHandler());
 
-            TableMapping.Map();
+            // SQLite NUMERIC columns can return INTEGER or REAL values per row. Use a
+            // runtime parser so Dapper's first-row deserializer does not assume one type.
+            Dapper.SqlMapper.AddTypeHandler(typeof(decimal), new SqliteDecimalHandler());
+            Dapper.SqlMapper.AddTypeHandler(typeof(decimal?), new SqliteNullableDecimalHandler());
+
+            if (TableMapping.Mapper.TableMap.Count == 0)
+            {
+                TableMapping.Map();
+            }
         }
 
         private static void InitializeEnvironment()
@@ -96,7 +104,7 @@ namespace NzbDrone.Core.Datastore
                 case MigrationType.Cache:
                     {
                         connectionInfo = _connectionStringFactory.CacheDbConnection;
-                        CreateLog(connectionInfo.ConnectionString, migrationContext, connectionInfo.DatabaseType);
+                        CreateCache(connectionInfo.ConnectionString, migrationContext, connectionInfo.DatabaseType);
 
                         break;
                     }
@@ -258,6 +266,52 @@ namespace NzbDrone.Core.Datastore
             catch (Exception e)
             {
                 throw new ChaptarrStartupException(e, "Error creating log database");
+            }
+        }
+
+        private void CreateCache(string connectionString, MigrationContext migrationContext, DatabaseType databaseType)
+        {
+            if (databaseType != DatabaseType.SQLite)
+            {
+                CreateLog(connectionString, migrationContext, databaseType);
+                return;
+            }
+
+            try
+            {
+                _migrationController.Migrate(connectionString, migrationContext, databaseType);
+                return;
+            }
+            catch (Exception e)
+            {
+                // The cache only holds responses that can be fetched again, so a database that
+                // cannot be migrated is discarded and rebuilt rather than blocking startup.
+                Logger.Warn(e, "Cache database could not be migrated, recreating it");
+            }
+
+            var fileName = _connectionStringFactory.GetDatabasePath(connectionString);
+
+            try
+            {
+                SqliteConnection.ClearAllPools();
+
+                _diskProvider.DeleteFile(fileName + "-shm");
+                _diskProvider.DeleteFile(fileName + "-wal");
+                _diskProvider.DeleteFile(fileName + "-journal");
+                _diskProvider.DeleteFile(fileName);
+            }
+            catch (Exception e)
+            {
+                throw new ChaptarrStartupException(e, "Unable to recreate the cache database automatically. Remove the file manually: {0}", fileName);
+            }
+
+            try
+            {
+                _migrationController.Migrate(connectionString, migrationContext, databaseType);
+            }
+            catch (Exception e)
+            {
+                throw new ChaptarrStartupException(e, "Error creating cache database");
             }
         }
 

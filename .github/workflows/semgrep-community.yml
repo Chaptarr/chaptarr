@@ -1,0 +1,96 @@
+# ng-runner-policy: trusted-hosted-or-private-jit-v1
+name: Semgrep Community Edition
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' &&
+      format('action:{0}:pool:{1}', inputs.action, inputs.runner_pool) || github.workflow }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Run trusted source security scanning
+        required: true
+        type: choice
+        options:
+          - scan
+      runner_pool:
+        description: Select compatible GitHub-hosted or private JIT runners
+        required: true
+        type: choice
+        default: public
+        options:
+          - public
+          - private
+permissions:
+  contents: read
+
+concurrency:
+  group: ng-scan-semgrep-community-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  semgrep:
+    name: Semgrep CE (community rules)
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.action == 'scan' && (inputs.runner_pool == 'public' || inputs.runner_pool == 'private') && github.ref == 'refs/heads/main'
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-semgrep"]}}', github.run_id)) }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify the isolated Docker daemon
+        run: docker info
+
+      - name: Scan with the current Semgrep CE image and p/default rules
+        run: |
+          docker run --rm --network host --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e EIO_BACKEND=posix \
+            -e HTTP_PROXY -e HTTPS_PROXY -e http_proxy -e https_proxy \
+            -e NO_PROXY -e no_proxy \
+            -e REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+            -e CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+            -e SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+            -v /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro \
+            -v "$GITHUB_WORKSPACE:/src" -w /src semgrep/semgrep:latest \
+            semgrep scan --config p/default --metrics=off --jobs 2 \
+              --json-output semgrep.json --sarif-output semgrep.sarif .
+
+      - name: Report finding count
+        if: always() && hashFiles('semgrep.json') != ''
+        run: |
+          jq -r '"Semgrep CE reported \(.results | length) finding(s). Review semgrep.sarif and the scan log."' semgrep.json
+
+      # Semgrep may omit suppression.status for in-source nosemgrep suppressions.
+      - name: Filter inline-suppressed SARIF results
+        if: always() && hashFiles('semgrep.sarif') != ''
+        run: |
+          inline_suppression_count="$(jq '[.runs[].results[]? | select(((.suppressions // []) | any(.kind == "inSource" and (.status == null or .status == "accepted"))))] | length' semgrep.sarif)"
+          jq '
+            .runs |= map(
+              .results |= map(select(((.suppressions // []) | any(.kind == "inSource" and (.status == null or .status == "accepted"))) | not))
+            )
+          ' semgrep.sarif > semgrep-upload.sarif
+          remaining_inline_suppressions="$(jq '[.runs[].results[]? | select(((.suppressions // []) | any(.kind == "inSource" and (.status == null or .status == "accepted"))))] | length' semgrep-upload.sarif)"
+          if [[ "$remaining_inline_suppressions" != "0" ]]; then
+            printf 'SARIF upload still contains %s accepted in-source suppression(s).\n' "$remaining_inline_suppressions" >&2
+            exit 1
+          fi
+          printf 'Filtered %s accepted in-source suppression(s); uploading %s active finding(s).\n' \
+            "$inline_suppression_count" \
+            "$(jq '[.runs[].results[]?] | length' semgrep-upload.sarif)"
+
+      - name: Retain Semgrep reports for review
+        if: always() && hashFiles('semgrep.json') != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: semgrep-ce-reports
+          path: |
+            semgrep.json
+            semgrep.sarif
+            semgrep-upload.sarif
+          if-no-files-found: warn
+          retention-days: 7
+

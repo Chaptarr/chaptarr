@@ -8,6 +8,7 @@ using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Http.Frontend.Mappers
 {
@@ -86,7 +87,7 @@ namespace Chaptarr.Http.Frontend.Mappers
             }
             catch
             {
-                _logger.Warn("Refusing to serve invalid path for url: {0}", resourceUrl);
+                _logger.WarnSafe("Refusing to serve invalid path for url: {0}", resourceUrl);
                 return null;
             }
 
@@ -94,7 +95,7 @@ namespace Chaptarr.Http.Frontend.Mappers
 
             if (allowedRoot.IsNullOrWhiteSpace())
             {
-                _logger.Warn("Refusing to serve file due to invalid root mapping for url: {0}", resourceUrl);
+                _logger.WarnSafe("Refusing to serve file due to invalid root mapping for url: {0}", resourceUrl);
                 return null;
             }
 
@@ -105,19 +106,19 @@ namespace Chaptarr.Http.Frontend.Mappers
             }
             catch
             {
-                _logger.Warn("Refusing to serve file due to invalid root mapping for url: {0}", resourceUrl);
+                _logger.WarnSafe("Refusing to serve file due to invalid root mapping for url: {0}", resourceUrl);
                 return null;
             }
 
             if (fullRoot.IsNullOrWhiteSpace())
             {
-                _logger.Warn("Refusing to serve file due to empty root mapping for url: {0}", resourceUrl);
+                _logger.WarnSafe("Refusing to serve file due to empty root mapping for url: {0}", resourceUrl);
                 return null;
             }
 
             if (string.Equals(fullRoot, Path.GetPathRoot(fullRoot), _caseSensitive))
             {
-                _logger.Warn("Refusing to serve file due to missing/overly broad root mapping for url: {0}", resourceUrl);
+                _logger.WarnSafe("Refusing to serve file due to missing/overly broad root mapping for url: {0}", resourceUrl);
                 return null;
             }
 
@@ -125,14 +126,14 @@ namespace Chaptarr.Http.Frontend.Mappers
             {
                 if (!IsSymlinkAwareChildPath(fullRoot, fullPath))
                 {
-                    _logger.Warn("Refusing to serve file outside allowed root via symlink/junction. url={0} mapped={1}", resourceUrl, fullPath);
+                    _logger.WarnSafe("Refusing to serve file outside allowed root via symlink/junction. url={0} mapped={1}", resourceUrl, fullPath);
                     return null;
                 }
 
                 return fullPath;
             }
 
-            _logger.Warn("Refusing to serve file outside allowed root. url={0} mapped={1}", resourceUrl, fullPath);
+            _logger.WarnSafe("Refusing to serve file outside allowed root. url={0} mapped={1}", resourceUrl, fullPath);
             return null;
         }
 

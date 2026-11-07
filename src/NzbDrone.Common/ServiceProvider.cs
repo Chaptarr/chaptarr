@@ -1,7 +1,9 @@
 using System;
 using System.Linq;
 using System.ServiceProcess;
+using System.Text;
 using NLog;
+using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Exceptions;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Processes;
@@ -28,11 +30,13 @@ namespace NzbDrone.Common
         public const string SERVICE_NAME = "Chaptarr";
 
         private readonly IProcessProvider _processProvider;
+        private readonly IStartupContext _startupContext;
         private readonly Logger _logger;
 
-        public ServiceProvider(IProcessProvider processProvider, Logger logger)
+        public ServiceProvider(IProcessProvider processProvider, IStartupContext startupContext, Logger logger)
         {
             _processProvider = processProvider;
+            _startupContext = startupContext;
             _logger = logger;
         }
 
@@ -62,9 +66,13 @@ namespace NzbDrone.Common
         {
             _logger.Info("Installing service '{0}'", serviceName);
 
+            var imagePathArgument = BuildServiceImagePathArgument(
+                Environment.ProcessPath ?? throw new InvalidOperationException("The current executable path is unavailable."),
+                _startupContext.PreservedArguments);
+
             var args = $"create {serviceName} " +
                 $"DisplayName= \"{serviceName}\" " +
-                $"binpath= \"{Environment.ProcessPath}\" " +
+                $"binpath= {imagePathArgument} " +
                 "start= auto " +
                 "depend= EventLog/Tcpip/http " +
                 "obj= \"NT AUTHORITY\\LocalService\"";
@@ -91,6 +99,49 @@ namespace NzbDrone.Common
             _logger.Info(descOutput.Lines.Select(x => x.Content).ConcatToString("\n"));
 
             _logger.Info("Service Has installed successfully.");
+        }
+
+        internal static string BuildServiceImagePathArgument(string executablePath, string preservedArguments)
+        {
+            var imagePath = $"\"{executablePath}\"";
+            if (!string.IsNullOrWhiteSpace(preservedArguments))
+            {
+                imagePath += " " + preservedArguments;
+            }
+
+            return QuoteWindowsArgument(imagePath);
+        }
+
+        private static string QuoteWindowsArgument(string value)
+        {
+            var builder = new StringBuilder();
+            builder.Append('"');
+
+            var backslashes = 0;
+            foreach (var character in value)
+            {
+                if (character == '\\')
+                {
+                    backslashes++;
+                    continue;
+                }
+
+                if (character == '"')
+                {
+                    builder.Append('\\', (backslashes * 2) + 1);
+                    builder.Append('"');
+                    backslashes = 0;
+                    continue;
+                }
+
+                builder.Append('\\', backslashes);
+                builder.Append(character);
+                backslashes = 0;
+            }
+
+            builder.Append('\\', backslashes * 2);
+            builder.Append('"');
+            return builder.ToString();
         }
 
         public virtual void Uninstall(string serviceName)

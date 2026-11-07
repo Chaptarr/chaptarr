@@ -48,6 +48,12 @@ class DeleteAuthorModalContent extends Component {
       onModalClose
     } = this.props;
     const deleteFiles = this.state.deleteFiles;
+    const hasMultipleAuthors = author.length > 1;
+    let confirmationKey = hasMultipleAuthors ? 'DeleteSelectedAuthorsConfirm' : 'DeleteOneAuthorConfirm';
+
+    if (deleteFiles) {
+      confirmationKey = hasMultipleAuthors ? 'DeleteSelectedAuthorsAndContentsConfirm' : 'DeleteOneAuthorAndContentsConfirm';
+    }
 
     return (
       <ModalContent onModalClose={onModalClose}>
@@ -58,13 +64,15 @@ class DeleteAuthorModalContent extends Component {
         <ModalBody>
           <div>
             <FormGroup>
-              <FormLabel>{`Delete Author Folder${author.length > 1 ? 's' : ''}`}</FormLabel>
+              <FormLabel>
+                {translate(hasMultipleAuthors ? 'DeleteAuthorFoldersLabel' : 'DeleteAuthorFolderLabel')}
+              </FormLabel>
 
               <FormInputGroup
                 type={inputTypes.CHECK}
                 name="deleteFiles"
                 value={deleteFiles}
-                helpText={`Delete Author Folder${author.length > 1 ? 's' : ''} and all contents`}
+                helpText={translate(hasMultipleAuthors ? 'DeleteAuthorFoldersContentsHelpText' : 'DeleteAuthorFolderContentsHelpText')}
                 kind={kinds.DANGER}
                 onChange={this.onDeleteFilesChange}
               />
@@ -72,7 +80,7 @@ class DeleteAuthorModalContent extends Component {
           </div>
 
           <div className={styles.message}>
-            {`Are you sure you want to delete ${author.length} selected author${author.length > 1 ? 's' : ''}${deleteFiles ? ' and all contents' : ''}?`}
+            {translate(confirmationKey, { count: author.length })}
           </div>
 
           <ul>

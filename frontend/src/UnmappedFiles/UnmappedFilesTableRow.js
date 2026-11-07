@@ -149,11 +149,14 @@ class UnmappedFilesTableRow extends Component {
             if (name === 'mediaType') {
               const rowMediaType = getMediaTypeFromExtension(path);
               let icon = '';
+              let mediaTypeLabel = '';
 
               if (rowMediaType === 'audiobook') {
                 icon = '🎧';
+                mediaTypeLabel = translate('Audiobook');
               } else if (rowMediaType === 'ebook') {
                 icon = '📖';
+                mediaTypeLabel = translate('Ebook');
               }
 
               return (
@@ -161,7 +164,17 @@ class UnmappedFilesTableRow extends Component {
                   key={name}
                   className={styles[name]}
                 >
-                  {icon}
+                  {
+                    icon ?
+                      <span
+                        role="img"
+                        aria-label={mediaTypeLabel}
+                        title={mediaTypeLabel}
+                      >
+                        {icon}
+                      </span> :
+                      null
+                  }
                 </VirtualTableRowCell>
               );
             }
@@ -187,16 +200,22 @@ class UnmappedFilesTableRow extends Component {
                 >
                   <IconButton
                     name={icons.INFO}
+                    title={translate('FileDetails')}
+                    aria-label={translate('FileDetails')}
                     onPress={this.onDetailsPress}
                   />
 
                   <IconButton
                     name={icons.INTERACTIVE}
+                    title={translate('InteractiveImport')}
+                    aria-label={translate('InteractiveImport')}
                     onPress={this.onInteractiveImportPress}
                   />
 
                   <IconButton
                     name={icons.DELETE}
+                    title={translate('DeleteBookFile')}
+                    aria-label={translate('DeleteBookFile')}
                     onPress={this.onDeleteFilePress}
                   />
 

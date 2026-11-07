@@ -115,6 +115,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 LocalBook("/books/cd01.mp3", "Harry Potter And The Goblet Of Fire - CD 01", "Harry Potter And The Goblet Of Fire")
             };
+            sources[0].RawTags.AllTags[BookshelfAudioTagFields.Book] = new List<string> { "Harry Potter and the Goblet of Fire" };
 
             var options = BuildOptions(sources, ConversionTagModes.Clean);
             using var document = JsonDocument.Parse(options.ManifestJson);
@@ -126,6 +127,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var firstSource = document.RootElement.GetProperty("sources")[0];
             Assert.That(firstSource.GetProperty("path").GetString(), Is.EqualTo("/books/cd01.mp3"));
             Assert.That(firstSource.GetProperty("tags").GetProperty("ID3v2:TIT2")[0].GetString(), Is.EqualTo("Harry Potter And The Goblet Of Fire - CD 01"));
+            Assert.That(options.ManifestJson, Does.Not.Contain(BookshelfAudioTagFields.Book));
         }
 
         private static ConversionTagOptions BuildOptions(IReadOnlyList<LocalBook> sources, string mode)

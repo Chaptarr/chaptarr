@@ -43,7 +43,16 @@ namespace NzbDrone.Core.Notifications
             // Always enable AudioBookShelf for metadata search functionality
             (Implementation == "AudioBookShelf") ||
 
+            // MQTT can run from its own sensor/event switches without legacy notification triggers.
+            (Settings is MqttGateway.MqttGatewaySettings mqtt && (mqtt.PublishSensors || mqtt.PublishEvents || mqtt.PublishHomeAssistantDiscovery)) ||
+
+            // Canonical webhook delivery has its own event contract and does not depend on legacy trigger checkboxes.
+            (Settings is Webhook.WebhookSettings webhook && webhook.IncludeCanonicalEvents) ||
+
+            // Grimmory pushes and edit forwarding run without any event trigger
+            (Settings is Grimmory.GrimmorySettings grimmory && (grimmory.PushMetadata || grimmory.PushCovers || grimmory.ForwardEdits)) ||
+
             // Standard notification trigger logic for other providers
-            (OnGrab || OnReleaseImport || (OnReleaseImport && OnUpgrade) || OnRename || OnAuthorAdded || OnBookAdded || OnAuthorDelete || OnBookDelete || OnBookFileDelete || OnBookFileDeleteForUpgrade || OnHealthIssue || OnHealthRestored || OnDownloadFailure || OnImportFailure || OnBookRetag || OnApplicationUpdate);
+            (OnGrab || OnReleaseImport || OnUpgrade || OnRename || OnAuthorAdded || OnBookAdded || OnAuthorDelete || OnBookDelete || OnBookFileDelete || OnBookFileDeleteForUpgrade || OnHealthIssue || OnHealthRestored || OnDownloadFailure || OnImportFailure || OnBookRetag || OnApplicationUpdate);
     }
 }

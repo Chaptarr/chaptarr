@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
+import CheckInput from 'Components/Form/CheckInput';
 import SelectInput from 'Components/Form/SelectInput';
 import TextInput from 'Components/Form/TextInput';
 import Icon from 'Components/Icon';
@@ -17,6 +18,58 @@ import AddNewBookSearchResultConnector from './Book/AddNewBookSearchResultConnec
 import AddNewSeriesSearchResult from './Series/AddNewSeriesSearchResult';
 import styles from './AddNewItem.css';
 
+const SEARCH_AS_YOU_TYPE_KEY = 'chaptarrng.addNewItem.searchAsYouType';
+const LEGACY_SEARCH_AS_YOU_TYPE_KEY = 'bookshelfng.addNewItem.searchAsYouType';
+
+function getSearchAsYouTypePreference() {
+  try {
+    const preference = window.localStorage.getItem(SEARCH_AS_YOU_TYPE_KEY);
+
+    if (preference !== null) {
+      return preference === 'true';
+    }
+
+    const legacyPreference = window.localStorage.getItem(LEGACY_SEARCH_AS_YOU_TYPE_KEY);
+
+    if (legacyPreference !== null) {
+      window.localStorage.setItem(SEARCH_AS_YOU_TYPE_KEY, legacyPreference);
+      return legacyPreference === 'true';
+    }
+  } catch (error) {
+    return false;
+  }
+
+  return false;
+}
+
+const supplementalMetadataProviders = [
+  { key: 'openlibrary', name: 'enableOpenLibrary', label: 'OpenLibrary' },
+  { key: 'googlebooks', name: 'enableGoogleBooks', label: 'GoogleBooks', requiresGoogleBooksKey: true },
+  { key: 'loc', name: 'enableLoc', label: 'LibraryOfCongress' },
+  { key: 'gutendex', name: 'enableGutendex', label: 'Gutendex' },
+  { key: 'internetarchive', name: 'enableInternetArchive', label: 'InternetArchive' },
+  { key: 'ndl', name: 'enableNdl', label: 'NdlSearch' },
+  { key: 'europeana', name: 'enableEuropeana', label: 'Europeana', requiresEuropeanaKey: true },
+  { key: 'apify-goodreads', name: 'enableApifyGoodreads', label: 'ApifyGoodreadsActor', requiresApifyCredentials: true }
+];
+
+function isMetadataApiEnabled(metadataProviderConfig) {
+  if (!metadataProviderConfig?.isPopulated || metadataProviderConfig.error) {
+    return true;
+  }
+
+  return metadataProviderConfig.item?.enableMetadataApi?.value === true;
+}
+
+function getNonHardcoverProvider(metadataProviderConfig) {
+  return isMetadataApiEnabled(metadataProviderConfig) ? 'metadata-api' : 'goodreads';
+}
+
+const supportsSeriesFilter = (provider) => provider !== 'goodreads' &&
+  provider !== 'metadata' &&
+  provider !== 'metadata-api' &&
+  !supplementalMetadataProviders.some((source) => source.key === provider);
+
 class AddNewItem extends Component {
 
   //
@@ -25,17 +78,19 @@ class AddNewItem extends Component {
   constructor(props, context) {
     super(props, context);
 
-    const defaultProvider = props.isHardcoverConfigured === false ? 'goodreads' : 'hardcover';
+    const defaultProvider = props.isHardcoverConfigured === false ? getNonHardcoverProvider(props.metadataProviderConfig) : 'hardcover';
     const providerFromProps = props.provider || defaultProvider;
-    const selectedProvider = props.isHardcoverConfigured === false && providerFromProps === 'hardcover' ?
-      defaultProvider :
-      providerFromProps;
+    const selectedProvider = props.isHardcoverConfigured === false && providerFromProps === 'hardcover' ? defaultProvider : providerFromProps;
+
+    const term = props.term || '';
 
     this.state = {
-      term: props.term || '',
-      isFetching: false,
+      term,
+      isFetching: !!term,
       selectedProvider,
-      activeFilter: 'all' // all, authors, books, series
+      activeFilter: 'all', // all, authors, books, series
+      hasSearched: !!term,
+      searchAsYouTypeEnabled: getSearchAsYouTypePreference()
     };
   }
 
@@ -57,20 +112,25 @@ class AddNewItem extends Component {
     } = this.props;
 
     const providerChanged = !!provider && provider !== prevProps.provider;
-    const termChanged = !!term && term !== prevProps.term;
+    const termChanged = (term || '') !== (prevProps.term || '');
 
     if (providerChanged || termChanged) {
+      const selectedProvider = providerChanged ? provider : this.state.selectedProvider;
+      const nextTerm = term || '';
+
       this.setState((prevState) => ({
-        activeFilter: (providerChanged ? provider : prevState.selectedProvider) === 'goodreads' && prevState.activeFilter === 'series' ?
+        activeFilter: !supportsSeriesFilter(selectedProvider) && prevState.activeFilter === 'series' ?
           'all' :
           prevState.activeFilter,
-        term: termChanged ? term : prevState.term,
-        isFetching: true,
-        selectedProvider: providerChanged ? provider : prevState.selectedProvider
+        term: nextTerm,
+        isFetching: !!nextTerm,
+        hasSearched: !!nextTerm,
+        selectedProvider
       }), () => {
-        const nextTerm = this.state.term;
-        if (nextTerm) {
-          this.props.onSearchChange(nextTerm, this.state.selectedProvider);
+        if (this.state.term) {
+          this.props.onSearchChange(this.state.term, this.state.selectedProvider);
+        } else {
+          this.props.onClearSearch();
         }
       });
     } else if (isFetching !== prevProps.isFetching) {
@@ -82,12 +142,28 @@ class AddNewItem extends Component {
     if (prevProps.isHardcoverConfigured !== isHardcoverConfigured &&
         isHardcoverConfigured === false &&
         this.state.selectedProvider === 'hardcover') {
-      this.setState({ selectedProvider: 'goodreads' }, () => {
+      const nextProvider = getNonHardcoverProvider(this.props.metadataProviderConfig);
+      this.setState({ selectedProvider: nextProvider }, () => {
         const nextTerm = this.state.term;
         if (nextTerm) {
           this.props.onSearchChange(nextTerm, this.state.selectedProvider);
         }
       });
+    }
+
+    if (prevProps.metadataProviderConfig !== this.props.metadataProviderConfig &&
+        this.props.metadataProviderConfig?.isPopulated &&
+        this.props.isHardcoverConfigured === false &&
+        !this.props.provider &&
+        (this.state.selectedProvider === 'metadata-api' || this.state.selectedProvider === 'goodreads')) {
+      const nextProvider = getNonHardcoverProvider(this.props.metadataProviderConfig);
+      if (nextProvider !== this.state.selectedProvider) {
+        this.setState({ selectedProvider: nextProvider }, () => {
+          if (this.state.term) {
+            this.props.onSearchChange(this.state.term, nextProvider);
+          }
+        });
+      }
     }
   }
 
@@ -96,9 +172,15 @@ class AddNewItem extends Component {
 
   onSearchInputChange = ({ value }) => {
     const hasValue = !!value.trim();
+    const searchAsYouTypeEnabled = this.state.searchAsYouTypeEnabled;
 
-    this.setState({ term: value, isFetching: hasValue }, () => {
-      if (hasValue) {
+    this.setState({
+      term: value,
+      isFetching: hasValue && searchAsYouTypeEnabled,
+      hasSearched: hasValue && searchAsYouTypeEnabled,
+      activeFilter: 'all'
+    }, () => {
+      if (hasValue && searchAsYouTypeEnabled) {
         this.props.onSearchChange(value, this.state.selectedProvider);
       } else {
         this.props.onClearSearch();
@@ -106,32 +188,83 @@ class AddNewItem extends Component {
     });
   };
 
-  onSearchKeyPress = (event) => {
-    if (event.key === 'Enter') {
-      const { term } = this.state;
-      const { selectedProvider } = this.state;
-      if (term.trim()) {
-        // Update the URL when Enter is pressed
-        this.props.onSearchSubmit(term, selectedProvider);
+  onSearchAsYouTypeChange = ({ value }) => {
+    const enabled = value === true;
+    const term = this.state.term;
+
+    try {
+      window.localStorage.setItem(SEARCH_AS_YOU_TYPE_KEY, enabled ? 'true' : 'false');
+    } catch (error) {
+      // Keep this choice for the current page if browser storage is unavailable.
+    }
+
+    this.setState({
+      searchAsYouTypeEnabled: enabled,
+      isFetching: enabled && !!term.trim(),
+      hasSearched: enabled && !!term.trim(),
+      activeFilter: 'all'
+    }, () => {
+      if (enabled && term.trim()) {
+        this.props.onSearchChange(term, this.state.selectedProvider);
+      } else {
+        this.props.onClearSearch();
       }
+    });
+  };
+
+  onSearchPress = () => {
+    const term = this.state.term.trim();
+
+    if (!term) {
+      this.props.onClearSearch();
+      return;
+    }
+
+    this.setState({
+      isFetching: true,
+      hasSearched: true,
+      activeFilter: 'all'
+    }, () => this.props.onSearchSubmit(term, this.state.selectedProvider));
+  };
+
+  onSearchInputKeyDown = (event) => {
+    if (event.target.name !== 'searchBox' || event.key !== 'Enter') {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (this.state.searchAsYouTypeEnabled) {
+      const term = this.state.term.trim();
+
+      if (term) {
+        this.props.onSearchSubmit(term, this.state.selectedProvider);
+      }
+    } else {
+      this.onSearchPress();
     }
   };
 
   onProviderChange = ({ value }) => {
     this.setState((prevState) => ({
       selectedProvider: value,
-      activeFilter: value === 'goodreads' && prevState.activeFilter === 'series' ? 'all' : prevState.activeFilter
+      activeFilter: !supportsSeriesFilter(value) && prevState.activeFilter === 'series' ? 'all' : prevState.activeFilter,
+      isFetching: prevState.searchAsYouTypeEnabled && !!prevState.term.trim(),
+      hasSearched: prevState.searchAsYouTypeEnabled && !!prevState.term.trim()
     }), () => {
-      const { term } = this.state;
-      if (term) {
+      const { term, searchAsYouTypeEnabled } = this.state;
+      if (term.trim() && searchAsYouTypeEnabled) {
         this.props.onSearchChange(term, value);
+      } else {
+        this.props.onClearSearch();
       }
     });
   };
 
   onClearSearchPress = () => {
-    this.setState({ term: '', activeFilter: 'all' });
-    this.props.onClearSearch();
+    this.setState({ term: '', activeFilter: 'all', hasSearched: false, isFetching: false }, () => {
+      this.props.onSearchSubmit('', this.state.selectedProvider);
+    });
   };
 
   onFilterChange = (filter) => {
@@ -185,24 +318,42 @@ class AddNewItem extends Component {
     const isFetching = this.state.isFetching;
     const selectedProvider = this.state.selectedProvider;
     const activeFilter = this.state.activeFilter;
+    const hasSearched = this.state.hasSearched;
+    const searchAsYouTypeEnabled = this.state.searchAsYouTypeEnabled;
     const filteredItems = this.getFilteredResults();
-    const showSeriesFilter = selectedProvider !== 'goodreads';
+    const showSeriesFilter = supportsSeriesFilter(selectedProvider);
     const isHardcoverConfigured = this.props.isHardcoverConfigured !== false;
+    const metadataProviderConfig = this.props.metadataProviderConfig || {};
+    const metadataProviderSettings = metadataProviderConfig.item || {};
 
-    // Provider options - structured for future expansion
     const metadataProviders = [
       { key: 'hardcover', value: 'Hardcover', isDisabled: !isHardcoverConfigured },
       { key: 'goodreads', value: 'Goodreads' },
-      { key: 'audible', value: 'Audiobooks' }
-      // Future providers can be added here:
-      // { key: 'openlibrary', value: 'OpenLibrary' },
-      // { key: 'googlebooks', value: 'Google Books' }
+      { key: 'audible', value: translate('Audiobooks') }
     ];
+
+    if (metadataProviderConfig.isPopulated && !metadataProviderConfig.error && metadataProviderSettings.enableMetadataApi?.value) {
+      metadataProviders.splice(1, 0, { key: 'metadata-api', value: translate('MetadataApiCatalog') });
+    }
+
+    if (metadataProviderConfig.isPopulated && !metadataProviderConfig.error) {
+      supplementalMetadataProviders.forEach((source) => {
+        const enabled = metadataProviderSettings[source.name];
+        const hasGoogleBooksKey = !source.requiresGoogleBooksKey || metadataProviderSettings.hasGoogleBooksApiKey;
+        const hasEuropeanaKey = !source.requiresEuropeanaKey || metadataProviderSettings.hasEuropeanaApiKey;
+        const hasApifyCredentials = !source.requiresApifyCredentials ||
+          (metadataProviderSettings.apifyGoodreadsActor && metadataProviderSettings.hasApifyToken);
+
+        if (enabled && hasGoogleBooksKey && hasEuropeanaKey && hasApifyCredentials) {
+          metadataProviders.push({ key: source.key, value: translate(source.label) });
+        }
+      });
+    }
 
     return (
       <PageContent title={translate('AddNewItem')}>
         <PageContentBody>
-          <div className={styles.searchContainer}>
+          <div className={styles.searchContainer} onKeyDown={this.onSearchInputKeyDown}>
             <div className={styles.searchIconContainer}>
               <Icon
                 name={icons.SEARCH}
@@ -217,11 +368,12 @@ class AddNewItem extends Component {
               placeholder={translate('SearchBoxPlaceHolder')}
               autoFocus={true}
               onChange={this.onSearchInputChange}
-              onKeyPress={this.onSearchKeyPress}
             />
 
             <Button
               className={styles.clearLookupButton}
+              title={translate('Clear')}
+              aria-label={translate('Clear')}
               onPress={this.onClearSearchPress}
             >
               <Icon
@@ -234,6 +386,7 @@ class AddNewItem extends Component {
               <SelectInput
                 className={styles.providerSelect}
                 name="provider"
+                aria-label={translate('MetadataSource')}
                 value={selectedProvider}
                 values={metadataProviders}
                 onChange={this.onProviderChange}
@@ -243,6 +396,25 @@ class AddNewItem extends Component {
                 name={icons.CARET_DOWN}
               />
             </div>
+          </div>
+
+          <div className={styles.searchOptions}>
+            <CheckInput
+              name="searchAsYouType"
+              value={searchAsYouTypeEnabled}
+              helpText={translate('SearchAsYouType')}
+              onChange={this.onSearchAsYouTypeChange}
+            />
+
+            {
+              !searchAsYouTypeEnabled &&
+                <Button
+                  kind={kinds.PRIMARY}
+                  onPress={this.onSearchPress}
+                >
+                  {translate('Search')}
+                </Button>
+            }
           </div>
 
           {
@@ -258,13 +430,23 @@ class AddNewItem extends Component {
           }
 
           {
-            !isFetching && !!error ?
+            !isFetching && hasSearched && !!error ?
               <div className={styles.message}>
                 <div className={styles.helpText}>
                   {translate('FailedLoadingSearchResults')}
                 </div>
 
-                <Alert kind={kinds.WARNING}>{getErrorMessage(error)}</Alert>
+                <Alert kind={kinds.WARNING} role="alert">
+                  <div>{getErrorMessage(error, translate('FailedLoadingSearchResults'))}</div>
+                  {
+                    searchAsYouTypeEnabled &&
+                      <div>
+                        <Button size="small" onPress={this.onSearchPress}>
+                          {translate('Retry')}
+                        </Button>
+                      </div>
+                  }
+                </Alert>
 
                 <div>
                   <Link to="https://discord.gg/nqFGsGUug2">
@@ -275,7 +457,7 @@ class AddNewItem extends Component {
           }
 
           {
-            !isFetching && !error && !!items.length &&
+            !isFetching && hasSearched && !error && !!items.length &&
               <div>
                 <div className={styles.filterButtons}>
                   <Button
@@ -347,7 +529,7 @@ class AddNewItem extends Component {
           }
 
           {
-            !isFetching && !error && !items.length && !!term &&
+            !isFetching && hasSearched && !error && !items.length && !!term &&
               <div className={styles.message}>
                 <div className={styles.noResults}>
                   {translate('CouldntFindAnyResultsForTerm', [term])}
@@ -400,6 +582,7 @@ AddNewItem.propTypes = {
   term: PropTypes.string,
   provider: PropTypes.string,
   isHardcoverConfigured: PropTypes.bool,
+  metadataProviderConfig: PropTypes.object,
   isFetching: PropTypes.bool.isRequired,
   error: PropTypes.object,
   isAdding: PropTypes.bool.isRequired,

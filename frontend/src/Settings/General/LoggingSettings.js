@@ -7,15 +7,17 @@ import FormLabel from 'Components/Form/FormLabel';
 import { inputTypes } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 
-const logLevelOptions = [
-  { key: 'trace', value: 'Trace' },
-  { key: 'debug', value: 'Debug' },
-  { key: 'info', value: 'Info' },
-  { key: 'warn', value: 'Warn' },
-  { key: 'error', value: 'Error' },
-  { key: 'fatal', value: 'Fatal' },
-  { key: 'off', value: 'Off' }
-];
+function getLogLevelOptions() {
+  return [
+    { key: 'trace', value: translate('Trace') },
+    { key: 'debug', value: translate('Debug') },
+    { key: 'info', value: translate('Information') },
+    { key: 'warn', value: translate('Warning') },
+    { key: 'error', value: translate('Error') },
+    { key: 'fatal', value: translate('Fatal') },
+    { key: 'off', value: translate('Off') }
+  ];
+}
 
 function LoggingSettings(props) {
   const {
@@ -37,7 +39,7 @@ function LoggingSettings(props) {
         <FormInputGroup
           type={inputTypes.SELECT}
           name="logLevel"
-          values={logLevelOptions}
+          values={getLogLevelOptions()}
           helpTextWarning={logLevel.value === 'trace' ? translate('LogLevelvalueTraceTraceLoggingShouldOnlyBeEnabledTemporarily') : undefined}
           onChange={onInputChange}
           {...logLevel}

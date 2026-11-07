@@ -1,5 +1,8 @@
+using System;
+using System.Collections.Generic;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser;
@@ -20,6 +23,23 @@ namespace Chaptarr.Core.Test.DecisionEngine
             Assert.That(decision.CanBypass, Is.False);
             Assert.That(decision.Category, Is.EqualTo("Pack"));
             Assert.That(decision.Reason, Is.EqualTo("Release appears to contain multiple books"));
+        }
+
+        [Test]
+        public void should_allow_discography_pack_when_every_book_is_released()
+        {
+            var spec = new MultiBookReleaseSpecification(LogManager.GetCurrentClassLogger());
+            var remoteBook = BuildRemoteBook(ReleasePackDetectionVerdict.MultipleBooks);
+            remoteBook.ParsedBookInfo.Discography = true;
+            remoteBook.Books = new List<Book>
+            {
+                new Book { ReleaseDate = DateTime.UtcNow.AddYears(-5) },
+                new Book { ReleaseDate = DateTime.UtcNow.AddDays(-1) }
+            };
+
+            var decision = spec.IsSatisfiedBy(remoteBook, new BookSearchCriteria());
+
+            Assert.That(decision.Accepted, Is.True);
         }
 
         [Test]
@@ -49,6 +69,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             return new RemoteBook
             {
                 Release = new ReleaseInfo { Title = "Release" },
+                ParsedBookInfo = new ParsedBookInfo(),
                 PackDetection = new ReleasePackDetection
                 {
                     Verdict = verdict,

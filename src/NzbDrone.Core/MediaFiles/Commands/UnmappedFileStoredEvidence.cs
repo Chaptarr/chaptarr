@@ -61,6 +61,10 @@ namespace NzbDrone.Core.MediaFiles.Commands
 
                 file.Size = fileInfo.Length;
                 file.Modified = MediaFileFreshness.GetLastWriteUtc(fileInfo);
+                if (result.FileChanged)
+                {
+                    file.LastRemoteSearchTime = null;
+                }
                 file.AllTags = result.Tags;
                 file.DurationSeconds = result.DurationSeconds;
                 file.MediaInfo = MediaDuration.ApplyToMediaInfo(file.MediaInfo, result.DurationSeconds);

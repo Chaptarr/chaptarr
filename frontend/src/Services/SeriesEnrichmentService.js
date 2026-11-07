@@ -16,7 +16,7 @@ class SeriesEnrichmentService {
     this.isActive = true;
     const urlBase = window.Chaptarr.urlBase || '';
     const apiKey = window.Chaptarr.apiKey;
-    const url = `${urlBase}/api/v1/enrichment/series/stream?apikey=${encodeURIComponent(apiKey)}`;
+    const url = `${urlBase}/api/v1/enrichment/series/stream?apikey=${encodeURIComponent(apiKey)}&chaptarrngClient=native`;
 
     console.log('[SeriesEnrichment] Connecting to SSE endpoint');
 

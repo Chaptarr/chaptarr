@@ -7,9 +7,10 @@
 .table {
   composes: table from '~Components/Table/Table.css';
 
-  max-width: 100%;
+  min-width: 1280px;
+
+  max-width: none;
   width: 100%;
-  min-width: 100%;
   table-layout: fixed;
 }
 
@@ -25,8 +26,12 @@
   width: 76px;
 }
 
+.table th:nth-child(4) {
+  width: 280px;
+}
+
 .table th:nth-child(5) {
-  width: 82px;
+  width: 180px;
 }
 
 .table th:nth-child(6) {
@@ -84,24 +89,24 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin-bottom: 0;
   padding: 12px 20px;
-  background-color: #f5f5f5;
   border: 1px solid #ddd;
   border-bottom: 2px solid #337ab7;
-  margin-bottom: 0;
+  background-color: #f5f5f5;
 }
 
 .formatTitle {
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
   color: #333;
+  font-weight: 600;
+  font-size: 18px;
 }
 
 .formatCount {
-  font-size: 14px;
   color: #666;
   font-weight: normal;
+  font-size: 14px;
 }
 
 .hiddenResultsHeader {
@@ -109,6 +114,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+
   margin-bottom: 8px;
 }
 
@@ -120,6 +126,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+
   flex-wrap: wrap;
 }
 

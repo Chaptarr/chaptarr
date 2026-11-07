@@ -61,6 +61,8 @@
 @media (max-width: 768px) {
   .option {
     height: 32px;
+    padding: 0 8px;
+    gap: 4px;
     font-size: 12px;
   }
 }

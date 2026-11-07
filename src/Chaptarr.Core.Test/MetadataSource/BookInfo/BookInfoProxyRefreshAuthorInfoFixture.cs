@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Reflection;
 using System.Text;
 using NLog;
+using Moq;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
@@ -15,6 +16,7 @@ using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
+using NzbDrone.Core.MetadataSource.Hardcover;
 
 namespace Chaptarr.Core.Test.MetadataSource.BookInfo
 {
@@ -72,12 +74,18 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
         private class ConfigServiceProxy : DispatchProxy
         {
             public string MetadataServerUrl { get; set; } = "http://metadata";
+            public bool BookshelfMatchCompatibility { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == "get_MetadataServerUrl")
                 {
                     return MetadataServerUrl;
+                }
+
+                if (targetMethod?.Name == "get_BookshelfMatchCompatibility")
+                {
+                    return BookshelfMatchCompatibility;
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement {targetMethod?.Name}");
@@ -88,6 +96,269 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
         {
             var logger = LogManager.GetCurrentClassLogger();
             return new MetadataServerHealthGate(configService, new MetadataServerHealthService(logger), logger);
+        }
+
+        [TestCase("hc:123")]
+        [TestCase("hardcover-author:123")]
+        [TestCase("123")]
+        public void should_refresh_native_hardcover_without_contacting_v5_or_reusing_its_etag(string authorId)
+        {
+            var native = new Mock<IHardcoverMetadataProxy>(MockBehavior.Strict);
+            native.SetupGet(x => x.IsNativeEnabled).Returns(true);
+            native.Setup(x => x.GetAuthor("123", false)).Returns(new AuthorResource
+            {
+                ForeignId = 123,
+                Name = "Test Author",
+                Works = new List<WorkResource>(),
+                Series = new List<SeriesResource>()
+            });
+            var proxy = CreateNativeRefreshProxy(native.Object, out var httpClient);
+
+            var result = proxy.RefreshAuthorInfo(authorId, etag: "old-v5-etag", forceRefresh: true);
+
+            Assert.That(result.Reason, Is.EqualTo(RefreshReason.Updated), result.Message);
+            Assert.That(result.Author.Name, Is.EqualTo("Test Author"));
+            Assert.That(result.Author.HardcoverAuthorId, Is.EqualTo("hc:123"));
+            Assert.That(result.Author.Books, Is.Empty);
+            Assert.That(result.ETag, Is.Null);
+            Assert.That(httpClient.Requests, Is.Empty);
+            native.Verify(x => x.GetAuthor("123", false), Times.Once);
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void should_preserve_native_refresh_failure_without_falling_back_to_v5(bool notFound)
+        {
+            var native = new Mock<IHardcoverMetadataProxy>(MockBehavior.Strict);
+            native.SetupGet(x => x.IsNativeEnabled).Returns(true);
+            if (notFound)
+            {
+                native.Setup(x => x.GetAuthor("123", false)).Throws(new AuthorNotFoundException("123"));
+            }
+            else
+            {
+                native.Setup(x => x.GetAuthor("123", false)).Throws(new InvalidOperationException("Provider unavailable"));
+            }
+
+            var proxy = CreateNativeRefreshProxy(native.Object, out var httpClient);
+            var result = proxy.RefreshAuthorInfo("hc:123");
+
+            Assert.That(result.Reason, Is.EqualTo(notFound ? RefreshReason.NotFound : RefreshReason.Error));
+            Assert.That(result.Author, Is.Null);
+            Assert.That(httpClient.Requests, Is.Empty);
+        }
+
+        [TestCase(false, 0)]
+        [TestCase(true, 0)]
+        [TestCase(false, 3)]
+        [TestCase(true, 3)]
+        public void should_return_independent_native_book_instances_for_both_format_profiles(bool compatibility, int readingFormatId)
+        {
+            var native = new Mock<IHardcoverMetadataProxy>();
+            native.SetupGet(x => x.IsNativeEnabled).Returns(true);
+            native.Setup(x => x.GetAuthor("123", false)).Returns(new AuthorResource
+            {
+                ForeignId = 123,
+                Name = "Test Author",
+                Works = new List<WorkResource>
+                {
+                    new WorkResource
+                    {
+                        ForeignId = 456,
+                        Title = "Test Work",
+                        Genres = new List<string> { "Fiction" },
+                        Books = new List<BookResource>
+                        {
+                            new BookResource { ForeignId = 789, Title = "Test Work", ReadingFormatId = readingFormatId }
+                        }
+                    }
+                }
+            });
+            var proxy = CreateNativeRefreshProxy(native.Object, out _, compatibility);
+
+            var result = proxy.RefreshAuthorInfo("hc:123");
+
+            Assert.That(result.Reason, Is.EqualTo(RefreshReason.Updated), result.Message);
+            var books = result.Author.Books;
+            Assert.That(books.Select(book => book.MediaType), Is.EquivalentTo(new[] { BookMediaType.Audiobook, BookMediaType.Ebook }));
+            Assert.That(books.All(book => book.HardcoverBookId == "hc:456"), Is.True);
+            Assert.That(books.All(book => book.Links.Single().Name == (compatibility ? "Book Editions" : "Hardcover")), Is.True);
+            Assert.That(books[0].Editions.Single().ReadingFormatId, Is.EqualTo(compatibility && readingFormatId == 0 ? 2 : readingFormatId));
+            Assert.That(books[1].Editions.Single().ReadingFormatId, Is.EqualTo(compatibility && readingFormatId == 0 ? 3 : readingFormatId));
+            Assert.That(books[0].Editions.Single(), Is.Not.SameAs(books[1].Editions.Single()));
+            books[0].Editions.Clear();
+            Assert.That(books[1].Editions, Has.Count.EqualTo(1));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void should_schedule_native_authors_without_sending_them_to_v5_diff(bool mixedProviders)
+        {
+            var native = new Mock<IHardcoverMetadataProxy>(MockBehavior.Strict);
+            native.SetupGet(x => x.IsNativeEnabled).Returns(true);
+            var proxy = CreateNativeRefreshProxy(native.Object, out var httpClient);
+            var items = new List<NzbDrone.Core.MetadataSource.BookInfo.V5.V5AuthorETag>
+            {
+                new() { RequestedId = "hc:123", ETag = "previous-v5-etag" }
+            };
+            if (mixedProviders)
+            {
+                items.Add(new() { RequestedId = "gr:456", ETag = "goodreads-etag" });
+            }
+
+            var result = proxy.GetBulkAuthorChanges(items);
+
+            Assert.That(result.Changed, Has.Count.EqualTo(1));
+            Assert.That(result.Changed[0].RequestedId, Is.EqualTo("hc:123"));
+            Assert.That(result.Changed[0].CanonicalId, Is.EqualTo("hc:123"));
+            Assert.That(result.Changed[0].ETag, Is.Null);
+            Assert.That(httpClient.Requests, Has.Count.EqualTo(mixedProviders ? 1 : 0));
+            if (mixedProviders)
+            {
+                var body = Encoding.UTF8.GetString(httpClient.Requests.Single().ContentData);
+                Assert.That(body, Does.Contain("gr:456"));
+                Assert.That(body, Does.Not.Contain("hc:123"));
+            }
+        }
+
+        [TestCase(false, "hc:123", "Hardcover")]
+        [TestCase(true, "123", "Goodreads")]
+        public void should_preserve_source_author_metadata_only_for_migrated_libraries(bool compatibility, string slug, string linkName)
+        {
+            var native = new Mock<IHardcoverMetadataProxy>();
+            native.SetupGet(x => x.IsNativeEnabled).Returns(true);
+            native.Setup(x => x.GetAuthor("123", false)).Returns(new AuthorResource
+            {
+                ForeignId = 123,
+                Name = "Test Author",
+                Url = "https://hardcover.app/authors/test-author"
+            });
+            var proxy = CreateNativeRefreshProxy(native.Object, out _, compatibility);
+
+            var result = proxy.RefreshAuthorInfo("hc:123");
+
+            Assert.That(result.Reason, Is.EqualTo(RefreshReason.Updated), result.Message);
+            Assert.That(result.Author.TitleSlug, Is.EqualTo(slug));
+            Assert.That(result.Author.Links.Single().Name, Is.EqualTo(linkName));
+            Assert.That(result.Author.HardcoverAuthorId, Is.EqualTo("hc:123"));
+        }
+
+        [TestCase(true, 602)]
+        [TestCase(false, 0)]
+        public void should_keep_source_catalogs_over_300_works_without_native_date_or_isbn_requirements(bool compatibility, int expectedBooks)
+        {
+            var native = new Mock<IHardcoverMetadataProxy>();
+            native.SetupGet(x => x.IsNativeEnabled).Returns(true);
+            native.Setup(x => x.GetAuthor("123", false)).Returns(new AuthorResource
+            {
+                ForeignId = 123,
+                Name = "Test Author",
+                Works = Enumerable.Range(1, 301).Select(id => new WorkResource
+                {
+                    ForeignId = id,
+                    Title = "Work " + id,
+                    Books = new List<BookResource> { new() { ForeignId = 1000 + id, Title = "Work " + id } }
+                }).ToList()
+            });
+            var proxy = CreateNativeRefreshProxy(native.Object, out _, compatibility);
+
+            var result = proxy.RefreshAuthorInfo("hc:123");
+
+            Assert.That(result.Reason, Is.EqualTo(RefreshReason.Updated), result.Message);
+            Assert.That(result.Author.Books, Has.Count.EqualTo(expectedBooks));
+        }
+
+        [TestCase("A Work (A Series, #1)", "A Work (A Series, #1)")]
+        [TestCase(null, "Fallback Edition (A Series, #1)")]
+        public void should_keep_source_work_titles_and_ignore_unusable_editions(string title, string expected)
+        {
+            var native = new Mock<IHardcoverMetadataProxy>();
+            native.SetupGet(x => x.IsNativeEnabled).Returns(true);
+            native.Setup(x => x.GetAuthor("123", false)).Returns(new AuthorResource
+            {
+                ForeignId = 123,
+                Name = "Test Author",
+                Works = new List<WorkResource>
+                {
+                    new()
+                    {
+                        ForeignId = 456, Title = title,
+                        Books = new List<BookResource>
+                        {
+                            null,
+                            new() { ForeignId = 0, Title = "Invalid identity" },
+                            new() { ForeignId = 789, Title = "Fallback Edition (A Series, #1)", RatingCount = 10 },
+                            new() { ForeignId = 790, Title = null },
+                            new() { ForeignId = 791, Title = "More popular edition", RatingCount = 20, AverageRating = 4 }
+                        }
+                    }
+                }
+            });
+            var proxy = CreateNativeRefreshProxy(native.Object, out _, compatibility: true);
+
+            var result = proxy.RefreshAuthorInfo("hc:123");
+
+            Assert.That(result.Reason, Is.EqualTo(RefreshReason.Updated), result.Message);
+            Assert.That(result.Author.Books.Select(book => book.Title), Is.All.EqualTo(expected));
+            Assert.That(result.Author.Books, Has.Count.EqualTo(2));
+            foreach (var book in result.Author.Books)
+            {
+                Assert.That(book.Editions.Select(edition => edition.HardcoverEditionId), Is.EquivalentTo(new[] { "789", "791" }));
+                Assert.That(book.Editions.Single(edition => edition.Monitored).HardcoverEditionId, Is.EqualTo("791"));
+            }
+        }
+
+        [TestCase(true, "123", "456", "789", "8", "Goodreads", "Book Editions", "Goodreads Book", "_SX50_")]
+        [TestCase(false, "hc:123", "hc:456", "hc:edition:789", "hc:8", "Hardcover", "Hardcover", "Hardcover", "_SX500_")]
+        public void should_preserve_source_metadata_presentation_without_rewriting_native_defaults(bool compatibility,
+            string authorSlug, string bookSlug, string editionSlug, string seriesSlug,
+            string authorLink, string bookLink, string editionLink, string imageSize)
+        {
+            const string image = "https://images.gr-assets.com/books/123._SX50_.jpg";
+            var native = new Mock<IHardcoverMetadataProxy>();
+            native.SetupGet(x => x.IsNativeEnabled).Returns(true);
+            native.Setup(x => x.GetAuthor("123", false)).Returns(new AuthorResource
+            {
+                ForeignId = 123, Name = "Test Author", ImageUrl = image, Url = "https://hardcover.app/authors/test-author",
+                Series = new List<SeriesResource> { new() { ForeignId = 8, Title = "Test Series" } },
+                Works = new List<WorkResource>
+                {
+                    new() { ForeignId = 456, Title = "Test Work", Books = new List<BookResource>
+                    {
+                        new() { ForeignId = 789, Title = "Test Edition", ImageUrl = image }
+                    } }
+                }
+            });
+            var proxy = CreateNativeRefreshProxy(native.Object, out _, compatibility);
+
+            var result = proxy.RefreshAuthorInfo("hc:123");
+
+            Assert.That(result.Reason, Is.EqualTo(RefreshReason.Updated), result.Message);
+            Assert.That(result.Author.TitleSlug, Is.EqualTo(authorSlug));
+            Assert.That(result.Author.Links.Single().Name, Is.EqualTo(authorLink));
+            Assert.That(result.Author.Images.Single().Url, Does.Contain(imageSize));
+            Assert.That(result.Author.Series.Select(series => series.TitleSlug), Is.All.EqualTo(seriesSlug));
+            foreach (var book in result.Author.Books)
+            {
+                Assert.That(book.TitleSlug, Is.EqualTo(bookSlug));
+                Assert.That(book.Links.Single().Name, Is.EqualTo(bookLink));
+                Assert.That(book.Editions.Single().TitleSlug, Is.EqualTo(editionSlug));
+                Assert.That(book.Editions.Single().Links.Single().Name, Is.EqualTo(editionLink));
+                Assert.That(book.Editions.Single().Images.Single().Url, Does.Contain(imageSize));
+            }
+        }
+
+        private static BookInfoProxy CreateNativeRefreshProxy(IHardcoverMetadataProxy native, out RecordingHttpClient httpClient, bool compatibility = false)
+        {
+            httpClient = new RecordingHttpClient("{}");
+            var config = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
+            ((ConfigServiceProxy)(object)config).BookshelfMatchCompatibility = compatibility;
+            var preferences = new Mock<IAdditionalBookMetadataProxy>();
+            preferences.Setup(x => x.ApplyAuthorImageSourcePreference(It.IsAny<Author>(), It.IsAny<Book>()))
+                .Returns((Author author, Book book) => author);
+            return new BookInfoProxy(httpClient, null, null, null, null, null, null, null,
+                config, null, LogManager.GetCurrentClassLogger(), new CacheManager(), CreateHealthGate(config),
+                preferences.Object, native);
         }
 
         [Test]

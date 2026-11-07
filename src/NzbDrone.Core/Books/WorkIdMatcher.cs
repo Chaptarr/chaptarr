@@ -61,9 +61,14 @@ namespace NzbDrone.Core.Books
             return WorkIdMatches(left, right);
         }
 
-        private static List<string> GetWorkProviderIds(Book book)
+        public static IReadOnlyList<string> GetWorkProviderIds(Book book)
         {
             var ids = new List<string>();
+
+            if (book == null)
+            {
+                return ids;
+            }
 
             AddWorkIdOrIgnore(ids, book?.HardcoverBookId, expectedPrefix: "hc");
             AddWorkIdOrIgnore(ids, book?.GoodreadsWorkId, expectedPrefix: "gr");
@@ -77,6 +82,7 @@ namespace NzbDrone.Core.Books
             return ids
                 .Where(id => id.IsNotNullOrWhiteSpace())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
 

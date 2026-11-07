@@ -1,0 +1,191 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net;
+using FluentValidation.Results;
+using Newtonsoft.Json;
+using NLog;
+using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Http;
+
+namespace NzbDrone.Core.ImportLists.Hardcover
+{
+    public interface IHardcoverProxy
+    {
+        List<HardcoverListResource> GetLists(HardcoverImportSettings settings);
+        ValidationFailure Test(HardcoverImportSettings settings);
+    }
+
+    public class HardcoverProxy : IHardcoverProxy
+    {
+        private const string ListQuery = "query UserLists($user: citext) {users(where: {username: {_eq: $user}}) {lists {name slug list_books { id  } } }}";
+
+        private readonly IHttpClient _httpClient;
+        private readonly Logger _logger;
+
+        public HardcoverProxy(IHttpClient httpClient, Logger logger)
+        {
+            _httpClient = httpClient;
+            _logger = logger;
+        }
+
+        public List<HardcoverListResource> GetLists(HardcoverImportSettings settings)
+        {
+            var apiKey = NormalizeApiKey(settings.ApiKey);
+
+            if (apiKey.IsNullOrWhiteSpace())
+            {
+                _logger.Debug("Hardcover: API key is empty, returning empty list");
+                return new List<HardcoverListResource>();
+            }
+
+            _logger.Debug("Hardcover: Fetching lists from {0}", settings.BaseUrl);
+
+            var request = BuildGraphQlRequest(settings, ListQuery, apiKey);
+            var response = _httpClient.Execute(request);
+
+            if (response.HasHttpError)
+            {
+                _logger.Warn("Hardcover: HTTP error {0}", response.StatusCode);
+                throw new HttpException(request, response);
+            }
+
+            var payload = JsonConvert.DeserializeObject<HardcoverGraphQlResponse>(response.Content);
+            var customLists = payload?.GetLists() ?? new List<HardcoverListResource>();
+
+            foreach (var list in customLists)
+            {
+                list.Hint = "Custom List";
+            }
+
+            _logger.Debug("Hardcover: Found {0} custom lists", customLists.Count);
+
+            var allOptions = GetReadingStatusOptions();
+            allOptions.AddRange(customLists);
+
+            return allOptions;
+        }
+
+        private static List<HardcoverListResource> GetReadingStatusOptions()
+        {
+            return new List<HardcoverListResource>
+            {
+                new HardcoverListResource { Id = "status:1", Name = "Want to Read", Hint = "Reading Status" },
+                new HardcoverListResource { Id = "status:2", Name = "Currently Reading", Hint = "Reading Status" },
+                new HardcoverListResource { Id = "status:3", Name = "Read", Hint = "Reading Status" },
+                new HardcoverListResource { Id = "status:4", Name = "Paused", Hint = "Reading Status" },
+                new HardcoverListResource { Id = "status:5", Name = "Did Not Finish", Hint = "Reading Status" },
+                new HardcoverListResource { Id = "status:6", Name = "Ignored", Hint = "Reading Status" },
+            };
+        }
+
+        public ValidationFailure Test(HardcoverImportSettings settings)
+        {
+            try
+            {
+                GetLists(settings);
+                _logger.Info("Hardcover authentication succeeded for {0}", settings.BaseUrl);
+                return null;
+            }
+            catch (HttpException ex)
+            {
+                _logger.Warn(ex, "Hardcover authentication failed (HTTP {0}) for {1}", ex.Response.StatusCode, settings.BaseUrl);
+                if (ex.Response.StatusCode == HttpStatusCode.Unauthorized || ex.Response.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    return new ValidationFailure(nameof(settings.ApiKey), "Invalid Hardcover API key");
+                }
+
+                return new ValidationFailure(string.Empty, "Unable to connect to Hardcover. Check URL/API key and logs for details.");
+            }
+            catch (System.Exception ex)
+            {
+                _logger.Warn(ex, "Unable to connect to Hardcover for {0}", settings.BaseUrl);
+                return new ValidationFailure(string.Empty, "Unable to connect to Hardcover. Check logs for details.");
+            }
+        }
+
+        private HttpRequest BuildGraphQlRequest(HardcoverImportSettings settings, string query, string apiKey)
+        {
+            var graphQlBody = JsonConvert.SerializeObject(new
+            {
+                query = query,
+                variables = new
+                {
+                    user = settings.User
+                }
+            });
+            var request = new HttpRequestBuilder($"{settings.BaseUrl.TrimEnd('/')}/v1/graphql")
+                .Post()
+                .Accept(HttpAccept.Json)
+                .SetHeader("Authorization", $"Bearer {apiKey}")
+                .SetHeader("X-Api-Key", apiKey)
+                .SetHeader("User-Agent", "Readarr (Hardcover Import)")
+                .SetHeader("Content-Type", "application/json")
+                .KeepAlive()
+                .Build();
+
+            request.RequestTimeout = TimeSpan.FromSeconds(300);
+            request.SetContent(graphQlBody);
+            return request;
+        }
+
+        private string NormalizeApiKey(string apiKey)
+        {
+            if (apiKey.IsNullOrWhiteSpace())
+            {
+                return string.Empty;
+            }
+
+            var trimmed = apiKey.Trim();
+            const string bearerPrefix = "bearer ";
+
+            if (trimmed.StartsWith(bearerPrefix, System.StringComparison.OrdinalIgnoreCase))
+            {
+                return trimmed.Substring(bearerPrefix.Length).Trim();
+            }
+
+            return trimmed;
+        }
+    }
+
+    public class HardcoverGraphQlResponse
+    {
+        [JsonProperty("data")]
+        public HardcoverGraphQlData Data { get; set; }
+
+        public List<HardcoverListResource> GetLists() =>
+            Data?.Users?
+                .SelectMany(m => m.Lists ?? new List<HardcoverListResource>())
+                .ToList()
+            ?? new List<HardcoverListResource>();
+    }
+
+    public class HardcoverGraphQlData
+    {
+        [JsonProperty("users")]
+        public List<HardcoverGraphQlUsers> Users { get; set; }
+    }
+
+    public class HardcoverGraphQlUsers
+    {
+        [JsonProperty("lists")]
+        public List<HardcoverListResource> Lists { get; set; }
+    }
+
+    public class HardcoverListResource
+    {
+        [JsonProperty("id")]
+        public string Id { get; set; }
+
+        [JsonProperty("slug")]
+        public string Slug { get; set; }
+
+        [JsonProperty("name")]
+        public string Name { get; set; }
+
+        [JsonIgnore]
+        public string Hint { get; set; }
+
+        public string DisplayName => Name ?? Slug ?? Id;
+    }
+}

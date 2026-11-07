@@ -5,8 +5,10 @@
 }
 
 .icon {
-  line-height: 1;
-}
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 
-@media (max-width: 768px) {
+  white-space: nowrap;
+  line-height: 1;
 }

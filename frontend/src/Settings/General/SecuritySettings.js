@@ -394,6 +394,7 @@ class SecuritySettings extends Component {
                   helpText={translate('OidcRequireEmailVerifiedHelpText')}
                   onChange={onInputChange}
                   {...oidcRequireEmailVerified}
+                  disabled
                 />
               </FormGroup>
 

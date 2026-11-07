@@ -408,6 +408,8 @@ namespace NzbDrone.Core.ImportLists.Hardcover.Library
 	        private readonly IRootFolderService _rootFolderService;
 	        private readonly IRootFolderSettingsResolver _rootFolderSettingsResolver;
 	        private readonly IHardcoverLibraryImportListStateRepository _stateRepository;
+	        private HardcoverLibraryImportListState _pendingState;
+	        private bool _pendingFetchSucceeded;
 	        private bool _useCachedContributorsFallback;
 
 	        public override string Name => "Hardcover Library";
@@ -450,6 +452,9 @@ namespace NzbDrone.Core.ImportLists.Hardcover.Library
 
 	        public override IList<ImportListItemInfo> Fetch()
 	        {
+	            _pendingState = null;
+	            _pendingFetchSucceeded = false;
+
 	            // Only enable the schema fallback for the current sync run. If Hardcover restores the old schema,
 	            // subsequent runs will automatically prefer the richer `contributions { author { ... } }` query.
 	            _useCachedContributorsFallback = false;
@@ -700,26 +705,49 @@ namespace NzbDrone.Core.ImportLists.Hardcover.Library
                     state.HardcoverUserId = user.Id;
                     state.SettingsSignature = settingsSignature;
                     state.UpdatedAt = now;
-
-                    if (state.Id == 0)
-                    {
-                        _stateRepository.Insert(state);
-                    }
-                    else
-                    {
-                        _stateRepository.Update(state);
-                    }
+                    _pendingState = state;
+                }
+                else
+                {
+                    _pendingState = null;
                 }
 
-                _importListStatusService.RecordSuccess(Definition.Id);
+                _pendingFetchSucceeded = true;
             }
             catch (Exception ex)
             {
                 _logger.Warn(ex, "Hardcover library import failed");
+                _pendingState = null;
+                _pendingFetchSucceeded = false;
                 _importListStatusService.RecordFailure(Definition.Id);
             }
 
             return CleanupListItems(results);
+        }
+
+        public override void CommitState()
+        {
+            if (!_pendingFetchSucceeded)
+            {
+                return;
+            }
+
+            if (_pendingState != null)
+            {
+                if (_pendingState.Id == 0)
+                {
+                    _stateRepository.Insert(_pendingState);
+                }
+                else
+                {
+                    _stateRepository.Update(_pendingState);
+                }
+
+                _pendingState = null;
+            }
+
+            _pendingFetchSucceeded = false;
+            _importListStatusService.RecordSuccess(Definition.Id);
         }
 
         protected override IList<ImportListItemInfo> CleanupListItems(IEnumerable<ImportListItemInfo> releases)

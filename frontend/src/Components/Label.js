@@ -17,6 +17,7 @@ function Label(props) {
   return (
     <span
       className={classNames(
+        styles.label,
         className,
         styles[kind],
         styles[size],

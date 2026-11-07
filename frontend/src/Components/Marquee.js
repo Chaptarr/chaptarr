@@ -1,6 +1,7 @@
 import classNames from 'classnames';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import BidiText from 'Components/BidiText';
 import Measure from './Measure';
 import styles from './Marquee.css';
 
@@ -129,7 +130,7 @@ class Marquee extends Component {
             }}
             title={text}
           >
-            {text}
+            <BidiText>{text}</BidiText>
           </span>
         </div>
       </Measure>

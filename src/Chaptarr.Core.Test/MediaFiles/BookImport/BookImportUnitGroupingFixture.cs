@@ -29,6 +29,32 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         }
 
         [Test]
+        public void case_only_duplicate_paths_should_not_break_unit_grouping()
+        {
+            // A folder renamed only by casing (case-insensitive mounts, sync tools)
+            // can leave the same file catalogued twice with paths that differ only
+            // by case. Grouping must degrade to keeping one of them, not throw and
+            // collapse the entire unmapped page to per-file units.
+            var folder = @"C:\library\Author\Vision in Silver".AsOsAgnostic();
+            var duplicateCasing = @"C:\library\Author\Vision In Silver".AsOsAgnostic();
+            var files = new[]
+            {
+                CreateFile(1, $@"{folder}{Sep}Vision in Silver.m4b", "audiobook",
+                    ("ARTIST", "Author"),
+                    ("TITLE", "Vision in Silver")),
+                CreateFile(2, $@"{duplicateCasing}{Sep}Vision in Silver.m4b", "audiobook",
+                    ("ARTIST", "Author"),
+                    ("TITLE", "Vision in Silver"))
+            };
+
+            IReadOnlyList<BookImportUnit> units = null;
+
+            Assert.DoesNotThrow(() => units = BookImportUnitGroupingService.BuildUnmappedUnits(files, _ => @"C:\library".AsOsAgnostic()));
+            Assert.That(units, Is.Not.Empty);
+            Assert.That(units.SelectMany(unit => unit.Files).Any(file => file.Id == 1 || file.Id == 2), Is.True);
+        }
+
+        [Test]
         public void homogeneous_audio_tracks_should_share_one_unit()
         {
             var folder = @"C:\library\Michael Connelly\Schwarzes Echo".AsOsAgnostic();

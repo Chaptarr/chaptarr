@@ -107,6 +107,10 @@ $hoverScale: 1.05;
   font-size: 30px;
 }
 
+.mediaTypeBadge {
+  margin: 0 8px;
+}
+
 .actions {
   white-space: nowrap;
 }
@@ -125,8 +129,17 @@ $hoverScale: 1.05;
   min-height: 0;
 }
 
+.overviewMessage {
+  display: flex;
+  align-items: center;
+  flex: 0 1 1000px;
+  overflow: hidden;
+  min-height: 0;
+}
+
 @media only screen and (max-width: $breakpointSmall) {
-  .overview {
+  .overview,
+  .overviewMessage {
     display: none;
   }
 }

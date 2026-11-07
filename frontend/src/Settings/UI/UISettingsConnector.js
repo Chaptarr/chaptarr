@@ -75,7 +75,18 @@ class UISettingsConnector extends Component {
   };
 
   onSavePress = () => {
-    this.props.saveUISettings();
+    const isLanguageChange = !!(this.props.settings &&
+      this.props.settings.uiLanguage &&
+      this.props.settings.uiLanguage.pending);
+    const saveRequest = this.props.saveUISettings();
+
+    if (isLanguageChange && saveRequest && typeof saveRequest.then === 'function') {
+      return saveRequest.then(() => {
+        window.location.reload();
+      });
+    }
+
+    return saveRequest;
   };
 
   //

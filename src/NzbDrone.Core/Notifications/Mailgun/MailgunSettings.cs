@@ -25,19 +25,19 @@ namespace NzbDrone.Core.Notifications.Mailgun
             Recipients = new string[] { };
         }
 
-        [FieldDefinition(0, Label = "API Key", Privacy = PrivacyLevel.ApiKey, HelpText = "The API key generated from MailGun")]
+        [FieldDefinition(0, Label = "ApiKey", Privacy = PrivacyLevel.ApiKey, HelpText = "provider.field.f2a05babe5664")]
         public string ApiKey { get; set; }
 
-        [FieldDefinition(1, Label = "Use EU Endpoint?", HelpText = "You can choose to use the EU MailGun endpoint with this", Type = FieldType.Checkbox)]
+        [FieldDefinition(1, Label = "provider.field.f4cfb24435d8f", HelpText = "provider.field.f5165e5321550", Type = FieldType.Checkbox)]
         public bool UseEuEndpoint { get; set; }
 
-        [FieldDefinition(2, Label = "From Address")]
+        [FieldDefinition(2, Label = "provider.field.f60643eae6376")]
         public string From { get; set; }
 
-        [FieldDefinition(3, Label = "Sender Domain")]
+        [FieldDefinition(3, Label = "provider.field.f890b32cf6373")]
         public string SenderDomain { get; set; }
 
-        [FieldDefinition(4, Label = "Recipient Address(es)", Type = FieldType.Tag)]
+        [FieldDefinition(4, Label = "provider.field.f72382eeea71e", Type = FieldType.Tag)]
         public IEnumerable<string> Recipients { get; set; }
 
         public NzbDroneValidationResult Validate()

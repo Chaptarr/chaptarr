@@ -16,6 +16,7 @@ using NzbDrone.Core.MetadataSource;
 // using NzbDrone.Core.MetadataSource.Hardcover; // Removed - using V5 API via BookInfoProxy
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Profiles.Metadata;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.Series
 {
@@ -55,7 +56,7 @@ namespace Chaptarr.Api.V1.Series
 
             try
             {
-                _logger.Debug($"Looking up series details for: {foreignSeriesId} using provider: {provider}, metadataProfileId: {metadataProfileId}");
+                _logger.DebugSafe($"Looking up series details for: {foreignSeriesId} using provider: {provider}, metadataProfileId: {metadataProfileId}");
 
                 if (!provider.Equals("hardcover", StringComparison.OrdinalIgnoreCase))
                 {
@@ -112,7 +113,7 @@ namespace Chaptarr.Api.V1.Series
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, $"Error looking up series {foreignSeriesId}");
+                _logger.ErrorSafe(ex, $"Error looking up series {foreignSeriesId}");
                 return StatusCode(500, new { error = ex.Message });
             }
         }

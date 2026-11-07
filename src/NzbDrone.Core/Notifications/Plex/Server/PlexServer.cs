@@ -9,6 +9,7 @@ using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Notifications.Plex.PlexTv;
@@ -22,6 +23,7 @@ namespace NzbDrone.Core.Notifications.Plex.Server
         private readonly IPlexServerService _plexServerService;
         private readonly IPlexTvService _plexTvService;
         private readonly IPendingProviderSecretService _pendingProviderSecretService;
+        private readonly IConfigService _configService;
         private readonly Logger _logger;
         private static readonly TimeSpan PlexConnectionProbeTimeout = TimeSpan.FromSeconds(3);
 
@@ -59,12 +61,14 @@ namespace NzbDrone.Core.Notifications.Plex.Server
         public PlexServer(IPlexServerService plexServerService,
                           IPlexTvService plexTvService,
                           IPendingProviderSecretService pendingProviderSecretService,
+                          IConfigService configService,
                           ICacheManager cacheManager,
                           Logger logger)
         {
             _plexServerService = plexServerService;
             _plexTvService = plexTvService;
             _pendingProviderSecretService = pendingProviderSecretService;
+            _configService = configService;
             _logger = logger;
 
             _pendingAuthorsCache = cacheManager.GetRollingCache<PlexUpdateQueue>(GetType(), "pendingAuthors", TimeSpan.FromDays(1));
@@ -133,6 +137,14 @@ namespace NzbDrone.Core.Notifications.Plex.Server
         private void UpdateIfEnabled(Author author)
         {
             _plexTvService.Ping(Settings.AuthToken);
+
+            // BookshelfNG used a global switch in addition to the event triggers.
+            // Native installations continue to use their event controls alone.
+            if (!Settings.UpdateLibrary && _configService.BookshelfNGDatabaseMigrated &&
+                _configService.BookshelfNGMigrationProfile?.IsCompatible == true)
+            {
+                return;
+            }
 
             _logger.Debug("Scheduling library update for author {0} {1}", author.Id, author.Name);
             var queue = _pendingAuthorsCache.Get(Settings.Host, () => new PlexUpdateQueue());

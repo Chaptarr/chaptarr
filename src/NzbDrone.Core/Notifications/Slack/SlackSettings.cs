@@ -18,16 +18,16 @@ namespace NzbDrone.Core.Notifications.Slack
     {
         private static readonly SlackSettingsValidator Validator = new SlackSettingsValidator();
 
-        [FieldDefinition(0, Label = "Webhook URL", Privacy = PrivacyLevel.ApiKey, HelpText = "Slack channel webhook url", Type = FieldType.Url, HelpLink = "https://my.slack.com/services/new/incoming-webhook/")]
+        [FieldDefinition(0, Label = "provider.field.f84805a7574a8", Privacy = PrivacyLevel.ApiKey, HelpText = "provider.field.f8cc89a742cf5", Type = FieldType.Url, HelpLink = "https://my.slack.com/services/new/incoming-webhook/")]
         public string WebHookUrl { get; set; }
 
-        [FieldDefinition(1, Label = "Username", Privacy = PrivacyLevel.UserName, HelpText = "Choose the username that this integration will post as", Type = FieldType.Textbox)]
+        [FieldDefinition(1, Label = "Username", Privacy = PrivacyLevel.UserName, HelpText = "provider.field.f855c2d83dc98", Type = FieldType.Textbox)]
         public string Username { get; set; }
 
-        [FieldDefinition(2, Label = "Icon", HelpText = "Change the icon that is used for messages from this integration (Emoji or URL)", Type = FieldType.Textbox, HelpLink = "http://www.emoji-cheat-sheet.com/")]
+        [FieldDefinition(2, Label = "provider.field.fa35abcd6dac9", HelpText = "provider.field.ffed63bc05b4c", Type = FieldType.Textbox, HelpLink = "http://www.emoji-cheat-sheet.com/")]
         public string Icon { get; set; }
 
-        [FieldDefinition(3, Label = "Channel", HelpText = "Overrides the default channel for the incoming webhook (#other-channel)", Type = FieldType.Textbox)]
+        [FieldDefinition(3, Label = "provider.field.fce4683e7013a", HelpText = "provider.field.f0e145034ef57", Type = FieldType.Textbox)]
         public string Channel { get; set; }
 
         public NzbDroneValidationResult Validate()

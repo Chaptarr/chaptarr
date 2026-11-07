@@ -19,10 +19,10 @@ namespace Chaptarr.Core.Test.Datastore
         {
             new(null, null, null, null),
             new(null, false, null, null),
-            new(null, true, true, NewItemMonitorTypes.New),
+            new(null, true, null, NewItemMonitorTypes.New),
             new(0, null, false, NewItemMonitorTypes.None),
             new(0, false, false, NewItemMonitorTypes.None),
-            new(0, true, true, NewItemMonitorTypes.New),
+            new(0, true, false, NewItemMonitorTypes.New),
             new(1, null, true, NewItemMonitorTypes.All),
             new(1, false, true, NewItemMonitorTypes.All),
             new(1, true, true, NewItemMonitorTypes.All),
@@ -41,13 +41,14 @@ namespace Chaptarr.Core.Test.Datastore
                     var testCase = Cases[index];
                     connection.Execute(@"
                         INSERT INTO ""Authors"" (""Id"", ""Monitored"", ""AudiobookMonitorExisting"", ""AudiobookMonitorFuture"", ""EbookMonitorExisting"", ""EbookMonitorFuture"")
-                        VALUES (@Id, FALSE, @Existing, @Future, @Existing, @Future);
+                        VALUES (@Id, @LegacyMonitored, @Existing, @Future, @Existing, @Future);
 
                         INSERT INTO ""PendingAuthorImport"" (""Id"", ""AudiobookMonitorExisting"", ""AudiobookMonitorFuture"", ""EbookMonitorExisting"", ""EbookMonitorFuture"")
                         VALUES (@Id, @Existing, @Future, @Existing, @Future);",
                         new
                         {
                             Id = index + 1,
+                            LegacyMonitored = false,
                             Existing = testCase.Existing,
                             Future = testCase.Future
                         });
@@ -78,8 +79,8 @@ namespace Chaptarr.Core.Test.Datastore
                     Assert.That(author.AudiobookMonitorNewItems, Is.EqualTo((int?)testCase.Policy), $"author audio policy case {index}");
                     Assert.That(author.EbookMonitorNewItems, Is.EqualTo((int?)testCase.Policy), $"author ebook policy case {index}");
 
-                    Assert.That(pendingImport.AudiobookMonitored, Is.EqualTo(testCase.Gate), $"pending audio gate case {index}");
-                    Assert.That(pendingImport.EbookMonitored, Is.EqualTo(testCase.Gate), $"pending ebook gate case {index}");
+                    Assert.That(pendingImport.AudiobookMonitored, Is.EqualTo(testCase.PendingGate), $"pending audio gate case {index}");
+                    Assert.That(pendingImport.EbookMonitored, Is.EqualTo(testCase.PendingGate), $"pending ebook gate case {index}");
                     Assert.That(pendingImport.AudiobookMonitorNewItems, Is.EqualTo((int?)testCase.Policy), $"pending audio policy case {index}");
                     Assert.That(pendingImport.EbookMonitorNewItems, Is.EqualTo((int?)testCase.Policy), $"pending ebook policy case {index}");
 
@@ -163,6 +164,8 @@ namespace Chaptarr.Core.Test.Datastore
                 CREATE TABLE ""Authors"" (
                     ""Id"" INTEGER PRIMARY KEY,
                     ""Monitored"" INTEGER NOT NULL,
+                    ""AudiobookRootFolderPath"" TEXT NULL,
+                    ""EbookRootFolderPath"" TEXT NULL,
                     ""AudiobookMonitorExisting"" INTEGER NULL,
                     ""AudiobookMonitorFuture"" INTEGER NULL,
                     ""EbookMonitorExisting"" INTEGER NULL,
@@ -193,6 +196,10 @@ namespace Chaptarr.Core.Test.Datastore
             public bool? Future { get; }
             public bool? Gate { get; }
             public NewItemMonitorTypes? Policy { get; }
+
+            public bool? PendingGate => Existing is 1 or 2 || Future == true
+                ? true
+                : Existing == 0 ? false : null;
         }
 
         private sealed class MonitoringProjection

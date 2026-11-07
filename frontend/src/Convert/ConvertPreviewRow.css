@@ -1,0 +1,31 @@
+.row {
+  display: flex;
+  margin-bottom: 5px;
+  padding: 5px 0 5px 34px;
+  border-bottom: 1px solid var(--borderColor);
+
+  &:last-of-type {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+}
+
+.details {
+  overflow: hidden;
+}
+
+.path {
+  margin-left: 10px;
+  word-break: break-all;
+}
+
+.quality {
+  margin-left: 25px;
+  color: var(--textColor);
+}
+
+.reason {
+  margin-top: 5px;
+  color: var(--warningColor);
+}

@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+run_dir="${DPKG_ROOT:-}/run"
+
+if [ "$1" = upgrade ] || [ "$1" = remove ]; then
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet bookshelfng.service; then
+    mkdir -p "$run_dir"
+    touch "$run_dir/bookshelfng-package-was-active"
+    systemctl stop bookshelfng.service
+  fi
+fi
+
+exit 0

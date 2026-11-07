@@ -1,0 +1,31 @@
+.relatedFormats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+
+  margin: 0 0 8px;
+  color: var(--textColor);
+}
+
+.label {
+  font-weight: 600;
+}
+
+.status {
+  color: var(--textColor);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.formatIdentityHelp {
+  flex-basis: 100%;
+  max-width: 28rem;
+  color: var(--textColor);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.relatedFormats button {
+  margin-left: 4px;
+}

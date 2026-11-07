@@ -226,7 +226,7 @@ namespace VersOne.Epub.Internal
                     case "id":
                         result.Id = attributeValue;
                         break;
-                    case "opf:scheme":
+                    case "scheme":
                         result.Scheme = attributeValue;
                         break;
                 }

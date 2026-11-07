@@ -59,6 +59,7 @@ namespace Chaptarr.Core.Test.Books
         {
             private readonly int _enqueueResult;
             private readonly PendingAuthorImport _byProviderId;
+            public MonitoringConfig LastConfig { get; private set; }
 
             public StubPendingAuthorImportService(int enqueueResult, PendingAuthorImport byProviderId)
             {
@@ -66,7 +67,11 @@ namespace Chaptarr.Core.Test.Books
                 _byProviderId = byProviderId;
             }
 
-            public Task<int> EnqueueAsync(string providerId, MonitoringConfig config, string sourceApplication) => Task.FromResult(_enqueueResult);
+            public Task<int> EnqueueAsync(string providerId, MonitoringConfig config, string sourceApplication)
+            {
+                LastConfig = config;
+                return Task.FromResult(_enqueueResult);
+            }
             public PendingAuthorImport GetByProviderId(string providerId) => _byProviderId;
 
             public List<PendingAuthorImport> GetAll() => throw new NotImplementedException();
@@ -124,6 +129,74 @@ namespace Chaptarr.Core.Test.Books
             var author = await svc.AddAuthorAsync(providerId, config);
 
             Assert.That(author.Id, Is.EqualTo(-pending.Id));
+        }
+
+        [Test]
+        public async Task should_queue_the_selected_work_and_media_type_when_the_author_is_not_available()
+        {
+            const string authorProviderId = "hc:1205498";
+            const string workProviderId = "hc:495645";
+            var pending = new PendingAuthorImport
+            {
+                Id = 123,
+                ProviderId = authorProviderId,
+                OverallStatus = PendingImportStatus.Pending
+            };
+            var pendingService = new StubPendingAuthorImportService(123, pending);
+            var svc = new AuthorLibraryService(
+                authorService: new StubAuthorService(),
+                authorInfo: new StubAuthorInfoNotFound(),
+                bookService: null,
+                refreshSeriesService: null,
+                editionService: null,
+                narratorLinkService: null,
+                metadataProfileService: null,
+                qualityProfileService: new TestQualityProfileService(),
+                authorPathBuilder: null,
+                rootFolderService: null,
+                commandQueueManager: null,
+                eventAggregator: null,
+                pendingImportService: pendingService,
+                mainDatabase: null,
+                importListExclusionService: null,
+                editionMetadataProfileFilter: new EditionMetadataProfileFilter(new TestTermMatcherService()),
+                syncMetadataService: null,
+                logger: LogManager.GetCurrentClassLogger()
+            );
+            var config = new MonitoringConfig
+            {
+                QueueIfUnavailable = false,
+                RequestedBy = "DownloadedBooksImportService",
+                AuthorName = "Pending Import",
+                CreateAudiobook = true,
+                CreateEbook = false
+            };
+
+            var result = await svc.MaterializeUserSelectedEditionAsync(
+                new UserSelectedRemoteEdition
+                {
+                    AuthorProviderId = authorProviderId,
+                    WorkProviderId = workProviderId,
+                    EditionProviderId = "gr:9001",
+                    EditionTitle = "Queued edition",
+                    MediaType = BookMediaType.Audiobook,
+                    QueueIfUnavailable = true
+                },
+                config);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Author.Id, Is.EqualTo(-pending.Id));
+                Assert.That(pendingService.LastConfig.QueueIfUnavailable, Is.True);
+                Assert.That(pendingService.LastConfig.AudiobookBooksToMonitor, Is.EquivalentTo(new[] { workProviderId }));
+                Assert.That(pendingService.LastConfig.AudiobookMonitorExistingMode, Is.EqualTo(MonitorTypes.SpecificBook));
+                Assert.That(pendingService.LastConfig.SelectedRemoteEditions, Has.Count.EqualTo(1));
+                Assert.That(pendingService.LastConfig.SelectedRemoteEditions[0].EditionProviderId, Is.EqualTo("gr:9001"));
+                Assert.That(pendingService.LastConfig.SelectedRemoteEditions[0].EditionTitle, Is.EqualTo("Queued edition"));
+                Assert.That(pendingService.LastConfig.EbookBooksToMonitor, Is.Null);
+                Assert.That(config.QueueIfUnavailable, Is.False);
+                Assert.That(config.AudiobookBooksToMonitor, Is.Null);
+            });
         }
     }
 }

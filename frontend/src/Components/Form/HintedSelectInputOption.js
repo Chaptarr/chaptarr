@@ -33,11 +33,11 @@ function HintedSelectInputOption(props) {
         isMobile && styles.isMobile
       )}
       >
-        <div>{value}</div>
+        <div title={value}>{value}</div>
 
         {
           hint != null &&
-            <div className={styles.hintText}>
+            <div className={styles.hintText} title={typeof hint === 'string' ? hint : undefined}>
               {hint}
             </div>
         }

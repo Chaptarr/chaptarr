@@ -3,7 +3,7 @@ import React from 'react';
 import Link from 'Components/Link/Link';
 import { inputTypes, kinds } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
-// import translate from 'Utilities/String/translate';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import AutoCompleteInput from './AutoCompleteInput';
 import BookEditionSelectInputConnector from './BookEditionSelectInputConnector';
 import BookshelfInputConnector from './BookshelfInputConnector';
@@ -14,6 +14,7 @@ import DownloadClientSelectInputConnector from './DownloadClientSelectInputConne
 import EnhancedSelectInput from './EnhancedSelectInput';
 import EnhancedSelectInputConnector from './EnhancedSelectInputConnector';
 import FormInputHelpText from './FormInputHelpText';
+import GenreTagInputConnector from './GenreTagInputConnector';
 import IndexerFlagsSelectInput from './IndexerFlagsSelectInput';
 import IndexerSelectInputConnector from './IndexerSelectInputConnector';
 import KeyValueListInput from './KeyValueListInput';
@@ -111,6 +112,9 @@ function getComponent(type) {
     case inputTypes.TEXT_TAG:
       return TextTagInputConnector;
 
+    case inputTypes.GENRE_TAG:
+      return GenreTagInputConnector;
+
     case inputTypes.TAG_SELECT:
       return TagInputConnector;
 
@@ -149,19 +153,28 @@ function FormInputGroup(props) {
 
   const lastButtonIndex = finalButtonsArray.length - 1;
   const hasButton = !!finalButtonsArray.length;
+  const name = otherProps.name;
+  const ariaDescribedBy = [
+    helpText ? `${name}-help` : null,
+    ...(!checkInput && helpTexts ? helpTexts.map((_, index) => `${name}-help-${index}`) : []),
+    (!checkInput || helpText) && helpTextWarning ? `${name}-warning` : null,
+    ...errors.map((_, index) => `${name}-error-${index}`),
+    ...warnings.map((_, index) => `${name}-warning-${index}`)
+  ].filter(Boolean).join(' ') || undefined;
 
   return (
     <div className={containerClassName}>
       <div className={className}>
         <div className={styles.inputContainer}>
           <InputComponent
+            {...otherProps}
             className={inputClassName}
             helpText={helpText}
             helpTextWarning={helpTextWarning}
             hasError={hasError}
             hasWarning={hasWarning}
             hasButton={hasButton}
-            {...otherProps}
+            ariaDescribedBy={ariaDescribedBy}
           />
 
           {
@@ -204,6 +217,7 @@ function FormInputGroup(props) {
       {
         !checkInput && helpText &&
           <FormInputHelpText
+            id={`${name}-help`}
             text={helpText}
           />
       }
@@ -216,6 +230,7 @@ function FormInputGroup(props) {
                 return (
                   <FormInputHelpText
                     key={index}
+                    id={`${name}-help-${index}`}
                     text={text}
                     isCheckInput={checkInput}
                   />
@@ -228,6 +243,7 @@ function FormInputGroup(props) {
       {
         (!checkInput || helpText) && helpTextWarning &&
           <FormInputHelpText
+            id={`${name}-warning`}
             text={helpTextWarning}
             isWarning={true}
           />
@@ -247,9 +263,10 @@ function FormInputGroup(props) {
           return (
             <FormInputHelpText
               key={index}
-              text={error.message}
+              id={`${name}-error-${index}`}
+              text={translateServerMessage(error.message)}
               link={error.link}
-              tooltip={error.detailedMessage}
+              tooltip={translateServerMessage(error.detailedMessage)}
               isError={true}
               isCheckInput={checkInput}
             />
@@ -262,9 +279,10 @@ function FormInputGroup(props) {
           return (
             <FormInputHelpText
               key={index}
-              text={warning.message}
+              id={`${name}-warning-${index}`}
+              text={translateServerMessage(warning.message)}
               link={warning.link}
-              tooltip={warning.detailedMessage}
+              tooltip={translateServerMessage(warning.detailedMessage)}
               isWarning={true}
               isCheckInput={checkInput}
             />

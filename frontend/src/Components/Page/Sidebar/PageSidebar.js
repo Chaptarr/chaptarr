@@ -1,5 +1,6 @@
 import classNames from 'classnames';
-import _ from 'lodash';
+import find from 'lodash/find';
+import some from 'lodash/some';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import ReactDOM from 'react-dom';
@@ -27,19 +28,23 @@ const links = [
     children: [
       {
         title: () => translate('Authors'),
-        to: '/authors'
+        to: '/authors',
+        simple: true
       },
       {
         title: () => translate('Books'),
-        to: '/books'
+        to: '/books',
+        simple: true
       },
       {
         title: () => translate('AddNew'),
-        to: '/add/search'
+        to: '/add/search',
+        simple: true
       },
       {
         title: () => translate('Bookshelf'),
-        to: '/shelf'
+        to: '/shelf',
+        simple: true
       },
       {
         title: () => translate('UnmappedFiles'),
@@ -51,7 +56,8 @@ const links = [
   {
     iconName: icons.CALENDAR,
     title: () => translate('Calendar'),
-    to: '/calendar'
+    to: '/calendar',
+    simple: true
   },
 
   {
@@ -62,11 +68,13 @@ const links = [
       {
         title: () => translate('Queue'),
         to: '/activity/queue',
-        statusComponent: QueueStatusConnector
+        statusComponent: QueueStatusConnector,
+        simple: true
       },
       {
         title: () => translate('History'),
-        to: '/activity/history'
+        to: '/activity/history',
+        simple: true
       },
       {
         title: () => translate('Blocklist'),
@@ -86,7 +94,8 @@ const links = [
     children: [
       {
         title: () => translate('Missing'),
-        to: '/wanted/missing'
+        to: '/wanted/missing',
+        simple: true
       },
       {
         title: () => translate('CutoffUnmet'),
@@ -142,11 +151,13 @@ const links = [
       },
       {
         title: () => translate('General'),
-        to: '/settings/general'
+        to: '/settings/general',
+        simple: true
       },
       {
         title: () => translate('Ui'),
-        to: '/settings/ui'
+        to: '/settings/ui',
+        simple: true
       }
     ]
   },
@@ -159,7 +170,13 @@ const links = [
       {
         title: () => translate('Status'),
         to: '/system/status',
-        statusComponent: HealthStatusConnector
+        statusComponent: HealthStatusConnector,
+        simple: true
+      },
+      {
+        title: () => translate('Quickstart'),
+        to: '/system/quickstart',
+        simple: true
       },
       {
         title: () => translate('Tasks'),
@@ -167,11 +184,13 @@ const links = [
       },
       {
         title: () => translate('Backup'),
-        to: '/system/backup'
+        to: '/system/backup',
+        simple: true
       },
       {
         title: () => translate('Updates'),
-        to: '/system/updates'
+        to: '/system/updates',
+        simple: true
       },
       {
         title: () => translate('Events'),
@@ -182,12 +201,6 @@ const links = [
         to: '/system/logs/files'
       }
     ]
-  },
-
-  {
-    iconName: icons.QUICK_IMPORT,
-    title: () => translate('Quickstart'),
-    to: '/system/quickstart'
   }
 ];
 
@@ -233,13 +246,16 @@ function hasActiveChildLink(link, pathname) {
     return false;
   }
 
-  return _.some(children, (child) => {
+  return some(children, (child) => {
     return child.to === pathname;
   });
 }
 
 function getPositioning() {
-  const windowScroll = window.scrollY == null ? document.documentElement.scrollTop : window.scrollY;
+  const windowScroll =
+    window.scrollY == null ?
+      document.documentElement.scrollTop :
+      window.scrollY;
   const top = Math.max(HEADER_HEIGHT - windowScroll, 0);
   const height = window.innerHeight - top;
 
@@ -250,7 +266,6 @@ function getPositioning() {
 }
 
 class PageSidebar extends Component {
-
   //
   // Lifecycle
 
@@ -260,6 +275,7 @@ class PageSidebar extends Component {
     this._touchStartX = null;
     this._touchStartY = null;
     this._sidebarRef = null;
+    this._smallScreenListenersBound = false;
 
     this.state = {
       top: dimensions.headerHeight,
@@ -270,20 +286,12 @@ class PageSidebar extends Component {
   }
 
   componentDidMount() {
-    if (this.props.isSmallScreen) {
-      window.addEventListener('click', this.onWindowClick, { capture: true });
-      window.addEventListener('scroll', this.onWindowScroll);
-      window.addEventListener('touchstart', this.onTouchStart);
-      window.addEventListener('touchmove', this.onTouchMove);
-      window.addEventListener('touchend', this.onTouchEnd);
-      window.addEventListener('touchcancel', this.onTouchCancel);
-    }
+    this._setInertAttribute();
+    this._syncSmallScreenListeners();
   }
 
   componentDidUpdate(prevProps) {
-    const {
-      isSidebarVisible
-    } = this.props;
+    const { isSidebarVisible } = this.props;
 
     const transform = this.state.transform;
 
@@ -294,17 +302,16 @@ class PageSidebar extends Component {
     } else if (transform === -SIDEBAR_WIDTH && isSidebarVisible) {
       this.props.onSidebarVisibleChange(false);
     }
+
+    this._setInertAttribute();
+
+    if (prevProps.isSmallScreen !== this.props.isSmallScreen) {
+      this._syncSmallScreenListeners();
+    }
   }
 
   componentWillUnmount() {
-    if (this.props.isSmallScreen) {
-      window.removeEventListener('click', this.onWindowClick, { capture: true });
-      window.removeEventListener('scroll', this.onWindowScroll);
-      window.removeEventListener('touchstart', this.onTouchStart);
-      window.removeEventListener('touchmove', this.onTouchMove);
-      window.removeEventListener('touchend', this.onTouchEnd);
-      window.removeEventListener('touchcancel', this.onTouchCancel);
-    }
+    this._removeSmallScreenListeners();
   }
 
   //
@@ -314,11 +321,62 @@ class PageSidebar extends Component {
     this._sidebarRef = ref;
   };
 
+  _setInertAttribute = () => {
+    if (!this._sidebarRef) {
+      return;
+    }
+
+    if (this.props.isSmallScreen && !this.props.isSidebarVisible) {
+      this._sidebarRef.setAttribute('inert', '');
+    } else {
+      this._sidebarRef.removeAttribute('inert');
+    }
+  };
+
+  _addSmallScreenListeners = () => {
+    if (this._smallScreenListenersBound) {
+      return;
+    }
+
+    window.addEventListener('click', this.onWindowClick, { capture: true });
+    window.addEventListener('scroll', this.onWindowScroll);
+    window.addEventListener('touchstart', this.onTouchStart);
+    window.addEventListener('touchmove', this.onTouchMove);
+    window.addEventListener('touchend', this.onTouchEnd);
+    window.addEventListener('touchcancel', this.onTouchCancel);
+    this._smallScreenListenersBound = true;
+  };
+
+  _removeSmallScreenListeners = () => {
+    if (!this._smallScreenListenersBound) {
+      return;
+    }
+
+    window.removeEventListener('click', this.onWindowClick, { capture: true });
+    window.removeEventListener('scroll', this.onWindowScroll);
+    window.removeEventListener('touchstart', this.onTouchStart);
+    window.removeEventListener('touchmove', this.onTouchMove);
+    window.removeEventListener('touchend', this.onTouchEnd);
+    window.removeEventListener('touchcancel', this.onTouchCancel);
+    this._smallScreenListenersBound = false;
+  };
+
+  _syncSmallScreenListeners = () => {
+    if (this.props.isSmallScreen) {
+      this._addSmallScreenListeners();
+    } else {
+      this._removeSmallScreenListeners();
+    }
+  };
+
   _setSidebarTransform(isSidebarVisible, transition, callback) {
-    this.setState({
-      transition,
-      transform: isSidebarVisible ? 0 : SIDEBAR_WIDTH * -1
-    }, callback);
+    this.setState(
+      {
+        transition,
+        transform: isSidebarVisible ? 0 : SIDEBAR_WIDTH * -1
+      },
+      callback
+    );
   }
 
   //
@@ -334,7 +392,7 @@ class PageSidebar extends Component {
 
     if (
       !sidebar.contains(event.target) &&
-      !toggleButton.contains(event.target) &&
+      (!toggleButton || !toggleButton.contains(event.target)) &&
       this.props.isSidebarVisible
     ) {
       event.preventDefault();
@@ -349,15 +407,16 @@ class PageSidebar extends Component {
 
   onTouchStart = (event) => {
     const touches = event.touches;
-    const touchStartX = touches[0].pageX;
-    const touchStartY = touches[0].pageY;
-    const isSidebarVisible = this.props.isSidebarVisible;
 
     if (touches.length !== 1) {
       return;
     }
 
-    if (isSidebarVisible && (touchStartX > 210 || touchStartX < 180)) {
+    const touchStartX = touches[0].pageX;
+    const touchStartY = touches[0].pageY;
+    const isSidebarVisible = this.props.isSidebarVisible;
+
+    if (isSidebarVisible && (touchStartX > SIDEBAR_WIDTH || touchStartX < SIDEBAR_WIDTH - 30)) {
       return;
     } else if (!isSidebarVisible && touchStartX > 40) {
       return;
@@ -369,13 +428,14 @@ class PageSidebar extends Component {
 
   onTouchMove = (event) => {
     const touches = event.touches;
+
+    if (touches.length !== 1 || this._touchStartX == null) {
+      return;
+    }
+
     const currentTouchX = touches[0].pageX;
     // const currentTouchY = touches[0].pageY;
     // const isSidebarVisible = this.props.isSidebarVisible;
-
-    if (!this._touchStartX) {
-      return;
-    }
 
     // This is a bit funky when trying to close and you scroll
     // vertical too much by mistake, commenting out for now.
@@ -406,11 +466,12 @@ class PageSidebar extends Component {
 
   onTouchEnd = (event) => {
     const touches = event.changedTouches;
-    const currentTouch = touches[0].pageX;
 
-    if (!this._touchStartX) {
+    if (!touches.length || this._touchStartX == null) {
       return;
     }
+
+    const currentTouch = touches[0].pageX;
 
     if (currentTouch > this._touchStartX && currentTouch > 50) {
       this._setSidebarTransform(true, 'none');
@@ -433,25 +494,37 @@ class PageSidebar extends Component {
     this.props.onSidebarVisibleChange(false);
   };
 
+  onKeyDown = (event) => {
+    if (event.key === 'Escape' && this.props.isSmallScreen && this.props.isSidebarVisible) {
+      this.props.onSidebarVisibleChange(false);
+      const toggleButton = document.getElementById('sidebar-toggle-button');
+
+      if (toggleButton) {
+        toggleButton.focus();
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+
   //
   // Render
 
   render() {
-    const {
-      location,
-      isSmallScreen
-    } = this.props;
+    const { location, isSmallScreen, isSidebarVisible, experienceMode } = this.props;
 
-    const {
-      top,
-      height,
-      transition,
-      transform
-    } = this.state;
+    const { top, height, transition, transform } = this.state;
 
     const urlBase = window.Chaptarr.urlBase;
-    const pathname = urlBase ? location.pathname.substr(urlBase.length) || '/' : location.pathname;
+    const pathname = urlBase ?
+      location.pathname.substr(urlBase.length) || '/' :
+      location.pathname;
     const activeParent = getActiveParent(pathname);
+    const visibleLinks = experienceMode === 'simple' ? links.map((link) => ({
+      ...link,
+      children: link.children && link.children.filter((child) => child.simple)
+    })) : links;
 
     let containerStyle = {};
     let sidebarStyle = {};
@@ -473,63 +546,65 @@ class PageSidebar extends Component {
     return (
       <div
         ref={this._setSidebarRef}
-        className={classNames(
-          styles.sidebarContainer
-        )}
+        className={classNames(styles.sidebarContainer)}
         style={containerStyle}
+        aria-hidden={isSmallScreen && !isSidebarVisible}
+        onKeyDown={this.onKeyDown}
       >
-        <ScrollerComponent
-          className={styles.sidebar}
-          style={sidebarStyle}
-        >
-          <div className={styles.sidebarContent}>
-            {
-              links.map((link) => {
-                const childWithStatusComponent = _.find(link.children, (child) => {
-                  return !!child.statusComponent;
-                });
+        <ScrollerComponent className={styles.sidebar} style={sidebarStyle}>
+          <nav
+            id="primary-navigation"
+            className={styles.sidebarContent}
+            aria-label={translate('PrimaryNavigation')}
+          >
+            {visibleLinks.map((link) => {
+              const childWithStatusComponent = find(link.children, (child) => {
+                return !!child.statusComponent;
+              });
 
-                const childStatusComponent = childWithStatusComponent ?
-                  childWithStatusComponent.statusComponent :
-                  null;
+              const childStatusComponent = childWithStatusComponent ?
+                childWithStatusComponent.statusComponent :
+                null;
 
-                const isActiveParent = activeParent === link.to;
-                const hasActiveChild = hasActiveChildLink(link, pathname);
+              const isActiveParent = activeParent === link.to;
+              const hasActiveChild = hasActiveChildLink(link, pathname);
 
-                return (
-                  <PageSidebarItem
-                    key={link.to}
-                    iconName={link.iconName}
-                    title={link.title}
-                    to={link.to}
-                    statusComponent={isActiveParent || !childStatusComponent ? link.statusComponent : childStatusComponent}
-                    isActive={pathname === link.to && !hasActiveChild}
-                    isActiveParent={isActiveParent}
-                    isParentItem={!!link.children}
-                    onPress={this.onItemPress}
-                  >
-                    {
-                      link.children && link.to === activeParent &&
-                        link.children.map((child) => {
-                          return (
-                            <PageSidebarItem
-                              key={child.to}
-                              title={child.title}
-                              to={child.to}
-                              isActive={pathname.startsWith(child.to)}
-                              isParentItem={false}
-                              isChildItem={true}
-                              statusComponent={child.statusComponent}
-                              onPress={this.onItemPress}
-                            />
-                          );
-                        })
-                    }
-                  </PageSidebarItem>
-                );
-              })
-            }
-          </div>
+              return (
+                <PageSidebarItem
+                  key={link.to}
+                  iconName={link.iconName}
+                  title={link.title}
+                  to={link.to}
+                  statusComponent={
+                    isActiveParent || !childStatusComponent ?
+                      link.statusComponent :
+                      childStatusComponent
+                  }
+                  isActive={pathname === link.to && !hasActiveChild}
+                  isActiveParent={isActiveParent}
+                  isParentItem={!!link.children}
+                  onPress={this.onItemPress}
+                >
+                  {link.children &&
+                    link.to === activeParent &&
+                    link.children.map((child) => {
+                      return (
+                        <PageSidebarItem
+                          key={child.to}
+                          title={child.title}
+                          to={child.to}
+                          isActive={pathname.startsWith(child.to)}
+                          isParentItem={false}
+                          isChildItem={true}
+                          statusComponent={child.statusComponent}
+                          onPress={this.onItemPress}
+                        />
+                      );
+                    })}
+                </PageSidebarItem>
+              );
+            })}
+          </nav>
 
           <MessagesConnector />
         </ScrollerComponent>
@@ -542,6 +617,7 @@ PageSidebar.propTypes = {
   location: locationShape.isRequired,
   isSmallScreen: PropTypes.bool.isRequired,
   isSidebarVisible: PropTypes.bool.isRequired,
+  experienceMode: PropTypes.oneOf(['simple', 'advanced']).isRequired,
   onSidebarVisibleChange: PropTypes.func.isRequired
 };
 

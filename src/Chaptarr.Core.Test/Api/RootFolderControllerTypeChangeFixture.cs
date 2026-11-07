@@ -45,8 +45,10 @@ namespace Chaptarr.Core.Test.Api
             public RootFolder Updated { get; private set; }
             public int UpdateCallCount { get; private set; }
 
-            public List<RootFolder> All() => new();
-            public List<RootFolder> AllWithSpaceStats() => new();
+            public List<RootFolder> AllFolders { get; set; } = new();
+
+            public List<RootFolder> All() => AllFolders;
+            public List<RootFolder> AllWithSpaceStats() => AllFolders;
             public RootFolder Add(RootFolder rootFolder) => throw new NotImplementedException();
 
             public RootFolder Update(RootFolder rootFolder)
@@ -111,6 +113,8 @@ namespace Chaptarr.Core.Test.Api
                 return new Dictionary<string, string>();
             }
 
+            public string GetCurrentLocale() => "en";
+
             public string GetLocalizedString(string phrase)
             {
                 LastPhrase = phrase;
@@ -174,11 +178,13 @@ namespace Chaptarr.Core.Test.Api
         }
 
         [Test]
-        public void post_should_require_an_explicit_folder_type_in_json()
+        public void post_should_default_an_omitted_legacy_folder_type_to_mixed()
         {
-            Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<RootFolderResource>(
+            var resource = JsonSerializer.Deserialize<RootFolderResource>(
                 "{\"name\":\"Books\",\"path\":\"/books\"}",
-                STJson.GetSerializerSettings()));
+                STJson.GetSerializerSettings());
+
+            Assert.That(resource.FolderType, Is.Zero);
         }
 
         [Test]
@@ -436,6 +442,74 @@ namespace Chaptarr.Core.Test.Api
 
             Assert.That(ex.Message, Does.EndWith("Cannot edit root folder path"));
             Assert.That(rootFolderService.UpdateCallCount, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void get_root_folders_should_flag_has_assigned_authors_for_a_matching_path()
+        {
+            var rootFolderService = new StubRootFolderService
+            {
+                AllFolders = new List<RootFolder>
+                {
+                    new()
+                    {
+                        Id = 42,
+                        Name = "Books",
+                        Path = "/books",
+                        FolderType = FolderType.Ebook
+                    }
+                }
+            };
+
+            var controller = BuildController(
+                rootFolderService,
+                new StubAuthorService(new List<Author>
+                {
+                    new()
+                    {
+                        Id = 100,
+                        Name = "Assigned Author",
+                        EbookRootFolderPath = "/books"
+                    }
+                }));
+
+            var resources = controller.GetRootFolders();
+
+            Assert.That(resources.Single(r => r.Id == 42).HasAssignedAuthors, Is.True);
+        }
+
+        [Test]
+        public void get_root_folders_should_not_flag_has_assigned_authors_for_an_unrelated_path()
+        {
+            var rootFolderService = new StubRootFolderService
+            {
+                AllFolders = new List<RootFolder>
+                {
+                    new()
+                    {
+                        Id = 42,
+                        Name = "Books",
+                        Path = "/books",
+                        FolderType = FolderType.Ebook
+                    }
+                }
+            };
+
+            var controller = BuildController(
+                rootFolderService,
+                new StubAuthorService(new List<Author>
+                {
+                    new()
+                    {
+                        Id = 100,
+                        Name = "Unrelated Author",
+                        EbookRootFolderPath = "/other-books"
+                    }
+                }));
+
+            var resources = controller.GetRootFolders();
+
+            Assert.That(resources.Single(r => r.Id == 42).HasAssignedAuthors, Is.False);
         }
 
         [Test]

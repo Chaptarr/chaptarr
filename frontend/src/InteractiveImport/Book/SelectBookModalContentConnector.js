@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import find from 'lodash/find';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -67,8 +67,17 @@ class SelectBookModalContentConnector extends Component {
     this.props.setInteractiveImportBooksSort({ sortKey, sortDirection });
   };
 
+  onRetryPress = () => {
+    const {
+      authorId,
+      mediaType
+    } = this.props;
+
+    this.props.fetchInteractiveImportBooks({ authorId, mediaType });
+  };
+
   onBookSelect = (bookId) => {
-    const book = _.find(this.props.items, { id: bookId });
+    const book = find(this.props.items, { id: bookId });
 
     const ids = this.props.ids;
 
@@ -100,6 +109,7 @@ class SelectBookModalContentConnector extends Component {
         {...this.props}
         onSortPress={this.onSortPress}
         onBookSelect={this.onBookSelect}
+        onRetryPress={this.onRetryPress}
       />
     );
   }

@@ -41,6 +41,7 @@ namespace Chaptarr.Core.Test.PendingImport
             public QualityProfile Add(QualityProfile profile) => throw new NotImplementedException();
             public void Update(QualityProfile profile) => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
+            public void EnsureNotInUse(IEnumerable<int> ids) => throw new NotImplementedException();
             public QualityProfile Get(int id) => throw new NotImplementedException();
             public bool Exists(int id) => _profiles.Any(p => p.Id == id);
             public QualityProfile GetDefaultProfile(string name, Quality cutoff = null, params Quality[] allowed) => throw new NotImplementedException();

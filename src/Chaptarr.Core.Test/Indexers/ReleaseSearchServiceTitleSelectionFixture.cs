@@ -1,14 +1,119 @@
+using System;
 using System.Collections.Generic;
+using System.Reflection;
+using System.Threading.Tasks;
+using FluentValidation.Results;
+using NLog;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.Parser.Model;
 
 namespace Chaptarr.Core.Test.Indexers
 {
     [TestFixture]
     public class ReleaseSearchServiceTitleSelectionFixture
     {
+        [TestCase("Galactic Empire Series 3 Books Set", "Galactic+Empire")]
+        [TestCase("Galactic Empire 3-Book Box Set", "Galactic+Empire")]
+        [TestCase("Galactic Empire 3 Books Set: Pebble in the Sky and more", "Galactic+Empire")]
+        [TestCase("The Three-Body Problem", "Three+Body+Problem")]
+        [TestCase("Foundation Book 3", "Foundation+Book+3")]
+        [TestCase("3 Books Set", "3+Books+Set")]
+        public void book_query_should_remove_only_trailing_box_set_packaging(string title, string query)
+        {
+            var criteria = new BookSearchCriteria
+            {
+                Author = new Author { Name = "Isaac Asimov" },
+                BookTitle = title
+            };
+
+            Assert.That(criteria.BookQuery, Is.EqualTo(query));
+            Assert.That(criteria.BookTitle, Is.EqualTo(title));
+        }
+
+        [Test]
+        public void book_query_should_use_alternate_search_title_without_changing_monitored_title()
+        {
+            var criteria = new BookSearchCriteria
+            {
+                Author = new Author { Name = "Karin Slaughter" },
+                BookTitle = "Mooie Meisjes",
+                SearchTitleOverride = "Pretty Girls"
+            };
+
+            Assert.That(criteria.BookQuery, Is.EqualTo("Pretty+Girls"));
+            Assert.That(criteria.BookTitle, Is.EqualTo("Mooie Meisjes"));
+        }
+
+        [Test]
+        public void should_offer_distinct_alternate_edition_titles_with_english_first()
+        {
+            var book = new Book
+            {
+                Title = "Mooie Meisjes",
+                OriginalTitle = "Pretty Girls",
+                Editions = new List<Edition>
+                {
+                    new Edition { Id = 1, Title = "Mooie Meisjes", Language = "nld", Monitored = true },
+                    new Edition { Id = 2, Title = "Pretty Girls", Language = "eng" },
+                    new Edition { Id = 3, Title = "Blutige Fesseln", Language = "deu" },
+                    new Edition { Id = 4, Title = "Pretty Girls", Language = "eng" }
+                }
+            };
+
+            var titles = ReleaseSearchService.GetAlternateEditionSearchTitles(book, "Mooie Meisjes", "Karin Slaughter");
+
+            Assert.That(titles, Is.EqualTo(new[] { "Pretty Girls", "Blutige Fesseln" }));
+        }
+
+        [Test]
+        public async Task book_search_should_try_known_edition_titles_after_the_primary_title_has_no_approved_results()
+        {
+            var author = new Author
+            {
+                Id = 18,
+                Name = "Karin Slaughter",
+                EbookMonitored = true,
+                EbookQualityProfileId = 2,
+                Books = new List<Book>()
+            };
+            var book = new Book
+            {
+                Id = 1625,
+                Author = author,
+                AuthorId = author.Id,
+                Title = "Mooie Meisjes",
+                EbookMonitored = true,
+                MediaType = BookMediaType.Ebook,
+                Editions = new List<Edition>
+                {
+                    new Edition { Id = 1, Title = "Mooie Meisjes", Language = "nld", Monitored = true },
+                    new Edition { Id = 2, Title = "Pretty Girls", Language = "eng" },
+                    new Edition { Id = 3, Title = "Blutige Fesseln", Language = "deu" }
+                }
+            };
+            author.Books.Add(book);
+
+            var indexer = new RecordingIndexer();
+            var subject = new ReleaseSearchService(
+                new SingleIndexerFactory(indexer),
+                DispatchProxy.Create<NzbDrone.Core.Books.IBookService, UnusedBookServiceProxy>(),
+                DispatchProxy.Create<NzbDrone.Core.Books.IAuthorService, UnusedAuthorServiceProxy>(),
+                null,
+                DispatchProxy.Create<IMakeDownloadDecision, EmptyDecisionMakerProxy>(),
+                LogManager.GetLogger("ReleaseSearchServiceTitleSelectionFixture"));
+
+            await subject.BookSearch(book, false, true, false);
+
+            Assert.That(indexer.SearchTitleOverrides, Is.EqualTo(new[] { null, "Pretty Girls", "Blutige Fesseln" }));
+            Assert.That(indexer.LastBookSearchCriteria?.SearchTitleOverride, Is.Null);
+            Assert.That(indexer.LastBookSearchCriteria?.BookTitle, Is.EqualTo("Mooie Meisjes"));
+        }
+
         [Test]
         public void should_use_selected_edition_title_when_any_edition_ok()
         {
@@ -57,6 +162,125 @@ namespace Chaptarr.Core.Test.Indexers
         }
 
         [Test]
+        public void should_use_book_title_when_selected_edition_is_an_omnibus_containing_it()
+        {
+            var omnibus = new Edition { Title = "A Game of Thrones / A Clash of Kings" };
+
+            var book = new Book
+            {
+                Title = "A Clash of Kings",
+                Editions = new List<Edition> { omnibus }
+            };
+
+            var title = ReleaseSearchService.GetSearchBookTitle(book, omnibus);
+
+            Assert.That(title, Is.EqualTo("A Clash of Kings"));
+        }
+
+        [Test]
+        public void should_use_book_title_when_omnibus_separator_has_no_surrounding_spaces()
+        {
+            var omnibus = new Edition { Title = "A Game of Thrones/A Clash of Kings" };
+
+            var book = new Book
+            {
+                Title = "A Clash of Kings",
+                Editions = new List<Edition> { omnibus }
+            };
+
+            var title = ReleaseSearchService.GetSearchBookTitle(book, omnibus);
+
+            Assert.That(title, Is.EqualTo("A Clash of Kings"));
+        }
+
+        [Test]
+        public void should_match_omnibus_segment_ignoring_case_and_padding()
+        {
+            var omnibus = new Edition { Title = "A GAME OF THRONES  /   a clash of kings" };
+
+            var book = new Book
+            {
+                Title = "A Clash of Kings",
+                Editions = new List<Edition> { omnibus }
+            };
+
+            var title = ReleaseSearchService.GetSearchBookTitle(book, omnibus);
+
+            Assert.That(title, Is.EqualTo("A Clash of Kings"));
+        }
+
+        [Test]
+        public void should_keep_edition_title_when_slash_is_part_of_a_phrase()
+        {
+            // "Horror/Sci-Fi" is one phrase, not two works. Splitting here would search for nonsense.
+            var edition = new Edition { Title = "Stories of Fantasy, Horror/Sci-Fi, and a Man Called Tuf" };
+
+            var book = new Book
+            {
+                Title = "Dreamsongs",
+                Editions = new List<Edition> { edition }
+            };
+
+            var title = ReleaseSearchService.GetSearchBookTitle(book, edition);
+
+            Assert.That(title, Is.EqualTo("Stories of Fantasy, Horror/Sci-Fi, and a Man Called Tuf"));
+        }
+
+        [Test]
+        public void should_keep_edition_title_when_no_segment_matches_the_book()
+        {
+            // A marketplace-style listing that happens to contain a slash. The book title is not a
+            // clean segment, so there is nothing safe to fall back to.
+            var edition = new Edition { Title = "Rare George R R Martin / A KNIGHT OF THE SEVEN KINGDOMS Signed 1st Edition 2015" };
+
+            var book = new Book
+            {
+                Title = "A Knight of the Seven Kingdoms",
+                Editions = new List<Edition> { edition }
+            };
+
+            var title = ReleaseSearchService.GetSearchBookTitle(book, edition);
+
+            Assert.That(title, Is.EqualTo("Rare George R R Martin / A KNIGHT OF THE SEVEN KINGDOMS Signed 1st Edition 2015"));
+        }
+
+        [Test]
+        public void should_keep_edition_title_when_book_title_is_blank()
+        {
+            var omnibus = new Edition { Title = "A Game of Thrones / A Clash of Kings" };
+
+            var book = new Book
+            {
+                Title = "   ",
+                Editions = new List<Edition> { omnibus }
+            };
+
+            var title = ReleaseSearchService.GetSearchBookTitle(book, omnibus);
+
+            Assert.That(title, Is.EqualTo("A Game of Thrones / A Clash of Kings"));
+        }
+
+        [Test]
+        public void omnibus_edition_should_produce_a_single_work_book_query()
+        {
+            var omnibus = new Edition { Title = "A Game of Thrones / A Clash of Kings" };
+
+            var book = new Book
+            {
+                Title = "A Clash of Kings",
+                Editions = new List<Edition> { omnibus }
+            };
+
+            var criteria = new BookSearchCriteria
+            {
+                Author = new Author { Name = "George R.R. Martin" },
+                BookTitle = ReleaseSearchService.GetSearchBookTitle(book, omnibus)
+            };
+
+            Assert.That(criteria.BookQuery, Is.EqualTo("A+Clash+of+Kings"));
+        }
+
+        [Test]
         public void book_query_should_use_main_title_section()
         {
             var criteria = new BookSearchCriteria
@@ -102,6 +326,254 @@ namespace Chaptarr.Core.Test.Indexers
             };
 
             Assert.That(criteria.BookQuery, Is.EqualTo("Storm+Front"));
+        }
+
+        [TestCase("9780439554930", null, ExpectedResult = "9780439554930")]
+        [TestCase(null, "0439554934", ExpectedResult = "0439554934")]
+        public async Task<string> book_search_should_propagate_monitored_ebook_edition_isbn(string isbn13, string isbn10)
+        {
+            var author = new Author
+            {
+                Id = 18,
+                Name = "J.K. Rowling",
+                EbookMonitored = true,
+                EbookQualityProfileId = 2,
+                Books = new List<Book>()
+            };
+            var monitoredEdition = new Edition
+            {
+                Id = 7,
+                Monitored = true,
+                Title = "Harry Potter and the Sorcerer's Stone",
+                Isbn13 = isbn13,
+                Isbn10 = isbn10
+            };
+            var book = new Book
+            {
+                Id = 1625,
+                Author = author,
+                AuthorId = author.Id,
+                Title = "Harry Potter and the Sorcerer's Stone, Book 1",
+                EbookMonitored = true,
+                MediaType = BookMediaType.Ebook,
+                Editions = new List<Edition> { monitoredEdition }
+            };
+            author.Books.Add(book);
+
+            var indexer = new RecordingIndexer();
+            var subject = new ReleaseSearchService(
+                new SingleIndexerFactory(indexer),
+                DispatchProxy.Create<NzbDrone.Core.Books.IBookService, UnusedBookServiceProxy>(),
+                DispatchProxy.Create<NzbDrone.Core.Books.IAuthorService, UnusedAuthorServiceProxy>(),
+                null,
+                DispatchProxy.Create<IMakeDownloadDecision, EmptyDecisionMakerProxy>(),
+                LogManager.GetLogger("ReleaseSearchServiceTitleSelectionFixture"));
+
+            await subject.BookSearch(book, false, true, false);
+
+            return indexer.LastBookSearchCriteria?.BookIsbn;
+        }
+
+        [Test]
+        public async Task book_search_should_fallback_to_first_suitable_ebook_edition_isbn_when_monitored_edition_lacks_one()
+        {
+            var author = new Author
+            {
+                Id = 18,
+                Name = "J.K. Rowling",
+                EbookMonitored = true,
+                EbookQualityProfileId = 2,
+                Books = new List<Book>()
+            };
+            var book = new Book
+            {
+                Id = 1625,
+                Author = author,
+                AuthorId = author.Id,
+                Title = "Harry Potter and the Philosopher's Stone",
+                EbookMonitored = true,
+                MediaType = BookMediaType.Ebook,
+                Editions = new List<Edition>
+                {
+                    new()
+                    {
+                        Id = 1,
+                        Monitored = true,
+                        Title = "Harry Potter and the Philosopher's Stone",
+                        ReadingFormatId = 3
+                    },
+                    new()
+                    {
+                        Id = 2,
+                        Title = "Physical Edition",
+                        ReadingFormatId = 1,
+                        Isbn13 = "9780000000001"
+                    },
+                    new()
+                    {
+                        Id = 30,
+                        Title = "Harry Potter and the Philosopher's Stone",
+                        ReadingFormatId = 3,
+                        Isbn13 = "9781408865279"
+                    },
+                    new()
+                    {
+                        Id = 4,
+                        Title = "Audio Edition",
+                        ReadingFormatId = 2,
+                        Isbn13 = "9789999999999"
+                    },
+                    new()
+                    {
+                        Id = 5,
+                        Title = "German Ebook",
+                        ReadingFormatId = 3,
+                        Isbn13 = "9781781100554"
+                    }
+                }
+            };
+            author.Books.Add(book);
+
+            var indexer = new RecordingIndexer();
+            var subject = new ReleaseSearchService(
+                new SingleIndexerFactory(indexer),
+                DispatchProxy.Create<NzbDrone.Core.Books.IBookService, UnusedBookServiceProxy>(),
+                DispatchProxy.Create<NzbDrone.Core.Books.IAuthorService, UnusedAuthorServiceProxy>(),
+                null,
+                DispatchProxy.Create<IMakeDownloadDecision, EmptyDecisionMakerProxy>(),
+                LogManager.GetLogger("ReleaseSearchServiceTitleSelectionFixture"));
+
+            await subject.BookSearch(book, false, true, false);
+
+            Assert.That(indexer.LastBookSearchCriteria?.BookIsbn, Is.EqualTo("9781408865279"));
+        }
+
+        [Test]
+        public void get_search_book_isbn_should_match_curly_and_straight_apostrophe_titles_when_monitored_edition_is_unavailable()
+        {
+            var book = new Book
+            {
+                Title = "Harry Potter and the Philosopher’s Stone",
+                MediaType = BookMediaType.Ebook,
+                Editions = new List<Edition>
+                {
+                    new()
+                    {
+                        Id = 2,
+                        Title = "Harry Potter und der Stein der Weisen",
+                        ReadingFormatId = 3,
+                        Isbn13 = "9781781100554"
+                    },
+                    new()
+                    {
+                        Id = 3,
+                        Title = "Harry Potter and the Philosopher's Stone",
+                        ReadingFormatId = 3,
+                        Isbn13 = "9781781105771"
+                    }
+                }
+            };
+
+            var isbn = ReleaseSearchService.GetSearchBookIsbn(book, null);
+
+            Assert.That(isbn, Is.EqualTo("9781781105771"));
+        }
+
+        private class RecordingIndexer : IIndexer
+        {
+            public BookSearchCriteria LastBookSearchCriteria { get; private set; }
+            public List<string> SearchTitleOverrides { get; } = new();
+
+            public bool SupportsRss => false;
+            public bool SupportsSearch => true;
+            public DownloadProtocol Protocol => DownloadProtocol.Direct;
+            public string Name => "Recording Indexer";
+            public Type ConfigContract => typeof(object);
+            public NzbDrone.Core.ThingiProvider.ProviderMessage Message => null;
+            public IEnumerable<NzbDrone.Core.ThingiProvider.ProviderDefinition> DefaultDefinitions => new List<NzbDrone.Core.ThingiProvider.ProviderDefinition>();
+            public NzbDrone.Core.ThingiProvider.ProviderDefinition Definition { get; set; } = new IndexerDefinition { Name = "Recording Indexer" };
+
+            public object RequestAction(string action, IDictionary<string, string> query) => null;
+            public ValidationResult Test() => new();
+            public Task<IList<ReleaseInfo>> FetchRecent() => Task.FromResult<IList<ReleaseInfo>>(new List<ReleaseInfo>());
+
+            public Task<IList<ReleaseInfo>> Fetch(BookSearchCriteria searchCriteria)
+            {
+                LastBookSearchCriteria = searchCriteria;
+                SearchTitleOverrides.Add(searchCriteria.SearchTitleOverride);
+                return Task.FromResult<IList<ReleaseInfo>>(new List<ReleaseInfo>());
+            }
+
+            public Task<IList<ReleaseInfo>> Fetch(AuthorSearchCriteria searchCriteria) => Task.FromResult<IList<ReleaseInfo>>(new List<ReleaseInfo>());
+            public NzbDrone.Common.Http.HttpRequest GetDownloadRequest(string link) => throw new System.NotImplementedException();
+            public Task<NzbDrone.Common.Http.HttpResponse> ExecuteDownloadRequestAsync(NzbDrone.Common.Http.HttpRequest request) => throw new System.NotImplementedException();
+        }
+
+        private class SingleIndexerFactory : IIndexerFactory
+        {
+            private readonly IIndexer _indexer;
+
+            public SingleIndexerFactory(IIndexer indexer)
+            {
+                _indexer = indexer;
+            }
+
+            public List<IIndexer> AutomaticSearchEnabled(bool filterBlockedIndexers = true) => new() { _indexer };
+            public List<IIndexer> InteractiveSearchEnabled(bool filterBlockedIndexers = true) => new() { _indexer };
+            public List<IIndexer> RssEnabled(bool filterBlockedIndexers = true) => new();
+            public List<IndexerDefinition> All() => new();
+            public List<IIndexer> GetAvailableProviders() => new() { _indexer };
+            public bool Exists(int id) => false;
+            public IndexerDefinition Find(int id) => null;
+            public IndexerDefinition Get(int id) => null;
+            public IEnumerable<IndexerDefinition> Get(IEnumerable<int> ids) => new List<IndexerDefinition>();
+            public IndexerDefinition Create(IndexerDefinition definition) => throw new System.NotImplementedException();
+            public void Update(IndexerDefinition definition) => throw new System.NotImplementedException();
+            public IEnumerable<IndexerDefinition> Update(IEnumerable<IndexerDefinition> definitions) => throw new System.NotImplementedException();
+            public void Delete(int id) => throw new System.NotImplementedException();
+            public void Delete(IEnumerable<int> ids) => throw new System.NotImplementedException();
+            public IEnumerable<IndexerDefinition> GetDefaultDefinitions() => new List<IndexerDefinition>();
+            public IEnumerable<IndexerDefinition> GetPresetDefinitions(IndexerDefinition providerDefinition) => new List<IndexerDefinition>();
+            public void SetProviderCharacteristics(IndexerDefinition definition) => throw new System.NotImplementedException();
+            public void SetProviderCharacteristics(IIndexer provider, IndexerDefinition definition) => throw new System.NotImplementedException();
+            public IIndexer GetInstance(IndexerDefinition definition) => _indexer;
+            public FluentValidation.Results.ValidationResult Test(IndexerDefinition definition) => new();
+            public object RequestAction(IndexerDefinition definition, string action, IDictionary<string, string> query) => null;
+            public List<IndexerDefinition> AllForTag(int tagId) => new();
+        }
+
+        private class EmptyDecisionMakerProxy : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod.Name == nameof(IMakeDownloadDecision.GetSearchDecision))
+                {
+                    return new List<DownloadDecision>();
+                }
+
+                throw new System.NotImplementedException(targetMethod.Name);
+            }
+        }
+
+        private class UnusedBookServiceProxy : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod.Name == nameof(NzbDrone.Core.Books.IBookService.UpdateLastSearchTime))
+                {
+                    return null;
+                }
+
+                throw new AssertionException($"Unexpected IBookService call: {targetMethod.Name}");
+            }
+        }
+
+        private class UnusedAuthorServiceProxy : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                throw new AssertionException($"Unexpected IAuthorService call: {targetMethod.Name}");
+            }
         }
     }
 }

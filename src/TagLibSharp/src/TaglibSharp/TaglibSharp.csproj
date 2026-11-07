@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <DocumentationFile>bin\$(Configuration)\$(TargetFramework)\TaglibSharp.xml</DocumentationFile>
+    <AssemblyName>TagLibSharp</AssemblyName>
+    <RootNamespace>TagLib</RootNamespace>
+    <AssemblyOriginatorKeyFile>..\..\taglib-sharp.snk</AssemblyOriginatorKeyFile>
+    <SignAssembly>true</SignAssembly>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <AllowedOutputExtensionsInPackageBuildOutputFolder>$(AllowedOutputExtensionsInPackageBuildOutputFolder);.pdb</AllowedOutputExtensionsInPackageBuildOutputFolder>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Version>2.4.0.0</Version>
+    <PackageId>TagLibSharp-Lidarr</PackageId>
+    <Product>TagLib#</Product>
+    <Description>A library for for reading and writing metadata in media files, including video, audio, and photo formats.</Description>
+    <Copyright>Copyright (c) 2006-2007 Brian Nickel.  Copyright (c) 2009-2022 Other contributors</Copyright>
+    <Authors>Brian Nickel, Gabriel Burt, Stephen Shaw, etc</Authors>
+    <PackageProjectUrl>https://github.com/lidarr/taglib-sharp</PackageProjectUrl>
+    <PackageLicenseExpression>LGPL-2.1-only</PackageLicenseExpression>
+  </PropertyGroup>
+
+</Project>

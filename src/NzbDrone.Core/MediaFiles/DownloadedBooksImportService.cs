@@ -5,6 +5,7 @@ using System.IO.Abstractions;
 using System.Linq;
 using System.Threading.Tasks;
 using NLog;
+using NzbDrone.Common;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.EnvironmentInfo;
@@ -54,6 +55,7 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IEventAggregator _eventAggregator;
         private readonly IRuntimeInfo _runtimeInfo;
         private readonly IMediaInfoExtractor _mediaInfoExtractor;
+        private readonly IArchiveService _archiveService;
         private readonly Logger _logger;
 
         public DownloadedBooksImportService(
@@ -73,7 +75,8 @@ namespace NzbDrone.Core.MediaFiles
             IEventAggregator eventAggregator,
             IRuntimeInfo runtimeInfo,
             IMediaInfoExtractor mediaInfoExtractor,
-            Logger logger)
+            Logger logger,
+            IArchiveService archiveService = null)
         {
             _diskProvider = diskProvider;
             _diskScanService = diskScanService;
@@ -92,6 +95,7 @@ namespace NzbDrone.Core.MediaFiles
             _runtimeInfo = runtimeInfo;
             _mediaInfoExtractor = mediaInfoExtractor;
             _logger = logger;
+            _archiveService = archiveService ?? new ArchiveService(logger);
         }
 
         public List<ImportResult> ProcessRootFolder(IDirectoryInfo directoryInfo)
@@ -164,6 +168,15 @@ namespace NzbDrone.Core.MediaFiles
 
             if (!mediaFiles.Any())
             {
+                ExtractArchivesInFolder(directoryInfo);
+                visibleFiles = _diskProvider.GetFileInfos(directoryInfo.FullName, true);
+                mediaFiles = visibleFiles
+                    .Where(f => MediaFileExtensions.AllExtensions.Contains(f.Extension))
+                    .ToList();
+            }
+
+            if (!mediaFiles.Any())
+            {
                 _logger.Debug("[DOWNLOAD-IMPORT] No media files found in: {0}", directoryInfo.FullName);
                 return new List<ImportResult> { NoSupportedMediaFilesResult(directoryInfo.FullName, visibleFiles, downloadClientItem) };
             }
@@ -201,11 +214,16 @@ namespace NzbDrone.Core.MediaFiles
                 .ToList();
             var restrictToAuthorId = ResolveRestrictedAuthorId(author, remoteBook);
             var allowAutomaticAuthorImport = downloadClientItem != null && _configService.AutoAddMissingAuthorsFromCompletedDownloads;
+            var trackedPathFallbackAllowed = ShouldAllowTrackedDownloadPathFallback(downloadClientItem, restrictToAuthorId, targetBookIds);
             var matchCtx = CreateStrictMatchingContext(
                 downloadClientItem == null || allowAutomaticAuthorImport,
                 targetBookIds,
-                allowPathFallback: ShouldAllowTrackedDownloadPathFallback(downloadClientItem, restrictToAuthorId, targetBookIds));
+                allowPathFallback: trackedPathFallbackAllowed);
             var matchResult = _fileMatchingService.MatchFilesToLibraryAsync(discovered.ToArray(), restrictToAuthorId, matchCtx).GetAwaiter().GetResult();
+            var discoveredByPath = discovered
+                .Where(d => !string.IsNullOrWhiteSpace(d?.Path))
+                .GroupBy(d => d.Path, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
             var decisions = new List<ImportDecision<LocalBook>>();
             var booksById = new Dictionary<int, Book>();
@@ -224,8 +242,6 @@ namespace NzbDrone.Core.MediaFiles
             var rematchedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if ((downloadClientItem == null || allowAutomaticAuthorImport) && matchResult.UnmatchedFiles.Any())
             {
-                var discoveredByPath = discovered.ToDictionary(d => d.Path, StringComparer.OrdinalIgnoreCase);
-
                 var groups = matchResult.UnmatchedFiles
                     .Select(u => new
                     {
@@ -261,7 +277,50 @@ namespace NzbDrone.Core.MediaFiles
                         _logger.Debug("[DOWNLOAD-IMPORT] Auto-adding author '{0}' ({1}) for {2} unmatched file(s)",
                             authorName ?? "<unknown>", authorProviderId, filePaths.Count);
 
-                        var addedAuthor = _authorLibraryService.AddAuthorAsync(authorProviderId, config).GetAwaiter().GetResult();
+                        Author addedAuthor;
+                        var selectedSuggestions = _configService?.BookshelfMatchCompatibility == true
+                            ? group
+                                .Where(item => !string.IsNullOrWhiteSpace(item.Suggestion.BookProviderId))
+                                .GroupBy(item => (QualityMediaTypeHelper.GetMediaTypeFromPath(item.Unmatched.File.Path)
+                                                     ?? BookMediaType.Audiobook).ToString() + "\u001f" +
+                                    item.Suggestion.BookProviderId + "\u001f" +
+                                    (!string.IsNullOrWhiteSpace(item.Suggestion.EditionHardcoverId)
+                                        ? "id:" + item.Suggestion.EditionHardcoverId
+                                        : "title:" + (item.Suggestion.EditionTitle ?? string.Empty)),
+                                    StringComparer.OrdinalIgnoreCase)
+                                .ToList()
+                            : null;
+
+                        if (selectedSuggestions?.Count > 0)
+                        {
+                            addedAuthor = null;
+                            foreach (var selectedGroup in selectedSuggestions)
+                            {
+                                var selectedItem = selectedGroup.First();
+                                var selectedSuggestion = selectedItem.Suggestion;
+                                var selectedPath = selectedItem.Unmatched.File.Path;
+                                var selectedMediaType = QualityMediaTypeHelper.GetMediaTypeFromPath(selectedPath)
+                                    ?? BookMediaType.Audiobook;
+                                var materialized = _authorLibraryService.MaterializeUserSelectedEditionAsync(
+                                        new UserSelectedRemoteEdition
+                                        {
+                                            AuthorProviderId = selectedSuggestion.ProviderId,
+                                            WorkProviderId = selectedSuggestion.BookProviderId,
+                                            EditionProviderId = selectedSuggestion.EditionHardcoverId,
+                                            EditionTitle = selectedSuggestion.EditionTitle,
+                                            MediaType = selectedMediaType,
+                                            QueueIfUnavailable = true
+                                        },
+                                        config)
+                                    .GetAwaiter()
+                                    .GetResult();
+                                addedAuthor = materialized?.Author ?? addedAuthor;
+                            }
+                        }
+                        else
+                        {
+                            addedAuthor = _authorLibraryService.AddAuthorAsync(authorProviderId, config).GetAwaiter().GetResult();
+                        }
 
                         // Pending imports (negative IDs) can't be imported immediately.
                         if (addedAuthor == null || addedAuthor.Id <= 0)
@@ -295,12 +354,31 @@ namespace NzbDrone.Core.MediaFiles
                             }
                         }
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException)
                     {
                         _logger.Error(ex, "[DOWNLOAD-IMPORT] Failed to auto-add author '{0}' ({1}) during downloaded import",
                             authorName ?? "<unknown>", authorProviderId ?? "<unknown>");
                     }
                 }
+            }
+
+            // Leftovers only: re-run matching with the same path/filename evidence the manual import
+            // preview is allowed to use, so the automatic path accepts exactly what the preview would
+            // already resolve as a local match. See RunLocalPreviewParityPass for the safety rules.
+            // Completed downloads only: a folder with no download client item has no grabbed release and no author
+            // restriction to bound the path evidence, and nobody reviews the result the way the preview screen is reviewed.
+            if (downloadClientItem != null && !trackedPathFallbackAllowed)
+            {
+                RunLocalPreviewParityPass(
+                    matchResult.UnmatchedFiles,
+                    discoveredByPath,
+                    tagsByPath,
+                    restrictToAuthorId,
+                    targetBookIds,
+                    decisions,
+                    booksById,
+                    authorsById,
+                    rematchedPaths);
             }
 
             // Any unmatched files remaining should be rejected (do not route through ImportApprovedBooks' orchestrator path).
@@ -431,7 +509,32 @@ namespace NzbDrone.Core.MediaFiles
                     {
                         try
                         {
-                            var addedAuthor = _authorLibraryService.AddAuthorAsync(suggestion.ProviderId, config).GetAwaiter().GetResult();
+                            Author addedAuthor;
+                            if (_configService?.BookshelfMatchCompatibility == true &&
+                                !string.IsNullOrWhiteSpace(suggestion.BookProviderId))
+                            {
+                                var suggestedMediaType = QualityMediaTypeHelper.GetMediaTypeFromPath(fileInfo.FullName)
+                                    ?? BookMediaType.Audiobook;
+                                var materialized = _authorLibraryService.MaterializeUserSelectedEditionAsync(
+                                        new UserSelectedRemoteEdition
+                                        {
+                                            AuthorProviderId = suggestion.ProviderId,
+                                            WorkProviderId = suggestion.BookProviderId,
+                                            EditionProviderId = suggestion.EditionHardcoverId,
+                                            EditionTitle = suggestion.EditionTitle,
+                                            MediaType = suggestedMediaType,
+                                            QueueIfUnavailable = true
+                                        },
+                                        config)
+                                    .GetAwaiter()
+                                    .GetResult();
+                                addedAuthor = materialized?.Author;
+                            }
+                            else
+                            {
+                                addedAuthor = _authorLibraryService.AddAuthorAsync(suggestion.ProviderId, config).GetAwaiter().GetResult();
+                            }
+
                             if (addedAuthor != null && addedAuthor.Id > 0)
                             {
                                 var rematchCtx = CreateStrictMatchingContext(false, targetBookIds);
@@ -452,7 +555,7 @@ namespace NzbDrone.Core.MediaFiles
                                 }
                             }
                         }
-                        catch (Exception ex)
+                        catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException)
                         {
                             _logger.Error(ex, "[DOWNLOAD-IMPORT] Failed to auto-add author '{0}' ({1}) during downloaded import",
                                 suggestion.AuthorName ?? "<unknown>", suggestion.ProviderId ?? "<unknown>");
@@ -596,7 +699,7 @@ namespace NzbDrone.Core.MediaFiles
             return new ImportDecision<LocalBook>(local);
         }
 
-        private static void ApplyTrackedReleaseEvidence(
+        internal static void ApplyTrackedReleaseEvidence(
             IEnumerable<ImportDecision<LocalBook>> decisions,
             RemoteBook remoteBook,
             DownloadClientItem downloadClientItem)
@@ -619,6 +722,9 @@ namespace NzbDrone.Core.MediaFiles
                 sceneName = parsed?.ReleaseTitle;
             }
 
+            var splitPart = NzbDrone.Core.Parser.ReleasePackDetector.ParseSplitPart(
+                !string.IsNullOrWhiteSpace(release?.Title) ? release.Title : sceneName);
+
             sceneName = string.IsNullOrWhiteSpace(sceneName)
                 ? null
                 : NzbDrone.Core.Parser.Parser.RemoveFileExtension(sceneName);
@@ -640,6 +746,8 @@ namespace NzbDrone.Core.MediaFiles
                 }
 
                 localBook.IndexerFlags = release?.IndexerFlags ?? localBook.IndexerFlags;
+                localBook.ReleasePart = splitPart?.Index ?? 0;
+                localBook.ReleasePartCount = splitPart?.Count ?? 0;
                 localBook.IsGraphicAudio = release?.IsGraphicAudio == true || parsed?.IsGraphicAudio == true;
                 localBook.AudioProductionType = !string.IsNullOrWhiteSpace(parsed?.AudioProductionType)
                     ? parsed.AudioProductionType
@@ -703,14 +811,87 @@ namespace NzbDrone.Core.MediaFiles
             var expectedBookIds = expectedBooks.Select(book => book.Id).ToHashSet();
             var expectedLabel = FormatBookListLabel(expectedBooks);
 
+            // An off-target match is only ever tolerated when every off-target file resolved to the same
+            // book row; more than one is an ambiguous multi-book match and stays rejected.
+            var offTargetBookIds = decisions
+                .Where(decision => decision?.Approved == true && decision.Item?.Book != null)
+                .Select(decision => decision.Item.Book.Id)
+                .Where(id => !expectedBookIds.Contains(id))
+                .Distinct()
+                .ToList();
+
+            var allowSameWorkPocket = offTargetBookIds.Count == 1;
+            List<Book> hydratedExpectedBooks = null;
+
             foreach (var decision in decisions.Where(decision => decision?.Approved == true))
             {
                 var matchedBook = decision.Item?.Book;
                 if (matchedBook == null || !expectedBookIds.Contains(matchedBook.Id))
                 {
+                    if (allowSameWorkPocket)
+                    {
+                        hydratedExpectedBooks ??= expectedBooks.Select(HydrateExpectedBook).ToList();
+
+                        if (IsSameWorkMediaPocketMatch(matchedBook, hydratedExpectedBooks, decision.Item))
+                        {
+                            var matchedAuthor = decision.Item.Author ?? matchedBook.Author;
+                            var rootPath = matchedBook.MediaType == BookMediaType.Ebook
+                                ? matchedAuthor?.EbookRootFolderPath
+                                : matchedAuthor?.AudiobookRootFolderPath;
+                            if (string.IsNullOrWhiteSpace(rootPath))
+                            {
+                                decision.Reject(new Rejection($"The matched {matchedBook.MediaType} book has no root folder configured for its author. Set that format's root folder and retry the import."));
+                                continue;
+                            }
+
+                            _logger.Debug("Accepting completed download '{0}' matched to same-work {1} pocket {2} instead of grabbed {3}",
+                                downloadClientItem?.Title ?? downloadClientItem?.DownloadId ?? "<unknown>",
+                                matchedBook.MediaType,
+                                FormatBookLabel(matchedBook),
+                                expectedLabel);
+                            continue;
+                        }
+                    }
+
                     decision.Reject(new Rejection($"Completed download was grabbed for {expectedLabel}, but import matched {FormatBookLabel(matchedBook)}."));
                 }
             }
+        }
+
+        private static bool IsSameWorkMediaPocketMatch(Book matchedBook, List<Book> expectedBooks, LocalBook localBook)
+        {
+            if (matchedBook == null || matchedBook.Id <= 0 || localBook == null || expectedBooks == null)
+            {
+                return false;
+            }
+
+            var fileMediaType = BookFile.DetermineMediaType(localBook.Quality ?? new QualityModel()) == "ebook"
+                ? BookMediaType.Ebook
+                : BookMediaType.Audiobook;
+
+            if (matchedBook.MediaType != fileMediaType)
+            {
+                return false;
+            }
+
+            var matchedAuthorId = GetAuthorId(matchedBook);
+            if (matchedAuthorId <= 0)
+            {
+                return false;
+            }
+
+            var sameWorkTargets = expectedBooks
+                .Where(target => target != null &&
+                                 target.Id != matchedBook.Id &&
+                                 // Only a DIFFERENT media type pocket qualifies. A same-format sibling row of the work
+                                 // (for example another narrator's audiobook row) is handled by
+                                 // RetargetSameWorkMatchesToGrabbedBook, which is skipped for a multi-book grab.
+                                 target.MediaType != matchedBook.MediaType &&
+                                 GetAuthorId(target) == matchedAuthorId &&
+                                 WorkIdMatcher.WorkProviderIdMatches(target, matchedBook))
+                .ToList();
+
+            return sameWorkTargets.Count == 1;
         }
 
         private void RetargetSameWorkMatchesToGrabbedBook(List<ImportDecision<LocalBook>> decisions, List<Book> expectedBooks, Author expectedAuthor, DownloadClientItem downloadClientItem)
@@ -746,17 +927,34 @@ namespace NzbDrone.Core.MediaFiles
             {
                 var localBook = decision.Item;
                 var matchedBook = localBook?.Book;
-                if (!CanRetargetSameWorkMatch(targetBook, matchedBook))
+                if (!IsSameWorkRetargetCandidate(targetBook, matchedBook))
                 {
                     continue;
                 }
 
                 var matchedEdition = localBook.Edition;
+
+                // Two independent same-book signals are accepted here:
+                //
+                //  1. Work-level provider IDs intersect (hc/gr/ol work IDs). This is the original signal and
+                //     covers duplicate rows catalogued through the same metadata provider.
+                //
+                //  2. The matched edition already exists under the grabbed row, identified by provider IDs.
+                //  3. For twin rows from different catalogues, a normalized title plus compatible format and
+                //     narrator can establish the edition match after the strict identity checks fail.
+                // Every path remains constrained to the same author and media type, and the target edition
+                // must already belong to the grabbed book row.
+                var sameWorkProviderId = WorkIdMatcher.WorkProviderIdMatches(targetBook, matchedBook);
                 var targetEdition = FindEquivalentEditionForTargetBook(targetBook, matchedEdition);
+
                 if (targetEdition == null)
                 {
-                    decision.Reject(new Rejection(
-                        $"Completed download was grabbed for {FormatBookLabel(targetBook)} and matched same-work sibling {FormatBookLabel(matchedBook)}, but no equivalent edition exists under the grabbed book row. Refresh metadata and retry."));
+                    if (sameWorkProviderId)
+                    {
+                        decision.Reject(new Rejection(
+                            $"Completed download was grabbed for {FormatBookLabel(targetBook)} and matched same-work sibling {FormatBookLabel(matchedBook)}, but no equivalent edition exists under the grabbed book row. Refresh metadata and retry."));
+                    }
+
                     continue;
                 }
 
@@ -801,7 +999,14 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        private static bool CanRetargetSameWorkMatch(Book targetBook, Book matchedBook)
+        /// <summary>
+        /// Baseline guards every retarget must clear, independent of how "same book" is established:
+        /// two distinct persisted rows, the same media type, and the same (known) author. These are
+        /// hard requirements -- retargeting across authors or across media types would misfile the download.
+        /// </summary>
+        // Two different rows for the same author and media type. Whether they are the same work is
+        // decided by a shared work id, or failing that by an equivalent edition under the grabbed row.
+        private static bool IsSameWorkRetargetCandidate(Book targetBook, Book matchedBook)
         {
             if (targetBook == null ||
                 matchedBook == null ||
@@ -819,12 +1024,7 @@ namespace NzbDrone.Core.MediaFiles
 
             var targetAuthorId = GetAuthorId(targetBook);
             var matchedAuthorId = GetAuthorId(matchedBook);
-            if (targetAuthorId <= 0 || matchedAuthorId <= 0 || targetAuthorId != matchedAuthorId)
-            {
-                return false;
-            }
-
-            return WorkIdMatcher.WorkProviderIdMatches(targetBook, matchedBook);
+            return targetAuthorId > 0 && matchedAuthorId > 0 && targetAuthorId == matchedAuthorId;
         }
 
         private Edition FindEquivalentEditionForTargetBook(Book targetBook, Edition matchedEdition)
@@ -845,7 +1045,69 @@ namespace NzbDrone.Core.MediaFiles
                 editions = _editionService.GetEditionsByBook(targetBook.Id) ?? new List<Edition>();
             }
 
-            return editions.FirstOrDefault(edition => BookEditionIdentity.EditionsMatch(edition, matchedEdition));
+            var identityMatch = editions.FirstOrDefault(edition => BookEditionIdentity.EditionsMatch(edition, matchedEdition));
+            if (identityMatch != null)
+            {
+                return identityMatch;
+            }
+
+            return FindMetadataEquivalentEdition(editions, matchedEdition);
+        }
+
+        // Twin rows: the same book stored twice because two catalogue listings were never linked. Such
+        // rows share no work id, and their editions share no ISBN, ASIN or edition id, so the identity
+        // checks above can never recognise them. What they do share is what a person sees: the same
+        // author and media type (checked by the caller), the same edition title and the same narrator.
+        internal static Edition FindMetadataEquivalentEdition(IEnumerable<Edition> candidates, Edition matchedEdition)
+        {
+            var title = NormalizeEditionText(matchedEdition?.Title);
+            if (title.Length == 0 || GenericEditionTitles.Contains(title))
+            {
+                return null;
+            }
+
+            var narrator = NormalizeEditionText(matchedEdition.Narrator);
+            var format = matchedEdition.Format;
+
+            var sameTitle = (candidates ?? Enumerable.Empty<Edition>())
+                .Where(edition => edition != null && edition.Id > 0)
+                .Where(edition => NormalizeEditionText(edition.Title) == title)
+                .Where(edition => FormatsCompatible(edition.Format, format))
+                .ToList();
+
+            // A known, different narrator is a different recording, never an equivalent edition. An
+            // unknown narrator on either side is not evidence against the match. Exact narrator matches
+            // win over unknowns; within each group the monitored edition wins.
+            var exactNarrator = sameTitle
+                .Where(edition => narrator.Length > 0 && NormalizeEditionText(edition.Narrator) == narrator);
+            var unknownNarrator = sameTitle
+                .Where(edition => narrator.Length == 0 || NormalizeEditionText(edition.Narrator).Length == 0);
+
+            return PreferMonitored(exactNarrator) ?? PreferMonitored(unknownNarrator);
+        }
+
+        private static readonly HashSet<string> GenericEditionTitles = new(StringComparer.Ordinal) { "untitled", "unknown", "unknown title" };
+
+        private static Edition PreferMonitored(IEnumerable<Edition> editions)
+        {
+            return editions
+                .OrderByDescending(edition => edition.Monitored)
+                .ThenBy(edition => edition.Id)
+                .FirstOrDefault();
+        }
+
+        private static string NormalizeEditionText(string value)
+        {
+            return string.IsNullOrWhiteSpace(value)
+                ? string.Empty
+                : NzbDrone.Core.Parser.Parser.NormalizeTitle(value);
+        }
+
+        private static bool FormatsCompatible(string left, string right)
+        {
+            return string.IsNullOrWhiteSpace(left) ||
+                   string.IsNullOrWhiteSpace(right) ||
+                   string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
         }
 
         private static Author ResolveTargetAuthor(Book targetBook, Book matchedBook, Author expectedAuthor, Author localAuthor)
@@ -965,9 +1227,37 @@ namespace NzbDrone.Core.MediaFiles
                     continue;
                 }
 
+                if (IsSameRecording(expectedEdition, matchedEdition))
+                {
+                    // Providers list one recording several times (Audible regions, Hardcover and
+                    // Goodreads copies), and uploads rarely say which listing they are. Files that
+                    // match another listing of the grabbed narration are still the requested book.
+                    _logger.Debug(
+                        "Import matched edition {0} instead of grabbed edition {1}; same narration and language, accepting",
+                        matchedEdition.Id,
+                        expectedEdition.Id);
+                    continue;
+                }
+
                 decision.Reject(new Rejection(
                     $"Completed download was grabbed for edition '{expectedEdition.Title}', but import matched edition '{matchedEdition.Title}'. Chaptarr could not verify the expected edition."));
             }
+        }
+
+        internal static bool IsSameRecording(Edition expected, Edition matched)
+        {
+            if (expected == null || matched == null || expected.IsEbook || matched.IsEbook)
+            {
+                return false;
+            }
+
+            var expectedLanguage = EditionMetadataProfileFilter.NormalizeLanguageBucket(expected.Language);
+            var matchedLanguage = EditionMetadataProfileFilter.NormalizeLanguageBucket(matched.Language);
+
+            return !string.IsNullOrWhiteSpace(expectedLanguage) &&
+                   !string.IsNullOrWhiteSpace(matchedLanguage) &&
+                   string.Equals(expectedLanguage, matchedLanguage, StringComparison.OrdinalIgnoreCase) &&
+                   BookService.HaveSameNarration(expected, matched);
         }
 
         private Edition ResolveExpectedTrackedEdition(Book book, DownloadClientItem downloadClientItem)
@@ -1211,7 +1501,7 @@ namespace NzbDrone.Core.MediaFiles
                             }
                         }
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException)
                     {
                         _logger.Warn(ex, "Failed to import extra file: {0}", extraFile.Name);
                     }
@@ -1450,6 +1740,96 @@ namespace NzbDrone.Core.MediaFiles
             return null;
         }
 
+        /// <summary>
+        /// Second matching pass for completed-download files the strict pass left unmatched.
+        /// It uses the manual import preview's matching evidence (path/filename supplements the embedded
+        /// tags) so the queue no longer blocks files the preview screen resolves locally on sight.
+        /// Safety rules:
+        ///  - only leftovers are re-matched; a file already matched or auto-add-rematched is untouched,
+        ///  - the author restriction and the grabbed target books are carried over unchanged,
+        ///  - no provider (V5) identification, so nothing new is imported into the library,
+        ///  - the matcher's own thresholds/proofs are unchanged; this only re-enables the evidence
+        ///    source the preview already trusts, still gated by UsePathAsTagsFallback and strictness,
+        ///  - only completed downloads (a download client item) get the pass, not arbitrary folders,
+        ///  - a multi-file leftover set that resolves to more than one book, or only partly, is discarded.
+        /// </summary>
+        private void RunLocalPreviewParityPass(
+            IEnumerable<UnmatchedFile> unmatchedFiles,
+            IReadOnlyDictionary<string, DiscoveredFileWithMetadata> discoveredByPath,
+            Dictionary<string, Dictionary<string, List<string>>> tagsByPath,
+            int? restrictToAuthorId,
+            List<int> targetBookIds,
+            List<ImportDecision<LocalBook>> decisions,
+            IDictionary<int, Book> booksById,
+            IDictionary<int, Author> authorsById,
+            HashSet<string> rematchedPaths)
+        {
+            var leftovers = (unmatchedFiles ?? Enumerable.Empty<UnmatchedFile>())
+                .Select(um => um?.File?.Path)
+                .Where(path => !string.IsNullOrWhiteSpace(path) && !rematchedPaths.Contains(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Where(discoveredByPath.ContainsKey)
+                .Select(path => discoveredByPath[path])
+                .ToArray();
+
+            if (leftovers.Length == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                var previewParityCtx = CreateStrictMatchingContext(false, targetBookIds, allowPathFallback: true);
+                var parityResult = _fileMatchingService
+                    .MatchFilesToLibraryAsync(leftovers, restrictToAuthorId, previewParityCtx)
+                    .GetAwaiter()
+                    .GetResult();
+
+                var parityMatches = (parityResult?.MatchedFiles ?? Array.Empty<FileMatch>())
+                    .Where(fm => fm?.File?.Path != null && !rematchedPaths.Contains(fm.File.Path))
+                    .ToList();
+
+                if (parityMatches.Count == 0)
+                {
+                    return;
+                }
+
+                // Path evidence is folder-level, so a genuine match covers every leftover file. Importing only some
+                // files of a multi-file set leaves the edition partially filled: the rest is rejected and a later
+                // attempt to add it fails with "Edition already has files".
+                if (leftovers.Length > 1 && parityMatches.Count < leftovers.Length)
+                {
+                    _logger.Debug("[DOWNLOAD-IMPORT] Discarding local preview-parity matches: only {0} of {1} leftover file(s) matched, which is too weak to import a partial set automatically",
+                        parityMatches.Count, leftovers.Length);
+                    return;
+                }
+
+                var distinctBookIds = parityMatches.Select(fm => fm.BookId).Distinct().Count();
+                if (parityMatches.Count > 1 && distinctBookIds > 1)
+                {
+                    _logger.Debug("[DOWNLOAD-IMPORT] Discarding local preview-parity matches for {0} file(s): they resolve to {1} different books, which is too ambiguous to import automatically",
+                        parityMatches.Count, distinctBookIds);
+                    return;
+                }
+
+                foreach (var fm in parityMatches)
+                {
+                    var decision = CreateDecisionForMatch(fm, tagsByPath, booksById, authorsById);
+                    if (decision != null)
+                    {
+                        decisions.Add(decision);
+                        rematchedPaths.Add(fm.File.Path);
+                        _logger.Debug("[DOWNLOAD-IMPORT] Local preview-parity pass matched '{0}' to BookId={1} EditionId={2} via {3}",
+                            fm.File.Path, fm.BookId, fm.EditionId, fm.MatchedVia ?? "unknown");
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException)
+            {
+                _logger.Debug(ex, "[DOWNLOAD-IMPORT] Local preview-parity matching pass failed for {0} leftover file(s)", leftovers.Length);
+            }
+        }
+
         private static bool ShouldAllowTrackedDownloadPathFallback(DownloadClientItem downloadClientItem, int? restrictToAuthorId, List<int> targetBookIds)
         {
             return downloadClientItem != null &&
@@ -1479,6 +1859,32 @@ namespace NzbDrone.Core.MediaFiles
 
             var fileInfo = _diskProvider.GetFileInfo(path);
             return ProcessFile(fileInfo, importMode, author, downloadClientItem, remoteBook, requireDefaultRootFolderForMissingAuthors: requireDefaultRootFolderForMissingAuthors);
+        }
+
+        private void ExtractArchivesInFolder(IDirectoryInfo directoryInfo)
+        {
+            var archives = _diskProvider.GetFiles(directoryInfo.FullName, true)
+                .Where(IsSupportedArchive)
+                .ToList();
+
+            foreach (var archive in archives)
+            {
+                try
+                {
+                    _archiveService.Extract(archive, directoryInfo.FullName);
+                }
+                catch (Exception e)
+                {
+                    _logger.Warn(e, "Failed to extract archive during import: {0}", archive);
+                }
+            }
+        }
+
+        private static bool IsSupportedArchive(string path)
+        {
+            return path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
+                   path.EndsWith(".tgz", StringComparison.OrdinalIgnoreCase) ||
+                   path.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase);
         }
     }
 }

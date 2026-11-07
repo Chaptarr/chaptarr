@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.MetadataSource.BookInfo;
 
 namespace Chaptarr.Core.Test.Books
 {
@@ -10,17 +11,19 @@ namespace Chaptarr.Core.Test.Books
         [Test]
         public void stable_work_tokens_should_exclude_internal_base_book_id()
         {
+            var supplementalProviderId = AdditionalMetadataSources.CreateProviderId("googlebooks", "book-1");
             var book = new Book
             {
                 BaseBookId = "sms-pocket-123",
                 HardcoverBookId = "hc:42",
                 GoodreadsWorkId = "gr:99",
-                OpenLibraryWorkId = "ol:OL123W"
+                OpenLibraryWorkId = "ol:OL123W",
+                AdditionalMetadataProviderId = supplementalProviderId
             };
 
             var tokens = BookIdentity.GetStableWorkProviderIdentityTokens(book);
 
-            Assert.That(tokens, Is.EquivalentTo(new[] { "hc:42", "gr:99", "ol:OL123W" }));
+            Assert.That(tokens, Is.EquivalentTo(new[] { "hc:42", "gr:99", "ol:OL123W", supplementalProviderId }));
             Assert.That(tokens, Does.Not.Contain("sms-pocket-123"));
         }
 
@@ -221,6 +224,21 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(BookEditionIdentity.GetTrustedForeignEditionId(new Edition { Asins = new List<string> { "b00abc1234" } }), Is.EqualTo("az:B00ABC1234"));
                 Assert.That(BookEditionIdentity.GetTrustedForeignEditionId(new Edition { ForeignEditionId = "hc:edition:12345" }), Is.EqualTo("hc:edition:12345"));
                 Assert.That(BookEditionIdentity.GetTrustedForeignEditionId(new Edition { ForeignEditionId = "az:b00abc1234" }), Is.EqualTo("az:B00ABC1234"));
+            });
+        }
+
+        [Test]
+        public void supplemental_catalog_edition_ids_should_be_trusted_and_part_of_canonical_identity()
+        {
+            const string providerId = "meta:YWJjLTEyMw-ebook";
+            var edition = new Edition { ForeignEditionId = providerId };
+            var book = new Book { Editions = new List<Edition> { edition } };
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(BookEditionIdentity.GetTrustedForeignEditionId(edition), Is.EqualTo(providerId));
+                Assert.That(BookEditionIdentity.GetCanonicalEditionProviderIds(book), Does.Contain(providerId));
+                Assert.That(BookEditionIdentity.GetStableEditionRehomeTokens(edition), Does.Contain(providerId));
             });
         }
 

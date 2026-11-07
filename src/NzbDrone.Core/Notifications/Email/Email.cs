@@ -112,11 +112,11 @@ namespace NzbDrone.Core.Notifications.Email
 
         public ValidationFailure Test(EmailSettings settings)
         {
-            const string body = "Success! You have properly configured your email notification settings";
+            var body = Localize("notification.test.emailConfigured", "Success! You have properly configured your email notification settings.");
 
             try
             {
-                SendEmail(settings, "Chaptarr - Test Notification", body);
+                SendEmail(settings, "Chaptarr - " + Localize("notification.test.title", "Test Notification"), body);
             }
             catch (Exception ex)
             {

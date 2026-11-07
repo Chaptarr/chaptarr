@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
+import Button from 'Components/Link/Button';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
 import PageContent from 'Components/Page/PageContent';
@@ -13,6 +14,7 @@ import TableBody from 'Components/Table/TableBody';
 import TableOptionsModalWrapper from 'Components/Table/TableOptions/TableOptionsModalWrapper';
 import TablePager from 'Components/Table/TablePager';
 import { align, icons, kinds } from 'Helpers/Props';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import getRemovedItems from 'Utilities/Object/getRemovedItems';
 import hasDifferentItems from 'Utilities/Object/hasDifferentItems';
 import translate from 'Utilities/String/translate';
@@ -106,6 +108,7 @@ class Blocklist extends Component {
       isRemoving,
       isClearingBlocklistExecuting,
       onClearBlocklistPress,
+      onRetryPress,
       ...otherProps
     } = this.props;
 
@@ -162,8 +165,11 @@ class Blocklist extends Component {
 
           {
             !isAnyFetching && !!error &&
-              <Alert kind={kinds.DANGER}>
-                {translate('UnableToLoadBlocklist')}
+              <Alert kind={kinds.DANGER} role="alert">
+                <div>{getErrorMessage(error, translate('UnableToLoadBlocklist'))}</div>
+                <Button size="small" onPress={onRetryPress}>
+                  {translate('Retry')}
+                </Button>
               </Alert>
           }
 
@@ -237,7 +243,8 @@ Blocklist.propTypes = {
   isRemoving: PropTypes.bool.isRequired,
   isClearingBlocklistExecuting: PropTypes.bool.isRequired,
   onRemoveSelected: PropTypes.func.isRequired,
-  onClearBlocklistPress: PropTypes.func.isRequired
+  onClearBlocklistPress: PropTypes.func.isRequired,
+  onRetryPress: PropTypes.func.isRequired
 };
 
 export default Blocklist;

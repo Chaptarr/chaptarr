@@ -5,9 +5,8 @@ import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import * as commandNames from 'Commands/commandNames';
 import withScrollPosition from 'Components/withScrollPosition';
-import { setSelectedMediaType } from 'Store/Actions/appActions';
 import { clearBooks, fetchBooks } from 'Store/Actions/bookActions';
-import { saveBookEditor, setBookFilter, setBookSort, setBookTableOption, setBookView } from 'Store/Actions/bookIndexActions';
+import { saveBookEditor, setBookFilter, setBookMediaType, setBookSort, setBookTableOption, setBookView } from 'Store/Actions/bookIndexActions';
 import * as bookInfiniteScrollActions from 'Store/Actions/bookInfiniteScrollActions';
 import { executeCommand } from 'Store/Actions/commandActions';
 import { selectQueryBooks } from 'Store/Reducers/bookInfiniteScrollReducer';
@@ -27,7 +26,7 @@ function createMapStateToProps() {
     createCommandExecutingSelector(commandNames.CUTOFF_UNMET_BOOK_SEARCH),
     createCommandExecutingSelector(commandNames.MISSING_BOOK_SEARCH),
     createDimensionsSelector(),
-    (state) => state.app.selectedMediaType,
+    (state) => state.bookIndex.selectedMediaType,
     (state) => state.bookInfiniteScroll,
     (
       book,
@@ -43,20 +42,18 @@ function createMapStateToProps() {
       const isRefreshingBook = isRefreshingBookCommand || isRefreshingAuthorCommand;
       const mediaType = selectedMediaType || 'audiobook';
       const {
-        queryKey: posterQueryKey,
-        queryParams: posterQueryParams,
-        useClientSidePosters
+        queryKey: bookQueryKey,
+        queryParams: bookQueryParams,
+        useClientSideBooks
       } = getBookIndexQuery(book, mediaType);
-      const posterBuckets = bookInfiniteScroll?.queries?.[posterQueryKey]?.buckets;
-      const posterTotalCount = bookInfiniteScroll?.queries?.[posterQueryKey]?.totalCount;
-      const useInfinitePosters = book.view === 'posters' && !useClientSidePosters;
-
-      // In posters (infinite scroll) view, the main `books` collection is not fetched.
-      // Provide the currently loaded poster items to BookIndex so editor selection
-      // (Select All / bulk actions) works consistently across views.
-      const selectionItems = useInfinitePosters ?
-        selectQueryBooks({ bookInfiniteScroll }, posterQueryKey).map((b) => ({ id: b.id })) :
-        book.items;
+      const bookBuckets = bookInfiniteScroll?.queries?.[bookQueryKey]?.buckets;
+      const bookTotalCount = bookInfiniteScroll?.queries?.[bookQueryKey]?.totalCount;
+      // Server-paged views don't fetch the main `books` collection. Provide the currently
+      // loaded paged items to BookIndex so editor selection (Select All / bulk actions)
+      // works consistently across views.
+      const selectionItems = useClientSideBooks ?
+        book.items :
+        selectQueryBooks({ bookInfiniteScroll }, bookQueryKey).map((b) => ({ id: b.id }));
 
       return {
         ...book,
@@ -66,11 +63,11 @@ function createMapStateToProps() {
         isSearching: isCutoffBooksSearch || isMissingBooksSearch,
         isSmallScreen: dimensionsState.isSmallScreen,
         selectedMediaType: mediaType,
-        posterQueryKey,
-        posterQueryParams,
-        posterBuckets,
-        posterTotalCount,
-        useClientSidePosters
+        bookQueryKey,
+        bookQueryParams,
+        bookBuckets,
+        bookTotalCount,
+        useClientSideBooks
       };
     }
   );
@@ -99,22 +96,25 @@ function createMapDispatchToProps(dispatch, props) {
     },
 
     onRefreshBookPress(items) {
-      dispatch(executeCommand({
+      return dispatch(executeCommand({
         name: commandNames.BULK_REFRESH_BOOK,
-        bookIds: items
+        bookIds: items,
+        suppressStartErrorMessage: true
       }));
     },
 
     onRssSyncPress() {
-      dispatch(executeCommand({
-        name: commandNames.RSS_SYNC
+      return dispatch(executeCommand({
+        name: commandNames.RSS_SYNC,
+        suppressStartErrorMessage: true
       }));
     },
 
     onSearchPress(items) {
-      dispatch(executeCommand({
+      return dispatch(executeCommand({
         name: commandNames.BOOK_SEARCH,
-        bookIds: items
+        bookIds: items,
+        suppressStartErrorMessage: true
       }));
     },
 
@@ -127,8 +127,7 @@ function createMapDispatchToProps(dispatch, props) {
     },
 
     onMediaTypeChange(mediaType) {
-      // Update global selected media type
-      dispatch(setSelectedMediaType({ mediaType }));
+      dispatch(setBookMediaType({ mediaType }));
 
       // Clear existing books to prevent transient mixing
       dispatch(clearBooks());
@@ -146,7 +145,7 @@ class BookIndexConnector extends Component {
 
     if (this.needsClientSideBooks()) {
       this.props.dispatchFetchBooks({
-        mediaType: selectedMediaType || 'audiobook',
+        mediaType: getBookIndexQuery(this.props, selectedMediaType).queryParams.filters.mediaType,
         include: 'author'
       });
     }
@@ -159,12 +158,16 @@ class BookIndexConnector extends Component {
 
     if (needsClientSideBooks &&
         (!previouslyNeededClientSideBooks || prevProps.selectedMediaType !== selectedMediaType)) {
-      this.props.dispatchFetchBooks({ mediaType: selectedMediaType, include: 'author' });
+      this.props.dispatchFetchBooks({
+        mediaType: getBookIndexQuery(this.props, selectedMediaType).queryParams.filters.mediaType,
+        include: 'author'
+      });
     }
   }
 
   needsClientSideBooks(props = this.props) {
-    return props.view !== 'posters' || props.useClientSidePosters;
+    // Only custom filters still need the whole list; built-in filters page on the server.
+    return props.useClientSideBooks;
   }
 
   //
@@ -201,9 +204,9 @@ BookIndexConnector.propTypes = {
   isSmallScreen: PropTypes.bool.isRequired,
   view: PropTypes.string.isRequired,
   isPopulated: PropTypes.bool.isRequired,
-  selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook']).isRequired,
-  useClientSidePosters: PropTypes.bool.isRequired,
-  posterTotalCount: PropTypes.number,
+  selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook', 'both']).isRequired,
+  useClientSideBooks: PropTypes.bool.isRequired,
+  bookTotalCount: PropTypes.number,
   dispatchSetBookView: PropTypes.func.isRequired,
   dispatchSaveBookEditor: PropTypes.func.isRequired,
   dispatchFetchBooks: PropTypes.func.isRequired,

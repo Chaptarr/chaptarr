@@ -1,6 +1,17 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import intlFormatters from 'Utilities/Localization/formatters.cjs';
+import { getLocale } from 'Utilities/Localization/locale';
 import TextInput from './TextInput';
+
+const { formatNumber, parseLocalizedNumber, stepNumber } = intlFormatters;
+
+function formatInputValue(value) {
+  return value == null ? '' : formatNumber(value, {
+    useGrouping: false,
+    maximumFractionDigits: 20
+  }, getLocale());
+}
 
 function parseValue(props, value) {
   const {
@@ -13,11 +24,18 @@ function parseValue(props, value) {
     return null;
   }
 
-  let newValue = isFloat ? parseFloat(value) : parseInt(value);
+  let newValue = parseLocalizedNumber(value, {
+    locale: getLocale(),
+    isFloat
+  });
 
-  if (min != null && newValue != null && newValue < min) {
+  if (newValue == null) {
+    return null;
+  }
+
+  if (min != null && newValue < min) {
     newValue = min;
-  } else if (max != null && newValue != null && newValue > max) {
+  } else if (max != null && newValue > max) {
     newValue = max;
   }
 
@@ -25,31 +43,22 @@ function parseValue(props, value) {
 }
 
 class NumberInput extends Component {
-
-  //
-  // Lifecycle
-
   constructor(props, context) {
     super(props, context);
 
     this.state = {
-      value: props.value == null ? '' : props.value.toString(),
+      value: formatInputValue(props.value),
       isFocused: false
     };
   }
 
-  componentDidUpdate(prevProps, prevState) {
+  componentDidUpdate(prevProps) {
     const { value } = this.props;
 
     if (!isNaN(value) && value !== prevProps.value && !this.state.isFocused) {
-      this.setState({
-        value: value == null ? '' : value.toString()
-      });
+      this.setState({ value: formatInputValue(value) });
     }
   }
-
-  //
-  // Listeners
 
   onChange = ({ name, value }) => {
     this.setState({ value });
@@ -58,31 +67,51 @@ class NumberInput extends Component {
       name,
       value: parseValue(this.props, value)
     });
-
   };
 
   onFocus = () => {
     this.setState({ isFocused: true });
   };
 
-  onBlur = () => {
-    const {
-      name,
-      onChange
-    } = this.props;
+  onKeyDown = (event) => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') {
+      return;
+    }
 
+    if (this.props.readOnly || this.props.isDisabled || this.props.disabled) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const direction = event.key === 'ArrowUp' ? 1 : -1;
+    const currentValue = parseValue(this.props, this.state.value);
+    const nextValue = stepNumber(currentValue, direction, {
+      step: this.props.step,
+      min: this.props.min,
+      max: this.props.max
+    });
+
+    if (nextValue == null) {
+      return;
+    }
+
+    this.setState({ value: formatInputValue(nextValue) });
+    this.props.onChange({
+      name: this.props.name,
+      value: nextValue
+    });
+  };
+
+  onBlur = () => {
+    const { name, onChange } = this.props;
     const { value } = this.state;
     const parsedValue = parseValue(this.props, value);
-    const stringValue = parsedValue == null ? '' : parsedValue.toString();
 
-    if (stringValue === value) {
-      this.setState({ isFocused: false });
-    } else {
-      this.setState({
-        value: stringValue,
-        isFocused: false
-      });
-    }
+    this.setState({
+      value: formatInputValue(parsedValue),
+      isFocused: false
+    });
 
     onChange({
       name,
@@ -90,18 +119,20 @@ class NumberInput extends Component {
     });
   };
 
-  //
-  // Render
-
   render() {
-    const value = this.state.value;
-
     return (
       <TextInput
         {...this.props}
-        type="number"
-        value={value == null ? '' : value}
+        type="text"
+        inputMode={this.props.isFloat ? 'decimal' : 'numeric'}
+        role="spinbutton"
+        ariaValueMin={this.props.min}
+        ariaValueMax={this.props.max}
+        ariaValueNow={parseValue(this.props, this.state.value) ?? undefined}
+        ariaValueText={this.state.value || undefined}
+        value={this.state.value}
         onChange={this.onChange}
+        onKeyDown={this.onKeyDown}
         onBlur={this.onBlur}
         onFocus={this.onFocus}
       />
@@ -114,6 +145,10 @@ NumberInput.propTypes = {
   value: PropTypes.number,
   min: PropTypes.number,
   max: PropTypes.number,
+  step: PropTypes.number,
+  isDisabled: PropTypes.bool,
+  disabled: PropTypes.bool,
+  readOnly: PropTypes.bool,
   isFloat: PropTypes.bool.isRequired,
   onChange: PropTypes.func.isRequired
 };

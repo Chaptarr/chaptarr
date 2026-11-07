@@ -271,6 +271,63 @@ namespace NzbDrone.Core.Parser
 
         private static readonly Regex AfterDashRegex = new Regex(@"[-:].*", RegexOptions.Compiled);
 
+#pragma warning disable CS0618 // Exact BookshelfNG selected-edition fuzzy matching is retained for migrated libraries.
+        public static ParsedBookInfo ParseBookshelfBookTitleWithSearchCriteria(string title, Author author, List<Book> books)
+        {
+            try
+            {
+                if (!ValidateBeforeParsing(title) || author == null || books?.Any() != true)
+                {
+                    return null;
+                }
+
+                var authorName = author.Name == "Various Authors" ? "VA" : author.Name.RemoveAccent();
+                var releaseTitle = RemoveFileExtension(title);
+                var simpleTitle = CleanTorrentSuffixRegex.Replace(
+                    WebsitePostfixRegex.Replace(WebsitePrefixRegex.Replace(SimpleTitleRegex.Replace(releaseTitle))));
+                var edition = books
+                    .OrderByDescending(book => simpleTitle.FuzzyMatch(book.Editions.Single(value => value.Monitored).Title, wordDelimiters: WordDelimiters))
+                    .First().Editions.Single(value => value.Monitored);
+                var foundAuthor = GetBookshelfTitleFuzzy(simpleTitle, authorName, out var remainder)
+                    ?? GetBookshelfTitleFuzzy(simpleTitle, authorName.ToLastFirst(), out remainder);
+                var foundBook = GetBookshelfTitleFuzzy(remainder, edition.Title, out _)
+                    ?? GetBookshelfTitleFuzzy(remainder, edition.Title.SplitBookTitle(authorName).Item1, out _);
+                if (foundAuthor == null || foundBook == null)
+                {
+                    return null;
+                }
+
+                return new ParsedBookInfo
+                {
+                    AuthorName = foundAuthor,
+                    AuthorTitleInfo = GetAuthorTitleInfo(foundAuthor),
+                    BookTitle = foundBook,
+                    Quality = QualityParser.ParseQuality(title),
+                    ReleaseGroup = ParseReleaseGroup(releaseTitle)
+                };
+            }
+            catch (Exception exception)
+            {
+                Logger.Debug(exception, "Unable to parse a BookshelfNG release using its selected edition.");
+                return null;
+            }
+        }
+
+        private static string GetBookshelfTitleFuzzy(string report, string name, out string remainder)
+        {
+            remainder = report;
+            var (start, length, score) = report.ToLowerInvariant().FuzzyMatch(name.ToLowerInvariant(), 0.6, WordDelimiters);
+            if (start < 0 || score < 0.8)
+            {
+                return null;
+            }
+
+            remainder = report.Remove(start, length);
+            return report.Substring(start, length).Replace('.', ' ').Replace('_', ' ');
+        }
+
+#pragma warning restore CS0618
+
         public static ParsedBookInfo ParseBookTitleWithSearchCriteria(string title, Author author, List<Book> books)
         {
             try
@@ -284,7 +341,7 @@ namespace NzbDrone.Core.Parser
 
                 if (Logger.IsTraceEnabled)
                 {
-                    Logger.Trace("Parsing string '{0}' using search criteria author: '{1}' books: '{2}'",
+                    Logger.TraceSafe("Parsing string '{0}' using search criteria author: '{1}' books: '{2}'",
                                  title,
                                  authorName.RemoveAccent(),
                                  string.Join(", ", books.Select(a => a.Title.RemoveAccent())));
@@ -304,7 +361,7 @@ namespace NzbDrone.Core.Parser
 
                 if (bestMatch?.Book == null || !bestMatch.IsMatch)
                 {
-                    Logger.Trace("No acceptable title match found using search criteria for '{0}'", title);
+                    Logger.TraceSafe("No acceptable title match found using search criteria for '{0}'", title);
                     return null;
                 }
 
@@ -357,11 +414,50 @@ namespace NzbDrone.Core.Parser
             {
                 if (!title.ToLower().Contains("password") && !title.ToLower().Contains("yenc"))
                 {
-                    Logger.Error(e, "An error has occurred while trying to parse {0}", title);
+                    Logger.ErrorSafe(e, "An error has occurred while trying to parse {0}", title);
                 }
             }
 
-            Logger.Trace("Unable to parse {0}", title);
+            Logger.TraceSafe("Unable to parse {0}", title);
+            return null;
+        }
+
+        public static ParsedBookInfo ParseBookTitleWithFuzzyMatch(string title, Author author, string matchedBookTitle)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(title) || !ValidateBeforeParsing(title) ||
+                    author == null || string.IsNullOrWhiteSpace(author.Name) ||
+                    string.IsNullOrWhiteSpace(matchedBookTitle))
+                {
+                    return null;
+                }
+
+                var result = new ParsedBookInfo
+                {
+                    AuthorName = author.Name,
+                    AuthorTitleInfo = GetAuthorTitleInfo(author.Name),
+                    BookTitle = matchedBookTitle
+                };
+
+                result.Quality = QualityParser.ParseQuality(title);
+                result.ReleaseGroup = ParseReleaseGroup(CleanReleaseTitleForParsing(title));
+
+                return result;
+            }
+            catch (InvalidDateException ex)
+            {
+                Logger.Debug(ex, ex.Message);
+            }
+            catch (Exception e)
+            {
+                if (title == null || (!title.Contains("password", StringComparison.OrdinalIgnoreCase) &&
+                                      !title.Contains("yenc", StringComparison.OrdinalIgnoreCase)))
+                {
+                    Logger.ErrorSafe(e, "An error has occurred while parsing a fuzzy-matched release title.");
+                }
+            }
+
             return null;
         }
 
@@ -401,14 +497,14 @@ namespace NzbDrone.Core.Parser
         {
             try
             {
-                Logger.Trace("ParseBookTitle called with: '{0}'", title);
+                Logger.TraceSafe("ParseBookTitle called with: '{0}'", title);
 
                 if (!ValidateBeforeParsing(title))
                 {
                     return null;
                 }
 
-                Logger.Trace("Parsing string '{0}'", title);
+                Logger.TraceSafe("Parsing string '{0}'", title);
 
                 var releaseTitle = CleanReleaseTitleForParsing(title);
 
@@ -488,11 +584,11 @@ namespace NzbDrone.Core.Parser
             {
                 if (!title.ToLower().Contains("password") && !title.ToLower().Contains("yenc"))
                 {
-                    Logger.Error(e, "An error has occurred while trying to parse {0}", title);
+                    Logger.ErrorSafe(e, "An error has occurred while trying to parse {0}", title);
                 }
             }
 
-            Logger.Trace("Unable to parse {0}", title);
+            Logger.TraceSafe("Unable to parse {0}", title);
             return null;
         }
 
@@ -818,7 +914,7 @@ namespace NzbDrone.Core.Parser
 
             if (RejectHashedReleasesRegex.Any(v => v.IsMatch(titleWithoutExtension)))
             {
-                Logger.Trace("Rejected Hashed Release Title: {0}", title);
+                Logger.TraceSafe("Rejected Hashed Release Title: {0}", title);
                 return false;
             }
 

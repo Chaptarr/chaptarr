@@ -21,7 +21,7 @@ using NzbDrone.Core.Tags;
 
 namespace NzbDrone.Core.ImportLists.Goodreads
 {
-    public class GoodreadsBookshelf : ImportListBase<GoodreadsBookshelfImportListSettings>
+    public class GoodreadsBookshelf : GoodreadsImportListBase<GoodreadsBookshelfImportListSettings>
     {
         private const int ReviewsPerPage = 200;
         private const int ShelvesPerPage = 100;
@@ -33,7 +33,6 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex ShelfQueryRegex = new(@"[?&]shelf=(?<shelf>[^&""'<>\s]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-        private readonly IHttpClient _httpClient;
         private readonly Lazy<IQualityProfileService> _qualityProfileService;
         private readonly Lazy<IMetadataProfileService> _metadataProfileService;
         private readonly Lazy<ITagService> _tagService;
@@ -51,9 +50,8 @@ namespace NzbDrone.Core.ImportLists.Goodreads
                                   IRootFolderService rootFolderService,
                                   IRootFolderSettingsResolver rootFolderSettingsResolver,
                                   Logger logger)
-            : base(importListStatusService, configService, parsingService, logger)
+            : base(importListStatusService, configService, parsingService, httpClient, logger)
         {
-            _httpClient = httpClient;
             _qualityProfileService = qualityProfileService;
             _metadataProfileService = metadataProfileService;
             _tagService = tagService;
@@ -61,9 +59,20 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             _rootFolderSettingsResolver = rootFolderSettingsResolver;
         }
 
+        private const int DefaultRefreshIntervalMinutes = 720;
+
         public override string Name => "Goodreads Bookshelves";
-        public override ImportListType ListType => ImportListType.Goodreads;
-        public override TimeSpan MinRefreshInterval => TimeSpan.FromHours(12);
+        public override TimeSpan MinRefreshInterval
+        {
+            get
+            {
+                var minutes = Definition?.Settings is GoodreadsBookshelfImportListSettings settings && settings.RefreshIntervalMinutes > 0
+                    ? settings.RefreshIntervalMinutes
+                    : DefaultRefreshIntervalMinutes;
+
+                return TimeSpan.FromMinutes(Math.Max(minutes, GoodreadsBookshelfImportListSettings.MinimumRefreshIntervalMinutes));
+            }
+        }
 
         public override IList<ImportListItemInfo> Fetch()
         {
@@ -114,6 +123,11 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             if (action.IsNullOrWhiteSpace())
             {
                 return null;
+            }
+
+            if (action == "startOAuth" || action == "getOAuthToken")
+            {
+                return base.RequestAction(action, query);
             }
 
             if (action == "getAudiobookQualityProfiles")
@@ -177,6 +191,12 @@ namespace NzbDrone.Core.ImportLists.Goodreads
                 : "bookshelfIds";
 
             var userId = GetNormalizedUserId();
+            if (userId.IsNullOrWhiteSpace() && HasOAuthSettings && HasOAuthCredentials)
+            {
+                userId = GetUser(null).Item1;
+                Settings.UserId = userId;
+            }
+
             if (userId.IsNullOrWhiteSpace())
             {
                 return new
@@ -190,7 +210,7 @@ namespace NzbDrone.Core.ImportLists.Goodreads
                 };
             }
 
-            var shelves = FetchShelves(userId);
+            var shelves = HasOAuthSettings ? FetchOAuthShelves(userId) : FetchShelves(userId);
             var displayUser = userId;
             var helptext = new Dictionary<string, string>
             {
@@ -212,11 +232,19 @@ namespace NzbDrone.Core.ImportLists.Goodreads
 
         protected override void Test(List<ValidationFailure> failures)
         {
-            failures.AddIfNotNull(TestConnection());
+            if (HasOAuthSettings)
+            {
+                base.Test(failures);
+            }
+            else
+            {
+                failures.AddIfNotNull(TestPublicConnection());
+            }
+
             failures.AddRange(TestRootFolderConfig());
         }
 
-        private ValidationFailure TestConnection()
+        private ValidationFailure TestPublicConnection()
         {
             try
             {
@@ -366,6 +394,28 @@ namespace NzbDrone.Core.ImportLists.Goodreads
         private IEnumerable<ImportListItemInfo> FetchShelf(string shelf, int remainingLimit)
         {
             var userId = GetNormalizedUserId();
+            if (HasOAuthSettings)
+            {
+                if (!HasOAuthCredentials)
+                {
+                    _logger.Warn("Goodreads Bookshelves import list has incomplete OAuth credentials; skipping authenticated shelf {0}.", shelf);
+                    yield break;
+                }
+
+                if (userId.IsNullOrWhiteSpace())
+                {
+                    userId = GetUser(null).Item1;
+                    Settings.UserId = userId;
+                }
+
+                foreach (var item in FetchOAuthShelf(userId, shelf, remainingLimit))
+                {
+                    yield return item;
+                }
+
+                yield break;
+            }
+
             if (userId.IsNullOrWhiteSpace())
             {
                 _logger.Warn("Goodreads Bookshelves import list requires a user ID.");
@@ -393,6 +443,101 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             foreach (var item in FetchShelfFromRss(userId, shelf))
             {
                 yield return item;
+            }
+        }
+
+        private List<ImportListItemInfo> FetchOAuthShelf(string userId, string shelf, int remainingLimit)
+        {
+            var result = new List<ImportListItemInfo>();
+
+            for (var page = 1; page <= MaxPages; page++)
+            {
+                var builder = RequestBuilder()
+                    .SetSegment("route", "review/list.xml")
+                    .AddQueryParam("v", 2)
+                    .AddQueryParam("id", userId)
+                    .AddQueryParam("shelf", shelf)
+                    .AddQueryParam("per_page", ReviewsPerPage)
+                    .AddQueryParam("page", page);
+
+                var reviews = OAuthGet(builder)
+                    .Deserialize<PaginatedList<ReviewResource>>("reviews")?.List ?? Array.Empty<ReviewResource>();
+
+                foreach (var review in reviews)
+                {
+                    var book = review?.Book;
+                    var author = book?.Authors?.FirstOrDefault();
+                    if (author?.Name.IsNullOrWhiteSpace() != false || book.TitleWithoutSeries.IsNullOrWhiteSpace())
+                    {
+                        continue;
+                    }
+
+                    result.Add(new ImportListItemInfo
+                    {
+                        Author = author.Name.CleanSpaces(),
+                        AuthorGoodreadsId = $"gr:{author.Id}",
+                        Book = book.TitleWithoutSeries.CleanSpaces(),
+                        BookGoodreadsId = book.WorkId > 0 ? $"gr:{book.WorkId}" : null,
+                        EditionGoodreadsId = $"gr:{book.Id}"
+                    });
+
+                    if (remainingLimit > 0 && result.Count >= remainingLimit)
+                    {
+                        return result;
+                    }
+                }
+
+                if (reviews.Count < ReviewsPerPage)
+                {
+                    break;
+                }
+            }
+
+            return result;
+        }
+
+        private List<string> FetchOAuthShelves(string userId)
+        {
+            if (!HasOAuthCredentials)
+            {
+                return new List<string>();
+            }
+
+            try
+            {
+                if (userId.IsNullOrWhiteSpace())
+                {
+                    userId = GetUser(null).Item1;
+                }
+
+                var shelves = new List<string>();
+                for (var page = 1; page <= MaxPages; page++)
+                {
+                    var builder = RequestBuilder()
+                        .SetSegment("route", "shelf/list.xml")
+                        .AddQueryParam("user_id", userId)
+                        .AddQueryParam("per_page", ShelvesPerPage)
+                        .AddQueryParam("page", page);
+
+                    var current = OAuthGet(builder).Deserialize<PaginatedList<UserShelfResource>>("shelves")?.List;
+                    if (current == null || current.Count == 0)
+                    {
+                        break;
+                    }
+
+                    shelves.AddRange(current.Where(item => !item.Name.IsNullOrWhiteSpace()).Select(item => item.Name));
+                    if (current.Count < ShelvesPerPage)
+                    {
+                        break;
+                    }
+                }
+
+                return shelves.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Unable to fetch authenticated Goodreads shelves for user {0}", userId);
+                return new List<string>();
             }
         }
 

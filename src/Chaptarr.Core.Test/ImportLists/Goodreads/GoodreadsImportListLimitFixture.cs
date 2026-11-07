@@ -53,16 +53,26 @@ namespace Chaptarr.Core.Test.ImportLists.Goodreads
 
         private sealed class StubSeriesInfo : IProvideSeriesInfo
         {
-            private readonly SeriesResource _series;
+            private readonly Dictionary<int, SeriesResource> _pages;
 
             public StubSeriesInfo(SeriesResource series)
+                : this(new Dictionary<int, SeriesResource> { [1] = series })
             {
-                _series = series;
             }
 
-            public SeriesResource GetSeriesInfo(int id, bool useCache = true)
+            public StubSeriesInfo(Dictionary<int, SeriesResource> pages)
             {
-                return _series;
+                _pages = pages;
+            }
+
+            public List<int> RequestedPages { get; } = new();
+
+            public SeriesResource GetSeriesInfo(int id, int page = 1, bool useCache = true)
+            {
+                RequestedPages.Add(page);
+                return _pages.TryGetValue(page, out var series)
+                    ? series
+                    : new SeriesResource { Works = new List<WorkResource>() };
             }
         }
 
@@ -226,6 +236,118 @@ namespace Chaptarr.Core.Test.ImportLists.Goodreads
             Assert.That(items, Has.Count.EqualTo(2));
             Assert.That(items.Select(i => i.BookGoodreadsId), Is.EqualTo(new[] { "gr:1001", "gr:2001" }));
             Assert.That(items.Select(i => i.EditionGoodreadsId), Is.EqualTo(new[] { "gr:101", "gr:201" }));
+            Assert.That(seriesInfo.RequestedPages, Is.EqualTo(new[] { 1 }));
+        }
+
+        [Test]
+        public void should_fetch_goodreads_series_pages_until_empty_when_import_limit_is_disabled()
+        {
+            var seriesInfo = new StubSeriesInfo(new Dictionary<int, SeriesResource>
+            {
+                [1] = new SeriesResource
+                {
+                    Works = new List<WorkResource>
+                    {
+                        BuildWork(1001, 101, "First Book", 501, "First Author")
+                    }
+                },
+                [2] = new SeriesResource
+                {
+                    Works = new List<WorkResource>
+                    {
+                        BuildWork(2001, 201, "Second Book", 502, "Second Author"),
+                        BuildWork(3001, 301, "Third Book", 503, "Third Author")
+                    }
+                }
+            });
+
+            var importList = new GoodreadsSeriesImportList(
+                seriesInfo,
+                new StubImportListStatusService(),
+                configService: null,
+                parsingService: null,
+                qualityProfileService: new Lazy<IQualityProfileService>(() => null),
+                metadataProfileService: new Lazy<IMetadataProfileService>(() => null),
+                tagService: new Lazy<ITagService>(() => null),
+                rootFolderService: null,
+                rootFolderSettingsResolver: null,
+                logger: LogManager.GetCurrentClassLogger())
+            {
+                Definition = new ImportListDefinition
+                {
+                    Id = 2,
+                    Name = "Goodreads Series",
+                    Settings = new GoodreadsSeriesImportListSettings
+                    {
+                        SeriesId = 20,
+                        ImportLimit = 0
+                    }
+                }
+            };
+
+            var items = importList.Fetch();
+
+            Assert.That(items.Select(i => i.BookGoodreadsId), Is.EqualTo(new[] { "gr:1001", "gr:2001", "gr:3001" }));
+            Assert.That(seriesInfo.RequestedPages, Is.EqualTo(new[] { 1, 2, 3 }));
+        }
+
+        [Test]
+        public void should_keep_import_limit_while_paging_across_duplicate_goodreads_works()
+        {
+            var seriesInfo = new StubSeriesInfo(new Dictionary<int, SeriesResource>
+            {
+                [1] = new SeriesResource
+                {
+                    Works = new List<WorkResource>
+                    {
+                        BuildWork(1001, 101, "First Book", 501, "First Author")
+                    }
+                },
+                [2] = new SeriesResource
+                {
+                    Works = new List<WorkResource>
+                    {
+                        BuildWork(1001, 102, "First Book alternate edition", 501, "First Author"),
+                        BuildWork(2001, 201, "Second Book", 502, "Second Author")
+                    }
+                },
+                [3] = new SeriesResource
+                {
+                    Works = new List<WorkResource>
+                    {
+                        BuildWork(3001, 301, "Third Book", 503, "Third Author")
+                    }
+                }
+            });
+
+            var importList = new GoodreadsSeriesImportList(
+                seriesInfo,
+                new StubImportListStatusService(),
+                configService: null,
+                parsingService: null,
+                qualityProfileService: new Lazy<IQualityProfileService>(() => null),
+                metadataProfileService: new Lazy<IMetadataProfileService>(() => null),
+                tagService: new Lazy<ITagService>(() => null),
+                rootFolderService: null,
+                rootFolderSettingsResolver: null,
+                logger: LogManager.GetCurrentClassLogger())
+            {
+                Definition = new ImportListDefinition
+                {
+                    Id = 2,
+                    Name = "Goodreads Series",
+                    Settings = new GoodreadsSeriesImportListSettings
+                    {
+                        SeriesId = 20,
+                        ImportLimit = 2
+                    }
+                }
+            };
+
+            var items = importList.Fetch();
+
+            Assert.That(items.Select(i => i.BookGoodreadsId), Is.EqualTo(new[] { "gr:1001", "gr:2001" }));
+            Assert.That(seriesInfo.RequestedPages, Is.EqualTo(new[] { 1, 2 }));
         }
 
         private static BookResource BuildBook(long editionId, long workId, string title, long authorId, string authorName)

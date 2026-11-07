@@ -17,11 +17,10 @@ function PageHeaderActionsMenu(props) {
     onRestartPress,
     onShutdownPress
   } = props;
-
   return (
     <div>
       <Menu alignMenu={align.RIGHT}>
-        <MenuButton className={styles.menuButton} aria-label="Menu Button">
+        <MenuButton className={styles.menuButton} aria-label={translate('MenuButton')}>
           <Icon
             name={icons.INTERACTIVE}
           />

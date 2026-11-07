@@ -94,7 +94,7 @@ namespace NzbDrone.Console
         {
             LogManager.Shutdown();
 
-            if (exitCode != ExitCodes.Normal)
+            if (exitCode != ExitCodes.Normal && startupArgs?.ExitImmediately != true)
             {
                 System.Console.WriteLine("Press enter to exit...");
 
@@ -102,13 +102,6 @@ namespace NzbDrone.Console
 
                 if (exitCode == ExitCodes.NonRecoverableFailure)
                 {
-                    if (startupArgs?.ExitImmediately == true)
-                    {
-                        System.Console.WriteLine("Non-recoverable failure, but set to exit immediately");
-
-                        Environment.Exit((int)exitCode);
-                    }
-
                     System.Console.WriteLine("Non-recoverable failure, waiting for user intervention...");
                     for (var i = 0; i < 3600; i++)
                     {

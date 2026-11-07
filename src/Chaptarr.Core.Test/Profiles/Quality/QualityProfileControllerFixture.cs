@@ -4,11 +4,13 @@ using System.Data;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Net;
+using Chaptarr.Http.Middleware;
 using Chaptarr.Http.REST;
 using FluentValidation;
 using Microsoft.AspNetCore.Http;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Core.Books;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.ImportLists;
@@ -59,6 +61,7 @@ namespace Chaptarr.Core.Test.Profiles.Quality
                     formatService: new StubCustomFormatService(formats),
                     rootFolderService: null,
                     qualityDefinitionService: null,
+                    configService: null,
                     logger: LogManager.GetCurrentClassLogger());
             }
 
@@ -81,25 +84,85 @@ namespace Chaptarr.Core.Test.Profiles.Quality
             }
 
             public QualityProfile Add(QualityProfile profile) => throw new NotImplementedException();
-            public void Update(QualityProfile profile) => throw new NotImplementedException();
+            public void Update(QualityProfile profile) => _profiles[_profiles.FindIndex(existing => existing.Id == profile.Id)] = profile;
             public void Delete(int id) => throw new NotImplementedException();
-            public QualityProfile Get(int id) => throw new NotImplementedException();
+            public void EnsureNotInUse(IEnumerable<int> ids) => throw new NotImplementedException();
+            public QualityProfile Get(int id) => _profiles.Single(profile => profile.Id == id);
             public bool Exists(int id) => throw new NotImplementedException();
+        }
+
+        private sealed class StubLegacyIdentityMap : IBookshelfLegacyIdentityMapService
+        {
+            public List<BookshelfLegacyIdentityMapEntry> Mappings { get; } = new();
+
+            public List<BookshelfLegacyIdentityMapEntry> GetMappingsByTargetIds(string entityType, IEnumerable<int> targetIds) =>
+                Mappings.Where(mapping => mapping.EntityType == entityType && targetIds.Contains(mapping.TargetId)).ToList();
+            public List<BookshelfLegacyIdentityMapEntry> GetMappings(string entityType, IEnumerable<int> sourceIds) => throw new NotImplementedException();
+            public List<int> ResolveBookIds(IEnumerable<int> sourceIds, BookMediaType? mediaType = null) => throw new NotImplementedException();
+        }
+
+        private sealed class StubBookshelfProfiles : IBookshelfQualityProfileService
+        {
+            private readonly IQualityProfileService _profiles;
+            public StubBookshelfProfiles(IQualityProfileService profiles) => _profiles = profiles;
+            public string LastOperation { get; private set; }
+            public int LastId { get; private set; }
+            public QualityProfile LastProfile { get; private set; }
+            public List<BookshelfQualityProfile> All() => _profiles.GetByType(ProfileType.Audiobook)
+                .Select(profile => new BookshelfQualityProfile { LegacyId = profile.Id, Profile = profile }).ToList();
+            public BookshelfQualityProfile Get(int id) => new()
+            {
+                LegacyId = id, Profile = LastProfile != null && LastId == id ? LastProfile : _profiles.Get(id)
+            };
+            public BookshelfQualityProfile Create(QualityProfile profile)
+            {
+                LastOperation = "create";
+                LastId = 7;
+                LastProfile = profile;
+                return Get(7);
+            }
+
+            public BookshelfQualityProfile Update(int id, QualityProfile profile)
+            {
+                LastOperation = "update";
+                LastId = id;
+                LastProfile = profile;
+                return Get(id);
+            }
+
+            public void Delete(int id)
+            {
+                LastOperation = "delete";
+                LastId = id;
+            }
         }
 
         private sealed class TestQualityProfileController : QualityApi.QualityProfileController
         {
-            public TestQualityProfileController(IEnumerable<CustomFormat> formats = null)
-                : base(new StubQualityProfileService(), new StubCustomFormatService(formats))
+            public TestQualityProfileController(IEnumerable<CustomFormat> formats = null, params QualityProfile[] profiles)
+                : this(new StubLegacyIdentityMap(), new StubQualityProfileService(formats, profiles), formats)
             {
+            }
+
+            private TestQualityProfileController(StubLegacyIdentityMap identityMap, StubQualityProfileService profiles, IEnumerable<CustomFormat> formats)
+                : this(identityMap, profiles, new StubBookshelfProfiles(profiles), formats)
+            {
+            }
+
+            private TestQualityProfileController(StubLegacyIdentityMap identityMap, StubQualityProfileService profiles,
+                StubBookshelfProfiles bookshelfProfiles, IEnumerable<CustomFormat> formats)
+                : base(profiles, new StubCustomFormatService(formats), identityMap, bookshelfProfiles)
+            {
+                LegacyMappings = identityMap.Mappings;
+                BookshelfService = bookshelfProfiles;
                 ControllerContext.HttpContext = new DefaultHttpContext();
                 ControllerContext.HttpContext.Request.Method = "POST";
             }
 
-            public void ValidateForTest(QualityApi.QualityProfileResource resource)
-            {
-                ValidateResource(resource, skipValidate: true);
-            }
+            public List<BookshelfLegacyIdentityMapEntry> LegacyMappings { get; }
+            public StubBookshelfProfiles BookshelfService { get; }
+            public QualityApi.QualityProfileResource GetResourceForTest(int id) => GetResourceById(id);
+            public void ValidateForTest(QualityApi.QualityProfileResource resource) => ValidateResource(resource, skipValidate: true);
         }
 
         [Test]
@@ -113,6 +176,39 @@ namespace Chaptarr.Core.Test.Profiles.Quality
             Assert.That(resource.ProfileType, Is.EqualTo(ProfileType.Audiobook));
             Assert.That(resource.Cutoff, Is.EqualTo(CoreQuality.Unknown.Id));            Assert.That(AllowedQualityIds(resource), Is.EqualTo(new[] { CoreQuality.Unknown.Id }));
             Assert.DoesNotThrow(() => QualityApi.ProfileResourceMapper.ToModel(resource));
+        }
+
+        [Test]
+        public void bookshelf_compatibility_should_return_only_original_profiles_without_filtering_the_legacy_quality_list()
+        {
+            var ebookQuality = new QualityProfileQualityItem
+            {
+                Quality = CoreQuality.MOBI,
+                Allowed = true
+            };
+            var controller = new TestQualityProfileController(
+                profiles: new[]
+                {
+                    CreateProfile(1, "Audio default", ProfileType.Audiobook),
+                    new QualityProfile
+                    {
+                        Id = 2,
+                        Name = "Ebook override",
+                        ProfileType = ProfileType.Audiobook,
+                        Cutoff = CoreQuality.MOBI.Id,
+                        Items = new List<QualityProfileQualityItem> { ebookQuality },
+                        FormatItems = new List<ProfileFormatItem>()
+                    },
+                    CreateProfile(3, "Ebook default", ProfileType.Ebook)
+                });
+            controller.ControllerContext.HttpContext.Items[ReadarrFacadeContext.ItemKey] =
+                new ReadarrFacadeContext("bookshelf", null, "", isBookshelfCompatibility: true);
+
+            var profiles = controller.GetAll();
+            var legacyProfile = controller.GetResourceForTest(2);
+
+            Assert.That(profiles.Select(profile => profile.Id), Is.EqualTo(new[] { 1, 2 }));
+            Assert.That(legacyProfile.Items.SelectMany(AllQualityIds), Does.Contain(CoreQuality.MOBI.Id));
         }
 
         [Test]
@@ -614,6 +710,219 @@ namespace Chaptarr.Core.Test.Profiles.Quality
 
             Assert.That(missing.Errors.Select(error => error.PropertyName), Does.Contain("FormatItems"));
         }
+
+        [TestCase(ProfileType.Audiobook)]
+        [TestCase(ProfileType.Ebook)]
+        public void update_should_retain_unchanged_generic_qualities_on_an_imported_profile(ProfileType type)
+        {
+            var (controller, resource) = ImportedGenericProfile(type);
+            resource.Name = "Renamed imported profile";
+
+            Assert.DoesNotThrow(() => controller.ValidateForTest(resource));
+            controller.Update(resource);
+            var persisted = controller.GetAll().Single(profile => profile.Id == resource.Id);
+            Assert.That(persisted.Name, Is.EqualTo(resource.Name));
+            Assert.That(AllowedQualityIds(persisted), Is.EqualTo(AllowedQualityIds(resource)));
+            Assert.That(persisted.Cutoff, Is.EqualTo(resource.Cutoff));
+            Assert.That(persisted.ConvertToQualityId, Is.EqualTo(resource.ConvertToQualityId));
+        }
+
+        [Test]
+        public void retaining_generic_qualities_requires_a_put_and_an_imported_mapping()
+        {
+            var (controller, resource) = ImportedGenericProfile(ProfileType.Audiobook);
+            controller.ControllerContext.HttpContext.Request.Method = "POST";
+            Assert.Throws<ValidationException>(() => controller.ValidateForTest(resource));
+
+            controller.ControllerContext.HttpContext.Request.Method = "PUT";
+            controller.LegacyMappings.Clear();
+            Assert.Throws<ValidationException>(() => controller.ValidateForTest(resource));
+        }
+
+        [Test]
+        public void imported_profile_must_not_enable_a_new_incompatible_quality_or_cutoff()
+        {
+            var (controller, resource) = ImportedGenericProfile(ProfileType.Audiobook);
+            resource.Items.Add(new QualityApi.QualityProfileQualityItemResource { Quality = CoreQuality.EPUB, Allowed = true });
+            resource.Cutoff = CoreQuality.EPUB.Id;
+
+            var exception = Assert.Throws<ValidationException>(() => controller.ValidateForTest(resource));
+            Assert.That(exception.Errors.Select(error => error.PropertyName), Does.Contain("Items"));
+            Assert.That(exception.Errors.Select(error => error.PropertyName), Does.Contain("Cutoff"));
+        }
+
+        [Test]
+        public void imported_profile_must_not_select_a_new_incompatible_conversion_target()
+        {
+            var (controller, resource) = ImportedGenericProfile(ProfileType.Audiobook);
+            resource.ConvertToQualityId = CoreQuality.EPUB.Id;
+
+            var exception = Assert.Throws<ValidationException>(() => controller.ValidateForTest(resource));
+            Assert.That(exception.Errors.Select(error => error.PropertyName), Does.Contain("ConvertToQualityId"));
+        }
+
+        [Test]
+        public void imported_profile_must_not_use_retained_choices_after_changing_its_format()
+        {
+            var (controller, resource) = ImportedGenericProfile(ProfileType.Audiobook);
+            resource.ProfileType = ProfileType.Ebook;
+
+            Assert.Throws<ValidationException>(() => controller.ValidateForTest(resource));
+        }
+
+        [Test]
+        public void imported_profile_can_remove_incompatible_choices()
+        {
+            var (controller, resource) = ImportedGenericProfile(ProfileType.Audiobook);
+            resource.Items.RemoveAll(item => item.Quality.Id == CoreQuality.PDF.Id);
+            resource.Cutoff = CoreQuality.M4B.Id;
+            resource.ConvertToQualityId = null;
+
+            Assert.DoesNotThrow(() => controller.ValidateForTest(resource));
+        }
+
+        [Test]
+        public void imported_mapping_must_match_the_requested_format()
+        {
+            var (controller, resource) = ImportedGenericProfile(ProfileType.Audiobook);
+            controller.LegacyMappings[0].MediaType = 1;
+
+            Assert.Throws<ValidationException>(() => controller.ValidateForTest(resource));
+        }
+
+        [Test]
+        public void retained_group_cutoff_must_not_hide_new_incompatible_children()
+        {
+            var (controller, resource) = ImportedGenericProfile(ProfileType.Audiobook, grouped: true);
+            resource.Items[0].Items.Add(new QualityApi.QualityProfileQualityItemResource { Quality = CoreQuality.EPUB, Allowed = false });
+
+            var exception = Assert.Throws<ValidationException>(() => controller.ValidateForTest(resource));
+            Assert.That(exception.Errors.Select(error => error.PropertyName), Does.Contain("Cutoff"));
+        }
+
+        private static (TestQualityProfileController Controller, QualityApi.QualityProfileResource Resource) ImportedGenericProfile(ProfileType type, bool grouped = false)
+        {
+            var wrongQuality = type == ProfileType.Audiobook ? CoreQuality.PDF : CoreQuality.MP3;
+            var validQuality = type == ProfileType.Audiobook ? CoreQuality.M4B : CoreQuality.EPUB;
+            var profile = CreateProfile(42, "Imported generic", type);
+            profile.Items.Add(new QualityProfileQualityItem { Quality = wrongQuality, Allowed = true, Items = new List<QualityProfileQualityItem>() });
+            profile.Items.Add(new QualityProfileQualityItem { Quality = validQuality, Allowed = true, Items = new List<QualityProfileQualityItem>() });
+            profile.Cutoff = wrongQuality.Id;
+            profile.ConvertToQualityId = wrongQuality.Id;
+            if (grouped)
+            {
+                profile.Items = new List<QualityProfileQualityItem>
+                {
+                    new() { Id = 1000, Name = "Imported group", Allowed = true, Items = profile.Items }
+                };
+                profile.Cutoff = 1000;
+            }
+
+            var controller = new TestQualityProfileController(profiles: new[] { profile });
+            controller.ControllerContext.HttpContext.Request.Method = "PUT";
+            controller.LegacyMappings.Add(new BookshelfLegacyIdentityMapEntry
+            {
+                Source = "BookshelfNG", EntityType = "QualityProfile", SourceId = 7, TargetId = 42,
+                MediaType = type == ProfileType.Audiobook ? 0 : 1
+            });
+            return (controller, QualityApi.ProfileResourceMapper.ToResource(profile));
+        }
+
+        [Test]
+        public void legacy_create_accepts_the_generic_predecessor_payload_and_returns_its_wire_id()
+        {
+            var controller = new TestQualityProfileController();
+            SetGenericFacade(controller);
+            var resource = GenericResource();
+            Assert.DoesNotThrow(() => controller.ValidateForTest(resource));
+            var result = controller.Create(resource);
+            var created = (Microsoft.AspNetCore.Mvc.CreatedAtActionResult)result.Result;
+            Assert.That(controller.BookshelfService.LastOperation, Is.EqualTo("create"));
+            Assert.That(((QualityApi.QualityProfileResource)created.Value).Id, Is.EqualTo(7));
+            Assert.That(created.RouteValues["id"], Is.EqualTo(7));
+        }
+
+        [Test]
+        public void legacy_update_and_delete_use_the_legacy_identity_service()
+        {
+            var controller = new TestQualityProfileController();
+            SetGenericFacade(controller);
+            controller.ControllerContext.HttpContext.Request.Method = "PUT";
+            var resource = GenericResource();
+            resource.Id = 9;
+            controller.ValidateForTest(resource);
+            var result = controller.Update(resource);
+            var updated = (Microsoft.AspNetCore.Mvc.AcceptedAtActionResult)result.Result;
+            Assert.That(controller.BookshelfService.LastOperation, Is.EqualTo("update"));
+            Assert.That(((QualityApi.QualityProfileResource)updated.Value).Id, Is.EqualTo(9));
+            controller.DeleteProfile(9);
+            Assert.That(controller.BookshelfService.LastOperation, Is.EqualTo("delete"));
+            Assert.That(controller.BookshelfService.LastId, Is.EqualTo(9));
+        }
+
+        [Test]
+        public void legacy_validation_retains_the_source_all_qualities_requirement()
+        {
+            var controller = new TestQualityProfileController();
+            SetGenericFacade(controller);
+            var resource = GenericResource();
+            resource.Items.RemoveAt(0);
+            var exception = Assert.Throws<ValidationException>(() => controller.ValidateForTest(resource));
+            Assert.That(exception.Errors.Any(error => error.PropertyName == "Items" && error.ErrorMessage == "Must contain all qualities"), Is.True);
+        }
+
+        [Test]
+        public void generic_legacy_validation_does_not_relax_native_or_format_scoped_requests()
+        {
+            var controller = new TestQualityProfileController();
+            Assert.Throws<ValidationException>(() => controller.ValidateForTest(GenericResource()));
+            SetGenericFacade(controller, "ebook");
+            Assert.Throws<ValidationException>(() => controller.ValidateForTest(GenericResource()));
+        }
+
+        [Test]
+        public void generic_profiles_expose_shared_custom_formats_and_preserve_native_specific_formats_outside_the_wire()
+        {
+            var formats = new[]
+            {
+                new CustomFormat { Id = 11, Name = "Shared" },
+                new CustomFormat { Id = 22, Name = "Native audio", AppliesTo = CustomFormatMediaType.Audiobook }
+            };
+            var profile = CreateProfile(1, "Imported", ProfileType.Audiobook);
+            profile.FormatItems = formats.Select(format => new ProfileFormatItem { Format = format, Score = 1 }).ToList();
+            var controller = new TestQualityProfileController(formats, profile);
+            SetGenericFacade(controller);
+            var resource = GenericResource();
+            resource.FormatItems.Add(new QualityApi.ProfileFormatItemResource { Format = 11, Score = 1 });
+            Assert.DoesNotThrow(() => controller.ValidateForTest(resource));
+            Assert.That(controller.GetAll().Single().FormatItems.Select(item => item.Format), Is.EqualTo(new[] { 11 }));
+        }
+
+        [Test]
+        public void legacy_custom_format_validation_preserves_the_source_permissive_extra_item_contract()
+        {
+            var controller = new TestQualityProfileController(new[] { new CustomFormat { Id = 11, Name = "Shared" } });
+            SetGenericFacade(controller);
+            var resource = GenericResource();
+            resource.FormatItems.Add(new QualityApi.ProfileFormatItemResource { Format = 11, Score = 1 });
+            resource.FormatItems.Add(new QualityApi.ProfileFormatItemResource { Format = 999, Score = 2 });
+            Assert.DoesNotThrow(() => controller.ValidateForTest(resource));
+            resource.FormatItems.RemoveAt(0);
+            Assert.Throws<ValidationException>(() => controller.ValidateForTest(resource));
+        }
+
+        private static void SetGenericFacade(TestQualityProfileController controller, string mediaType = null)
+        {
+            controller.ControllerContext.HttpContext.Items[ReadarrFacadeContext.ItemKey] =
+                new ReadarrFacadeContext("bookshelf", mediaType, "", isBookshelfCompatibility: true);
+        }
+
+        private static QualityApi.QualityProfileResource GenericResource() => new()
+        {
+            Name = "Source generic", Cutoff = CoreQuality.M4B.Id,
+            Items = CoreQuality.All.Select(quality => new QualityApi.QualityProfileQualityItemResource { Quality = quality, Allowed = true }).ToList(),
+            FormatItems = new List<QualityApi.ProfileFormatItemResource>()
+        };
 
         private static QualityProfile CreateProfile(int id, string name, ProfileType type)
         {

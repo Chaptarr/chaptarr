@@ -383,26 +383,148 @@ namespace NzbDrone.Common.Extensions
             var appDataPath = GetAppDataPath(appFolderInfo);
             var primaryPath = Path.Combine(appDataPath, DB);
 
-            if (File.Exists(primaryPath))
+            // Keep the resolver file-only. Opening the primary database here runs
+            // before DbFactory's restore/recovery path and can prevent recovery of
+            // a damaged database. The migration lineage guard checks for sibling
+            // legacy databases after restore and before any migration is applied.
+            var primaryHasData = File.Exists(primaryPath) && new FileInfo(primaryPath).Length > 0;
+            if (primaryHasData && !appFolderInfo.MergeBookshelfDatabases)
             {
                 return primaryPath;
             }
 
-            // Rebrand compatibility: allow legacy DB filenames for upgrades (Readarr/AudioArr → Chaptarr).
-            // Prefer the newest name when present, otherwise continue using the existing DB file.
-            var legacyNames = new[] { "readarr.db", "audioarr.db" };
-            foreach (var legacyName in legacyNames)
+            // A prior startup may have created a zero-byte chaptarr.db before
+            // discovering an existing BookshelfNG/Readarr database. Keep this
+            // check file-only; schema validation belongs after database recovery.
+            var legacyDatabasePaths = GetLegacyDatabasePaths(appDataPath);
+            var hasBookshelfDatabasePair =
+                legacyDatabasePaths.Any(path => string.Equals(Path.GetFileName(path), "readarr.db", StringComparison.OrdinalIgnoreCase)) &&
+                legacyDatabasePaths.Any(path => string.Equals(Path.GetFileName(path), "audioarr.db", StringComparison.OrdinalIgnoreCase));
+            var primaryHasRecoveryData = HasNonEmptyDurableSqliteSidecar(primaryPath);
+            if (primaryHasRecoveryData && !File.Exists(primaryPath))
             {
-                var legacyPath = Path.Combine(appDataPath, legacyName);
-                if (File.Exists(legacyPath))
+                throw new InvalidOperationException(
+                    "The Chaptarr database file is missing but its WAL or rollback journal contains data. Preserve the database and sidecars and resolve recovery before starting Chaptarr.");
+            }
+
+            if (primaryHasRecoveryData && legacyDatabasePaths.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    "A Chaptarr database sidecar and a BookshelfNG database both contain data. Preserve all database files and resolve the source before starting Chaptarr.");
+            }
+
+            if (primaryHasData)
+            {
+                if (appFolderInfo.MergeBookshelfDatabases && hasBookshelfDatabasePair)
                 {
-                    return legacyPath;
+                    // Let explicit preview/apply inspect both legacy sources even
+                    // when a prior launch left a SQLite target. The converter will
+                    // fail closed unless that target is only an empty placeholder.
+                    return Path.Combine(appDataPath, "readarr.db");
                 }
+
+                return primaryPath;
+            }
+
+            if (legacyDatabasePaths.Count > 1)
+            {
+                if (!primaryHasRecoveryData && hasBookshelfDatabasePair)
+                {
+                    if (appFolderInfo.MergeBookshelfDatabases)
+                    {
+                        // The explicit preview/apply utility starts from the stable
+                        // BookshelfNG identity database. Normal startup instead keeps
+                        // the native target path so MigrationController can stage and
+                        // validate both legacy sources before promoting it.
+                        return Path.Combine(appDataPath, "readarr.db");
+                    }
+
+                    return primaryPath;
+                }
+
+                throw new InvalidOperationException("Multiple legacy database files were found. Choose one before starting Chaptarr.");
+            }
+
+            if (primaryHasRecoveryData)
+            {
+                return primaryPath;
+            }
+
+            if (legacyDatabasePaths.Count == 1)
+            {
+                return legacyDatabasePaths[0];
             }
 
             return primaryPath;
         }
 
+        private static List<string> GetLegacyDatabasePaths(string appDataPath)
+        {
+            var paths = new List<string>();
+            foreach (var legacyName in new[] { "readarr.db", "audioarr.db" })
+            {
+                var legacyPath = Path.Combine(appDataPath, legacyName);
+                EnsureLegacyDatabasePathsAreRegular(legacyPath, legacyName);
+
+                var databaseExists = File.Exists(legacyPath);
+                var hasDurableSidecar = HasNonEmptyDurableSqliteSidecar(legacyPath);
+                if (hasDurableSidecar && !databaseExists)
+                {
+                    throw new InvalidOperationException(
+                        $"The BookshelfNG database file '{legacyName}' is missing but its WAL or rollback journal contains data. Preserve the database and sidecars and resolve recovery before starting Chaptarr.");
+                }
+
+                if ((databaseExists && new FileInfo(legacyPath).Length > 0) || hasDurableSidecar)
+                {
+                    paths.Add(legacyPath);
+                }
+            }
+
+            return paths;
+        }
+
+        private static void EnsureLegacyDatabasePathsAreRegular(string databasePath, string databaseName)
+        {
+            EnsureRegularFileSystemPath(databasePath, $"BookshelfNG database '{databaseName}'");
+            foreach (var suffix in new[] { "-journal", "-wal", "-shm" })
+            {
+                EnsureRegularFileSystemPath(databasePath + suffix, $"BookshelfNG SQLite sidecar '{databaseName + suffix}'");
+            }
+        }
+
+        private static void EnsureRegularFileSystemPath(string path, string description)
+        {
+            var file = new FileInfo(path);
+            var directory = new DirectoryInfo(path);
+            if (file.LinkTarget is not null || directory.LinkTarget is not null)
+            {
+                throw new InvalidOperationException($"The {description} is a symbolic link. Resolve it to a regular file before starting Chaptarr.");
+            }
+
+            if (Directory.Exists(path))
+            {
+                throw new InvalidOperationException($"The {description} is a directory, not a regular file.");
+            }
+
+            if (File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new InvalidOperationException($"The {description} is a reparse point. Resolve it to a regular file before starting Chaptarr.");
+            }
+        }
+
+        private static bool HasNonEmptyDurableSqliteSidecar(string databasePath)
+        {
+            foreach (var suffix in new[] { "-journal", "-wal" })
+            {
+                var sidecarPath = databasePath + suffix;
+                if (File.Exists(sidecarPath) && new FileInfo(sidecarPath).Length > 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
         public static string GetDatabaseRestore(this IAppFolderInfo appFolderInfo)
         {
             return Path.Combine(GetAppDataPath(appFolderInfo), DB_RESTORE);

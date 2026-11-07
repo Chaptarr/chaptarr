@@ -29,6 +29,8 @@ SLN_FILE="src/Chaptarr.sln"
 OUTPUT_FILE="src/Chaptarr.Api.V1/openapi.json"
 APP_PATH="_output/$FRAMEWORK/$RUNTIME/$APPLICATION"
 TOOL_DIR="$(mktemp -d)"
+GENERATED_OUTPUT="$TOOL_DIR/openapi.json"
+SWAGGER_CLI=""
 SWAGGER_PID=""
 
 cleanup() {
@@ -41,26 +43,69 @@ cleanup() {
 }
 trap cleanup EXIT
 
-dotnet msbuild -restore "$SLN_FILE"   -p:Configuration=Debug   -p:Platform=Posix   -p:RuntimeIdentifiers="$RUNTIME"   -t:PublishAllRids
+run_msbuild() {
+  dotnet msbuild -restore "$SLN_FILE" \
+    -p:Configuration=Debug \
+    -p:Platform=Posix \
+    -p:RuntimeIdentifiers="$RUNTIME" \
+    -t:PublishAllRids \
+    "$@"
+}
 
-dotnet tool install --tool-path "$TOOL_DIR" --version 9.0.6 Swashbuckle.AspNetCore.Cli
+run_msbuild
 
-rm -f "$OUTPUT_FILE"
+dotnet tool install --tool-path "$TOOL_DIR" --version 10.2.3 Swashbuckle.AspNetCore.Cli
 
-Chaptarr__App__LaunchBrowser=false DOTNET_ROLL_FORWARD=Major "$TOOL_DIR/swagger" tofile --output "$OUTPUT_FILE" "$APP_PATH" v1 &
+SWAGGER_CLI="$(find "$TOOL_DIR/.store" -type f -name dotnet-swagger.dll -print -quit)"
+if [[ -z "$SWAGGER_CLI" ]]; then
+  echo "Could not locate the installed Swashbuckle CLI assembly." >&2
+  exit 1
+fi
+
+# Swashbuckle starts the application host while discovering the OpenAPI document.
+# Keep its profile and listener isolated so generation cannot touch the operator's
+# Chaptarr data folder or expose a temporary unauthenticated listener on the LAN.
+HOME="$TOOL_DIR/home" \
+XDG_CONFIG_HOME="$TOOL_DIR/config" \
+XDG_DATA_HOME="$TOOL_DIR/data" \
+XDG_CACHE_HOME="$TOOL_DIR/cache" \
+Chaptarr__Server__BindAddress=127.0.0.1 \
+Chaptarr__Server__Port=0 \
+Chaptarr__App__LaunchBrowser=false \
+DOTNET_ROLL_FORWARD=Major dotnet "$SWAGGER_CLI" tofile --output "$GENERATED_OUTPUT" "$APP_PATH" v1 &
 SWAGGER_PID="$!"
 
-sleep "$SWAGGER_WAIT_SECONDS"
+for ((attempt = 0; attempt < SWAGGER_WAIT_SECONDS * 10; attempt++)); do
+  if [[ -s "$GENERATED_OUTPUT" ]] && python3 -c 'import json, sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$GENERATED_OUTPUT" >/dev/null 2>&1; then
+    break
+  fi
 
-if kill -0 "$SWAGGER_PID" 2>/dev/null; then
+  if ! kill -0 "$SWAGGER_PID" 2>/dev/null; then
+    if ! wait "$SWAGGER_PID"; then
+      SWAGGER_PID=""
+      exit 1
+    fi
+    SWAGGER_PID=""
+    break
+  fi
+
+  sleep 0.1
+done
+
+if [[ -n "$SWAGGER_PID" ]]; then
+  if [[ ! -s "$GENERATED_OUTPUT" ]] || ! python3 -c 'import json, sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$GENERATED_OUTPUT" >/dev/null 2>&1; then
+    echo "Swagger did not produce a complete OpenAPI document within $SWAGGER_WAIT_SECONDS seconds." >&2
+    exit 1
+  fi
+
   kill "$SWAGGER_PID" 2>/dev/null || true
   wait "$SWAGGER_PID" 2>/dev/null || true
-else
-  wait "$SWAGGER_PID"
 fi
 SWAGGER_PID=""
 
-if [[ ! -f "$OUTPUT_FILE" ]]; then
-  echo "$OUTPUT_FILE not found, check logs for errors" >&2
+if [[ ! -f "$GENERATED_OUTPUT" ]]; then
+  echo "$GENERATED_OUTPUT not found, check logs for errors" >&2
   exit 1
 fi
+
+mv "$GENERATED_OUTPUT" "$OUTPUT_FILE"

@@ -14,13 +14,14 @@ namespace NzbDrone.Core.Notifications
             return Message;
         }
 
-        public AuthorDeleteMessage(Author author, bool deleteFiles)
+        public AuthorDeleteMessage(Author author, bool deleteFiles, NotificationText text = null)
         {
             Author = author;
             DeletedFiles = deleteFiles;
+            text ??= new NotificationText(null);
             DeletedFilesMessage = DeletedFiles ?
-                "Author removed and all files were deleted" :
-                "Author removed, files were not deleted";
+                text.Get("notification.body.authorRemovedWithFiles", "Author removed and all files were deleted") :
+                text.Get("notification.body.authorRemovedWithoutFiles", "Author removed, files were not deleted");
             Message = author.Name + " - " + DeletedFilesMessage;
         }
     }

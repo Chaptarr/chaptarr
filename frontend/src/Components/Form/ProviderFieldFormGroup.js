@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import reduce from 'lodash/reduce';
 import PropTypes from 'prop-types';
 import React from 'react';
 import FormGroup from 'Components/Form/FormGroup';
@@ -35,6 +35,8 @@ function getType({ type, selectOptionsProviderAction }) {
       return inputTypes.TAG_SELECT;
     case 'textbox':
       return inputTypes.TEXT;
+    case 'textArea':
+      return inputTypes.TEXT_AREA;
     case 'oAuth':
       return inputTypes.OAUTH;
     default:
@@ -47,7 +49,7 @@ function getSelectValues(selectOptions) {
     return;
   }
 
-  return _.reduce(selectOptions, (result, option) => {
+  return reduce(selectOptions, (result, option) => {
     result.push({
       key: option.value,
       value: option.name,

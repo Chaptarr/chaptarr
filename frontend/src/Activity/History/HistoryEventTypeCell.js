@@ -3,6 +3,7 @@ import React from 'react';
 import Icon from 'Components/Icon';
 import TableRowCell from 'Components/Table/Cells/TableRowCell';
 import { icons, kinds } from 'Helpers/Props';
+import translate from 'Utilities/String/translate';
 import styles from './HistoryEventTypeCell.css';
 
 function getIconName(eventType) {
@@ -52,33 +53,36 @@ function getIconKind(eventType) {
 function getTooltip(eventType, data) {
   switch (eventType) {
     case 'grabbed':
-      return `Book grabbed from ${data.indexer} and sent to ${data.downloadClient}`;
+      return translate('HistoryGrabbedTooltip', {
+        indexer: data.indexer,
+        downloadClient: data.downloadClient
+      });
     case 'authorFolderImported':
-      return 'Book imported from author folder';
+      return translate('HistoryImportedFromAuthorFolderTooltip');
     case 'bookFileImported':
       return data && (data.downloadClient || data.downloadClientName)
-        ? 'Book downloaded successfully and picked up from download client'
-        : 'Book imported manually';
+        ? translate('HistoryDownloadedFromClientTooltip')
+        : translate('BookImported');
     case 'bookFileConverted':
       return data && data.importedPath
-        ? 'Book converted before import'
-        : 'Book converted, but import did not complete';
+        ? translate('HistoryConvertedBeforeImportTooltip')
+        : translate('HistoryConvertedImportIncompleteTooltip');
     case 'bookFileConversionFailed':
-      return 'Book conversion failed';
+      return translate('HistoryBookConversionFailedTitle');
     case 'downloadFailed':
-      return 'Book download failed';
+      return translate('DownloadFailed');
     case 'bookFileDeleted':
-      return 'Book file deleted';
+      return translate('HistoryBookFileDeletedTooltip');
     case 'bookFileRenamed':
-      return 'Book file renamed';
+      return translate('HistoryBookFileRenamedTooltip');
     case 'bookFileRetagged':
-      return 'Book file tags updated';
+      return translate('HistoryBookFileTagsUpdatedTooltip');
     case 'bookImportIncomplete':
-      return 'Files downloaded but not all could be imported';
+      return translate('HistoryFilesImportIncompleteTooltip');
     case 'downloadIgnored':
-      return 'Book Download Ignored';
+      return translate('HistoryDownloadIgnoredTitle');
     default:
-      return 'Unknown event';
+      return translate('HistoryUnknownEventTooltip');
   }
 }
 

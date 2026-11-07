@@ -17,6 +17,7 @@ import { inputTypes, kinds } from 'Helpers/Props';
 import AdvancedSettingsButton from 'Settings/AdvancedSettingsButton';
 import titleCase from 'Utilities/String/titleCase';
 import translate from 'Utilities/String/translate';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import styles from './EditIndexerModalContent.css';
 
 function isPrivateHost(hostname) {
@@ -105,11 +106,19 @@ function EditIndexerModalContent(props) {
   const baseUrl = fields.find((field) => field.name === 'baseUrl')?.value;
   const isNewznabLike = implementationName === 'Newznab' || implementationName === 'Torznab';
   const showProxyWarning = isNewznabLike && looksLikeProwlarrIndexerProxy(baseUrl);
+  const isDirectDownload = protocol?.value === 'direct';
+  const protocolValue = protocol?.value;
+  let protocolLabel = '';
+  if (protocolValue) {
+    protocolLabel = protocolValue === 'direct' ? translate('DirectDownload') : titleCase(protocolValue);
+  }
 
   return (
     <ModalContent onModalClose={onModalClose}>
       <ModalHeader>
-        {`${id ? 'Edit' : 'Add'} Indexer - ${implementationName}`}
+        {id ?
+          translate('EditMetadataHeader', { name: `${translate('Indexer')} - ${implementationName}` }) :
+          translate('AddName', { name: `${translate('Indexer')} - ${implementationName}` })}
       </ModalHeader>
 
       <ModalBody>
@@ -135,6 +144,13 @@ function EditIndexerModalContent(props) {
                   </Alert>
               }
 
+              {
+                isDirectDownload && item.message?.message &&
+                  <Alert kind={kinds.INFO}>
+                    {translateServerMessage(item.message.message)}
+                  </Alert>
+              }
+
               <FormGroup>
                 <FormLabel>
                   {translate('Name')}
@@ -156,7 +172,7 @@ function EditIndexerModalContent(props) {
                 <FormInputGroup
                   type={inputTypes.TEXT}
                   name="protocolDisplay"
-                  value={protocol && protocol.value ? titleCase(protocol.value) : ''}
+                  value={protocolLabel}
                   readOnly={true}
                   onChange={onInputChange}
                 />

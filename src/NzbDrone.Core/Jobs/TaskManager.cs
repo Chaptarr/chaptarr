@@ -14,6 +14,7 @@ using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.ImportLists.Hardcover.Library;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.MyAnonaMouse;
+using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.MediaCover.Commands;
@@ -32,6 +33,8 @@ namespace NzbDrone.Core.Jobs
 
     public class TaskManager : ITaskManager, IHandle<ApplicationStartedEvent>, IHandle<CommandExecutedEvent>, IHandleAsync<ConfigSavedEvent>
     {
+        private const int MinimumMissingBookSearchInterval = 60;
+
         private readonly IScheduledTaskRepository _scheduledTaskRepository;
         private readonly IConfigService _configService;
         private readonly Logger _logger;
@@ -191,6 +194,13 @@ namespace NzbDrone.Core.Jobs
 
                     new ScheduledTask
                     {
+                        Interval = GetMissingBookSearchInterval(),
+                        TypeName = typeof(MissingBookSearchCommand).FullName,
+                        Priority = CommandPriority.Low
+                    },
+
+                    new ScheduledTask
+                    {
                         Interval = 1, // Run every minute
                         TypeName = typeof(ProcessPendingImportsCommand).FullName,
                         Priority = CommandPriority.Low
@@ -248,6 +258,18 @@ namespace NzbDrone.Core.Jobs
             }
         }
 
+        private ScheduledTask FindDefinition(Type type)
+        {
+            try
+            {
+                return _scheduledTaskRepository.GetDefinition(type);
+            }
+            catch (InvalidOperationException)
+            {
+                return null;
+            }
+        }
+
         private int GetBackupInterval()
         {
             var interval = _configService.BackupInterval;
@@ -275,6 +297,18 @@ namespace NzbDrone.Core.Jobs
             }
 
             return interval;
+        }
+
+        private int GetMissingBookSearchInterval()
+        {
+            var interval = _configService.MissingBookSearchInterval;
+
+            if (interval <= 0)
+            {
+                return 0;
+            }
+
+            return Math.Max(interval, MinimumMissingBookSearchInterval);
         }
 
         public void Handle(CommandExecutedEvent message)
@@ -317,7 +351,21 @@ namespace NzbDrone.Core.Jobs
             var backup = _scheduledTaskRepository.GetDefinition(typeof(BackupCommand));
             backup.Interval = GetBackupInterval();
 
-            _scheduledTaskRepository.UpdateMany(new List<ScheduledTask> { rss, backup });
+            var tasks = new List<ScheduledTask> { rss, backup };
+
+            var missingSearch = FindDefinition(typeof(MissingBookSearchCommand));
+            if (missingSearch != null)
+            {
+                missingSearch.Interval = GetMissingBookSearchInterval();
+                tasks.Add(missingSearch);
+            }
+
+            _scheduledTaskRepository.UpdateMany(tasks);
+
+            foreach (var task in tasks.Skip(2))
+            {
+                _cache.Set(task.TypeName, task);
+            }
 
             _cache.Set(rss.TypeName, rss);
             _cache.Set(backup.TypeName, backup);

@@ -1,0 +1,49 @@
+#!/bin/sh
+set -eu
+
+data_dir=/var/lib/bookshelfng
+pending_marker="$data_dir/.chaptarrng-bookshelfng-migration-pending"
+handoff_status="$data_dir/.chaptarrng-bookshelfng-handoff-status"
+journal=/usr/lib/chaptarrng/handoff/bookshelfng-journal
+
+if [ ! -f "$pending_marker" ] || [ "$(cat "$handoff_status" 2>/dev/null || true)" != starting ]; then
+  exit 0
+fi
+
+health_timeout=${CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS:-}
+if [ -z "$health_timeout" ] && [ -r /etc/bookshelfng/bookshelfng.env ]; then
+  health_timeout=$(sed -n 's/^CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS=//p' /etc/bookshelfng/bookshelfng.env | tail -n 1)
+fi
+health_timeout=${health_timeout:-14700}
+case "$health_timeout" in
+  ''|*[!0-9]*)
+    echo 'CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS must be an integer from 1 to 14700.' >&2
+    exit 1
+    ;;
+esac
+while [ "${health_timeout#0}" != "$health_timeout" ] && [ "${#health_timeout}" -gt 1 ]; do
+  health_timeout=${health_timeout#0}
+done
+if [ "${#health_timeout}" -gt 5 ] || [ "$health_timeout" -lt 1 ] || [ "$health_timeout" -gt 14700 ]; then
+  echo 'CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS must be an integer from 1 to 14700.' >&2
+  exit 1
+fi
+
+if ! /usr/lib/chaptarrng/bin/Chaptarr /check-bookshelf-migration \
+  -data="$data_dir" \
+  -bookshelf-health-url=auto \
+  "-bookshelf-health-timeout-seconds=$health_timeout"; then
+  printf '%s\n' intervention-required > "$handoff_status.tmp"
+  chmod 0600 "$handoff_status.tmp"
+  mv -f "$handoff_status.tmp" "$handoff_status"
+  "$journal" state intervention-required
+  exit 1
+fi
+
+"$journal" outcome health database-and-http-readable
+"$journal" state healthy
+printf '%s\n' healthy > "$handoff_status.tmp"
+chmod 0600 "$handoff_status.tmp"
+mv -f "$handoff_status.tmp" "$handoff_status"
+rm -f "$pending_marker"
+echo 'BookshelfNG handoff database and local HTTP checks passed in the RPM transaction.'

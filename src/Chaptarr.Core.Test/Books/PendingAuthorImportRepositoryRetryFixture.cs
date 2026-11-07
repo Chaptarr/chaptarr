@@ -61,6 +61,7 @@ namespace Chaptarr.Core.Test.Books
                     EbookTags = "[]",
                     Tags = "[1]",
                     LastSelectedMediaType = "ebook",
+                    SelectedRemoteEditions = "[{\"WorkProviderId\":\"hc:work\",\"EditionProviderId\":\"hc:edition\"}]",
                     NextAttemptAt = DateTime.UtcNow
                 };
 
@@ -72,13 +73,14 @@ namespace Chaptarr.Core.Test.Books
                 {
                     verifyUpdate.Open();
                     var tags = verifyUpdate.QuerySingle<TagProjection>(@"
-                        SELECT ""AudiobookTags"", ""EbookTags"", ""Tags"", ""LastSelectedMediaType""
+                        SELECT ""AudiobookTags"", ""EbookTags"", ""Tags"", ""LastSelectedMediaType"", ""SelectedRemoteEditions""
                         FROM ""PendingAuthorImport""
                         WHERE ""Id"" = 1;");
                     Assert.That(tags.AudiobookTags, Is.EqualTo("[1]"));
                     Assert.That(tags.EbookTags, Is.EqualTo("[]"));
                     Assert.That(tags.Tags, Is.EqualTo("[1]"));
                     Assert.That(tags.LastSelectedMediaType, Is.EqualTo("ebook"));
+                    Assert.That(tags.SelectedRemoteEditions, Is.EqualTo("[{\"WorkProviderId\":\"hc:work\",\"EditionProviderId\":\"hc:edition\"}]"));
                 }
 
                 Assert.That(repository.TryDelete(item.Id, expectedVersion: 4), Is.False);
@@ -121,6 +123,7 @@ namespace Chaptarr.Core.Test.Books
                             ""AudiobookRootFolderPath"" TEXT,
                             ""AudiobookBooksToMonitor"" TEXT,
                             ""AudiobookBooksToSearch"" TEXT,
+                            ""SelectedRemoteEditions"" TEXT,
                             ""AudiobookTags"" TEXT,
                             ""EbookMonitored"" INTEGER,
                             ""EbookMonitorNewItems"" INTEGER,
@@ -193,6 +196,7 @@ namespace Chaptarr.Core.Test.Books
                             ""ProviderId"" TEXT,
                             ""NextAttemptAt"" DATETIME,
                             ""OverallStatus"" INTEGER,
+                            ""SelectedRemoteEditions"" TEXT,
                             ""AttemptCount"" INTEGER,
                             ""MaxAttempts"" INTEGER,
                             ""CreatedAt"" DATETIME
@@ -241,6 +245,7 @@ namespace Chaptarr.Core.Test.Books
             public string EbookTags { get; set; }
             public string Tags { get; set; }
             public string LastSelectedMediaType { get; set; }
+            public string SelectedRemoteEditions { get; set; }
         }
     }
 }

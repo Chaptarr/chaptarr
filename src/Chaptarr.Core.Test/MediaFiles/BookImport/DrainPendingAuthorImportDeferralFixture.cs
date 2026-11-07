@@ -228,7 +228,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 ImportResults.Add((queueItemId, outcome, errorMessage));
             }
 
-            public void CompleteItemWithResult(int queueItemId, string path, ImportOutcome outcome, int? bookId = null, int? authorId = null, string quality = null, string errorMessage = null, string statusError = null)
+            public void CompleteItemWithResult(int queueItemId, string path, ImportOutcome outcome, int? bookId = null, int? authorId = null, string quality = null, string errorMessage = null, string statusError = null, DateTime? lastRemoteSearchTime = null)
             {
                 RecordImportResult(queueItemId, path, outcome, bookId, authorId, quality, errorMessage);
                 UpdateStatus(queueItemId, "done", statusError);
@@ -411,6 +411,13 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     return null;
                 }
 
+                if (targetMethod?.Name == nameof(IMediaFileRepository.GetFileWithPath) &&
+                    args?.Length == 1 &&
+                    args[0] is List<string>)
+                {
+                    return new List<BookFile>();
+                }
+
                 throw new NotImplementedException($"Test proxy does not implement {typeof(IMediaFileRepository).Name}.{targetMethod?.Name}");
             }
         }
@@ -469,8 +476,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public FileAttributes GetFileAttributes(string path) => throw new NotImplementedException();
             public void EmptyFolder(string path) => throw new NotImplementedException();
             public string GetVolumeLabel(string path) => throw new NotImplementedException();
-            public FileStream OpenReadStream(string path) => throw new NotImplementedException();
-            public FileStream OpenWriteStream(string path) => throw new NotImplementedException();
+            public Stream OpenReadStream(string path) => throw new NotImplementedException();
+            public Stream OpenWriteStream(string path) => throw new NotImplementedException();
             public List<IMount> GetMounts() => throw new NotImplementedException();
             public IMount GetMount(string path) => throw new NotImplementedException();
             public IDirectoryInfo GetDirectoryInfo(string path) => throw new NotImplementedException();
@@ -660,6 +667,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             SetField(sut, "_bookImport", import);
             SetField(sut, "_bookService", bookService);
             SetField(sut, "_editionService", editionService);
+            SetField(sut, "_mediaFileRepository", DispatchProxy.Create<IMediaFileRepository, RecordingMediaFileRepositoryProxy>());
             SetField(sut, "_unitDestination", new RecordingBookUnitDestinationService());
             SetField(sut, "_diskProvider", new StubDiskProvider(scannedPath));
             SetField(sut, "_logger", LogManager.GetCurrentClassLogger());
@@ -722,6 +730,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             SetField(sut, "_bookImport", import);
             SetField(sut, "_bookService", bookService);
             SetField(sut, "_editionService", editionService);
+            SetField(sut, "_mediaFileRepository", DispatchProxy.Create<IMediaFileRepository, RecordingMediaFileRepositoryProxy>());
             SetField(sut, "_unitDestination", new RecordingBookUnitDestinationService());
             SetField(sut, "_diskProvider", new StubDiskProvider(scannedPath));
             SetField(sut, "_logger", LogManager.GetCurrentClassLogger());
@@ -780,7 +789,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
             try
             {
-                var fileInfo = new FileSystem().FileInfo.FromFileName(scannedPath);
+                var fileInfo = new FileSystem().FileInfo.New(scannedPath);
                 var queue = new RecordingIngestQueueRepository();
                 queue.QueueItems.Add(new IngestQueueItem
                 {

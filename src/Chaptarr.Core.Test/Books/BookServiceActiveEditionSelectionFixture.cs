@@ -87,6 +87,7 @@ namespace Chaptarr.Core.Test.Books
         {
             private readonly List<Edition> _editions;
             public Edition MonitoredEdition { get; private set; }
+            public bool MonitoredEditionWasManualSelection { get; private set; }
             public List<int> RequestedBookIds { get; private set; } = new();
             public bool LoadedAllMonitoredEditions { get; private set; }
 
@@ -110,6 +111,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false)
             {
                 MonitoredEdition = edition;
+                MonitoredEditionWasManualSelection = isManualSelection;
                 return _editions;
             }
 
@@ -122,7 +124,7 @@ namespace Chaptarr.Core.Test.Books
             public Edition GetEditionByGoogleBooksEditionId(string googleBooksEditionId) => throw new NotImplementedException();
             public Edition GetEditionByProviderAndId(string providerPrefix, string providerId) => throw new NotImplementedException();
             public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
-            public List<Edition> GetAllMonitoredEditions()
+            public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType)
             {
                 LoadedAllMonitoredEditions = true;
                 return _editions.Where(e => e.Monitored).ToList();
@@ -250,7 +252,42 @@ namespace Chaptarr.Core.Test.Books
             service.AddBook(book, doRefresh: false);
 
             Assert.That(editionService.MonitoredEdition?.Id, Is.EqualTo(10));
+            Assert.That(editionService.MonitoredEditionWasManualSelection, Is.False);
             Assert.That(book.ForeignEditionId, Is.EqualTo("first"));
+        }
+
+        [Test]
+        public void add_book_should_preserve_manual_selection_for_an_explicitly_selected_edition()
+        {
+            var selectedEdition = new Edition
+            {
+                Id = 10,
+                Title = "Selected edition",
+                ForeignEditionId = "edition-10",
+                ReadingFormatId = 2,
+                Monitored = true,
+                ManualAdd = true
+            };
+            var book = new Book
+            {
+                Id = 42,
+                AuthorId = 7,
+                Title = "Dune",
+                TitleSlug = "dune",
+                MediaType = BookMediaType.Audiobook,
+                Editions = new List<Edition> { selectedEdition }
+            };
+            var editionService = new StubEditionService(new[] { selectedEdition });
+            var service = BuildService(
+                new StubBookRepository(),
+                editionService,
+                new StubAuthorService(new Author { Id = 7, Name = "Frank Herbert" }));
+
+            service.AddBook(book, doRefresh: false);
+
+            Assert.That(editionService.MonitoredEdition?.Id, Is.EqualTo(selectedEdition.Id));
+            Assert.That(editionService.MonitoredEditionWasManualSelection, Is.True);
+            Assert.That(selectedEdition.ManualAdd, Is.True);
         }
 
         [Test]

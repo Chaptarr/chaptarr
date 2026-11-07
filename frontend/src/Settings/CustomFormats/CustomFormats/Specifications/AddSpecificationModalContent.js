@@ -113,7 +113,7 @@ class AddSpecificationModalContent extends Component {
           {
             !isSchemaFetching && !!schemaError &&
               <div>
-                {'Unable to add a new condition, please try again.'}
+                {translate('UnableToLoadCustomFormatConditions')}
               </div>
           }
 

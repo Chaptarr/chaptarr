@@ -43,6 +43,9 @@ const mapDispatchToProps = {
 };
 
 class EditNotificationModalContentConnector extends Component {
+  state = {
+    didRequestTest: false
+  };
 
   //
   // Lifecycle
@@ -58,6 +61,16 @@ class EditNotificationModalContentConnector extends Component {
 
     if (prevProps.isDeleting && !this.props.isDeleting && !this.props.deleteError) {
       this.props.onModalClose();
+    }
+
+    if (this.state.didRequestTest && prevProps.isTesting && !this.props.isTesting) {
+      this.setState({ didRequestTest: false });
+
+      if (this.props.saveError) {
+        this.props.onTestConnectionFailure?.(this.props.saveError);
+      } else {
+        this.props.onTestConnectionSuccess?.();
+      }
     }
 
     if (prevProps.item.implementationName !== this.props.item.implementationName ||
@@ -91,6 +104,7 @@ class EditNotificationModalContentConnector extends Component {
 
   onTestPress = () => {
     const { item, id } = this.props;
+    this.setState({ didRequestTest: true });
 
     // Set default name for AudioBookShelf if name is empty
     if (item.implementationName === 'AudioBookShelf' && (!item.name || !item.name.value || item.name.value.trim() === '')) {
@@ -142,6 +156,7 @@ EditNotificationModalContentConnector.propTypes = {
   id: PropTypes.number,
   isFetching: PropTypes.bool.isRequired,
   isSaving: PropTypes.bool.isRequired,
+  isTesting: PropTypes.bool.isRequired,
   saveError: PropTypes.object,
   isDeleting: PropTypes.bool,
   deleteError: PropTypes.object,
@@ -155,6 +170,8 @@ EditNotificationModalContentConnector.propTypes = {
   testNotification: PropTypes.func.isRequired,
   toggleAdvancedSettings: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired,
+  onTestConnectionSuccess: PropTypes.func,
+  onTestConnectionFailure: PropTypes.func,
   rootFolders: PropTypes.arrayOf(PropTypes.object).isRequired,
   isRootFoldersPopulated: PropTypes.bool.isRequired,
   isRootFoldersFetching: PropTypes.bool,

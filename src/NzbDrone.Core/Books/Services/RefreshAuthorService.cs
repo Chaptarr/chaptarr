@@ -64,7 +64,17 @@ namespace NzbDrone.Core.Books
         private readonly IMainDatabase _mainDatabase;
         private readonly Logger _logger;
         private BookRefreshMatchingIndex _bookRefreshMatchingIndex;
-        private List<Book> _authorRefreshRehomeBlueprint;
+
+        // The remote book snapshot of the author refresh in progress. RefreshAuthor commands for different authors run
+        // concurrently on this singleton, so it is held per async flow: a shared field let one refresh re-home editions
+        // using another author's snapshot, or null it under a refresh still using it.
+        private static readonly System.Threading.AsyncLocal<List<Book>> CurrentAuthorRefreshRehomeBlueprint = new System.Threading.AsyncLocal<List<Book>>();
+
+        private List<Book> _authorRefreshRehomeBlueprint
+        {
+            get => CurrentAuthorRefreshRehomeBlueprint.Value;
+            set => CurrentAuthorRefreshRehomeBlueprint.Value = value;
+        }
 
         private static readonly SemaphoreSlim AuthorMetadataRefreshGate = new SemaphoreSlim(1, 1);
         // SMS /authors/diff hard-rejects requests above 10,000 items and caps the body at 1MB;
@@ -529,6 +539,11 @@ namespace NzbDrone.Core.Books
                     var author = _authorService.FindByProviderId("gb", local.GoogleBooksAuthorId);
                     if (author != null) return author;
                 }
+                if (!string.IsNullOrEmpty(local.RanobeDbAuthorId))
+                {
+                    var author = _authorService.FindByProviderId("rn", local.RanobeDbAuthorId);
+                    if (author != null) return author;
+                }
             }
 
             return null;
@@ -561,7 +576,7 @@ namespace NzbDrone.Core.Books
                         audiobookMetadataProfileIdOverride: null,
                         ebookMetadataProfileIdOverride: null,
                         editionSelector: null,
-                        retainEditions: true,
+                        retainEditions: _configService?.BookshelfMatchCompatibility != true,
                         logContext: "GetRemoteChildren");
                 }
 
@@ -636,7 +651,7 @@ namespace NzbDrone.Core.Books
                         }
 
                         skipped++;
-                        logger?.Error("[REMOTE-BOOK-DATA] {0}: skipping remote book '{1}' for author '{2}' because it has no editions. MediaType={3}, ProviderIds=[{4}]",
+                        logger?.Debug("[REMOTE-BOOK-DATA] {0}: skipping remote book '{1}' for author '{2}' because it has no editions. MediaType={3}, ProviderIds=[{4}]",
                             logContext,
                             book?.Title ?? "Unknown",
                             local?.Name ?? "Unknown",
@@ -1542,10 +1557,10 @@ namespace NzbDrone.Core.Books
                 return true;
             }
 
-            if (!string.IsNullOrWhiteSpace(book.UnitKeyHash))
+            if (!string.IsNullOrWhiteSpace(book.UnitKeyHash) &&
+                // The grace window covers clones whose files are still attaching or converting.
+                (HasKnownFiles(book) || book.Added > DateTime.UtcNow.AddHours(-24)))
             {
-                // UnitKeyHash is the durable identity of an intentional multi-copy row. Refresh
-                // may update it from the server pocket, but must never merge it away as a duplicate.
                 return true;
             }
 
@@ -1564,13 +1579,16 @@ namespace NzbDrone.Core.Books
 
         private BookRefreshMatchingIndex GetBookRefreshMatchingIndex(List<Book> existingChildren)
         {
-            if (_bookRefreshMatchingIndex?.Source == existingChildren)
+            // Read the shared one-entry memo once: another refresh can replace the field between the check and the return.
+            var current = _bookRefreshMatchingIndex;
+            if (current?.Source == existingChildren)
             {
-                return _bookRefreshMatchingIndex;
+                return current;
             }
 
-            _bookRefreshMatchingIndex = BookRefreshMatchingIndex.Build(existingChildren, _logger);
-            return _bookRefreshMatchingIndex;
+            var built = BookRefreshMatchingIndex.Build(existingChildren, _logger);
+            _bookRefreshMatchingIndex = built;
+            return built;
         }
 
         private sealed class BookRefreshMatchingIndex
@@ -1578,6 +1596,7 @@ namespace NzbDrone.Core.Books
             private readonly Dictionary<string, List<Book>> _booksByProviderToken;
             private readonly Dictionary<int, int> _sourceOrderByBookId;
             private readonly HashSet<int> _activeBookIds;
+            private readonly Dictionary<BookMediaType, HashSet<string>> _consumedStableWorkTokensByType = new Dictionary<BookMediaType, HashSet<string>>();
 
             private BookRefreshMatchingIndex(
                 List<Book> source,
@@ -1667,6 +1686,7 @@ namespace NzbDrone.Core.Books
                 if (existingChild?.Id > 0)
                 {
                     _activeBookIds.Remove(existingChild.Id);
+                    ConsumeStableWorkTokens(existingChild);
                 }
 
                 foreach (var child in mergedChildren ?? Enumerable.Empty<Book>())
@@ -1674,9 +1694,59 @@ namespace NzbDrone.Core.Books
                     if (child?.Id > 0)
                     {
                         _activeBookIds.Remove(child.Id);
+                        ConsumeStableWorkTokens(child);
                     }
                 }
             }
+
+            private void ConsumeStableWorkTokens(Book book)
+            {
+                if (!_consumedStableWorkTokensByType.TryGetValue(book.MediaType, out var tokens))
+                {
+                    tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    _consumedStableWorkTokensByType[book.MediaType] = tokens;
+                }
+
+                tokens.UnionWith(BookIdentity.GetStableWorkProviderIdentityTokens(book));
+            }
+
+            public bool HasConsumedStableWorkOverlap(Book remote)
+            {
+                if (remote == null ||
+                    !_consumedStableWorkTokensByType.TryGetValue(remote.MediaType, out var tokens) ||
+                    tokens.Count == 0)
+                {
+                    return false;
+                }
+
+                return BookIdentity.GetStableWorkProviderIdentityTokens(remote).Overlaps(tokens);
+            }
+        }
+
+        protected override bool ShouldSkipChildAdd(Author entity, Book remoteChild)
+        {
+            var index = _bookRefreshMatchingIndex;
+            if (index == null || !index.HasConsumedStableWorkOverlap(remoteChild))
+            {
+                return false;
+            }
+
+            _logger.Info("[REFRESH-DUP-GUARD] Remote book '{0}' shares stable work identity with a local book already matched in this refresh pass; skipping duplicate add", remoteChild?.Title);
+            return true;
+        }
+
+        // See RefreshEntityServiceBase.SortChildren for why this needs to be deterministic: without it,
+        // ambiguous same-titled remote pockets (e.g. several "Dune" editions) can claim a different local
+        // row on every refresh purely because the metadata source didn't return them in the same order,
+        // producing spurious "N books updated/deleted" churn even when nothing actually changed. Sorting by
+        // the remote item's own stable identity tokens makes claim order a function of the data itself.
+        protected override List<Book> OrderRemoteChildrenForMatching(List<Book> remoteChildren)
+        {
+            return (remoteChildren ?? new List<Book>())
+                .OrderBy(b => BookIdentity.GetStableWorkProviderIdentityTokens(b).OrderBy(t => t, StringComparer.OrdinalIgnoreCase).FirstOrDefault() ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(b => b?.ForeignEditionId ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(b => b?.Title ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         protected override Tuple<Book, List<Book>> GetMatchingExistingChildren(List<Book> existingChildren, Book remote)
@@ -1825,7 +1895,22 @@ namespace NzbDrone.Core.Books
 
             var remoteForCompare = RefreshEntityCopy.CloneBook(remote, includeEditions: false);
             remoteForCompare.UseDbFieldsFrom(local);
-            return local.Equals(remoteForCompare);
+
+            // chaptarr #183: don't compare local against the raw remote clone. Book.UseMetadataFrom
+            // (the method that actually applies a change) non-destructively coalesces several fields -
+            // Title/Overview only replace a non-empty local value, ReleaseDate only replaces a non-null
+            // one, SeriesName/SeriesPosition use ?? against the existing value - specifically so a remote
+            // payload that just doesn't carry some field (e.g. this author-scoped batch has no series data
+            // for a given book, even though an earlier, richer fetch populated it locally) can't clobber
+            // good local data with nothing. A raw compare doesn't know that and sees "populated" != "empty"
+            // as a real difference - one that a real update would never actually apply - so the book gets
+            // classified Updated on every single refresh forever, never converging. Compare against what
+            // local would actually BECOME if updated, not against the untouched remote payload.
+            var simulatedUpdate = RefreshEntityCopy.CloneBook(local, includeEditions: false);
+            simulatedUpdate.UseDbFieldsFrom(local);
+            simulatedUpdate.UseMetadataFrom(remoteForCompare);
+
+            return local.Equals(simulatedUpdate);
         }
 
         protected override Book CreateChildForAdd(Book remoteChild, Author entity)
@@ -1837,6 +1922,8 @@ namespace NzbDrone.Core.Books
         {
             _logger.Debug("ProcessChildren: Processing {0} new books for author {1}", children.Added.Count, entity.Name);
 
+            var deletionExclusions = _importListExclusionService.All();
+
             foreach (var book in children.Added)
             {
                 // Store original narrator for logging
@@ -1844,6 +1931,20 @@ namespace NzbDrone.Core.Books
 
                 var audioMonitor = ShouldMonitorNewBook(book, entity, isAudiobook: true);
                 var ebookMonitor = ShouldMonitorNewBook(book, entity, isAudiobook: false);
+
+                if ((audioMonitor || ebookMonitor) && deletionExclusions.Count > 0)
+                {
+                    var providerIds = new HashSet<string>(ImportListExclusionBookMatcher.GetCanonicalProviderIds(book), StringComparer.OrdinalIgnoreCase);
+
+                    // Deleted with an exclusion; recreate the catalog row unmonitored so it stays gone.
+                    if (providerIds.Count > 0 &&
+                        deletionExclusions.Any(e => providerIds.Contains(e.ForeignId) && (!e.MediaType.HasValue || e.MediaType == book.MediaType)))
+                    {
+                        audioMonitor = false;
+                        ebookMonitor = false;
+                        _logger.Debug("[MONITORING-REFRESH] '{0}' was previously deleted with an exclusion; recreating unmonitored", book.Title);
+                    }
+                }
 
                 // Set monitoring flags (metadata profile filtering will happen after insertion)
                 book.AudiobookMonitored = audioMonitor;
@@ -2055,15 +2156,23 @@ namespace NzbDrone.Core.Books
                     .Select(g => g.First())
                     .ToList();
 
+                // chaptarr #182: hand the already-decided match down instead of letting RefreshBookService
+                // re-derive it independently - see RefreshBookService.RefreshBookInfo's hint-overload doc
+                // comment and GetRemoteData for why re-deriving it separately can disagree.
+                if (_refreshBookService is RefreshBookService concreteRefreshBookService)
+                {
+                    return concreteRefreshBookService.RefreshBookInfo(booksToRefresh, remoteChildren, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate, localChildren.MatchedRemoteByLocalId);
+                }
+
                 return _refreshBookService.RefreshBookInfo(booksToRefresh, remoteChildren, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate);
             }
 
-        protected override void PublishEntityUpdatedEvent(Author entity)
+        protected override void PublishEntityUpdatedEvent(Author entity, Author remoteData)
         {
             _eventAggregator.PublishEvent(new AuthorUpdatedEvent(entity));
         }
 
-        protected override void PublishRefreshCompleteEvent(Author entity)
+        protected override void PublishRefreshCompleteEvent(Author entity, bool anyChanges)
         {
             _logger.Debug("[SERIES-DEBUG] PublishRefreshCompleteEvent called for author '{0}' (ID: {1})",
                 entity.Name, entity.Id);
@@ -2072,7 +2181,7 @@ namespace NzbDrone.Core.Books
                 // IMPORTANT: We don't process series here anymore because books might not be committed to DB yet
                 // Series processing is now handled in a separate event handler after books are guaranteed to be in the database
 
-            _eventAggregator.PublishEvent(new AuthorRefreshCompleteEvent(entity));
+            _eventAggregator.PublishEvent(new AuthorRefreshCompleteEvent(entity, anyChanges));
         }
 
         protected override void PublishChildrenUpdatedEvent(Author entity, List<Book> newChildren, List<Book> updateChildren, List<Book> deleteChildren)
@@ -2227,6 +2336,14 @@ namespace NzbDrone.Core.Books
                     continue;
                 }
 
+                // The folder walker only applies exclusions below its starting folder, so evidence rooted inside
+                // an excluded download-client seed directory would otherwise scan all of it.
+                if (DiskScanService.ExcludedSubFoldersRegex.IsMatch(rootFolder.Path.GetRelativePath(candidate) + Path.DirectorySeparatorChar))
+                {
+                    _logger.Debug("[FLOW-DEBUG] RESCAN-EVIDENCE-SKIP: Ignoring '{0}' because it is inside an excluded folder.", candidate);
+                    continue;
+                }
+
                 boundedCandidates.Add(candidate);
             }
 
@@ -2262,13 +2379,26 @@ namespace NzbDrone.Core.Books
                 var authorsWithETags = new List<MetadataSource.BookInfo.V5.V5AuthorETag>();
                 var authorDiffItemGroups = new List<(int AuthorId, List<MetadataSource.BookInfo.V5.V5AuthorETag> Items)>();
                 var requestedIdsByAuthorId = new Dictionary<int, HashSet<string>>();
+                var ranobeOnlyAuthors = new List<Author>();
 
                 foreach (var author in authors)
                 {
-                    var providerIds = GetAuthorDiffProviderIds(author);
+                    var providerIds = GetAuthorDiffProviderIds(author)
+                        .Where(id => !id.StartsWith("rn:", StringComparison.OrdinalIgnoreCase))
+                        .ToList();
                     if (providerIds.Count == 0)
                     {
-                        _logger.Warn("[BULK-SYNC] Author {0} has no provider IDs, skipping", author.Name);
+                        if (!string.IsNullOrWhiteSpace(author.RanobeDbAuthorId))
+                        {
+                            // This provider owns the complete child list only when it is the author's sole source.
+                            // Refreshing a mixed-provider author from RanobeDB could prune books the API cannot see.
+                            ranobeOnlyAuthors.Add(author);
+                        }
+                        else
+                        {
+                            _logger.Warn("[BULK-SYNC] Author {0} has no supported metadata-server provider IDs, skipping", author.Name);
+                        }
+
                         continue;
                     }
 
@@ -2293,16 +2423,21 @@ namespace NzbDrone.Core.Books
 
                 if (!authorsWithETags.Any())
                 {
-                    _logger.Warn("[BULK-SYNC] No authors with provider IDs found");
-                    _logger.ProgressInfo("No refreshable authors found.");
-                    return false;
+                    if (ranobeOnlyAuthors.Count == 0)
+                    {
+                        _logger.Warn("[BULK-SYNC] No authors with supported provider IDs found");
+                        _logger.ProgressInfo("No refreshable authors found.");
+                        return false;
+                    }
+
+                    return RefreshRanobeOnlyAuthors(ranobeOnlyAuthors, forceRefresh);
                 }
 
                 if (_authorInfo is not BookInfoProxy bookInfoProxy)
                 {
                     _logger.Error("[BULK-SYNC] Bulk author diff requires BookInfoProxy; no legacy author refresh fallback is available.");
                     _logger.ProgressInfo("Bulk author sync endpoint unavailable.");
-                    return false;
+                    return RefreshRanobeOnlyAuthors(ranobeOnlyAuthors, forceRefresh);
                 }
 
                 // Call bulk changes endpoint
@@ -2317,7 +2452,7 @@ namespace NzbDrone.Core.Books
                 if (changesResponse == null)
                 {
                     _logger.Warn("[BULK-SYNC] No response from bulk changes endpoint");
-                    return false;
+                    return RefreshRanobeOnlyAuthors(ranobeOnlyAuthors, forceRefresh);
                 }
 
                 _logger.Debug("[BULK-SYNC] Bulk diff returned {0} refresh candidate(s), {1} deleted, {2} merged",
@@ -2529,6 +2664,7 @@ namespace NzbDrone.Core.Books
                     ReportServerDeletedAuthors(deletedIdsToReport, reportingAuthors);
                 }
 
+                updated |= RefreshRanobeOnlyAuthors(ranobeOnlyAuthors, forceRefresh);
                 return updated;
             }
             catch (Exception e)
@@ -2541,6 +2677,37 @@ namespace NzbDrone.Core.Books
                 bulkStopwatch.Stop();
                 _logger.Debug("[AUTHOR-REFRESH-TIMING] Bulk sync for {0} requested authors finished in {1}ms", authorIds.Count, bulkStopwatch.ElapsedMilliseconds);
             }
+        }
+
+        private bool RefreshRanobeOnlyAuthors(IEnumerable<Author> authors, bool forceRefresh)
+        {
+            var updated = false;
+            foreach (var author in authors ?? Enumerable.Empty<Author>())
+            {
+                try
+                {
+                    var ranobeAuthorId = author.RanobeDbAuthorId;
+                    var remoteAuthor = GetSkyhookData(
+                        author,
+                        forceRefresh: forceRefresh,
+                        bypassEtag: forceRefresh,
+                        authorIdentifierOverride: ranobeAuthorId);
+                    if (remoteAuthor != null && RefreshEntityInfoIfRemoteDataAvailable(author, remoteAuthor, true, false, null))
+                    {
+                        updated = true;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, "[BULK-SYNC] RanobeDB refresh failed for author {0}", author.Name);
+                }
+            }
+
+            return updated;
         }
 
         private void StampAuthorsChecked(IEnumerable<Author> authors)
@@ -2877,7 +3044,9 @@ namespace NzbDrone.Core.Books
                 (provider == "gr" && ProviderIdHelper.Normalize(a.GoodreadsAuthorId, "gr") == normalizedPrefixedId) ||
                 (provider == "ol" && ProviderIdHelper.Normalize(a.OpenLibraryAuthorId, "ol") == normalizedPrefixedId) ||
                 (provider == "gb" && ProviderIdHelper.Normalize(a.GoogleBooksAuthorId, "gb") == normalizedPrefixedId) ||
-                (provider == "az" && ProviderIdHelper.Normalize(a.AudnexusAuthorId, "az") == normalizedPrefixedId));
+                (provider == "az" && ProviderIdHelper.Normalize(a.AudnexusAuthorId, "az") == normalizedPrefixedId) ||
+                (provider == "rn" && ProviderIdHelper.Normalize(a.RanobeDbAuthorId, "rn") == normalizedPrefixedId) ||
+                (provider == "meta" && ProviderIdHelper.Normalize(a.AdditionalMetadataProviderId, "meta") == normalizedPrefixedId));
 
             if (author != null)
             {
@@ -3049,13 +3218,51 @@ namespace NzbDrone.Core.Books
 
         private bool TryMergeAuthorsWithoutDataLoss(Author source, Author target, string canonicalId, out string reason)
         {
+            var originalTargetProviderIds = new
+            {
+                target.HardcoverAuthorId,
+                target.GoodreadsAuthorId,
+                target.AudnexusAuthorId,
+                target.OpenLibraryAuthorId,
+                target.GoogleBooksAuthorId,
+                target.RanobeDbAuthorId
+            };
+
             try
             {
                 MergeIntoSurvivor(target, source, canonicalId);
+
+                // Persist the survivor WITHOUT the unique provider ids first: a failure
+                // here still leaves the source author untouched (the data-loss guarantee
+                // this method is named for). Saving them now would collide with the
+                // source row, which still owns the same values under the UX_Authors_*
+                // unique indexes - the ids are handed over atomically below instead.
+                var mergedHardcoverId = target.HardcoverAuthorId;
+                var mergedGoodreadsId = target.GoodreadsAuthorId;
+                var mergedAudnexusId = target.AudnexusAuthorId;
+                var mergedOpenLibraryId = target.OpenLibraryAuthorId;
+                var mergedGoogleBooksId = target.GoogleBooksAuthorId;
+                var mergedRanobeDbId = target.RanobeDbAuthorId;
+
+                target.HardcoverAuthorId = originalTargetProviderIds.HardcoverAuthorId;
+                target.GoodreadsAuthorId = originalTargetProviderIds.GoodreadsAuthorId;
+                target.AudnexusAuthorId = originalTargetProviderIds.AudnexusAuthorId;
+                target.OpenLibraryAuthorId = originalTargetProviderIds.OpenLibraryAuthorId;
+                target.GoogleBooksAuthorId = originalTargetProviderIds.GoogleBooksAuthorId;
+                target.RanobeDbAuthorId = originalTargetProviderIds.RanobeDbAuthorId;
                 _authorService.UpdateAuthor(target);
+
+                target.HardcoverAuthorId = mergedHardcoverId;
+                target.GoodreadsAuthorId = mergedGoodreadsId;
+                target.AudnexusAuthorId = mergedAudnexusId;
+                target.OpenLibraryAuthorId = mergedOpenLibraryId;
+                target.GoogleBooksAuthorId = mergedGoogleBooksId;
+                target.RanobeDbAuthorId = mergedRanobeDbId;
 
                 using var connection = _mainDatabase.OpenConnection();
                 using var transaction = connection.BeginTransaction();
+
+                ReleaseAndTransferUniqueProviderIds(connection, transaction, source.Id, target);
 
                 ReassignAuthorId(connection, transaction, "Books", source.Id, target.Id);
                 ReassignAuthorId(connection, transaction, "AuthorSeries", source.Id, target.Id);
@@ -3089,6 +3296,45 @@ namespace NzbDrone.Core.Books
             }
         }
 
+        // The unique provider-id handoff has to happen inside the merge transaction:
+        // release the ids on the source row before the survivor takes them over, so
+        // the UX_Authors_* unique indexes never see both rows holding the same value.
+        internal static void ReleaseAndTransferUniqueProviderIds(System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, int sourceId, Author target)
+        {
+            connection.Execute(
+                @"UPDATE ""Authors"" SET
+                    ""HardcoverAuthorId"" = NULL,
+                    ""GoodreadsAuthorId"" = NULL,
+                    ""AudnexusAuthorId"" = NULL,
+                    ""OpenLibraryAuthorId"" = NULL,
+                    ""GoogleBooksAuthorId"" = NULL,
+                    ""RanobeDbAuthorId"" = NULL
+                  WHERE ""Id"" = @Id;",
+                new { Id = sourceId },
+                transaction);
+
+            connection.Execute(
+                @"UPDATE ""Authors"" SET
+                    ""HardcoverAuthorId"" = @HardcoverAuthorId,
+                    ""GoodreadsAuthorId"" = @GoodreadsAuthorId,
+                    ""AudnexusAuthorId"" = @AudnexusAuthorId,
+                    ""OpenLibraryAuthorId"" = @OpenLibraryAuthorId,
+                    ""GoogleBooksAuthorId"" = @GoogleBooksAuthorId,
+                    ""RanobeDbAuthorId"" = @RanobeDbAuthorId
+                  WHERE ""Id"" = @Id;",
+                new
+                {
+                    target.HardcoverAuthorId,
+                    target.GoodreadsAuthorId,
+                    target.AudnexusAuthorId,
+                    target.OpenLibraryAuthorId,
+                    target.GoogleBooksAuthorId,
+                    target.RanobeDbAuthorId,
+                    Id = target.Id
+                },
+                transaction);
+        }
+
         private void MergeIntoSurvivor(Author survivor, Author source, string canonicalId)
         {
             survivor.HardcoverAuthorId = PreferCanonicalProviderId(survivor.HardcoverAuthorId, source.HardcoverAuthorId, canonicalId, "hc");
@@ -3096,6 +3342,7 @@ namespace NzbDrone.Core.Books
             survivor.AudnexusAuthorId ??= source.AudnexusAuthorId;
             survivor.OpenLibraryAuthorId ??= source.OpenLibraryAuthorId;
             survivor.GoogleBooksAuthorId ??= source.GoogleBooksAuthorId;
+            survivor.RanobeDbAuthorId ??= source.RanobeDbAuthorId;
             survivor.RemoteProviderIds = AuthorIdentity.MergeProviderIdentityTokens(survivor, source);
 
             survivor.AudiobookRootFolderPath ??= source.AudiobookRootFolderPath;
@@ -3547,9 +3794,10 @@ namespace NzbDrone.Core.Books
                 var effectiveForceRefresh = message.ForceRefresh ||
                                             (trigger == CommandTrigger.Manual && !message.IsFromImport);
                 var rescanWhenMetadataUnchanged =
-                    trigger == CommandTrigger.Manual &&
-                    message.RescanFolders &&
-                    !message.IsFromImport;
+                    message.RescanWhenMetadataUnchanged ||
+                    (trigger == CommandTrigger.Manual &&
+                     message.RescanFolders &&
+                     !message.IsFromImport);
 
                 RefreshSelectedAuthors(new List<int> { message.AuthorId.Value }, isNew, trigger, message.IsFromImport, message.RefreshMetadata, message.RescanFolders, "all", cancellationToken, rescanWhenMetadataUnchanged, forceRefresh: effectiveForceRefresh, useBulkSyncWhenNotForced: false, scopeRescanToSingleAuthor: true);
             }

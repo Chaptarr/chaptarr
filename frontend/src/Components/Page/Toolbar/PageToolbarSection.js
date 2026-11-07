@@ -10,6 +10,7 @@ import SpinnerIcon from 'Components/SpinnerIcon';
 import { forEach } from 'Helpers/elementChildren';
 import { align, icons } from 'Helpers/Props';
 import dimensions from 'Styles/Variables/dimensions';
+import translate from 'Utilities/String/translate';
 import styles from './PageToolbarSection.css';
 
 const BUTTON_WIDTH = parseInt(dimensions.toolbarButtonWidth);
@@ -50,19 +51,12 @@ function calculateOverflowItems(children, isMeasured, width, collapseButtons) {
     };
   }
 
-  const maxButtons = Math.max(Math.floor((width - separatorsWidth) / BUTTON_WIDTH), 1);
+  // Reserve one toolbar slot for the overflow menu itself. Without this, the menu can be
+  // clipped even though some actions were moved into it.
+  const maxButtons = Math.max(Math.floor(width / BUTTON_WIDTH) - 1, 0);
   const buttons = [];
   const overflowItems = [];
   let actualButtons = 0;
-
-  // Return all buttons if only one is being pushed to the overflow menu.
-  if (buttonCount - 1 === maxButtons) {
-    return {
-      buttons: validChildren,
-      buttonCount,
-      overflowItems: []
-    };
-  }
 
   validChildren.forEach((child, index) => {
     const isSeparator = Object.keys(child.props).length === 0;
@@ -158,7 +152,7 @@ class PageToolbarSection extends Component {
                     <ToolbarMenuButton
                       className={styles.overflowMenuButton}
                       iconName={icons.OVERFLOW}
-                      text="More"
+                      text={translate('More')}
                     />
 
                     <MenuContent>

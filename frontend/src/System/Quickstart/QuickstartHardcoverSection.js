@@ -12,7 +12,8 @@ class QuickstartHardcoverSection extends Component {
     super(props, context);
 
     this.state = {
-      isApiKeyModalOpen: false
+      isApiKeyModalOpen: false,
+      connectionStatus: null
     };
   }
 
@@ -28,11 +29,19 @@ class QuickstartHardcoverSection extends Component {
   };
 
   onConnectionSuccess = () => {
+    this.setState({ connectionStatus: 'tested' });
+    this.props.onConnectionTestSuccess?.();
     // Mark this section as interacted when connection succeeds
     const { markSectionInteracted } = this.props;
     if (markSectionInteracted) {
       markSectionInteracted({ section: 'hardcover' });
     }
+
+  };
+
+  onConnectionFailure = (error) => {
+    this.setState({ connectionStatus: 'failed' });
+    this.props.onConnectionTestFailure?.(error);
   };
 
   //
@@ -42,16 +51,32 @@ class QuickstartHardcoverSection extends Component {
     const {
       isHardcoverConfigured,
       hardcoverUsername,
-      hardcoverAvatarUrl
+      hardcoverAvatarUrl,
+      wasSkipped
     } = this.props;
 
     const {
-      isApiKeyModalOpen
+      isApiKeyModalOpen,
+      connectionStatus
     } = this.state;
+    let statusKey = 'QuickstartConnectionNotConfigured';
+
+    if (wasSkipped) {
+      statusKey = 'QuickstartConnectionSkipped';
+    }
+    if (isHardcoverConfigured) {
+      statusKey = 'QuickstartConnectionConfigured';
+    }
+    if (connectionStatus === 'tested') {
+      statusKey = 'QuickstartConnectionTested';
+    }
+    if (connectionStatus === 'failed') {
+      statusKey = 'QuickstartConnectionFailed';
+    }
 
     const renderButtonContent = () => {
       if (!isHardcoverConfigured) {
-        return 'Add Hardcover';
+        return translate('AddHardcoverButton');
       }
 
       if (hardcoverUsername) {
@@ -71,7 +96,7 @@ class QuickstartHardcoverSection extends Component {
         );
       }
 
-      return 'Connected';
+      return translate('HardcoverConnectedStatus');
     };
 
     if (this.props.compact) {
@@ -85,11 +110,15 @@ class QuickstartHardcoverSection extends Component {
               {renderButtonContent()}
             </button>
           </div>
+          <div className={styles.quickstartConnectionStatus} aria-live="polite">
+            {translate(statusKey)}
+          </div>
 
           <HardcoverApiKeyModal
             isOpen={isApiKeyModalOpen}
             onModalClose={this.onApiKeyModalClose}
             onConnectionSuccess={this.onConnectionSuccess}
+            onConnectionFailure={this.onConnectionFailure}
           />
         </>
       );
@@ -128,11 +157,15 @@ class QuickstartHardcoverSection extends Component {
             {renderButtonContent()}
           </button>
         </div>
+        <div className={styles.quickstartConnectionStatus} aria-live="polite">
+          {translate(statusKey)}
+        </div>
 
         <HardcoverApiKeyModal
           isOpen={isApiKeyModalOpen}
           onModalClose={this.onApiKeyModalClose}
           onConnectionSuccess={this.onConnectionSuccess}
+          onConnectionFailure={this.onConnectionFailure}
         />
       </div>
     );
@@ -144,6 +177,9 @@ QuickstartHardcoverSection.propTypes = {
   hardcoverUsername: PropTypes.string,
   hardcoverAvatarUrl: PropTypes.string,
   compact: PropTypes.bool,
+  wasSkipped: PropTypes.bool,
+  onConnectionTestSuccess: PropTypes.func,
+  onConnectionTestFailure: PropTypes.func,
   markSectionInteracted: PropTypes.func
 };
 

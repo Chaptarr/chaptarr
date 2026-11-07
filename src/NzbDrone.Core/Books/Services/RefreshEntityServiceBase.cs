@@ -8,6 +8,7 @@ namespace NzbDrone.Core.Books
 {
     public abstract class RefreshEntityServiceBase<TEntity, TChild>
         where TEntity : ModelBase
+        where TChild : ModelBase
     {
         private readonly Logger _logger;
         protected RefreshEntityServiceBase(Logger logger)
@@ -31,6 +32,7 @@ namespace NzbDrone.Core.Books
                 Updated = new List<TChild>();
                 Merged = new List<Tuple<TChild, TChild>>();
                 Deleted = new List<TChild>();
+                MatchedRemoteByLocalId = new Dictionary<int, TChild>();
             }
 
             public List<TChild> UpToDate { get; set; }
@@ -38,6 +40,14 @@ namespace NzbDrone.Core.Books
             public List<TChild> Updated { get; set; }
             public List<Tuple<TChild, TChild>> Merged { get; set; }
             public List<TChild> Deleted { get; set; }
+
+            // chaptarr #182: the exact remote item this refresh matched to each surviving local child
+            // (keyed by the local child's own Id), captured at the one place that actually decided the
+            // match. Callers that need to know "what did remote say about this specific local row" should
+            // use this instead of independently re-deriving a match from the raw remote list - see
+            // RefreshBookService.GetRemoteData for why re-derivation can disagree with the match already
+            // made here.
+            public Dictionary<int, TChild> MatchedRemoteByLocalId { get; set; }
 
             public List<TChild> All => UpToDate.Concat(Added).Concat(Updated).Concat(Merged.Select(x => x.Item1)).Concat(Deleted).ToList();
             public List<TChild> Future => UpToDate.Concat(Added).Concat(Updated).ToList();
@@ -88,6 +98,13 @@ namespace NzbDrone.Core.Books
         protected abstract List<TChild> GetLocalChildren(TEntity entity, List<TChild> remoteChildren);
         protected abstract Tuple<TChild, List<TChild>> GetMatchingExistingChildren(List<TChild> existingChildren, TChild remote);
 
+        // Default: no reordering (today's behavior - whatever order GetRemoteChildren returned).
+        // Override when match-claim order needs to be stable across calls; see SortChildren for why.
+        protected virtual List<TChild> OrderRemoteChildrenForMatching(List<TChild> remoteChildren)
+        {
+            return remoteChildren;
+        }
+
         protected abstract void PrepareNewChild(TChild child, TEntity entity);
         protected abstract void PrepareExistingChild(TChild local, TChild remote, TEntity entity);
 
@@ -105,6 +122,11 @@ namespace NzbDrone.Core.Books
             return remoteChild;
         }
 
+        protected virtual bool ShouldSkipChildAdd(TEntity entity, TChild remoteChild)
+        {
+            return false;
+        }
+
         protected virtual void ProcessChildren(TEntity entity, SortedChildren children)
         {
         }
@@ -112,11 +134,11 @@ namespace NzbDrone.Core.Books
         protected abstract void AddChildren(List<TChild> children);
         protected abstract bool RefreshChildren(SortedChildren localChildren, List<TChild> remoteChildren, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate);
 
-        protected virtual void PublishEntityUpdatedEvent(TEntity entity)
+        protected virtual void PublishEntityUpdatedEvent(TEntity entity, Author remoteData)
         {
         }
 
-        protected virtual void PublishRefreshCompleteEvent(TEntity entity)
+        protected virtual void PublishRefreshCompleteEvent(TEntity entity, bool anyChanges)
         {
         }
 
@@ -199,10 +221,10 @@ namespace NzbDrone.Core.Books
 
             if (updated)
             {
-                PublishEntityUpdatedEvent(local);
+                PublishEntityUpdatedEvent(local, remoteData);
             }
 
-            PublishRefreshCompleteEvent(local);
+            PublishRefreshCompleteEvent(local, updated);
 
             _logger.Debug($"Finished {typeof(TEntity).Name} refresh for {local}");
 
@@ -228,7 +250,17 @@ namespace NzbDrone.Core.Books
             var sortedChildren = new SortedChildren();
             sortedChildren.Deleted.AddRange(localChildren);
 
-            foreach (var remoteChild in remoteChildren)
+            // PERF/correctness (chaptarr #179): when several remote items could plausibly claim the same
+            // local row (e.g. multiple same-titled "Dune" pockets), whichever one is processed first below
+            // wins it via GetMatchingExistingChildren -> matchingIndex.Consume. Without a fixed processing
+            // order here, that outcome depends on whatever order the metadata source happened to return
+            // items in on a given call - which local row "wins" can flip between otherwise-identical
+            // refreshes, so the loser gets bucketed as Updated/Deleted every single time even though nothing
+            // really changed. Ordering by the remote item's own stable identity makes the claim order (and
+            // therefore the outcome) a function of the data, not of call-to-call API response order.
+            var orderedRemoteChildren = OrderRemoteChildrenForMatching(remoteChildren);
+
+            foreach (var remoteChild in orderedRemoteChildren)
             {
                 var tuple = GetMatchingExistingChildren(localChildren, remoteChild);
                 var existingChild = tuple.Item1;
@@ -241,6 +273,11 @@ namespace NzbDrone.Core.Books
                     // This prevents the same DB row from ending up in multiple buckets (Updated/Merged/Deleted)
                     // during a single refresh pass.
                     localChildren.Remove(existingChild);
+
+                    if (existingChild.Id > 0)
+                    {
+                        sortedChildren.MatchedRemoteByLocalId[existingChild.Id] = remoteChild;
+                    }
 
                     PrepareExistingChild(existingChild, remoteChild, entity);
 
@@ -260,6 +297,10 @@ namespace NzbDrone.Core.Books
                         sortedChildren.Deleted.Remove(child);
                         localChildren.Remove(child);
                     }
+                }
+                else if (ShouldSkipChildAdd(entity, remoteChild))
+                {
+                    continue;
                 }
                 else
                 {

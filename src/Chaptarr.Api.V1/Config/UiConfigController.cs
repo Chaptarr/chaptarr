@@ -30,6 +30,16 @@ namespace Chaptarr.Api.V1.Config
                            .GreaterThanOrEqualTo(1)
                            .WithMessage("The UI Language value cannot be less than 1");
 
+            SharedValidator.RuleFor(c => c.ExperienceMode).Custom((value, context) =>
+            {
+                if (!string.IsNullOrWhiteSpace(value) &&
+                    value.Trim().ToLowerInvariant() != "simple" &&
+                    value.Trim().ToLowerInvariant() != "advanced")
+                {
+                    context.AddFailure("Experience mode must be simple or advanced");
+                }
+            });
+
             SharedValidator.RuleFor(c => c.AddNewDefaultMediaType).Custom((value, context) =>
             {
                 if (string.IsNullOrWhiteSpace(value))

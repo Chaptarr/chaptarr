@@ -18,11 +18,13 @@ import createAjaxRequest from 'Utilities/createAjaxRequest';
 import translate from 'Utilities/String/translate';
 import styles from './DevelopmentSettings.css';
 
-const logLevelOptions = [
-  { key: 'info', value: 'Info' },
-  { key: 'debug', value: 'Debug' },
-  { key: 'trace', value: 'Trace' }
-];
+function getLogLevelOptions() {
+  return [
+    { key: 'info', value: translate('Information') },
+    { key: 'debug', value: translate('Debug') },
+    { key: 'trace', value: translate('Trace') }
+  ];
+}
 
 class DevelopmentSettings extends Component {
 
@@ -324,7 +326,7 @@ class DevelopmentSettings extends Component {
                     <FormInputGroup
                       type={inputTypes.SELECT}
                       name="consoleLogLevel"
-                      values={logLevelOptions}
+                      values={getLogLevelOptions()}
                       onChange={onInputChange}
                       {...settings.consoleLogLevel}
                     />

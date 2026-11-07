@@ -181,6 +181,100 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 }
             }
 
+            private (List<FileMatch> Matches, RecordingStagedEditionFtsRepository Repository) MatchFilesUnderPerFileMemo(
+                bool memoEnabled,
+                IReadOnlyList<Dictionary<string, List<string>>> tagsPerFile)
+            {
+                var logger = LogManager.GetCurrentClassLogger();
+                var recalls = new[]
+                {
+                    new BookFtsMatch { BookId = 302, AuthorId = 72, AuthorName = "Freida McFadden", BookTitle = "The Wife Upstairs", MatchScore = 100 },
+                    new BookFtsMatch { BookId = 301, AuthorId = 72, AuthorName = "Freida McFadden", BookTitle = "The Boyfriend", MatchScore = 90 }
+                };
+                var editions = new[]
+                {
+                    new EditionFtsMatch { EditionId = 3002, BookId = 302, BookTitle = "The Wife Upstairs", EditionTitle = "The Wife Upstairs", MatchingTitle = "The Wife Upstairs", AuthorId = 72, AuthorName = "Freida McFadden", Publisher = "Hollywood Upstairs Press", ReadingFormatId = 3 },
+                    new EditionFtsMatch { EditionId = 3001, BookId = 301, BookTitle = "The Boyfriend", EditionTitle = "The Boyfriend", MatchingTitle = "The Boyfriend", AuthorId = 72, AuthorName = "Freida McFadden", Publisher = "Grand Central Publishing", ReadingFormatId = 3 }
+                };
+                var books = new[]
+                {
+                    new Book { Id = 301, AuthorId = 72, Title = "The Boyfriend", HardcoverBookId = "hc:boyfriend", MediaType = BookMediaType.Ebook },
+                    new Book { Id = 302, AuthorId = 72, Title = "The Wife Upstairs", HardcoverBookId = "hc:wife-upstairs", MediaType = BookMediaType.Ebook }
+                };
+                var stagedFts = new RecordingStagedEditionFtsRepository(recalls, editions);
+                var service = new FileMatchingService(
+                    matchingLogger: new NullMatchingUploadLogger(),
+                    v5MatchingService: null,
+                    containmentValidator: new ContainmentValidator(new TagNormalizer(), logger),
+                    pendingAuthorImportService: null,
+                    commandQueue: null,
+                    authorFolderMatchingService: null,
+                    rootFolderService: null,
+                    configService: ConfigServiceTestProxy.Create(
+                        strictness: BookMatchingStrictness.Balanced,
+                        usePathAsTagsFallback: false),
+                    authorService: new StubAuthorService(new Author { Id = 72, Name = "Freida McFadden" }),
+                    eventAggregator: null,
+                    authorLibraryService: null,
+                    editionFtsRepository: stagedFts,
+                    bookService: new StubBookService(books),
+                    editionService: null,
+                    editionRepository: null,
+                    mediaInfoExtractor: null,
+                    logger: logger);
+
+                var files = tagsPerFile
+                    .Select((tags, index) => new DiscoveredFileWithMetadata
+                    {
+                        Path = $"/library/Freida McFadden/part-{index}.epub",
+                        AllTags = tags.ToDictionary(pair => pair.Key, pair => pair.Value.ToList(), StringComparer.OrdinalIgnoreCase)
+                    })
+                    .ToList();
+
+                var matches = service.WithPerFileFtsMemo(
+                    memoEnabled,
+                    () => files.Select(file => service.HolyGrailMatchFile(file, BookMediaType.Ebook, restrictToAuthorId: null)).ToList());
+                return (matches, stagedFts);
+            }
+
+            private static Dictionary<string, List<string>> BoyfriendTags(string title = "The Boyfriend") => new()
+            {
+                ["TITLE"] = new() { title },
+                ["ALBUM"] = new() { title },
+                ["ARTIST"] = new() { "Freida McFadden" },
+                ["PUBLISHER"] = new() { "Hollywood Upstairs Press" }
+            };
+
+            [Test]
+            public void per_file_memo_should_run_the_staged_search_once_per_distinct_evidence_and_not_change_results()
+            {
+                var evidence = new[] { BoyfriendTags(), BoyfriendTags(), BoyfriendTags() };
+
+                var without = MatchFilesUnderPerFileMemo(false, evidence);
+                var with = MatchFilesUnderPerFileMemo(true, evidence);
+
+                Assert.That(without.Repository.RecallCalls, Is.EqualTo(3));
+                Assert.That(without.Repository.RankCalls, Is.EqualTo(3));
+                Assert.That(with.Repository.RecallCalls, Is.EqualTo(1), "identical evidence must share one recall");
+                Assert.That(with.Repository.RankCalls, Is.EqualTo(1), "identical evidence must share one rank");
+                Assert.That(with.Matches.Select(m => (m?.EditionId, m?.BookId, m?.MatchedVia)),
+                    Is.EqualTo(without.Matches.Select(m => (m?.EditionId, m?.BookId, m?.MatchedVia))));
+                Assert.That(with.Matches, Has.All.Not.Null);
+            }
+
+            [Test]
+            public void per_file_memo_should_not_share_results_between_files_with_different_evidence()
+            {
+                var evidence = new[] { BoyfriendTags(), BoyfriendTags("The Wife Upstairs"), BoyfriendTags() };
+
+                var without = MatchFilesUnderPerFileMemo(false, evidence);
+                var with = MatchFilesUnderPerFileMemo(true, evidence);
+
+                Assert.That(with.Repository.RecallCalls, Is.EqualTo(2), "two distinct evidence sets, three files");
+                Assert.That(with.Matches.Select(m => (m?.EditionId, m?.MatchedVia)),
+                    Is.EqualTo(without.Matches.Select(m => (m?.EditionId, m?.MatchedVia))));
+            }
+
             private FileMatch MatchStagedStructuralScenario(
                 string scenario,
                 BookMediaType mediaType,
@@ -408,7 +502,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 public Edition Single() => throw new NotImplementedException();
                 public Edition SingleOrDefault() => throw new NotImplementedException();
                 public PagingSpec<Edition> GetPaged(PagingSpec<Edition> pagingSpec) => throw new NotImplementedException();
-                public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
+                public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType) => throw new NotImplementedException();
                 public Edition FindByForeignEditionId(string foreignEditionId) => throw new NotImplementedException();
                 public List<Edition> FindAllByForeignEditionId(string foreignEditionId) => throw new NotImplementedException();
                 public Edition FindByHardcoverEditionId(string hardcoverEditionId) => throw new NotImplementedException();
@@ -596,7 +690,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public Book AddWantedEdition(int bookId, int editionId, bool asNewVariant = false) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -4388,24 +4482,29 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Assert.That(match, Is.Null);
                 }
 
-                [TestCase(false, false)]
-                [TestCase(true, true)]
+                [TestCase(null, false, false, 0)]
+                [TestCase("Harry Potter", false, true, 1)]
+                [TestCase("Harry Potter", true, false, 0)]
+                [TestCase("Harry Potter and the Order of the Phoenix", true, true, 2)]
                 public void should_only_block_generic_series_title_when_no_clean_title_field_remains(
-                    bool includeCleanTitleField,
-                    bool expectedMatch)
+                    string cleanTitleField,
+                    bool isCollectionTitle,
+                    bool expectedMatch,
+                    int expectedEditionId)
                 {
                     var logger = LogManager.GetCurrentClassLogger();
                     var containment = new ContainmentValidator(new TagNormalizer(), logger);
 
                     var fts = new StubEditionFtsRepository(new List<EditionFtsMatch>
                     {
-                        // Wrong candidate first: series-level/boxed-set-ish title
+                    // A generic clean title can prove a normal series book, but must not turn a boxed set into a single book.
+                    // A specific clean title should still select the matching individual book over the boxed set.
                         new EditionFtsMatch
                         {
                             EditionId = 1,
                             BookId = 49,
                             EditionTitle = "Harry Potter",
-                            BookTitle = "Complete Harry Potter Boxed Set",
+                            BookTitle = isCollectionTitle ? "Complete Harry Potter Boxed Set" : "Harry Potter",
                             AuthorId = 25,
                             AuthorName = "J.K. Rowling",
                         },
@@ -4454,9 +4553,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 	                        { "ALBUMARTIST", new List<string> { "J.K. Rowling" } }
 	                    };
 
-	                    if (includeCleanTitleField)
+                    if (cleanTitleField != null)
 	                    {
-	                        tags["TITLE"] = new List<string> { "Harry Potter" };
+                        tags["TITLE"] = new List<string> { cleanTitleField };
 	                    }
 
 	                    var file = new DiscoveredFileWithMetadata
@@ -4471,7 +4570,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 	                    if (expectedMatch)
 	                    {
 	                        Assert.That(match, Is.Not.Null);
-	                        Assert.That(match.EditionId, Is.EqualTo(1));
+                        Assert.That(match.EditionId, Is.EqualTo(expectedEditionId));
 	                    }
 	                    else
 	                    {

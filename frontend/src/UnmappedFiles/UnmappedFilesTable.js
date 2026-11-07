@@ -23,6 +23,7 @@ import { align, icons, kinds, sizes, sortDirections } from 'Helpers/Props';
 import { getMediaTypeFromExtension } from 'Utilities/MediaFile/getMediaTypeFromExtension';
 import hasDifferentItemsOrOrder from 'Utilities/Object/hasDifferentItemsOrOrder';
 import translate from 'Utilities/String/translate';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import getToggledRange from 'Utilities/Table/getToggledRange';
 import UnmappedFilesMediaTypeToggle from './UnmappedFilesMediaTypeToggle';
 import UnmappedFilesTableHeader from './UnmappedFilesTableHeader';
@@ -498,7 +499,7 @@ class UnmappedFilesTable extends Component {
         this.setState({
           isFetchingSendLogsPreview: false,
           sendLogsPreview: null,
-          sendLogsPreviewError: xhr?.responseJSON?.message || xhr?.responseText || 'Unable to preview matching logs'
+          sendLogsPreviewError: xhr?.responseJSON?.message || xhr?.responseText || translate('UnableToPreviewMatchingLogs')
         });
       });
   };
@@ -549,6 +550,19 @@ class UnmappedFilesTable extends Component {
 
     const hasPreviewEntries = (sendLogsPreview?.totalEntries || 0) > 0;
     const sendDisabled = isFetchingSendLogsPreview || !!sendLogsPreviewError || !hasPreviewEntries;
+    let sendLogsMediaType = sendLogsPreview?.mediaType;
+    if (sendLogsMediaType === 'audiobook') {
+      sendLogsMediaType = translate('Audiobooks');
+    } else if (sendLogsMediaType === 'ebook') {
+      sendLogsMediaType = translate('Ebooks');
+    }
+
+    let sendLogsScope = sendLogsPreview?.scope;
+    if (sendLogsScope === 'all') {
+      sendLogsScope = translate('All');
+    } else if (sendLogsScope === 'selected') {
+      sendLogsScope = translate('Selected');
+    }
 
     return (
       <Modal
@@ -574,7 +588,7 @@ class UnmappedFilesTable extends Component {
             {
               !!sendLogsPreviewError &&
                 <Alert kind={kinds.DANGER}>
-                  {sendLogsPreviewError}
+                  {translateServerMessage(sendLogsPreviewError)}
                 </Alert>
             }
 
@@ -583,8 +597,8 @@ class UnmappedFilesTable extends Component {
                 <div>
                   <div style={{ marginBottom: '12px' }}>
                     <strong>{sendLogsPreview.totalEntries}</strong> {translate('UnmappedFilesSendLogsEntriesWillBeSent')}
-                    {sendLogsPreview.mediaType && sendLogsPreview.mediaType !== 'all' ? ` ${translate('UnmappedFilesSendLogsForMediaType', { mediaType: sendLogsPreview.mediaType })}` : ''}
-                    {sendLogsPreview.scope ? ` ${translate('UnmappedFilesSendLogsScopeSuffix', { scope: sendLogsPreview.scope })}` : ''}.
+                    {sendLogsPreview.mediaType && sendLogsPreview.mediaType !== 'all' ? ` ${translate('UnmappedFilesSendLogsForMediaType', { mediaType: sendLogsMediaType })}` : ''}
+                    {sendLogsPreview.scope ? ` ${translate('UnmappedFilesSendLogsScopeSuffix', { scope: sendLogsScope })}` : ''}.
                   </div>
 
                   {
@@ -606,7 +620,7 @@ class UnmappedFilesTable extends Component {
                             (sendLogsPreview.samples || []).map((entry, index) => {
                               const tags = entry.tags || {};
                               const tagKeys = Object.keys(tags);
-                              const primaryLine = entry.decision || entry.reason || (entry.success ? 'Matched' : 'No match');
+                              const primaryLine = entry.decision || entry.reason || translate(entry.success ? 'Matched' : 'NoMatch');
                               const rejectionLine = entry.topRejectionReason ?
                                 `${entry.topRejectionReason}${entry.topRejectionDetail ? `: ${entry.topRejectionDetail}` : ''}` :
                                 null;
@@ -628,7 +642,7 @@ class UnmappedFilesTable extends Component {
                                     onPress={() => this.onSendLogsPreviewSamplePress(index)}
                                   >
                                     <div style={{ fontWeight: 600 }}>
-                                      {entry.path || entry.fileName || '(unknown file)'}
+                                      {entry.path || entry.fileName || translate('UnknownFile')}
                                     </div>
 
                                     {
@@ -764,6 +778,7 @@ class UnmappedFilesTable extends Component {
       onSortPress,
       isRefreshingFiles,
       isRetryMatching,
+      fetchUnmappedFiles,
       onRefreshUnmappedFilesPress,
       onRetryUnmappedMatchPress,
       ...otherProps
@@ -776,6 +791,7 @@ class UnmappedFilesTable extends Component {
     } = this.state;
 
     const filteredItems = this.getFilteredItems();
+    const isFileActionDisabled = !isPopulated || isFetching || !!error || !filteredItems.length;
 
     // Calculate stats for all items and filtered items
     const totalFiles = items.length;
@@ -832,7 +848,7 @@ class UnmappedFilesTable extends Component {
               iconName={icons.RESCAN}
               title={refreshFilesTitle}
               aria-label={refreshFilesTitle}
-              isDisabled={isPopulated && !error && !filteredItems.length}
+              isDisabled={isFileActionDisabled}
               isSpinning={isRefreshingFiles}
               onPress={() => {
                 onRefreshUnmappedFilesPress(selectedMediaType, this.buildUnmappedFilesSelection());
@@ -843,7 +859,7 @@ class UnmappedFilesTable extends Component {
               iconName={icons.SEARCH}
               title={retryMatchTitle}
               aria-label={retryMatchTitle}
-              isDisabled={isPopulated && !error && !filteredItems.length}
+              isDisabled={isFileActionDisabled}
               isSpinning={isRetryMatching}
               onPress={() => {
                 onRetryUnmappedMatchPress(selectedMediaType, this.buildUnmappedFilesSelection());
@@ -903,6 +919,23 @@ class UnmappedFilesTable extends Component {
           {
             isFetching && !isPopulated &&
               <LoadingIndicator />
+          }
+
+          {
+            error && !isFetching &&
+              <Alert
+                kind={kinds.DANGER}
+                role="alert"
+              >
+                {translate('UnmappedFilesLoadFailed')}{' '}
+                <Button
+                  kind={kinds.PRIMARY}
+                  size="small"
+                  onPress={fetchUnmappedFiles}
+                >
+                  {translate('Retry')}
+                </Button>
+              </Alert>
           }
 
           {

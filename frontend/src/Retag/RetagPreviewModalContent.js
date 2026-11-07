@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import Alert from 'Components/Alert';
 import CheckInput from 'Components/Form/CheckInput';
 import Button from 'Components/Link/Button';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
@@ -8,6 +9,7 @@ import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { kinds } from 'Helpers/Props';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import getSelectedIds from 'Utilities/Table/getSelectedIds';
 import selectAll from 'Utilities/Table/selectAll';
@@ -80,6 +82,7 @@ class RetagPreviewModalContent extends Component {
       isPopulated,
       error,
       items,
+      onRetryPress,
       onModalClose
     } = this.props;
 
@@ -105,9 +108,12 @@ class RetagPreviewModalContent extends Component {
 
           {
             !isFetching && error &&
-              <div>
-                {translate('ErrorLoadingPreviews')}
-              </div>
+              <Alert kind={kinds.DANGER} role="alert">
+                <div>{getErrorMessage(error, translate('ErrorLoadingPreviews'))}</div>
+                <Button size="small" onPress={onRetryPress}>
+                  {translate('Retry')}
+                </Button>
+              </Alert>
           }
 
           {
@@ -204,6 +210,7 @@ RetagPreviewModalContent.propTypes = {
   error: PropTypes.object,
   items: PropTypes.arrayOf(PropTypes.object).isRequired,
   path: PropTypes.string.isRequired,
+  onRetryPress: PropTypes.func.isRequired,
   onRetagPress: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired
 };

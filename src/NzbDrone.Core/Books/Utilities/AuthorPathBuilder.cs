@@ -42,6 +42,24 @@ namespace NzbDrone.Core.Books
             if (hasAudiobookRoot && hasEbookRoot && audiobookRoot.PathEquals(ebookRoot))
             {
                 var sharedRoot = audiobookRoot;
+
+                // BookshelfNG can keep separate audiobook and ebook directories under one shared root.
+                // Preserve that explicit split instead of treating a shared root as a shared author path.
+                if (HasDistinctSafeMediaPathsInsideSharedRoot(author, rootFolders))
+                {
+                    var authorUsesRootAsItsFolder = author.Path.PathEquals(sharedRoot);
+                    if (!authorUsesRootAsItsFolder && NeedsPrimaryPathRepair(author.Path, sharedRoot, rootFolders))
+                    {
+                        var desiredPrimary = author.AudiobookPath;
+                        if (desiredPrimary.IsNotNullOrWhiteSpace() && sharedRoot.IsParentPath(desiredPrimary))
+                        {
+                            author.Path = desiredPrimary;
+                        }
+                    }
+
+                    return;
+                }
+
                 var authorFolder = _fileNameBuilder.GetAuthorFolder(author); // Mixed/shared root uses a single author folder format
 
                 if (authorFolder.IsNullOrWhiteSpace())
@@ -211,6 +229,30 @@ namespace NzbDrone.Core.Books
                    IsUnsafePath(path, rootFolders) ||
                    path.PathEquals(root) ||
                    !root.IsParentPath(path);
+        }
+
+        internal static bool HasDistinctSafeMediaPathsInsideSharedRoot(Author author, System.Collections.Generic.List<RootFolder> rootFolders)
+        {
+            if (author == null ||
+                author.AudiobookRootFolderPath.IsNullOrWhiteSpace() ||
+                !author.AudiobookRootFolderPath.PathEquals(author.EbookRootFolderPath) ||
+                author.AudiobookPath.IsNullOrWhiteSpace() ||
+                author.EbookPath.IsNullOrWhiteSpace() ||
+                author.AudiobookPath.PathEquals(author.EbookPath))
+            {
+                return false;
+            }
+
+            return IsSafeMediaPathInsideRoot(author.AudiobookPath, author.AudiobookRootFolderPath, rootFolders) &&
+                   IsSafeMediaPathInsideRoot(author.EbookPath, author.EbookRootFolderPath, rootFolders);
+        }
+
+        private static bool IsSafeMediaPathInsideRoot(string path, string root, System.Collections.Generic.List<RootFolder> rootFolders)
+        {
+            return path.IsNotNullOrWhiteSpace() &&
+                   !path.PathEquals(root) &&
+                   root.IsParentPath(path) &&
+                   !IsUnsafePath(path, rootFolders);
         }
 
         private string BuildPathUnderRoot(string root, string existingPath, string authorFolder, bool useExistingRelativeFolder)

@@ -23,14 +23,14 @@ namespace NzbDrone.Core.Notifications.Subsonic
 
         public override void OnGrab(GrabMessage grabMessage)
         {
-            const string header = "Chaptarr - Grabbed";
+            var header = BOOK_GRABBED_TITLE_BRANDED;
 
             Notify(Settings, header, grabMessage.Message);
         }
 
         public override void OnReleaseImport(BookDownloadMessage message)
         {
-            const string header = "Chaptarr - Downloaded";
+            var header = BOOK_DOWNLOADED_TITLE_BRANDED;
 
             Notify(Settings, header, message.Message);
             Update();
@@ -48,14 +48,14 @@ namespace NzbDrone.Core.Notifications.Subsonic
 
         public override void OnBookAdded(Book book)
         {
-            const string header = "Chaptarr - Book Added";
+            var header = BOOK_ADDED_TITLE_BRANDED;
 
             Notify(Settings, header, $"{book.Author.Name} - {book.Title}");
         }
 
         public override void OnAuthorDelete(AuthorDeleteMessage deleteMessage)
         {
-            const string header = "Chaptarr - Author Deleted";
+            var header = AUTHOR_DELETED_TITlE_BRANDED;
 
             Notify(Settings, header, deleteMessage.Message);
 
@@ -67,7 +67,7 @@ namespace NzbDrone.Core.Notifications.Subsonic
 
         public override void OnBookDelete(BookDeleteMessage deleteMessage)
         {
-            const string header = "Chaptarr - Book Deleted";
+            var header = BOOK_DELETED_TITLE_BRANDED;
 
             Notify(Settings, header, deleteMessage.Message);
 
@@ -79,7 +79,7 @@ namespace NzbDrone.Core.Notifications.Subsonic
 
         public override void OnBookFileDelete(BookFileDeleteMessage deleteMessage)
         {
-            const string header = "Chaptarr - Book File Deleted";
+            var header = BOOK_FILE_DELETED_TITLE_BRANDED;
 
             Notify(Settings, header, deleteMessage.Message);
             Update();
@@ -101,7 +101,7 @@ namespace NzbDrone.Core.Notifications.Subsonic
         {
             var failures = new List<ValidationFailure>();
 
-            failures.AddIfNotNull(_subsonicService.Test(Settings, "Success! Subsonic has been successfully configured!"));
+            failures.AddIfNotNull(_subsonicService.Test(Settings, Localize("notification.test.subsonicConfigured", "Success! Subsonic has been successfully configured!")));
 
             return new ValidationResult(failures);
         }

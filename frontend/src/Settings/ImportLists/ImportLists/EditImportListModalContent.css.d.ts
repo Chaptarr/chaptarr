@@ -7,7 +7,12 @@ interface CssExports {
   'hardcoverIdentityRow': string;
   'hardcoverIdentityText': string;
   'hardcoverInfo': string;
+  'hardcoverInlineLoading': string;
   'hardcoverMediaTypeToggle': string;
+  'hardcoverStatus': string;
+  'hardcoverStatusAlert': string;
+  'hardcoverStatusError': string;
+  'hardcoverStatusLoading': string;
   'hardcoverSubsection': string;
   'hardcoverSubsectionTitle': string;
   'hideMetadataProfile': string;

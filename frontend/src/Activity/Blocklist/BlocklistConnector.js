@@ -69,6 +69,10 @@ class BlocklistConnector extends Component {
   repopulate = () => {
     this.props.fetchBlocklist();
   };
+
+  onRetryPress = () => {
+    this.props.fetchBlocklist();
+  };
   //
   // Listeners
 
@@ -127,6 +131,7 @@ class BlocklistConnector extends Component {
         onSortPress={this.onSortPress}
         onTableOptionChange={this.onTableOptionChange}
         onClearBlocklistPress={this.onClearBlocklistPress}
+        onRetryPress={this.onRetryPress}
         {...this.props}
       />
     );

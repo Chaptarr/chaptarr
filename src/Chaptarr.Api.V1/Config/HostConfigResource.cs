@@ -9,6 +9,8 @@ namespace Chaptarr.Api.V1.Config
 {
     public class HostConfigResource : RestResource
     {
+        private ProxyMode _proxyMode;
+
         public string BindAddress { get; set; }
         public int Port { get; set; }
         public int SslPort { get; set; }
@@ -31,7 +33,16 @@ namespace Chaptarr.Api.V1.Config
         public bool UpdateAutomatically { get; set; }
         public UpdateMechanism UpdateMechanism { get; set; }
         public string UpdateScriptPath { get; set; }
-        public ProxyMode ProxyMode { get; set; }
+        public ProxyMode ProxyMode
+        {
+            get => _proxyMode;
+            set
+            {
+                _proxyMode = value;
+                ProxyModeWasProvided = true;
+            }
+        }
+        public bool? ProxyEnabled { get; set; }
         public int? GlobalProxyId { get; set; }
         public ProxyType ProxyType { get; set; }
         public string ProxyHostname { get; set; }
@@ -54,6 +65,18 @@ namespace Chaptarr.Api.V1.Config
         public string OidcAllowedEmailDomains { get; set; }
         public bool OidcRequireEmailVerified { get; set; }
         public bool OidcAllowAnyVerifiedUser { get; set; }
+
+        internal bool ProxyModeWasProvided { get; private set; }
+
+        internal void ApplyBookshelfCompatibilityAliases()
+        {
+            if (!ProxyModeWasProvided && ProxyEnabled.HasValue)
+            {
+                ProxyMode = ProxyEnabled.Value
+                    ? NzbDrone.Core.Configuration.ProxyMode.ProxyEverything
+                    : NzbDrone.Core.Configuration.ProxyMode.Disabled;
+            }
+        }
     }
 
     public static class HostConfigResourceMapper
@@ -85,6 +108,7 @@ namespace Chaptarr.Api.V1.Config
                 UpdateMechanism = model.UpdateMechanism,
                 UpdateScriptPath = model.UpdateScriptPath,
                 ProxyMode = configService.ProxyMode,
+                ProxyEnabled = configService.ProxyEnabled,
                 GlobalProxyId = configService.GlobalProxyId,
                 ProxyType = configService.ProxyType,
                 ProxyHostname = configService.ProxyHostname,

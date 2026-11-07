@@ -1,11 +1,12 @@
-import moment from 'moment';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
 import { sortDirections } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import updateSectionState from 'Utilities/State/updateSectionState';
 import naturalExpansion from 'Utilities/String/naturalExpansion';
+import translate from 'Utilities/String/translate';
 import { set, update, updateItem } from './baseActions';
 import createFetchHandler from './Creators/createFetchHandler';
 import createHandleActions from './Creators/createHandleActions';
@@ -136,7 +137,7 @@ export const actionHandlers = handleThunks({
     }
 
     if (!payload.downloadId && !payload.folder) {
-      dispatch(set({ section, error: { message: '`downloadId` or `folder` is required.' } }));
+      dispatch(set({ section, error: { message: translate('InteractiveImportDownloadIdOrFolderRequired') } }));
       return;
     }
 
@@ -151,7 +152,7 @@ export const actionHandlers = handleThunks({
 
     abortCurrentFetchRequest = abortRequest;
 
-    request.done((data) => {
+    request.then((data) => {
       dispatch(batchActions([
         update({ section, data }),
 
@@ -164,7 +165,7 @@ export const actionHandlers = handleThunks({
       ]));
     });
 
-    request.fail((xhr) => {
+    request.catch((xhr) => {
       if (xhr.aborted) {
         return;
       }
@@ -177,7 +178,7 @@ export const actionHandlers = handleThunks({
       }));
     });
 
-    request.always(() => {
+    request.finally(() => {
       if (abortCurrentFetchRequest === currentAbortRequest) {
         abortCurrentFetchRequest = null;
       }
@@ -249,7 +250,7 @@ export const actionHandlers = handleThunks({
     abortCurrentRequest = abortRequest;
     currentIds = payload.ids;
 
-    request.done((data) => {
+    request.then((data) => {
       dispatch(batchActions(
         data.map((item) => updateItem({
           section,
@@ -260,7 +261,7 @@ export const actionHandlers = handleThunks({
       ));
     });
 
-    request.fail((xhr) => {
+    request.catch((xhr) => {
       if (xhr.aborted) {
         return;
       }
@@ -318,7 +319,7 @@ export const reducers = createHandleActions({
 
   [ADD_RECENT_FOLDER]: function(state, { payload }) {
     const folder = payload.folder;
-    const recentFolder = { folder, lastUsed: moment().toISOString() };
+    const recentFolder = { folder, lastUsed: dayjs().toISOString() };
     const recentFolders = [...state.recentFolders];
     const index = recentFolders.findIndex((r) => r.folder === folder);
 

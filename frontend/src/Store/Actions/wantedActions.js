@@ -8,6 +8,7 @@ import createServerSideCollectionHandlers from './Creators/createServerSideColle
 import createClearReducer from './Creators/Reducers/createClearReducer';
 import createSetTableOptionReducer from './Creators/Reducers/createSetTableOptionReducer';
 import { set } from './baseActions';
+import translate from 'Utilities/String/translate';
 
 //
 // Variables
@@ -31,43 +32,43 @@ export const defaultState = {
     columns: [
       {
         name: 'authors.sortName',
-        label: 'Author',
+        label: () => translate('Author'),
         isSortable: true,
         isVisible: true
       },
       {
         name: 'books.title',
-        label: 'Book',
+        label: () => translate('Book'),
         isSortable: true,
         isVisible: true
       },
       {
         name: 'mediaType',
-        label: 'Type',
+        label: () => translate('Type'),
         isSortable: true,
         isVisible: true
       },
       {
         name: 'narrator',
-        label: 'Narrator',
+        label: () => translate('Narrator'),
         isSortable: true,
         isVisible: true
       },
       {
         name: 'releaseDate',
-        label: 'Release Date',
+        label: () => translate('ReleaseDate'),
         isSortable: true,
         isVisible: true
       },
       {
         name: 'books.lastSearchTime',
-        label: 'Last Searched',
+        label: () => translate('LastSearched'),
         isSortable: true,
         isVisible: false
       },
       {
         name: 'actions',
-        columnLabel: 'Actions',
+        columnLabel: () => translate('Actions'),
         isVisible: true,
         isModifiable: false
       }
@@ -78,7 +79,7 @@ export const defaultState = {
     filters: [
       {
         key: 'monitored',
-        label: 'Monitored',
+        label: () => translate('Monitored'),
         filters: [
           {
             key: 'monitored',
@@ -89,7 +90,7 @@ export const defaultState = {
       },
       {
         key: 'unmonitored',
-        label: 'Unmonitored',
+        label: () => translate('Unmonitored'),
         filters: [
           {
             key: 'monitored',
@@ -113,43 +114,43 @@ export const defaultState = {
     columns: [
       {
         name: 'authors.sortName',
-        label: 'Author',
+        label: () => translate('Author'),
         isSortable: true,
         isVisible: true
       },
       {
         name: 'books.title',
-        label: 'Book',
+        label: () => translate('Book'),
         isSortable: true,
         isVisible: true
       },
       {
         name: 'mediaType',
-        label: 'Type',
+        label: () => translate('Type'),
         isSortable: true,
         isVisible: true
       },
       {
         name: 'narrator',
-        label: 'Narrator',
+        label: () => translate('Narrator'),
         isSortable: true,
         isVisible: true
       },
       {
         name: 'releaseDate',
-        label: 'Release Date',
+        label: () => translate('ReleaseDate'),
         isSortable: true,
         isVisible: true
       },
       {
         name: 'books.lastSearchTime',
-        label: 'Last Searched',
+        label: () => translate('LastSearched'),
         isSortable: true,
         isVisible: false
       },
       {
         name: 'actions',
-        columnLabel: 'Actions',
+        columnLabel: () => translate('Actions'),
         isVisible: true,
         isModifiable: false
       }
@@ -160,7 +161,7 @@ export const defaultState = {
     filters: [
       {
         key: 'monitored',
-        label: 'Monitored',
+        label: () => translate('Monitored'),
         filters: [
           {
             key: 'monitored',
@@ -171,7 +172,7 @@ export const defaultState = {
       },
       {
         key: 'unmonitored',
-        label: 'Unmonitored',
+        label: () => translate('Unmonitored'),
         filters: [
           {
             key: 'monitored',

@@ -1,0 +1,120 @@
+.sectionDescription {
+  margin-bottom: 20px;
+
+  color: var(--helpTextColor);
+}
+
+.mediaScopeOptions {
+  display: flex;
+  flex-wrap: wrap;
+
+  gap: 10px;
+
+  margin-bottom: 20px;
+}
+
+.mediaScopeOption {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+
+  padding: 10px 16px;
+  min-width: 130px;
+
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+
+  background: var(--pageBackground);
+  color: var(--textColor);
+
+  font: inherit;
+  cursor: pointer;
+}
+
+.mediaScopeOption:hover,
+.mediaScopeOption:focus-visible {
+  outline: 2px solid var(--primaryColor);
+  outline-offset: 2px;
+
+  border-color: var(--primaryColor);
+}
+
+.mediaScopeOptionSelected {
+  border-color: var(--primaryColor);
+
+  background: var(--primaryColor);
+  color: #fff;
+}
+
+.rootFolderScopeChooser {
+  grid-column: 1 / -1;
+
+  margin-top: 12px;
+}
+
+.setupReviewList {
+  margin: 0 0 24px;
+}
+
+.setupReviewRow {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.8fr) minmax(160px, 2fr) auto;
+
+  align-items: center;
+  gap: 10px 16px;
+
+  padding: 12px 0;
+
+  border-bottom: 1px solid var(--borderColor);
+}
+
+.setupReviewRow dt {
+  font-weight: 600;
+}
+
+.setupReviewRow dd {
+  margin: 0;
+
+  color: var(--helpTextColor);
+  overflow-wrap: anywhere;
+}
+
+.setupReviewStatus {
+  grid-column: 3;
+  justify-self: end;
+
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.setupReviewRow dd.setupReviewStatusConfigured {
+  color: var(--successColor);
+}
+
+.setupReviewRow dd.setupReviewStatusSkipped {
+  color: var(--helpTextColor);
+}
+
+.setupReviewRow dd.setupReviewStatusFailed {
+  color: var(--dangerColor);
+}
+
+.setupReviewRow dd.setupReviewStatusNeeded {
+  color: var(--primaryColor);
+}
+
+@media only screen and (max-width: $breakpointSmall) {
+  .setupReviewRow {
+    grid-template-columns: 1fr auto;
+  }
+
+  .setupReviewRow dd {
+    grid-column: 1 / -1;
+  }
+
+  .setupReviewRow dd.setupReviewStatus {
+    justify-self: start;
+  }
+}

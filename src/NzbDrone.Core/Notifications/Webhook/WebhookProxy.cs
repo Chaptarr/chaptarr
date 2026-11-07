@@ -49,6 +49,12 @@ namespace NzbDrone.Core.Notifications.Webhook
                 request.Headers.ContentType = "application/json";
                 request.SetContent(body.ToJson());
 
+                var canonicalEventName = body.CanonicalEvent?.Value<string>("event");
+                if (!string.IsNullOrWhiteSpace(canonicalEventName))
+                {
+                    request.Headers.Add("X-Chaptarr-Event", canonicalEventName);
+                }
+
                 if (settings.Username.IsNotNullOrWhiteSpace() || settings.Password.IsNotNullOrWhiteSpace())
                 {
                     request.Credentials = new BasicNetworkCredential(settings.Username, settings.Password);

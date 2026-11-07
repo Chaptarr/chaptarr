@@ -4,9 +4,11 @@ using FluentValidation.Validators;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Organizer;
 
+using NzbDrone.Core.Validation;
+
 namespace Chaptarr.Api.V1.Author
 {
-    public class AuthorFolderAsRootFolderValidator : PropertyValidator
+    public class AuthorFolderAsRootFolderValidator : NzbDronePropertyValidator
     {
         private readonly IBuildFileNames _fileNameBuilder;
 
@@ -17,7 +19,7 @@ namespace Chaptarr.Api.V1.Author
 
         protected override string GetDefaultMessageTemplate() => "Root folder path '{rootFolderPath}' contains author folder '{authorFolder}'";
 
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue == null)
             {

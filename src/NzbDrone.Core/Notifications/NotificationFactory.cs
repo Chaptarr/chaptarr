@@ -4,6 +4,7 @@ using System.Linq;
 using FluentValidation.Results;
 using NLog;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Localization;
 using NzbDrone.Core.ThingiProvider;
 
 namespace NzbDrone.Core.Notifications
@@ -31,12 +32,14 @@ namespace NzbDrone.Core.Notifications
     {
         private readonly INotificationStatusService _notificationStatusService;
         private readonly Logger _logger;
+        private readonly ILocalizationService _localizationService;
 
-        public NotificationFactory(INotificationStatusService notificationStatusService, INotificationRepository providerRepository, IEnumerable<INotification> providers, IServiceProvider container, IEventAggregator eventAggregator, Logger logger)
+        public NotificationFactory(INotificationStatusService notificationStatusService, INotificationRepository providerRepository, IEnumerable<INotification> providers, IServiceProvider container, IEventAggregator eventAggregator, ILocalizationService localizationService, Logger logger)
             : base(providerRepository, providers, container, eventAggregator, logger)
         {
             _notificationStatusService = notificationStatusService;
             _logger = logger;
+            _localizationService = localizationService;
         }
 
         protected override List<NotificationDefinition> Active()
@@ -227,6 +230,11 @@ namespace NzbDrone.Core.Notifications
 
         public override void SetProviderCharacteristics(INotification provider, NotificationDefinition definition)
         {
+            if (provider is ILocalizedNotification localized)
+            {
+                localized.ConfigureLocalization(_localizationService);
+            }
+
             base.SetProviderCharacteristics(provider, definition);
 
             definition.SupportsOnGrab = provider.SupportsOnGrab;

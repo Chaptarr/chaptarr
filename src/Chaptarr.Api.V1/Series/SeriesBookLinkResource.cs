@@ -11,6 +11,7 @@ namespace Chaptarr.Api.V1.Series
         public int SeriesPosition { get; set; }
         public int SeriesId { get; set; }
         public int BookId { get; set; }
+        public bool IsPrimary { get; set; }
     }
 
     public static class SeriesBookLinkResourceMapper
@@ -23,7 +24,8 @@ namespace Chaptarr.Api.V1.Series
                 Position = model.Position,
                 SeriesPosition = model.SeriesPosition,
                 SeriesId = model.SeriesId,
-                BookId = model.BookId
+                BookId = model.BookId,
+                IsPrimary = model.IsPrimary
             };
         }
 

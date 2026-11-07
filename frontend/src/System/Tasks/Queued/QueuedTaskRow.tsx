@@ -1,4 +1,3 @@
-import moment from 'moment';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { CommandBody } from 'Commands/Command';
@@ -11,6 +10,7 @@ import useModalOpenState from 'Helpers/Hooks/useModalOpenState';
 import { icons, kinds } from 'Helpers/Props';
 import { cancelCommand } from 'Store/Actions/commandActions';
 import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import formatDate from 'Utilities/Date/formatDate';
 import formatDateTime from 'Utilities/Date/formatDateTime';
 import formatTimeSpan from 'Utilities/Date/formatTimeSpan';
@@ -67,9 +67,9 @@ function getFormattedDates(
 ) {
   if (showRelativeDates) {
     return {
-      queuedAt: moment(queued).fromNow(),
-      startedAt: started ? moment(started).fromNow() : '-',
-      endedAt: ended ? moment(ended).fromNow() : '-',
+      queuedAt: dayjs(queued).fromNow(),
+      startedAt: started ? dayjs(started).fromNow() : '-',
+      endedAt: ended ? dayjs(ended).fromNow() : '-',
     };
   }
 

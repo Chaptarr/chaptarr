@@ -11,6 +11,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.MediaCover;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.Series
 {
@@ -21,6 +22,7 @@ namespace Chaptarr.Api.V1.Series
         private readonly ISeriesNarratorService _seriesNarratorService;
         private readonly ISeriesNarratorDiscoveryService _narratorDiscoveryService;
         private readonly ISeriesVariantService _seriesVariantService;
+        private readonly IEditionService _editionService;
         private readonly IMediaCoverProxy _mediaCoverProxy;
         private readonly Logger _logger;
 
@@ -28,6 +30,7 @@ namespace Chaptarr.Api.V1.Series
                                 ISeriesNarratorService seriesNarratorService,
                                 ISeriesNarratorDiscoveryService narratorDiscoveryService,
                                 ISeriesVariantService seriesVariantService,
+                                IEditionService editionService,
                                 IMediaCoverProxy mediaCoverProxy,
                                 Logger logger)
         {
@@ -35,6 +38,7 @@ namespace Chaptarr.Api.V1.Series
             _seriesNarratorService = seriesNarratorService;
             _narratorDiscoveryService = narratorDiscoveryService;
             _seriesVariantService = seriesVariantService;
+            _editionService = editionService;
             _mediaCoverProxy = mediaCoverProxy;
             _logger = logger;
         }
@@ -48,10 +52,55 @@ namespace Chaptarr.Api.V1.Series
             if (requestedMediaType.HasValue)
             {
                 series = series.Where(s => s.MediaType == requestedMediaType.Value).ToList();
-               _logger.Debug("Filtered series for author {0} by mediaType {1}: {2} series", authorId, mediaType, series.Count);
+               _logger.DebugSafe("Filtered series for author {0} by mediaType {1}: {2} series", authorId, mediaType, series.Count);
             }
 
             return ProxyRemoteImages(series.ToResource());
+        }
+
+        /// <summary>
+        /// Compares narrators across every volume of a series, over all known editions rather than
+        /// only the monitored ones: which volumes each narrator covers, which are missing, and
+        /// which are already owned.
+        /// </summary>
+        [HttpGet("narrators/matrix")]
+        public ActionResult<SeriesNarratorMatrixResource> GetNarratorMatrix([FromQuery] string title, [FromQuery] int? authorId = null)
+        {
+            if (title.IsNullOrWhiteSpace())
+            {
+                return BadRequest(new ApiErrorResource { Error = "title is required" });
+            }
+
+            var candidates = authorId.HasValue ? _seriesService.GetByAuthorId(authorId.Value) : _seriesService.GetAllSeries();
+            var wanted = SeriesNarratorMatrixBuilder.Normalize(title);
+            var series = candidates
+                .Where(s => SeriesNarratorMatrixBuilder.Normalize(s.Title) == wanted)
+                .OrderBy(s => s.IsNarratorVariant)
+                .ThenByDescending(s => s.PrimaryWorkCount)
+                .FirstOrDefault();
+            if (series == null)
+            {
+                return NotFound(new ApiErrorResource { Error = "series not found" });
+            }
+
+            var links = (series.LinkItems ?? new List<NzbDrone.Core.Books.SeriesBookLink>())
+                .Where(l => l.IsPrimary)
+                .OrderBy(l => l.SeriesPosition)
+                .ToList();
+            var volumes = new List<SeriesNarratorMatrixBuilder.Volume>();
+            foreach (var link in links)
+            {
+                var book = link.Book?.Value;
+                if (book == null)
+                {
+                    continue;
+                }
+
+                var editions = _editionService.GetEditionsByBook(book.Id).Where(e => !e.IsEbook).ToList();
+                volumes.Add(new SeriesNarratorMatrixBuilder.Volume(book.Id, book.Title, link.SeriesPosition, editions));
+            }
+
+            return Ok(SeriesNarratorMatrixBuilder.Build(series.Id, series.Title, volumes));
         }
 
         [HttpGet("{seriesId:int}")]

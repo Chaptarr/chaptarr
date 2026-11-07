@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
+import Button from 'Components/Link/Button';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import FilterMenu from 'Components/Menu/FilterMenu';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
@@ -18,6 +19,7 @@ import { align, icons, kinds } from 'Helpers/Props';
 import InteractiveImportModal from 'InteractiveImport/InteractiveImportModal';
 import UnmappedFilesMediaTypeToggle from 'UnmappedFiles/UnmappedFilesMediaTypeToggle';
 import getFilterValue from 'Utilities/Filter/getFilterValue';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import hasDifferentItems from 'Utilities/Object/hasDifferentItems';
 import translate from 'Utilities/String/translate';
 import getSelectedIds from 'Utilities/Table/getSelectedIds';
@@ -129,6 +131,7 @@ class Missing extends Component {
       isFetching,
       isPopulated,
       error,
+      onRetryPress,
       items,
       isAuthorFetching,
       isAuthorPopulated,
@@ -230,8 +233,11 @@ class Missing extends Component {
 
           {
             !isAnyFetching && error &&
-              <Alert kind={kinds.DANGER}>
-                {translate('ErrorFetchingMissingItems')}
+              <Alert kind={kinds.DANGER} role="alert">
+                <div>{getErrorMessage(error, translate('ErrorFetchingMissingItems'))}</div>
+                <Button size="small" onPress={onRetryPress}>
+                  {translate('Retry')}
+                </Button>
               </Alert>
           }
 
@@ -312,6 +318,7 @@ Missing.propTypes = {
   isFetching: PropTypes.bool.isRequired,
   isPopulated: PropTypes.bool.isRequired,
   error: PropTypes.object,
+  onRetryPress: PropTypes.func.isRequired,
   items: PropTypes.arrayOf(PropTypes.object).isRequired,
   isAuthorFetching: PropTypes.bool.isRequired,
   isAuthorPopulated: PropTypes.bool.isRequired,

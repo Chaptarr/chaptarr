@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.MediaFiles;
@@ -19,6 +20,7 @@ namespace NzbDrone.Core.Parser
     public interface IParsingService
     {
         Author GetAuthor(string title);
+        ParsedBookInfo ParseBookTitleFuzzy(string title) => null;
         RemoteBook Map(ParsedBookInfo parsedBookInfo, SearchCriteriaBase searchCriteria = null);
         RemoteBook Map(ParsedBookInfo parsedBookInfo, int authorId, IEnumerable<int> bookIds);
         List<Book> GetBooks(ParsedBookInfo parsedBookInfo, Author author, SearchCriteriaBase searchCriteria = null);
@@ -34,6 +36,7 @@ namespace NzbDrone.Core.Parser
         private readonly IEditionService _editionService;
         private readonly IMediaFileService _mediaFileService;
         private readonly IAudioTagService _audioTagService;
+        private readonly IConfigService _configService;
         private readonly Logger _logger;
         // private readonly IDeterministicMatcher _deterministicMatcher; // Disabled - old identification system
         // private readonly IExactStringMatcher _stringMatcher; // Disabled - old identification system
@@ -54,13 +57,15 @@ namespace NzbDrone.Core.Parser
                               IEditionService editionService,
                               IMediaFileService mediaFileService,
                               IAudioTagService audioTagService,
-                              Logger logger)
+                              Logger logger,
+                              IConfigService configService = null)
         {
             _bookService = bookService;
             _editionService = editionService;
             _authorService = authorService;
             _mediaFileService = mediaFileService;
             _audioTagService = audioTagService;
+            _configService = configService;
             _logger = logger;
             // _deterministicMatcher = new DeterministicMatchingService(logger); // Disabled - old identification system
             // _stringMatcher = new ExactStringMatcher(logger); // Disabled - old identification system
@@ -84,6 +89,85 @@ namespace NzbDrone.Core.Parser
             }
 
             return authorInfo;
+        }
+
+        public ParsedBookInfo ParseBookTitleFuzzy(string title)
+        {
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                return null;
+            }
+
+            var matchPercent = _configService?.BookImportMinimumMatchPercent ?? 70;
+            if (matchPercent < 50 || matchPercent > 99)
+            {
+                _logger.Warn("Ignoring invalid BookshelfNG fuzzy title threshold {0}; using the default 70%.", matchPercent);
+                matchPercent = 70;
+            }
+
+            var minimumTitleMatch = matchPercent / 100.0;
+            var bestScore = 0.0;
+            Author bestAuthor = null;
+            Book bestBook = null;
+            string bestBookTitle = null;
+
+#pragma warning disable CS0618 // The retained overload implements BookshelfNG's configured fuzzy fallback.
+            var possibleAuthors = _authorService.GetReportCandidates(title);
+            foreach (var author in possibleAuthors)
+            {
+                foreach (var book in _bookService.GetCandidates(author.Id, title) ?? new List<Book>())
+                {
+                    var bookMatch = title.FuzzyMatch(book.Title, minimumTitleMatch);
+                    if (bookMatch.Item1 < 0)
+                    {
+                        continue;
+                    }
+
+                    if (bookMatch.Item3 > bestScore)
+                    {
+                        bestScore = bookMatch.Item3;
+                        bestAuthor = author;
+                        bestBook = book;
+                        bestBookTitle = book.Title;
+                    }
+                }
+
+                foreach (var edition in _editionService.GetCandidates(author.Id, title) ?? new List<Edition>())
+                {
+                    if (edition?.Book == null)
+                    {
+                        continue;
+                    }
+
+                    var editionMatch = title.FuzzyMatch(edition.Title, minimumTitleMatch);
+                    if (editionMatch.Item1 < 0)
+                    {
+                        continue;
+                    }
+
+                    if (editionMatch.Item3 > bestScore)
+                    {
+                        bestScore = editionMatch.Item3;
+                        bestAuthor = author;
+                        bestBook = edition.Book;
+                        bestBookTitle = edition.Title;
+                    }
+                }
+            }
+#pragma warning restore CS0618
+
+            if (bestAuthor == null || bestBook == null || string.IsNullOrWhiteSpace(bestBookTitle))
+            {
+                return null;
+            }
+
+            _logger.Debug("BookshelfNG fuzzy fallback selected {0} by {1} with a {2:P1} title match.",
+                bestBook.Title,
+                bestAuthor.Name,
+                bestScore);
+
+            return Parser.ParseBookTitleWithSearchCriteria(title, bestAuthor, new List<Book> { bestBook }) ??
+                   Parser.ParseBookTitleWithFuzzyMatch(title, bestAuthor, bestBookTitle);
         }
 
         public RemoteBook Map(ParsedBookInfo parsedBookInfo, SearchCriteriaBase searchCriteria = null)
@@ -679,7 +763,9 @@ namespace NzbDrone.Core.Parser
             {
                 var allFields = _audioTagService.ReadAllTags(audioFilePath);
 
-                foreach (var field in allFields.Values.SelectMany(v => v))
+                foreach (var field in allFields
+                             .Where(pair => !BookshelfAudioTagFields.IsPrivate(pair.Key))
+                             .SelectMany(pair => pair.Value ?? new List<string>()))
                 {
                     if (!string.IsNullOrWhiteSpace(field) && field.Contains(authorName, StringComparison.OrdinalIgnoreCase))
                     {

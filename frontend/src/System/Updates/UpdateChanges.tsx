@@ -14,7 +14,7 @@ function UpdateChanges(props: UpdateChangesProps) {
     return null;
   }
 
-  const uniqueChanges = [...new Set(changes)];
+  const uniqueChanges = Array.from(new Set(changes));
 
   return (
     <div>
@@ -24,7 +24,7 @@ function UpdateChanges(props: UpdateChangesProps) {
           const checkChange = change.replace(
             /#\d+\b/g,
             (match) =>
-              `[${match}](https://github.com/Chaptarr/chaptarr/issues/${match.substring(
+              `[${match}](https://github.com/snapetech-org/chaptarrng/issues/${match.substring(
                 1
               )})`
           );

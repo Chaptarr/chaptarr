@@ -1,6 +1,7 @@
 using System;
 using FluentValidation.Results;
 using NLog;
+using NzbDrone.Core.Localization;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 
@@ -17,11 +18,13 @@ namespace NzbDrone.Core.Notifications.Pushover
         private const string URL = "https://api.pushover.net/1/messages.json";
         private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
+        private readonly NotificationText _notificationText;
 
-        public PushoverProxy(IHttpClient httpClient, Logger logger)
+        public PushoverProxy(IHttpClient httpClient, ILocalizationService localizationService, Logger logger)
         {
             _httpClient = httpClient;
             _logger = logger;
+            _notificationText = new NotificationText(localizationService);
         }
 
         public void SendNotification(string title, string message, PushoverSettings settings)
@@ -55,8 +58,8 @@ namespace NzbDrone.Core.Notifications.Pushover
         {
             try
             {
-                const string title = "Test Notification";
-                const string body = "This is a test message from Chaptarr";
+                var title = _notificationText.Get("notification.test.title", "Test Notification");
+                var body = _notificationText.Get("notification.test.body", "This is a test message from Chaptarr.");
 
                 SendNotification(title, body, settings);
             }

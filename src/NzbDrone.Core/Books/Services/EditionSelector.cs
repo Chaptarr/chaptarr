@@ -5,6 +5,7 @@ using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Books.Services;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Books
 {
@@ -86,7 +87,7 @@ namespace NzbDrone.Core.Books
             {
                 var selected = manual.Where(e => e.Monitored).OrderBy(e => e.Id).FirstOrDefault()
                                ?? manual.OrderBy(e => e.Id).First();
-                _logger.Debug("Using manually selected edition: {0} (ID: {1})", selected.Title, selected.Id);
+                _logger.DebugSafe("Using manually selected edition: {0} (ID: {1})", selected.Title, selected.Id);
                 return selected;
             }
 
@@ -98,7 +99,7 @@ namespace NzbDrone.Core.Books
                 return null;
             }
 
-            _logger.Debug("Selected edition '{0}' (ID: {1}, Format: {2}, Votes: {3}, Rating: {4})",
+            _logger.DebugSafe("Selected edition '{0}' (ID: {1}, Format: {2}, Votes: {3}, Rating: {4})",
                 selected2.Title, selected2.Id, selected2.ReadingFormatId,
                 selected2.Ratings?.Votes ?? 0, selected2.Ratings?.Value ?? 0m);
 
@@ -137,7 +138,7 @@ namespace NzbDrone.Core.Books
                 }
 
                 // Audiobook book rows always retain a non-audio representative per language
-                // (best RF=3 ebook, else RF=1 print) so users have an ebook safety net for
+                // (best RF=3/4 ebook, else RF=1 print) so users have an ebook safety net for
                 // self-narrated and unprovable-narrator titles even when audio editions exist.
                 // Ebook book rows skip the print companion when ebooks are present.
                 var hasNative = groupEditions.Any(e => e.ReadingFormatId == nativeFormat);
@@ -327,7 +328,8 @@ namespace NzbDrone.Core.Books
             {
                 return edition.ReadingFormatId switch
                 {
-                    3 => 2,
+                    // Hardcover format 4 is classified as an ebook elsewhere in import flows.
+                    3 or 4 => 2,
                     1 => 1,
                     _ => 0
                 };
@@ -341,6 +343,7 @@ namespace NzbDrone.Core.Books
             return (editions ?? Enumerable.Empty<Edition>())
                 .Where(e => IsRepresentativeFallback(e, mediaType))
                 .OrderByDescending(e => GetRepresentativeFallbackRank(e, mediaType))
+                .ThenByDescending(e => GetLanguagePreferenceRank(e))
                 .ThenByDescending(e => e.Ratings?.Votes ?? 0)
                 .ThenByDescending(e => e.Ratings?.Value ?? 0m)
                 .ThenBy(e => e.Id)
@@ -351,10 +354,34 @@ namespace NzbDrone.Core.Books
         {
             return (editions ?? Enumerable.Empty<Edition>())
                 .Where(e => e != null)
-                .OrderByDescending(e => e.Ratings?.Votes ?? 0)
+                .OrderByDescending(e => GetLanguagePreferenceRank(e))
+                .ThenByDescending(e => e.Ratings?.Votes ?? 0)
                 .ThenByDescending(e => e.Ratings?.Value ?? 0m)
                 .ThenBy(e => e.Id)
                 .FirstOrDefault();
+        }
+
+        // Candidate pools reaching here have already passed MetadataProfile.AllowedLanguages
+        // filtering upstream (EditionMetadataProfileFilter.Apply), when that setting is configured.
+        // When it is NOT configured (the common/default case), every language passes through
+        // unfiltered and this tiebreak is the only thing standing between "most-voted edition wins"
+        // and "most-voted English edition wins" — without it, a translated edition can outrank the
+        // original-language one on a per-edition vote count alone (e.g. a Spanish audiobook edition
+        // consolidating all Spanish-reader votes onto one row, while English votes split across
+        // several English edition rows for the same work). Rank explicit English highest, unknown/
+        // unset language next (don't punish editions that are simply missing a language tag), and
+        // every other explicit language last — a soft default, not an exclusionary filter, so a
+        // foreign-only candidate pool still picks sensibly among itself via votes as before.
+        private static int GetLanguagePreferenceRank(Edition edition)
+        {
+            var canonical = edition?.Language?.CanonicalizeLanguage();
+
+            if (canonical == null)
+            {
+                return 1;
+            }
+
+            return canonical == "eng" ? 2 : 0;
         }
 
     }

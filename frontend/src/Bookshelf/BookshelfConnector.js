@@ -3,51 +3,54 @@ import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import { setSelectedMediaType } from 'Store/Actions/appActions';
-import { clearBooks, fetchBooks } from 'Store/Actions/bookActions';
-import { saveBookshelf, setBookshelfFilter, setBookshelfSort } from 'Store/Actions/bookshelfActions';
+import {
+  clearBookshelf,
+  fetchBookshelfAuthors,
+  saveBookshelf,
+  setBookshelfFilter,
+  setBookshelfMediaType,
+  setBookshelfSort
+} from 'Store/Actions/bookshelfActions';
 import createAuthorClientSideCollectionItemsSelector from 'Store/Selectors/createAuthorClientSideCollectionItemsSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import Bookshelf from './Bookshelf';
 
-function createBookFetchStateSelector() {
-  return createSelector(
-    (state) => state.books.items,
-    (state) => state.books.isFetching,
-    (state) => state.books.isPopulated,
-    (state) => state.app.selectedMediaType || 'audiobook',
-    (items, isFetching, isPopulated, selectedMediaType) => {
-      const scopedItems = items.filter((book) => book.mediaType === selectedMediaType);
-      return {
-        isFetching,
-        isPopulated,
-        items: scopedItems,
-        selectedMediaType
-      };
-    }
-  );
+function getSelectedBookshelfMediaType(state) {
+  const bookshelfMediaType = state.bookshelf.selectedMediaType;
+
+  if (bookshelfMediaType === 'audiobook' || bookshelfMediaType === 'ebook' || bookshelfMediaType === 'both') {
+    return bookshelfMediaType;
+  }
+
+  return state.app.selectedMediaType === 'ebook' ? 'ebook' : 'audiobook';
 }
 
 function createMapStateToProps() {
   return createSelector(
-    createBookFetchStateSelector(),
+    (state) => state.bookshelf,
+    getSelectedBookshelfMediaType,
     createAuthorClientSideCollectionItemsSelector('bookshelf'),
     createDimensionsSelector(),
-    (books, author, dimensionsState) => {
-      const isPopulated = books.isPopulated && author.isPopulated;
-      const isFetching = author.isFetching || books.isFetching;
-      const authorIds = new Set(books.items.map((book) => book.authorId));
-      const items = author.items.filter((item) => authorIds.has(item.id));
-      const visibleAuthorIds = new Set(items.map((item) => item.id));
-      const bookCount = books.items.filter((book) => visibleAuthorIds.has(book.authorId)).length;
+    (bookshelf, selectedMediaType, author, dimensionsState) => {
+      const { authorBookCounts } = bookshelf;
+      const isPopulated = bookshelf.isPopulated && author.isPopulated;
+      const isFetching = author.isFetching || bookshelf.isFetching;
+      const items = author.items.filter((item) => authorBookCounts.hasOwnProperty(item.id));
+
+      let bookCount = 0;
+      items.forEach((item) => {
+        bookCount += authorBookCounts[item.id];
+      });
 
       return {
         ...author,
         items,
-        totalItems: authorIds.size,
+        totalItems: Object.keys(authorBookCounts).length,
         isPopulated,
         isFetching,
+        error: author.error || bookshelf.error,
         bookCount,
-        selectedMediaType: books.selectedMediaType,
+        selectedMediaType,
         isSmallScreen: dimensionsState.isSmallScreen
       };
     }
@@ -57,9 +60,10 @@ function createMapStateToProps() {
 const mapDispatchToProps = {
   setBookshelfSort,
   setBookshelfFilter,
+  setBookshelfMediaType,
   setSelectedMediaType,
-  clearBooks,
-  fetchBooks,
+  clearBookshelf,
+  fetchBookshelfAuthors,
   saveBookshelf
 };
 
@@ -69,24 +73,23 @@ class BookshelfConnector extends Component {
   // Lifecycle
 
   componentDidMount() {
-    this.fetchBooksForSelectedMediaType();
+    // Other pages can replace the books store, so rows reload their books on every visit.
+    this.props.clearBookshelf();
+    this.fetchAuthorBookCounts();
   }
 
   componentDidUpdate(prevProps) {
     if (prevProps.selectedMediaType !== this.props.selectedMediaType) {
-      this.fetchBooksForSelectedMediaType();
+      this.fetchAuthorBookCounts();
     }
   }
 
   componentWillUnmount() {
-    if (this.abortBooksFetch) {
-      this.abortBooksFetch();
-      this.abortBooksFetch = null;
-    }
+    this.props.clearBookshelf();
   }
 
-  fetchBooksForSelectedMediaType() {
-    this.abortBooksFetch = this.props.fetchBooks({
+  fetchAuthorBookCounts() {
+    this.props.fetchBookshelfAuthors({
       mediaType: this.props.selectedMediaType
     });
   }
@@ -103,8 +106,16 @@ class BookshelfConnector extends Component {
   };
 
   onMediaTypeChange = (mediaType) => {
+    if (mediaType === 'both') {
+      this.props.setBookshelfMediaType({ mediaType });
+      return;
+    }
+
     this.props.setSelectedMediaType({ mediaType });
-    this.props.clearBooks();
+  };
+
+  onRetryPress = () => {
+    this.fetchAuthorBookCounts();
   };
 
   onUpdateSelectedPress = (payload) => {
@@ -121,6 +132,7 @@ class BookshelfConnector extends Component {
         onSortPress={this.onSortPress}
         onFilterSelect={this.onFilterSelect}
         onMediaTypeChange={this.onMediaTypeChange}
+        onRetryPress={this.onRetryPress}
         onUpdateSelectedPress={this.onUpdateSelectedPress}
       />
     );
@@ -128,12 +140,13 @@ class BookshelfConnector extends Component {
 }
 
 BookshelfConnector.propTypes = {
-  selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook']).isRequired,
+  selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook', 'both']).isRequired,
   setBookshelfSort: PropTypes.func.isRequired,
   setBookshelfFilter: PropTypes.func.isRequired,
+  setBookshelfMediaType: PropTypes.func.isRequired,
   setSelectedMediaType: PropTypes.func.isRequired,
-  clearBooks: PropTypes.func.isRequired,
-  fetchBooks: PropTypes.func.isRequired,
+  clearBookshelf: PropTypes.func.isRequired,
+  fetchBookshelfAuthors: PropTypes.func.isRequired,
   saveBookshelf: PropTypes.func.isRequired
 };
 

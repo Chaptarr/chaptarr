@@ -57,6 +57,53 @@ namespace Chaptarr.Core.Test.Indexers
         }
 
         [Test]
+        public void should_keep_bookshelf_mam_search_filters_and_languages_effective()
+        {
+            var generator = CreateGenerator();
+            generator.Settings.SearchType = (int)MyAnonaMouseSearchType.Freeleech;
+            generator.Settings.SearchInDescription = true;
+            generator.Settings.SearchInSeries = false;
+            generator.Settings.SearchInFilenames = true;
+            generator.Settings.SearchLanguages = new[] { 4, 1, 4 };
+
+            var criteria = new BookSearchCriteria
+            {
+                Author = new Author
+                {
+                    Name = "Author",
+                    AudiobookMetadataProfile = new MetadataProfile { AllowedLanguages = "spa" }
+                },
+                Books = new List<Book> { new Book { MediaType = BookMediaType.Audiobook } },
+                BookTitle = "Book"
+            };
+            var payload = GetRequestPayloadObject(generator.GetSearchRequests(criteria), 0);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(payload["tor"]?["searchType"]?.Value<string>(), Is.EqualTo("fl"));
+                Assert.That(payload["tor"]?["srchIn"]?.Values<string>(),
+                    Is.EqualTo(new[] { "title", "author", "narrator", "tags", "description", "filenames" }));
+                Assert.That(payload["tor"]?["browse_lang"]?.Values<string>(), Is.EqualTo(new[] { "4", "1" }));
+            });
+        }
+
+        [Test]
+        public void should_query_an_alternate_edition_title_without_replacing_the_primary_title()
+        {
+            var searchCriteria = new BookSearchCriteria
+            {
+                Author = new Author { Name = "Karin Slaughter" },
+                BookTitle = "Mooie Meisjes",
+                SearchTitleOverride = "Pretty Girls"
+            };
+
+            var chain = CreateGenerator().GetSearchRequests(searchCriteria);
+
+            Assert.That(GetRequestPayload(chain, 0), Does.Contain("Pretty Girls"));
+            Assert.That(searchCriteria.BookTitle, Is.EqualTo("Mooie Meisjes"));
+        }
+
+        [Test]
         public void should_add_book_number_fallback_as_last_tier_for_interactive_search()
         {
             var generator = CreateGenerator();
@@ -73,6 +120,39 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(GetRequestPayload(chain, 0), Does.Contain("\"text\":\"Trouble With Peace Book 2 Joe Abercrombie\""));
             Assert.That(GetRequestPayload(chain, 1), Does.Contain("\"text\":\"Trouble With Peace Book 2\""));
             Assert.That(GetRequestPayload(chain, 2), Does.Contain("\"text\":\"Trouble With Peace\""));
+        }
+
+        [Test]
+        public void should_add_book_number_fallback_as_last_tier_for_automatic_search()
+        {
+            var generator = CreateGenerator();
+            var searchCriteria = new BookSearchCriteria
+            {
+                Author = new Author { Name = "Joe Abercrombie" },
+                BookTitle = "The Trouble With Peace, Book 2",
+                InteractiveSearch = false
+            };
+
+            var chain = generator.GetSearchRequests(searchCriteria);
+
+            Assert.That(chain.Tiers, Is.EqualTo(3));
+            Assert.That(GetRequestPayload(chain, 2), Does.Contain("\"text\":\"Trouble With Peace\""));
+        }
+
+        [Test]
+        public void should_drop_a_fractional_book_number_in_the_fallback()
+        {
+            var generator = CreateGenerator();
+            var searchCriteria = new BookSearchCriteria
+            {
+                Author = new Author { Name = "George R.R. Martin" },
+                BookTitle = "The Hedge Knight, Book 0.5",
+                InteractiveSearch = false
+            };
+
+            var chain = generator.GetSearchRequests(searchCriteria);
+
+            Assert.That(GetRequestPayload(chain, chain.Tiers - 1), Does.Contain("\"text\":\"Hedge Knight\""));
         }
 
         [Test]

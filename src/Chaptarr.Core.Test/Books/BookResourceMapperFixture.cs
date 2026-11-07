@@ -1,3 +1,4 @@
+using Chaptarr.Api.V1.Author;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -19,6 +20,38 @@ namespace Chaptarr.Core.Test.Books
     [TestFixture]
     public class BookResourceMapperFixture
     {
+        [TestCase(BookMediaType.Audiobook, true)]
+        [TestCase(BookMediaType.Ebook, true)]
+        [TestCase(BookMediaType.Audiobook, false)]
+        [TestCase(BookMediaType.Ebook, false)]
+        public void should_preserve_bookshelf_work_date_and_selected_edition_page_count(BookMediaType mediaType, bool legacy)
+        {
+            var workDate = new DateTime(2000, 1, 1);
+            var editionDate = new DateTime(2020, 1, 1);
+            var book = new Book
+            {
+                Title = "Fixture work",
+                MediaType = mediaType,
+                ReleaseDate = workDate,
+                Author = new Author(),
+                Editions = new List<Edition>
+                {
+                    new Edition { Monitored = true, ReleaseDate = editionDate, PageCount = 240 }
+                }
+            };
+
+            var resource = book.ToResource(new BookResourceMappingOptions
+            {
+                FacadeContext = legacy ? new ReadarrFacadeContext("hc", null, string.Empty, isBookshelfCompatibility: true) : null
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.ReleaseDate, Is.EqualTo(legacy ? workDate : editionDate));
+                Assert.That(resource.PageCount, Is.EqualTo(legacy || mediaType == BookMediaType.Ebook ? 240 : 0));
+            });
+        }
+
         [TestCase("work:12345")]
         [TestCase("WORK:12345")]
         public void should_not_map_unknown_foreign_book_prefixes(string foreignBookId)
@@ -876,6 +909,166 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(resource.Links, Is.Null);
             Assert.That(resource.Title, Is.EqualTo("Dune"));
             Assert.That(resource.Statistics, Is.Not.Null);
+        }
+
+        [Test]
+        public void resource_should_include_selected_edition_links()
+        {
+            var book = new Book
+            {
+                Id = 12,
+                Title = "Dune",
+                MediaType = BookMediaType.Audiobook,
+                Links = new System.Collections.Generic.List<Links>
+                {
+                    new Links { Name = "Work", Url = "https://catalog.example/work" }
+                },
+                Editions = new System.Collections.Generic.List<Edition>
+                {
+                    new Edition
+                    {
+                        Id = 1,
+                        Monitored = true,
+                        Title = "Dune audiobook",
+                        Links = new System.Collections.Generic.List<Links>
+                        {
+                            new Links { Name = "Edition", Url = "https://catalog.example/edition" }
+                        }
+                    }
+                }
+            };
+
+            var resource = book.ToResource();
+
+            Assert.That(resource.Links.Select(link => link.Url), Is.EquivalentTo(new[]
+            {
+                "https://catalog.example/work",
+                "https://catalog.example/edition"
+            }));
+        }
+
+        [Test]
+        public void bookshelf_compatibility_should_preserve_empty_series_grabbed_and_other_provider_edition_ids()
+        {
+            var book = new Book
+            {
+                Id = 13,
+                Title = "Dune",
+                MediaType = BookMediaType.Ebook,
+                Editions = new System.Collections.Generic.List<Edition>
+                {
+                    new Edition
+                    {
+                        Id = 1,
+                        Monitored = true,
+                        Title = "Dune ebook",
+                        ForeignEditionId = "ol:OL123M",
+                        OpenLibraryEditionId = "OL123M"
+                    }
+                }
+            };
+            var options = new BookResourceMappingOptions
+            {
+                FacadeContext = new ReadarrFacadeContext("hc", null, "/api", isBookshelfCompatibility: true)
+            };
+
+            var resource = book.ToResource(options);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.SeriesTitle, Is.EqualTo(string.Empty));
+                Assert.That(resource.Grabbed, Is.False);
+                Assert.That(resource.ForeignEditionId, Is.EqualTo("ol:OL123M"));
+            });
+        }
+
+        [TestCase("")]
+        [TestCase("Reader One / Reader Two")]
+        public void bookshelf_should_preserve_raw_narrator_title_and_all_series(string narrator)
+        {
+            var book = new Book
+            {
+                Id = 1,
+                Title = "Fixture (Cycle #2)",
+                MediaType = BookMediaType.Audiobook,
+                AnyEditionOk = true,
+                SeriesLinks = new List<SeriesBookLink>
+                {
+                    new SeriesBookLink { SeriesPosition = 2, Series = new Series { Title = "Universe" } },
+                    new SeriesBookLink { SeriesPosition = 1, Position = "2", IsPrimary = true, Series = new Series { Title = "Cycle" } }
+                },
+                Editions = new List<Edition>
+                {
+                    new Edition { Monitored = true, Title = "Fixture (Cycle #2)", Narrator = narrator }
+                }
+            };
+
+            var resource = book.ToResource(new BookResourceMappingOptions
+            {
+                FacadeContext = new ReadarrFacadeContext("hc", null, "/api", isBookshelfCompatibility: true)
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.Title, Is.EqualTo("Fixture (Cycle #2)"));
+                Assert.That(resource.SeriesTitle, Is.EqualTo("Cycle #2; Universe"));
+                Assert.That(resource.Narrator, Is.EqualTo(narrator));
+            });
+        }
+
+        [Test]
+        public void bookshelf_without_monitored_edition_should_use_empty_edition_metadata()
+        {
+            var book = new Book
+            {
+                Id = 1,
+                Title = "Fixture",
+                Ratings = new Ratings { Votes = 5, Value = 4 },
+                Images = new List<CoreMediaCover> { new CoreMediaCover { Url = "https://example.test/cover.jpg" } }
+            };
+            var resource = book.ToResource(new BookResourceMappingOptions
+            {
+                FacadeContext = new ReadarrFacadeContext("hc", null, "/api", isBookshelfCompatibility: true)
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.Ratings.Votes, Is.Zero);
+                Assert.That(resource.Ratings.Value, Is.Zero);
+                Assert.That(resource.Images, Is.Empty);
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void only_legacy_author_resource_should_preserve_provider_placeholder(bool legacy)
+        {
+            const string placeholder = "https://assets.hardcover.app/author/910002/provider-default.jpg";
+            MediaCoverRendition.RegisterKnownPlaceholderImage(placeholder, "47736d50a054c80f646c094ecd9c00c3fb12f5c585817fa5a581140c364da30e");
+            var author = new Author { Images = new List<CoreMediaCover> { new(MediaCoverTypes.Poster, placeholder) } };
+            var resource = author.ToResource(legacy ? new ReadarrFacadeContext("hc", null, "/api", isBookshelfCompatibility: true) : null);
+
+            Assert.That(resource.Images.Count, Is.EqualTo(legacy ? 1 : 0));
+        }
+
+        [Test]
+        public void bookshelf_series_with_equal_positions_should_follow_source_link_order()
+        {
+            var book = new Book
+            {
+                Id = 1,
+                SeriesLinks = new List<SeriesBookLink>
+                {
+                    new() { Id = 20, SeriesPosition = 1, Series = new Series { Title = "Second" } },
+                    new() { Id = 10, SeriesPosition = 1, Series = new Series { Title = "First" } }
+                }
+            };
+            var resource = book.ToResource(new BookResourceMappingOptions
+            {
+                FacadeContext = new ReadarrFacadeContext("hc", null, "/api", isBookshelfCompatibility: true)
+            });
+
+            Assert.That(resource.SeriesTitle, Is.EqualTo("First; Second"));
         }
 
         private static MemoryTarget ConfigureLogging()

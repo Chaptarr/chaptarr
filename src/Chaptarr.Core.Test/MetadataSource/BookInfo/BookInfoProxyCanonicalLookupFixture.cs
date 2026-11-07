@@ -21,6 +21,54 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
     [TestFixture]
     public class BookInfoProxyCanonicalLookupFixture
     {
+        private sealed class GoodreadsSearchProxyStub : IGoodreadsSearchProxy
+        {
+            private readonly List<SearchJsonResource> _results;
+
+            public int SearchCalls { get; private set; }
+
+            public GoodreadsSearchProxyStub(List<SearchJsonResource> results)
+            {
+                _results = results;
+            }
+
+            public List<SearchJsonResource> Search(string query)
+            {
+                SearchCalls++;
+                return _results;
+            }
+        }
+
+        private sealed class MetadataPreferencesStub : IAdditionalBookMetadataProxy
+        {
+            public int BookPreferenceCalls { get; private set; }
+            public int AuthorImagePreferenceCalls { get; private set; }
+
+            public List<Book> Search(string query) => new();
+            public List<Book> SearchProvider(string query, string provider) => new();
+            public bool HandlesBookId(string foreignBookId) => false;
+            public bool HandlesAuthorId(string foreignAuthorId) => false;
+            public Tuple<string, Book, List<Author>> GetBook(string foreignBookId) => throw new NotImplementedException();
+            public Author GetAuthor(string foreignAuthorId) => throw new NotImplementedException();
+
+            public Book ApplyFieldSourcePreferences(Book book)
+            {
+                BookPreferenceCalls++;
+                book.Title = "Preferred title";
+                return book;
+            }
+
+            public Author ApplyAuthorImageSourcePreference(Author author, Book contextBook = null)
+            {
+                if (author != null)
+                {
+                    AuthorImagePreferenceCalls++;
+                }
+
+                return author;
+            }
+        }
+
         private class RecordingHttpClient : IHttpClient
         {
             private readonly Func<HttpRequest, HttpResponse> _handler;
@@ -64,6 +112,18 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                     return MetadataServerUrl;
                 }
 
+                if (targetMethod?.Name == "IsDefined")
+                {
+                    return false;
+                }
+
+                if (targetMethod?.Name.StartsWith("get_", StringComparison.Ordinal) == true)
+                {
+                    return targetMethod.ReturnType.IsValueType
+                        ? Activator.CreateInstance(targetMethod.ReturnType)
+                        : null;
+                }
+
                 throw new NotImplementedException($"Test proxy does not implement {targetMethod?.Name}");
             }
         }
@@ -74,14 +134,17 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             return new MetadataServerHealthGate(configService, new MetadataServerHealthService(logger), logger);
         }
 
-        private static BookInfoProxy CreateProxy(IHttpClient httpClient)
+        private static BookInfoProxy CreateProxy(
+            IHttpClient httpClient,
+            IGoodreadsSearchProxy goodreadsSearchProxy = null,
+            IAdditionalBookMetadataProxy additionalBookMetadataProxy = null)
         {
             var configService = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
             var requestBuilder = new MetadataRequestBuilder(configService);
 
             return new BookInfoProxy(httpClient,
                 cachedHttpClient: null,
-                goodreadsSearchProxy: null,
+                goodreadsSearchProxy: goodreadsSearchProxy,
                 hardcoverSearchClient: null,
                 audibleCatalogProxy: null,
                 authorService: null,
@@ -91,7 +154,8 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 requestBuilder: requestBuilder,
                 logger: LogManager.GetCurrentClassLogger(),
                 cacheManager: new CacheManager(),
-                metadataServerHealthGate: CreateHealthGate(configService));
+                metadataServerHealthGate: CreateHealthGate(configService),
+                additionalBookMetadataProxy: additionalBookMetadataProxy);
         }
 
         [Test]
@@ -107,7 +171,8 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                     WorkId = 22733728,
                     Title = "The Long Way to a Small, Angry Planet",
                     Author = new AuthorJsonResource { Id = 1306980, Name = "Becky Chambers" }
-                }
+                },
+                null
             });
 
             var resource = book.ToResource();
@@ -124,6 +189,46 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 Assert.That(resource.ForeignEditionId, Is.EqualTo("gr:22733729"));
                 Assert.That(resource.Editions.Single().ForeignEditionId, Is.EqualTo("gr:22733729"));
                 Assert.That(prefixFailures, Is.Empty);
+            });
+        }
+
+        [Test]
+        public void should_preserve_requested_media_type_on_goodreads_text_search()
+        {
+            var goodreadsSearch = new GoodreadsSearchProxyStub(new List<SearchJsonResource>
+            {
+                new SearchJsonResource
+                {
+                    BookId = 22733729,
+                    WorkId = 22733728,
+                    Title = "The Long Way to a Small, Angry Planet",
+                    Author = new AuthorJsonResource { Id = 1306980, Name = "Becky Chambers" }
+                }
+            });
+            var proxy = CreateProxy(
+                new RecordingHttpClient(_ => throw new AssertionException("HTTP should not be called")),
+                goodreadsSearch);
+
+            // Select the fallback path explicitly. With no saved source preference,
+            // ChaptarrNG uses its metadata server as the primary catalog and resolves
+            // its result through the V5 work endpoint instead of Goodreads autocomplete.
+            var previousSources = Environment.GetEnvironmentVariable("CHAPTARR_METADATA_SOURCES");
+            List<Book> results;
+            try
+            {
+                Environment.SetEnvironmentVariable("CHAPTARR_METADATA_SOURCES", "loc,gutendex,openlibrary");
+                results = proxy.SearchForNewBook("dune", author: null, mediaType: BookMediaType.Ebook);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("CHAPTARR_METADATA_SOURCES", previousSources);
+            }
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(goodreadsSearch.SearchCalls, Is.EqualTo(1));
+                Assert.That(results, Has.Count.EqualTo(1));
+                Assert.That(results.Single().MediaType, Is.EqualTo(BookMediaType.Ebook));
             });
         }
 
@@ -147,6 +252,28 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 Assert.That(url, Does.Contain("/api/v5/author"));
                 Assert.That(url, Does.Contain("id=gr:2514"));
                 Assert.That(url, Does.Not.Contain("hc:2514"));
+                Assert.That(results, Is.Empty);
+            });
+        }
+
+        [Test]
+        public void should_resolve_a_provider_prefixed_author_term_on_the_author_endpoint()
+        {
+            var httpClient = new RecordingHttpClient(req =>
+                new HttpResponse(req, new HttpHeader { ContentType = "application/json" }, "{}", HttpStatusCode.NotFound));
+
+            var proxy = CreateProxy(httpClient);
+
+            var results = proxy.SearchForNewAuthor("hc:252214");
+
+            var urls = httpClient.Requests.Select(r => Uri.UnescapeDataString(r.Url.ToString())).ToList();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(urls, Is.Not.Empty);
+                Assert.That(urls, Has.All.Contain("/api/v5/author"));
+                Assert.That(urls, Has.None.Contain("/api/v5/work"));
+                Assert.That(urls.First(), Does.Contain("id=hc:252214"));
                 Assert.That(results, Is.Empty);
             });
         }
@@ -192,7 +319,9 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             var mapper = typeof(BookInfoProxy).GetMethod("MapEdition", BindingFlags.Static | BindingFlags.NonPublic);
             var edition = (Edition)mapper.Invoke(null, new object[]
             {
-                new NzbDrone.Core.MetadataSource.BookInfo.BookResource { ForeignId = 12345, Title = "Legacy Edition" }
+                new NzbDrone.Core.MetadataSource.BookInfo.BookResource { ForeignId = 12345, Title = "Legacy Edition" },
+                "goodreads",
+                false
             });
 
             Assert.Multiple(() =>
@@ -833,6 +962,24 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             Assert.That(authorKey, Is.EqualTo("hc:999"));
             Assert.That(book.HardcoverBookId, Is.EqualTo("hc:12345"));
             Assert.That(book.BaseBookId, Is.EqualTo("hc:12345"));
+        }
+
+        [Test]
+        public void should_apply_supplemental_metadata_preferences_to_primary_catalog_refreshes()
+        {
+            var httpClient = new RecordingHttpClient(req =>
+                new HttpResponse(req, new HttpHeader { ContentType = "application/json" }, HardcoverWorkPayload, HttpStatusCode.OK));
+            var preferences = new MetadataPreferencesStub();
+            var proxy = CreateProxy(httpClient, additionalBookMetadataProxy: preferences);
+
+            var result = proxy.GetBookInfo("hc:383236", BookMediaType.Audiobook);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.Item2.Title, Is.EqualTo("Preferred title"));
+                Assert.That(preferences.BookPreferenceCalls, Is.EqualTo(1));
+                Assert.That(preferences.AuthorImagePreferenceCalls, Is.GreaterThan(0));
+            });
         }
     }
 }

@@ -54,8 +54,8 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
         private string GetPostImportCategory(DownloadClientItem downloadClientItem)
         {
             return PostImportCategoryResolver.Resolve(downloadClientItem,
-                Settings.AudiobookCategory,
-                Settings.EbookCategory,
+                BookDownloadCategorySettings.GetCategory(Settings, BookMediaType.Audiobook),
+                BookDownloadCategorySettings.GetCategory(Settings, BookMediaType.Ebook),
                 Settings.AudiobookImportedCategory,
                 Settings.EbookImportedCategory);
         }
@@ -85,10 +85,68 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
         public bool ShouldPreserveItemAfterImport(DownloadClientItem downloadClientItem)
         {
             return PostImportCategoryResolver.IsInResolvedPostImportCategory(downloadClientItem,
-                Settings.AudiobookCategory,
-                Settings.EbookCategory,
+                BookDownloadCategorySettings.GetCategory(Settings, BookMediaType.Audiobook),
+                BookDownloadCategorySettings.GetCategory(Settings, BookMediaType.Ebook),
                 Settings.AudiobookImportedCategory,
                 Settings.EbookImportedCategory);
+        }
+
+        private bool TryAdoptExistingTorrent(RemoteBook remoteBook, string hash, string category, DownloadClientException addException)
+        {
+            if (hash.IsNullOrWhiteSpace())
+            {
+                return false;
+            }
+
+            string existingCategory;
+            bool existsElsewhere;
+
+            try
+            {
+                existingCategory = BookDownloadCategorySettings.GetConfiguredCategories(Settings)
+                    .Concat(new[] { Settings.AudiobookImportedCategory, Settings.EbookImportedCategory })
+                    .Where(c => c.IsNotNullOrWhiteSpace())
+                    .Distinct(StringComparer.InvariantCultureIgnoreCase)
+                    .FirstOrDefault(c => Proxy.GetTorrents(Settings, c).Any(t => hash.Equals(t.Hash, StringComparison.OrdinalIgnoreCase)));
+
+                existsElsewhere = existingCategory == null && Proxy.IsTorrentLoaded(hash.ToLower(), Settings);
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Unable to check whether torrent {0} already exists in qBittorrent", hash);
+                return false;
+            }
+
+            if (existsElsewhere)
+            {
+                throw new DownloadClientRejectedReleaseException(remoteBook.Release, "qBittorrent already has this torrent outside Chaptarr's categories", addException);
+            }
+
+            if (existingCategory == null)
+            {
+                return false;
+            }
+
+            if (category.IsNotNullOrWhiteSpace() && !category.Equals(existingCategory, StringComparison.InvariantCultureIgnoreCase))
+            {
+                try
+                {
+                    Proxy.SetTorrentLabel(hash.ToLower(), category, Settings);
+                }
+                catch (DownloadClientException ex)
+                {
+                    _logger.Warn(ex, "Failed to move existing torrent {0} from category \"{1}\" to \"{2}\" in qBittorrent.", hash, existingCategory, category);
+                }
+            }
+
+            _logger.Info("qBittorrent already has torrent {0} in Chaptarr category \"{1}\"; continuing with the existing download instead of failing the grab", hash, existingCategory);
+            return true;
+        }
+
+        private static bool IsConflictResponse(DownloadClientException exception)
+        {
+            return exception.InnerException is HttpException httpException &&
+                   httpException.Response?.StatusCode == HttpStatusCode.Conflict;
         }
 
         protected override string AddFromMagnetLink(RemoteBook remoteBook, string hash, string magnetLink)
@@ -103,15 +161,23 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             var isRecentBook = remoteBook.IsRecentBook();
             var moveToTop = (isRecentBook && Settings.RecentTvPriority == (int)QBittorrentPriority.First) || (!isRecentBook && Settings.OlderTvPriority == (int)QBittorrentPriority.First);
             var forceStart = (QBittorrentState)Settings.InitialState == QBittorrentState.ForceStart;
-            var category = remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? Settings.EbookCategory : Settings.AudiobookCategory;
+            var category = BookDownloadCategorySettings.GetCategory(Settings, remoteBook.GetPreferredMediaType());
 
             try
             {
                 Proxy.AddTorrentFromUrl(magnetLink, addHasSetShareLimits && setShareLimits ? remoteBook.SeedConfiguration : null, Settings, category);
             }
-            catch (DownloadClientException ex) when (ex.InnerException is HttpException httpException && httpException.Response.StatusCode is HttpStatusCode.Conflict)
+            catch (DownloadClientException ex)
             {
-                throw new DownloadClientRejectedReleaseException(remoteBook.Release, "qBittorrent rejected the magnet link due to a conflict", ex);
+                if (!TryAdoptExistingTorrent(remoteBook, hash, category, ex))
+                {
+                    if (IsConflictResponse(ex))
+                    {
+                        throw new DownloadClientRejectedReleaseException(remoteBook.Release, "qBittorrent rejected the magnet link due to a conflict", ex);
+                    }
+
+                    throw;
+                }
             }
 
             if ((!addHasSetShareLimits && setShareLimits) || moveToTop || forceStart)
@@ -168,15 +234,23 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             var isRecentBook = remoteBook.IsRecentBook();
             var moveToTop = (isRecentBook && Settings.RecentTvPriority == (int)QBittorrentPriority.First) || (!isRecentBook && Settings.OlderTvPriority == (int)QBittorrentPriority.First);
             var forceStart = (QBittorrentState)Settings.InitialState == QBittorrentState.ForceStart;
-            var category = remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? Settings.EbookCategory : Settings.AudiobookCategory;
+            var category = BookDownloadCategorySettings.GetCategory(Settings, remoteBook.GetPreferredMediaType());
 
             try
             {
                 Proxy.AddTorrentFromFile(filename, fileContent, addHasSetShareLimits ? remoteBook.SeedConfiguration : null, Settings, category);
             }
-            catch (DownloadClientException ex) when (ex.InnerException is HttpException httpException && httpException.Response.StatusCode is HttpStatusCode.Conflict)
+            catch (DownloadClientException ex)
             {
-                throw new DownloadClientRejectedReleaseException(remoteBook.Release, "qBittorrent rejected the torrent file due to a conflict", ex);
+                if (!TryAdoptExistingTorrent(remoteBook, hash, category, ex))
+                {
+                    if (IsConflictResponse(ex))
+                    {
+                        throw new DownloadClientRejectedReleaseException(remoteBook.Release, "qBittorrent rejected the torrent file due to a conflict", ex);
+                    }
+
+                    throw;
+                }
             }
 
             if ((!addHasSetShareLimits && setShareLimits) || moveToTop || forceStart)
@@ -258,10 +332,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
         {
             var version = Proxy.GetApiVersion(Settings);
             var config = Proxy.GetConfig(Settings);
-            var configuredCategories = new[] { Settings.AudiobookCategory, Settings.EbookCategory }
-                .Where(c => c.IsNotNullOrWhiteSpace())
-                .Distinct(StringComparer.InvariantCultureIgnoreCase)
-                .ToList();
+            var configuredCategories = BookDownloadCategorySettings.GetConfiguredCategories(Settings).ToList();
 
             var torrents = new List<QBittorrentTorrent>();
 
@@ -491,10 +562,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
             var config = Proxy.GetConfig(Settings);
 
             var destDir = new OsPath(config.SavePath);
-            var configuredCategories = new[] { Settings.AudiobookCategory, Settings.EbookCategory }
-                .Where(c => c.IsNotNullOrWhiteSpace())
-                .Distinct(StringComparer.InvariantCultureIgnoreCase)
-                .ToList();
+            var configuredCategories = BookDownloadCategorySettings.GetConfiguredCategories(Settings).ToList();
 
             var outputRootFolders = new List<OsPath>();
 
@@ -578,7 +646,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                 else if (version < Version.Parse("1.6"))
                 {
                     // API version 6 introduced support for labels
-                    if (Settings.AudiobookCategory.IsNotNullOrWhiteSpace() || Settings.EbookCategory.IsNotNullOrWhiteSpace())
+                    if (BookDownloadCategorySettings.GetConfiguredCategories(Settings).Any())
                     {
                         return new NzbDroneValidationFailure("Category", "Category is not supported")
                         {
@@ -586,7 +654,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
                         };
                     }
                 }
-                else if (Settings.AudiobookCategory.IsNullOrWhiteSpace() && Settings.EbookCategory.IsNullOrWhiteSpace())
+                else if (!BookDownloadCategorySettings.GetConfiguredCategories(Settings).Any())
                 {
                     // warn if labels are supported, but category is not provided
                     return new NzbDroneValidationFailure(nameof(QBittorrentSettings.AudiobookCategory), "Category is recommended")
@@ -642,8 +710,7 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
 
         private ValidationFailure TestCategory()
         {
-            if (Settings.AudiobookCategory.IsNullOrWhiteSpace() &&
-                Settings.EbookCategory.IsNullOrWhiteSpace() &&
+            if (!BookDownloadCategorySettings.GetConfiguredCategories(Settings).Any() &&
                 Settings.AudiobookImportedCategory.IsNullOrWhiteSpace() &&
                 Settings.EbookImportedCategory.IsNullOrWhiteSpace())
             {
@@ -659,13 +726,19 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
 
             var labels = Proxy.GetLabels(Settings);
 
-            foreach (var pair in new[]
-                     {
-                         new { Field = nameof(QBittorrentSettings.AudiobookCategory), Value = Settings.AudiobookCategory },
-                         new { Field = nameof(QBittorrentSettings.EbookCategory), Value = Settings.EbookCategory },
-                         new { Field = nameof(QBittorrentSettings.AudiobookImportedCategory), Value = Settings.AudiobookImportedCategory },
-                         new { Field = nameof(QBittorrentSettings.EbookImportedCategory), Value = Settings.EbookImportedCategory }
-                     })
+            var categoriesToValidate = BookDownloadCategorySettings.GetConfiguredCategories(Settings)
+                .Select(category => new
+                {
+                    Field = BookDownloadCategorySettings.GetCategoryFieldName(Settings, category),
+                    Value = category
+                })
+                .Concat(new[]
+                {
+                    new { Field = nameof(QBittorrentSettings.AudiobookImportedCategory), Value = Settings.AudiobookImportedCategory },
+                    new { Field = nameof(QBittorrentSettings.EbookImportedCategory), Value = Settings.EbookImportedCategory }
+                });
+
+            foreach (var pair in categoriesToValidate)
             {
                 if (pair.Value.IsNullOrWhiteSpace() || labels.ContainsKey(pair.Value))
                 {

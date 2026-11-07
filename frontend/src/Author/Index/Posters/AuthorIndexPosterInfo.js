@@ -2,6 +2,7 @@ import PropTypes from 'prop-types';
 import React from 'react';
 import getRelativeDate from 'Utilities/Date/getRelativeDate';
 import formatBytes from 'Utilities/Number/formatBytes';
+import translate from 'Utilities/String/translate';
 import styles from './AuthorIndexPosterInfo.css';
 
 function AuthorIndexPosterInfo(props) {
@@ -50,7 +51,7 @@ function AuthorIndexPosterInfo(props) {
 
     return (
       <div className={styles.info}>
-        {`Added ${addedDate}`}
+        {`${translate('Added')} ${addedDate}`}
       </div>
     );
   }
@@ -68,7 +69,7 @@ function AuthorIndexPosterInfo(props) {
 
     return (
       <div className={styles.info}>
-        {`Next Book ${date}`}
+        {`${translate('NextBook')} ${date}`}
       </div>
     );
   }
@@ -86,18 +87,18 @@ function AuthorIndexPosterInfo(props) {
 
     return (
       <div className={styles.info}>
-        {`Last Book ${date}`}
+        {`${translate('LastBook')} ${date}`}
       </div>
     );
   }
 
   if (sortKey === 'bookCount') {
-    let books = '1 book';
+    let books = translate('BookCountMessage', { count: bookCount });
 
     if (bookCount === 0) {
-      books = 'No books';
+      books = translate('NoBooks');
     } else if (bookCount > 1) {
-      books = `${bookCount} books`;
+      books = translate('BooksCountMessage', { count: bookCount });
     }
 
     return (

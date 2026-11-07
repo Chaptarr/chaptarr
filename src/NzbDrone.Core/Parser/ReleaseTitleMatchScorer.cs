@@ -57,6 +57,7 @@ namespace NzbDrone.Core.Parser
         public string PrimaryTitle { get; set; }
         public string SeriesName { get; set; }
         public string SeriesPosition { get; set; }
+        public string SeriesSetVariant { get; set; }
         public List<string> PrimaryVariants { get; } = new List<string>();
         public HashSet<string> PrefixAllowanceTokens { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     }
@@ -72,14 +73,18 @@ namespace NzbDrone.Core.Parser
         private const int HintOnlyPrefixGuardTokenThreshold = 2;
         private const string DecimalPointToken = "chaptarrdecimalpoint";
 
-        private static readonly Regex TokenRegex = new Regex(@"\p{Nd}+(?:\.\p{Nd}+)+|[\p{L}\p{Nd}]+", RegexOptions.Compiled);
+        // A dot followed by a standalone four-digit year is a scene-style separator, not a decimal point.
+        private const string NotFollowedByYearSegment = @"(?!(?:18|19|20|21)\p{Nd}{2}(?!\p{Nd}))";
+
+        private static readonly Regex TokenRegex = new Regex(@"\p{Nd}+(?:\." + NotFollowedByYearSegment + @"\p{Nd}+)+|[\p{L}\p{Nd}]+", RegexOptions.Compiled);
         private static readonly Regex PossessiveRegex = new Regex(@"['\u2018\u2019]s\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private static readonly Regex DecimalPointBetweenDigitsRegex = new Regex(@"(?<=\p{Nd})\.(?=\p{Nd})", RegexOptions.Compiled);
+        private static readonly Regex DecimalPointBetweenDigitsRegex = new Regex(@"(?<=\p{Nd})\." + NotFollowedByYearSegment + @"(?=\p{Nd})", RegexOptions.Compiled);
         private static readonly Regex OptionalQualifierSegmentRegex = new Regex(@"\s*[\(\[](?<label>[^\)\]]+)[\)\]]\s*", RegexOptions.Compiled);
         private static readonly Regex SubtitleLeadingArticleRegex = new Regex(@"(?<prefix>[:;\-\u2013\u2014]\s+)(?<article>a|an|the)\s+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex SubtitleArticleInsertionPointRegex = new Regex(@"(?<prefix>[:;\-\u2013\u2014]\s+)(?<head>[\p{L}\p{Nd}])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex LeadingOptionalArticleRegex = new Regex(@"^(?:a|an|the)\s+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex WhitespaceRegex = new Regex(@"\s+", RegexOptions.Compiled);
+        private static readonly Regex SeriesSetTitleRegex = new Regex(@"^(?<series>.+\s+series)\s+\d+[\s-]+books?\s+(?:box(?:ed)?\s+)?set$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex SpaceBeforePunctuationRegex = new Regex(@"\s+([:;,])", RegexOptions.Compiled);
         private static readonly Regex SpaceAfterPunctuationRegex = new Regex(@"([:;,])(?=\S)", RegexOptions.Compiled);
         private static readonly Regex YearTokenRegex = new Regex(@"^(?:18\d{2}|19\d{2}|20\d{2}|21\d{2})$", RegexOptions.Compiled);
@@ -233,6 +238,12 @@ namespace NzbDrone.Core.Parser
 
             foreach (var span in spans)
             {
+                if (TokenizedEquals(bookTitleVariant, context?.SeriesSetVariant) &&
+                    HasSeriesSetExtras(releaseTokens, span.Start, span.End, book?.Author?.Name))
+                {
+                    continue;
+                }
+
                 var problems = GetProblems(releaseTokens, span.Start, span.End, titleTokens.Count, hasAuthorInTitle, book?.Author?.Name, context, contradictoryVariants);
                 var leftovers = problems.Select(problem => problem.Value).ToList();
 
@@ -254,6 +265,14 @@ namespace NzbDrone.Core.Parser
             }
 
             return best;
+        }
+
+        private static bool HasSeriesSetExtras(IReadOnlyList<string> releaseTokens, int matchedStart, int matchedEnd, string authorName)
+        {
+            var authorTokens = Tokenize(authorName);
+            return releaseTokens.Where((_, index) => index < matchedStart || index > matchedEnd).Any(token =>
+                (IsNumericToken(token) && !YearTokenRegex.IsMatch(token)) ||
+                (!IsMetadataToken(token) && !authorTokens.Any(authorToken => TokensMatch(authorToken, token))));
         }
 
         private static bool IsLongAuthorlessYearTitleMatch(IReadOnlyList<string> releaseTokens, int matchedStart, int matchedEnd, IReadOnlyCollection<string> titleTokens, IReadOnlyCollection<TitleMatchProblem> problems)
@@ -317,7 +336,10 @@ namespace NzbDrone.Core.Parser
                         continue;
                     }
 
-                    if (IsTargetSeriesContext(contradiction.Title, context))
+                    // A catalogue can contain a book named after its author. The author
+                    // credit in a release is not evidence that it contains that book.
+                    if (TokenizedEquals(contradiction.Title, authorName) ||
+                        IsTargetSeriesContext(contradiction.Title, context))
                     {
                         continue;
                     }
@@ -829,7 +851,36 @@ namespace NzbDrone.Core.Parser
 
         internal static bool TokensMatch(string left, string right)
         {
-            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase) || TokenSynonyms.AreSynonyms(left, right);
+            return string.Equals(left, right, StringComparison.OrdinalIgnoreCase) ||
+                   NumericTokensEqual(left, right) ||
+                   TokenSynonyms.AreSynonyms(left, right);
+        }
+
+        private static bool NumericTokensEqual(string left, string right)
+        {
+            if (string.IsNullOrEmpty(left) || string.IsNullOrEmpty(right) ||
+                !NumericTokenRegex.IsMatch(left) || !NumericTokenRegex.IsMatch(right))
+            {
+                return false;
+            }
+
+            var leftParts = left.Split('.');
+            var rightParts = right.Split('.');
+
+            // Zero padding is only normalized for short integer parts so long identifiers are never conflated.
+            if (leftParts[0].Length > 4 || rightParts[0].Length > 4)
+            {
+                return false;
+            }
+
+            return TrimLeadingZeros(leftParts[0]) == TrimLeadingZeros(rightParts[0]) &&
+                   (leftParts.Length > 1 ? leftParts[1] : string.Empty) == (rightParts.Length > 1 ? rightParts[1] : string.Empty);
+        }
+
+        private static string TrimLeadingZeros(string digits)
+        {
+            var trimmed = digits.TrimStart('0');
+            return trimmed.Length == 0 ? "0" : trimmed;
         }
 
         private static TitleMatchResult ChooseBetterResult(TitleMatchResult current, TitleMatchResult candidate)
@@ -886,6 +937,35 @@ namespace NzbDrone.Core.Parser
             AddTitleVariants(context.PrimaryVariants, primaryTitle);
             context.PrimaryTitle = primaryTitle;
 
+            // AnyEditionOk changes which edition can be accepted after a download; it
+            // must not broaden release identity during search. Otherwise, known sibling
+            // editions can make a result appear to match the monitored edition.
+            if (book?.AnyEditionOk != true)
+            {
+                // Preserve useful alternate titles for normal matching, but don't turn a
+                // shortened base title into proof for a monitored edition whose title
+                // carries a meaningful subtitle or other suffix.
+                AddTitleVariantUnlessShorterThanMonitoredTitle(context.PrimaryVariants, book?.Title, primaryTitle);
+                AddTitleVariantUnlessShorterThanMonitoredTitle(context.PrimaryVariants, book?.OriginalTitle, primaryTitle);
+                foreach (var edition in book?.Editions ?? Enumerable.Empty<Edition>())
+                {
+                    AddTitleVariantUnlessShorterThanMonitoredTitle(
+                        context.PrimaryVariants,
+                        BookEditionTitle.GetTitleForBook(book, edition),
+                        primaryTitle);
+                }
+            }
+
+            // Keep "series" in this variant so a bare title or an individual volume
+            // cannot stand in for the set. Explicit counts and extra titles are checked
+            // before scoring this variant, including in relaxed matching modes.
+            var seriesSet = SeriesSetTitleRegex.Match(primaryTitle);
+            if (seriesSet.Success)
+            {
+                context.SeriesSetVariant = seriesSet.Groups["series"].Value;
+                AddTitleVariants(context.PrimaryVariants, context.SeriesSetVariant);
+            }
+
             foreach (var variant in context.PrimaryVariants)
             {
                 AddTokens(context.PrefixAllowanceTokens, variant);
@@ -901,6 +981,33 @@ namespace NzbDrone.Core.Parser
             }
 
             return context;
+        }
+
+        private static void AddTitleVariantUnlessShorterThanMonitoredTitle(List<string> variants, string title, string monitoredTitle)
+        {
+            if (!IsShorterMonitoredTitleBase(title, monitoredTitle))
+            {
+                AddTitleVariants(variants, title);
+            }
+        }
+
+        private static bool IsShorterMonitoredTitleBase(string title, string monitoredTitle)
+        {
+            var candidate = NormalizeExpandedVariant(title);
+            var full = NormalizeExpandedVariant(monitoredTitle);
+            if (candidate.Length == 0 || full.Length <= candidate.Length ||
+                !full.StartsWith(candidate, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return full.Substring(candidate.Length).TrimStart().StartsWith(":", StringComparison.Ordinal) ||
+                   full.Substring(candidate.Length).TrimStart().StartsWith(";", StringComparison.Ordinal) ||
+                   full.Substring(candidate.Length).TrimStart().StartsWith("-", StringComparison.Ordinal) ||
+                   full.Substring(candidate.Length).TrimStart().StartsWith("–", StringComparison.Ordinal) ||
+                   full.Substring(candidate.Length).TrimStart().StartsWith("—", StringComparison.Ordinal) ||
+                   full.Substring(candidate.Length).TrimStart().StartsWith("(", StringComparison.Ordinal) ||
+                   full.Substring(candidate.Length).TrimStart().StartsWith("[", StringComparison.Ordinal);
         }
 
         private static IEnumerable<string> GetKnownNarrators(Book book)

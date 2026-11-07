@@ -89,6 +89,10 @@ class CutoffUnmetConnector extends Component {
     this.props.fetchCutoffUnmet();
   };
 
+  onRetryPress = () => {
+    this.repopulate();
+  };
+
   //
   // Listeners
 
@@ -167,6 +171,7 @@ class CutoffUnmetConnector extends Component {
         onSearchSelectedPress={this.onSearchSelectedPress}
         onToggleSelectedPress={this.onToggleSelectedPress}
         onSearchAllCutoffUnmetPress={this.onSearchAllCutoffUnmetPress}
+        onRetryPress={this.onRetryPress}
         {...this.props}
       />
     );

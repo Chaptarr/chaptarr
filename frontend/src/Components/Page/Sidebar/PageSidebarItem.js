@@ -52,6 +52,7 @@ class PageSidebarItem extends Component {
             isActive && styles.isActiveLink
           )}
           to={to}
+          aria-current={isActive ? 'page' : undefined}
           onPress={this.onPress}
         >
           {
@@ -63,7 +64,7 @@ class PageSidebarItem extends Component {
               </span>
           }
 
-          <span className={isChildItem ? styles.noIcon : null}>
+          <span className={classNames(styles.label, isChildItem && styles.noIcon)}>
             {typeof title === 'function' ? title() : title}
           </span>
 

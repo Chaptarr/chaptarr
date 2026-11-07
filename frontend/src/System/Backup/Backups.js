@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
+import Button from 'Components/Link/Button';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import PageContent from 'Components/Page/PageContent';
 import PageContentBody from 'Components/Page/PageContentBody';
@@ -10,8 +11,10 @@ import PageToolbarSection from 'Components/Page/Toolbar/PageToolbarSection';
 import Table from 'Components/Table/Table';
 import TableBody from 'Components/Table/TableBody';
 import { icons, kinds } from 'Helpers/Props';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import BackupRow from './BackupRow';
+import EncryptedBackupModal from './EncryptedBackupModal';
 import RestoreBackupModalConnector from './RestoreBackupModalConnector';
 
 const columns = [
@@ -49,7 +52,8 @@ class Backups extends Component {
     super(props, context);
 
     this.state = {
-      isRestoreModalOpen: false
+      isRestoreModalOpen: false,
+      isEncryptedBackupModalOpen: false
     };
   }
 
@@ -64,6 +68,14 @@ class Backups extends Component {
     this.setState({ isRestoreModalOpen: false });
   };
 
+  onEncryptedBackupPress = () => {
+    this.setState({ isEncryptedBackupModalOpen: true });
+  };
+
+  onEncryptedBackupModalClose = () => {
+    this.setState({ isEncryptedBackupModalOpen: false });
+  };
+
   //
   // Render
 
@@ -75,7 +87,8 @@ class Backups extends Component {
       items,
       backupExecuting,
       onBackupPress,
-      onDeleteBackupPress
+      onDeleteBackupPress,
+      onRetryPress
     } = this.props;
 
     const hasBackups = isPopulated && !!items.length;
@@ -97,6 +110,12 @@ class Backups extends Component {
               iconName={icons.RESTORE}
               onPress={this.onRestorePress}
             />
+
+            <PageToolbarButton
+              label={translate('DownloadEncryptedBackup')}
+              iconName={icons.BACKUP}
+              onPress={this.onEncryptedBackupPress}
+            />
           </PageToolbarSection>
         </PageToolbar>
 
@@ -112,8 +131,11 @@ class Backups extends Component {
 
           {
             !isFetching && !!error &&
-              <Alert kind={kinds.DANGER}>
-                {translate('UnableToLoadBackups')}
+              <Alert kind={kinds.DANGER} role="alert">
+                <div>{getErrorMessage(error, translate('UnableToLoadBackups'))}</div>
+                <Button size="small" onPress={onRetryPress}>
+                  {translate('Retry')}
+                </Button>
               </Alert>
           }
 
@@ -164,6 +186,11 @@ class Backups extends Component {
           isOpen={this.state.isRestoreModalOpen}
           onModalClose={this.onRestoreModalClose}
         />
+
+        <EncryptedBackupModal
+          isOpen={this.state.isEncryptedBackupModalOpen}
+          onModalClose={this.onEncryptedBackupModalClose}
+        />
       </PageContent>
     );
   }
@@ -177,7 +204,8 @@ Backups.propTypes = {
   items: PropTypes.array.isRequired,
   backupExecuting: PropTypes.bool.isRequired,
   onBackupPress: PropTypes.func.isRequired,
-  onDeleteBackupPress: PropTypes.func.isRequired
+  onDeleteBackupPress: PropTypes.func.isRequired,
+  onRetryPress: PropTypes.func.isRequired
 };
 
 export default Backups;

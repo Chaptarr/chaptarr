@@ -13,6 +13,7 @@ using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Http.REST.Attributes;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.Profiles.Metadata
 {
@@ -22,14 +23,17 @@ namespace Chaptarr.Api.V1.Profiles.Metadata
         private static readonly NLog.Logger Logger = NLog.LogManager.GetCurrentClassLogger();
         private readonly IMetadataProfileService _profileService;
         private readonly IAuthorService _authorService;
+        private readonly IBookService _bookService;
         private readonly IManageCommandQueue _commandQueueManager;
 
         public MetadataProfileController(IMetadataProfileService profileService,
                                        IAuthorService authorService,
+                                       IBookService bookService,
                                        IManageCommandQueue commandQueueManager)
         {
             _profileService = profileService;
             _authorService = authorService;
+            _bookService = bookService;
             _commandQueueManager = commandQueueManager;
 
             SharedValidator.RuleFor(c => c.Name)
@@ -110,7 +114,7 @@ namespace Chaptarr.Api.V1.Profiles.Metadata
 
                 if (authorsUsingProfile.Any())
                 {
-                    logger.Info("Metadata profile '{0}' updated; refreshing {1} authors to apply new filters", model.Name, authorsUsingProfile.Count);
+                    logger.InfoSafe("Metadata profile '{0}' updated; refreshing {1} authors to apply new filters", model.Name, authorsUsingProfile.Count);
 
                     var command = new BulkRefreshAuthorCommand(authorsUsingProfile, refreshMetadata: true, rescanFolders: false, trigger: CommandTrigger.Manual, forceRefresh: true);
                     _commandQueueManager.Push(command, trigger: CommandTrigger.Manual);
@@ -140,6 +144,12 @@ namespace Chaptarr.Api.V1.Profiles.Metadata
             }
             
             return profiles.ToResource();
+        }
+
+        [HttpGet("genres")]
+        public ActionResult<List<string>> GetAvailableGenres()
+        {
+            return Ok(_bookService.GetAllGenres());
         }
 
         [HttpGet("languages")]
@@ -208,6 +218,7 @@ namespace Chaptarr.Api.V1.Profiles.Metadata
 
             if (!NormalizedAllowedLanguagesEquals(previous.AllowedLanguages, current.AllowedLanguages)) return true;
             if (!NormalizedTokenSetEquals(previous.Ignored, current.Ignored)) return true;
+            if (!NormalizedTokenSetEquals(previous.IgnoredGenres, current.IgnoredGenres)) return true;
 
             return false;
         }

@@ -10,6 +10,7 @@
   <ItemGroup>
     <PackageReference Include="DryIoc.dll" />
     <PackageReference Include="IPAddressRange" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
 	<PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
     <PackageReference Include="NLog.Extensions.Logging" />

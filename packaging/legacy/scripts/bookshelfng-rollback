@@ -1,0 +1,174 @@
+#!/bin/sh
+set -eu
+
+data_dir=/var/lib/bookshelfng
+pending_marker="$data_dir/.chaptarrng-bookshelfng-migration-pending"
+handoff_status="$data_dir/.chaptarrng-bookshelfng-handoff-status"
+handoff_dir="$data_dir/.chaptarrng-bookshelfng-handoff"
+journal=/usr/lib/chaptarrng/handoff/bookshelfng-journal
+status=$(cat "$handoff_status" 2>/dev/null || true)
+service_result=${SERVICE_RESULT:-unknown}
+restore_database=true
+
+write_status() {
+  printf '%s\n' "$1" > "$handoff_status.tmp"
+  chmod 0600 "$handoff_status.tmp"
+  mv -f "$handoff_status.tmp" "$handoff_status"
+  case "$1" in
+    rolled-back)
+      "$journal" state rolled-back
+      ;;
+    intervention-required)
+      "$journal" state intervention-required
+      ;;
+  esac
+}
+
+mask_service_after_failure() {
+  if command -v systemctl >/dev/null 2>&1; then
+    install -d -m 0755 /run/systemd/system
+    if [ ! -e /run/systemd/system/bookshelfng.service ] && [ ! -L /run/systemd/system/bookshelfng.service ]; then
+      ln -s /dev/null /run/systemd/system/bookshelfng.service || true
+      systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+fail_safely() {
+  echo "BookshelfNG automatic rollback stopped: $1" >&2
+  write_status intervention-required
+  "$journal" outcome rollback failed
+  mask_service_after_failure
+  exit 0
+}
+
+if [ ! -f "$pending_marker" ]; then
+  exit 0
+fi
+
+case "$status" in
+  healthy|operator-review-required|rolled-back) exit 0 ;;
+  preflighting|preflight-failed) restore_database=false ;;
+  intervention-required) ;;
+  starting)
+    if [ "$service_result" = success ]; then
+      exit 0
+    fi
+    ;;
+  *) exit 0 ;;
+esac
+
+if [ ! -f "$handoff_dir/snapshot-ready" ] || [ ! -x "$handoff_dir/source-app/Readarr" ]; then
+  fail_safely "the pre-upgrade BookshelfNG application snapshot is missing or incomplete."
+fi
+
+if [ ! -f "$handoff_dir/source-unit-path" ] || [ ! -f "$handoff_dir/source-unit" ]; then
+  fail_safely "the original BookshelfNG systemd unit snapshot is missing."
+fi
+
+unit_path=$(cat "$handoff_dir/source-unit-path")
+case "$unit_path" in
+  /lib/systemd/system/bookshelfng.service|/usr/lib/systemd/system/bookshelfng.service) ;;
+  *) fail_safely "the saved unit path is not a standard BookshelfNG systemd unit." ;;
+esac
+
+if ! command -v runuser >/dev/null 2>&1; then
+  fail_safely "runuser is unavailable, so the database restore cannot run as the bookshelfng service account."
+fi
+
+if [ "$restore_database" = true ]; then
+  postgres_backup_dir=
+  if [ -f "$handoff_dir/postgres-backup-ready" ]; then
+    postgres_backup_dir=$(cat "$handoff_dir/postgres-backup-dir" 2>/dev/null || true)
+    case "$postgres_backup_dir" in
+      "$data_dir"/.chaptarrng-bookshelfng-postgres-backup.*) ;;
+      *) fail_safely "the retained PostgreSQL log/cache backup path is invalid." ;;
+    esac
+
+    if [ -s "$postgres_backup_dir/postgres-log.dump" ] || [ -s "$postgres_backup_dir/postgres-cache.dump" ]; then
+      if ! runuser --preserve-environment --user bookshelfng -- \
+        /usr/lib/chaptarrng/bin/Chaptarr /preview-bookshelf-postgres-restore \
+        -confirm-bookshelf-service-stopped \
+        -bookshelf-postgres-log-cache-only \
+        -bookshelf-postgres-backup="$postgres_backup_dir" \
+        -data="$data_dir"; then
+        fail_safely "the retained PostgreSQL log/cache backups could not be validated before rollback."
+      fi
+
+      chaptarr_postgres_backup_dir=$(mktemp -d "$data_dir/.chaptarrng-chaptarr-postgres-log-cache.XXXXXX")
+      chown bookshelfng:bookshelfng "$chaptarr_postgres_backup_dir"
+      chmod 0700 "$chaptarr_postgres_backup_dir"
+      if ! runuser --preserve-environment --user bookshelfng -- \
+        /usr/lib/chaptarrng/bin/Chaptarr /backup-bookshelf-postgres \
+        -confirm-bookshelf-service-stopped \
+        -bookshelf-postgres-log-cache-only \
+        -bookshelf-postgres-backup="$chaptarr_postgres_backup_dir" \
+        -data="$data_dir"; then
+        fail_safely "the current ChaptarrNG PostgreSQL log/cache state could not be preserved before rollback."
+      fi
+
+      if find "$chaptarr_postgres_backup_dir" -type f \
+        \( -name 'postgres-log.dump' -o -name 'postgres-cache.dump' \) -print -quit | grep -q .; then
+        "$journal" fingerprint rollback-target-postgres-log-cache "$chaptarr_postgres_backup_dir" --refresh
+        "$journal" outcome rollback-target-postgres-log-cache retained
+        printf '%s\n' "$chaptarr_postgres_backup_dir" > "$handoff_dir/chaptarr-postgres-log-cache-backup-dir"
+        chmod 0600 "$handoff_dir/chaptarr-postgres-log-cache-backup-dir"
+      else
+        rmdir "$chaptarr_postgres_backup_dir"
+        chaptarr_postgres_backup_dir=
+      fi
+    fi
+  fi
+
+  if ! runuser --preserve-environment --user bookshelfng -- \
+    /usr/lib/chaptarrng/bin/Chaptarr /restore-bookshelf \
+    -bookshelf-backup=auto \
+    -confirm-bookshelf-service-stopped \
+    -data="$data_dir"; then
+    fail_safely "the retained BookshelfNG database backup could not be validated and restored."
+  fi
+
+  if [ -f "$handoff_dir/postgres-backup-ready" ]; then
+    if [ -s "$postgres_backup_dir/postgres-log.dump" ] || [ -s "$postgres_backup_dir/postgres-cache.dump" ]; then
+      if ! runuser --preserve-environment --user bookshelfng -- \
+        /usr/lib/chaptarrng/bin/Chaptarr /restore-bookshelf-postgres \
+        -confirm-bookshelf-service-stopped \
+        -bookshelf-postgres-log-cache-only \
+        -bookshelf-postgres-backup="$postgres_backup_dir" \
+        -data="$data_dir"; then
+        fail_safely "the retained PostgreSQL log/cache databases could not be restored."
+      fi
+    fi
+  fi
+fi
+
+rm -rf /usr/lib/bookshelfng
+install -d -m 0755 /usr/lib
+if ! cp -a "$handoff_dir/source-app" /usr/lib/bookshelfng; then
+  fail_safely "the previous BookshelfNG application files could not be restored."
+fi
+
+if [ -f "$handoff_dir/source-bin-entry" ]; then
+  rm -f /usr/bin/bookshelfng
+  if ! cp -a "$handoff_dir/source-bin-entry" /usr/bin/bookshelfng; then
+    fail_safely "the previous BookshelfNG command link could not be restored."
+  fi
+elif [ -f "$handoff_dir/source-bin-entry-absent" ]; then
+  rm -f /usr/bin/bookshelfng
+fi
+
+if ! cp -a "$handoff_dir/source-unit" "$unit_path"; then
+  fail_safely "the previous BookshelfNG systemd unit could not be restored."
+fi
+
+if ! systemctl daemon-reload; then
+  fail_safely "systemd could not reload the restored BookshelfNG unit."
+fi
+
+write_status rolled-back
+"$journal" outcome rollback restored-source-and-application
+echo 'BookshelfNG automatic rollback restored the source database and prior application package. systemd will restart the restored unit according to its saved policy.' >&2
+if [ -f "$handoff_dir/chaptarr-postgres-log-cache-backup-dir" ]; then
+  echo "The displaced ChaptarrNG PostgreSQL log/cache state is retained at: $(cat "$handoff_dir/chaptarr-postgres-log-cache-backup-dir")" >&2
+fi
+exit 0

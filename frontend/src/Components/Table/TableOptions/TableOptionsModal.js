@@ -1,7 +1,7 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { DndProvider } from 'react-dnd-multi-backend';
-import HTML5toTouch from 'react-dnd-multi-backend/dist/esm/HTML5toTouch';
+import { HTML5toTouch } from 'rdndmb-html5-to-touch';
 import Form from 'Components/Form/Form';
 import FormGroup from 'Components/Form/FormGroup';
 import FormInputGroup from 'Components/Form/FormInputGroup';
@@ -50,9 +50,9 @@ class TableOptionsModal extends Component {
     let pageSizeError = null;
 
     if (value < 5) {
-      pageSizeError = 'Page size must be at least 5';
+      pageSizeError = translate('TablePageSizeMinimumError', { min: 5 });
     } else if (value > 250) {
-      pageSizeError = 'Page size must not exceed 250';
+      pageSizeError = translate('TablePageSizeMaximumError', { max: 250 });
     } else {
       this.props.onTableOptionChange({ pageSize: value });
     }
@@ -191,7 +191,7 @@ class TableOptionsModal extends Component {
 
                           <div>
                             <FormInputHelpText
-                              text="Choose which columns are visible and which order they appear in"
+                              text={translate('ChooseTableColumnsDescription')}
                             />
 
                             <div className={styles.columns}>

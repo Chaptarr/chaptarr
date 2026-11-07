@@ -8,6 +8,7 @@ using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 using Chaptarr.Http;
 using Chaptarr.Http.REST;
+using Chaptarr.Http.Middleware;
 using FluentValidation;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
@@ -20,6 +21,7 @@ using NzbDrone.Core.Update;
 using NzbDrone.Core.Validation;
 using NzbDrone.Core.Validation.Paths;
 using NzbDrone.Http.REST.Attributes;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.Config
 {
@@ -57,7 +59,10 @@ namespace Chaptarr.Api.V1.Config
             SharedValidator.RuleFor(c => c.Port).ValidPort();
 
             SharedValidator.RuleFor(c => c.UrlBase).ValidUrlBase();
-            SharedValidator.RuleFor(c => c.InstanceName).ContainsChaptarr().When(c => c.InstanceName.IsNotNullOrWhiteSpace());
+            SharedValidator.RuleFor(c => c.InstanceName).ContainsChaptarr()
+                           .When(c => c.InstanceName.IsNotNullOrWhiteSpace() &&
+                                      !(HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true &&
+                                        c.InstanceName.Contains("Readarr", StringComparison.OrdinalIgnoreCase)));
 
             SharedValidator.RuleFor(c => c.Username).NotEmpty().When(c => c.AuthenticationMethod == AuthenticationType.Basic ||
                                                                           c.AuthenticationMethod == AuthenticationType.Forms);
@@ -113,7 +118,7 @@ namespace Chaptarr.Api.V1.Config
                 .Must((resource, path) => IsValidSslCertificate(resource)).WithMessage("Invalid SSL certificate file or password")
                 .When(c => c.EnableSsl);
 
-            SharedValidator.RuleFor(c => c.Branch).NotEmpty().WithMessage("Branch name is required, 'master' is the default");
+            SharedValidator.RuleFor(c => c.Branch).NotEmpty().WithMessage("Branch name is required, 'main' is the default");
             SharedValidator.RuleFor(c => c.UpdateScriptPath).IsValidPath().When(c => c.UpdateMechanism == UpdateMechanism.Script);
             SharedValidator.RuleFor(c => c.ProxyMode)
                            .Must(x => Enum.IsDefined(typeof(ProxyMode), x))
@@ -169,6 +174,10 @@ namespace Chaptarr.Api.V1.Config
         {
             var resource = HostConfigResourceMapper.ToResource(_configFileProvider, _configService);
             resource.Id = 1;
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+            {
+                resource.InstanceName = _configFileProvider.GetBookshelfInstanceName();
+            }
 
             var user = _userService.FindUser();
 
@@ -196,6 +205,7 @@ namespace Chaptarr.Api.V1.Config
         [RestPutById]
         public async Task<ActionResult<HostConfigResource>> SaveHostConfig([FromBody] HostConfigResource resource)
         {
+            resource.ApplyBookshelfCompatibilityAliases();
             EnsureValidProxyEnums(resource.ProxyMode, resource.ProxyType);
 
             var current = HostConfigResourceMapper.ToResource(_configFileProvider, _configService);
@@ -253,6 +263,7 @@ namespace Chaptarr.Api.V1.Config
 
             var dictionary = resource.GetType()
                                      .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+                                     .Where(prop => prop.Name != nameof(HostConfigResource.ProxyEnabled))
                                      .ToDictionary(prop => prop.Name, prop => prop.GetValue(resource, null));
 
             _configFileProvider.SaveConfigDictionary(dictionary);
@@ -309,7 +320,7 @@ namespace Chaptarr.Api.V1.Config
                             Name = resource.ProxyName.IsNotNullOrWhiteSpace() ? resource.ProxyName : "Default Proxy"
                         };
                         _proxyService.Add(target);
-                        _logger.Info("Created proxy '{0}' from quickstart configuration", target.Name);
+                        _logger.InfoSafe("Created proxy '{0}' from quickstart configuration", target.Name);
                     }
 
                     target.ProxyType = resource.ProxyType;
@@ -332,6 +343,10 @@ namespace Chaptarr.Api.V1.Config
             // Return the updated configuration to show any normalization that occurred
             var updatedResource = HostConfigResourceMapper.ToResource(_configFileProvider, _configService);
             updatedResource.Id = 1;
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true)
+            {
+                updatedResource.InstanceName = _configFileProvider.GetBookshelfInstanceName();
+            }
 
             var user = _userService.FindUser();
             updatedResource.Username = user?.Username ?? string.Empty;
@@ -530,7 +545,7 @@ namespace Chaptarr.Api.V1.Config
                 // shared enum guard without implying this endpoint changes proxy routing mode.
                 EnsureValidProxyEnums(ProxyMode.ProxyEverything, request.ProxyType);
 
-                _logger.Debug("Proxy test endpoint called - Host: {0}, Port: {1}, Type: {2}", request.ProxyHostname, request.ProxyPort, request.ProxyType);
+                _logger.DebugSafe("Proxy test endpoint called - Host: {0}, Port: {1}, Type: {2}", request.ProxyHostname, request.ProxyPort, request.ProxyType);
 
                 var result = await _proxyTestService.TestProxy(
                     request.ProxyHostname,

@@ -7,6 +7,7 @@ import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import Table from 'Components/Table/Table';
 import TableBody from 'Components/Table/TableBody';
 import { icons, kinds, sortDirections } from 'Helpers/Props';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import FilterWarning from './FilterWarning';
 import InteractiveSearchMediaTypeToggle from './InteractiveSearchMediaTypeToggle';
@@ -18,61 +19,61 @@ const hiddenResultsPageSize = 50;
 const columns = [
   {
     name: 'rank',
-    label: 'Rank',
+    label: () => translate('Rank'),
     isSortable: true,
     isVisible: true
   },
   {
     name: 'protocol',
-    label: 'Source',
+    label: () => translate('Source'),
     isSortable: true,
     isVisible: true
   },
   {
     name: 'age',
-    label: 'Age',
+    label: () => translate('Age'),
     isSortable: true,
     isVisible: true
   },
   {
     name: 'title',
-    label: 'Title',
+    label: () => translate('Title'),
     isSortable: true,
     isVisible: true
   },
   {
     name: 'indexer',
-    label: 'Indexer',
+    label: () => translate('Indexer'),
     isSortable: true,
     isVisible: true
   },
   {
     name: 'size',
-    label: 'Size',
+    label: () => translate('Size'),
     isSortable: true,
     isVisible: true
   },
   {
     name: 'peers',
-    label: 'Peers',
+    label: () => translate('Peers'),
     isSortable: true,
     isVisible: true
   },
   {
     name: 'duration',
-    label: 'Duration',
+    label: () => translate('Duration'),
     isSortable: true,
     isVisible: true
   },
   {
     name: 'narrator',
-    label: 'Narrator',
+    label: () => translate('Narrator'),
     isSortable: true,
     isVisible: true
   },
   {
     name: 'quality',
-    label: 'Quality',
+    label: () => translate('Quality'),
     isSortable: true,
     isVisible: true
   },
@@ -80,7 +81,7 @@ const columns = [
     name: 'customFormats',
     label: React.createElement(Icon, {
       name: icons.INTERACTIVE,
-      title: 'Custom Format'
+      title: () => translate('CustomFormat')
     }),
     isSortable: true,
     isVisible: true
@@ -89,7 +90,7 @@ const columns = [
     name: 'indexerFlags',
     label: React.createElement(Icon, {
       name: icons.FLAG,
-      title: 'Indexer Flags'
+      title: () => translate('IndexerFlags')
     }),
     isSortable: true,
     isVisible: true
@@ -98,7 +99,7 @@ const columns = [
     name: 'rejections',
     label: React.createElement(Icon, {
       name: icons.DANGER,
-      title: 'Rejections'
+      title: () => translate('Rejections')
     }),
     isSortable: true,
     fixedSortDirection: sortDirections.ASCENDING,
@@ -126,6 +127,7 @@ class InteractiveSearch extends Component {
   componentDidUpdate(prevProps) {
     const searchChanged =
       prevProps.searchPayload?.bookId !== this.props.searchPayload?.bookId ||
+      prevProps.searchPayload?.seriesId !== this.props.searchPayload?.seriesId ||
       prevProps.searchPayload?.authorId !== this.props.searchPayload?.authorId ||
       prevProps.searchPayload?.initialMediaType !== this.props.searchPayload?.initialMediaType;
 
@@ -218,7 +220,8 @@ class InteractiveSearch extends Component {
       siblingToggleEnabled,
       siblingToggleDisabledReason,
       onSortPress,
-      onToggleBypass
+      onToggleBypass,
+      onRetryPress
     } = this.props;
 
     const { showHiddenResults } = this.state;
@@ -247,9 +250,12 @@ class InteractiveSearch extends Component {
         {isFetching ? <LoadingIndicator /> : null}
 
         {!isFetching && error ?
-          <div className={styles.blankpad}>
-            {translate('InteractiveSearchUnableToLoadResults')}
-          </div> :
+          <Alert kind={kinds.DANGER} role="alert">
+            <div>{getErrorMessage(error, translate('InteractiveSearchUnableToLoadResults'))}</div>
+            <Button size="small" onPress={onRetryPress}>
+              {translate('Retry')}
+            </Button>
+          </Alert> :
           null}
 
         {!isFetching && isPopulated && !totalReleasesCount && (!filterSummary || !filterSummary.hasSoftFilters) ?
@@ -298,7 +304,7 @@ class InteractiveSearch extends Component {
                   size="small"
                   onPress={this.onToggleHiddenResults}
                 >
-                  {showHiddenResults ? `Hide ${hiddenCount} Hidden Results` : `Show ${hiddenCount} Hidden Results`}
+                  {translate(showHiddenResults ? 'HideHiddenResults' : 'ShowHiddenResults', { count: hiddenCount })}
                 </Button>
               </div> :
               null}
@@ -388,6 +394,7 @@ InteractiveSearch.propTypes = {
   siblingToggleDisabledReason: PropTypes.string,
   onSortPress: PropTypes.func.isRequired,
   onGrabPress: PropTypes.func.isRequired,
+  onRetryPress: PropTypes.func.isRequired,
   onToggleBypass: PropTypes.func,
   onMediaTypeChange: PropTypes.func
 };

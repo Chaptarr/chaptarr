@@ -78,7 +78,8 @@ export const actionHandlers = handleThunks({
     const {
       historyId,
       authorId,
-      bookId
+      bookId,
+      mediaType
     } = payload;
 
     const promise = createAjaxRequest({
@@ -87,7 +88,7 @@ export const actionHandlers = handleThunks({
     }).request;
 
     promise.done(() => {
-      dispatch(fetchAuthorHistory({ authorId, bookId }));
+      dispatch(fetchAuthorHistory({ authorId, bookId, mediaType }));
     });
   }
 });

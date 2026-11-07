@@ -13,6 +13,7 @@ using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Security;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Configuration
 {
@@ -23,6 +24,8 @@ namespace NzbDrone.Core.Configuration
 
     public class ConfigService : IConfigService
     {
+        // Verified default of the supported BookshelfNG .76 source binary.
+        internal const string BookshelfMetadataServerDefault = "https://api.bookinfo.pro";
         private readonly IConfigRepository _repository;
         private readonly IEventAggregator _eventAggregator;
         private readonly IRootFolderService _rootFolderService;
@@ -124,6 +127,13 @@ namespace NzbDrone.Core.Configuration
             get { return GetValueInt("RssSyncInterval", 15); }
 
             set { SetValue("RssSyncInterval", value); }
+        }
+
+        public int MissingBookSearchInterval
+        {
+            get { return GetValueInt("MissingBookSearchInterval", 0); }
+
+            set { SetValue("MissingBookSearchInterval", value); }
         }
 
         public int MaximumSize
@@ -240,6 +250,13 @@ namespace NzbDrone.Core.Configuration
             set { SetValue("CopyUsingHardlinks", value); }
         }
 
+        public bool KeepExistingLibraryFileOnImportConflict
+        {
+            get { return GetValueBoolean("KeepExistingLibraryFileOnImportConflict", false); }
+
+            set { SetValue("KeepExistingLibraryFileOnImportConflict", value); }
+        }
+
         public bool ImportExtraFiles
         {
             get { return GetValueBoolean("ImportExtraFiles", false); }
@@ -249,9 +266,16 @@ namespace NzbDrone.Core.Configuration
 
         public string ExtraFileExtensions
         {
-            get { return GetValue("ExtraFileExtensions", "jpg,png,cue,m3u,opf"); }
+            get { return GetValue("ExtraFileExtensions", BookshelfNGDatabaseMigrated ? "srt" : "jpg,png,cue,m3u,opf"); }
 
             set { SetValue("ExtraFileExtensions", value); }
+        }
+
+        public bool MoveExtraFilesOnRename
+        {
+            get { return GetValueBoolean("MoveExtraFilesOnRename", false); }
+
+            set { SetValue("MoveExtraFilesOnRename", value); }
         }
 
         public bool WatchLibraryForChanges
@@ -289,6 +313,20 @@ namespace NzbDrone.Core.Configuration
             set { SetValue("BookMatchingStrictness", value); }
         }
 
+        public int BookImportMinimumMatchPercent
+        {
+            get { return GetValueInt("BookImportMinimumMatchPercent", 70); }
+
+            set { SetValue("BookImportMinimumMatchPercent", value); }
+        }
+
+        public bool BookshelfMatchCompatibility
+        {
+            get { return GetValueBoolean("BookshelfMatchCompatibility", false); }
+
+            set { SetValue("BookshelfMatchCompatibility", value); }
+        }
+
         public bool UsePathAsTagsFallback
         {
             get { return GetValueBoolean("UsePathAsTagsFallback", true); }
@@ -301,6 +339,14 @@ namespace NzbDrone.Core.Configuration
             get { return GetValueBoolean("AutoAddMissingAuthorsFromCompletedDownloads", false); }
 
             set { SetValue("AutoAddMissingAuthorsFromCompletedDownloads", value); }
+        }
+
+        public bool AutoInitializeFormatSpecificAuthorPaths
+        {
+            // Match the opt-in new-author path behavior; existing author paths are never backfilled here.
+            get { return GetValueBoolean("AutoInitializeFormatSpecificAuthorPaths", false); }
+
+            set { SetValue("AutoInitializeFormatSpecificAuthorPaths", value); }
         }
 
         public string DefaultAudiobookRootFolderPath
@@ -394,6 +440,16 @@ namespace NzbDrone.Core.Configuration
             set { SetValue("ChownGroup", value); }
         }
 
+        public string AudibleMarketplace
+        {
+            get
+            {
+                return AudibleMarketplaceOptions.Normalize(GetValue("AudibleMarketplace", AudibleMarketplaceOptions.Default));
+            }
+
+            set { SetValue("AudibleMarketplace", AudibleMarketplaceOptions.Normalize(value)); }
+        }
+
         public string MetadataSource
         {
             get { return GetValue("MetadataSource", ""); }
@@ -401,11 +457,139 @@ namespace NzbDrone.Core.Configuration
             set { SetValue("MetadataSource", value); }
         }
 
+        public string MetadataCatalogSources
+        {
+            get { return GetValue("MetadataCatalogSources", string.Empty); }
+            set { SetValue("MetadataCatalogSources", value ?? string.Empty); }
+        }
+
+        public string AdditionalMetadataSources
+        {
+            get { return GetValue("AdditionalMetadataSources", string.Empty); }
+            set { SetValue("AdditionalMetadataSources", value ?? string.Empty); }
+        }
+
+        public string OpenLibraryContactEmail
+        {
+            get { return GetValue("OpenLibraryContactEmail", string.Empty); }
+            set { SetValue("OpenLibraryContactEmail", value ?? string.Empty); }
+        }
+
+        public string MetadataTitleSourcePreference
+        {
+            get { return GetValue("MetadataTitleSourcePreference", string.Empty); }
+            set { SetValue("MetadataTitleSourcePreference", value ?? string.Empty); }
+        }
+
+        public string MetadataDescriptionSourcePreference
+        {
+            get { return GetValue("MetadataDescriptionSourcePreference", string.Empty); }
+            set { SetValue("MetadataDescriptionSourcePreference", value ?? string.Empty); }
+        }
+
+        public string MetadataPublisherSourcePreference
+        {
+            get { return GetValue("MetadataPublisherSourcePreference", string.Empty); }
+            set { SetValue("MetadataPublisherSourcePreference", value ?? string.Empty); }
+        }
+
+        public string MetadataLanguageSourcePreference
+        {
+            get { return GetValue("MetadataLanguageSourcePreference", string.Empty); }
+            set { SetValue("MetadataLanguageSourcePreference", value ?? string.Empty); }
+        }
+
+        public string MetadataReleaseDateSourcePreference
+        {
+            get { return GetValue("MetadataReleaseDateSourcePreference", string.Empty); }
+            set { SetValue("MetadataReleaseDateSourcePreference", value ?? string.Empty); }
+        }
+
+        public string MetadataPageCountSourcePreference
+        {
+            get { return GetValue("MetadataPageCountSourcePreference", string.Empty); }
+            set { SetValue("MetadataPageCountSourcePreference", value ?? string.Empty); }
+        }
+
+        public string MetadataCoverSourcePreference
+        {
+            get { return GetValue("MetadataCoverSourcePreference", string.Empty); }
+            set { SetValue("MetadataCoverSourcePreference", value ?? string.Empty); }
+        }
+
+        public string MetadataAuthorImageSourcePreference
+        {
+            get { return GetValue("MetadataAuthorImageSourcePreference", string.Empty); }
+            set { SetValue("MetadataAuthorImageSourcePreference", value ?? string.Empty); }
+        }
+
+        public string MetadataGenresSourcePreference
+        {
+            get { return GetValue("MetadataGenresSourcePreference", string.Empty); }
+            set { SetValue("MetadataGenresSourcePreference", value ?? string.Empty); }
+        }
+
+        public string GoogleBooksApiKey
+        {
+            get { return GetValue("GoogleBooksApiKey", string.Empty); }
+            set { SetValue("GoogleBooksApiKey", value ?? string.Empty); }
+        }
+
+        public string EuropeanaApiKey
+        {
+            get { return GetValue("EuropeanaApiKey", string.Empty); }
+            set { SetValue("EuropeanaApiKey", value ?? string.Empty); }
+        }
+
+        public string ApifyGoodreadsActor
+        {
+            get { return GetValue("ApifyGoodreadsActor", string.Empty); }
+            set { SetValue("ApifyGoodreadsActor", value ?? string.Empty); }
+        }
+
+        public string ApifyToken
+        {
+            get { return GetValue("ApifyToken", string.Empty); }
+            set { SetValue("ApifyToken", value ?? string.Empty); }
+        }
+
+        public string ApifyGoodreadsInputTemplate
+        {
+            get { return GetValue("ApifyGoodreadsInputTemplate", string.Empty); }
+            set { SetValue("ApifyGoodreadsInputTemplate", value ?? string.Empty); }
+        }
+
         public string MetadataServerUrl
         {
-            get { return GetValue("MetadataServerUrl", "https://api2.chaptarr.com"); }
+            get
+            {
+                var sourceFallback = BookshelfNGDatabaseMigrated
+                    ? GetValue("BookshelfNGMetadataServerUrlFallback", BookshelfMetadataServerDefault)
+                    : string.Empty;
+                return ResolveMetadataServerUrl(
+                    GetValue("MetadataServerUrl", string.Empty),
+                    Environment.GetEnvironmentVariable("METADATA_URL"),
+                    sourceFallback);
+            }
 
             set { SetValue("MetadataServerUrl", value); }
+        }
+
+        internal static string ResolveMetadataServerUrl(string configuredValue, string legacyEnvironmentValue, string capturedSourceFallback = null)
+        {
+            if (!string.IsNullOrWhiteSpace(configuredValue))
+            {
+                return configuredValue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(legacyEnvironmentValue))
+            {
+                return legacyEnvironmentValue;
+            }
+
+            return !string.IsNullOrWhiteSpace(capturedSourceFallback)
+                ? capturedSourceFallback
+                : "https://api2.chaptarr.com";
         }
 
         public string HardcoverApiToken
@@ -420,6 +604,47 @@ namespace NzbDrone.Core.Configuration
             get { return GetValueBoolean("HardcoverEnabled", false); }
 
             set { SetValue("HardcoverEnabled", value); }
+        }
+
+        public bool BookshelfNGDatabaseMigrated
+        {
+            get { return GetValueBoolean("BookshelfNGDatabaseMigrated", false); }
+        }
+
+        public string BookshelfNGProviderDialect
+        {
+            get { return GetValue("BookshelfNGProviderDialect", "gr"); }
+        }
+
+        public BookshelfNGCompatibilityProfile BookshelfNGMigrationProfile
+        {
+            get
+            {
+                return new BookshelfNGCompatibilityProfile
+                {
+                    Version = GetBookshelfProfileInteger("BookshelfNGCompatibilityProfileVersion", 0),
+                    SourceProduct = GetValue("BookshelfNGSourceProduct", string.Empty),
+                    SourceSchemaVersion = GetBookshelfProfileInteger("BookshelfNGSourceSchemaVersion", 0),
+                    ProviderDialect = BookshelfNGProviderDialect,
+                    ApiBasePath = GetValue("BookshelfNGApiBasePath", string.Empty),
+                    FormatSemantics = GetValue("BookshelfNGFormatSemantics", string.Empty),
+                    IdentityMapVersion = GetBookshelfProfileInteger("BookshelfNGIdentityMapVersion", 0),
+                    MigrationOutcome = GetValue("BookshelfNGMigrationOutcome", string.Empty)
+                };
+            }
+        }
+
+        private int GetBookshelfProfileInteger(string key, int defaultValue)
+        {
+            var value = GetValue(key, string.Empty);
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return defaultValue;
+            }
+
+            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+                ? parsed
+                : -1;
         }
 
         public string HardcoverUsername
@@ -527,6 +752,22 @@ namespace NzbDrone.Core.Configuration
             set { SetValue("EnableColorImpairedMode", value); }
         }
 
+        public string ExperienceMode
+        {
+            get
+            {
+                var defaultMode = BookshelfMatchCompatibility ? "simple" : "advanced";
+                var mode = GetValue("ExperienceMode", defaultMode);
+                return string.Equals(mode, "simple", StringComparison.OrdinalIgnoreCase) ? "simple" : "advanced";
+            }
+
+            set
+            {
+                var mode = string.Equals(value, "simple", StringComparison.OrdinalIgnoreCase) ? "simple" : "advanced";
+                SetValue("ExperienceMode", mode);
+            }
+        }
+
         public int UILanguage
         {
             get { return GetValueInt("UILanguage", (int)Language.English); }
@@ -624,13 +865,13 @@ namespace NzbDrone.Core.Configuration
 
         public string GitHubOwner
         {
-            get { return GetValue("GitHubOwner", "chaptarr"); }
+            get { return GetValue("GitHubOwner", "snapetech-org"); }
             set { SetValue("GitHubOwner", value); }
         }
 
         public string GitHubRepo
         {
-            get { return GetValue("GitHubRepo", "chaptarr"); }
+            get { return GetValue("GitHubRepo", "chaptarrng"); }
             set { SetValue("GitHubRepo", value); }
         }
 
@@ -723,7 +964,7 @@ namespace NzbDrone.Core.Configuration
 
                 if (originalValue != value)
                 {
-                    _logger.Debug("Normalized proxy hostname from '{0}' to '{1}'", originalValue, value);
+                    _logger.DebugSafe("Normalized proxy hostname from '{0}' to '{1}'", originalValue, value);
                 }
             }
 
@@ -735,7 +976,7 @@ namespace NzbDrone.Core.Configuration
 
                 if (!string.Equals(originalValue, value, StringComparison.Ordinal))
                 {
-                    _logger.Debug("Normalized metadata server URL from '{0}' to '{1}'", RedactUrlForLogs(originalValue), RedactUrlForLogs(value));
+                    _logger.DebugSafe("Normalized metadata server URL from '{0}' to '{1}'", RedactUrlForLogs(originalValue), RedactUrlForLogs(value));
                 }
             }
 
@@ -761,7 +1002,7 @@ namespace NzbDrone.Core.Configuration
             }
             else
             {
-                _logger.Trace("Writing Setting to database. Key:'{0}' Value:'{1}'", key, value);
+                _logger.TraceSafe("Writing Setting to database. Key:'{0}' Value:'{1}'", key, value);
             }
             _repository.Upsert(key, value);
 

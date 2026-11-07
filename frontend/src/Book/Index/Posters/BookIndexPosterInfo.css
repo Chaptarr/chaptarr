@@ -1,5 +1,6 @@
 .info {
-  background-color: #fafbfc;
+  background-color: var(--cardAlternateBackgroundColor);
+  color: var(--textColor);
   text-align: center;
   font-size: $smallFontSize;
 }

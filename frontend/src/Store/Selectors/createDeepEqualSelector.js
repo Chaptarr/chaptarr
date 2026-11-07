@@ -1,9 +1,9 @@
-import _ from 'lodash';
-import { createSelectorCreator, defaultMemoize } from 'reselect';
+import isEqual from 'lodash/isEqual';
+import { createSelectorCreator, lruMemoize } from 'reselect';
 
 const createDeepEqualSelector = createSelectorCreator(
-  defaultMemoize,
-  _.isEqual
+  lruMemoize,
+  isEqual
 );
 
 export default createDeepEqualSelector;

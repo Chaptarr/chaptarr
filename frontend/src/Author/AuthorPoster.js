@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import Icon from 'Components/Icon';
 import { icons } from 'Helpers/Props';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
+import translate from 'Utilities/String/translate';
 import AuthorImage from './AuthorImage';
 import styles from './AuthorPoster.css';
 
@@ -440,7 +441,7 @@ class AuthorPoster extends Component {
           <img
             className={styles.sandersonOverlayImage}
             src={sandersonEasterEggImage}
-            alt="Brandon Sanderson"
+            alt={translate('AuthorPosterAlt')}
           />
         </div>,
         document.body
@@ -463,7 +464,7 @@ class AuthorPoster extends Component {
           />
           
           {isLoading && (
-            <div className={styles.loadingOverlay} title="Loading image...">
+            <div className={styles.loadingOverlay} title={translate('LoadingImage')}>
               <Icon name={icons.SPINNER} size={24} />
             </div>
           )}
@@ -475,7 +476,7 @@ class AuthorPoster extends Component {
                 type="button"
                 data-select-exempt="true"
                 onClick={this.onPreviousPhotoPress}
-                title="Previous photo"
+                title={translate('PreviousPhoto')}
                 disabled={posterImages.length <= 1}
               >
                 <Icon name={icons.ARROW_LEFT} size={16} />
@@ -486,7 +487,7 @@ class AuthorPoster extends Component {
                 type="button"
                 data-select-exempt="true"
                 onClick={this.onNextPhotoPress}
-                title="Next photo"
+                title={translate('NextPhoto')}
                 disabled={posterImages.length <= 1}
               >
                 <Icon name={icons.ARROW_RIGHT} size={16} />

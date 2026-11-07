@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Chaptarr.Api.V1.Books;
+using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http;
 using Chaptarr.Http.Middleware;
 using Microsoft.AspNetCore.Mvc;
@@ -16,23 +17,29 @@ namespace NzbDrone.Api.V1.Editions
         private readonly IEditionService _editionService;
         private readonly IBookService _bookService;
         private readonly IMediaCoverProxy _mediaCoverProxy;
+        private readonly IBookshelfLegacyIdentityMapService _legacyIdentityMapService;
 
         public EditionController(IEditionService editionService,
                                  IBookService bookService,
-                                 IMediaCoverProxy mediaCoverProxy)
+                                 IMediaCoverProxy mediaCoverProxy,
+                                 IBookshelfLegacyIdentityMapService legacyIdentityMapService = null)
         {
             _editionService = editionService;
             _bookService = bookService;
             _mediaCoverProxy = mediaCoverProxy;
+            _legacyIdentityMapService = legacyIdentityMapService;
         }
 
         [HttpGet]
-        public List<EditionResource> GetEditions([FromQuery] List<int> bookId)
+        public List<EditionResource> GetEditions([FromQuery] List<int> bookId, [FromQuery] string mediaType = null)
         {
-            var requestedBookIds = bookId?
+            var sourceBookIds = bookId?
                 .Where(id => id > 0)
                 .Distinct()
                 .ToList() ?? new List<int>();
+            var effectiveMediaType = mediaType ?? HttpContext?.GetReadarrFacadeContext()?.MediaType;
+            var parsedMediaType = MediaTypeParameterParser.ParseOptional(effectiveMediaType);
+            var requestedBookIds = HttpContext.ResolveBookshelfLegacyBookIds(_legacyIdentityMapService, sourceBookIds, parsedMediaType);
 
             var editions = _editionService.GetEditionsByBook(requestedBookIds);
             var resources = editions.ToResource(HttpContext.GetReadarrFacadeContext());
@@ -44,7 +51,43 @@ namespace NzbDrone.Api.V1.Editions
 
             AnnotateAudiobookMonitoringStatus(resources, editions, requestedBookIds);
 
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true && _legacyIdentityMapService != null)
+            {
+                ProjectLegacyEditionIdentities(resources);
+            }
+
             return resources;
+        }
+
+        private void ProjectLegacyEditionIdentities(IEnumerable<EditionResource> resources)
+        {
+            var editionResources = resources?.Where(resource => resource != null).ToList();
+            if (editionResources == null || editionResources.Count == 0)
+            {
+                return;
+            }
+
+            var editionMappings = _legacyIdentityMapService
+                .GetMappingsByTargetIds("Edition", editionResources.Select(resource => resource.Id))
+                .GroupBy(mapping => mapping.TargetId)
+                .ToDictionary(group => group.Key, group => group.First());
+            var bookMappings = _legacyIdentityMapService
+                .GetMappingsByTargetIds("Book", editionResources.Select(resource => resource.BookId))
+                .GroupBy(mapping => mapping.TargetId)
+                .ToDictionary(group => group.Key, group => group.First());
+
+            foreach (var resource in editionResources)
+            {
+                if (editionMappings.TryGetValue(resource.Id, out var editionMapping))
+                {
+                    resource.Id = editionMapping.SourceId;
+                }
+
+                if (bookMappings.TryGetValue(resource.BookId, out var bookMapping))
+                {
+                    resource.BookId = bookMapping.SourceId;
+                }
+            }
         }
 
         private void AnnotateAudiobookMonitoringStatus(List<EditionResource> resources, List<Edition> editions, List<int> requestedBookIds)

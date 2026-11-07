@@ -51,7 +51,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
 
                 var bookFolder = ResolveFolderName(bookFolderPath);
-                var authorFolder = ResolveFolderName(authorFolderPath);
+                var authorFolder = CleanDownloadFolderName(ResolveFolderName(authorFolderPath));
 
                 if (!string.IsNullOrWhiteSpace(bookFolder))
                 {
@@ -76,6 +76,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             return tags;
+        }
+
+        internal static string CleanDownloadFolderName(string folderName)
+        {
+            return folderName?.Replace("_UNPACK_", string.Empty)
+                .Replace("_FAILED_", string.Empty);
         }
 
         private static string ResolveFolderName(string folderPath)

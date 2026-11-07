@@ -149,5 +149,23 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             Assert.That(upgradable, Is.True);
         }
+
+        [Test]
+        public void migrated_bookshelf_profiles_keep_quality_ahead_of_custom_format_score()
+        {
+            _profile.PreferCustomFormatsOverQuality = true;
+            var compatibilitySubject = new UpgradableSpecification(
+                ConfigServiceTestProxy.Create(bookshelfMatchCompatibility: true),
+                LogManager.GetCurrentClassLogger());
+
+            var upgradable = compatibilitySubject.IsUpgradable(
+                _profile,
+                new QualityModel(Quality.M4B),
+                new List<CustomFormat>(),
+                new QualityModel(Quality.MP3),
+                new List<CustomFormat> { _selectedNarrator });
+
+            Assert.That(upgradable, Is.False);
+        }
     }
 }

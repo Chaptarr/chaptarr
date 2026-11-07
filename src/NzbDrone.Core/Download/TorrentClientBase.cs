@@ -15,6 +15,7 @@ using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
 using NzbDrone.Core.ThingiProvider;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Download
 {
@@ -67,7 +68,14 @@ namespace NzbDrone.Core.Download
                 magnetUrl = torrentInfo.MagnetUrl;
             }
 
-            if (PreferTorrentFile)
+            var downloadFallback = indexer as IIndexerDownloadFallback;
+            var requiredIndexerFallbackUrl = torrentUrl.IsNotNullOrWhiteSpace() && downloadFallback != null
+                ? indexer.GetDownloadRequest(torrentUrl)?.Url?.FullUri
+                : null;
+            var requireIndexerFallbackSuccess = !string.IsNullOrWhiteSpace(requiredIndexerFallbackUrl) &&
+                                                downloadFallback.IsRequiredDownloadFallback(requiredIndexerFallbackUrl);
+
+            if (PreferTorrentFile || requireIndexerFallbackSuccess)
             {
                 if (torrentUrl.IsNotNullOrWhiteSpace())
                 {
@@ -77,7 +85,7 @@ namespace NzbDrone.Core.Download
                     }
                     catch (Exception ex)
                     {
-                        if (magnetUrl.IsNullOrWhiteSpace())
+                        if (requireIndexerFallbackSuccess || magnetUrl.IsNullOrWhiteSpace())
                         {
                             throw;
                         }
@@ -88,6 +96,11 @@ namespace NzbDrone.Core.Download
 
                 if (magnetUrl.IsNotNullOrWhiteSpace())
                 {
+                    if (requireIndexerFallbackSuccess)
+                    {
+                        throw new ReleaseUnavailableException(remoteBook.Release, "A required MyAnonamouse freeleech wedge cannot be applied to a magnet link");
+                    }
+
                     try
                     {
                         return DownloadFromMagnetUrl(remoteBook, indexer, magnetUrl);
@@ -142,12 +155,14 @@ namespace NzbDrone.Core.Download
         private async Task<string> DownloadFromWebUrl(RemoteBook remoteBook, IIndexer indexer, string torrentUrl, bool useIndexerRequestBuilder = true)
         {
             byte[] torrentFile = null;
+            var attemptedDownloadUrl = torrentUrl;
 
             try
             {
                 var request = indexer != null && useIndexerRequestBuilder
                     ? indexer.GetDownloadRequest(torrentUrl)
                     : new HttpRequest(torrentUrl);
+                attemptedDownloadUrl = request.Url.FullUri;
 
                 // Debug logging for MAM authentication
                 if (request.Headers.ContainsKey("Cookie"))
@@ -236,29 +251,41 @@ namespace NzbDrone.Core.Download
 
                 torrentFile = response.ResponseData;
 
-                _logger.Debug("Downloading torrent for release '{0}' finished ({1} bytes from {2})", remoteBook.Release.Title, torrentFile.Length, torrentUrl);
+                _logger.DebugSafe("Downloading torrent for release '{0}' finished ({1} bytes from {2})", remoteBook.Release.Title, torrentFile.Length, torrentUrl);
             }
             catch (HttpException ex)
             {
+                var fallbackUrl = (indexer as IIndexerDownloadFallback)?.GetFallbackDownloadUrl(attemptedDownloadUrl);
+                if (fallbackUrl.IsNotNullOrWhiteSpace())
+                {
+                    if (((IIndexerDownloadFallback)indexer).IsRequiredDownloadFallback(attemptedDownloadUrl))
+                    {
+                        throw new ReleaseUnavailableException(remoteBook.Release, "Unable to use the required MyAnonamouse freeleech wedge");
+                    }
+
+                    _logger.Debug(ex, "MyAnonamouse wedge request failed; retrying without the wedge");
+                    return await DownloadFromWebUrl(remoteBook, indexer, fallbackUrl).ConfigureAwait(false);
+                }
+
                 if (ex.Response.StatusCode == HttpStatusCode.NotFound)
                 {
-                    _logger.Error(ex, "Downloading torrent file for book '{0}' failed since it no longer exists ({1})", remoteBook.Release.Title, torrentUrl);
+                    _logger.ErrorSafe(ex, "Downloading torrent file for book '{0}' failed since it no longer exists ({1})", remoteBook.Release.Title, torrentUrl);
                     throw new ReleaseUnavailableException(remoteBook.Release, "Downloading torrent failed", ex);
                 }
 
                 if ((int)ex.Response.StatusCode == 429)
                 {
-                    _logger.Error("API Grab Limit reached for {0}", torrentUrl);
+                    _logger.ErrorSafe("API Grab Limit reached for {0}", torrentUrl);
                 }
                 else
                 {
-                    _logger.Error(ex, "Downloading torrent file for release '{0}' failed ({1})", remoteBook.Release.Title, torrentUrl);
+                    _logger.ErrorSafe(ex, "Downloading torrent file for release '{0}' failed ({1})", remoteBook.Release.Title, torrentUrl);
                     try
                     {
                         var content = ex.Response.Content ?? string.Empty;
                         if (content.IndexOf("Invalid download link, or not signed in", StringComparison.OrdinalIgnoreCase) >= 0)
                         {
-                            _logger.Warn("MAM_AUTH: MAM returned 'not signed in' for {0}. Verify mam_id/mam_ssl and that the cookie is valid for the proxy egress IP.", torrentUrl);
+                            _logger.WarnSafe("MAM_AUTH: MAM returned 'not signed in' for {0}. Verify mam_id/mam_ssl and that the cookie is valid for the proxy egress IP.", torrentUrl);
                         }
                     }
                     catch { }
@@ -268,7 +295,19 @@ namespace NzbDrone.Core.Download
             }
             catch (WebException ex)
             {
-                _logger.Error(ex, "Downloading torrent file for release '{0}' failed ({1})", remoteBook.Release.Title, torrentUrl);
+                var fallbackUrl = (indexer as IIndexerDownloadFallback)?.GetFallbackDownloadUrl(attemptedDownloadUrl);
+                if (fallbackUrl.IsNotNullOrWhiteSpace())
+                {
+                    if (((IIndexerDownloadFallback)indexer).IsRequiredDownloadFallback(attemptedDownloadUrl))
+                    {
+                        throw new ReleaseUnavailableException(remoteBook.Release, "Unable to use the required MyAnonamouse freeleech wedge");
+                    }
+
+                    _logger.Debug(ex, "MyAnonamouse wedge request failed; retrying without the wedge");
+                    return await DownloadFromWebUrl(remoteBook, indexer, fallbackUrl).ConfigureAwait(false);
+                }
+
+                _logger.ErrorSafe(ex, "Downloading torrent file for release '{0}' failed ({1})", remoteBook.Release.Title, torrentUrl);
 
                 throw new ReleaseDownloadException(remoteBook.Release, "Downloading torrent failed", ex);
             }
@@ -291,7 +330,7 @@ namespace NzbDrone.Core.Download
 
             if (actualHash.IsNotNullOrWhiteSpace() && hash != actualHash)
             {
-                _logger.Debug(
+                _logger.DebugSafe(
                     "{0} did not return the expected InfoHash for '{1}', Chaptarr could potentially lose track of the download in progress.",
                     Definition.Implementation,
                     remoteBook.Release.DownloadUrl);
@@ -323,7 +362,7 @@ namespace NzbDrone.Core.Download
 
             if (actualHash.IsNotNullOrWhiteSpace() && hash != actualHash)
             {
-                _logger.Debug(
+                _logger.DebugSafe(
                     "{0} did not return the expected InfoHash for '{1}', Chaptarr could potentially lose track of the download in progress.",
                     Definition.Implementation,
                     remoteBook.Release.DownloadUrl);

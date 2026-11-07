@@ -11,6 +11,7 @@ using NzbDrone.Core.Authors;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.MediaFiles.BookImport.Services;
+using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
 
 namespace Chaptarr.Core.Test.MediaFiles.BookImport
@@ -273,6 +274,45 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     }
                 };
             }
+        }
+
+        private sealed class RecordingCatalogSearch : ISearchForNewBook
+        {
+            public List<string> Calls { get; } = new();
+
+            public List<Book> SearchForNewBook(string title, string author, bool getAllEditions = true, BookMediaType? mediaType = null)
+            {
+                Calls.Add($"{title}|{author}");
+                if (title == "Dune" && author == "Frank Herbert")
+                {
+                    return new List<Book>
+                    {
+                        new Book
+                        {
+                            Title = "Dune",
+                            HardcoverBookId = "9001",
+                            MediaType = mediaType ?? BookMediaType.Ebook,
+                            Editions = new List<Edition>
+                            {
+                                new Edition
+                                {
+                                    Title = "Dune",
+                                    ForeignEditionId = "hc-edition-9001",
+                                    HardcoverEditionId = "hc-edition-9001",
+                                    Format = "Kindle Edition"
+                                }
+                            },
+                            Author = new Author { Name = "Frank Herbert", HardcoverAuthorId = "42" }
+                        }
+                    };
+                }
+
+                return new List<Book>();
+            }
+
+            public List<Book> SearchByIsbn(string isbn) => new();
+            public List<Book> SearchByAsin(string asin) => new();
+            public List<Book> SearchByGoodreadsBookId(int goodreadsId, bool getAllEditions) => new();
         }
 
         private sealed class StubAuthorService : IAuthorService
@@ -792,6 +832,75 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Assert.That(result.UnmatchedFiles, Has.Length.EqualTo(files.Length));
                 Assert.That(v5.Calls, Is.EqualTo(1));
                 Assert.That(result.UnmatchedFiles.All(u => u.PotentialAuthors?.SingleOrDefault()?.ProviderId == "hc:12345"), Is.True);
+            });
+        }
+
+        [Test]
+        public async Task manual_preview_should_run_catalog_fallback_after_local_and_v5_matching_miss()
+        {
+            var fts = new BranchingEditionFtsRepository { AlwaysMiss = true };
+            var v5 = new RecordingV5MatchingService { ReturnNoSuggestion = true };
+            var catalog = new RecordingCatalogSearch();
+            var svc = CreateNoMatchService(v5, fts, catalog);
+            var file = new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/Dune.epub",
+                AllTags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["ALBUM"] = new() { "Dune" },
+                    ["ALBUMARTIST"] = new() { "Frank Herbert" }
+                }
+            };
+
+            var result = await svc.MatchFilesToLibraryAsync(
+                new[] { file },
+                restrictToAuthorId: null,
+                MatchingContextPresets.ForManualPreview());
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.MatchedFiles, Is.Empty);
+                Assert.That(result.UnmatchedFiles, Is.Not.Empty);
+                Assert.That(v5.Calls, Is.GreaterThan(0));
+                Assert.That(catalog.Calls, Is.EquivalentTo(new[] { "Dune|Frank Herbert" }));
+                Assert.That(result.UnmatchedFiles.Any(unmatched => unmatched.PotentialAuthors?.Any(author =>
+                    author.ProviderId == "hc:42" && author.BookProviderId == "hc:9001") == true), Is.True);
+            });
+        }
+
+        [Test]
+        public async Task manual_preview_catalog_fallback_should_preserve_a_restricted_author_boundary()
+        {
+            var fts = new BranchingEditionFtsRepository { AlwaysMiss = true };
+            var v5 = new RecordingV5MatchingService { ReturnNoSuggestion = true };
+            var catalog = new RecordingCatalogSearch();
+            var restrictedAuthor = new Author
+            {
+                Id = 344,
+                Name = "Different Frank Herbert Identity",
+                HardcoverAuthorId = "43"
+            };
+            var svc = CreateNoMatchService(v5, fts, catalog, new StubAuthorService(restrictedAuthor));
+            var file = new DiscoveredFileWithMetadata
+            {
+                Path = "/downloads/Dune.epub",
+                AllTags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["ALBUM"] = new() { "Dune" },
+                    ["ALBUMARTIST"] = new() { "Frank Herbert" }
+                }
+            };
+
+            var result = await svc.MatchFilesToLibraryAsync(
+                new[] { file },
+                restrictedAuthor.Id,
+                MatchingContextPresets.ForManualPreview());
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(result.UnmatchedFiles, Has.Length.EqualTo(1));
+                Assert.That(catalog.Calls, Is.EquivalentTo(new[] { "Dune|Frank Herbert" }));
+                Assert.That(result.UnmatchedFiles[0].PotentialAuthors, Is.Empty);
             });
         }
 
@@ -1840,7 +1949,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
         private static FileMatchingService CreateNoMatchService(
             RecordingV5MatchingService v5,
-            BranchingEditionFtsRepository fts)
+            BranchingEditionFtsRepository fts,
+            ISearchForNewBook catalogSearch = null,
+            IAuthorService authorService = null)
         {
             var logger = LogManager.GetCurrentClassLogger();
             return new FileMatchingService(
@@ -1852,7 +1963,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 authorFolderMatchingService: null,
                 rootFolderService: null,
                 configService: ConfigServiceTestProxy.Create(usePathAsTagsFallback: true),
-                authorService: null,
+                authorService: authorService,
                 eventAggregator: null,
                 authorLibraryService: null,
                 editionFtsRepository: fts,
@@ -1860,7 +1971,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 editionService: null,
                 editionRepository: null,
                 mediaInfoExtractor: null,
-                logger: logger);
+                logger: logger,
+                catalogSearch: catalogSearch);
         }
     }
 }

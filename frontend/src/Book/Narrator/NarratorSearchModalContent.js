@@ -59,6 +59,7 @@ class NarratorSearchModalContent extends Component {
       isSearching,
       isSettingPreferred,
       error,
+      onRefreshPress,
       onNarratorSelect,
       onModalClose
     } = this.props;
@@ -93,9 +94,17 @@ class NarratorSearchModalContent extends Component {
 
           {isSearching && <LoadingIndicator />}
 
-          {hasError && (
-            <Alert kind={kinds.DANGER}>
+          {hasError && !isSearching && (
+            <Alert kind={kinds.DANGER} role="alert">
               {errorMessage || error.message || translate('NarratorSearchFailed')}
+              <div>
+                <Button
+                  size="small"
+                  onPress={onRefreshPress}
+                >
+                  {translate('Retry')}
+                </Button>
+              </div>
             </Alert>
           )}
 

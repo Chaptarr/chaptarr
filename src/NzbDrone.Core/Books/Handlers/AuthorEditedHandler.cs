@@ -21,7 +21,6 @@ namespace NzbDrone.Core.Books
         {
             _logger.Debug("[FLOW-DEBUG] ========== AuthorEditedService.Handle START ==========");
             _logger.Debug("[FLOW-DEBUG] Author: '{0}' (ID: {1})", message.Author.Name, message.Author.Id);
-            _logger.Debug("[FLOW-DEBUG] Old MetadataProfileId: {0}, New MetadataProfileId: {1}", message.OldAuthor.MetadataProfileId, message.Author.MetadataProfileId);
 
             // Check if author gained a new root folder type
             var gainedAudiobookFolder = string.IsNullOrWhiteSpace(message.OldAuthor.AudiobookRootFolderPath) &&
@@ -38,7 +37,15 @@ namespace NzbDrone.Core.Books
                 _logger.Debug("[BOOK-MONITORING] Author '{0}' gained a root folder; preserving existing book-row monitoring", message.Author.Name);
             }
 
-            var metadataProfileChanged = message.Author.MetadataProfileId != message.OldAuthor.MetadataProfileId;
+            var legacyMetadataProfileChanged = message.Author.MetadataProfileId != message.OldAuthor.MetadataProfileId;
+            var audiobookMetadataProfileChanged = message.Author.AudiobookMetadataProfileId != message.OldAuthor.AudiobookMetadataProfileId;
+            var ebookMetadataProfileChanged = message.Author.EbookMetadataProfileId != message.OldAuthor.EbookMetadataProfileId;
+            var metadataProfileChanged = legacyMetadataProfileChanged || audiobookMetadataProfileChanged || ebookMetadataProfileChanged;
+            _logger.Debug(
+                "[FLOW-DEBUG] Metadata profiles changed: legacy={0}, audiobook={1}, ebook={2}",
+                legacyMetadataProfileChanged,
+                audiobookMetadataProfileChanged,
+                ebookMetadataProfileChanged);
 
             // Refresh metadata when profile filters change, or when a per-format root is
             // explicitly added for the first time. The root-folder case is intentionally

@@ -1,7 +1,8 @@
 import PropTypes from 'prop-types';
 import React from 'react';
+import translate from 'Utilities/String/translate';
 
-function GraphicAudioIcon({ size = 16, title = 'GraphicAudio Production', className = '', style = {} }) {
+function GraphicAudioIcon({ size = 16, title = translate('GraphicAudioProductionTitle'), className = '', style = {} }) {
   return (
     <img
       src={`${window.Chaptarr.urlBase}/Content/Images/Icons/graphic-audio-logo.svg`}

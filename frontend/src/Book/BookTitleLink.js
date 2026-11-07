@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types';
 import React from 'react';
+import BidiText from 'Components/BidiText';
 import Link from 'Components/Link/Link';
 
 function BookTitleLink({ bookId, title, disambiguation }) {
@@ -7,7 +8,7 @@ function BookTitleLink({ bookId, title, disambiguation }) {
 
   return (
     <Link to={link}>
-      {title}{disambiguation ? ` (${disambiguation})` : ''}
+      <BidiText>{title}{disambiguation ? ` (${disambiguation})` : ''}</BidiText>
     </Link>
   );
 }

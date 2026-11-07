@@ -1,0 +1,1164 @@
+{
+  "version": 1,
+  "scope": "Fixed human-readable outbound headings, bodies, field labels, sensor names, and test notifications. Dynamic book/author/path/version/timestamp/provider data and transport protocol IDs/keys remain unchanged.",
+  "records": [
+    {
+      "id": "notification.body.applicationUpdated",
+      "source": "Chaptarr updated from {previous} to {current}",
+      "sourceFingerprint": "03fa3558ef7fe46b6303f456b511504175edcefe472fa768f5b8aecdb6632326",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationService.cs",
+          "line": 659,
+          "sourceLine": "updateMessage.Message = _notificationText.Get(\"notification.body.applicationUpdated\", \"Chaptarr updated from {previous} to {current}\",",
+          "sourceLineSha256": "153f01a400931e027b0bd140423ed042f21d0f409ff3a31603f333c42cc4aa36"
+        }
+      ],
+      "protectedLiterals": [
+        "Chaptarr"
+      ]
+    },
+    {
+      "id": "notification.body.authorRemovedWithFiles",
+      "source": "Author removed and all files were deleted",
+      "sourceFingerprint": "924dc60408823ddc073ebd4befd1f997d7dc5e60dc54fd72a853c42857df1c66",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/AuthorDeleteMessage.cs",
+          "line": 23,
+          "sourceLine": "text.Get(\"notification.body.authorRemovedWithFiles\", \"Author removed and all files were deleted\") :",
+          "sourceLineSha256": "c37fefa647c8067e72dcfa40202973cdceb515a37e73d5df12d27d1f73d6065b"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.body.authorRemovedWithoutFiles",
+      "source": "Author removed, files were not deleted",
+      "sourceFingerprint": "ae2fbf1668867ab083137d68babe46670d4a105fd3d43319494a43ee3e6340fd",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/AuthorDeleteMessage.cs",
+          "line": 24,
+          "sourceLine": "text.Get(\"notification.body.authorRemovedWithoutFiles\", \"Author removed, files were not deleted\");",
+          "sourceLineSha256": "47680974e97d490a791b43d7721afc0071d4d8027c088786f1e9599b280a18f4"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.body.bookRemovedWithFiles",
+      "source": "Book removed and all files were deleted",
+      "sourceFingerprint": "249b3a461dfc820331c62810999ac943a78e2639053a47dc1db6ecbfc6e4b8b7",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/BookDeleteMessage.cs",
+          "line": 23,
+          "sourceLine": "text.Get(\"notification.body.bookRemovedWithFiles\", \"Book removed and all files were deleted\") :",
+          "sourceLineSha256": "4069eac5b3fb3b744e99374f178fcdda3607132ed491a84eb05c5e6334839539"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.body.bookRemovedWithoutFiles",
+      "source": "Book removed, files were not deleted",
+      "sourceFingerprint": "535d1875e816bbf3cd72cb65309a0851de17f7d093e123321c06c82f2827fb29",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/BookDeleteMessage.cs",
+          "line": 24,
+          "sourceLine": "text.Get(\"notification.body.bookRemovedWithoutFiles\", \"Book removed, files were not deleted\");",
+          "sourceLineSha256": "9771d4072783f7f84626b78be7b1e3e1f19f4dd51dbe1d32a9adca46d57aa7c5"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.body.fileDeleted",
+      "source": "{author} - {book} - file deleted",
+      "sourceFingerprint": "5ad55a98199ac8714d25c4c59a745ace812a5310d502244ff375c9078ae62195",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 149,
+          "sourceLine": "Title = Localize(\"notification.body.fileDeleted\", \"{author} - {book} - file deleted\",",
+          "sourceLineSha256": "92e29e4be7ace1c5e43d1fa65ad93c297324b5df2729da6ac58f871930e23c30"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Slack/Slack.cs",
+          "line": 141,
+          "sourceLine": "Title = Localize(\"notification.body.fileDeleted\", \"{author} - {book} - file deleted\",",
+          "sourceLineSha256": "92e29e4be7ace1c5e43d1fa65ad93c297324b5df2729da6ac58f871930e23c30"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.body.filesImported",
+      "source": "{author} - {book} ({count} files imported)",
+      "sourceFingerprint": "93b9fd0363e1874a918dc4d88f88f5a9a4afb306a9be6944ecbd6fc032a5fa62",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationService.cs",
+          "line": 116,
+          "sourceLine": "return _notificationText.Get(\"notification.body.filesImported\", \"{author} - {book} ({count} files imported)\",",
+          "sourceLineSha256": "ee406c218ecf7313d0152247954b5419271d2d8851be148ff39f0e3df1b6b157"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.body.incompleteImport",
+      "source": "Chaptarr failed to import all files for {source}",
+      "sourceFingerprint": "14b4b109d69b939682f0a2d53a4540d800a368b321944203eae85a4c47eb27c5",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationService.cs",
+          "line": 122,
+          "sourceLine": "return _notificationText.Get(\"notification.body.incompleteImport\", \"Chaptarr failed to import all files for {source}\",",
+          "sourceLineSha256": "9e99020e62a537592defa159f5ba6a09a87c2e17f4ee8843efeb1e1d2dd97b08"
+        }
+      ],
+      "protectedLiterals": [
+        "Chaptarr"
+      ]
+    },
+    {
+      "id": "notification.body.missingValue",
+      "source": "<missing>",
+      "sourceFingerprint": "1e16fac5af1a5ef24aab89b8403dd17f4cdee8e7585e35101baf4ea32af340dd",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationService.cs",
+          "line": 129,
+          "sourceLine": "return text.IsNullOrWhiteSpace() ? _notificationText.Get(\"notification.body.missingValue\", \"<missing>\") : text;",
+          "sourceLineSha256": "ee94d234bf05d92e3dbb55ac7c4e7e48149747cdda698c415efa3f7c57b3b5de"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.body.unknownDownload",
+      "source": "an unknown download",
+      "sourceFingerprint": "4373f7b83f4c8c04b89bae0c4cdf9cd98454cf58a6460e672cdcfddcb26c4f2d",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationService.cs",
+          "line": 596,
+          "sourceLine": "sourceTitle = _notificationText.Get(\"notification.body.unknownDownload\", \"an unknown download\");",
+          "sourceLineSha256": "d7dfc60f7c0056f6d354f5dc35e8605eca47b6ab20545679fed9b29aa465eed7"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.failure.detected",
+      "source": "Failed download detected",
+      "sourceFingerprint": "79781f5312a618a5b15569af7767b4fdda113363875dac94ab94131eef10af59",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/FailedDownloadService.cs",
+          "line": 140,
+          "sourceLine": "var messageId = \"notification.failure.detected\";",
+          "sourceLineSha256": "626e1919b024dd025bac13c6fd7c4f39555dea90fee4af8dfc68823b60b3f90e"
+        }
+      ],
+      "delivery": "Only explicit project-authored event message IDs use this source. External download-client messages never receive an ID.",
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.failure.encrypted",
+      "source": "Encrypted download detected",
+      "sourceFingerprint": "75ac55dc88d9c6bed2b475f0c1599d7a27d93b052f76673a6dd2a9c418c142d3",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/FailedDownloadService.cs",
+          "line": 145,
+          "sourceLine": "messageId = \"notification.failure.encrypted\";",
+          "sourceLineSha256": "2963d4f0c64238781ed6417bd16b9a4d981acf281a156d1767bbf79f93d19e0b"
+        }
+      ],
+      "delivery": "Only explicit project-authored event message IDs use this source. External download-client messages never receive an ID.",
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.failure.manuallyFailed",
+      "source": "Manually marked as failed",
+      "sourceFingerprint": "487c90f40400723cc13972d17ee5d994927975021768175d5097d25899a557d8",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/FailedDownloadService.cs",
+          "line": 43,
+          "sourceLine": "PublishDownloadFailedEvent(new List<EntityHistory> { history }, \"Manually marked as failed\", skipRedownload: skipRedownload, messageId: \"notification.failure.manuallyFailed\");",
+          "sourceLineSha256": "1bd0a71403854ccfa05c55eb660d1504f9b09fd09ff03b85e0c6a71afc0b7b71"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/FailedDownloadService.cs",
+          "line": 48,
+          "sourceLine": "PublishDownloadFailedEvent(grabbedHistory, \"Manually marked as failed\", messageId: \"notification.failure.manuallyFailed\");",
+          "sourceLineSha256": "1ddf6d3ba694d454626f7f7c51c4ce5f35a88dcee3c762daa763f797b88a8092"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/FailedDownloadService.cs",
+          "line": 60,
+          "sourceLine": "PublishDownloadFailedEvent(history, \"Manually marked as failed\", trackedDownload, skipRedownload, \"notification.failure.manuallyFailed\");",
+          "sourceLineSha256": "d5e646bfdb4620c051dd7d1a7191e75f22bb51d854a48e1fcf16119701169e1a"
+        }
+      ],
+      "delivery": "Only explicit project-authored event message IDs use this source. External download-client messages never receive an ID.",
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.failure.profileDisallowed",
+      "source": "No file in this download is in a format allowed by the quality profile ({value0})",
+      "sourceFingerprint": "4b9a58cce19f46521efd51878e0648d75127100b31fd371dc561d1499947c678",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/FailedDownloadService.cs",
+          "line": 94,
+          "sourceLine": "hasProfileReason ? \"notification.failure.profileDisallowed\" : null,",
+          "sourceLineSha256": "da53de6aafe0faf22b01e0cd8a36466a847c6c9717cedf6287d8a19b0d9ad00b"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/CompletedDownloadService.cs",
+          "line": 224,
+          "sourceLine": "var reason = string.Format(\"No file in this download is in a format allowed by the quality profile ({0})\",",
+          "sourceLineSha256": "717f23e6d24730b54efa1ef05bf959157b62d35c9286c95152901faaf1f5096d"
+        }
+      ],
+      "delivery": "Only explicit project-authored event message IDs use this source. External download-client messages never receive an ID.",
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.field.links",
+      "source": "Links",
+      "sourceFingerprint": "8fedbef7874a40dd6da8b3d01c0cd3cb86f3d625dcd6a3e8bd541fefb30b3aa1",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 85,
+          "sourceLine": "Name = Localize(\"notification.field.links\", \"Links\"),",
+          "sourceLineSha256": "5658b63491b051efca468ec4377e0ac6f2e8316409acb5bcba86afa2713ac353"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.field.newVersion",
+      "source": "New Version",
+      "sourceFingerprint": "18635a7bdecf6791d2efc12743a215e8ed61aa0e560fc2cf529bd0d46f3448a0",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 250,
+          "sourceLine": "Name = Localize(\"notification.field.newVersion\", \"New Version\"),",
+          "sourceLineSha256": "d8a37a9a02a91931b182903fad3f5f00c5aab5e15cbfb3e2ef59de9351531e64"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.field.previousVersion",
+      "source": "Previous Version",
+      "sourceFingerprint": "c5e58cc70d7433c9496dfe55bad2b298ce2ff2182de4ab46f51c86df6cf87361",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 245,
+          "sourceLine": "Name = Localize(\"notification.field.previousVersion\", \"Previous Version\"),",
+          "sourceLineSha256": "89d7be5a0f952c7b551eb39024f28f2931eb55366b875d3cd3ef9ba2d896ce5c"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.heading.applicationUpdate",
+      "source": "Application Updated",
+      "sourceFingerprint": "9965ea07feaec259bc4a33e4efc9277adb06d82c3b954ddcc8bf42d4fd21f435",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationBase.cs",
+          "line": 25,
+          "sourceLine": "protected string APPLICATION_UPDATE_TITLE => Localize(\"notification.heading.applicationUpdate\", \"Application Updated\");",
+          "sourceLineSha256": "5e214ad51f5af687b9e0068e7aacf72211276dddba74d3c73401fea03fcd11ba"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Slack/Slack.cs",
+          "line": 230,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.heading.applicationUpdate\", \"Application Updated\"), attachments);",
+          "sourceLineSha256": "0bc5c04488640dba66936ac893c5909af0f0f20a207022926a8120b5fb07c39f"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.heading.authorAdded",
+      "source": "Author Added",
+      "sourceFingerprint": "d173f046e9bc606cd1c399260a8b3b1c9d79aad87fd372abc603762303c3a1a7",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 91,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.heading.authorAdded\", \"Author Added\"), attachments);",
+          "sourceLineSha256": "f1c1652ca811a705159b8aad9c4bea52d6cbd0165bc5ef45884d7940eb0bfcf6"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationBase.cs",
+          "line": 16,
+          "sourceLine": "protected string AUTHOR_ADDED_TITLE => Localize(\"notification.heading.authorAdded\", \"Author Added\");",
+          "sourceLineSha256": "380278bdf61941fe7f7b238deb7a941dde029aaa24016520f74acc6043b625cd"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Slack/Slack.cs",
+          "line": 83,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.heading.authorAdded\", \"Author Added\"), attachments);",
+          "sourceLineSha256": "f1c1652ca811a705159b8aad9c4bea52d6cbd0165bc5ef45884d7940eb0bfcf6"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.heading.authorDeleted",
+      "source": "Author Deleted",
+      "sourceFingerprint": "145e462196237d9186b6b1df4dbf6b4d41f6c275f476194fd4ad53e2ff932583",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 122,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.heading.authorDeleted\", \"Author Deleted\"), attachments);",
+          "sourceLineSha256": "121ffdb68c03c227ef72f8700fd3c97db7202da8eaa0a7dd969b71557bf59041"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationBase.cs",
+          "line": 18,
+          "sourceLine": "protected string AUTHOR_DELETED_TITLE => Localize(\"notification.heading.authorDeleted\", \"Author Deleted\");",
+          "sourceLineSha256": "57dfce4f0eea83ff6d5c0c85f4f1886e976d9ef6286d5611a516fc47abb84200"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Slack/Slack.cs",
+          "line": 114,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.heading.authorDeleted\", \"Author Deleted\"), attachments);",
+          "sourceLineSha256": "121ffdb68c03c227ef72f8700fd3c97db7202da8eaa0a7dd969b71557bf59041"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.heading.bookAdded",
+      "source": "Book Added",
+      "sourceFingerprint": "efac9f75a203c0e8cf0cbc5ad553e178273c75b01d81ba4f34b384551c7eb04f",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 106,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.heading.bookAdded\", \"Book Added\"), attachments);",
+          "sourceLineSha256": "e7a85a6a1339ecebc4ac78715b821f45b742482414a7ee6f9b08a4812c13d400"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationBase.cs",
+          "line": 17,
+          "sourceLine": "protected string BOOK_ADDED_TITLE => Localize(\"notification.heading.bookAdded\", \"Book Added\");",
+          "sourceLineSha256": "5cfbdf57887baede55097fcc521014762799d6f0f7915acff3f1d20ef75a3312"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Slack/Slack.cs",
+          "line": 98,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.heading.bookAdded\", \"Book Added\"), attachments);",
+          "sourceLineSha256": "e7a85a6a1339ecebc4ac78715b821f45b742482414a7ee6f9b08a4812c13d400"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.heading.bookDeleted",
+      "source": "Book Deleted",
+      "sourceFingerprint": "10d801acb9b01285d6db04c09c34cbe4c3825a4fa870635f0afa869dd0b44bae",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 138,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.heading.bookDeleted\", \"Book Deleted\"), attachments);",
+          "sourceLineSha256": "74d9401f96354836c987d8a5967bdffae1886282d4cdf9fe795030c6ea4fd16a"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationBase.cs",
+          "line": 19,
+          "sourceLine": "protected string BOOK_DELETED_TITLE => Localize(\"notification.heading.bookDeleted\", \"Book Deleted\");",
+          "sourceLineSha256": "5e18a50fcc466a32d9751ab723832ab31fe8ce85b22809132dfc2900cf0a8c2b"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Slack/Slack.cs",
+          "line": 130,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.heading.bookDeleted\", \"Book Deleted\"), attachments);",
+          "sourceLineSha256": "74d9401f96354836c987d8a5967bdffae1886282d4cdf9fe795030c6ea4fd16a"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.heading.bookDownloaded",
+      "source": "Book Downloaded",
+      "sourceFingerprint": "d3771d248234841b964f990f4cfc106740901e2df35813954ad75e1bab7e64e0",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationBase.cs",
+          "line": 15,
+          "sourceLine": "protected string BOOK_DOWNLOADED_TITLE => Localize(\"notification.heading.bookDownloaded\", \"Book Downloaded\");",
+          "sourceLineSha256": "1c879ddc61393e984ec4275c1d4aa068c87955daf4eebb868ae4afe0c2f8ba8c"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.heading.bookFileDeleted",
+      "source": "Book File Deleted",
+      "sourceFingerprint": "da6101143e697e5502639385962aca7c8e799d301a8a95894a2e69b25e2cb7b6",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 155,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.heading.bookFileDeleted\", \"Book File Deleted\"), attachments);",
+          "sourceLineSha256": "5bf379c7c60c7159000e35694c745f585c4ee44529fc949d12766cb4b77a997b"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationBase.cs",
+          "line": 20,
+          "sourceLine": "protected string BOOK_FILE_DELETED_TITLE => Localize(\"notification.heading.bookFileDeleted\", \"Book File Deleted\");",
+          "sourceLineSha256": "7de80253254bcdf4523ba1200d39dfa0424579796521c7cedf59aec5467b191a"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Slack/Slack.cs",
+          "line": 147,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.heading.bookFileDeleted\", \"Book File Deleted\"), attachments);",
+          "sourceLineSha256": "5bf379c7c60c7159000e35694c745f585c4ee44529fc949d12766cb4b77a997b"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.heading.bookGrabbed",
+      "source": "Book Grabbed",
+      "sourceFingerprint": "2b40fe055b03ed099951afba9ff4afe56ca4da54d25434ef4acf5cdb7b1c8762",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationBase.cs",
+          "line": 14,
+          "sourceLine": "protected string BOOK_GRABBED_TITLE => Localize(\"notification.heading.bookGrabbed\", \"Book Grabbed\");",
+          "sourceLineSha256": "89596641e6dccb9214990439a341bdcc261baf382e7c3620275881d2cf61d907"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.heading.bookRetagged",
+      "source": "Book File Tags Updated",
+      "sourceFingerprint": "bfd214c2187be31a5aa61496b767a33038976f15bda080cf11c65a0094cbe54a",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationBase.cs",
+          "line": 24,
+          "sourceLine": "protected string BOOK_RETAGGED_TITLE => Localize(\"notification.heading.bookRetagged\", \"Book File Tags Updated\");",
+          "sourceLineSha256": "108bbc635d23ae611cc3d2976737ed7b1abaff65bc70e28722581e4b06e0c0fb"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.heading.downloadFailure",
+      "source": "Download Failed",
+      "sourceFingerprint": "013fa8a690a1457ba4cf34ad56d65d869a78f9a8963c9656d27ebeb620673e9f",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationBase.cs",
+          "line": 22,
+          "sourceLine": "protected string DOWNLOAD_FAILURE_TITLE => Localize(\"notification.heading.downloadFailure\", \"Download Failed\");",
+          "sourceLineSha256": "d6a2bcf1f002dc308275c7d16b3db594ff23496d0512edd685a7e95527f69a97"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.heading.healthIssue",
+      "source": "Health Check Failure",
+      "sourceFingerprint": "188d783ab45ad3047b0c52e3e6ad2e4e641f82d65f44743b4a0658afc151519e",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 172,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.heading.healthIssue\", \"Health Check Failure\"), attachments);",
+          "sourceLineSha256": "589afb8e01e3a09115f7ccd06e2a0f9d9191399ec535d93822d6e22e009212b4"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationBase.cs",
+          "line": 21,
+          "sourceLine": "protected string HEALTH_ISSUE_TITLE => Localize(\"notification.heading.healthIssue\", \"Health Check Failure\");",
+          "sourceLineSha256": "2afed385afe4ed5407c2ce3bb53023c9019481db9f0660d9f0642e6537ca2bea"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Slack/Slack.cs",
+          "line": 164,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.heading.healthIssue\", \"Health Check Failure\"), attachments);",
+          "sourceLineSha256": "589afb8e01e3a09115f7ccd06e2a0f9d9191399ec535d93822d6e22e009212b4"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.heading.importFailure",
+      "source": "Import Failed",
+      "sourceFingerprint": "e1ed31a84ef6c6333da840eae437266df8f3b57c650ca5e2c4d5fd0b9714d213",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationBase.cs",
+          "line": 23,
+          "sourceLine": "protected string IMPORT_FAILURE_TITLE => Localize(\"notification.heading.importFailure\", \"Import Failed\");",
+          "sourceLineSha256": "4c10e29e6ebd40cdb3b93b0b5110005159c2bc4aab81b14f688d384f47699aed"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.heading.renamed",
+      "source": "Renamed",
+      "sourceFingerprint": "fcb80bcab161040f1e5e525838f2d453f834b143578797aa782f3b4a66f2bb96",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 69,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.heading.renamed\", \"Renamed\"), attachments);",
+          "sourceLineSha256": "7898b3e87d6181e1ee4ebca77dc71a2fe71a3be31433473ba6870c4d16736162"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Slack/Slack.cs",
+          "line": 68,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.heading.renamed\", \"Renamed\"), attachments);",
+          "sourceLineSha256": "7898b3e87d6181e1ee4ebca77dc71a2fe71a3be31433473ba6870c4d16736162"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.prefix.applicationUpdated",
+      "source": "Application updated: {message}",
+      "sourceFingerprint": "aec955bf254362b00e2e850b5e16da85df8eec4dad4108fc83993d624065ec23",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Twitter/Twitter.cs",
+          "line": 77,
+          "sourceLine": "_twitterService.SendNotification(Localize(\"notification.prefix.applicationUpdated\", \"Application updated: {message}\", new Dictionary<string, object> { [\"message\"] = updateMessage.Message }), Settings);",
+          "sourceLineSha256": "bcef199bf0453f9e4f48ed4bde09395d992341226144c3406a16db6954dd1824"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.prefix.authorAdded",
+      "source": "Author added: {message}",
+      "sourceFingerprint": "ab39f07f3f004ecc79569c5d2f37cc838f986e5e18b156c95b0b6631c435bb0c",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Twitter/Twitter.cs",
+          "line": 37,
+          "sourceLine": "_twitterService.SendNotification(Localize(\"notification.prefix.authorAdded\", \"Author added: {message}\", new Dictionary<string, object> { [\"message\"] = author.Name }), Settings);",
+          "sourceLineSha256": "acd6dbe83de37955c64e9f85170e32759a7377053881006578efd63f13828acd"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.prefix.bookAdded",
+      "source": "Book added: {message}",
+      "sourceFingerprint": "db7da9923d58db3b60789918a908f498bd602d814cc786fb37b9b492d8b5603e",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Twitter/Twitter.cs",
+          "line": 42,
+          "sourceLine": "_twitterService.SendNotification(Localize(\"notification.prefix.bookAdded\", \"Book added: {message}\", new Dictionary<string, object> { [\"message\"] = $\"{book.Author.Name} - {book.Title}\" }), Settings);",
+          "sourceLineSha256": "9891d3ead9a1230c73f3b04dea41ce863d8da1a5886bb390d4ab09cb684824d9"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.prefix.deleted",
+      "source": "Deleted: {message}",
+      "sourceFingerprint": "521fd82bc561c4c1c48682d976dc9f02394e2ce111ccdb6801f4951e062a3378",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Twitter/Twitter.cs",
+          "line": 47,
+          "sourceLine": "_twitterService.SendNotification(Localize(\"notification.prefix.deleted\", \"Deleted: {message}\", new Dictionary<string, object> { [\"message\"] = deleteMessage.Message }), Settings);",
+          "sourceLineSha256": "3ddddec2c162bb059e392d82927162ecb1aa7e1616f784aa4c10d7bb56a85314"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Twitter/Twitter.cs",
+          "line": 52,
+          "sourceLine": "_twitterService.SendNotification(Localize(\"notification.prefix.deleted\", \"Deleted: {message}\", new Dictionary<string, object> { [\"message\"] = deleteMessage.Message }), Settings);",
+          "sourceLineSha256": "3ddddec2c162bb059e392d82927162ecb1aa7e1616f784aa4c10d7bb56a85314"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Twitter/Twitter.cs",
+          "line": 57,
+          "sourceLine": "_twitterService.SendNotification(Localize(\"notification.prefix.deleted\", \"Deleted: {message}\", new Dictionary<string, object> { [\"message\"] = deleteMessage.Message }), Settings);",
+          "sourceLineSha256": "3ddddec2c162bb059e392d82927162ecb1aa7e1616f784aa4c10d7bb56a85314"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.prefix.downloadFailed",
+      "source": "Download failed: {message}",
+      "sourceFingerprint": "a31c5b1b9308c905877ee30258a5df86d8aa0c9e75514dd3a109bd74e03b7fe3",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 205,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.prefix.downloadFailed\", \"Download failed: {message}\", new Dictionary<string, object> { [\"message\"] = message.Message }), attachments);",
+          "sourceLineSha256": "bc5578d55eeb5a11fc094ef7e095102c55185f027a45ad676c11583484cf5af2"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Slack/Slack.cs",
+          "line": 197,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.prefix.downloadFailed\", \"Download failed: {message}\", new Dictionary<string, object> { [\"message\"] = message.Message }), attachments);",
+          "sourceLineSha256": "bc5578d55eeb5a11fc094ef7e095102c55185f027a45ad676c11583484cf5af2"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Twitter/Twitter.cs",
+          "line": 67,
+          "sourceLine": "_twitterService.SendNotification(Localize(\"notification.prefix.downloadFailed\", \"Download failed: {message}\", new Dictionary<string, object> { [\"message\"] = message.Message }), Settings);",
+          "sourceLineSha256": "3c379423e85c4e65f5cd1cd84cd61183b2200bf36385f250fef22b3b67b4688a"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.prefix.grabbed",
+      "source": "Grabbed: {message}",
+      "sourceFingerprint": "c761c4bd318e395906a46e60e588c7513cf5da1fd253468dd626f7e34fa292d1",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 37,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.prefix.grabbed\", \"Grabbed: {message}\", new Dictionary<string, object> { [\"message\"] = message.Message }), embeds);",
+          "sourceLineSha256": "e74df7622ae2ba95be4bf3d7076c2ff3155249b0e2168c30013da6408b2a1e95"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Slack/Slack.cs",
+          "line": 36,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.prefix.grabbed\", \"Grabbed: {message}\", new Dictionary<string, object> { [\"message\"] = message.Message }), attachments);",
+          "sourceLineSha256": "f2d9c50177b64f3334d3a5b1f404dc20ab6dc228a7ad422f4322158ab5252f2c"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Twitter/Twitter.cs",
+          "line": 27,
+          "sourceLine": "_twitterService.SendNotification(Localize(\"notification.prefix.grabbed\", \"Grabbed: {message}\", new Dictionary<string, object> { [\"message\"] = message.Message }), Settings);",
+          "sourceLineSha256": "e93e1cbd92c04b6e23f31aa5dbbc439b76bda4408eb8cd6d55bc38855aa9890a"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.prefix.healthIssue",
+      "source": "Health issue: {message}",
+      "sourceFingerprint": "739533df13554094e60be10658e7069df4bda43f29f6c474303d1c15548c20ca",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Twitter/Twitter.cs",
+          "line": 62,
+          "sourceLine": "_twitterService.SendNotification(Localize(\"notification.prefix.healthIssue\", \"Health issue: {message}\", new Dictionary<string, object> { [\"message\"] = healthCheck.Message }), Settings);",
+          "sourceLineSha256": "ea49127240c86ed86069483f58d828ecd230cf188e2aa55dd6a72cbe2534191e"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.prefix.importFailed",
+      "source": "Import failed: {message}",
+      "sourceFingerprint": "a038c41da6e9a0e487d2bf1863627683de4516212fd2104941a4c719001fc7e2",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 222,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.prefix.importFailed\", \"Import failed: {message}\", new Dictionary<string, object> { [\"message\"] = message.Message }), attachments);",
+          "sourceLineSha256": "187e2d240f8a8f22abdcb58822531f865c8ff327f003b0ec9312bdbfc5400fa6"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Slack/Slack.cs",
+          "line": 213,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.prefix.importFailed\", \"Import failed: {message}\", new Dictionary<string, object> { [\"message\"] = message.Message }), attachments);",
+          "sourceLineSha256": "187e2d240f8a8f22abdcb58822531f865c8ff327f003b0ec9312bdbfc5400fa6"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Twitter/Twitter.cs",
+          "line": 72,
+          "sourceLine": "_twitterService.SendNotification(Localize(\"notification.prefix.importFailed\", \"Import failed: {message}\", new Dictionary<string, object> { [\"message\"] = message.Message }), Settings);",
+          "sourceLineSha256": "5ed2c3872d496a77746aff2968278d8906734812cf9b27611f84e6b7e67d8146"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.prefix.imported",
+      "source": "Imported: {message}",
+      "sourceFingerprint": "afe69db2e0288df67ab49c4d8ba5e117c84d8d0361e968a3d052b3960c751e7b",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 54,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.prefix.imported\", \"Imported: {message}\", new Dictionary<string, object> { [\"message\"] = message.Message }), attachments);",
+          "sourceLineSha256": "92dc2ae91b0ff9dc039da7299fbcb9e8c9e3d633ba3ce9a174a56bab80f14062"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Slack/Slack.cs",
+          "line": 53,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.prefix.imported\", \"Imported: {message}\", new Dictionary<string, object> { [\"message\"] = message.Message }), attachments);",
+          "sourceLineSha256": "92dc2ae91b0ff9dc039da7299fbcb9e8c9e3d633ba3ce9a174a56bab80f14062"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Twitter/Twitter.cs",
+          "line": 32,
+          "sourceLine": "_twitterService.SendNotification(Localize(\"notification.prefix.imported\", \"Imported: {message}\", new Dictionary<string, object> { [\"message\"] = message.Message }), Settings);",
+          "sourceLineSha256": "b6e49934dcda4a7c1dec97cb29af3967482b064a863bfa375bdd1f4b90d8f629"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.prefix.retagged",
+      "source": "Book file tags updated: {message}",
+      "sourceFingerprint": "95c6367601e9aeba71c1b0aaa19c1ee790c09ef04ef087df4c0117c4f104426c",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 188,
+          "sourceLine": "var payload = CreatePayload(Localize(\"notification.prefix.retagged\", \"Book file tags updated: {message}\", new Dictionary<string, object> { [\"message\"] = message.Message }), attachments);",
+          "sourceLineSha256": "cfd0519ac4cd27fab543e721bdf09db3329850ff0d736a61fe7638a664800e5c"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.sensor.audiobooksTotal",
+      "source": "Audiobooks Total",
+      "sourceFingerprint": "453a11bc1206e01e2385f750ddb67ebaa7ea0973f542764579508d290ed2ba59",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/MqttGateway/MqttGatewayConnectionWorker.cs",
+          "line": 410,
+          "sourceLine": "[\"audiobooks_total\"] = CreateSensor(instance, \"audiobooks_total\", _notificationText.Get(\"notification.sensor.audiobooksTotal\", \"Audiobooks Total\"), \"sensor.chaptarr_audiobooks_total\", stateTopic, availabilityTopic, \"{{ value_json.audiobooks_total }}\", stateClass: \"measurement\"),",
+          "sourceLineSha256": "cecc6dc9967a86c9c13d6286907aee76a58f480f3101770315453e2520bdac22"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.sensor.booksTotal",
+      "source": "Books Total",
+      "sourceFingerprint": "4ddc23d66b04a75244fb14b2e1cd40064fb3fed30dd5474da649e484d6bf2895",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/MqttGateway/MqttGatewayConnectionWorker.cs",
+          "line": 409,
+          "sourceLine": "[\"books_total\"] = CreateSensor(instance, \"books_total\", _notificationText.Get(\"notification.sensor.booksTotal\", \"Books Total\"), \"sensor.chaptarr_books_total\", stateTopic, availabilityTopic, \"{{ value_json.books_total }}\", stateClass: \"measurement\"),",
+          "sourceLineSha256": "426de837e1fd916b18bcd4ec0f9582db49ffa118980dee118232e2cfaadd9e67"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.sensor.health",
+      "source": "Health",
+      "sourceFingerprint": "3a97c099440e4bf4ce207f78f7607dfa2f0073fbb3153f5c4ddeb354540fa408",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/MqttGateway/MqttGatewayConnectionWorker.cs",
+          "line": 417,
+          "sourceLine": "[\"health\"] = CreateSensor(instance, \"health\", _notificationText.Get(\"notification.sensor.health\", \"Health\"), \"sensor.chaptarr_health\", stateTopic, availabilityTopic, \"{{ value_json.health }}\", deviceClass: \"enum\", options: new[] { \"ok\", \"warning\", \"error\" }, icon: \"mdi:heart-pulse\")",
+          "sourceLineSha256": "37ef22f81d18ddaa1beba4340668f71ac62ff52f5afd229d948b7bbf70058191"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.sensor.lastImport",
+      "source": "Last Import",
+      "sourceFingerprint": "c1dbd6a83c386dea4e886263431407ee4a079d5ed1bf579ea92e4fb09beb0565",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/MqttGateway/MqttGatewayConnectionWorker.cs",
+          "line": 416,
+          "sourceLine": "[\"last_import\"] = CreateSensor(instance, \"last_import\", _notificationText.Get(\"notification.sensor.lastImport\", \"Last Import\"), \"sensor.chaptarr_last_import\", stateTopic, availabilityTopic, \"{{ value_json.last_import or none }}\", deviceClass: \"timestamp\"),",
+          "sourceLineSha256": "e3f1e6d47669c576aa9a6a3c2799526505e1624d34d59e6fb1709052a1a7361d"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.sensor.librarySize",
+      "source": "Library Size",
+      "sourceFingerprint": "2ea5391f00a5b6116ab4987a137f524dc92fd5906a5c00a9cbd0876ecc84e1dd",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/MqttGateway/MqttGatewayConnectionWorker.cs",
+          "line": 415,
+          "sourceLine": "[\"library_size\"] = CreateSensor(instance, \"library_size\", _notificationText.Get(\"notification.sensor.librarySize\", \"Library Size\"), \"sensor.chaptarr_library_size\", stateTopic, availabilityTopic, \"{{ value_json.library_size }}\", deviceClass: \"data_size\", unit: \"B\", stateClass: \"measurement\"),",
+          "sourceLineSha256": "6e14469d68a1cdd0d2ac5ba0b6bcb17c51a9053ff001e93c6b4ad9684d1e5b22"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.sensor.missingBooks",
+      "source": "Missing Books",
+      "sourceFingerprint": "7a44cfe073f8ef2730198d4bf046557c7c92fdae1fa52ea1a48f74f8431023ba",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/MqttGateway/MqttGatewayConnectionWorker.cs",
+          "line": 411,
+          "sourceLine": "[\"missing_books\"] = CreateSensor(instance, \"missing_books\", _notificationText.Get(\"notification.sensor.missingBooks\", \"Missing Books\"), \"sensor.chaptarr_missing_books\", stateTopic, availabilityTopic, \"{{ value_json.missing_books }}\", stateClass: \"measurement\"),",
+          "sourceLineSha256": "541a59b87cf473e54138fd48fc07d5c2301f1c787b12279b48023c04d95b404d"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.sensor.queue",
+      "source": "Queue",
+      "sourceFingerprint": "177fafc046582cdca2c805bf6aef004d4a712e87ea9ccc3bc2921151debbd576",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/MqttGateway/MqttGatewayConnectionWorker.cs",
+          "line": 413,
+          "sourceLine": "[\"queue\"] = CreateSensor(instance, \"queue\", _notificationText.Get(\"notification.sensor.queue\", \"Queue\"), \"sensor.chaptarr_queue\", stateTopic, availabilityTopic, \"{{ value_json.queue }}\", stateClass: \"measurement\"),",
+          "sourceLineSha256": "07e21867d626c1a8b6b85043aeeb67bf435b6ea059a413e1418e1563ce2ed7ec"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.sensor.upcomingReleases",
+      "source": "Upcoming Releases",
+      "sourceFingerprint": "4e2a1102290da36db1f88aa36b82345427f1b46bc29961429a0ceeb582862e4c",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/MqttGateway/MqttGatewayConnectionWorker.cs",
+          "line": 414,
+          "sourceLine": "[\"upcoming_releases\"] = CreateSensor(instance, \"upcoming_releases\", _notificationText.Get(\"notification.sensor.upcomingReleases\", \"Upcoming Releases\"), \"sensor.chaptarr_upcoming_releases\", stateTopic, availabilityTopic, \"{{ value_json.upcoming_releases }}\", stateClass: \"measurement\"),",
+          "sourceLineSha256": "5072f690d795a189ee741cc3bd658d5618b0d7f6766cc568e19938965cd2cea3"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.sensor.wantedBooks",
+      "source": "Wanted Books",
+      "sourceFingerprint": "ac9fcb02adbb728b2775239bdfdebd9ff5505c7b45d652dd7501d38e452d73da",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/MqttGateway/MqttGatewayConnectionWorker.cs",
+          "line": 412,
+          "sourceLine": "[\"wanted_books\"] = CreateSensor(instance, \"wanted_books\", _notificationText.Get(\"notification.sensor.wantedBooks\", \"Wanted Books\"), \"sensor.chaptarr_wanted_books\", stateTopic, availabilityTopic, \"{{ value_json.wanted_books }}\", stateClass: \"measurement\"),",
+          "sourceLineSha256": "52efdf1a236f237be7bd10eb9564491216aa669a1f27939396f47da37112115c"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.test.appriseConfigured",
+      "source": "Success! You have properly configured your Apprise notification settings.",
+      "sourceFingerprint": "10a4b17b2b08d3100f817982361d82048b207e2c26ddb0be7fc5b5c24b42206c",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Apprise/AppriseProxy.cs",
+          "line": 87,
+          "sourceLine": "var body = _notificationText.Get(\"notification.test.appriseConfigured\", \"Success! You have properly configured your Apprise notification settings.\");",
+          "sourceLineSha256": "1db373c7b48babd0a02c55678f3d05c4b6357b17d7988567ed5c1b55248e5a80"
+        }
+      ],
+      "protectedLiterals": [
+        "Apprise"
+      ]
+    },
+    {
+      "id": "notification.test.body",
+      "source": "This is a test message from Chaptarr.",
+      "sourceFingerprint": "aa62cad6063bb9cdb7757e2024d6362ef363eac87a3863ec4401d9ec566b637f",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Gotify/Gotify.cs",
+          "line": 85,
+          "sourceLine": "var body = Localize(\"notification.test.body\", \"This is a test message from Chaptarr.\");",
+          "sourceLineSha256": "0c11a360f5c6d5d2c82f2bc61b971935246c1cbbe0b89441b43382e70638af13"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Join/JoinProxy.cs",
+          "line": 50,
+          "sourceLine": "var body = _notificationText.Get(\"notification.test.body\", \"This is a test message from Chaptarr.\");",
+          "sourceLineSha256": "d701e2f77b13d00a592e166f62b7019d3ffcdbae937c6274dfb7b15655e44efa"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Ntfy/NtfyProxy.cs",
+          "line": 77,
+          "sourceLine": "var body = _notificationText.Get(\"notification.test.body\", \"This is a test message from Chaptarr.\");",
+          "sourceLineSha256": "d701e2f77b13d00a592e166f62b7019d3ffcdbae937c6274dfb7b15655e44efa"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Prowl/ProwlProxy.cs",
+          "line": 68,
+          "sourceLine": "var body = _notificationText.Get(\"notification.test.body\", \"This is a test message from Chaptarr.\");",
+          "sourceLineSha256": "d701e2f77b13d00a592e166f62b7019d3ffcdbae937c6274dfb7b15655e44efa"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/PushBullet/PushBulletProxy.cs",
+          "line": 131,
+          "sourceLine": "var body = _notificationText.Get(\"notification.test.body\", \"This is a test message from Chaptarr.\");",
+          "sourceLineSha256": "d701e2f77b13d00a592e166f62b7019d3ffcdbae937c6274dfb7b15655e44efa"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Pushover/PushoverProxy.cs",
+          "line": 62,
+          "sourceLine": "var body = _notificationText.Get(\"notification.test.body\", \"This is a test message from Chaptarr.\");",
+          "sourceLineSha256": "d701e2f77b13d00a592e166f62b7019d3ffcdbae937c6274dfb7b15655e44efa"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/SendGrid/SendGrid.cs",
+          "line": 85,
+          "sourceLine": "var body = Localize(\"notification.test.body\", \"This is a test message from Chaptarr.\");",
+          "sourceLineSha256": "0c11a360f5c6d5d2c82f2bc61b971935246c1cbbe0b89441b43382e70638af13"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Signal/SignalProxy.cs",
+          "line": 70,
+          "sourceLine": "var body = _notificationText.Get(\"notification.test.body\", \"This is a test message from Chaptarr.\");",
+          "sourceLineSha256": "d701e2f77b13d00a592e166f62b7019d3ffcdbae937c6274dfb7b15655e44efa"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Simplepush/SimplepushProxy.cs",
+          "line": 48,
+          "sourceLine": "var body = _notificationText.Get(\"notification.test.body\", \"This is a test message from Chaptarr.\");",
+          "sourceLineSha256": "d701e2f77b13d00a592e166f62b7019d3ffcdbae937c6274dfb7b15655e44efa"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Telegram/TelegramService.cs",
+          "line": 56,
+          "sourceLine": "var body = _notificationText.Get(\"notification.test.body\", \"This is a test message from Chaptarr.\");",
+          "sourceLineSha256": "d701e2f77b13d00a592e166f62b7019d3ffcdbae937c6274dfb7b15655e44efa"
+        }
+      ],
+      "protectedLiterals": [
+        "Chaptarr"
+      ]
+    },
+    {
+      "id": "notification.test.emailConfigured",
+      "source": "Success! You have properly configured your email notification settings.",
+      "sourceFingerprint": "2d7a84f4b08f5c33ddd0cbc2fcf8d6de4cb15e1a5b20a02f2152d6dbfea8d9c1",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Email/Email.cs",
+          "line": 115,
+          "sourceLine": "var body = Localize(\"notification.test.emailConfigured\", \"Success! You have properly configured your email notification settings.\");",
+          "sourceLineSha256": "6ccc38fb50cc90f625f6a6581557622160db5b7e7dc3956ad6a14bf0a1892969"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "notification.test.kavitaConfigured",
+      "source": "Success! Kavita has been successfully configured!",
+      "sourceFingerprint": "00a6110bcb208fa7bb8a141ddaf36e5c9b4c820816ce36c5c53613c3476fde91",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Kavita/Kavita.cs",
+          "line": 62,
+          "sourceLine": "failures.AddIfNotNull(_kavitaService.Test(Settings, Localize(\"notification.test.kavitaConfigured\", \"Success! Kavita has been successfully configured!\")));",
+          "sourceLineSha256": "5a8f22d4b45e0bdef65f178016cbae658dd7174b4ba39ce0b398da75a759e5c6"
+        }
+      ],
+      "protectedLiterals": [
+        "Kavita"
+      ]
+    },
+    {
+      "id": "notification.test.mailgunBody",
+      "source": "This is a test message from Chaptarr through Mailgun.",
+      "sourceFingerprint": "7a266f9106a09d7e80026d2eb1ca9a4578adf3f792e4178645e7284efd7c5769",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Mailgun/Mailgun.cs",
+          "line": 75,
+          "sourceLine": "var body = Localize(\"notification.test.mailgunBody\", \"This is a test message from Chaptarr through Mailgun.\");",
+          "sourceLineSha256": "3adb0de0878b83a91f4f19a1ddacf419379424c16ae6d020a9e76d8fdd8eea74"
+        }
+      ],
+      "protectedLiterals": [
+        "Chaptarr",
+        "Mailgun"
+      ]
+    },
+    {
+      "id": "notification.test.subsonicConfigured",
+      "source": "Success! Subsonic has been successfully configured!",
+      "sourceFingerprint": "6a6b937ce8cecc2045e8731cc7a03cfc2a440f46da075bfd0b3d0c988fd93c31",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Subsonic/Subsonic.cs",
+          "line": 104,
+          "sourceLine": "failures.AddIfNotNull(_subsonicService.Test(Settings, Localize(\"notification.test.subsonicConfigured\", \"Success! Subsonic has been successfully configured!\")));",
+          "sourceLineSha256": "7f7c9979d7ff0d2e8c82f03d3a29cc36bf7b83e225434d49142b9ba595fd46c5"
+        }
+      ],
+      "protectedLiterals": [
+        "Subsonic"
+      ]
+    },
+    {
+      "id": "notification.test.timestampedBody",
+      "source": "Test message from Chaptarr posted at {timestamp}",
+      "sourceFingerprint": "4c29d853985fc9feb020ac054ea36a4231c966c01de278a0f4115c641d083264",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Discord/Discord.cs",
+          "line": 275,
+          "sourceLine": "var message = Localize(\"notification.test.timestampedBody\", \"Test message from Chaptarr posted at {timestamp}\",",
+          "sourceLineSha256": "ad6fdec2377a13fdc406a77376d172654c9a72281313b9a86e378d139a45238b"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Slack/Slack.cs",
+          "line": 248,
+          "sourceLine": "var message = Localize(\"notification.test.timestampedBody\", \"Test message from Chaptarr posted at {timestamp}\",",
+          "sourceLineSha256": "ad6fdec2377a13fdc406a77376d172654c9a72281313b9a86e378d139a45238b"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Twitter/TwitterService.cs",
+          "line": 96,
+          "sourceLine": "var body = _notificationText.Get(\"notification.test.timestampedBody\", \"Test message from Chaptarr posted at {timestamp}\",",
+          "sourceLineSha256": "e864c059b9d8eea7883f9ffe460d7add1eb2111e240a1dc8b5147784bad8dcd9"
+        }
+      ],
+      "protectedLiterals": [
+        "Chaptarr"
+      ]
+    },
+    {
+      "id": "notification.test.title",
+      "source": "Test Notification",
+      "sourceFingerprint": "86542737dcd070ec8cae87d2b88f0f4e5c01426b22dd3d8491a4c6cad2d54a11",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Apprise/AppriseProxy.cs",
+          "line": 86,
+          "sourceLine": "var title = \"Chaptarr - \" + _notificationText.Get(\"notification.test.title\", \"Test Notification\");",
+          "sourceLineSha256": "ad830be95bf7977f696ee4c263b14649840d68718535d5e598c0531a4d8ea3a5"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Email/Email.cs",
+          "line": 119,
+          "sourceLine": "SendEmail(settings, \"Chaptarr - \" + Localize(\"notification.test.title\", \"Test Notification\"), body);",
+          "sourceLineSha256": "bab87a96519d82bbadee4fc01e64a4bd1d7d96f587d368bc1416b6beb06a5c21"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Gotify/Gotify.cs",
+          "line": 84,
+          "sourceLine": "var title = Localize(\"notification.test.title\", \"Test Notification\");",
+          "sourceLineSha256": "7197f4e5c2b1f6e319ffaa5443e09b78e810ef04fd0f99b7a50e12e6dc6e036d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Join/JoinProxy.cs",
+          "line": 49,
+          "sourceLine": "var title = _notificationText.Get(\"notification.test.title\", \"Test Notification\");",
+          "sourceLineSha256": "3e3ed3741d5834cab58b67ad424afdcbfaec5d4412cb4a303a062da1360bbbfd"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Mailgun/Mailgun.cs",
+          "line": 74,
+          "sourceLine": "var title = Localize(\"notification.test.title\", \"Test Notification\");",
+          "sourceLineSha256": "7197f4e5c2b1f6e319ffaa5443e09b78e810ef04fd0f99b7a50e12e6dc6e036d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Ntfy/NtfyProxy.cs",
+          "line": 75,
+          "sourceLine": "var title = \"Chaptarr - \" + _notificationText.Get(\"notification.test.title\", \"Test Notification\");",
+          "sourceLineSha256": "ad830be95bf7977f696ee4c263b14649840d68718535d5e598c0531a4d8ea3a5"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Prowl/ProwlProxy.cs",
+          "line": 67,
+          "sourceLine": "var title = _notificationText.Get(\"notification.test.title\", \"Test Notification\");",
+          "sourceLineSha256": "3e3ed3741d5834cab58b67ad424afdcbfaec5d4412cb4a303a062da1360bbbfd"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/PushBullet/PushBulletProxy.cs",
+          "line": 130,
+          "sourceLine": "var title = \"Chaptarr - \" + _notificationText.Get(\"notification.test.title\", \"Test Notification\");",
+          "sourceLineSha256": "ad830be95bf7977f696ee4c263b14649840d68718535d5e598c0531a4d8ea3a5"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Pushover/PushoverProxy.cs",
+          "line": 61,
+          "sourceLine": "var title = _notificationText.Get(\"notification.test.title\", \"Test Notification\");",
+          "sourceLineSha256": "3e3ed3741d5834cab58b67ad424afdcbfaec5d4412cb4a303a062da1360bbbfd"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/SendGrid/SendGrid.cs",
+          "line": 84,
+          "sourceLine": "var title = Localize(\"notification.test.title\", \"Test Notification\");",
+          "sourceLineSha256": "7197f4e5c2b1f6e319ffaa5443e09b78e810ef04fd0f99b7a50e12e6dc6e036d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Signal/SignalProxy.cs",
+          "line": 69,
+          "sourceLine": "var title = _notificationText.Get(\"notification.test.title\", \"Test Notification\");",
+          "sourceLineSha256": "3e3ed3741d5834cab58b67ad424afdcbfaec5d4412cb4a303a062da1360bbbfd"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Simplepush/SimplepushProxy.cs",
+          "line": 47,
+          "sourceLine": "var title = _notificationText.Get(\"notification.test.title\", \"Test Notification\");",
+          "sourceLineSha256": "3e3ed3741d5834cab58b67ad424afdcbfaec5d4412cb4a303a062da1360bbbfd"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Telegram/TelegramService.cs",
+          "line": 55,
+          "sourceLine": "var title = _notificationText.Get(\"notification.test.title\", \"Test Notification\");",
+          "sourceLineSha256": "3e3ed3741d5834cab58b67ad424afdcbfaec5d4412cb4a303a062da1360bbbfd"
+        }
+      ],
+      "protectedLiterals": []
+    }
+  ],
+  "counts": {
+    "messages": 57,
+    "sourceCallsites": 108,
+    "excludedCallsites": 2
+  },
+  "excluded": [
+    {
+      "category": "protected-technical-literal",
+      "reason": "Proper is a release-revision marker, not the adjective proper. The full core review intentionally preserves Proper/Real across all twelve locales.",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationService.cs",
+          "line": 103,
+          "sourceLine": "qualityString += \" Proper\";",
+          "sourceLineSha256": "015cc2a4c06dd0473aa0d5876b4b965d738399eeb474569c953ae8a6364e10d4"
+        }
+      ],
+      "referenceId": "Proper",
+      "expectedValue": "Proper"
+    },
+    {
+      "category": "dynamic-metadata-field",
+      "reason": "Retag diff keys are metadata/protocol field identifiers and can originate outside the UI catalog; preserve them alongside paths and old/new values.",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/NotificationService.cs",
+          "line": 136,
+          "sourceLine": "string.Join(\"\\n\", diff.Select(x => $\"{x.Key}: {FormatMissing(x.Value.Item1)} → {FormatMissing(x.Value.Item2)}\")));",
+          "sourceLineSha256": "0da14328a7f8cc1bfe28761b5ca8f73d3d3f7ca12d5a8d1bdf106d9311db7fd6"
+        }
+      ]
+    }
+  ]
+}

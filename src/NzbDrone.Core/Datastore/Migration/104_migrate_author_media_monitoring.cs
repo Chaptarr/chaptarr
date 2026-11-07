@@ -34,17 +34,21 @@ namespace NzbDrone.Core.Datastore.Migration
                 return;
             }
 
+            // Before 0.9.929 the author-monitor toggle updated MonitorExisting only;
+            // MonitorFuture could remain true while the author was intentionally
+            // unmonitored. Use MonitorExisting for the author gate and retain
+            // MonitorFuture only in the new-item policy migration below.
             Execute.Sql($@"
                 UPDATE ""{tableName}""
                    SET ""Monitored"" = CASE
-                           WHEN ""AudiobookMonitorExisting"" IN (1, 2) OR ""AudiobookMonitorFuture"" = TRUE
-                             OR ""EbookMonitorExisting"" IN (1, 2) OR ""EbookMonitorFuture"" = TRUE THEN TRUE
-                           WHEN ""AudiobookMonitorExisting"" IS NOT NULL OR ""AudiobookMonitorFuture"" IS NOT NULL
-                             OR ""EbookMonitorExisting"" IS NOT NULL OR ""EbookMonitorFuture"" IS NOT NULL THEN FALSE
+                           WHEN ""AudiobookMonitorExisting"" IN (1, 2)
+                             OR ""EbookMonitorExisting"" IN (1, 2) THEN TRUE
+                           WHEN ""AudiobookMonitorExisting"" IS NOT NULL
+                             OR ""EbookMonitorExisting"" IS NOT NULL THEN FALSE
                            ELSE ""Monitored""
                        END,
                        ""AudiobookMonitored"" = CASE
-                           WHEN ""AudiobookMonitorExisting"" IN (1, 2) OR ""AudiobookMonitorFuture"" = TRUE THEN TRUE
+                           WHEN ""AudiobookMonitorExisting"" IN (1, 2) THEN TRUE
                            WHEN ""AudiobookMonitorExisting"" = 0 THEN FALSE
                            ELSE ""AudiobookMonitored""
                        END,
@@ -56,7 +60,7 @@ namespace NzbDrone.Core.Datastore.Migration
                            ELSE ""AudiobookMonitorNewItems""
                        END,
                        ""EbookMonitored"" = CASE
-                           WHEN ""EbookMonitorExisting"" IN (1, 2) OR ""EbookMonitorFuture"" = TRUE THEN TRUE
+                           WHEN ""EbookMonitorExisting"" IN (1, 2) THEN TRUE
                            WHEN ""EbookMonitorExisting"" = 0 THEN FALSE
                            ELSE ""EbookMonitored""
                        END,

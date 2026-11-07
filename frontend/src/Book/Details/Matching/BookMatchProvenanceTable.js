@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import React from 'react';
 import translate from 'Utilities/String/translate';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import styles from './BookMatchProvenanceTable.css';
 
 const dispositionPriority = { conflicting: 3, supporting: 2, neutral: 1 };
@@ -114,7 +115,7 @@ function getRangeTitle(ranges) {
   return ranges
     .map((range) => {
       const label = getSignalLabel(range.type);
-      return range.detail ? `${label}: ${range.detail}` : label;
+      return range.detail ? `${label}: ${translateServerMessage(range.detail)}` : label;
     })
     .filter((value, index, values) => values.indexOf(value) === index)
     .join('\n');
@@ -260,7 +261,7 @@ function getFactText(signal) {
       expected;
   }
 
-  return signal.detail || '';
+  return translateServerMessage(signal.detail) || '';
 }
 
 function getPrimarySignalGroups(signals) {
@@ -553,7 +554,7 @@ function SignalSummary({ provenance }) {
                   <div
                     key={`${signal.disposition}-${text}-${valueIndex}`}
                     className={getDispositionClassName(signal.disposition)}
-                    title={signal.detail}
+                    title={translateServerMessage(signal.detail)}
                   >
                     {text}
                   </div>

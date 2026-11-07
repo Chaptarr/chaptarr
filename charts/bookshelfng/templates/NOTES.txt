@@ -1,0 +1,9 @@
+ChaptarrNG is running under the existing BookshelfNG Helm release identity.
+Keep the release name, namespace, and persistent volume claim unchanged.
+
+Access the web interface through the Service:
+  kubectl port-forward svc/{{ include "bookshelfng.fullname" . }} 8787:{{ .Values.service.port }}
+  open http://localhost:8787
+
+The image is pinned by image.digest. Confirm that the digest matches
+the provider mode used by the migrated BookshelfNG database.

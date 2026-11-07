@@ -4,8 +4,10 @@ import React, { Component } from 'react';
 import AuthorNameLink from 'Author/AuthorNameLink';
 import DeleteAuthorModal from 'Author/Delete/DeleteAuthorModal';
 import EditAuthorModalConnector from 'Author/Edit/EditAuthorModalConnector';
+import BookMediaTypeBadge from 'Book/BookMediaTypeBadge';
 import BookNameLink from 'Book/BookNameLink';
 import EditBookModalConnector from 'Book/Edit/EditBookModalConnector';
+import getBookIndexItemMediaType from 'Book/Index/getBookIndexItemMediaType';
 import NarratorCell from 'Components/Book/NarratorCell';
 import HeartRating from 'Components/HeartRating';
 import IconButton from 'Components/Link/IconButton';
@@ -90,6 +92,7 @@ class BookIndexRow extends Component {
       authorId,
       audiobookMonitored,
       ebookMonitored,
+      mediaType,
       hasFiles,
       anyEditionOk,
       selectedMediaType,
@@ -123,7 +126,9 @@ class BookIndexRow extends Component {
     } = this.props;
 
     const hasNarrator = narrator && (typeof narrator !== 'string' || narrator.trim().length > 0);
-    const showNarratorPicker = selectedMediaType === 'audiobook';
+    const rowMediaType = getBookIndexItemMediaType(selectedMediaType, mediaType);
+    const isMonitored = rowMediaType === 'ebook' ? ebookMonitored : audiobookMonitored;
+    const showNarratorPicker = rowMediaType === 'audiobook';
 
     const {
       bookFileCount,
@@ -172,7 +177,7 @@ class BookIndexRow extends Component {
                   key={name}
                   className={styles[name]}
                   grabbed={grabbed}
-                  monitored={audiobookMonitored || ebookMonitored}
+                  monitored={isMonitored}
                   component={VirtualTableRowCell}
                 />
               );
@@ -191,6 +196,12 @@ class BookIndexRow extends Component {
                     localBookId={localBookId}
                     title={title}
                   />
+                  {selectedMediaType === 'both' ? (
+                    <BookMediaTypeBadge
+                      className={styles.mediaTypeBadge}
+                      mediaType={rowMediaType}
+                    />
+                  ) : null}
                 </VirtualTableRowCell>
               );
             }
@@ -399,6 +410,7 @@ class BookIndexRow extends Component {
         <EditAuthorModalConnector
           isOpen={isEditAuthorModalOpen}
           authorId={authorId}
+          initialMediaType={rowMediaType}
           onModalClose={this.onEditAuthorModalClose}
           onDeleteAuthorPress={this.onDeleteAuthorPress}
         />
@@ -425,9 +437,10 @@ BookIndexRow.propTypes = {
   authorId: PropTypes.number.isRequired,
   audiobookMonitored: PropTypes.bool,
   ebookMonitored: PropTypes.bool,
+  mediaType: PropTypes.oneOf(['audiobook', 'ebook']),
   anyEditionOk: PropTypes.bool,
   hasFiles: PropTypes.bool,
-  selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook']),
+  selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook', 'both']),
   title: PropTypes.string.isRequired,
   titleSlug: PropTypes.string.isRequired,
   localBookId: PropTypes.string,

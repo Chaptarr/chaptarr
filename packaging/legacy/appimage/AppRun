@@ -1,0 +1,21 @@
+#!/usr/bin/env sh
+set -eu
+
+HERE="$(dirname "$(readlink -f "$0")")"
+export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+# Keep the old AppImage data directory so the normal startup migration finds
+# the existing BookshelfNG database, config, and backups in place.
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/bookshelfng"
+mkdir -p "$DATA_DIR"
+
+# The standalone BookshelfNG launcher did not set HARDCOVER; preserve its
+# Goodreads-compatible default. Operators whose source used native Hardcover
+# can override this with HARDCOVER=true.
+export HARDCOVER="${HARDCOVER:-false}"
+export BOOKSHELFNG_DESKTOP_CHANNEL=appimage
+export CHAPTARR_PACKAGE_UPDATE_MECHANISM="${CHAPTARR_PACKAGE_UPDATE_MECHANISM:-External}"
+export CHAPTARR_PACKAGE_UPDATE_MECHANISM_MESSAGE="${CHAPTARR_PACKAGE_UPDATE_MECHANISM_MESSAGE:-Replace this AppImage with a newer compatible build.}"
+
+exec "$HERE/usr/libexec/bookshelfng-supervisor.sh" \
+  "$HERE/usr/bin/Chaptarr" "$DATA_DIR" "$@"

@@ -56,7 +56,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
-        public void matched_filter_should_exclude_mapped_files_even_when_timestamps_drift()
+        public void matched_filter_should_reconsider_files_when_timestamps_drift()
         {
             var root = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"mediafiles_filter_{Guid.NewGuid():N}");
             var authorDir = Path.Combine(root, "books", "Andrzej Sapkowski");
@@ -77,8 +77,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 fileSystem.File.SetLastWriteTimeUtc(mappedPath, new DateTime(2001, 1, 1, 0, 0, 0, DateTimeKind.Utc));
                 fileSystem.File.SetLastWriteTimeUtc(unmappedPath, new DateTime(2001, 1, 1, 0, 0, 0, DateTimeKind.Utc));
 
-                var mappedDisk = fileSystem.FileInfo.FromFileName(mappedPath);
-                var unmappedDisk = fileSystem.FileInfo.FromFileName(unmappedPath);
+                var mappedDisk = fileSystem.FileInfo.New(mappedPath);
+                var unmappedDisk = fileSystem.FileInfo.New(unmappedPath);
 
                 var known = new Dictionary<string, BookFile>(PathEqualityComparer.Instance)
                 {
@@ -118,7 +118,69 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var resultPaths = result.Select(f => f.FullName).ToList();
 
                 Assert.That(resultPaths, Does.Contain(unmappedPath));
-                Assert.That(resultPaths, Does.Not.Contain(mappedPath));
+                Assert.That(resultPaths, Does.Contain(mappedPath), "a changed mapped file must be reconsidered during a scan");
+            }
+            finally
+            {
+                try
+                {
+                    if (Directory.Exists(root))
+                    {
+                        Directory.Delete(root, recursive: true);
+                    }
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        [Test]
+        public void matched_filter_should_skip_unchanged_mapped_or_successfully_searched_files()
+        {
+            var root = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"mediafiles_filter_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(root);
+            var mappedPath = Path.Combine(root, "Mapped.epub");
+            var searchedPath = Path.Combine(root, "Searched.epub");
+            var unsoughtPath = Path.Combine(root, "Unsought.epub");
+
+            try
+            {
+                File.WriteAllText(mappedPath, "mapped");
+                File.WriteAllText(searchedPath, "searched");
+                File.WriteAllText(unsoughtPath, "unsought");
+
+                var modified = new DateTime(2024, 3, 4, 5, 6, 7, DateTimeKind.Utc);
+                foreach (var path in new[] { mappedPath, searchedPath, unsoughtPath })
+                {
+                    File.SetLastWriteTimeUtc(path, modified);
+                }
+
+                var fileSystem = new FileSystem();
+                var diskFiles = new[]
+                {
+                    fileSystem.FileInfo.New(mappedPath),
+                    fileSystem.FileInfo.New(searchedPath),
+                    fileSystem.FileInfo.New(unsoughtPath)
+                };
+                var known = new Dictionary<string, BookFile>(PathEqualityComparer.Instance)
+                {
+                    [mappedPath] = new BookFile { Path = mappedPath, Size = diskFiles[0].Length, Modified = modified, EditionId = 42 },
+                    [searchedPath] = new BookFile { Path = searchedPath, Size = diskFiles[1].Length, Modified = modified, EditionId = 0, LastRemoteSearchTime = modified },
+                    [unsoughtPath] = new BookFile { Path = unsoughtPath, Size = diskFiles[2].Length, Modified = modified, EditionId = 0 }
+                };
+
+                var repo = DispatchProxy.Create<IMediaFileRepository, MediaFileRepositoryProxy>();
+                ((MediaFileRepositoryProxy)(object)repo).GetFileWithPathHandler = paths =>
+                    paths.Select(path => known.TryGetValue(path, out var file) ? file : null).Where(file => file != null).ToList();
+                var ingestQueue = DispatchProxy.Create<IIngestQueueRepository, IngestQueueRepositoryProxy>();
+                var sut = new MediaFileService(repo, new StubEventAggregator(), ingestQueue, LogManager.GetLogger("test"));
+
+                var resultPaths = sut.FilterUnchangedFiles(diskFiles.ToList(), FilterFilesType.Matched)
+                    .Select(file => file.FullName)
+                    .ToList();
+
+                Assert.That(resultPaths, Is.EquivalentTo(new[] { unsoughtPath }));
             }
             finally
             {

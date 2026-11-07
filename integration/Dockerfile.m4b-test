@@ -1,0 +1,36 @@
+FROM sandreas/mp4v2:2.1.1@sha256:c186cccc63b69a428be6a60359c29aff84bfacbd8597a4237038c7ccd7628a2d AS mp4v2
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0.403@sha256:de4fe90a98845d75910b9769662465c84de1a934665c431279d1382b2bddc02b
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates ffmpeg php-cli php-mbstring php-xml php-json php-curl php-zip wget \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=mp4v2 /usr/local/bin/mp4* /opt/mp4v2/bin/
+COPY --from=mp4v2 /usr/local/lib/libmp4v2* /opt/mp4v2/lib/
+COPY --from=mp4v2 /usr/lib/libstdc++.so.6* /usr/lib/libgcc_s.so.1 /opt/mp4v2/lib/
+COPY --from=mp4v2 /lib/ld-musl-*.so.1 /lib/
+COPY --from=mp4v2 /lib/ld-musl-*.so.1 /opt/mp4v2/lib/
+COPY --from=mp4v2 /lib/libc.musl-*.so.1 /opt/mp4v2/lib/
+
+RUN set -eux; \
+    for tool in /opt/mp4v2/bin/mp4*; do \
+        name="$(basename "$tool")"; \
+        printf '%s\n' '#!/bin/sh' \
+            'export LD_LIBRARY_PATH="/opt/mp4v2/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"' \
+            "exec /opt/mp4v2/bin/${name} \"\$@\"" \
+            > "/usr/local/bin/${name}"; \
+        chmod +x "/usr/local/bin/${name}"; \
+    done; \
+    mp4info --version; \
+    mp4tags --version; \
+    mp4chaps --version
+
+ARG M4B_TOOL_URL=https://github.com/sandreas/m4b-tool/releases/download/v0.5.2/m4b-tool.phar
+ARG M4B_TOOL_SHA256=a3ea9b81a4e8ce10ecc85c1fc712c982ba2622f2ed0318fb558dadfad4a590fa
+
+RUN set -eux; \
+    wget -O /usr/local/bin/m4b-tool "$M4B_TOOL_URL"; \
+    echo "${M4B_TOOL_SHA256}  /usr/local/bin/m4b-tool" | sha256sum -c -; \
+    chmod +x /usr/local/bin/m4b-tool; \
+    php /usr/local/bin/m4b-tool --version

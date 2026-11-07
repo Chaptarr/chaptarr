@@ -81,8 +81,8 @@ namespace NzbDrone.Core.Notifications.Gotify
 
             try
             {
-                const string title = "Test Notification";
-                const string body = "This is a test message from Chaptarr";
+                var title = Localize("notification.test.title", "Test Notification");
+                var body = Localize("notification.test.body", "This is a test message from Chaptarr.");
 
                 _proxy.SendNotification(title, body, Settings);
             }

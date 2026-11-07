@@ -181,7 +181,21 @@ namespace Chaptarr.Api.V1.RootFolders
         protected override RootFolderResource GetResourceById(int id)
         {
             var rootFolders = _rootFolderService.All();
-            return _rootFolderService.Get(id).ToResource(rootFolders, _configService.DefaultAudiobookRootFolderPath, _configService.DefaultEbookRootFolderPath);
+            var model = _rootFolderService.Get(id);
+            var authors = _authorService.GetAllAuthors(bypassCache: true);
+
+            return model.ToResource(
+                rootFolders,
+                _configService.DefaultAudiobookRootFolderPath,
+                _configService.DefaultEbookRootFolderPath,
+                AnyAuthorAssignedToPath(model.Path, authors));
+        }
+
+        private static bool AnyAuthorAssignedToPath(string path, IEnumerable<NzbDrone.Core.Books.Author> authors)
+        {
+            return authors.Any(author =>
+                author.AudiobookRootFolderPath.PathEquals(path) ||
+                author.EbookRootFolderPath.PathEquals(path));
         }
 
         [RestPostById]
@@ -218,10 +232,9 @@ namespace Chaptarr.Api.V1.RootFolders
             if (existingRootFolder.FolderType != model.FolderType &&
                 model.FolderType != FolderType.Mixed)
             {
-                var hasAssignedAuthors = _authorService.GetAllAuthors(bypassCache: true)
-                    .Any(author =>
-                        author.AudiobookRootFolderPath.PathEquals(existingRootFolder.Path) ||
-                        author.EbookRootFolderPath.PathEquals(existingRootFolder.Path));
+                var hasAssignedAuthors = AnyAuthorAssignedToPath(
+                    existingRootFolder.Path,
+                    _authorService.GetAllAuthors(bypassCache: true));
 
                 if (hasAssignedAuthors)
                 {
@@ -252,8 +265,13 @@ namespace Chaptarr.Api.V1.RootFolders
         {
             var allRootFolders = _rootFolderService.AllWithSpaceStats();
             var rootFolders = RootFolderMediaTypeFilter.Filter(allRootFolders, mediaType);
+            var authors = _authorService.GetAllAuthors(bypassCache: true);
 
-            return rootFolders.ToResource(allRootFolders, _configService.DefaultAudiobookRootFolderPath, _configService.DefaultEbookRootFolderPath);
+            return rootFolders.ToResource(
+                allRootFolders,
+                _configService.DefaultAudiobookRootFolderPath,
+                _configService.DefaultEbookRootFolderPath,
+                folder => AnyAuthorAssignedToPath(folder.Path, authors));
         }
 
         [RestDeleteById]

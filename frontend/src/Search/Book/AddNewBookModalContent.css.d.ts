@@ -3,6 +3,8 @@
 interface CssExports {
   'addButton': string;
   'addError': string;
+  'ambiguousCandidateLink': string;
+  'ambiguousCandidates': string;
   'authorName': string;
   'bookCount': string;
   'bookType': string;

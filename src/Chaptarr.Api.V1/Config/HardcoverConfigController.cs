@@ -31,15 +31,27 @@ namespace Chaptarr.Api.V1.Config
         [ProducesResponseType(typeof(HardcoverConfigResource), 200)]
         public ActionResult<HardcoverConfigResource> GetConfig()
         {
-            var enabled = _configService.HardcoverEnabled;
-            var hasToken = !string.IsNullOrEmpty(_configService.HardcoverApiToken);
+            var environmentToken = Environment.GetEnvironmentVariable("HARDCOVER_AUTH");
+            if (string.IsNullOrWhiteSpace(environmentToken))
+            {
+                environmentToken = Environment.GetEnvironmentVariable("HARDCOVER_API_KEY");
+            }
+
+            var token = string.IsNullOrWhiteSpace(environmentToken) ? _configService.HardcoverApiToken : environmentToken;
+            var nativeEnvironmentEnabled =
+                string.Equals(Environment.GetEnvironmentVariable("HARDCOVER"), "true", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(Environment.GetEnvironmentVariable("HARDCOVER_NATIVE"), "false", StringComparison.OrdinalIgnoreCase);
+            var enabled = _configService.HardcoverEnabled || nativeEnvironmentEnabled;
+            var hasToken = !string.IsNullOrEmpty(token);
             var username = _configService.HardcoverUsername ?? "";
             var avatarUrl = _configService.HardcoverUserImageUrl ?? "";
 
             // Backfill username/avatar for existing installs that configured Hardcover before these fields existed.
-            if (enabled && hasToken && (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(avatarUrl)))
+            // Avoid a network request on every GET when the effective token comes from the environment.
+            if (enabled && hasToken && string.IsNullOrWhiteSpace(environmentToken) &&
+                (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(avatarUrl)))
             {
-                var validation = ValidateHardcoverToken(_configService.HardcoverApiToken);
+                var validation = ValidateHardcoverToken(token);
                 if (validation.IsValid && validation.UserInfo != null && !string.IsNullOrEmpty(validation.UserInfo.Username))
                 {
                     if (string.IsNullOrEmpty(username))

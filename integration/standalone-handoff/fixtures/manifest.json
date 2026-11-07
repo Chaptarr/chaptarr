@@ -1,0 +1,9 @@
+{
+  "sourceVersion": "0.4.21.76",
+  "sourceArchiveSha256": "f0d8983f72663fcb5ccbeb4758bc4adcb1e9d5d19ed57c62e91a0409b3500bba",
+  "generation": "Healthy checksum-pinned musl-x64 predecessor, committed synthetic schema-158 main fixture; stopped before capture. Only schema and VersionInfo rows retained.",
+  "files": {
+    "BookshelfNG.cache.158.sql": "9e43bb6f996124f972c4194c9e2558aeae3835180360f12397510360831ae73c",
+    "BookshelfNG.logs.158.sql": "f40bd5bc35773ee0c65ac9f2c98396612450fd30892e80df80c877f0ee03451e"
+  }
+}

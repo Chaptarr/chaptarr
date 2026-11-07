@@ -56,26 +56,37 @@ namespace NzbDrone.Core.ImportLists.Goodreads
 
             try
             {
-                var series = _seriesInfo.GetSeriesInfo(Settings.SeriesId);
+                var page = 1;
+                var reachedLimit = false;
 
-                foreach (var work in series.Works)
+                while (!reachedLimit)
                 {
-                    var item = new ImportListItemInfo
+                    var series = _seriesInfo.GetSeriesInfo(Settings.SeriesId, page++);
+                    if (series?.Works == null || series.Works.Count == 0)
                     {
-                        BookGoodreadsId = $"gr:{work.Id}",
-                        Book = work.OriginalTitle,
-                        EditionGoodreadsId = $"gr:{work.BestBook.Id}",
-                        Author = work.BestBook.AuthorName,
-                        AuthorGoodreadsId = $"gr:{work.BestBook.AuthorId}"
-                    };
-
-                    GoodreadsImportListLimit.TryAdd(result, item, seenSourceBooks, Settings.ImportLimit);
-
-                    if (GoodreadsImportListLimit.HasReached(result.Count, Settings.ImportLimit))
-                    {
-                        _logger.Info("Goodreads Series import list '{0}' reached import limit of {1}; remaining Goodreads items will be skipped.",
-                            Definition?.Name ?? Name, Settings.ImportLimit);
                         break;
+                    }
+
+                    foreach (var work in series.Works)
+                    {
+                        var item = new ImportListItemInfo
+                        {
+                            BookGoodreadsId = $"gr:{work.Id}",
+                            Book = work.OriginalTitle,
+                            EditionGoodreadsId = $"gr:{work.BestBook.Id}",
+                            Author = work.BestBook.AuthorName,
+                            AuthorGoodreadsId = $"gr:{work.BestBook.AuthorId}"
+                        };
+
+                        GoodreadsImportListLimit.TryAdd(result, item, seenSourceBooks, Settings.ImportLimit);
+
+                        if (GoodreadsImportListLimit.HasReached(result.Count, Settings.ImportLimit))
+                        {
+                            _logger.Info("Goodreads Series import list '{0}' reached import limit of {1}; remaining Goodreads items will be skipped.",
+                                Definition?.Name ?? Name, Settings.ImportLimit);
+                            reachedLimit = true;
+                            break;
+                        }
                     }
                 }
 

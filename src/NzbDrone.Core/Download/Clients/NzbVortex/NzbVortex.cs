@@ -10,6 +10,7 @@ using NzbDrone.Common.Http;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
 using NzbDrone.Core.Validation;
@@ -36,7 +37,7 @@ namespace NzbDrone.Core.Download.Clients.NzbVortex
         {
             var priority = remoteBook.IsRecentBook() ? Settings.RecentTvPriority : Settings.OlderTvPriority;
 
-            var group = remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? Settings.EbookCategory : Settings.AudiobookCategory;
+            var group = BookDownloadCategorySettings.GetCategory(Settings, remoteBook.GetPreferredMediaType());
             var response = _proxy.DownloadNzb(fileContent, filename, priority, Settings, group);
 
             if (response == null)
@@ -51,10 +52,7 @@ namespace NzbDrone.Core.Download.Clients.NzbVortex
 
         public override IEnumerable<DownloadClientItem> GetItems()
         {
-            var configuredGroups = new[] { Settings.AudiobookCategory, Settings.EbookCategory }
-                .Where(c => c.IsNotNullOrWhiteSpace())
-                .Distinct(StringComparer.InvariantCultureIgnoreCase)
-                .ToList();
+            var configuredGroups = BookDownloadCategorySettings.GetConfiguredCategories(Settings).ToList();
 
             var vortexQueue = new List<NzbVortexQueueItem>();
 
@@ -235,20 +233,11 @@ namespace NzbDrone.Core.Download.Clients.NzbVortex
         {
             var groups = GetGroups();
 
-            foreach (var pair in new[]
-                     {
-                         new { Field = nameof(NzbVortexSettings.AudiobookCategory), Value = Settings.AudiobookCategory },
-                         new { Field = nameof(NzbVortexSettings.EbookCategory), Value = Settings.EbookCategory }
-                     })
+            foreach (var category in BookDownloadCategorySettings.GetConfiguredCategories(Settings))
             {
-                if (pair.Value.IsNullOrWhiteSpace())
+                if (groups.FirstOrDefault(c => c.GroupName == category) == null)
                 {
-                    continue;
-                }
-
-                if (groups.FirstOrDefault(c => c.GroupName == pair.Value) == null)
-                {
-                    return new NzbDroneValidationFailure(pair.Field, "Group does not exist")
+                    return new NzbDroneValidationFailure(BookDownloadCategorySettings.GetCategoryFieldName(Settings, category), "Group does not exist")
                     {
                         DetailedDescription = "The Group you entered doesn't exist in NzbVortex. Go to NzbVortex to create it."
                     };

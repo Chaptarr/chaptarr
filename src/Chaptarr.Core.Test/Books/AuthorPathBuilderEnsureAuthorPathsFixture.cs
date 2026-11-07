@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
@@ -150,6 +151,38 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(author.AudiobookPath, Is.EqualTo("/media/Alexis Hall"));
             Assert.That(author.EbookPath, Is.EqualTo("/media/Alexis Hall"));
             Assert.That(author.Path, Is.EqualTo("/media/Alexis Hall"));
+        }
+
+        [Test]
+        public void should_preserve_distinct_media_paths_when_a_shared_root_is_the_author_path()
+        {
+            const string authorRoot = "/media/Alexis Hall";
+            var builder = new AuthorPathBuilder(
+                new StubBuildFileNames(),
+                new StubRootFolderService(new List<RootFolder>
+                {
+                    new RootFolder { Path = "/media", FolderType = FolderType.Mixed },
+                    new RootFolder { Path = authorRoot, FolderType = FolderType.Mixed }
+                }));
+
+            var author = new Author
+            {
+                Name = "Alexis Hall",
+                AudiobookRootFolderPath = authorRoot,
+                EbookRootFolderPath = authorRoot,
+                AudiobookPath = Path.Combine(authorRoot, "Audiobooks"),
+                EbookPath = Path.Combine(authorRoot, "Ebooks"),
+                Path = authorRoot
+            };
+
+            builder.EnsureAuthorPaths(author, useExistingRelativeFolder: true);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(author.Path, Is.EqualTo(authorRoot));
+                Assert.That(author.AudiobookPath, Is.EqualTo(Path.Combine(authorRoot, "Audiobooks")));
+                Assert.That(author.EbookPath, Is.EqualTo(Path.Combine(authorRoot, "Ebooks")));
+            });
         }
 
         [Test]

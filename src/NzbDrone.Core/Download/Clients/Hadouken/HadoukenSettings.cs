@@ -39,10 +39,10 @@ namespace NzbDrone.Core.Download.Clients.Hadouken
         [FieldDefinition(1, Label = "Port", Type = FieldType.Textbox)]
         public int Port { get; set; }
 
-        [FieldDefinition(2, Label = "Use SSL", Type = FieldType.Checkbox, HelpText = "Use secure connection when connecting to Hadouken")]
+        [FieldDefinition(2, Label = "UseSSL", Type = FieldType.Checkbox, HelpText = "provider.field.fd8a3f9b429d7")]
         public bool UseSsl { get; set; }
 
-        [FieldDefinition(3, Label = "Url Base", Type = FieldType.Textbox, Advanced = true, HelpText = "Adds a prefix to the Hadouken url, e.g. http://[host]:[port]/[urlBase]/api")]
+        [FieldDefinition(3, Label = "provider.field.fafbbcc619aac", Type = FieldType.Textbox, Advanced = true, HelpText = "provider.field.fc977e5885c27")]
         public string UrlBase { get; set; }
 
         [FieldDefinition(4, Label = "Username", Type = FieldType.Textbox, Privacy = PrivacyLevel.UserName)]
@@ -51,7 +51,7 @@ namespace NzbDrone.Core.Download.Clients.Hadouken
         [FieldDefinition(5, Label = "Password", Type = FieldType.Password, Privacy = PrivacyLevel.Password)]
         public string Password { get; set; }
 
-        [FieldDefinition(6, Label = "Category", Type = FieldType.Textbox)]
+        [FieldDefinition(6, Label = "provider.field.f292c06f0045a", Type = FieldType.Textbox)]
         public string Category { get; set; }
 
         public NzbDroneValidationResult Validate()

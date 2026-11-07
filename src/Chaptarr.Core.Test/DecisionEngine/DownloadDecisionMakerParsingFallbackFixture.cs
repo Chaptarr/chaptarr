@@ -33,11 +33,19 @@ namespace Chaptarr.Core.Test.DecisionEngine
             public List<Book> MappedBooks { get; set; } = new();
             public List<int> MappedBookIds { get; private set; } = new();
             public int GetAuthorCalls { get; private set; }
+            public ParsedBookInfo FuzzyParsedBookInfo { get; set; }
+            public int FuzzyParseCalls { get; private set; }
 
             public Author GetAuthor(string title)
             {
                 GetAuthorCalls++;
                 return null;
+            }
+
+            public ParsedBookInfo ParseBookTitleFuzzy(string title)
+            {
+                FuzzyParseCalls++;
+                return FuzzyParsedBookInfo;
             }
 
             public RemoteBook Map(ParsedBookInfo parsedBookInfo, SearchCriteriaBase searchCriteria = null)
@@ -177,6 +185,41 @@ namespace Chaptarr.Core.Test.DecisionEngine
         }
 
         [Test]
+        public void should_use_bookshelf_fuzzy_parser_when_rss_title_does_not_parse()
+        {
+            var parsingService = new TestParsingService
+            {
+                FuzzyParsedBookInfo = new ParsedBookInfo
+                {
+                    AuthorName = "Example Author",
+                    BookTitle = "Example Book"
+                }
+            };
+
+            var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>(),
+                                                          parsingService,
+                                                          new TestEditionFtsRepository(),
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          LogManager.GetCurrentClassLogger());
+
+            decisionMaker.GetRssDecision(new List<ReleaseInfo>
+            {
+                new ReleaseInfo
+                {
+                    Title = "123",
+                    Indexer = "Test Indexer",
+                    Categories = new List<int>(),
+                    PublishDate = DateTime.UtcNow
+                }
+            });
+
+            Assert.That(parsingService.FuzzyParseCalls, Is.EqualTo(1));
+        }
+
+        [Test]
         public void should_expose_interactive_source_before_decision_specifications_run()
         {
             var author = new Author { Id = 1, Name = "Author" };
@@ -210,6 +253,58 @@ namespace Chaptarr.Core.Test.DecisionEngine
             });
 
             Assert.That(specification.SeenSource, Is.EqualTo(ReleaseSourceType.InteractiveSearch));
+        }
+
+        [TestCase(false, ReleaseSourceType.Rss)]
+        [TestCase(true, ReleaseSourceType.ReleasePush)]
+        public void should_preserve_rss_and_release_push_source_before_decision_specifications_run(
+            bool pushedRelease,
+            ReleaseSourceType expectedSource)
+        {
+            var author = new Author { Id = 7, Name = "Example Author" };
+            var book = new Book
+            {
+                Id = 11,
+                Author = author,
+                AuthorId = author.Id,
+                Title = "Example Book",
+                MediaType = BookMediaType.Audiobook
+            };
+            var parsingService = new TestParsingService
+            {
+                MappedBooks = new List<Book> { book }
+            };
+            var ftsRepository = new TestEditionFtsRepository();
+            ftsRepository.Recalls.Add(new BookFtsMatch
+            {
+                BookId = book.Id,
+                AuthorId = author.Id,
+                AuthorName = author.Name,
+                BookTitle = book.Title
+            });
+            var specification = new RecordingReleaseSourceSpecification();
+            var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification> { specification },
+                                                          parsingService,
+                                                          ftsRepository,
+                                                          new NoOpCustomFormatCalculationService(),
+                                                          new NoOpRemoteBookAggregationService(),
+                                                          new NoOpReleaseNarratorMetadataEnricher(),
+                                                          (IConfigService)null,
+                                                          LogManager.GetCurrentClassLogger());
+
+            decisionMaker.GetRssDecision(new List<ReleaseInfo>
+            {
+                new ReleaseInfo
+                {
+                    Title = "Example Author - Example Book",
+                    Author = author.Name,
+                    Indexer = pushedRelease ? null : "Test Indexer",
+                    Categories = new List<int>(),
+                    PublishDate = DateTime.UtcNow
+                }
+            }, pushedRelease);
+
+            Assert.That(specification.SeenSource, Is.EqualTo(expectedSource));
         }
 
         [Test]
@@ -679,7 +774,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 new List<IDecisionEngineSpecification>
                 {
                     new ReleaseTitleMatchSpecification(logger, configService),
-                    new NzbDrone.Core.DecisionEngine.Specifications.RssSync.MonitoredBookSpecification(logger),
+                    new NzbDrone.Core.DecisionEngine.Specifications.RssSync.MonitoredBookSpecification(configService, logger),
                     new MonitoredMediaTypeSpecification(logger)
                 },
                 parsingService,
@@ -1283,7 +1378,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>
                                                           {
                                                               new EbookFormatSpecification(logger),
-                                                              new QualityAllowedByProfileSpecification(logger),
+                                                              new QualityAllowedByProfileSpecification((IConfigService)null, logger),
                                                               new ReleaseTitleMatchSpecification(logger)
                                                           },
                                                           new TestParsingService(),
@@ -1392,7 +1487,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>
                                                           {
                                                               new EbookFormatSpecification(logger),
-                                                              new QualityAllowedByProfileSpecification(logger),
+                                                              new QualityAllowedByProfileSpecification((IConfigService)null, logger),
                                                               new ReleaseTitleMatchSpecification(logger)
                                                           },
                                                           new TestParsingService(),
@@ -1451,7 +1546,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>
                                                           {
                                                               new EbookFormatSpecification(logger),
-                                                              new QualityAllowedByProfileSpecification(logger),
+                                                              new QualityAllowedByProfileSpecification((IConfigService)null, logger),
                                                               new ReleaseTitleMatchSpecification(logger)
                                                           },
                                                           new TestParsingService(),
@@ -1530,7 +1625,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var decisionMaker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>
                                                           {
                                                               new EbookFormatSpecification(logger),
-                                                              new QualityAllowedByProfileSpecification(logger)
+                                                              new QualityAllowedByProfileSpecification((IConfigService)null, logger)
                                                           },
                                                           parsingService,
                                                           ftsRepository,

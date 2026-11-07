@@ -135,6 +135,7 @@ class SettingsToolbar extends Component {
   render() {
     const {
       advancedSettings,
+      isAdvancedExperience,
       showSave,
       isSaving,
       hasPendingChanges,
@@ -175,10 +176,13 @@ class SettingsToolbar extends Component {
     return (
       <PageToolbar>
         <PageToolbarSection>
-          <AdvancedSettingsButton
-            advancedSettings={advancedSettings}
-            onAdvancedSettingsPress={onAdvancedSettingsPress}
-          />
+          {
+            isAdvancedExperience &&
+              <AdvancedSettingsButton
+                advancedSettings={advancedSettings}
+                onAdvancedSettingsPress={onAdvancedSettingsPress}
+              />
+          }
 
           {
             showSave &&
@@ -209,6 +213,7 @@ class SettingsToolbar extends Component {
 
 SettingsToolbar.propTypes = {
   advancedSettings: PropTypes.bool.isRequired,
+  isAdvancedExperience: PropTypes.bool.isRequired,
   showSave: PropTypes.bool.isRequired,
   isSaving: PropTypes.bool,
   saveError: PropTypes.object,

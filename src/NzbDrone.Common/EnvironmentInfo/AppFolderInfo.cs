@@ -11,6 +11,7 @@ namespace NzbDrone.Common.EnvironmentInfo
         string AppDataFolder { get; }
         string TempFolder { get; }
         string StartUpFolder { get; }
+        bool MergeBookshelfDatabases => false;
     }
 
     public class AppFolderInfo : IAppFolderInfo
@@ -38,6 +39,7 @@ namespace NzbDrone.Common.EnvironmentInfo
 
             StartUpFolder = new FileInfo(Assembly.GetExecutingAssembly().Location).Directory.FullName;
             TempFolder = Path.GetTempPath();
+            MergeBookshelfDatabases = startupContext.MergeBookshelfDatabases;
         }
 
         public string AppDataFolder { get; }
@@ -45,5 +47,7 @@ namespace NzbDrone.Common.EnvironmentInfo
         public string StartUpFolder { get; }
 
         public string TempFolder { get; }
+
+        public bool MergeBookshelfDatabases { get; }
     }
 }

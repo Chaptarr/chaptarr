@@ -12,6 +12,7 @@ import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { inputTypes, kinds } from 'Helpers/Props';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 
 class SelectQualityModalContent extends Component {
@@ -63,6 +64,7 @@ class SelectQualityModalContent extends Component {
       isPopulated,
       error,
       items,
+      onRetryPress,
       onModalClose
     } = this.props;
 
@@ -78,6 +80,8 @@ class SelectQualityModalContent extends Component {
         value: name
       };
     });
+    const isLoading = isFetching || (!isPopulated && !error);
+    const hasQualities = !!qualityOptions.length;
 
     return (
       <ModalContent onModalClose={onModalClose}>
@@ -87,19 +91,29 @@ class SelectQualityModalContent extends Component {
 
         <ModalBody>
           {
-            isFetching &&
+            isLoading &&
               <LoadingIndicator />
           }
 
           {
-            !isFetching && !!error &&
-              <Alert kind={kinds.DANGER}>
-                {translate('UnableToLoadQualities')}
+            !isLoading && !!error &&
+              <Alert kind={kinds.DANGER} role="alert">
+                <div>{getErrorMessage(error, translate('UnableToLoadQualities'))}</div>
+                <Button size="small" onPress={onRetryPress}>
+                  {translate('Retry')}
+                </Button>
               </Alert>
           }
 
           {
-            isPopulated && !error &&
+            isPopulated && !isFetching && !error && !hasQualities &&
+              <Alert kind={kinds.INFO} role="status">
+                {translate('ManualImportNoQualitiesAvailable')}
+              </Alert>
+          }
+
+          {
+            isPopulated && !isFetching && !error && hasQualities &&
               <Form>
                 <FormGroup>
                   <FormLabel>
@@ -151,6 +165,7 @@ class SelectQualityModalContent extends Component {
 
           <Button
             kind={kinds.SUCCESS}
+            isDisabled={!isPopulated || isFetching || !!error || !hasQualities}
             onPress={this.onQualitySelect}
           >
             {translate('SelectQuality')}
@@ -169,6 +184,7 @@ SelectQualityModalContent.propTypes = {
   isPopulated: PropTypes.bool.isRequired,
   error: PropTypes.object,
   items: PropTypes.arrayOf(PropTypes.object).isRequired,
+  onRetryPress: PropTypes.func.isRequired,
   onQualitySelect: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired
 };

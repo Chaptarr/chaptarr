@@ -26,10 +26,30 @@
 }
 
 .emptyMessage {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 12px;
+
   margin-top: 10px;
   margin-bottom: 30px;
   text-align: center;
   font-size: 20px;
+}
+
+.formatToolbarGroup {
+  display: flex;
+  align-items: center;
+}
+
+.formatGroupingHelp {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  min-width: 44px;
+  min-height: 44px;
+  color: var(--infoColor);
 }
 
 @media only screen and (max-width: $breakpointSmall) {

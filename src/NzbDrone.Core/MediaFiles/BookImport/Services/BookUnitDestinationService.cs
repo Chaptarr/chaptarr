@@ -6,7 +6,10 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using NLog;
+using NzbDrone.Common.Disk;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaFiles;
 
@@ -25,23 +28,34 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
         private readonly IBookService _bookService;
         private readonly IEditionService _editionService;
         private readonly IMainDatabase _mainDatabase;
+        private readonly IRootFolderService _rootFolderService;
+        private readonly IAuthorService _authorService;
+        private readonly IDiskProvider _diskProvider;
         private readonly Logger _logger;
 
         // Cache per canonical book + unit so we don't create multiple clones for the same physical unit.
         private readonly ConcurrentDictionary<string, (int BookId, int EditionId)> _unitDestCache =
             new ConcurrentDictionary<string, (int BookId, int EditionId)>(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, string> _renamedEpubReservations =
+            new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public BookUnitDestinationService(
             IMediaFileService mediaFileService,
             IBookService bookService,
             IEditionService editionService,
             IMainDatabase mainDatabase,
-            Logger logger)
+            IDiskProvider diskProvider,
+            Logger logger,
+            IRootFolderService rootFolderService = null,
+            IAuthorService authorService = null)
         {
             _mediaFileService = mediaFileService;
             _bookService = bookService;
             _editionService = editionService;
             _mainDatabase = mainDatabase;
+            _rootFolderService = rootFolderService;
+            _authorService = authorService;
+            _diskProvider = diskProvider;
             _logger = logger;
         }
 
@@ -53,6 +67,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 var ext = Path.GetExtension(anyFilePathInUnit) ?? string.Empty;
                 if (BookCoalescingHelper.IsStandaloneUnitExtension(ext))
                 {
+                    if (mediaType == BookMediaType.Ebook && ext.Equals(".epub", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return $"{baseKey}|{ext}".ToLowerInvariant();
+                    }
+
                     return baseKey.ToLowerInvariant();
                 }
 
@@ -69,6 +88,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             if (canonicalBook == null || canonicalBook.Id <= 0 || canonicalEdition == null || canonicalEdition.Id <= 0)
             {
                 throw new ArgumentException("Canonical book/edition must be provided for destination resolution");
+            }
+
+            // Calibre keeps every format on one record; never clone per-unit copies in calibre roots.
+            if (IsCalibreLibraryBook(canonicalBook))
+            {
+                var calibreEditionId = ResolveEditionIdForDestination(canonicalBook, canonicalEdition);
+                return (canonicalBook.Id, calibreEditionId);
             }
 
             unitKey = unitKey ?? string.Empty;
@@ -141,13 +167,43 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
             // Check files on BOOK level, not edition - prevents different folders from collapsing onto same book
             // when they match different editions of the same work
-            var existingFiles = _mediaFileService.GetFilesByBook(canonicalBook.Id) ?? new List<BookFile>();
+            var trackedFiles = _mediaFileService.GetFilesByBook(canonicalBook.Id) ?? new List<BookFile>();
+            var existingFiles = new List<BookFile>();
+            var staleFiles = new List<BookFile>();
+            foreach (var file in trackedFiles)
+            {
+                if (string.IsNullOrWhiteSpace(file?.Path) || !IsStillOnDisk(file.Path))
+                {
+                    staleFiles.Add(file);
+                }
+                else
+                {
+                    existingFiles.Add(file);
+                }
+            }
+
+            if (staleFiles.Count > 0)
+            {
+                _logger.Debug("[UNIT-DEST] Ignored {0} tracked files missing from disk on BookId={1} while resolving unit destination", staleFiles.Count, canonicalBook.Id);
+            }
+
+            PruneRenamedEpubReservations(canonicalBook.Id, staleFiles);
+
             if (existingFiles.Count == 0)
             {
-                // No existing files on canonical book → reuse canonical
-                var dest0 = (canonicalBook.Id, canonicalEdition.Id);
-                if (!string.IsNullOrWhiteSpace(cacheKey)) _unitDestCache[cacheKey] = dest0;
-                return dest0;
+                // No existing rows means there is no physical copy to split from. A same-root
+                // EPUB rename is the exception: retain the old row as evidence so only one new
+                // unit can claim the vanished file, and only for its original edition.
+                var canReuseCanonical = staleFiles.Count == 0 ||
+                                        OnlyReplacedFilesRemain(staleFiles, canonicalEdition.Title, canonicalBook.MediaType, unitKey) ||
+                                        TryReserveRenamedEpub(canonicalBook, canonicalEdition, staleFiles, unitKey);
+
+                if (canReuseCanonical)
+                {
+                    var dest0 = (canonicalBook.Id, canonicalEdition.Id);
+                    if (!string.IsNullOrWhiteSpace(cacheKey)) _unitDestCache[cacheKey] = dest0;
+                    return dest0;
+                }
             }
 
             // Check if existing files belong to the same unit key
@@ -166,6 +222,34 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 return dest1;
             }
 
+            // The book's files were replaced in place, e.g. an outside tool converted its MP3s into one M4B
+            // in the same folder. A rescan places new files before it deletes the rows of files that have
+            // disappeared, so the old rows are still here, and their extension differs from this unit's.
+            // They are not a second copy of the book: reuse it, rather than leave it monitored with no files.
+            if (existingFiles.Count > 0 && OnlyReplacedFilesRemain(existingFiles, canonicalEdition.Title, canonicalBook.MediaType, unitKey))
+            {
+                _logger.Debug("[UNIT-REPLACED] BookId={0} only has rows for files gone from this unit's folder; reusing it for unitKey='{1}' instead of creating a copy",
+                    canonicalBook.Id, unitKey);
+                var dest3 = (canonicalBook.Id, canonicalEdition.Id);
+                if (!string.IsNullOrWhiteSpace(cacheKey)) _unitDestCache[cacheKey] = dest3;
+                return dest3;
+            }
+
+            // Sibling ebook formats of one release (epub/azw3/mobi in the same folder) are
+            // renditions of the same physical unit, never a second copy to clone for.
+            if (canonicalBook.MediaType == BookMediaType.Ebook)
+            {
+                var incomingBaseKey = StripUnitKeyExtension(unitKey);
+
+                if (!string.IsNullOrWhiteSpace(incomingBaseKey) &&
+                    existingKeys.Any(k => StripUnitKeyExtension(k).Equals(incomingBaseKey, StringComparison.OrdinalIgnoreCase)))
+                {
+                    var destSibling = (canonicalBook.Id, canonicalEdition.Id);
+                    if (!string.IsNullOrWhiteSpace(cacheKey)) _unitDestCache[cacheKey] = destSibling;
+                    return destSibling;
+                }
+            }
+
             // Clone book + chosen edition for this unit
             var clone = CloneBookAndEdition(canonicalBook, canonicalEdition, unitKeyHash, makeAutomaticCopy: false);
             _logger.Debug("[UNIT-CLONE] Created duplicate BookId={0} EditionId={1} for unitKey='{2}' from canonical BookId={3} EditionId={4}",
@@ -173,6 +257,199 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             var dest2 = (clone.BookId, clone.EditionId);
             if (!string.IsNullOrWhiteSpace(cacheKey)) _unitDestCache[cacheKey] = dest2;
             return dest2;
+        }
+
+        // True when every file the book has rows for sits in the incoming unit's own book folder and is
+        // no longer on disk. A file that is still there, or one in a different folder, is a real copy.
+        private bool OnlyReplacedFilesRemain(List<BookFile> existingFiles, string editionTitle, BookMediaType mediaType, string unitKey)
+        {
+            if (existingFiles == null || existingFiles.Count == 0)
+            {
+                return false;
+            }
+
+            var incomingFolder = FolderOfUnitKey(unitKey);
+
+            foreach (var file in existingFiles)
+            {
+                var fileFolder = FolderOfUnitKey(BuildRootUnitKeyWithExtension(file.Path, editionTitle, mediaType));
+                if (!string.Equals(fileFolder, incomingFolder, StringComparison.OrdinalIgnoreCase) || IsStillOnDisk(file.Path))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private bool TryReserveRenamedEpub(Book canonicalBook, Edition canonicalEdition, List<BookFile> staleFiles, string unitKey)
+        {
+            if (canonicalBook?.MediaType != BookMediaType.Ebook ||
+                canonicalEdition == null ||
+                staleFiles?.Count != 1 ||
+                !unitKey.EndsWith("|.epub", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var staleFile = staleFiles[0];
+            if (staleFile == null ||
+                staleFile.EditionId != canonicalEdition.Id ||
+                !string.Equals(Path.GetExtension(staleFile.Path), ".epub", StringComparison.OrdinalIgnoreCase) ||
+                IsStillOnDisk(staleFile.Path))
+            {
+                return false;
+            }
+
+            var incomingPath = GetEpubPathFromUnitKey(unitKey);
+            if (incomingPath.IsNullOrWhiteSpace() ||
+                !TryGetAccessibleNonCalibreRoot(incomingPath, out var incomingRoot) ||
+                !TryGetAccessibleNonCalibreRoot(staleFile.Path, out var previousRoot) ||
+                !previousRoot.Path.PathEquals(incomingRoot.Path))
+            {
+                return false;
+            }
+
+            var reservationKey = GetRenamedEpubReservationKey(canonicalBook.Id, staleFile);
+            var reservedUnitKey = _renamedEpubReservations.GetOrAdd(reservationKey, unitKey);
+
+            if (!reservedUnitKey.Equals(unitKey, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.Debug("[UNIT-REPLACED-EPUB] Stale file BookFileId={0} for BookId={1} is already reserved for another incoming unit; preserving a separate copy",
+                    staleFile.Id, canonicalBook.Id);
+                return false;
+            }
+
+            _logger.Debug("[UNIT-REPLACED-EPUB] BookId={0} EditionId={1} is reusing one vanished EPUB under the same accessible library root for unitKey='{2}'",
+                canonicalBook.Id, canonicalEdition.Id, unitKey);
+            return true;
+        }
+
+        private void PruneRenamedEpubReservations(int bookId, List<BookFile> staleFiles)
+        {
+            var reservationPrefix = $"{bookId}|";
+            var staleReservationKeys = new HashSet<string>(
+                (staleFiles ?? new List<BookFile>())
+                    .Where(file => file != null && string.Equals(Path.GetExtension(file.Path), ".epub", StringComparison.OrdinalIgnoreCase))
+                    .Select(file => GetRenamedEpubReservationKey(bookId, file)),
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var reservationKey in _renamedEpubReservations.Keys)
+            {
+                if (reservationKey.StartsWith(reservationPrefix, StringComparison.OrdinalIgnoreCase) &&
+                    !staleReservationKeys.Contains(reservationKey))
+                {
+                    _renamedEpubReservations.TryRemove(reservationKey, out _);
+                }
+            }
+        }
+
+        private static string GetRenamedEpubReservationKey(int bookId, BookFile staleFile)
+        {
+            var staleFileIdentity = staleFile.Id > 0
+                ? staleFile.Id.ToString()
+                : (staleFile.Path ?? string.Empty).Trim().ToLowerInvariant();
+
+            return $"{bookId}|{staleFileIdentity}";
+        }
+
+        private bool TryGetAccessibleNonCalibreRoot(string path, out RootFolder rootFolder)
+        {
+            rootFolder = null;
+
+            try
+            {
+                rootFolder = _rootFolderService?.GetBestRootFolder(path);
+                if (rootFolder == null ||
+                    rootFolder.IsCalibreLibrary ||
+                    rootFolder.Path.IsNullOrWhiteSpace() ||
+                    !_diskProvider.FolderExists(rootFolder.Path))
+                {
+                    rootFolder = null;
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException)
+            {
+                _logger.Debug(ex, "[UNIT-REPLACED-EPUB] Unable to verify the library root for '{0}'", path);
+                rootFolder = null;
+                return false;
+            }
+        }
+
+        private static string GetEpubPathFromUnitKey(string unitKey)
+        {
+            if (unitKey.IsNullOrWhiteSpace() || !unitKey.EndsWith("|.epub", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            var withoutExtension = unitKey.Substring(0, unitKey.Length - "|.epub".Length);
+            var mediaTypeSeparator = withoutExtension.LastIndexOf('|');
+            if (mediaTypeSeparator <= 0 ||
+                !withoutExtension.Substring(mediaTypeSeparator + 1).Equals(nameof(BookMediaType.Ebook), StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            return withoutExtension.Substring(0, mediaTypeSeparator);
+        }
+
+        // Remove the optional container suffix while retaining the unit stem and media type.
+        private static string FolderOfUnitKey(string unitKey)
+        {
+            if (string.IsNullOrEmpty(unitKey))
+            {
+                return string.Empty;
+            }
+
+            var separator = unitKey.LastIndexOf('|');
+            return separator >= 0 && separator + 1 < unitKey.Length && unitKey[separator + 1] == '.'
+                ? unitKey.Substring(0, separator)
+                : unitKey;
+        }
+
+        private bool IsStillOnDisk(string path)
+        {
+            try
+            {
+                // The same check the scan's cleanup uses to decide which rows to delete.
+                return _diskProvider.FileExistsCanonical(path);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException)
+            {
+                // If it can't be checked, keep counting it, which is the behaviour before this check existed.
+                _logger.Debug(ex, "[UNIT-REPLACED] Could not check whether '{0}' is on disk; treating it as present", path);
+                return true;
+            }
+        }
+
+        private bool IsCalibreLibraryBook(Book book)
+        {
+            try
+            {
+                var path = book?.Author?.Path;
+
+                if (path.IsNullOrWhiteSpace() && book != null && book.AuthorId > 0)
+                {
+                    path = _authorService.GetAuthor(book.AuthorId)?.Path;
+                }
+
+                if (path.IsNullOrWhiteSpace())
+                {
+                    return false;
+                }
+
+                var rootFolder = _rootFolderService.GetBestRootFolder(path);
+                return rootFolder != null && rootFolder.IsCalibreLibrary;
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Unable to determine whether book {0} is in a calibre library", book?.Id);
+                return false;
+            }
         }
 
         private static string BuildUnitDestCacheKey(Book canonicalBook, string unitKeyOrHash)
@@ -183,6 +460,23 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             return $"{canonicalBook.Id}|{unitKeyOrHash}".ToLowerInvariant();
+        }
+
+        private static string StripUnitKeyExtension(string key)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return key ?? string.Empty;
+            }
+
+            var idx = key.LastIndexOf('|');
+
+            if (idx <= 0 || idx == key.Length - 1)
+            {
+                return key;
+            }
+
+            return key[idx + 1] == '.' ? key.Substring(0, idx) : key;
         }
 
         private static string ComputeUnitKeyHash(string unitKey)
@@ -229,7 +523,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 foreach (var f in files)
                 {
                     var key = BuildRootUnitKeyWithExtension(f.Path, canonicalEdition.Title, canonicalBook.MediaType);
-                    if (!string.Equals(key, unitKey, StringComparison.OrdinalIgnoreCase))
+                    var sameUnit = string.Equals(key, unitKey, StringComparison.OrdinalIgnoreCase) ||
+                                   (canonicalBook.MediaType == BookMediaType.Ebook &&
+                                    StripUnitKeyExtension(key).Equals(StripUnitKeyExtension(unitKey), StringComparison.OrdinalIgnoreCase));
+
+                    if (!sameUnit)
                     {
                         continue;
                     }
@@ -317,7 +615,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 book.UnitKeyHash = unitKeyHash;
                 _bookService.UpdateMany(new List<Book> { book });
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException)
             {
                 _logger.Debug(ex, "[UNIT-CLONE] Failed to persist UnitKeyHash for BookId={0}", book?.Id ?? 0);
             }

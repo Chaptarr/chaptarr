@@ -126,7 +126,7 @@ class Indexer extends Component {
                 kind={kinds.INFO}
                 outline={true}
               >
-                {titleCase(protocol)}
+                {protocol === 'direct' ? translate('DirectDownload') : titleCase(protocol)}
               </Label>
           }
 

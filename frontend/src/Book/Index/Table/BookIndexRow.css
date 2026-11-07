@@ -19,6 +19,10 @@
   flex: 4 0 110px;
 }
 
+.mediaTypeBadge {
+  margin-left: 8px;
+}
+
 .authorName {
   composes: cell;
 
@@ -31,9 +35,9 @@
   display: flex;
   justify-content: center;
   flex: 1 0 110px;
+  overflow: hidden;
   min-width: 100px;
   max-width: 180px;
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

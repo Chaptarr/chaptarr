@@ -54,7 +54,7 @@ namespace NzbDrone.Core.Indexers
         [FieldDefinition(1, Type = FieldType.Number, Label = "IndexerSettingsSeedTime", Unit = "minutes", HelpText = "IndexerSettingsSeedTimeHelpText", Advanced = true)]
         public int? SeedTime { get; set; }
 
-        [FieldDefinition(2, Type = FieldType.Textbox, Label = "Discography Seed Time", Unit = "minutes", HelpText = "The time a torrent should be seeded before stopping, empty is download client's default", Advanced = true)]
+        [FieldDefinition(2, Type = FieldType.Textbox, Label = "provider.field.f1fb3893d0b21", Unit = "minutes", HelpText = "provider.field.fff254e3d4b53", Advanced = true)]
         public int? DiscographySeedTime { get; set; }
 
         [FieldDefinition(3, Type = FieldType.Checkbox, Label = "IndexerSettingsNeverMoveOnImport", HelpText = "IndexerSettingsNeverMoveOnImportHelpText")]

@@ -11,6 +11,7 @@ import formatDateTime from 'Utilities/Date/formatDateTime';
 import formatAge from 'Utilities/Number/formatAge';
 import formatCustomFormatScore from 'Utilities/Number/formatCustomFormatScore';
 import translate from 'Utilities/String/translate';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import styles from './HistoryDetails.css';
 
 function getDetailedList(statusMessages) {
@@ -26,7 +27,7 @@ function getDetailedList(statusMessages) {
                   messages.map((message) => {
                     return (
                       <li key={message}>
-                        {message}
+                        {translateServerMessage(message)}
                       </li>
                     );
                   })
@@ -55,11 +56,11 @@ function formatChange(oldValue, newValue) {
 
 function formatConversionTagMode(tagMode) {
   if (tagMode === 'clean') {
-    return 'Clean matched tags';
+    return translate('CleanMatchedTags');
   }
 
   if (tagMode === 'preserve') {
-    return 'Preserve source tags';
+    return translate('PreserveSourceTags');
   }
 
   return tagMode;
@@ -202,7 +203,7 @@ function HistoryDetails(props) {
           message ?
             <DescriptionListItem
               title={translate('Message')}
-              data={message}
+              data={translateServerMessage(message)}
             /> :
             null
         }
@@ -292,7 +293,7 @@ function HistoryDetails(props) {
         {
           !!sourceFileCount &&
             <DescriptionListItem
-              title="Source Files"
+              title={translate('SourceFiles')}
               data={sourceFileCount}
             />
         }
@@ -300,7 +301,7 @@ function HistoryDetails(props) {
         {
           !!sourceQuality &&
             <DescriptionListItem
-              title="Source Quality"
+              title={translate('SourceQuality')}
               data={sourceQuality}
             />
         }
@@ -308,7 +309,7 @@ function HistoryDetails(props) {
         {
           !!targetQuality &&
             <DescriptionListItem
-              title="Converted Quality"
+              title={translate('ConvertedQuality')}
               data={targetQuality}
             />
         }
@@ -317,7 +318,7 @@ function HistoryDetails(props) {
           !!convertedPath &&
             <DescriptionListItem
               descriptionClassName={styles.description}
-              title="Converted File"
+              title={translate('ConvertedFile')}
               data={convertedPath}
             />
         }
@@ -351,7 +352,7 @@ function HistoryDetails(props) {
           !!message &&
             <DescriptionListItem
               title={translate('Message')}
-              data={message}
+              data={translateServerMessage(message)}
             />
         }
       </DescriptionList>
@@ -580,7 +581,7 @@ function HistoryDetails(props) {
           !!message &&
             <DescriptionListItem
               title={translate('Message')}
-              data={message}
+              data={translateServerMessage(message)}
             />
         }
       </DescriptionList>

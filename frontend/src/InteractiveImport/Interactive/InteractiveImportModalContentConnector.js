@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import forEach from 'lodash/forEach';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -16,6 +16,7 @@ import {
 import { fetchMediaManagementSettings, saveMediaManagementSettings, setMediaManagementSettingsValue } from 'Store/Actions/settingsActions';
 import createClientSideCollectionSelector from 'Store/Selectors/createClientSideCollectionSelector';
 import createSettingsSectionSelector from 'Store/Selectors/createSettingsSectionSelector';
+import translate from 'Utilities/String/translate';
 import InteractiveImportModalContent from './InteractiveImportModalContent';
 
 function createMapStateToProps() {
@@ -170,6 +171,10 @@ class InteractiveImportModalContentConnector extends Component {
     });
   };
 
+  onRetryPress = () => {
+    this.refetchItems();
+  };
+
   onPathFallbackChange = ({ value }) => {
     const { mediaManagementSettings } = this.props;
 
@@ -187,7 +192,7 @@ class InteractiveImportModalContentConnector extends Component {
     });
 
     if (promise && promise.done) {
-      promise.done(() => {
+      promise.then(() => {
         this.refetchItems();
       });
     }
@@ -209,11 +214,11 @@ class InteractiveImportModalContentConnector extends Component {
     let validationError = null;
 
     if (importMode === 'chooseImportMode') {
-      this.setState({ interactiveImportErrorMessage: 'An import mode must be selected' });
+      this.setState({ interactiveImportErrorMessage: translate('InteractiveImportModeRequiredError') });
       return;
     }
 
-    _.forEach(this.props.items, (item) => {
+    forEach(this.props.items, (item) => {
       const isSelected = selected.indexOf(item.id) > -1;
 
       if (isSelected) {
@@ -240,23 +245,23 @@ class InteractiveImportModalContentConnector extends Component {
         const useMetadataSuggestion = !isLocalReady && hasSuggestedAuthor;
 
         if (!hasAuthor) {
-          validationError = 'Author must be selected (or suggested) for each selected file';
+          validationError = translate('InteractiveImportAuthorRequiredError');
           return false;
         }
 
         // A metadata suggestion remains selectable when only the author resolved locally.
         if (hasLocalAuthor && !hasBook && !useMetadataSuggestion) {
-          validationError = 'Book must be selected for each selected file';
+          validationError = translate('InteractiveImportBookRequiredError');
           return false;
         }
 
         if (hasLocalAuthor && hasBook && !editionId && !useMetadataSuggestion) {
-          validationError = 'Edition must be selected for each selected file';
+          validationError = translate('InteractiveImportEditionRequiredError');
           return false;
         }
 
         if (!quality) {
-          validationError = 'Quality must be chosen for each selected file';
+          validationError = translate('InteractiveImportQualityRequiredError');
           return false;
         }
 
@@ -323,6 +328,7 @@ class InteractiveImportModalContentConnector extends Component {
         onFilterExistingFilesChange={this.onFilterExistingFilesChange}
         onReplaceExistingFilesChange={this.onReplaceExistingFilesChange}
         onImportModeChange={this.onImportModeChange}
+        onRetryPress={this.onRetryPress}
         onPathFallbackChange={this.onPathFallbackChange}
         onImportSelectedPress={this.onImportSelectedPress}
       />

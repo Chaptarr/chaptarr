@@ -12,6 +12,7 @@ import TableRow from 'Components/Table/TableRow';
 import { icons, kinds } from 'Helpers/Props';
 import titleCase from 'Utilities/String/titleCase';
 import translate from 'Utilities/String/translate';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import styles from './Health.css';
 
 function getInternalLink(source) {
@@ -206,7 +207,7 @@ class Health extends Component {
                           />
                         </TableRowCell>
 
-                        <TableRowCell>{item.message}</TableRowCell>
+                        <TableRowCell>{translateServerMessage(item.message)}</TableRowCell>
 
                         <TableRowCell>
                           <IconButton

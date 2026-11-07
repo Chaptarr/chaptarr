@@ -106,7 +106,7 @@ class ConsoleApi {
     const promise = createAjaxRequest(req).request;
 
     promise.fail((xhr) => {
-      console.error(`Failed to fetch ${url}`, xhr);
+      console.error('Failed to fetch', url, xhr);
     });
 
     attachAsyncActions(promise);

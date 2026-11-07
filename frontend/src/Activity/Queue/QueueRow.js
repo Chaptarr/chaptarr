@@ -18,6 +18,7 @@ import InteractiveImportModal from 'InteractiveImport/InteractiveImportModal';
 import formatBytes from 'Utilities/Number/formatBytes';
 import formatCustomFormatScore from 'Utilities/Number/formatCustomFormatScore';
 import translate from 'Utilities/String/translate';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import QueueStatusCell from './QueueStatusCell';
 import RemoveQueueItemModal from './RemoveQueueItemModal';
 import TimeleftCell from './TimeleftCell';
@@ -31,27 +32,27 @@ function getConversionProgressLabel(message, progress) {
   }
 
   if (normalizedMessage.startsWith('cancelled')) {
-    return 'Cancelled';
+    return translate('ConversionCancelled');
   }
 
   if (normalizedMessage.startsWith('verifying')) {
-    return 'Verifying';
+    return translate('QueueConversionVerifying');
   }
 
   if (normalizedMessage.startsWith('finalizing')) {
-    return 'Finalizing';
+    return translate('QueueConversionFinalizing');
   }
 
   if (normalizedMessage.startsWith('preparing import')) {
-    return 'Preparing import';
+    return translate('ImportPreparing');
   }
 
   if (normalizedMessage.startsWith('importing')) {
-    return 'Importing';
+    return translate('Importing');
   }
 
   if (normalizedMessage.startsWith('converted m4b imported')) {
-    return 'Imported';
+    return translate('QueueConversionImported');
   }
 
   const stepMatch = message?.match(/(\d+)\s+of\s+(\d+)/i);
@@ -303,7 +304,7 @@ class QueueRow extends Component {
                     convertToQualityModel ?
                       <BookQuality
                         className={styles.qualityLabel}
-                        title={conversionMessage || ''}
+                        title={translateServerMessage(conversionMessage) || ''}
                         quality={convertToQualityModel}
                       /> :
                       '-'
@@ -423,12 +424,12 @@ class QueueRow extends Component {
                     isConverting ?
                       <div
                         className={styles.conversionProgress}
-                        title={conversionMessage || conversionProgressLabel}
+                        title={translateServerMessage(conversionMessage) || conversionProgressLabel}
                         role="progressbar"
                         aria-valuenow={Math.round(displayConversionProgress)}
                         aria-valuemin={0}
                         aria-valuemax={100}
-                        aria-label={conversionMessage || conversionProgressLabel}
+                        aria-label={translateServerMessage(conversionMessage) || conversionProgressLabel}
                       >
                         <div className={styles.conversionDownloadComplete} />
                         <div

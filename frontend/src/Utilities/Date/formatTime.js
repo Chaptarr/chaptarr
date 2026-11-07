@@ -1,21 +1,28 @@
-import moment from 'moment';
+import intlFormatters from 'Utilities/Localization/formatters.cjs';
+import { getLocale } from 'Utilities/Localization/locale';
+
+const { formatPattern } = intlFormatters;
 
 function formatTime(date, timeFormat, { includeMinuteZero = false, includeSeconds = false } = {}) {
   if (!date) {
     return '';
   }
 
-  const time = moment(date);
+  const time = date instanceof Date ? date : new Date(date);
+
+  if (!Number.isFinite(time.getTime())) {
+    return '';
+  }
 
   if (includeSeconds) {
     timeFormat = timeFormat.replace(/\(?:mm\)?/, ':mm:ss');
-  } else if (includeMinuteZero || time.minute() !== 0) {
+  } else if (includeMinuteZero || time.getMinutes() !== 0) {
     timeFormat = timeFormat.replace('(:mm)', ':mm');
   } else {
     timeFormat = timeFormat.replace('(:mm)', '');
   }
 
-  return time.format(timeFormat);
+  return formatPattern(time, timeFormat, getLocale());
 }
 
 export default formatTime;

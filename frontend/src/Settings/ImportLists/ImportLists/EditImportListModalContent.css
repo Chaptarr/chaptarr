@@ -26,6 +26,36 @@
   margin-bottom: 18px;
 }
 
+.hardcoverStatus {
+  margin-bottom: 10px;
+}
+
+.hardcoverStatusAlert {
+  margin-bottom: 8px;
+}
+
+.hardcoverStatusLoading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  margin-bottom: 12px;
+}
+
+.hardcoverInlineLoading {
+  margin: 0;
+  text-align: left;
+}
+
+.hardcoverStatusError {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+
+  margin-bottom: 12px;
+}
+
 .hardcoverSubsection {
   margin-top: 14px;
   padding-top: 12px;
@@ -34,9 +64,9 @@
 
 .hardcoverSubsectionTitle {
   margin-bottom: 10px;
-  font-size: 15px;
-  font-weight: 600;
   color: var(--textColor);
+  font-weight: 600;
+  font-size: 15px;
 }
 
 .hardcoverMediaTypeToggle {
@@ -47,15 +77,16 @@
   display: flex;
   align-items: center;
   gap: 10px;
+
   margin-bottom: 12px;
 }
 
 .hardcoverIdentityAvatar {
+  flex: 0 0 auto;
   width: 26px;
   height: 26px;
   border-radius: 50%;
   object-fit: cover;
-  flex: 0 0 auto;
 }
 
 .hardcoverIdentityText {

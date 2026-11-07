@@ -1,0 +1,46 @@
+name: Set up GitHub CLI
+description: Install a checksum-pinned GitHub CLI release on a Linux x64 runner.
+runs:
+  using: composite
+  steps:
+    - name: Ensure GitHub CLI is installed
+      shell: bash
+      run: |
+        set -euo pipefail
+        if command -v gh >/dev/null 2>&1; then
+          gh --version
+          exit 0
+        fi
+
+        if [[ "${RUNNER_OS:-Linux}" != Linux || "$(uname -m)" != x86_64 ]]; then
+          echo 'GitHub CLI setup requires a Linux x64 runner.' >&2
+          exit 1
+        fi
+        command -v curl >/dev/null 2>&1
+        command -v sha256sum >/dev/null 2>&1
+        command -v tar >/dev/null 2>&1
+
+        version=2.103.2
+        archive_name="gh_${version}_linux_amd64.tar.gz"
+        archive_url="https://github.com/cli/cli/releases/download/v${version}/${archive_name}"
+        archive_sha256=62ccf747115ddc61237efffdde66a3c8f70ba249433dc64f70801089b59c59c8
+        temporary_directory="$(mktemp -d "${RUNNER_TEMP%/}/github-cli.XXXXXX")"
+        install_directory="${RUNNER_TEMP%/}/gh-cli-${version}"
+        trap 'rm -rf -- "$temporary_directory"' EXIT
+
+        curl --fail --silent --show-error --location --retry 3 \
+          "$archive_url" --output "$temporary_directory/$archive_name"
+        printf '%s  %s\n' \
+          "$archive_sha256" "$temporary_directory/$archive_name" \
+          | sha256sum --check --status
+
+        mkdir -p "$install_directory"
+        tar --extract --gzip \
+          --file="$temporary_directory/$archive_name" \
+          --directory="$install_directory" \
+          --strip-components=1 \
+          "gh_${version}_linux_amd64/bin/gh"
+        chmod 0755 "$install_directory/bin/gh"
+        printf '%s\n' "$install_directory/bin" >> "$GITHUB_PATH"
+        export PATH="$install_directory/bin:$PATH"
+        gh --version

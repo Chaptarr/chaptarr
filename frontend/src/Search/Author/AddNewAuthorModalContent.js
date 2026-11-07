@@ -11,10 +11,10 @@ import ModalHeader from 'Components/Modal/ModalHeader';
 import { kinds } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 import AddAuthorOptionsForm from '../Common/AddAuthorOptionsForm.js';
+import { getMissingAddFormatSetup } from '../Common/addFormatSetup.cjs';
 import styles from './AddNewAuthorModalContent.css';
 
 class AddNewAuthorModalContent extends Component {
-
   //
   // Lifecycle
 
@@ -34,6 +34,13 @@ class AddNewAuthorModalContent extends Component {
   };
 
   onAddAuthorPress = () => {
+    if (
+      !this.props.rootFoldersPopulated ||
+      getMissingAddFormatSetup(this.props).length > 0
+    ) {
+      return;
+    }
+
     this.props.onAddAuthorPress(this.state.searchForMissingBooks);
   };
 
@@ -54,6 +61,9 @@ class AddNewAuthorModalContent extends Component {
       onSetDefaultMediaType,
       isSavingDefaultMediaType,
       rootFoldersPopulated,
+      rootFoldersFetching,
+      rootFoldersError,
+      fetchRootFolders,
       audiobookRootFolderPath,
       ebookRootFolderPath,
       audiobookQualityProfileId,
@@ -62,66 +72,50 @@ class AddNewAuthorModalContent extends Component {
       ...otherProps
     } = this.props;
 
-    let addLabel = 'Add Audiobooks';
+    let addLabel = translate('AddAudiobooksLabel');
     if (selectedMediaType === 'ebook') {
-      addLabel = 'Add Ebooks';
+      addLabel = translate('AddEbooksLabel');
     } else if (selectedMediaType === 'both') {
-      addLabel = 'Add Audiobooks + Ebooks';
+      addLabel = translate('AddAudiobooksAndEbooksLabel');
     }
 
-    const audiobookRoot = audiobookRootFolderPath?.value;
-    const ebookRoot = ebookRootFolderPath?.value;
-    const audiobookProfile = audiobookQualityProfileId?.value;
-    const ebookProfile = ebookQualityProfileId?.value;
-
-    const needsAudiobook = selectedMediaType === 'audiobook' || selectedMediaType === 'both';
-    const needsEbook = selectedMediaType === 'ebook' || selectedMediaType === 'both';
-
-    const isAddDisabled = !rootFoldersPopulated ||
-      (needsAudiobook && (!audiobookRoot || !audiobookProfile || audiobookProfile === 0 || audiobookProfile === 'none')) ||
-      (needsEbook && (!ebookRoot || !ebookProfile || ebookProfile === 0 || ebookProfile === 'none'));
+    const missingAddSetup = rootFoldersPopulated ?
+      getMissingAddFormatSetup({ ...this.props, selectedMediaType }) :
+      ['loading'];
+    const isAddDisabled = missingAddSetup.length > 0;
 
     return (
       <ModalContent onModalClose={onModalClose}>
-        <ModalHeader>
-          {translate('AddNewAuthor')}
-        </ModalHeader>
+        <ModalHeader>{translate('AddNewAuthor')}</ModalHeader>
 
         <ModalBody>
           <div className={styles.container}>
-            {
-              isSmallScreen ?
-                null:
-                <div className={styles.poster}>
-                  <AuthorPoster
-                    className={styles.poster}
-                    images={images}
-                    size={250}
-                  />
-                </div>
-            }
+            {isSmallScreen ? null : (
+              <div className={styles.poster}>
+                <AuthorPoster
+                  className={styles.poster}
+                  images={images}
+                  size={250}
+                />
+              </div>
+            )}
 
             <div className={styles.info}>
-              <div className={styles.name}>
-                {authorName}
-              </div>
+              <div className={styles.name}>{authorName}</div>
 
-              {
-                !!disambiguation &&
-                  <span className={styles.disambiguation}>({disambiguation})</span>
-              }
+              {!!disambiguation && (
+                <span className={styles.disambiguation}>
+                  ({disambiguation})
+                </span>
+              )}
 
-              {
-                overview ?
-                  <div className={styles.overview}>
-                    <TextTruncate
-                      truncateText="…"
-                      line={8}
-                      text={overview}
-                    />
-                  </div> :
-                  null
-              }
+              {overview ? (
+                <div className={styles.overview}>
+                  <TextTruncate truncateText="…" line={8}
+                    text={overview}
+                  />
+                </div>
+              ) : null}
 
               <AddAuthorOptionsForm
                 includeNoneMetadataProfile={false}
@@ -131,13 +125,16 @@ class AddNewAuthorModalContent extends Component {
                 defaultMediaType={defaultMediaType}
                 onSetDefaultMediaType={onSetDefaultMediaType}
                 isSavingDefaultMediaType={isSavingDefaultMediaType}
+                rootFoldersPopulated={rootFoldersPopulated}
+                rootFoldersFetching={rootFoldersFetching}
+                rootFoldersError={rootFoldersError}
+                fetchRootFolders={fetchRootFolders}
                 audiobookRootFolderPath={audiobookRootFolderPath}
                 ebookRootFolderPath={ebookRootFolderPath}
                 audiobookQualityProfileId={audiobookQualityProfileId}
                 ebookQualityProfileId={ebookQualityProfileId}
                 {...otherProps}
               />
-
             </div>
           </div>
         </ModalBody>
@@ -186,6 +183,9 @@ AddNewAuthorModalContent.propTypes = {
   onSetDefaultMediaType: PropTypes.func,
   isSavingDefaultMediaType: PropTypes.bool,
   rootFoldersPopulated: PropTypes.bool.isRequired,
+  rootFoldersFetching: PropTypes.bool.isRequired,
+  rootFoldersError: PropTypes.object,
+  fetchRootFolders: PropTypes.func.isRequired,
   audiobookRootFolderPath: PropTypes.object,
   ebookRootFolderPath: PropTypes.object,
   audiobookQualityProfileId: PropTypes.object,

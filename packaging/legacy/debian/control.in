@@ -1,0 +1,15 @@
+Package: bookshelfng
+Version: __DEB_VERSION__
+Section: web
+Priority: optional
+Architecture: amd64
+Maintainer: ChaptarrNG maintainers <noreply@github.com>
+Homepage: https://github.com/snapetech-org/chaptarrng
+Depends: ca-certificates, libc6, libgcc-s1, libstdc++6, libicu70 | libicu74 | libicu76, libssl3t64 | libssl3, libsqlite3-0, util-linux, zlib1g
+Recommends: ffmpeg
+Provides: chaptarrng
+Conflicts: chaptarrng
+Description: BookshelfNG package identity carrying the ChaptarrNG application
+ Keeps the existing BookshelfNG package name, service, environment file, and
+ data directory while installing ChaptarrNG. Supported BookshelfNG SQLite data
+ is migrated on startup and retained in a source database backup.

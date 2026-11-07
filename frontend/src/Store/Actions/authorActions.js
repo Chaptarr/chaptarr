@@ -1,4 +1,6 @@
-import _ from 'lodash';
+import cloneDeep from 'lodash/cloneDeep';
+import filter from 'lodash/filter';
+import find from 'lodash/find';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
 import { filterTypePredicates, filterTypes, sortDirections } from 'Helpers/Props';
@@ -12,6 +14,7 @@ import translate from 'Utilities/String/translate';
 import { showMessage } from './appActions';
 import { set, update, updateItem } from './baseActions';
 import { fetchBooks } from './bookActions';
+import { fetchCommands } from './commandActions';
 import createHandleActions from './Creators/createHandleActions';
 import createRemoveItemHandler from './Creators/createRemoveItemHandler';
 import createSaveProviderHandler from './Creators/createSaveProviderHandler';
@@ -317,7 +320,7 @@ export const actionHandlers = handleThunks({
       traditional: true
     });
 
-    request.done((data) => {
+    request.then((data) => {
       dispatch(batchActions([
         (id == null) ? update({ section, data }) : updateItem({ section, ...data }),
         set({
@@ -329,7 +332,7 @@ export const actionHandlers = handleThunks({
       ]));
     });
 
-    request.fail((xhr) => {
+    request.catch((xhr) => {
       dispatch(set({
         section,
         isFetching: false,
@@ -341,7 +344,28 @@ export const actionHandlers = handleThunks({
     return abortRequest;
   },
   [SAVE_AUTHOR]: createSaveProviderHandler(section, '/author', { getAjaxOptions: getSaveAjaxOptions }),
-  [DELETE_AUTHOR]: createRemoveItemHandler(section, '/author'),
+  // A large author delete runs as a background command and responds 202 (queued, not done yet)
+  // instead of a completed 2xx - see AuthorService.DeleteAuthorsSyncOrQueue.
+  [DELETE_AUTHOR]: createRemoveItemHandler(section, '/author', {
+    allowQueuedResponse: true,
+    onQueued: (dispatch, getState, payload) => {
+      const author = (getState().authors.items || []).find((item) => item.id === payload.id);
+      const name = author ? author.authorName : translate('Author');
+
+      dispatch(showMessage({
+        id: `author-delete-queued-${payload.id}`,
+        name: 'AuthorDeleteQueued',
+        message: translate('AuthorDeleteQueuedNotification', { name }),
+        type: 'info',
+        hideAfter: 15
+      }));
+
+      // The server publishes no update when a command is only queued (the first push to the client is
+      // when it starts), and the 202 response has no body, so pull the command list once now: that puts
+      // the queued DeleteAuthor command in the store and lets the author page show its "queued" banner.
+      dispatch(fetchCommands());
+    }
+  }),
 
   [TOGGLE_AUTHOR_MONITORED]: (getState, payload, dispatch) => {
     const {
@@ -350,7 +374,7 @@ export const actionHandlers = handleThunks({
       mediaType
     } = payload;
 
-    const author = _.find(getState().authors.items, { id });
+    const author = find(getState().authors.items, { id });
 
     if (!author) {
       return;
@@ -363,7 +387,9 @@ export const actionHandlers = handleThunks({
       dispatch(showMessage({
         id: `author-monitor-toggle-no-root-folder-${id}-${effectiveMediaType}`,
         name: 'AuthorMonitorToggleNoRootFolder',
-        message: `No ${effectiveMediaType} root folder configured for this author`,
+        message: translate('AuthorMissingMediaTypeRootFolder', {
+          mediaType: translate(effectiveMediaType === 'ebook' ? 'EbookLabel' : 'AudiobookLabel')
+        }),
         type: 'warning',
         hideAfter: 10
       }));
@@ -406,7 +432,7 @@ export const actionHandlers = handleThunks({
       dataType: 'json'
     }).request;
 
-    promise.done((data) => {
+    promise.then((data) => {
       // CONTEXT-AWARE MONITORING: Update Redux state with the correct media-type-specific field
       const stateUpdate = {
         id,
@@ -437,11 +463,11 @@ export const actionHandlers = handleThunks({
       dispatch(updateItem(stateUpdate));
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       dispatch(showMessage({
         id: `author-save-failed-${id}-${Date.now()}`,
         name: 'AuthorSaveFailed',
-        message: getErrorMessage(xhr, 'Unable to save author settings'),
+        message: getErrorMessage(xhr, translate('UnableToSaveAuthorSettings')),
         type: 'error',
         hideAfter: 10
       }));
@@ -461,9 +487,9 @@ export const actionHandlers = handleThunks({
       monitored
     } = payload;
 
-    const author = _.find(getState().authors.items, { id });
-    const seasons = _.cloneDeep(author.seasons);
-    const season = _.find(seasons, { seasonNumber });
+    const author = find(getState().authors.items, { id });
+    const seasons = cloneDeep(author.seasons);
+    const season = find(seasons, { seasonNumber });
 
     season.isSaving = true;
 
@@ -485,8 +511,8 @@ export const actionHandlers = handleThunks({
       dataType: 'json'
     }).request;
 
-    promise.done((data) => {
-      const books = _.filter(getState().books.items, { authorId: id, seasonNumber });
+    promise.then((data) => {
+      const books = filter(getState().books.items, { authorId: id, seasonNumber });
 
       dispatch(batchActions([
         updateItem({
@@ -505,7 +531,7 @@ export const actionHandlers = handleThunks({
       ]));
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       dispatch(updateItem({
         id,
         section,
@@ -536,7 +562,7 @@ export const actionHandlers = handleThunks({
       dataType: 'json'
     }).request;
 
-    promise.done((data) => {
+    promise.then((data) => {
       const { app = {} } = getState();
       const selectedMediaType = mediaType || app.selectedMediaType || 'audiobook';
       const hideUnmonitoredMissing = app.hideUnmonitoredMissing;
@@ -559,7 +585,7 @@ export const actionHandlers = handleThunks({
       }));
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       dispatch(set({
         section,
         isSaving: false,
@@ -585,13 +611,13 @@ export const actionHandlers = handleThunks({
       method: 'PUT'
     }).request;
 
-    promise.done(() => {
+    promise.then(() => {
       // Success - media type updated
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       // Revert on failure
-      const author = _.find(getState().authors.items, { id: authorId });
+      const author = find(getState().authors.items, { id: authorId });
       dispatch(updateItem({
         id: authorId,
         section,
@@ -622,7 +648,7 @@ export const actionHandlers = handleThunks({
       })
     }).request;
 
-    promise.done((data) => {
+    promise.then((data) => {
       dispatch(updateItem({
         id: authorId,
         section,
@@ -631,7 +657,7 @@ export const actionHandlers = handleThunks({
       }));
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       dispatch(updateItem({
         id: authorId,
         section,
@@ -651,7 +677,7 @@ export const actionHandlers = handleThunks({
       method: 'GET'
     }).request;
 
-    promise.done((data) => {
+    promise.then((data) => {
       dispatch(updateItem({
         id: authorId,
         section,
@@ -659,7 +685,7 @@ export const actionHandlers = handleThunks({
       }));
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
       console.error(`Failed to fetch ${mediaType} size for author ${authorId}:`, xhr);
     });
   }

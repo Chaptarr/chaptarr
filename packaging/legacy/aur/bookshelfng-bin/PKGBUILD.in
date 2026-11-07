@@ -1,0 +1,50 @@
+pkgname=bookshelfng-bin
+pkgver=__VERSION__
+pkgrel=2
+pkgdesc='BookshelfNG package identity carrying the standard ChaptarrNG application'
+arch=('x86_64')
+options=('!debug')
+url='https://github.com/snapetech/chaptarrng'
+license=('GPL-3.0-only')
+provides=('chaptarrng')
+conflicts=('chaptarrng-bin')
+depends=('glibc' 'gcc-libs' 'icu' 'openssl' 'sqlite' 'util-linux')
+optdepends=('ffmpeg: audiobook conversion and chapter operations')
+backup=('etc/bookshelfng/bookshelfng.env')
+install=bookshelfng.install
+source=("https://github.com/snapetech/chaptarrng/releases/download/v${pkgver}/ChaptarrNG-${pkgver}-linux-x64.tar.gz"
+        'bookshelfng.service'
+        'bookshelfng.env'
+        'bookshelfng.sysusers'
+        'bookshelfng.tmpfiles'
+        'bookshelfng.install'
+        'bookshelfng-healthcheck'
+        'bookshelfng-begin'
+        'bookshelfng-prepare'
+        'bookshelfng-cleanup'
+        'bookshelfng-rollback'
+        'bookshelfng-journal'
+        'chaptarrng.package_info')
+sha256sums=('__ARCHIVE_SHA256__' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+package() {
+  install -d "${pkgdir}/usr/lib/chaptarrng/bin" "${pkgdir}/usr/lib/systemd/system"
+  install -d "${pkgdir}/usr/lib/chaptarrng/handoff"
+  install -d "${pkgdir}/usr/lib/sysusers.d" "${pkgdir}/usr/lib/tmpfiles.d"
+  install -d "${pkgdir}/usr/bin" "${pkgdir}/etc/bookshelfng"
+  tar -xzf "${srcdir}/ChaptarrNG-${pkgver}-linux-x64.tar.gz" --strip-components=1 -C "${pkgdir}/usr/lib/chaptarrng/bin"
+  install -Dm644 "${srcdir}/bookshelfng.service" "${pkgdir}/usr/lib/systemd/system/bookshelfng.service"
+  install -Dm600 "${srcdir}/bookshelfng.env" "${pkgdir}/etc/bookshelfng/bookshelfng.env"
+  install -Dm644 "${srcdir}/bookshelfng.sysusers" "${pkgdir}/usr/lib/sysusers.d/bookshelfng.conf"
+  install -Dm644 "${srcdir}/bookshelfng.tmpfiles" "${pkgdir}/usr/lib/tmpfiles.d/bookshelfng.conf"
+  install -Dm644 "${srcdir}/chaptarrng.package_info" "${pkgdir}/usr/lib/chaptarrng/package_info"
+  install -Dm755 "${srcdir}/bookshelfng-healthcheck" "${pkgdir}/usr/lib/chaptarrng/handoff/bookshelfng-healthcheck"
+  install -Dm755 "${srcdir}/bookshelfng-begin" "${pkgdir}/usr/lib/chaptarrng/handoff/bookshelfng-begin"
+  install -Dm755 "${srcdir}/bookshelfng-prepare" "${pkgdir}/usr/lib/chaptarrng/handoff/bookshelfng-prepare"
+  install -Dm755 "${srcdir}/bookshelfng-cleanup" "${pkgdir}/usr/lib/chaptarrng/handoff/bookshelfng-cleanup"
+  install -Dm755 "${srcdir}/bookshelfng-rollback" "${pkgdir}/usr/lib/chaptarrng/handoff/bookshelfng-rollback"
+  install -Dm755 "${srcdir}/bookshelfng-journal" "${pkgdir}/usr/lib/chaptarrng/handoff/bookshelfng-journal"
+  install -Dm644 "${pkgdir}/usr/lib/chaptarrng/bin/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  ln -s ../lib/chaptarrng/bin/Chaptarr "${pkgdir}/usr/bin/bookshelfng"
+  chmod -R u=rwX,go=rX "${pkgdir}/usr/lib/chaptarrng"
+}

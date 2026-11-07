@@ -1,10 +1,11 @@
-import _ from 'lodash';
+import map from 'lodash/map';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import { fetchDownloadClients } from 'Store/Actions/settingsActions';
 import sortByName from 'Utilities/Array/sortByName';
+import translate from 'Utilities/String/translate';
 import EnhancedSelectInput from './EnhancedSelectInput';
 
 function createMapStateToProps() {
@@ -22,7 +23,7 @@ function createMapStateToProps() {
 
       const filteredItems = items.filter((item) => item.protocol === protocolFilter);
 
-      const values = _.map(filteredItems.sort(sortByName), (downloadClient) => {
+      const values = map(filteredItems.sort(sortByName), (downloadClient) => {
         return {
           key: downloadClient.id,
           value: downloadClient.name,
@@ -33,7 +34,7 @@ function createMapStateToProps() {
       if (includeAny) {
         values.unshift({
           key: 0,
-          value: '(Any)'
+          value: `(${translate('Any')})`
         });
       }
 

@@ -5,15 +5,27 @@
 
 ###### node stage ######
 # Use a pinned Node image instead of curl|bash installers.
-FROM --platform=$BUILDPLATFORM node:20.11.1-bookworm-slim AS node
+FROM --platform=$BUILDPLATFORM node:26.12.1-bookworm-slim@sha256:28147155d47dc31abe0a46e0d12b59b2fb3d0a2dcc5dc65fce76a074180b16fe AS node
 RUN npm install -g yarn@1.22.22 --force
+
+###### browser stage ######
+# Keep an arm/v7-compatible Node release for cross-platform Playwright assets.
+FROM node:22.23.4-bookworm-slim AS browser
+ARG TARGETARCH
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN mkdir -p "$PLAYWRIGHT_BROWSERS_PATH"; \
+    case "$TARGETARCH" in \
+        amd64|arm64) npx --yes playwright@1.63.0 install --only-shell chromium ;; \
+        arm) echo "Playwright Chromium is unavailable for linux/arm/v7; browser-assisted fallback will be unavailable on this image." ;; \
+        *) echo "Unsupported architecture for Playwright Chromium: $TARGETARCH" && exit 1 ;; \
+    esac
 
 ###### mp4v2 stage ######
 FROM --platform=$TARGETPLATFORM sandreas/mp4v2:2.1.1@sha256:c186cccc63b69a428be6a60359c29aff84bfacbd8597a4237038c7ccd7628a2d AS mp4v2
 
 ###### deps stage ######
 # Always build on the native architecture for speed
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS deps
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.403@sha256:de4fe90a98845d75910b9769662465c84de1a934665c431279d1382b2bddc02b AS deps
 WORKDIR /src
 
 # Copy Node + Yarn from the official Node image (avoids curl|bash installers).
@@ -21,9 +33,13 @@ COPY --from=node /usr/local /usr/local
 
 # Copy only dependency manifests so cache is preserved when code changes
 COPY package.json yarn.lock ./
+# The pinned braces resolution is a local package and must exist before Yarn resolves it.
+COPY patches/braces ./patches/braces
 
-# Use BuildKit cache mount so tarballs stay on host between builds
-RUN --mount=type=cache,target=/root/.cache/yarn \
+# Yarn 1 otherwise selects /usr/local/share/.cache/yarn in this copied toolchain.
+# Keep its actual cache on the mount and serialize writers during parallel builds.
+ENV YARN_CACHE_FOLDER=/root/.cache/yarn
+RUN --mount=type=cache,target=/root/.cache/yarn,sharing=locked \
     yarn install --frozen-lockfile
 
 ###### build stage ######
@@ -42,7 +58,7 @@ RUN yarn build
 # just bloats every final image layer.
 ARG TARGETPLATFORM
 RUN --mount=type=cache,target=/root/.nuget/packages,sharing=locked \
-    set -eux; \
+    set -eu; \
     case "$TARGETPLATFORM" in \
         "linux/amd64") RUNTIME_ID="linux-x64" ;; \
         "linux/arm64") RUNTIME_ID="linux-arm64" ;; \
@@ -54,10 +70,17 @@ RUN --mount=type=cache,target=/root/.nuget/packages,sharing=locked \
 
 # Copy UI output to app directory
 RUN mkdir -p /app/UI && cp -r _output/UI/* /app/UI/
+RUN test -s /app/UI/index.html
 
 ###### runtime stage ######
-# This stage runs on the target platform
-FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/aspnet:10.0
+# Pin the cross-platform runtime to the patch shipped with SDK 10.0.403.
+FROM --platform=$TARGETPLATFORM mcr.microsoft.com/dotnet/aspnet:10.0.14-noble@sha256:de0ee358cdd672f7017a003bed21e9ac9ed48a27c922a59b18175b6e82fa7fee AS chaptarrng-standard
+RUN dotnet --list-runtimes | grep -Fq 'Microsoft.NETCore.App 10.0.14' \
+    && dotnet --list-runtimes | grep -Fq 'Microsoft.AspNetCore.App 10.0.14'
+
+# Copy Playwright Chromium from the browser stage
+COPY --from=browser /ms-playwright /ms-playwright
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # Install runtime dependencies (these are architecture-specific)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -69,7 +92,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         php-cli php-mbstring php-xml php-json php-curl php-zip \
         wget \
         gosu \
-        sqlite3 libsqlite3-0; \
+        util-linux \
+        iproute2 \
+        postgresql-client \
+        sqlite3 libsqlite3-0 \
+        libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 \
+        libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 \
+        libpango-1.0-0 libcairo2 libdbus-1-3 fonts-liberation libxshmfence1; \
     rm -rf /var/lib/apt/lists/*
 
 # Copy pinned mp4v2 tools used by m4b-tool for chapter and tag writes. These
@@ -105,15 +134,30 @@ RUN set -eux; \
 
 # Copy our robust entrypoint script
 COPY docker-entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY docker-bookshelf-migration-detect.sh /docker-bookshelf-migration-detect.sh
+COPY docker-bookshelf-compat-supervisor.sh /usr/local/bin/chaptarr-bookshelf-compat-supervisor
+COPY docker-bookshelf-liveness.sh /usr/local/bin/chaptarr-bookshelf-liveness
+COPY --chmod=0755 docker-startos-init.sh /init
+RUN chmod +x /entrypoint.sh /usr/local/bin/chaptarr-bookshelf-compat-supervisor /usr/local/bin/chaptarr-bookshelf-liveness
+COPY docker-healthcheck.sh /usr/local/bin/chaptarr-healthcheck
+RUN chmod +x /usr/local/bin/chaptarr-healthcheck
 
 WORKDIR /app
+
+# Every fresh and migrated install uses this exact standard image.
+EXPOSE 8787 8789
+
+# Containers are updated by pulling a new image, not by the in-app updater.
+ENV CHAPTARR_PACKAGE_UPDATE_MECHANISM=Docker \
+    CHAPTARR_PACKAGE_UPDATE_MECHANISM_MESSAGE="Pull the new ChaptarrNG image to update."
 
 COPY --from=build /app /app
 
 # Set app permissions at build time
 RUN chmod -R 755 /app
 
-EXPOSE 8789
+HEALTHCHECK --interval=30s --timeout=10s --start-period=2m --retries=3 \
+    CMD ["/usr/local/bin/chaptarr-healthcheck"]
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["dotnet", "/app/Chaptarr.dll", "-nobrowser", "-data=/config"]
+

@@ -156,7 +156,7 @@ function TagDetailsModalContent(props) {
                               </Label>
                             );
                           })
-                        }s
+                        }
                       </div>
                     </div>
                   );

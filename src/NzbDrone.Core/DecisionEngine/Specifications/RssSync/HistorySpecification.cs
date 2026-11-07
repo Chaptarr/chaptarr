@@ -69,8 +69,13 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
                         return Decision.Reject("No quality profile configured for {0} files", subject.ParsedBookInfo.Quality.Quality.Name);
                     }
 
-                    var currentEffectiveQuality = QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(subject.Author, mostRecent.Quality);
-                    var candidateEffectiveQuality = QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(subject.Author, subject.ParsedBookInfo.Quality);
+                    var bookshelfCompatibility = _configService?.BookshelfMatchCompatibility == true;
+                    var currentEffectiveQuality = bookshelfCompatibility
+                        ? mostRecent.Quality
+                        : QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(subject.Author, mostRecent.Quality);
+                    var candidateEffectiveQuality = bookshelfCompatibility
+                        ? subject.ParsedBookInfo.Quality
+                        : QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(subject.Author, subject.ParsedBookInfo.Quality);
 
                     // The series will be the same as the one in history since it's the same episode.
                     // Instead of fetching the series from the DB reuse the known series.

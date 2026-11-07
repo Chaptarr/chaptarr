@@ -10,9 +10,10 @@ import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
 import BookDetailsHeader from './BookDetailsHeader';
 
 const selectBookDetails = createSelector(
+  (state, { bookId }) => bookId,
   (state) => state.editions,
-  (editions) => {
-    const monitored = editions.items.find((e) => e.monitored === true);
+  (bookId, editions) => {
+    const monitored = editions.items.find((e) => e.bookId === bookId && e.monitored === true);
     return {
       overview: monitored?.overview,
       images: monitored?.images,
@@ -78,6 +79,7 @@ class BookDetailsHeaderConnector extends Component {
 
 BookDetailsHeaderConnector.propTypes = {
   bookId: PropTypes.number,
+  mediaType: PropTypes.oneOf(['audiobook', 'ebook']),
   toggleBooksMonitored: PropTypes.func.isRequired,
   author: PropTypes.object
 };

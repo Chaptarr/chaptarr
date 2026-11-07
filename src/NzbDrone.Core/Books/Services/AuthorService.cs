@@ -6,7 +6,9 @@ using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Books.Events;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.MediaCover.Commands;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MetadataSource;
@@ -28,6 +30,7 @@ namespace NzbDrone.Core.Books
         Author FindByName(string title);
         Author FindByNameInexact(string title);
         List<Author> GetCandidates(string title);
+        List<Author> GetReportCandidates(string reportTitle);
 	        void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false);
             // Purge/re-add deliberately retains files, so production must preserve the import
             // history that prevents a still-seeding download from being imported again.
@@ -57,6 +60,11 @@ namespace NzbDrone.Core.Books
         }
         List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder);
         Dictionary<int, string> AllAuthorPaths();
+        // The default exists only for lightweight test doubles. Every production implementation must override it.
+        List<KeyValuePair<int, string>> AllAuthorMediaPaths()
+        {
+            throw new NotSupportedException();
+        }
         bool AuthorPathExists(string folder);
         void RemoveAddOptions(Author author);
         void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored);
@@ -70,9 +78,14 @@ namespace NzbDrone.Core.Books
         List<Book> GetAuthorBooksFromCache(int authorId);
         List<int> GetAuthorIdsByMetadataProfileId(int metadataProfileId);
         void ClearAuthorCache();
+        // The default exists only for lightweight test doubles. Every production implementation must override it.
+        bool DeleteAuthorsSyncOrQueue(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false)
+        {
+            throw new NotSupportedException();
+        }
     }
 
-    public class AuthorService : IAuthorService
+    public class AuthorService : IAuthorService, IExecute<DeleteAuthorCommand>
     {
         private readonly IAuthorRepository _authorRepository;
         private readonly IEventAggregator _eventAggregator;
@@ -87,6 +100,7 @@ namespace NzbDrone.Core.Books
 	        private readonly IBookRepository _bookRepository;
 	        private readonly IMediaFileService _mediaFileService;
 	        private readonly IProviderAliasService _providerAliasService;
+        private readonly IConfigService _configService;
 
         // Single-author cache fields
         private volatile int _currentAuthorId = -1;
@@ -102,7 +116,8 @@ namespace NzbDrone.Core.Books
 	                             IBookRepository bookRepository,
 	                             IMediaFileService mediaFileService,
 	                             Logger logger,
-	                             IProviderAliasService providerAliasService = null)
+	                             IProviderAliasService providerAliasService = null,
+	                             IConfigService configService = null)
 	        {
 	            _authorRepository = authorRepository;
 	            _eventAggregator = eventAggregator;
@@ -116,6 +131,7 @@ namespace NzbDrone.Core.Books
 	            _bookRepository = bookRepository;
 	            _mediaFileService = mediaFileService;
 	            _providerAliasService = providerAliasService;
+	            _configService = configService;
 	        }
 
         private void EnsureAuthorDbFields(Author author, bool ensurePaths, bool requirePath)
@@ -147,6 +163,8 @@ namespace NzbDrone.Core.Books
             author.OpenLibraryAuthorId = NormalizeOrNull(author.OpenLibraryAuthorId, "ol");
             author.GoogleBooksAuthorId = NormalizeOrNull(author.GoogleBooksAuthorId, "gb");
             author.AudnexusAuthorId = NormalizeOrNull(author.AudnexusAuthorId, "az");
+            author.RanobeDbAuthorId = NormalizeOrNull(author.RanobeDbAuthorId, "rn");
+            author.AdditionalMetadataProviderId = NormalizeOrNull(author.AdditionalMetadataProviderId, "meta");
 
             if (author.CleanName.IsNullOrWhiteSpace())
             {
@@ -159,12 +177,18 @@ namespace NzbDrone.Core.Books
                 author.LastSelectedMediaType = "audiobook";
             }
 
+            if (author.QualityProfileId <= 0)
+            {
+                author.QualityProfileId = author.AudiobookQualityProfileId ?? author.EbookQualityProfileId ?? 1;
+            }
+
             // Ensure embedded documents can't violate NOT NULL constraints or deserialize to null.
             author.Aliases ??= new List<string>();
             author.Images ??= new List<MediaCover.MediaCover>();
             author.Images = author.Images
                 .Where(image => image != null &&
-                                !NzbDrone.Core.MediaCover.MediaCoverRendition.IsKnownPlaceholderImageUrl(image.Url))
+                                (_configService?.BookshelfNGDatabaseMigrated == true ||
+                                 !NzbDrone.Core.MediaCover.MediaCoverRendition.IsKnownPlaceholderImageUrl(image.Url)))
                 .ToList();
             author.Links ??= new List<Links>();
             author.Genres ??= new List<string>();
@@ -223,6 +247,8 @@ namespace NzbDrone.Core.Books
             AddProviderId(providerIds, author.OpenLibraryAuthorId);
             AddProviderId(providerIds, author.GoogleBooksAuthorId);
             AddProviderId(providerIds, author.AudnexusAuthorId);
+            AddProviderId(providerIds, author.RanobeDbAuthorId);
+            AddProviderId(providerIds, author.AdditionalMetadataProviderId);
 
             if (author.RemoteProviderIds != null)
             {
@@ -248,6 +274,7 @@ namespace NzbDrone.Core.Books
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var rootFolders = _rootFolderService?.All();
 
+            ApplyDefaultRootFoldersOnAdd(newAuthor, rootFolders);
             ApplySyncMonitoredAcrossFormatsDefaultOnAdd(newAuthor, rootFolders);
             NormalizeOrValidateSyncMonitoredAcrossFormats(newAuthor, null, rootFolders);
             
@@ -275,6 +302,7 @@ namespace NzbDrone.Core.Books
             
             foreach (var author in newAuthors)
             {
+                ApplyDefaultRootFoldersOnAdd(author, rootFolders);
                 ApplySyncMonitoredAcrossFormatsDefaultOnAdd(author, rootFolders);
                 NormalizeOrValidateSyncMonitoredAcrossFormats(author, null, rootFolders);
                 EnsureAuthorDbFields(author, ensurePaths: true, requirePath: true);
@@ -318,6 +346,50 @@ namespace NzbDrone.Core.Books
 	        public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false)
 	        {
 	            DeleteAuthorsInternal(authorIds, deleteFiles, addImportListExclusion, false);
+	        }
+
+	        // Below the threshold, delete inline and keep the old immediately-consistent contract - a
+	        // caller that deletes then re-adds the same author expects the delete to have already
+	        // happened by the time it gets a response, and that guarantee only breaks down once the
+	        // command queue is actually in the picture. Only defer to the queue once an author (or a
+	        // bulk selection) is large enough that inline deletion is what caused this host to lock up
+	        // in the first place (Charles Dickens, 10113 books) - see PR #260.
+	        private const int AsyncDeleteBookCountThreshold = 200;
+
+	        // Returns true if the delete was queued (caller should respond 202 Accepted, work not done
+	        // yet), false if it ran inline before returning (caller should respond 200 OK, already done).
+	        public bool DeleteAuthorsSyncOrQueue(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false)
+	        {
+	            var distinctIds = (authorIds ?? new List<int>()).Where(id => id > 0).Distinct().ToList();
+	            if (!distinctIds.Any())
+	            {
+	                return false;
+	            }
+
+	            var totalBooks = _bookRepository.CountBooksByAuthorIds(distinctIds).Values.Sum();
+
+	            if (totalBooks <= AsyncDeleteBookCountThreshold)
+	            {
+	                DeleteAuthorsInternal(distinctIds, deleteFiles, addImportListExclusion, false);
+	                return false;
+	            }
+
+	            // High, not Normal: this is an interactive UI action (the user is watching the author page
+	            // wait for it), and at Normal it queues behind every background MissingBookSearch already
+	            // waiting - all command threads can be busy with rate-limited indexer searches for many
+	            // minutes, leaving a delete "stuck" on the author page. Same treatment ManualImportCommand
+	            // gets in CommandController.
+	            _commandQueueManager.Push(
+	                new DeleteAuthorCommand(distinctIds, deleteFiles, addImportListExclusion),
+	                CommandPriority.High,
+	                CommandTrigger.Manual);
+
+	            return true;
+	        }
+
+	        public void Execute(DeleteAuthorCommand message)
+	        {
+	            DeleteAuthors(message.AuthorIds, message.DeleteFiles, message.AddImportListExclusion);
 	        }
 
 	        private List<int> DeleteAuthorsInternal(
@@ -420,6 +492,16 @@ namespace NzbDrone.Core.Books
 	                case "az":
 	                    canonicalPrefix = "az";
 	                    finder = _authorRepository.FindByAudnexusId;
+	                    break;
+
+	                case "rn":
+	                    canonicalPrefix = "rn";
+	                    finder = _authorRepository.FindByRanobeDbId;
+	                    break;
+
+	                case "meta":
+	                    canonicalPrefix = "meta";
+                    finder = _authorRepository.FindByAdditionalMetadataProviderId;
 	                    break;
 
 	                default:
@@ -532,6 +614,28 @@ namespace NzbDrone.Core.Books
             return output.DistinctBy(x => x.Id).ToList();
         }
 
+        public List<Author> GetReportCandidates(string reportTitle)
+        {
+            if (reportTitle.IsNullOrWhiteSpace())
+            {
+                return new List<Author>();
+            }
+
+            var authors = GetAllAuthors();
+            var output = new List<Author>();
+
+#pragma warning disable CS0618 // Keep BookshelfNG's report-author scoring for its migration fallback.
+            output.AddRange(FindByStringInexact(authors,
+                (author, title) => title.FuzzyMatch(author.Name, 0.6).Item3,
+                reportTitle));
+            output.AddRange(FindByStringInexact(authors,
+                (author, title) => title.FuzzyMatch(author.NameLastFirst, 0.6).Item3,
+                reportTitle));
+#pragma warning restore CS0618
+
+            return output.DistinctBy(author => author.Id).ToList();
+        }
+
         private static string NormalizeAuthorNameForComparison(string name)
         {
             if (string.IsNullOrWhiteSpace(name))
@@ -592,6 +696,11 @@ namespace NzbDrone.Core.Books
         public Dictionary<int, string> AllAuthorPaths()
         {
             return _authorRepository.AllAuthorPaths();
+        }
+
+        public List<KeyValuePair<int, string>> AllAuthorMediaPaths()
+        {
+            return _authorRepository.AllAuthorMediaPaths();
         }
 
         public List<Author> AllForTag(int tagId)
@@ -1063,6 +1172,33 @@ namespace NzbDrone.Core.Books
             }
 
             TrySeedSyncMonitoredAcrossFormatsFromRootFolderDefaults(author, rootFolders, "when author became dual-format eligible");
+        }
+
+        // Import paths can create an author for the one format being imported, leaving the other format's root folder
+        // blank, which makes the author ineligible for "sync monitored across formats". When enabled in Media
+        // Management, fill each blank root from that format's effective default; never overwrite an explicit value,
+        // and leave it blank when the default is missing or ambiguous.
+        internal void ApplyDefaultRootFoldersOnAdd(Author author, List<RootFolder> rootFolders)
+        {
+            if (author == null || rootFolders == null || rootFolders.Count == 0 ||
+                _configService?.AutoInitializeFormatSpecificAuthorPaths != true)
+            {
+                return;
+            }
+
+            if (author.AudiobookRootFolderPath.IsNullOrWhiteSpace() &&
+                RootFolderDefaultResolver.TryGetEffectiveDefaultRootFolder(rootFolders, FolderType.Audiobook, _configService?.DefaultAudiobookRootFolderPath, out var audiobookRoot, out _))
+            {
+                author.AudiobookRootFolderPath = audiobookRoot.Path;
+                _logger.Debug("Filled missing audiobook root folder for new author {0} from the default: {1}", author.Name, audiobookRoot.Path);
+            }
+
+            if (author.EbookRootFolderPath.IsNullOrWhiteSpace() &&
+                RootFolderDefaultResolver.TryGetEffectiveDefaultRootFolder(rootFolders, FolderType.Ebook, _configService?.DefaultEbookRootFolderPath, out var ebookRoot, out _))
+            {
+                author.EbookRootFolderPath = ebookRoot.Path;
+                _logger.Debug("Filled missing ebook root folder for new author {0} from the default: {1}", author.Name, ebookRoot.Path);
+            }
         }
 
         private void ApplySyncMonitoredAcrossFormatsDefaultOnAdd(Author author, List<RootFolder> rootFolders)

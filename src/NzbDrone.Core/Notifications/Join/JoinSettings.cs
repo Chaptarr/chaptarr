@@ -23,16 +23,16 @@ namespace NzbDrone.Core.Notifications.Join
 
         private static readonly JoinSettingsValidator Validator = new JoinSettingsValidator();
 
-        [FieldDefinition(0, Label = "API Key", Privacy = PrivacyLevel.ApiKey, HelpText = "The API Key from your Join account settings (click Join API button).", HelpLink = "https://joinjoaomgcd.appspot.com/")]
+        [FieldDefinition(0, Label = "ApiKey", Privacy = PrivacyLevel.ApiKey, HelpText = "provider.field.fb1d0448a0cf2", HelpLink = "https://joinjoaomgcd.appspot.com/")]
         public string ApiKey { get; set; }
 
-        [FieldDefinition(1, Label = "Device IDs", HelpText = "Deprecated, use Device Names instead. Comma separated list of Device IDs you'd like to send notifications to. If unset, all devices will receive notifications.")]
+        [FieldDefinition(1, Label = "provider.field.f00c0e6769b60", HelpText = "provider.field.faf9cbff5e244")]
         public string DeviceIds { get; set; }
 
-        [FieldDefinition(2, Label = "Device Names", HelpText = "Comma separated list of full or partial device names you'd like to send notifications to. If unset, all devices will receive notifications.", HelpLink = "https://joaoapps.com/join/api/")]
+        [FieldDefinition(2, Label = "provider.field.f5d08d1531c08", HelpText = "provider.field.fc7083c245d2b", HelpLink = "https://joaoapps.com/join/api/")]
         public string DeviceNames { get; set; }
 
-        [FieldDefinition(3, Label = "Notification Priority", Type = FieldType.Select, SelectOptions = typeof(JoinPriority))]
+        [FieldDefinition(3, Label = "provider.field.fb93be45094c3", Type = FieldType.Select, SelectOptions = typeof(JoinPriority))]
         public int Priority { get; set; }
 
         public NzbDroneValidationResult Validate()

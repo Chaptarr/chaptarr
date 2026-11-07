@@ -1,0 +1,70 @@
+[
+  {
+    "id": "ui.loading.organizingBookshelf",
+    "source": "Organizing your bookshelf..."
+  },
+  {
+    "id": "ui.loading.nextChapter",
+    "source": "Turning to the next chaptarr..."
+  },
+  {
+    "id": "ui.loading.libraryVoices",
+    "source": "Shh! Library voices, please..."
+  },
+  {
+    "id": "ui.loading.overdueBooks",
+    "source": "Checking for overdue books..."
+  },
+  {
+    "id": "ui.loading.newEbookSmell",
+    "source": "There's just nothing quite like the smell of opening a new... eBook?"
+  },
+  {
+    "id": "ui.loading.placeInStory",
+    "source": "Finding your place in the story..."
+  },
+  {
+    "id": "ui.loading.rewindAudiobooks",
+    "source": "Be Kind: Rewind your audiobooks"
+  },
+  {
+    "id": "ui.loading.nextAdventure",
+    "source": "Loading your next adventure..."
+  },
+  {
+    "id": "ui.loading.blameCody",
+    "source": "I blame Cody..."
+  },
+  {
+    "id": "ui.loading.gomeyyApi",
+    "source": "Sorry Gomeyy...this isn't the API you're looking for"
+  },
+  {
+    "id": "ui.loading.shaneKing",
+    "source": "Shane.......our King"
+  },
+  {
+    "id": "ui.loading.dodgeBooks",
+    "source": "Dodge-ing these piles of books"
+  },
+  {
+    "id": "ui.loading.goldanDragon",
+    "source": "Solid. Goldan. Dragon."
+  },
+  {
+    "id": "ui.loading.rlhIdentity",
+    "source": "Have you ever seen DefinitelyNotRLH and RLH in the same room?"
+  },
+  {
+    "id": "ui.loading.swanDragonLibrary",
+    "source": "A Black Swan and a Goldan Dragon walk into a library..."
+  },
+  {
+    "id": "ui.loading.skippedOldBooks",
+    "source": "These old books always get skipped"
+  },
+  {
+    "id": "ui.loading.somethingSkels",
+    "source": "Something Something Skels"
+  }
+]

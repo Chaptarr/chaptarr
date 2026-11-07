@@ -25,7 +25,7 @@ function NoAuthor(props) {
   return (
     <div>
       <div className={styles.message}>
-        {`No ${itemType} found. Let's get started!`}
+        {translate(itemType === 'books' ? 'NoBooksFoundGetStarted' : 'NoAuthorsFoundGetStarted')}
       </div>
 
       <div className={styles.buttonContainer}>

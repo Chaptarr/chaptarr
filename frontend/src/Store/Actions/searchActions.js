@@ -1,4 +1,5 @@
-import _ from 'lodash';
+import cloneDeep from 'lodash/cloneDeep';
+import find from 'lodash/find';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
 import { createThunk, handleThunks } from 'Store/thunks';
@@ -8,6 +9,7 @@ import getNewBook from 'Utilities/Book/getNewBook';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import getSectionState from 'Utilities/State/getSectionState';
 import updateSectionState from 'Utilities/State/updateSectionState';
+import translate from 'Utilities/String/translate';
 import { showMessage } from './appActions';
 import { set, update, updateItem } from './baseActions';
 import createHandleActions from './Creators/createHandleActions';
@@ -105,7 +107,16 @@ export const UPDATE_SERIES_ENRICHMENT = 'search/UPDATE_SERIES_ENRICHMENT';
 export const getSearchResults = createThunk(GET_SEARCH_RESULTS);
 export const addAuthor = createThunk(ADD_AUTHOR);
 export const addBook = createThunk(ADD_BOOK);
-export const clearSearchResults = createAction(CLEAR_SEARCH_RESULTS);
+export const clearSearchResults = () => {
+  currentSearchRequestId++;
+
+  if (abortCurrentRequest) {
+    abortCurrentRequest();
+    abortCurrentRequest = null;
+  }
+
+  return { type: CLEAR_SEARCH_RESULTS };
+};
 export const resetAddState = createAction(RESET_ADD_STATE);
 export const setAuthorAddDefault = createAction(SET_AUTHOR_ADD_DEFAULT);
 export const setBookAddDefault = createAction(SET_BOOK_ADD_DEFAULT);
@@ -113,7 +124,7 @@ export const updateSeriesEnrichment = createAction(UPDATE_SERIES_ENRICHMENT);
 
 function getAjaxErrorMessage(xhr) {
   if (!xhr) {
-    return 'Unknown error';
+    return translate('UnknownError');
   }
 
   const responseJson = xhr.responseJSON;
@@ -131,16 +142,18 @@ function getAjaxErrorMessage(xhr) {
     }
   }
 
-  const status = xhr.status ? `HTTP ${xhr.status}` : 'Request failed';
+  const status = xhr.status ? `HTTP ${xhr.status}` : translate('RequestFailed');
   const statusText = xhr.statusText || '';
   return `${status} ${statusText}`.trim();
 }
 
 function getMediaTypeLabel(mediaType) {
-  return mediaType === 'ebook' ? 'eBook' : 'audiobook';
+  return translate(mediaType === 'ebook' ? 'EbookLabel' : 'AudiobookLabel');
 }
 
-const pendingBookRequestMessage = 'The author and requested book are being prepared by the metadata server. Chaptarr saved your request and will add it automatically when it becomes available.';
+function getPendingBookRequestMessage() {
+  return translate('BookRequestPendingMessage');
+}
 
 function getPendingBookRequest(data, xhr) {
   const status = (xhr && xhr.status) || (data && data.pendingId ? 202 : null);
@@ -151,7 +164,7 @@ function getPendingBookRequest(data, xhr) {
 
   return {
     pendingId: (data && data.pendingId) || null,
-    message: (data && data.message) || pendingBookRequestMessage
+    message: (data && data.message) || getPendingBookRequestMessage()
   };
 }
 
@@ -214,7 +227,7 @@ function getMediaTypePayload(payload, mediaType, searchForNewBook) {
 
 function postBookForMediaType(itemToAdd, payload, mediaType, searchForNewBook) {
   const mediaPayload = getMediaTypePayload(payload, mediaType, searchForNewBook);
-  const newBook = getNewBook(_.cloneDeep(itemToAdd.book), mediaPayload, mediaType);
+  const newBook = getNewBook(cloneDeep(itemToAdd.book), mediaPayload, mediaType);
 
   return createAjaxRequest({
     url: '/book',
@@ -374,14 +387,17 @@ export const actionHandlers = handleThunks({
         method: 'POST',
         dataType: 'json',
         contentType: 'application/json',
-        headers: { 'X-Api-Key': window.Chaptarr.apiKey },
+        headers: {
+          'X-Api-Key': window.Chaptarr.apiKey,
+          'X-ChaptarrNG-Client': 'native'
+        },
         data: JSON.stringify(v1Payload)
       }).request;
     };
 
     const getImportErrorMessage = (xhr) => {
       if (!xhr) {
-        return 'Unknown error';
+        return translate('UnknownError');
       }
 
       const responseJson = xhr.responseJSON;
@@ -399,7 +415,7 @@ export const actionHandlers = handleThunks({
         }
       }
 
-      const status = xhr.status ? `HTTP ${xhr.status}` : 'Request failed';
+      const status = xhr.status ? `HTTP ${xhr.status}` : translate('RequestFailed');
       const statusText = xhr.statusText || '';
       return `${status} ${statusText}`.trim();
     };
@@ -420,7 +436,7 @@ export const actionHandlers = handleThunks({
           showMessage({
             id: `author-import-missing-metadataprofile-${Date.now()}`,
             name: 'AuthorImportMissingMetadataProfile',
-            message: 'Select a metadata profile for both Audiobooks and Ebooks before adding this author.',
+            message: translate('AuthorMetadataProfileRequiredBothMediaTypes'),
             type: 'error',
             hideAfter: 14
           }),
@@ -494,11 +510,11 @@ export const actionHandlers = handleThunks({
           if (status1 === 202 || status2 === 202) {
             const pendingId = (status2 === 202 && data2 && data2.pendingId) || (status1 === 202 && data1 && data1.pendingId) || null;
 
-            let message = (data2 && data2.message) || (data1 && data1.message) || 'Author queued for import';
+            let message = (data2 && data2.message) || (data1 && data1.message) || translate('AuthorQueuedForImport');
             if (status1 !== 202 && status2 === 202) {
-              message = `Audiobooks added, eBooks queued for import. ${message}`.trim();
+              message = translate('AuthorAudiobooksAddedEbooksQueued', { message }).trim();
             } else if (status1 === 202 && status2 !== 202) {
-              message = `eBooks added, audiobooks queued for import. ${message}`.trim();
+              message = translate('AuthorEbooksAddedAudiobooksQueued', { message }).trim();
             }
 
             dispatch(batchActions([
@@ -532,7 +548,7 @@ export const actionHandlers = handleThunks({
               showMessage({
                 id: `author-add-${Date.now()}`,
                 name: 'AuthorAdded',
-                message: 'Author added to your library',
+                message: translate('AuthorAddedToLibrary'),
                 type: 'success',
                 hideAfter: 8
               }),
@@ -570,7 +586,7 @@ export const actionHandlers = handleThunks({
                 showMessage({
                   id: `author-add-${Date.now()}`,
                   name: 'AuthorAdded',
-                  message: 'Author added to your library',
+                  message: translate('AuthorAddedToLibrary'),
                   type: 'success',
                   hideAfter: 8
                 }),
@@ -591,7 +607,7 @@ export const actionHandlers = handleThunks({
                 showMessage({
                   id: `author-add-${Date.now()}`,
                   name: 'AuthorAdded',
-                  message: 'Author added to your library',
+                  message: translate('AuthorAddedToLibrary'),
                   type: 'success',
                   hideAfter: 8
                 }),
@@ -614,7 +630,7 @@ export const actionHandlers = handleThunks({
             showMessage({
               id: `author-add-${Date.now()}`,
               name: 'AuthorAdded',
-              message: 'Author added to your library',
+              message: translate('AuthorAddedToLibrary'),
               type: 'success',
               hideAfter: 8
             }),
@@ -634,7 +650,7 @@ export const actionHandlers = handleThunks({
           const error = getImportErrorMessage(xhr);
 
           if (status1 === 202) {
-            const message = (data1 && data1.message) ? data1.message : 'Author queued for import';
+            const message = (data1 && data1.message) ? data1.message : translate('AuthorQueuedForImport');
             const pendingId = (data1 && data1.pendingId) || null;
 
             dispatch(batchActions([
@@ -648,7 +664,7 @@ export const actionHandlers = handleThunks({
               showMessage({
                 id: `author-add-ebook-failed-${Date.now()}`,
                 name: 'AuthorAddEbookFailed',
-                message: `Ebook import failed: ${error} (audiobook import is queued; you can retry eBooks later)`,
+                message: translate('AuthorEbookImportFailedAudiobookQueued', { error }),
                 type: 'error',
                 hideAfter: 14
               }),
@@ -669,14 +685,14 @@ export const actionHandlers = handleThunks({
             showMessage({
               id: `author-add-audiobook-partial-${Date.now()}`,
               name: 'AuthorAddAudiobookPartial',
-              message: 'Audiobooks added successfully, but eBooks failed to import.',
+              message: translate('AuthorAudiobooksAddedEbooksFailed'),
               type: 'warning',
               hideAfter: 12
             }),
             showMessage({
               id: `author-add-ebook-failed-${Date.now()}`,
               name: 'AuthorAddEbookFailed',
-              message: `Ebook import failed: ${error} (you can retry by selecting Ebooks and clicking Add)`,
+              message: translate('AuthorEbookImportFailedRetry', { error }),
               type: 'error',
               hideAfter: 14
             }),
@@ -700,7 +716,7 @@ export const actionHandlers = handleThunks({
           showMessage({
             id: `author-add-audiobook-failed-${Date.now()}`,
             name: 'AuthorAddAudiobookFailed',
-            message: `Audiobook import failed: ${error}`,
+            message: translate('AuthorAudiobookImportFailed', { error }),
             type: 'error',
             hideAfter: 14
           }),
@@ -734,7 +750,7 @@ export const actionHandlers = handleThunks({
         showMessage({
           id: `author-import-missing-metadataprofile-${Date.now()}`,
           name: 'AuthorImportMissingMetadataProfile',
-          message: 'Select a metadata profile before adding this author.',
+          message: translate('AuthorMetadataProfileRequired'),
           type: 'error',
           hideAfter: 14
         }),
@@ -796,7 +812,7 @@ export const actionHandlers = handleThunks({
             showMessage({
               id: `author-add-${Date.now()}`,
               name: 'AuthorAdded',
-              message: 'Author added to your library',
+              message: translate('AuthorAddedToLibrary'),
               type: 'success',
               hideAfter: 8
             }),
@@ -818,7 +834,7 @@ export const actionHandlers = handleThunks({
             showMessage({
               id: `author-add-${Date.now()}`,
               name: 'AuthorAdded',
-              message: 'Author added to your library',
+              message: translate('AuthorAddedToLibrary'),
               type: 'success',
               hideAfter: 8
             }),
@@ -838,7 +854,7 @@ export const actionHandlers = handleThunks({
 
       // 202 Accepted: provider queued the author for import
       if (status === 202) {
-        const message = (data && data.message) ? data.message : 'Author queued for import';
+        const message = (data && data.message) ? data.message : translate('AuthorQueuedForImport');
         const pendingId = (data && data.pendingId) || null;
 
         dispatch(batchActions([
@@ -868,7 +884,7 @@ export const actionHandlers = handleThunks({
         showMessage({
           id: `author-add-${Date.now()}`,
           name: 'AuthorAdded',
-          message: 'Author added to your library',
+          message: translate('AuthorAddedToLibrary'),
           type: 'success',
           hideAfter: 8
         }),
@@ -898,7 +914,7 @@ export const actionHandlers = handleThunks({
         showMessage({
           id: `author-add-failed-${Date.now()}`,
           name: 'AuthorAddFailed',
-          message: `Author import failed: ${error}`,
+          message: translate('AuthorImportFailed', { error }),
           type: 'error',
           hideAfter: 14
         }),
@@ -926,7 +942,7 @@ export const actionHandlers = handleThunks({
 
     const foreignBookId = payload.foreignBookId;
     const items = getState().search.items;
-    const itemToAdd = _.find(items, { foreignId: foreignBookId }) || (payload.book ? {
+    const itemToAdd = find(items, { foreignId: foreignBookId }) || (payload.book ? {
       foreignId: foreignBookId,
       book: payload.book
     } : null);
@@ -939,7 +955,7 @@ export const actionHandlers = handleThunks({
         isAdded: false,
         addFailedMediaType: null,
         addError: {
-          message: 'Cannot add this book: missing search result data'
+          message: translate('BookAddMissingSearchResultData')
         }
       }));
       return;
@@ -959,7 +975,7 @@ export const actionHandlers = handleThunks({
             const audiobookFailureAction = audiobookError ? showMessage({
               id: `book-add-audiobook-failed-${Date.now()}`,
               name: 'BookAddAudiobookFailed',
-              message: `The eBook request was queued, but audiobook failed: ${getAjaxErrorMessage(audiobookError)}. The modal is still open so you can retry audiobook.`,
+              message: translate('BookAddEbookQueuedAudiobookFailed', { error: getAjaxErrorMessage(audiobookError) }),
               type: 'warning',
               hideAfter: 14
             }) : null;
@@ -989,7 +1005,7 @@ export const actionHandlers = handleThunks({
               showMessage({
                 id: `book-add-audiobook-failed-${Date.now()}`,
                 name: 'BookAddAudiobookFailed',
-                message: `eBook added, but audiobook failed: ${error}. The modal is still open so you can retry audiobook.`,
+                message: translate('BookAddEbookAddedAudiobookFailed', { error }),
                 type: 'warning',
                 hideAfter: 14
               }),
@@ -1020,24 +1036,30 @@ export const actionHandlers = handleThunks({
 
         second.fail((ebookError) => {
           const error = getAjaxErrorMessage(ebookError);
-          let audiobookMessage = 'Audiobook added, but ';
+          let message = '';
           let addedMediaTypes = getAddedMediaTypes(getState(), 'audiobook');
 
           if (audiobookPending) {
-            audiobookMessage = 'Audiobook request queued, but ';
             addedMediaTypes = getAddedMediaTypes(getState());
           }
 
           if (audiobookError) {
-            audiobookMessage = `Audiobook failed: ${getAjaxErrorMessage(audiobookError)}. `;
+            message = translate('BookAddAudiobookAndEbookFailed', {
+              audiobookError: getAjaxErrorMessage(audiobookError),
+              ebookError: error
+            });
             addedMediaTypes = getAddedMediaTypes(getState());
+          } else if (audiobookPending) {
+            message = translate('BookAddAudiobookQueuedEbookFailed', { error });
+          } else {
+            message = translate('BookAddAudiobookAddedEbookFailed', { error });
           }
 
           dispatch(batchActions([
             showMessage({
               id: `book-add-ebook-failed-${Date.now()}`,
               name: 'BookAddEbookFailed',
-              message: `${audiobookMessage}eBook failed: ${error}. The modal is still open so you can retry.`,
+              message,
               type: audiobookError ? 'error' : 'warning',
               hideAfter: 14
             }),
@@ -1120,7 +1142,10 @@ export const actionHandlers = handleThunks({
         showMessage({
           id: `book-add-${mediaType}-failed-${Date.now()}`,
           name: 'BookAddFailed',
-          message: `${getMediaTypeLabel(mediaType)} failed: ${error}. The modal is still open so you can retry.`,
+          message: translate('BookAddMediaTypeFailedRetry', {
+            mediaType: getMediaTypeLabel(mediaType),
+            error
+          }),
           type: 'error',
           hideAfter: 14
         }),

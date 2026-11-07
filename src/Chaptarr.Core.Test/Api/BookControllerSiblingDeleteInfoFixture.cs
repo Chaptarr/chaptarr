@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.IO.Abstractions;
 using Chaptarr.Core.Test;
 using Chaptarr.Api.V1.Books;
@@ -11,6 +12,7 @@ using NzbDrone.Core.AuthorStats;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.Validation;
 
 namespace Chaptarr.Core.Test.Api
@@ -22,15 +24,25 @@ namespace Chaptarr.Core.Test.Api
         {
             private readonly Func<int, Book> _getBook;
             private readonly Func<int, List<Book>> _getBooksByAuthor;
+            private readonly Func<BookMediaType, List<AuthorBookCount>> _getBookshelfAuthorCounts;
+            private readonly Func<IEnumerable<int>, BookMediaType, List<Book>> _getBooksForBookshelf;
 
-            public StubBookService(Func<int, Book> getBook, Func<int, List<Book>> getBooksByAuthor)
+            public StubBookService(
+                Func<int, Book> getBook,
+                Func<int, List<Book>> getBooksByAuthor,
+                Func<BookMediaType, List<AuthorBookCount>> getBookshelfAuthorCounts = null,
+                Func<IEnumerable<int>, BookMediaType, List<Book>> getBooksForBookshelf = null)
             {
                 _getBook = getBook;
                 _getBooksByAuthor = getBooksByAuthor;
+                _getBookshelfAuthorCounts = getBookshelfAuthorCounts;
+                _getBooksForBookshelf = getBooksForBookshelf;
             }
 
             public Book GetBook(int bookId) => _getBook?.Invoke(bookId);
             public List<Book> GetBooksByAuthor(int authorId) => _getBooksByAuthor?.Invoke(authorId) ?? new List<Book>();
+            public List<AuthorBookCount> GetBookshelfAuthorCounts(BookMediaType mediaType) => _getBookshelfAuthorCounts?.Invoke(mediaType) ?? new List<AuthorBookCount>();
+            public List<Book> GetBooksForBookshelf(IEnumerable<int> authorIds, BookMediaType mediaType) => _getBooksForBookshelf?.Invoke(authorIds, mediaType) ?? new List<Book>();
 
             public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new NotImplementedException();
             public List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
@@ -67,7 +79,7 @@ namespace Chaptarr.Core.Test.Api
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public Book AddWantedEdition(int bookId, int editionId, bool asNewVariant = false) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -77,17 +89,58 @@ namespace Chaptarr.Core.Test.Api
         private sealed class StubAuthorStatisticsService : IAuthorStatisticsService
         {
             private readonly Func<int, AuthorStatistics> _getStats;
+            private readonly Func<IEnumerable<int>, string, List<AuthorStatistics>> _getStatsForAuthors;
 
-            public StubAuthorStatisticsService(Func<int, AuthorStatistics> getStats)
+            public StubAuthorStatisticsService(
+                Func<int, AuthorStatistics> getStats,
+                Func<IEnumerable<int>, string, List<AuthorStatistics>> getStatsForAuthors = null)
             {
                 _getStats = getStats;
+                _getStatsForAuthors = getStatsForAuthors;
             }
 
             public List<AuthorStatistics> AuthorStatistics() => throw new NotImplementedException();
             public AuthorStatistics AuthorStatistics(int authorId) => _getStats?.Invoke(authorId) ?? new AuthorStatistics();
             public List<AuthorStatistics> AuthorStatistics(string mediaType) => throw new NotImplementedException();
             public AuthorStatistics AuthorStatistics(int authorId, string mediaType) => throw new NotImplementedException();
+            public List<AuthorStatistics> AuthorStatistics(IEnumerable<int> authorIds, string mediaType) =>
+                _getStatsForAuthors?.Invoke(authorIds, mediaType) ?? new List<AuthorStatistics>();
+            public List<AuthorStatistics> BookshelfAuthorStatistics() => throw new NotImplementedException();
+            public AuthorStatistics BookshelfAuthorStatistics(int authorId) => _getStats?.Invoke(authorId) ?? new AuthorStatistics();
             public void InvalidateAuthorCache(int authorId) => throw new NotImplementedException();
+        }
+
+        private class StubAuthorService : DispatchProxy
+        {
+            public List<Author> Authors { get; set; } = new List<Author>();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod.Name == nameof(IAuthorService.GetAuthors))
+                {
+                    return Authors;
+                }
+
+                throw new NotImplementedException($"Unexpected author service call: {targetMethod.Name}");
+            }
+        }
+
+        private class StubSeriesBookLinkService : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod.Name == nameof(ISeriesBookLinkService.GetLinksByBook))
+                {
+                    return new List<SeriesBookLink>();
+                }
+
+                throw new NotImplementedException($"Unexpected series book link service call: {targetMethod.Name}");
+            }
+        }
+
+        private class StubCoverMapper : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo targetMethod, object[] args) => null;
         }
 
         private sealed class StubMediaFileService : IMediaFileService
@@ -130,16 +183,24 @@ namespace Chaptarr.Core.Test.Api
 
         private sealed class TestableBookController : Chaptarr.Api.V1.Books.BookController
         {
-            public TestableBookController(IBookService bookService, IAuthorStatisticsService authorStatisticsService, Logger logger, IMediaFileService mediaFileService = null)
-                : base(authorService: null,
+            public TestableBookController(
+                IBookService bookService,
+                IAuthorStatisticsService authorStatisticsService,
+                Logger logger,
+                IMediaFileService mediaFileService = null,
+                IAuthorService authorService = null,
+                ISeriesBookLinkService seriesBookLinkService = null)
+                : base(authorService: authorService,
                     bookService: bookService,
                     addBookService: null,
                     editionService: null,
                     editionSelector: null,
-                    seriesBookLinkService: null,
+                    seriesBookLinkService: seriesBookLinkService ??
+                        DispatchProxy.Create<ISeriesBookLinkService, StubSeriesBookLinkService>(),
                     authorStatisticsService: authorStatisticsService,
                     mediaFileService: mediaFileService ?? new StubMediaFileService(),
-                    coverMapper: null,
+                    coverMapper: DispatchProxy.Create<IMapCoversToLocal, StubCoverMapper>(),
+                    mediaCoverProxy: null,
                     upgradableSpecification: null,
                     signalRBroadcaster: null,
                     commandQueueManager: null,
@@ -162,6 +223,13 @@ namespace Chaptarr.Core.Test.Api
                 Size = size,
                 Edition = new Edition { Id = bookId * 10, BookId = bookId }
             };
+        }
+
+        private static IAuthorService BuildAuthorService(params Author[] authors)
+        {
+            var authorService = DispatchProxy.Create<IAuthorService, StubAuthorService>();
+            ((StubAuthorService)(object)authorService).Authors = authors.ToList();
+            return authorService;
         }
 
         [Test]
@@ -204,6 +272,188 @@ namespace Chaptarr.Core.Test.Api
             Assert.That(result.Value.Siblings, Is.Empty);
             Assert.That(result.Value.Statistics.BookFileCount, Is.EqualTo(0));
             Assert.That(result.Value.Statistics.SizeOnDisk, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void should_return_only_work_matched_records_in_the_other_format()
+        {
+            var book = new Book
+            {
+                Id = 1,
+                Title = "1984",
+                MediaType = BookMediaType.Audiobook,
+                BaseBookId = "hc:1984",
+                HardcoverBookId = "hc:1984"
+            };
+            book.AuthorId = 10;
+
+            var ebook = new Book
+            {
+                Id = 200,
+                Title = "1984",
+                MediaType = BookMediaType.Ebook,
+                BaseBookId = "hc:1984",
+                HardcoverBookId = "hc:1984",
+                PublicationYear = 1949,
+                Publisher = "Secker & Warburg"
+            };
+            ebook.AuthorId = 10;
+
+            var audiobookClone = new Book
+            {
+                Id = 2,
+                Title = "1984",
+                MediaType = BookMediaType.Audiobook,
+                BaseBookId = "hc:1984",
+                HardcoverBookId = "hc:1984"
+            };
+            audiobookClone.AuthorId = 10;
+
+            var unrelatedEbook = new Book
+            {
+                Id = 201,
+                Title = "Animal Farm",
+                MediaType = BookMediaType.Ebook,
+                BaseBookId = "hc:animal-farm",
+                HardcoverBookId = "hc:animal-farm"
+            };
+            unrelatedEbook.AuthorId = 10;
+
+            var controller = new TestableBookController(
+                new StubBookService(
+                    getBook: id => id == book.Id ? book : null,
+                    getBooksByAuthor: _ => new List<Book> { book, audiobookClone, unrelatedEbook, ebook }),
+                new StubAuthorStatisticsService(getStats: _ => new AuthorStatistics()),
+                LogManager.GetCurrentClassLogger());
+
+            var result = controller.GetRelatedFormats(book.Id);
+
+            Assert.That(result.Result, Is.Null);
+            Assert.That(result.Value.Formats.Select(format => format.BookId), Is.EqualTo(new[] { 200 }));
+            Assert.That(result.Value.Formats.Single().MediaType, Is.EqualTo("ebook"));
+            Assert.That(result.Value.Formats.Single().Title, Is.EqualTo("1984"));
+            Assert.That(result.Value.Formats.Single().Disambiguation, Is.EqualTo("1949"));
+        }
+
+        [Test]
+        public void bookshelf_both_formats_should_sum_author_counts_without_losing_single_format_authors()
+        {
+            var controller = new TestableBookController(
+                new StubBookService(
+                    getBook: _ => null,
+                    getBooksByAuthor: _ => new List<Book>(),
+                    getBookshelfAuthorCounts: mediaType => mediaType == BookMediaType.Audiobook
+                        ? new List<AuthorBookCount>
+                        {
+                            new AuthorBookCount { AuthorId = 1, BookCount = 2 },
+                            new AuthorBookCount { AuthorId = 2, BookCount = 1 }
+                        }
+                        : new List<AuthorBookCount>
+                        {
+                            new AuthorBookCount { AuthorId = 1, BookCount = 3 },
+                            new AuthorBookCount { AuthorId = 3, BookCount = 1 }
+                        }),
+                new StubAuthorStatisticsService(getStats: _ => new AuthorStatistics()),
+                LogManager.GetCurrentClassLogger());
+
+            var result = controller.GetBookshelfAuthors("both");
+
+            Assert.That(result.Value.Select(count => new { count.AuthorId, count.BookCount }), Is.EquivalentTo(new[]
+            {
+                new { AuthorId = 1, BookCount = 5 },
+                new { AuthorId = 2, BookCount = 1 },
+                new { AuthorId = 3, BookCount = 1 }
+            }));
+        }
+
+        [Test]
+        public void bookshelf_both_formats_should_request_both_media_types_for_book_rows()
+        {
+            var mediaTypes = new List<BookMediaType>();
+            var controller = new TestableBookController(
+                new StubBookService(
+                    getBook: _ => null,
+                    getBooksByAuthor: _ => new List<Book>(),
+                    getBooksForBookshelf: (authorIds, mediaType) =>
+                    {
+                        mediaTypes.Add(mediaType);
+                        return new List<Book>();
+                    }),
+                new StubAuthorStatisticsService(getStats: _ => new AuthorStatistics()),
+                LogManager.GetCurrentClassLogger());
+
+            var result = controller.GetBookshelfBooks(new List<int> { 1 }, "both");
+
+            Assert.That(result.Value, Is.Empty);
+            Assert.That(mediaTypes, Is.EqualTo(new[] { BookMediaType.Audiobook, BookMediaType.Ebook }));
+        }
+
+        [Test]
+        public void bookshelf_both_formats_should_return_both_book_records_and_work_identity()
+        {
+            var author = new Author { Id = 42, Name = "Ursula K. Le Guin" };
+            var audiobook = new Book
+            {
+                Id = 1,
+                AuthorId = author.Id,
+                Title = "A Wizard of Earthsea",
+                MediaType = BookMediaType.Audiobook,
+                HardcoverBookId = "hc:earthsea"
+            };
+            var ebook = new Book
+            {
+                Id = 2,
+                AuthorId = author.Id,
+                Title = "A Wizard of Earthsea",
+                MediaType = BookMediaType.Ebook,
+                HardcoverBookId = "hc:earthsea"
+            };
+            var requestedTypes = new List<BookMediaType>();
+            var statisticsTypes = new List<string>();
+            var bookService = new StubBookService(
+                getBook: _ => null,
+                getBooksByAuthor: _ => new List<Book>(),
+                getBooksForBookshelf: (authorIds, mediaType) =>
+                {
+                    requestedTypes.Add(mediaType);
+                    return mediaType == BookMediaType.Audiobook
+                        ? new List<Book> { audiobook }
+                        : new List<Book> { ebook };
+                });
+            var statisticsService = new StubAuthorStatisticsService(
+                getStats: _ => new AuthorStatistics(),
+                getStatsForAuthors: (authorIds, mediaType) =>
+                {
+                    statisticsTypes.Add(mediaType);
+                    return new List<AuthorStatistics>();
+                });
+            var controller = new TestableBookController(
+                bookService,
+                statisticsService,
+                LogManager.GetCurrentClassLogger(),
+                authorService: BuildAuthorService(author));
+
+            var result = controller.GetBookshelfBooks(new List<int> { author.Id }, "both");
+
+            Assert.That(result.Result, Is.Null);
+            Assert.That(result.Value.Select(book => book.Id), Is.EqualTo(new[] { audiobook.Id, ebook.Id }));
+            Assert.That(result.Value.Select(book => book.MediaType), Is.EqualTo(new[] { "audiobook", "ebook" }));
+            Assert.That(result.Value.SelectMany(book => book.WorkProviderIds).Distinct(), Is.EqualTo(new[] { "hc:earthsea" }));
+            Assert.That(requestedTypes, Is.EqualTo(new[] { BookMediaType.Audiobook, BookMediaType.Ebook }));
+            Assert.That(statisticsTypes, Is.EqualTo(new[] { "audiobook", "ebook" }));
+        }
+
+        [Test]
+        public void should_return_404_when_related_format_book_is_missing()
+        {
+            var controller = new TestableBookController(
+                new StubBookService(getBook: _ => null, getBooksByAuthor: _ => new List<Book>()),
+                new StubAuthorStatisticsService(getStats: _ => new AuthorStatistics()),
+                LogManager.GetCurrentClassLogger());
+
+            var result = controller.GetRelatedFormats(123);
+
+            Assert.That(result.Result, Is.InstanceOf<NotFoundResult>());
         }
 
         [Test]

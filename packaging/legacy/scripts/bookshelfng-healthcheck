@@ -1,0 +1,188 @@
+#!/bin/sh
+set -eu
+
+data_dir=/var/lib/bookshelfng
+pending_marker="$data_dir/.chaptarrng-bookshelfng-migration-pending"
+handoff_status="$data_dir/.chaptarrng-bookshelfng-handoff-status"
+journal=/usr/lib/chaptarrng/handoff/bookshelfng-journal
+
+# Native BookshelfNG packages preserve stopped/disabled service state. The
+# marker is created only when a package manager replaces an installed legacy
+# binary, so ordinary ChaptarrNG starts do not require a migration marker.
+if [ ! -f "$pending_marker" ]; then
+  exit 0
+fi
+
+write_status() {
+  printf '%s\n' "$1" > "$handoff_status.tmp"
+  chmod 0600 "$handoff_status.tmp"
+  mv -f "$handoff_status.tmp" "$handoff_status"
+  case "$1" in
+    healthy|rolled-back)
+      "$journal" state "$1"
+      ;;
+    operator-review-required|intervention-required)
+      "$journal" state intervention-required
+      ;;
+  esac
+}
+
+if ! command -v systemctl >/dev/null 2>&1; then
+  write_status operator-review-required
+  echo 'systemd is unavailable; automatic migration readiness was not checked.' >&2
+  exit 0
+fi
+
+fragment_path=$(systemctl show --property=FragmentPath --value bookshelfng.service 2>/dev/null || true)
+dropin_paths=$(systemctl show --property=DropInPaths --value bookshelfng.service 2>/dev/null || true)
+has_unit_specific_dropins=false
+for dropin_path in $dropin_paths; do
+  case "$dropin_path" in
+    */bookshelfng.service.d/*) has_unit_specific_dropins=true ;;
+  esac
+done
+case "$fragment_path" in
+  /lib/systemd/system/bookshelfng.service|/usr/lib/systemd/system/bookshelfng.service) ;;
+  *)
+    write_status operator-review-required
+    echo 'BookshelfNG uses a custom or missing systemd unit; automatic migration readiness was not checked.' >&2
+    exit 0
+    ;;
+esac
+if [ "$has_unit_specific_dropins" = true ]; then
+  write_status operator-review-required
+  echo 'BookshelfNG has unit-specific systemd drop-ins; automatic migration readiness was not checked.' >&2
+  exit 0
+fi
+
+health_timeout=${CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS:-14700}
+case "$health_timeout" in
+  ''|*[!0-9]*)
+    write_status intervention-required
+    echo 'CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS must be an integer from 1 to 14700.' >&2
+    exit 1
+    ;;
+esac
+while [ "${health_timeout#0}" != "$health_timeout" ] && [ "${#health_timeout}" -gt 1 ]; do
+  health_timeout=${health_timeout#0}
+done
+if [ "${#health_timeout}" -gt 5 ] || [ "$health_timeout" -lt 1 ] || [ "$health_timeout" -gt 14700 ]; then
+  write_status intervention-required
+  echo 'CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS must be an integer from 1 to 14700.' >&2
+  exit 1
+fi
+deadline=$(( $(date +%s) + health_timeout ))
+health_url=${BOOKSHELFNG_HEALTH_URL:-auto}
+main_process_alive() {
+  # systemd supplies MAINPID to ExecStartPost. A failed main process must
+  # release this hook so ExecStopPost can restore the source installation.
+  [ -z "${MAINPID:-}" ] || kill -0 "$MAINPID" 2>/dev/null
+}
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  if ! main_process_alive; then break; fi
+  selinux_enforce_file=${CHAPTARR_BOOKSHELF_SELINUX_ENFORCE_FILE:-/sys/fs/selinux/enforce}
+  if [ "${CHAPTARR_BOOKSHELF_HANDOFF_HEALTH_MODE:-}" = database-listener ] &&
+     [ -r "$selinux_enforce_file" ] &&
+     [ "$(cat "$selinux_enforce_file" 2>/dev/null || true)" = 1 ]; then
+    if /usr/lib/chaptarrng/bin/Chaptarr /check-bookshelf-migration -data="$data_dir" >/dev/null 2>&1; then
+      health_port=${CHAPTARR_DEFAULT_PORT:-8787}
+      if [ -r "$data_dir/config.xml" ]; then
+        configured_port=$(python3 - "$data_dir/config.xml" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+try:
+    root = ET.parse(sys.argv[1]).getroot()
+    node = root.find("Port")
+    print(node.text.strip() if node is not None and node.text else "")
+except (OSError, ET.ParseError):
+    print("")
+PY
+)
+        case "$configured_port" in
+          ''|*[!0-9]*) ;;
+          *) health_port=$configured_port ;;
+        esac
+      fi
+
+      if [ "$health_port" -ge 1 ] && [ "$health_port" -le 65535 ] &&
+         CHAPTARR_BOOKSHELF_PROC_NET_TCP_FILE=${CHAPTARR_BOOKSHELF_PROC_NET_TCP_FILE:-/proc/net/tcp} \
+         CHAPTARR_BOOKSHELF_PROC_NET_TCP6_FILE=${CHAPTARR_BOOKSHELF_PROC_NET_TCP6_FILE:-/proc/net/tcp6} \
+         python3 - "$health_port" "$deadline" "${MAINPID:-}" <<'PY'
+import sys
+import time
+import os
+
+port = int(sys.argv[1])
+deadline = int(sys.argv[2])
+main_pid = int(sys.argv[3]) if sys.argv[3] else None
+while time.time() < deadline:
+    if main_pid is not None:
+        try:
+            os.kill(main_pid, 0)
+        except ProcessLookupError:
+            sys.exit(1)
+    port_hex = f"{port:04X}"
+    for path in (
+        os.environ["CHAPTARR_BOOKSHELF_PROC_NET_TCP_FILE"],
+        os.environ["CHAPTARR_BOOKSHELF_PROC_NET_TCP6_FILE"],
+    ):
+        try:
+            with open(path, encoding="ascii") as sockets:
+                next(sockets, None)
+                for line in sockets:
+                    fields = line.split()
+                    if len(fields) > 3 and fields[1].rsplit(":", 1)[-1].upper() == port_hex and fields[3] == "0A":
+                        sys.exit(0)
+        except OSError:
+            pass
+    time.sleep(1)
+sys.exit(1)
+PY
+      then
+        if [ -e /run/bookshelfng-package-was-active ]; then
+          write_status starting
+          echo 'SELinux blocks this service context from connecting to its own HTTP port; the database and listening socket are ready, and the RPM transaction will verify HTTP from its scriptlet context.'
+          exit 0
+        fi
+
+        "$journal" outcome health database-and-listener-readable
+        write_status healthy
+        rm -f "$pending_marker"
+        exit 0
+      fi
+    fi
+    sleep 5
+    continue
+  fi
+
+  if /usr/lib/chaptarrng/bin/Chaptarr /check-bookshelf-migration -data="$data_dir" >/dev/null 2>&1; then
+    remaining=$(( deadline - $(date +%s) ))
+    if [ "$remaining" -lt 1 ]; then break; fi
+    # Bound each HTTP wait so a dead service cannot hold recovery until the
+    # full migration deadline. A live service still gets that full deadline.
+    if [ "$remaining" -gt 5 ]; then remaining=5; fi
+    if ! /usr/lib/chaptarrng/bin/Chaptarr /check-bookshelf-migration \
+      -data="$data_dir" \
+      "-bookshelf-health-url=$health_url" \
+      "-bookshelf-health-timeout-seconds=$remaining"; then
+      continue
+    fi
+
+    if ! main_process_alive; then break; fi
+
+    "$journal" outcome conversion verified
+    "$journal" state converted
+    "$journal" outcome promotion verified
+    "$journal" state promoted
+    "$journal" outcome health database-and-http-readable
+    write_status healthy
+    rm -f "$pending_marker"
+    exit 0
+  fi
+
+  sleep 5
+done
+
+write_status intervention-required
+echo "BookshelfNG conversion did not pass its database and local HTTP health checks within ${health_timeout} seconds. Automatic rollback will restore the retained source database and the prior BookshelfNG package if both are valid." >&2
+exit 1

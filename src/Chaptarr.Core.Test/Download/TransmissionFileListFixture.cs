@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using NLog;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -20,9 +21,10 @@ namespace Chaptarr.Core.Test.Download
         {
             public string RequestedHash { get; private set; }
             public TransmissionTorrent TorrentDetails { get; set; }
+            public List<TransmissionTorrent> Torrents { get; set; } = new();
             public bool ThrowOnDetails { get; set; }
 
-            public List<TransmissionTorrent> GetTorrents(TransmissionSettings settings) => throw new NotImplementedException();
+            public List<TransmissionTorrent> GetTorrents(TransmissionSettings settings) => Torrents;
 
             public TransmissionTorrent GetTorrentDetails(string hashString, TransmissionSettings settings)
             {
@@ -71,6 +73,33 @@ namespace Chaptarr.Core.Test.Download
 
                 return remotePath;
             }
+        }
+
+        [Test]
+        public void should_fall_back_to_milliseconds_for_out_of_range_eta_values()
+        {
+            var eta = (long)TimeSpan.MaxValue.TotalSeconds + 1;
+            var proxy = new TestProxy
+            {
+                Torrents = new List<TransmissionTorrent>
+                {
+                    new()
+                    {
+                        HashString = "ABCDEF1234",
+                        Name = "Author - Book",
+                        DownloadDir = "/downloads",
+                        TotalSize = 100,
+                        LeftUntilDone = 50,
+                        Eta = eta,
+                        SeedRatioMode = 2,
+                        SeedIdleMode = 2
+                    }
+                }
+            };
+
+            var item = CreateClient(proxy).GetItems().Single();
+
+            Assert.That(item.RemainingTime, Is.EqualTo(TimeSpan.FromMilliseconds(eta)));
         }
 
         [Test]

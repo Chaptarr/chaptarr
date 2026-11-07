@@ -1,3 +1,4 @@
+using NzbDrone.Core.Books;
 using System.Collections.Generic;
 using Chaptarr.Api.V1.Author;
 using NUnit.Framework;
@@ -43,6 +44,52 @@ namespace Chaptarr.Core.Test.Api
                     "A missing media side must be explicit zeroes instead of falling back to combined statistics");
                 Assert.That(resources[1].Statistics.BookCount, Is.EqualTo(5));
             });
+        }
+
+        [Test]
+        public void bookshelf_compatibility_should_set_zero_legacy_statistics_when_no_books_exist()
+        {
+            var resources = new List<AuthorResource>
+            {
+                new AuthorResource { Id = 1, Statistics = new AuthorStatisticsResource { BookCount = 4, TotalBookCount = 4 } },
+                new AuthorResource { Id = 2, Statistics = new AuthorStatisticsResource { BookCount = 9, TotalBookCount = 9 } }
+            };
+            var legacyStatistics = new Dictionary<int, AuthorStatistics>
+            {
+                [1] = Statistics(authorId: 1, books: 3, files: 1, size: 100)
+            };
+
+            AuthorController.LinkBookshelfAuthorStatistics(resources, legacyStatistics);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(resources[0].Statistics.BookCount, Is.EqualTo(3));
+                Assert.That(resources[1].Statistics.BookCount, Is.Zero,
+                    "BookshelfNG returns zero statistics for authors that have no statistics row");
+                Assert.That(resources[1].Statistics.TotalBookCount, Is.Zero);
+            });
+        }
+
+        [Test]
+        public void legacy_embedded_work_should_combine_format_monitoring_without_using_the_ignored_raw_flag()
+        {
+            var books = new List<Book>
+            {
+                new() { Id = 30, MediaType = BookMediaType.Audiobook, AudiobookMonitored = true },
+                new() { Id = 31, MediaType = BookMediaType.Ebook, EbookMonitored = false },
+                new() { Id = 32, MediaType = BookMediaType.Ebook, EbookMonitored = false }
+            };
+            var mappings = new List<BookshelfLegacyIdentityMapEntry>
+            {
+                new() { SourceId = 30, TargetId = 30 },
+                new() { SourceId = 30, TargetId = 31 },
+                new() { SourceId = 32, TargetId = 32 }
+            };
+
+            var flags = AuthorController.BuildBookshelfWorkMonitoring(books, mappings);
+            Assert.That(flags[30], Is.True);
+            Assert.That(flags[31], Is.True);
+            Assert.That(flags[32], Is.False);
         }
 
         private static AuthorStatistics Statistics(int authorId, int books, int files, long size)

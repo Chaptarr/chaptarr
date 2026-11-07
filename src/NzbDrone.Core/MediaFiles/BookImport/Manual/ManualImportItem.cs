@@ -3,6 +3,7 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
 
@@ -24,12 +25,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
         public Book Book { get; set; }
         public Edition Edition { get; set; }
         public QualityModel Quality { get; set; }
+        public int? DurationSeconds { get; set; }
         public string ReleaseGroup { get; set; }
         public string DownloadId { get; set; }
         public List<CustomFormat> CustomFormats { get; set; }
         public int IndexerFlags { get; set; }
         public IEnumerable<Rejection> Rejections { get; set; }
         public List<string> Warnings { get; set; }
+        public MatchProvenance MatchProvenance { get; set; }
         public Dictionary<string, List<string>> Tags { get; set; }
         public bool AdditionalFile { get; set; }
         public bool ReplaceExistingFiles { get; set; }

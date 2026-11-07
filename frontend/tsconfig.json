@@ -3,27 +3,28 @@
       "target": "esnext",
       "allowJs": true,
       "checkJs": false,
-      "baseUrl": "src",
+      "strict": false,
+      "skipLibCheck": true,
       "jsx": "react",
       "module": "esnext",
       "moduleResolution": "bundler",
       "noEmit": true,
       "esModuleInterop": true,
-      "typeRoots": ["node_modules/@types", "typings"],
+      "types": ["node"],
+      "typeRoots": ["../node_modules/@types", "./typings"],
       "paths": {
           "*": [
-              "*"
+              "./src/*"
           ]
       },
       "plugins": [{ "name": "typescript-plugin-css-modules" }]
   },
   "include": [
       "./src/**/*",
-      "./.eslintrc.js",
-      "./build/webpack.config.js",
-      "./typings/*.ts"
+      "./typings/*.d.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "./src/sw.js"
   ]
 }

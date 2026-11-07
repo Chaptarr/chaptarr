@@ -4,6 +4,8 @@ interface CssExports {
   'contentBody': string;
   'contentBodyContainer': string;
   'emptyMessage': string;
+  'formatGroupingHelp': string;
+  'formatToolbarGroup': string;
   'pageContentBodyWrapper': string;
   'tableInnerContentBody': string;
 }

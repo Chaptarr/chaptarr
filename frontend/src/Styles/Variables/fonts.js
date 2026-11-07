@@ -1,6 +1,6 @@
 module.exports = {
   // Families
-  defaultFontFamily: 'Roboto, "open sans", "Helvetica Neue", Helvetica, Arial, sans-serif',
+  defaultFontFamily: 'Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
   monoSpaceFontFamily: '"Ubuntu Mono", Menlo, Monaco, Consolas, "Courier New", monospace;',
 
   // Sizes

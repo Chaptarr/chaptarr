@@ -1,0 +1,99 @@
+#!/bin/sh
+set -eu
+
+data_dir=/var/lib/bookshelfng
+pending_marker="$data_dir/.chaptarrng-bookshelfng-migration-pending"
+handoff_status="$data_dir/.chaptarrng-bookshelfng-handoff-status"
+handoff_dir="$data_dir/.chaptarrng-bookshelfng-handoff"
+journal=/usr/lib/chaptarrng/handoff/bookshelfng-journal
+
+write_status() {
+  printf '%s\n' "$1" > "$handoff_status.tmp"
+  chmod 0600 "$handoff_status.tmp"
+  mv -f "$handoff_status.tmp" "$handoff_status"
+}
+
+if [ ! -f "$pending_marker" ]; then
+  exit 0
+fi
+
+case "$("$journal" get-state)" in
+  unknown|deferred) "$journal" state detected ;;
+esac
+
+if [ -f "$handoff_dir/snapshot-ready" ]; then
+  "$journal" fingerprint source-app "$handoff_dir/source-app"
+  "$journal" fingerprint source-unit "$handoff_dir/source-unit"
+  "$journal" fingerprint source-database-readarr "$data_dir/readarr.db"
+  "$journal" fingerprint source-database-audioarr "$data_dir/audioarr.db"
+  "$journal" fingerprint source-config "$data_dir/config.xml"
+  "$journal" fingerprint source-environment /etc/bookshelfng/bookshelfng.env
+  "$journal" outcome source-snapshot success
+  "$journal" state snapshotted
+fi
+
+"$journal" fingerprint target-artifact /usr/lib/chaptarrng/bin/Chaptarr --refresh
+"$journal" fingerprint target-package-info /usr/lib/chaptarrng/package_info --refresh
+
+if ! command -v systemctl >/dev/null 2>&1; then
+  write_status operator-review-required
+  "$journal" state intervention-required
+  exit 0
+fi
+
+fragment_path=$(systemctl show --property=FragmentPath --value bookshelfng.service 2>/dev/null || true)
+dropin_paths=$(systemctl show --property=DropInPaths --value bookshelfng.service 2>/dev/null || true)
+has_unit_specific_dropins=false
+for dropin_path in $dropin_paths; do
+  case "$dropin_path" in
+    */bookshelfng.service.d/*) has_unit_specific_dropins=true ;;
+  esac
+done
+restore_unit=false
+case "$fragment_path" in
+  /lib/systemd/system/bookshelfng.service|/usr/lib/systemd/system/bookshelfng.service)
+    if [ "$has_unit_specific_dropins" = false ]; then
+      exit 0
+    fi
+    restore_unit=true
+    ;;
+  *) ;;
+esac
+
+write_status operator-review-required
+"$journal" state intervention-required
+if [ ! -f "$handoff_dir/snapshot-ready" ] ||
+   [ ! -x "$handoff_dir/source-app/Readarr" ]; then
+  echo 'Custom BookshelfNG service configuration needs operator review; no original application snapshot is available to restore.' >&2
+  exit 0
+fi
+
+rm -rf /usr/lib/bookshelfng
+install -d -m 0755 /usr/lib
+cp -a "$handoff_dir/source-app" /usr/lib/bookshelfng
+
+if [ "$restore_unit" = true ]; then
+  if [ ! -f "$handoff_dir/source-unit" ] || [ ! -f "$handoff_dir/source-unit-path" ]; then
+    echo 'The original systemd unit cannot be restored; the app snapshot was restored for operator recovery.' >&2
+    exit 0
+  fi
+  unit_path=$(cat "$handoff_dir/source-unit-path")
+  case "$unit_path" in
+    /lib/systemd/system/bookshelfng.service|/usr/lib/systemd/system/bookshelfng.service) ;;
+    *)
+      echo 'The saved BookshelfNG service unit path is not a standard unit path; the app snapshot was restored for operator recovery.' >&2
+      exit 0
+      ;;
+  esac
+  cp -a "$handoff_dir/source-unit" "$unit_path"
+fi
+
+if [ -f "$handoff_dir/source-bin-entry" ]; then
+  rm -f /usr/bin/bookshelfng
+  cp -a "$handoff_dir/source-bin-entry" /usr/bin/bookshelfng
+elif [ -f "$handoff_dir/source-bin-entry-absent" ]; then
+  rm -f /usr/bin/bookshelfng
+fi
+
+systemctl daemon-reload
+echo 'Custom BookshelfNG service configuration was preserved with the original application; automatic conversion is deferred for operator review.' >&2

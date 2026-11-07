@@ -4,6 +4,7 @@ using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.CustomFormats.Events;
 using NzbDrone.Core.ImportLists;
@@ -19,6 +20,7 @@ namespace NzbDrone.Core.Profiles.Qualities
         QualityProfile Add(QualityProfile profile);
         void Update(QualityProfile profile);
         void Delete(int id);
+        void EnsureNotInUse(IEnumerable<int> ids);
         List<QualityProfile> All();
         List<QualityProfile> GetByType(ProfileType type);
         QualityProfile Get(int id);
@@ -38,6 +40,7 @@ namespace NzbDrone.Core.Profiles.Qualities
         private readonly ICustomFormatService _formatService;
         private readonly IRootFolderService _rootFolderService;
         private readonly IQualityDefinitionService _qualityDefinitionService;
+        private readonly IConfigService _configService;
         private readonly Logger _logger;
 
         public QualityProfileService(IProfileRepository profileRepository,
@@ -46,6 +49,7 @@ namespace NzbDrone.Core.Profiles.Qualities
                                      ICustomFormatService formatService,
                                      IRootFolderService rootFolderService,
                                      IQualityDefinitionService qualityDefinitionService,
+                                     IConfigService configService,
                                      Logger logger)
         {
             _profileRepository = profileRepository;
@@ -54,6 +58,7 @@ namespace NzbDrone.Core.Profiles.Qualities
             _rootFolderService = rootFolderService;
             _formatService = formatService;
             _qualityDefinitionService = qualityDefinitionService;
+            _configService = configService;
             _logger = logger;
         }
 
@@ -69,30 +74,25 @@ namespace NzbDrone.Core.Profiles.Qualities
 
         public void Delete(int id)
         {
-            var authorInUse = _authorService
-                .GetAllAuthors()
-                .Any(a => a.AudiobookQualityProfileId == id || a.EbookQualityProfileId == id);
-
-            var importListInUse = _importListFactory
-                .All()
-                .Any(l => l.QualityProfileId == id);
-
-            var rootFolderInUse = _rootFolderService
-                .All()
-                .Any(rf =>
-                {
-                    var ab = rf.GetAudiobookSettings();
-                    var eb = rf.GetEbookSettings();
-                    return (ab?.QualityProfileId == id) || (eb?.QualityProfileId == id);
-                });
-
-            if (authorInUse || importListInUse || rootFolderInUse)
-            {
-                var profile = _profileRepository.Get(id);
-                throw new QualityProfileInUseException(profile.Name);
-            }
-
+            EnsureNotInUse(new[] { id });
             _profileRepository.Delete(id);
+        }
+
+        public void EnsureNotInUse(IEnumerable<int> ids)
+        {
+            var authors = _authorService.GetAllAuthors();
+            var lists = _importListFactory.All();
+            var roots = _rootFolderService.All();
+            foreach (var id in ids.Distinct())
+            {
+                var authorInUse = authors.Any(author => author.AudiobookQualityProfileId == id || author.EbookQualityProfileId == id);
+                var importListInUse = lists.Any(list => list.QualityProfileId == id);
+                var rootFolderInUse = roots.Any(root => root.GetAudiobookSettings()?.QualityProfileId == id || root.GetEbookSettings()?.QualityProfileId == id);
+                if (authorInUse || importListInUse || rootFolderInUse)
+                {
+                    throw new QualityProfileInUseException(_profileRepository.Get(id).Name);
+                }
+            }
         }
 
         public List<QualityProfile> All()
@@ -276,7 +276,14 @@ namespace NzbDrone.Core.Profiles.Qualities
 
         public QualityProfile GetDefaultProfile(string name, Quality cutoff = null, params Quality[] allowed)
         {
-            var groupedQualites = Quality.DefaultQualityDefinitions
+            var useBookshelfOrdering = _configService?.BookshelfMatchCompatibility == true;
+            IEnumerable<QualityDefinition> definitions = useBookshelfOrdering
+                ? BookshelfQualityCompatibility.GetDefaultDefinitions()
+                : Quality.DefaultQualityDefinitions;
+            var allowedQualities = useBookshelfOrdering
+                ? allowed.Where(quality => quality != Quality.Unknown).ToArray()
+                : allowed;
+            var groupedQualites = definitions
                 .OrderBy(q => q.GroupWeight)
                 .GroupBy(q => q.GroupWeight);
             var items = new List<QualityProfileQualityItem>();
@@ -288,11 +295,11 @@ namespace NzbDrone.Core.Profiles.Qualities
                 if (group.Count() == 1)
                 {
                     var quality = group.First().Quality;
-                    items.Add(new QualityProfileQualityItem { Quality = quality, Allowed = allowed.Contains(quality) });
+                    items.Add(new QualityProfileQualityItem { Quality = quality, Allowed = allowedQualities.Contains(quality) });
                     continue;
                 }
 
-                var groupAllowed = group.Any(g => allowed.Contains(g.Quality));
+                var groupAllowed = group.Any(g => allowedQualities.Contains(g.Quality));
 
                 items.Add(new QualityProfileQualityItem
                 {

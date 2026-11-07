@@ -7,6 +7,8 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.Qualities;
 using NzbDrone.Core.RootFolders;
 
 namespace NzbDrone.Core.MediaFiles
@@ -26,6 +28,7 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IRootFolderService _rootFolderService;
         private readonly ICalibreProxy _calibre;
         private readonly Logger _logger;
+        private readonly IQualityProfileService _qualityProfileService;
 
         public UpgradeMediaFileService(IRecycleBinProvider recycleBinProvider,
                                        IMediaFileService mediaFileService,
@@ -34,7 +37,8 @@ namespace NzbDrone.Core.MediaFiles
                                        IDiskProvider diskProvider,
                                        IRootFolderService rootFolderService,
                                        ICalibreProxy calibre,
-                                       Logger logger)
+                                       Logger logger,
+                                       IQualityProfileService qualityProfileService)
         {
             _recycleBinProvider = recycleBinProvider;
             _mediaFileService = mediaFileService;
@@ -44,6 +48,7 @@ namespace NzbDrone.Core.MediaFiles
             _rootFolderService = rootFolderService;
             _calibre = calibre;
             _logger = logger;
+            _qualityProfileService = qualityProfileService;
         }
 
         public BookFileMoveResult UpgradeBookFile(BookFile bookFile, LocalBook localBook, bool copyOnly = false)
@@ -52,6 +57,35 @@ namespace NzbDrone.Core.MediaFiles
 
             // Ensure BookFiles collection is loaded
             var existingFiles = localBook.Book.BookFiles ?? new List<BookFile>();
+            var filesToReplace = existingFiles.Where(file => MediaFileExtensions.AreCompatibleFormats(file.Quality?.Quality ?? Quality.Unknown,
+                                                                                                        file.Path,
+                                                                                                        bookFile.Quality?.Quality ?? Quality.Unknown,
+                                                                                                        localBook.Path))
+                                              .ToList();
+
+            // Last-line quality guard: an approved import (e.g. an edition
+            // switch) must never destroy files that outrank the incoming one
+            // in the author's profile. Only files of a compatible media type
+            // and ebook container are replacement candidates. Decision specs
+            // compare within an edition; this is the only place that sees the
+            // actual deletion.
+            var guardProfileId = localBook.Book?.MediaType == Books.BookMediaType.Ebook
+                ? localBook.Author?.EbookQualityProfileId
+                : localBook.Author?.AudiobookQualityProfileId;
+            if (guardProfileId > 0 && bookFile.Quality != null && _qualityProfileService != null)
+            {
+                var guardProfile = _qualityProfileService.Get(guardProfileId.Value);
+                if (guardProfile != null)
+                {
+                    var comparer = new QualityModelComparer(guardProfile);
+                    var betterExisting = filesToReplace.FirstOrDefault(f => f.Quality != null && comparer.Compare(f.Quality, bookFile.Quality) > 0);
+                    if (betterExisting != null)
+                    {
+                        throw new System.InvalidOperationException(
+                            $"Refusing to replace '{betterExisting.Path}' ({betterExisting.Quality}) with lower-ranked '{localBook.Path}' ({bookFile.Quality})");
+                    }
+                }
+            }
 
             // Handle cases where author path might not be set (e.g., for downloads)
             string rootFolderPath;
@@ -66,9 +100,13 @@ namespace NzbDrone.Core.MediaFiles
             }
 
             var rootFolder = _rootFolderService.GetBestRootFolder(rootFolderPath);
-            var isCalibre = rootFolder?.IsCalibreLibrary == true && rootFolder.CalibreSettings != null;
+            if (rootFolder == null)
+            {
+                throw new RootFolderNotFoundException($"Root folder '{rootFolderPath}' was not found.");
+            }
 
-            var settings = rootFolder?.CalibreSettings;
+            var isCalibre = rootFolder.IsCalibreLibrary && rootFolder.CalibreSettings != null;
+            var settings = rootFolder.CalibreSettings;
 
             // If there are existing book files and the root folder is missing, throw, so the old file isn't left behind during the import process.
             if (existingFiles != null && existingFiles.Any() && !_diskProvider.FolderExists(rootFolderPath))
@@ -76,7 +114,7 @@ namespace NzbDrone.Core.MediaFiles
                 throw new RootFolderNotFoundException($"Root folder '{rootFolderPath}' was not found.");
             }
 
-            foreach (var file in existingFiles)
+            foreach (var file in filesToReplace)
             {
                 var bookFilePath = file.Path;
                 var subfolder = rootFolderPath.GetRelativePath(_diskProvider.GetParentFolder(bookFilePath));

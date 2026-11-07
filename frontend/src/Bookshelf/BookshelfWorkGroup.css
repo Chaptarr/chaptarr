@@ -1,0 +1,20 @@
+.workGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  margin: 2px 4px;
+  padding: 4px 6px;
+  border-left: 2px solid var(--primaryColor);
+}
+
+.workTitle {
+  padding: 2px 0;
+  font-weight: 600;
+}
+
+.formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}

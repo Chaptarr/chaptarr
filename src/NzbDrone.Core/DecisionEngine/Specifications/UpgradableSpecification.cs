@@ -41,12 +41,80 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         public bool IsUpgradable(QualityProfile qualityProfile, QualityModel currentQualities, List<CustomFormat> currentCustomFormats, QualityModel newQuality, List<CustomFormat> newCustomFormats)
         {
+            if (_configService?.BookshelfMatchCompatibility == true)
+            {
+                return IsBookshelfUpgradable(qualityProfile, currentQualities, currentCustomFormats, newQuality, newCustomFormats);
+            }
+
             return IsUpgradable(qualityProfile, currentQualities, currentCustomFormats, newQuality, newCustomFormats, currentIsIncomingRelease: false);
         }
 
         public bool IsReleaseUpgradable(QualityProfile qualityProfile, QualityModel currentQuality, List<CustomFormat> currentCustomFormats, QualityModel newQuality, List<CustomFormat> newCustomFormats)
         {
+            if (_configService?.BookshelfMatchCompatibility == true)
+            {
+                return IsBookshelfUpgradable(qualityProfile, currentQuality, currentCustomFormats, newQuality, newCustomFormats);
+            }
+
             return IsUpgradable(qualityProfile, currentQuality, currentCustomFormats, newQuality, newCustomFormats, currentIsIncomingRelease: true);
+        }
+
+        private bool IsBookshelfUpgradable(
+            QualityProfile qualityProfile,
+            QualityModel currentQuality,
+            List<CustomFormat> currentCustomFormats,
+            QualityModel newQuality,
+            List<CustomFormat> newCustomFormats)
+        {
+            var qualityComparison = CompareBookshelfQuality(qualityProfile, currentQuality, newQuality);
+            if (qualityComparison > 0)
+            {
+                _logger.Trace("New item has a better quality");
+                return true;
+            }
+
+            if (qualityComparison < 0)
+            {
+                _logger.Trace("Existing item has better quality, skipping");
+                return false;
+            }
+
+            var currentFormatScore = qualityProfile.CalculateCustomFormatScore(currentCustomFormats ?? new List<CustomFormat>());
+            var newFormatScore = qualityProfile.CalculateCustomFormatScore(newCustomFormats ?? new List<CustomFormat>());
+            if (newFormatScore <= currentFormatScore)
+            {
+                _logger.Trace("New item's custom format score {0} does not improve on {1}, skipping", newFormatScore, currentFormatScore);
+                return false;
+            }
+
+            _logger.Trace("New item has a better custom format score");
+            return true;
+        }
+
+        private int CompareBookshelfQuality(QualityProfile qualityProfile, QualityModel currentQuality, QualityModel newQuality)
+        {
+            currentQuality = NormalizeQuality(currentQuality);
+            newQuality = NormalizeQuality(newQuality);
+            var comparison = new QualityModelComparer(qualityProfile).Compare(newQuality, currentQuality);
+            if (comparison < 0)
+            {
+                return -1;
+            }
+
+            if (comparison == 0)
+            {
+                return 0;
+            }
+
+            // BookshelfNG did not treat a higher revision as an upgrade when proper
+            // preference was disabled, even if its comparer returned a positive value.
+            if (_configService.DownloadPropersAndRepacks == ProperDownloadTypes.DoNotPrefer &&
+                newQuality.Revision.CompareTo(currentQuality.Revision) > 0)
+            {
+                return 0;
+            }
+
+            return 1;
         }
 
         private bool IsUpgradable(QualityProfile qualityProfile, QualityModel currentQualities, List<CustomFormat> currentCustomFormats, QualityModel newQuality, List<CustomFormat> newCustomFormats, bool currentIsIncomingRelease)
@@ -153,11 +221,25 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         public bool IsUpgradeAllowed(QualityProfile qualityProfile, QualityModel currentQuality, List<CustomFormat> currentCustomFormats, QualityModel newQuality, List<CustomFormat> newCustomFormats)
         {
+            if (_configService?.BookshelfMatchCompatibility == true)
+            {
+                var qualityComparison = CompareBookshelfQuality(qualityProfile, currentQuality, newQuality);
+                var currentFormatScore = qualityProfile.CalculateCustomFormatScore(currentCustomFormats ?? new List<CustomFormat>());
+                var newFormatScore = qualityProfile.CalculateCustomFormatScore(newCustomFormats ?? new List<CustomFormat>());
+                var improves = qualityComparison > 0 || newFormatScore > currentFormatScore;
+                return !improves || qualityProfile.UpgradeAllowed;
+            }
+
             return IsUpgradeAllowed(qualityProfile, currentQuality, currentCustomFormats, newQuality, newCustomFormats, currentIsIncomingRelease: false);
         }
 
         public bool IsReleaseUpgradeAllowed(QualityProfile qualityProfile, QualityModel currentQuality, List<CustomFormat> currentCustomFormats, QualityModel newQuality, List<CustomFormat> newCustomFormats)
         {
+            if (_configService?.BookshelfMatchCompatibility == true)
+            {
+                return IsUpgradeAllowed(qualityProfile, currentQuality, currentCustomFormats, newQuality, newCustomFormats);
+            }
+
             return IsUpgradeAllowed(qualityProfile, currentQuality, currentCustomFormats, newQuality, newCustomFormats, currentIsIncomingRelease: true);
         }
 

@@ -7,6 +7,7 @@ using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MetadataSource;
+using NzbDrone.Common.Instrumentation;
 
 namespace Chaptarr.Api.V1.ProviderIds
 {
@@ -68,7 +69,7 @@ namespace Chaptarr.Api.V1.ProviderIds
             }
 
             var normalizedProviderId = NormalizeProviderId(provider, providerId);
-            logger?.Warn("[API-AMBIGUOUS-PROVIDER] {0}={1} matched {2} local authors{3}; refusing to choose one",
+            logger?.WarnSafe("[API-AMBIGUOUS-PROVIDER] {0}={1} matched {2} local authors{3}; refusing to choose one",
                 field,
                 normalizedProviderId,
                 matches.Count,
@@ -130,13 +131,31 @@ namespace Chaptarr.Api.V1.ProviderIds
             string operation = null)
         {
             var matches = FindBookProviderMatches(bookService, provider, providerId, mediaType);
+            return GetBookAmbiguity(matches, $"{provider}:{providerId}", mediaType, field, logger, operation);
+        }
+
+        public static ProviderAmbiguityResource GetBookAmbiguity(
+            IEnumerable<Book> candidates,
+            string prefixedProviderId,
+            BookMediaType mediaType,
+            string field,
+            Logger logger,
+            string operation = null)
+        {
+            var matches = (candidates ?? Enumerable.Empty<Book>())
+                .Where(book => book != null)
+                .GroupBy(book => book.Id)
+                .Select(group => group.First())
+                .OrderBy(book => book.Id)
+                .ToList();
             if (matches.Count <= 1)
             {
                 return null;
             }
 
-            var normalizedProviderId = NormalizeProviderId(provider, providerId);
-            logger?.Warn("[API-AMBIGUOUS-PROVIDER] {0}={1} mediaType={2} matched {3} local books{4}; refusing to choose one",
+            var (provider, providerId) = SplitProviderId(prefixedProviderId);
+            var normalizedProviderId = NormalizeProviderId(provider, providerId) ?? prefixedProviderId;
+            logger?.WarnSafe("[API-AMBIGUOUS-PROVIDER] {0}={1} mediaType={2} matched {3} local books{4}; refusing to choose one",
                 field,
                 normalizedProviderId,
                 mediaType,
@@ -147,7 +166,8 @@ namespace Chaptarr.Api.V1.ProviderIds
 
             return new ProviderAmbiguityResource
             {
-                Message = $"{field} '{normalizedProviderId}' resolves to multiple local {mediaType} book rows. Retry with a local row id or a more specific scoped identity.",
+                Error = "Ambiguous local book match",
+                Message = "Several local records match the selected work. Open the intended record below, then request it from that record.",
                 EntityType = "book",
                 Field = field,
                 ProviderId = normalizedProviderId,
@@ -198,7 +218,7 @@ namespace Chaptarr.Api.V1.ProviderIds
                 }
                 catch (Exception ex)
                 {
-                    logger?.Warn(ex, "Unable to check provider alias ambiguity for author provider id {0}", normalizedProviderId);
+                    logger?.WarnSafe(ex, "Unable to check provider alias ambiguity for author provider id {0}", normalizedProviderId);
                 }
             }
 
@@ -303,6 +323,7 @@ namespace Chaptarr.Api.V1.ProviderIds
                 Id = local.Id,
                 EntityType = "book",
                 Title = local.Title,
+                AuthorName = book.Author?.Name,
                 TitleSlug = local.TitleSlug,
                 MediaType = local.MediaType,
                 Narrator = local.Narrator,

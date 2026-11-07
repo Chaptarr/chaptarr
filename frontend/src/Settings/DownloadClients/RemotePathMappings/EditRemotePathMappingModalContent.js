@@ -158,7 +158,7 @@ function EditRemotePathMappingModalContent(props) {
   return (
     <ModalContent onModalClose={onModalClose}>
       <ModalHeader>
-        {id ? 'Edit Remote Path Mapping' : 'Add Remote Path Mapping'}
+        {translate(id ? 'EditRemotePathMappingTitle' : 'AddRemotePathMappingTitle')}
       </ModalHeader>
 
       <ModalBody className={styles.body}>

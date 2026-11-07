@@ -9,7 +9,9 @@ using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Books.Extensions;
 // using NzbDrone.Core.MediaFiles.BookImport.Identification; // Disabled - old identification system
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Parser;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.Books
 {
@@ -24,7 +26,8 @@ namespace NzbDrone.Core.Books
         Edition GetEditionByGoogleBooksEditionId(string googleBooksEditionId);
         Edition GetEditionByProviderAndId(string providerPrefix, string providerId);
         List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId);
-        List<Edition> GetAllMonitoredEditions();
+        List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType);
+        List<Edition> GetMonitoredEditionsForAuthors(IEnumerable<int> authorIds, BookMediaType mediaType) => throw new NotImplementedException();
         void InsertMany(List<Edition> editions);
         void InsertMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction);
         void UpdateMany(List<Edition> editions);
@@ -109,7 +112,7 @@ namespace NzbDrone.Core.Books
         {
             if (string.IsNullOrWhiteSpace(providerPrefix) || string.IsNullOrWhiteSpace(providerId))
             {
-                _logger.Warn("GetEditionsByProviderAndId called with null/empty parameters: provider='{0}', id='{1}'", providerPrefix, providerId);
+                _logger.WarnSafe("GetEditionsByProviderAndId called with null/empty parameters: provider='{0}', id='{1}'", providerPrefix, providerId);
                 return new List<Edition>();
             }
 
@@ -119,7 +122,7 @@ namespace NzbDrone.Core.Books
             switch (prefix)
             {
                 case "hc":
-                    _logger.Debug("Looking up Hardcover edition with ID: {0}", providerId);
+                    _logger.DebugSafe("Looking up Hardcover edition with ID: {0}", providerId);
                     return _editionRepository.FindAllByHardcoverEditionId(id);
 
                 case "gr":
@@ -129,25 +132,33 @@ namespace NzbDrone.Core.Books
                         return _editionRepository.FindAllByGoodreadsEditionId(goodreadsId);
                     }
 
-                    _logger.Error("Invalid Goodreads edition ID format: {0} (expected numeric)", id);
+                    _logger.ErrorSafe("Invalid Goodreads edition ID format: {0} (expected numeric)", id);
                     return new List<Edition>();
 
                 case "ol":
-                    _logger.Debug("Looking up OpenLibrary edition with ID: {0}", providerId);
+                    _logger.DebugSafe("Looking up OpenLibrary edition with ID: {0}", providerId);
                     return _editionRepository.FindAllByOpenLibraryEditionId(id);
 
                 case "gb":
-                    _logger.Debug("Looking up Google Books edition with ID: {0}", providerId);
+                    _logger.DebugSafe("Looking up Google Books edition with ID: {0}", providerId);
                     return _editionRepository.FindAllByGoogleBooksEditionId(id);
 
                 case "az":
                     {
                         var normalized = id.ToUpperInvariant();
-                        _logger.Debug("Looking up edition with ASIN: {0}", normalized);
+                        _logger.DebugSafe("Looking up edition with ASIN: {0}", normalized);
 
                         return DistinctEditions(
                             _editionRepository.FindAllByAsin(normalized),
                             string.Equals(normalized, id, StringComparison.Ordinal) ? null : _editionRepository.FindAllByAsin(id));
+                    }
+
+                case "rnr":
+                    {
+                        var foreignEditionId = id.Contains(":")
+                            ? ProviderIdHelper.Normalize(id, "rnr")
+                            : ProviderIdHelper.WithPrefix("rnr", id);
+                        return _editionRepository.FindAllByForeignEditionId(foreignEditionId);
                     }
 
                 case "isbn":
@@ -161,7 +172,7 @@ namespace NzbDrone.Core.Books
                     }
 
                 default:
-                    _logger.Warn("Unknown provider prefix: {0}. Supported providers: hc, gr, ol, gb, az, isbn", providerPrefix);
+                    _logger.WarnSafe("Unknown provider prefix: {0}. Supported providers: hc, gr, ol, gb, az, isbn", providerPrefix);
                     return new List<Edition>();
             }
         }
@@ -194,6 +205,7 @@ namespace NzbDrone.Core.Books
         private static bool IsExpectedPluralSingularLookup(string providerPrefix)
         {
             return string.Equals(providerPrefix, "az", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(providerPrefix, "rnr", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(providerPrefix, "isbn", StringComparison.OrdinalIgnoreCase);
         }
 
@@ -220,9 +232,14 @@ namespace NzbDrone.Core.Books
                 .ToList();
         }
 
-        public List<Edition> GetAllMonitoredEditions()
+        public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType)
         {
-            return _editionRepository.GetAllMonitoredEditions();
+            return _editionRepository.GetMonitoredEditionsForBookList(mediaType);
+        }
+
+        public List<Edition> GetMonitoredEditionsForAuthors(IEnumerable<int> authorIds, BookMediaType mediaType)
+        {
+            return _editionRepository.GetMonitoredEditionsForAuthors(authorIds, mediaType);
         }
 
 	        public void InsertMany(List<Edition> editions)

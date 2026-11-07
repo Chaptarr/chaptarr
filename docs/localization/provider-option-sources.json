@@ -1,0 +1,2732 @@
+{
+  "version": 1,
+  "scope": "Fixed static provider enum display labels and app-authored explanatory hints. Underlying enum member names, numeric values, EnumMember protocol values, dynamic provider option names, and AdditionalTags example hints remain unchanged.",
+  "records": [
+    {
+      "id": "Default",
+      "source": "Default",
+      "sourceFingerprint": "61313a8a9317fe8796da7d67517ecceae77af9ab2f985d942929d4e4c5e2bda7",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Ntfy/NtfyPriority.cs",
+          "enum": "NtfyPriority",
+          "member": "Default",
+          "kind": "Label",
+          "line": 11,
+          "sourceLine": "[FieldOption(Label = \"Default\")]",
+          "sourceLineSha256": "8b6b6ce8705afb0fc34071479060e5d90b38a54b991f4037b19595a3b1915ff6"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/QBittorrent/QBittorrentContentLayout.cs",
+          "enum": "QBittorrentContentLayout",
+          "member": "Default",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"Default\")]",
+          "sourceLineSha256": "8b6b6ce8705afb0fc34071479060e5d90b38a54b991f4037b19595a3b1915ff6"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdPriority.cs",
+          "enum": "SabnzbdPriority",
+          "member": "Default",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"Default\")]",
+          "sourceLineSha256": "8b6b6ce8705afb0fc34071479060e5d90b38a54b991f4037b19595a3b1915ff6"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "Format",
+      "source": "Format",
+      "sourceFingerprint": "49b425320f3c460af9900820fc3299c917e7c62ab9d8e5a6a8df5f20a2cdbc84",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Flood/Models/AdditionalTags.cs",
+          "enum": "AdditionalTags",
+          "member": "Format",
+          "kind": "Label",
+          "line": 10,
+          "sourceLine": "[FieldOption(Label = \"Format\", Hint = \"EPUB\")]",
+          "sourceLineSha256": "9b49e31092f26b19cacd0a51285f7bc209cef3490079f9f351a59904fca3a73c"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "Indexer",
+      "source": "Indexer",
+      "sourceFingerprint": "befae315c1701d1a4151ebe92c675439f7d560d5ddcb5310ff58412345e3c3f5",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Flood/Models/AdditionalTags.cs",
+          "enum": "AdditionalTags",
+          "member": "Indexer",
+          "kind": "Label",
+          "line": 19,
+          "sourceLine": "[FieldOption(Label = \"Indexer\", Hint = \"Torznab\")]",
+          "sourceLineSha256": "a5af21dc4552dd42702e76257ba72542278633497291c648fd382fe43c6a3b27"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "Max",
+      "source": "Max",
+      "sourceFingerprint": "4bbe49ee38aa4fdd8cf31e256cf94e9d5a6b0ba9a57a2ec3fae1a5a1532a598a",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Ntfy/NtfyPriority.cs",
+          "enum": "NtfyPriority",
+          "member": "Max",
+          "kind": "Label",
+          "line": 15,
+          "sourceLine": "[FieldOption(Label = \"Max\")]",
+          "sourceLineSha256": "e634dc92c7ee9e928b703eae9d2a7827a2ab8771b6030aa2776afe37f2644d25"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "Min",
+      "source": "Min",
+      "sourceFingerprint": "12d276e847d282245907ed8426bd92276898a073aa9c1ed2c9f8c493ee59b6bd",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Gotify/GotifyPriority.cs",
+          "enum": "GotifyPriority",
+          "member": "Min",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"Min\")]",
+          "sourceLineSha256": "0972884c060ede49624b3f8f7a85d41ceca01f2bf38905ce0a4b3d7d7c0596f6"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Ntfy/NtfyPriority.cs",
+          "enum": "NtfyPriority",
+          "member": "Min",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"Min\")]",
+          "sourceLineSha256": "0972884c060ede49624b3f8f7a85d41ceca01f2bf38905ce0a4b3d7d7c0596f6"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "NamingTokenCategoryAuthor",
+      "source": "Author",
+      "sourceFingerprint": "9e761c9e6ffdc6656658cb2d58de9f27c8947a6355b6634563f598612623f4a5",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Flood/Models/AdditionalTags.cs",
+          "enum": "AdditionalTags",
+          "member": "Author",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"NamingTokenCategoryAuthor\", Hint = \"J.R.R. Tolkien\")]",
+          "sourceLineSha256": "5f5bb5d4b0cfba23f47fc8e23d7f5f209eec11f5439bee08845ba214e9fcba16"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "Original",
+      "source": "Original",
+      "sourceFingerprint": "e4bef6b1e5dbb50e398346dcd3a721b8c7236b7e9cd5f8b3bcb8a9610f5d26a9",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/QBittorrent/QBittorrentContentLayout.cs",
+          "enum": "QBittorrentContentLayout",
+          "member": "Original",
+          "kind": "Label",
+          "line": 9,
+          "sourceLine": "[FieldOption(Label = \"Original\")]",
+          "sourceLineSha256": "d74ff65ea91d531932f30e8402c83259ff369dc6fe490c27becc69142f0a11b2"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "Other",
+      "source": "Other",
+      "sourceFingerprint": "7340b86083daf777ef6caffd979dc369cee162aac0b5edd3ee7705ca347021d9",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Other",
+          "kind": "Label",
+          "line": 274,
+          "sourceLine": "[FieldOption(Label = \"Other\")] Other = 47",
+          "sourceLineSha256": "de750bfdfbc83d26dc36690fe96f9cf049a3973d4e72992cfce6e3a5417148fe"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "Pause",
+      "source": "Pause",
+      "sourceFingerprint": "700757c8b26da4f4ee79d96d2bd08bc2e7058514bb698e3593020622a15cec04",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/uTorrent/UtorrentState.cs",
+          "enum": "UTorrentState",
+          "member": "Pause",
+          "kind": "Label",
+          "line": 11,
+          "sourceLine": "[FieldOption(Label = \"Pause\")]",
+          "sourceLineSha256": "16db6e281b86c7ed8837a5ab4f3361962ea5e607f740b357539240e6b5fecbbf"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "QueueStatusPaused",
+      "source": "Paused",
+      "sourceFingerprint": "bb89f66c7bee43d9eaa45d3f71e4a66bc4a8f2b2069b202eb81988f74b9fa1e7",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdPriority.cs",
+          "enum": "SabnzbdPriority",
+          "member": "Paused",
+          "kind": "Label",
+          "line": 9,
+          "sourceLine": "[FieldOption(Label = \"QueueStatusPaused\")]",
+          "sourceLineSha256": "fbc0803073b0f1668b4d6bc1d537279fabfa4beee5e17902a1aa9960256c0ba2"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "ReleaseGroup",
+      "source": "Release Group",
+      "sourceFingerprint": "cca480ddebce2521e11b0b7f06ed2582d0c1645e017bc2517ac286fa867238f5",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Flood/Models/AdditionalTags.cs",
+          "enum": "AdditionalTags",
+          "member": "ReleaseGroup",
+          "kind": "Label",
+          "line": 13,
+          "sourceLine": "[FieldOption(Label = \"ReleaseGroup\", Hint = \"Example-Raws\")]",
+          "sourceLineSha256": "a7202093d844a044d0f6c224cdd3c85723d030a84d990ebaf73ce00b1a7a76ae"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "Started",
+      "source": "Started",
+      "sourceFingerprint": "f4ca4d1e1e64940e45713e8a0997691bfcd94b776618e6bac85ba3508fec472e",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/QBittorrent/QBittorrentState.cs",
+          "enum": "QBittorrentState",
+          "member": "Start",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"Started\")]",
+          "sourceLineSha256": "6cb28e328032d64639e3be922b211cb91d6121119799f3d37cc04ebb6c61cca6"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "Warning",
+      "source": "Warning",
+      "sourceFingerprint": "05ca51a266749f883b94683e0ef8f25210991a336000d9776b337695a971abc6",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Apprise/AppriseNotificationType.cs",
+          "enum": "AppriseNotificationType",
+          "member": "Warning",
+          "kind": "Label",
+          "line": 18,
+          "sourceLine": "[FieldOption(Label = \"Warning\")]",
+          "sourceLineSha256": "c355dd3309305697a8c570ffddfb46b24373da8de73d382dd1153e1a57614ee9"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "Year",
+      "source": "Year",
+      "sourceFingerprint": "47acbc5047040febaf38cd6471533ca38e212ad116c1f22bfc0f0fa5f49407cf",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Flood/Models/AdditionalTags.cs",
+          "enum": "AdditionalTags",
+          "member": "Year",
+          "kind": "Label",
+          "line": 16,
+          "sourceLine": "[FieldOption(Label = \"Year\", Hint = \"1954\")]",
+          "sourceLineSha256": "9fc9fb6f89d715ad5d4593aeebdb0cef766b07bdc1da89d71827126600ecc204"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o04656c6fe003",
+      "source": "Korean",
+      "sourceFingerprint": "527d7187084fdcf6383b33d2379990f94b1cbca78977b6fb1aa2c63ec032139b",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Korean",
+          "kind": "Label",
+          "line": 244,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o04656c6fe003\")] Korean = 41,",
+          "sourceLineSha256": "a70ef2aca55f9ff8fcfc4406d377de83444c204302cd38b11ace1736da5fd897"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o096b861df653",
+      "source": "Romanian",
+      "sourceFingerprint": "9953f7aa7337b88513199ab283c32ed36c6017fc5d89a2fae737deb3eba8793e",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Romanian",
+          "kind": "Label",
+          "line": 257,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o096b861df653\")] Romanian = 30,",
+          "sourceLineSha256": "d4bf289f9219be430a69e07ab2db1c4d8f4d32d847359403d634da0770c04f16"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o0be971351722",
+      "source": "Require Wedge",
+      "sourceFingerprint": "86876369c1afc9240f01507f1feca8b14a44783314e62c6d946f122dcdcc3a05",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseFreeleechWedgeAction",
+          "member": "Required",
+          "kind": "Label",
+          "line": 285,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o0be971351722\", Hint = \"provider.option.o836f9584c3e0\")]",
+          "sourceLineSha256": "657613a42f18037d8dabfb497266b008190d05a8ef2b68f1ac8de88b820c1654"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o11d78e4024e8",
+      "source": "Halfleech",
+      "sourceFingerprint": "fe47b7988cba21d97155e64a436d004ad141a44a08924cca46b11e1fc8429bfe",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Parser/Model/ReleaseInfo.cs",
+          "enum": "IndexerFlags",
+          "member": "Halfleech",
+          "kind": "Label",
+          "line": 112,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o11d78e4024e8\")]",
+          "sourceLineSha256": "0aee45c65cd5b3049e6331727ee76880836f48ce93dd490913db327444ffb9a8"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o135d78ac8f56",
+      "source": "Tamil",
+      "sourceFingerprint": "2c11b30bb370e8c91cb1ba03e540d9e226d2711356e976f7b6cbccee604aad40",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Tamil",
+          "kind": "Label",
+          "line": 267,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o135d78ac8f56\")] Tamil = 11,",
+          "sourceLineSha256": "7bc2382219ae6f5ce357985d46d8b12223d7ce5fd0ca7dc22dfed7a92804594d"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o1435d07cdf1c",
+      "source": "Scottish Gaelic",
+      "sourceFingerprint": "32b90346c64a3b60d787814e22e9ad7961ab6677e8ac20ce1f3620e049615902",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "ScottishGaelic",
+          "kind": "Label",
+          "line": 259,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o1435d07cdf1c\")] ScottishGaelic = 24,",
+          "sourceLineSha256": "56fa8f4ee980ed926864f2f23b6c21b00163f6c2281dbbfb848a571fc0bb894f"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o170322a32f3c",
+      "source": "Info",
+      "sourceFingerprint": "cac35cc5d90844b295f2d58cc8c10e5a970de5944931520c00d93be1c7490d65",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Apprise/AppriseNotificationType.cs",
+          "enum": "AppriseNotificationType",
+          "member": "Info",
+          "kind": "Label",
+          "line": 10,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o170322a32f3c\")]",
+          "sourceLineSha256": "5a6a9613044fc81f5738ef7cea3ff339d0552b16b787262666d6bf45713f2967"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o18c2b11ffbb0",
+      "source": "Subfolder",
+      "sourceFingerprint": "dab501a9705c98451c975629862db3f8fbe06c8978ead44ff66865411e4cc62a",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/QBittorrent/QBittorrentContentLayout.cs",
+          "enum": "QBittorrentContentLayout",
+          "member": "Subfolder",
+          "kind": "Label",
+          "line": 11,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o18c2b11ffbb0\")]",
+          "sourceLineSha256": "793902da11aae715cf1e7fa442dfb3f5fb19673b189fc8f593c86958ccfab8af"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o1a4f630ac1b6",
+      "source": "Stopped",
+      "sourceFingerprint": "2a41507975b82ed28c5de435b5e39b9c3543d9a2b033448960fc39601842e412",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/QBittorrent/QBittorrentState.cs",
+          "enum": "QBittorrentState",
+          "member": "Stop",
+          "kind": "Label",
+          "line": 13,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o1a4f630ac1b6\")]",
+          "sourceLineSha256": "72ef86c2ec4d08b59ec82a28cbd34f7961dd68563edf56f5162566f60e8bd46a"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o1d25285d7182",
+      "source": "Bosnian",
+      "sourceFingerprint": "db2ce83153c70c7b058b24b29135af7c1cbce02c6a0e8e0ac1ceba489e356c2e",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Bosnian",
+          "kind": "Label",
+          "line": 216,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o1d25285d7182\")] Bosnian = 51,",
+          "sourceLineSha256": "e4a1e97bcb48f9143eff59d82c04d2d672c5920d3308971d261403d02b7b559d"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o1d8b8d4e409f",
+      "source": "Javanese",
+      "sourceFingerprint": "726e71f1dbbce5f5032130c53ad6beafe90f94fa3eb4a2db45b43123dcc3c99e",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Javanese",
+          "kind": "Label",
+          "line": 242,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o1d8b8d4e409f\")] Javanese = 12,",
+          "sourceLineSha256": "ee273fec27b5a0bb8ea6ab671b9bd0c46bd70eacdac3c7aa01a1902307173db4"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o2247ef59ce64",
+      "source": "Malayalam",
+      "sourceFingerprint": "4de9a56a78925eda88a11febe9eb2abf5e8bba621e441bea5cdec4534b1e93c0",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Malayalam",
+          "kind": "Label",
+          "line": 249,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o2247ef59ce64\")] Malayalam = 58,",
+          "sourceLineSha256": "8f0b0fcb2cb65e12ec9990ad5f79f34307e7ae8e4569f3d101b5d90e5b8d15ac"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o28fa038bb8bc",
+      "source": "Latvian",
+      "sourceFingerprint": "76450b9a05ed5218985dcca130e7767a9450d947214f9cb0f9918fb588e83c74",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Latvian",
+          "kind": "Label",
+          "line": 247,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o28fa038bb8bc\")] Latvian = 62,",
+          "sourceLineSha256": "461b9d621ad37adb82d3133bee7e509d5eaedd3f26fcb2d5680947a834c3a076"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o294a0c3d28c4",
+      "source": "Freeleech",
+      "sourceFingerprint": "04b39ce6c90368f38702beb6aae662293676f6239b413b8ede3ac9103d5751dc",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Parser/Model/ReleaseInfo.cs",
+          "enum": "IndexerFlags",
+          "member": "Freeleech",
+          "kind": "Label",
+          "line": 110,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o294a0c3d28c4\")]",
+          "sourceLineSha256": "d34d448f6f2cca04b997a0d0d35c75c0e1b2c6490029d93cdbb8c012a36078c6"
+        },
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchType",
+          "member": "Freeleech",
+          "kind": "Label",
+          "line": 197,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o294a0c3d28c4\", Hint = \"provider.option.oaab534cd510a\")]",
+          "sourceLineSha256": "89b1183cbfd5ee45b864925281273f218b19d81eda9c825c379a3fddb8bb8677"
+        }
+      ],
+      "protectedLiterals": [
+        "Freeleech"
+      ]
+    },
+    {
+      "id": "provider.option.o2bca68c58bb4",
+      "source": "Icelandic",
+      "sourceFingerprint": "361cdc0d2ef2b3590aa13668c21f4383d792d443ffb6189df03ace5557deb4d8",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Icelandic",
+          "kind": "Label",
+          "line": 237,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o2bca68c58bb4\")] Icelandic = 63,",
+          "sourceLineSha256": "1eea12544a847133b26ccdb50fe25ca4b7baa12a2aeb216e27c8c46a678cb372"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o2c6ef73fc9e2",
+      "source": "Urdu",
+      "sourceFingerprint": "d1af92c3341b7c10fb4633e14d0755e3fb665883b8fd0e0b6fd832f3c70b9e6b",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Urdu",
+          "kind": "Label",
+          "line": 272,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o2c6ef73fc9e2\")] Urdu = 15,",
+          "sourceLineSha256": "bfce8ee7fcc6ad3da28dd3d665be95a0d4b20a4840cfee65479eee41e2a53756"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o2d38c456a2ec",
+      "source": "Latin",
+      "sourceFingerprint": "99c5614fad64b1e7d9bf55c9925bb08badf50a20eaa4779b9ab21ad7060e8cd7",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Latin",
+          "kind": "Label",
+          "line": 246,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o2d38c456a2ec\")] Latin = 46,",
+          "sourceLineSha256": "d2294204d4cc992176a773f7d1ae628f159e8f3948110d55909df76bf4951686"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o2e9fa8e62006",
+      "source": "Burmese",
+      "sourceFingerprint": "43b948f12d1aba4412a13b4bc564e6000378747524de1cdd1e076d46613bd5fa",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Burmese",
+          "kind": "Label",
+          "line": 218,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o2e9fa8e62006\")] Burmese = 6,",
+          "sourceLineSha256": "c46958414a42084457df53146be624ad297f92e316794026776f35e910f14407"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o2ea1842b445b",
+      "source": "Internal",
+      "sourceFingerprint": "7ad8a9029de8c2ec1d39e5e7f64baed65b6fc46c2ce5f4706282751eb9fd2b36",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Parser/Model/ReleaseInfo.cs",
+          "enum": "IndexerFlags",
+          "member": "Internal",
+          "kind": "Label",
+          "line": 116,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o2ea1842b445b\")]",
+          "sourceLineSha256": "5c9f08d259caa23d0f56847d9a796702167484a27539d9e2e2f8c7d6ad059b75"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o33e00df2aac3",
+      "source": "Hebrew",
+      "sourceFingerprint": "5163c9b1a0172bcaa420bc8278910cb432121c10e3982c0bbfeed6d020161837",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Hebrew",
+          "kind": "Label",
+          "line": 234,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o33e00df2aac3\")] Hebrew = 27,",
+          "sourceLineSha256": "22f47379737f5aa7dde8af6f18be6cae70263e1e52160dd0f86c220019b2b841"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o3411059cb8e0",
+      "source": "Spanish",
+      "sourceFingerprint": "01af10d2840014b1cd0144975a216cef24789691a102940c95b68c0f0d480f6b",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Spanish",
+          "kind": "Label",
+          "line": 263,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o3411059cb8e0\")] Spanish = 4,",
+          "sourceLineSha256": "ae8f1d78b487079e725d3b4a14f44ecb5b84f4b1157052dffcd319c7477db1ed"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o343deecd9d8f",
+      "source": "Like New",
+      "sourceFingerprint": "813c85b9b66c03c1d812e8237640dde54330669e9c7e10030ce2f3e930e4dc7d",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Goodreads/OwnedBooks/GoodreadsOwnedBooksNotificationSettings.cs",
+          "enum": "OwnedBookCondition",
+          "member": "LikeNew",
+          "kind": "Label",
+          "line": 10,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o343deecd9d8f\")]",
+          "sourceLineSha256": "10e5bfeb28d790bcf09b172c7dd2a57c0a180d52811a33686b8d51c0c2103735"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o388655e25e91",
+      "source": "Very Good",
+      "sourceFingerprint": "c53b4caecd286862b48fe9cc8627744b332eee818db5c4183b55761d6494e328",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Goodreads/OwnedBooks/GoodreadsOwnedBooksNotificationSettings.cs",
+          "enum": "OwnedBookCondition",
+          "member": "VeryGood",
+          "kind": "Label",
+          "line": 12,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o388655e25e91\")]",
+          "sourceLineSha256": "072a28bc2d5c35321001014a834ece2d9ee09fd187a4a5ad69f066598176ff55"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o3e6bbeeff4ef",
+      "source": "All torrents",
+      "sourceFingerprint": "10a4f6406922b41cb744033c75bab97c7a7844ef35b43c713f2dce73c78d100c",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchType",
+          "member": "All",
+          "kind": "Label",
+          "line": 191,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o3e6bbeeff4ef\", Hint = \"provider.option.o415155739590\")]",
+          "sourceLineSha256": "8ef0c2336c155153695d76312fd242f4900ed7b049e80d34907dc5ffec2be5a3"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o415155739590",
+      "source": "Search everything",
+      "sourceFingerprint": "3d261743a19a03652f5ae6421ff7a2f534e556583a0cfe0fdfff86d8909ec8d2",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchType",
+          "member": "All",
+          "kind": "Hint",
+          "line": 191,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o3e6bbeeff4ef\", Hint = \"provider.option.o415155739590\")]",
+          "sourceLineSha256": "8ef0c2336c155153695d76312fd242f4900ed7b049e80d34907dc5ffec2be5a3"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o4538f2dc67b5",
+      "source": "Emergency",
+      "sourceFingerprint": "f3ae88f2e80cfcba75ac373f839d608abb1e1b446340429af261d1b3778206d3",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Join/JoinPriority.cs",
+          "enum": "JoinPriority",
+          "member": "Emergency",
+          "kind": "Label",
+          "line": 15,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o4538f2dc67b5\")]",
+          "sourceLineSha256": "81c4a64450166f2373051a35aafe32393d5cac576c66da1f4a1103abdf4469f4"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Prowl/ProwlPriority.cs",
+          "enum": "ProwlPriority",
+          "member": "Emergency",
+          "kind": "Label",
+          "line": 15,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o4538f2dc67b5\")]",
+          "sourceLineSha256": "81c4a64450166f2373051a35aafe32393d5cac576c66da1f4a1103abdf4469f4"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Pushover/PushoverPriority.cs",
+          "enum": "PushoverPriority",
+          "member": "Emergency",
+          "kind": "Label",
+          "line": 15,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o4538f2dc67b5\")]",
+          "sourceLineSha256": "81c4a64450166f2373051a35aafe32393d5cac576c66da1f4a1103abdf4469f4"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o45f16144c18c",
+      "source": "Dutch",
+      "sourceFingerprint": "ce9b461e1d50e3d4f5beab7863569983ecfb4fb7426ae54ac794b88c95a96718",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Dutch",
+          "kind": "Label",
+          "line": 225,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o45f16144c18c\")] Dutch = 22,",
+          "sourceLineSha256": "e98e190f595d6f93e9d3a9e932c61009622336e9eef219c252e9246558d8edb4"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o477e5af2fd7e",
+      "source": "Scene",
+      "sourceFingerprint": "f3744dbb27c2dd2c5a1a69aa00c2ce7f235472cda3003968f346d56190d07ef1",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Parser/Model/ReleaseInfo.cs",
+          "enum": "IndexerFlags",
+          "member": "Scene",
+          "kind": "Label",
+          "line": 118,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o477e5af2fd7e\")]",
+          "sourceLineSha256": "82ee7b647ee0c04b647f1cd3c5c96126a43d4a34569e6fae4cae0d7d7297ce3b"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o4829406f52d7",
+      "source": "Kannada",
+      "sourceFingerprint": "41837a0ad1cdf3fb6c52dda9150277d43862d1d760584687f2077ecad73cdca8",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Kannada",
+          "kind": "Label",
+          "line": 243,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o4829406f52d7\")] Kannada = 5,",
+          "sourceLineSha256": "f0e69be7c591d65b61e57467eae8d50daa8d21d5f10726f668386a7e3416d5ae"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o4b9cfa1c7da0",
+      "source": "Acceptable",
+      "sourceFingerprint": "09f1f7e8483b32774b9fc002bbce6cff242f96696d84562a12130fb48d42602b",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Goodreads/OwnedBooks/GoodreadsOwnedBooksNotificationSettings.cs",
+          "enum": "OwnedBookCondition",
+          "member": "Acceptable",
+          "kind": "Label",
+          "line": 16,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o4b9cfa1c7da0\")]",
+          "sourceLineSha256": "e716405d8677bb68c38bb8bb21230cdd23ba575ce4d1c9bcde80e91d9de4b932"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o4d8bdb8972a2",
+      "source": "Estonian",
+      "sourceFingerprint": "d1037c4cf6e0ecb9a61fed12f4e5bf7436a7203ebf5f8cbcbe4eae4e55b5abd8",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Estonian",
+          "kind": "Label",
+          "line": 226,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o4d8bdb8972a2\")] Estonian = 61,",
+          "sourceLineSha256": "d18aece295ef68dcb942f8550c1ea267cbc7381b20e688efce869d7a527e7ecf"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o4fe1bb67f3b9",
+      "source": "Indonesian",
+      "sourceFingerprint": "0e8a473e5407fd782e8a9009122d4f755cf993351518975697fc07356fac7d53",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Indonesian",
+          "kind": "Label",
+          "line": 238,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o4fe1bb67f3b9\")] Indonesian = 53,",
+          "sourceLineSha256": "f8cc6fe2fb9cae295ad861fb583dd71ee91b11c596e93ccf4c92cd331a08d16c"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o54b0bff947fb",
+      "source": "Manx",
+      "sourceFingerprint": "ae91f8d37f3d8b522e5af2fbda9b226c15f4feaf9d9ebcced893a161537d047b",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Manx",
+          "kind": "Label",
+          "line": 250,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o54b0bff947fb\")] Manx = 57,",
+          "sourceLineSha256": "5fbc6250d1ba5a10808f00f9708cb0c7d519776936961368c52702db83c97b83"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o5710b435f90a",
+      "source": "Finnish",
+      "sourceFingerprint": "4867425b468fc5de01edc39f1bb2d8cd662df2986c7d39e7d65c43c0776bc8ed",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Finnish",
+          "kind": "Label",
+          "line": 228,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o5710b435f90a\")] Finnish = 23,",
+          "sourceLineSha256": "c57d3dba810b1bf63f26676c8ff8159b6f80628bcb7b29728e53cfbaa769d452"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o58801e6907f0",
+      "source": "Hungarian",
+      "sourceFingerprint": "d770acc1eb2a489664c3a10761ccd3277571b0b8d22998c754a7e67a17a31788",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Hungarian",
+          "kind": "Label",
+          "line": 236,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o58801e6907f0\")] Hungarian = 28,",
+          "sourceLineSha256": "b8538d888daff6f9c60688c3601a2a176ce822e72be2eca06c7dfa8ca8f5d12c"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o5afee72c1059",
+      "source": "Exactly Once",
+      "sourceFingerprint": "cf2e6d13392ab5a9583d6a07a18ff5118229d673d30eb0f32a42e03fb9818ecb",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/MqttGateway/MqttGatewaySettings.cs",
+          "enum": "MqttGatewayQos",
+          "member": "ExactlyOnce",
+          "kind": "Label",
+          "line": 15,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o5afee72c1059\")]",
+          "sourceLineSha256": "48e2db4cf730f486510917ca314837bdc9972d800c87735b8e82749307d543f9"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o5bcc40adf6e0",
+      "source": "Russian",
+      "sourceFingerprint": "40d13da2ac1d9332f390f5bfff7fe14e32d6e832b836e41687613edb0550cdf2",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Russian",
+          "kind": "Label",
+          "line": 258,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o5bcc40adf6e0\")] Russian = 16,",
+          "sourceLineSha256": "7bf09c1d180e950eecfbf7d0052b41347c70dba29d9355b15374b90b88f1e039"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o5c74e5b8100c",
+      "source": "Greek",
+      "sourceFingerprint": "d8514ccae3063f447691a62c4d612b628d4a108c7214b18f3c4ccdb23f8402ec",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Greek",
+          "kind": "Label",
+          "line": 231,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o5c74e5b8100c\")] Greek = 26,",
+          "sourceLineSha256": "e139a22ec8846f56fff318232d4dd0a561f1b7be95124c0b776e4bbb577e68f4"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o605eac303049",
+      "source": "Tagalog",
+      "sourceFingerprint": "92e9597350e14ecaa2ef58d174f022b72025dd1815f2934613dbecfcf97c4449",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Tagalog",
+          "kind": "Label",
+          "line": 266,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o605eac303049\")] Tagalog = 29,",
+          "sourceLineSha256": "aaeba8b1290774d5dad632cb1381b240e03b733b5b611529f8d96f6e98077c2c"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o60a7067462bf",
+      "source": "Greek, Ancient",
+      "sourceFingerprint": "9c6da1b24fb7ce00e39ff813973e555c68032b68e710915b251feb6957319ac3",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "GreekAncient",
+          "kind": "Label",
+          "line": 232,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o60a7067462bf\")] GreekAncient = 59,",
+          "sourceLineSha256": "59945a115c2999249c14d81e00d9f36cf29269ee561f202663543b812cabf27c"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o63c2dc51d089",
+      "source": "Hindi",
+      "sourceFingerprint": "db6b8dea040e2e3da8830f1af014035db5b473ef48ed7b4df9a6bcbf07dfa5c7",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Hindi",
+          "kind": "Label",
+          "line": 235,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o63c2dc51d089\")] Hindi = 8,",
+          "sourceLineSha256": "f689038ac32561fc68806bf3cdf931133b4364dbd5f9cb538816be19852814d5"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o687198870652",
+      "source": "Follow MAM Preferences",
+      "sourceFingerprint": "a4bead2a4a5ca77bfdd475865190e4827d5d13c9454320a82fdbefda694ddb00",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseFreeleechWedgeAction",
+          "member": "Never",
+          "kind": "Label",
+          "line": 279,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o687198870652\", Hint = \"provider.option.od54cdf586b7b\")]",
+          "sourceLineSha256": "851075f9d5f3f4c6f09fb70fdcc099c6e34c88e3f4ddabe192e9c0699c3efefa"
+        }
+      ],
+      "protectedLiterals": [
+        "MAM"
+      ]
+    },
+    {
+      "id": "provider.option.o6884e4dc7300",
+      "source": "Afrikaans",
+      "sourceFingerprint": "cca4c1428e8fbde74cfbaddd456905f6d00a05585be8ceacfba84b0ea690ba2a",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Afrikaans",
+          "kind": "Label",
+          "line": 213,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o6884e4dc7300\")] Afrikaans = 17,",
+          "sourceLineSha256": "92a9728a85fbd1fdc7c3b85f9955947eb9a1b37bfd76aef39030e3c93e592792"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o6bbef3a79c78",
+      "source": "Marathi",
+      "sourceFingerprint": "9ae6ff6922c00abcda81eb130b5b82c58cfff73c727c69794a8a858df31a2d5e",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Marathi",
+          "kind": "Label",
+          "line": 251,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o6bbef3a79c78\")] Marathi = 9,",
+          "sourceLineSha256": "57350b8a69220cc0fb2ebc315b0287da60af79b05cac19494fc9ce606cc1090f"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o6c3105944211",
+      "source": "Prefer Wedge",
+      "sourceFingerprint": "69fb88f8c59a3d8d4d739233a0b29485c3259b76191c333121a68b9dbddde4c8",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseFreeleechWedgeAction",
+          "member": "Preferred",
+          "kind": "Label",
+          "line": 282,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o6c3105944211\", Hint = \"provider.option.o9cb1fa5198db\")]",
+          "sourceLineSha256": "4dbc8b7f03634221d27c7c2f3af79fedfdbfd1513e3c01dcba6c229dccc273da"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o6e7aac65db01",
+      "source": "Turkish",
+      "sourceFingerprint": "555f26acdb1f259aad6a4215fcdc6d5fb7d63f13417bd7f2266bc97aafd8eeca",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Turkish",
+          "kind": "Label",
+          "line": 270,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o6e7aac65db01\")] Turkish = 42,",
+          "sourceLineSha256": "12ea6bd8cdf5c2d17ae8650a7540b8295e9dfbf98a9f1135c2f09c2cd592d141"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o6f424303fa12",
+      "source": "Ukrainian",
+      "sourceFingerprint": "0d8c644c866e3df5ae8116faf90ddf03075707bad7a1c8f05e9fe075366aae7f",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Ukrainian",
+          "kind": "Label",
+          "line": 271,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o6f424303fa12\")] Ukrainian = 25,",
+          "sourceLineSha256": "b3dc7ec2e9e4a1454557b697d45ea73fa972e2af446e483d26c35d337f2dd474"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o7031edbcf9c4",
+      "source": "Failure",
+      "sourceFingerprint": "87a77c6992a5f08c186dbb39cfd0ecf01632d00cdf8bd3d9a4930a96f803d194",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Apprise/AppriseNotificationType.cs",
+          "enum": "AppriseNotificationType",
+          "member": "Failure",
+          "kind": "Label",
+          "line": 22,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o7031edbcf9c4\")]",
+          "sourceLineSha256": "b919023d3cd9ecfd177e379f5d04b83553aa8ecebd2a6051bfbe2db0eeb172fd"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o71f4cf5c7a23",
+      "source": "Norwegian",
+      "sourceFingerprint": "6d167d63a79ad1d7d1bb74014b02a96d591c3140bd3e5892032e7f4ab018558e",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Norwegian",
+          "kind": "Label",
+          "line": 252,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o71f4cf5c7a23\")] Norwegian = 48,",
+          "sourceLineSha256": "a6375d3bd3e6780c06985b04db465ec008908bbd6a6d0cb9b52c8a006d74ffbe"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o7285d46b982d",
+      "source": "Castilian Spanish",
+      "sourceFingerprint": "244280f95f5b5e6aa81b628d658611a9ff65459776ab0427f1a0f8b286840856",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "CastilianSpanish",
+          "kind": "Label",
+          "line": 264,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o7285d46b982d\")] CastilianSpanish = 55,",
+          "sourceLineSha256": "4c5f5a5381505620e34cdbe9c1f9f74094713ab5aaae6c3f65a83f259f9564c2"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o72a071498ead",
+      "source": "Freeleech or VIP",
+      "sourceFingerprint": "f6d96307a71c4d54e130f5ddb5d9125040f00c8d38e00fed503f4113fb2eaadb",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchType",
+          "member": "FreeleechOrVip",
+          "kind": "Label",
+          "line": 200,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o72a071498ead\", Hint = \"provider.option.ob31cf1a5e75d\")]",
+          "sourceLineSha256": "14954c8153c1b1d9306d2e1d08dcb313429f5c96d575c40c0c73e7c0955ea044"
+        }
+      ],
+      "protectedLiterals": [
+        "VIP",
+        "Freeleech"
+      ]
+    },
+    {
+      "id": "provider.option.o7458199fe97a",
+      "source": "French",
+      "sourceFingerprint": "c676323a3e343bc684be6d04fb644d19bd3af4803eef44341b9596440d74dfa8",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "French",
+          "kind": "Label",
+          "line": 229,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o7458199fe97a\")] French = 36,",
+          "sourceLineSha256": "01376ac4e07b0b5e96deb6f67c8699612cf8c483e110d2fbd0a1b0672dcc01c5"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o745833c910da",
+      "source": "Emby",
+      "sourceFingerprint": "3542550c1624f43c0c43ffa62eaa6f748e8b74e74e7fa2b1cd07f743a786ae2b",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/EmbyJellyfin/EmbyJellyfinServerType.cs",
+          "enum": "EmbyJellyfinServerType",
+          "member": "Emby",
+          "kind": "Label",
+          "line": 10,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o745833c910da\")]",
+          "sourceLineSha256": "fc33244a997e74240fa569e8cb2021f8a3912d9e77e5ebadd8ecdec1e489dee7"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o754787c2f88c",
+      "source": "Croatian",
+      "sourceFingerprint": "5c4e47397825f94b5523cbe420ccc7942ae7888be737c6361256d78b791c09e6",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Croatian",
+          "kind": "Label",
+          "line": 222,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o754787c2f88c\")] Croatian = 49,",
+          "sourceLineSha256": "9c62423ef5bb3e8aff5fcf564555fcb2cb4600e4ce8a9f5dbd1a5edf71fba6dd"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o770341d6e89e",
+      "source": "Polish",
+      "sourceFingerprint": "bbf29467972b3da2f68ea17f91efd08368b5390640603c57c03b5adf526f3e57",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Polish",
+          "kind": "Label",
+          "line": 253,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o770341d6e89e\")] Polish = 45,",
+          "sourceLineSha256": "8a891ab38a351212eda85cf0f5a52dc53c993fe9d9989c45fb564253b7fbc611"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o7a21be239c11",
+      "source": "Torrents not VIP",
+      "sourceFingerprint": "12a7c6985eef942360454ac00f874c3bd8fbd339585c3c8f4f48fdecf18d72ec",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchType",
+          "member": "NotVip",
+          "kind": "Hint",
+          "line": 206,
+          "sourceLine": "[FieldOption(Label = \"provider.option.obff67db96859\", Hint = \"provider.option.o7a21be239c11\")]",
+          "sourceLineSha256": "95df83476f41eae32a28c9e3325d6420bb8808945869811abae2305ea07bb2dd"
+        }
+      ],
+      "protectedLiterals": [
+        "VIP"
+      ]
+    },
+    {
+      "id": "provider.option.o7af023c43013",
+      "source": "Docs",
+      "sourceFingerprint": "655bed04479432e8f414c542f8c189cdff1655563a6b95b73abd07287b4864f1",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/FileList/FileListSettings.cs",
+          "enum": "FileListCategories",
+          "member": "Docs",
+          "kind": "Label",
+          "line": 67,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o7af023c43013\")]",
+          "sourceLineSha256": "808dbd267006092a4399d1ab71309cd51bfc321877c82bb26018f60a7949d49b"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o7b375cf123e1",
+      "source": "Double Upload",
+      "sourceFingerprint": "af75ed0a101a345f5b41d5dcd4a921a95acf892f07df9c0f6917529922ea2126",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Parser/Model/ReleaseInfo.cs",
+          "enum": "IndexerFlags",
+          "member": "DoubleUpload",
+          "kind": "Label",
+          "line": 114,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o7b375cf123e1\")]",
+          "sourceLineSha256": "1446e67dc9fda3e689f4908a97360475a5a74a980b64aa2bc43dc8e6a835bca7"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o7c3056a206f0",
+      "source": "VIP torrents",
+      "sourceFingerprint": "962004410883f20dbed963868ec43730b2b03fe3f4568304a5b110410bc8ea01",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchType",
+          "member": "Vip",
+          "kind": "Hint",
+          "line": 203,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o986e2890737d\", Hint = \"provider.option.o7c3056a206f0\")]",
+          "sourceLineSha256": "19c92cea9f6c9873f6c5dbb4d9889c71e5b9e987ed2bda73b83863ea15abc9de"
+        }
+      ],
+      "protectedLiterals": [
+        "VIP"
+      ]
+    },
+    {
+      "id": "provider.option.o801996c00122",
+      "source": "Force Start",
+      "sourceFingerprint": "154efac47611808e82e929d8c7c2b56fac454604b6ffdd9bdb539631de877e62",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/uTorrent/UtorrentState.cs",
+          "enum": "UTorrentState",
+          "member": "ForceStart",
+          "kind": "Label",
+          "line": 9,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o801996c00122\")]",
+          "sourceLineSha256": "fdd9493b82c3cf27db412c826a6f668d377be040283a57b9256376b7c24ef773"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o836f9584c3e0",
+      "source": "Fail the grab if MAM cannot apply the required personal freeleech wedge",
+      "sourceFingerprint": "10a17fc50bcf64c6b3d421a60d7b904e0a9d4a39fa3358751486884834855fa2",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseFreeleechWedgeAction",
+          "member": "Required",
+          "kind": "Hint",
+          "line": 285,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o0be971351722\", Hint = \"provider.option.o836f9584c3e0\")]",
+          "sourceLineSha256": "657613a42f18037d8dabfb497266b008190d05a8ef2b68f1ac8de88b820c1654"
+        }
+      ],
+      "protectedLiterals": [
+        "MAM"
+      ]
+    },
+    {
+      "id": "provider.option.o843c489421f4",
+      "source": "Catalan",
+      "sourceFingerprint": "9606c82933391f7e81cddd77e527d93a3a4ba48ca6f632a8e5126ff48544070d",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Catalan",
+          "kind": "Label",
+          "line": 220,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o843c489421f4\")] Catalan = 19,",
+          "sourceLineSha256": "d8e26a78358eb0a84a35e7ca8e3bc341d3eb134ca6cf48dcbc24ed7ecd14086c"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o8625f6a2065b",
+      "source": "Lithuanian",
+      "sourceFingerprint": "e850b98372446751980ad8317d6ab1c07645408baf9cd737df70e84c5dcf7d30",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Lithuanian",
+          "kind": "Label",
+          "line": 245,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o8625f6a2065b\")] Lithuanian = 50,",
+          "sourceLineSha256": "dd8f9fddd33224c2ab3e05458cf7cb21ad1721a0a785ae0a6dfde6e7620bd988"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o8a9779f42128",
+      "source": "Chinese",
+      "sourceFingerprint": "b3613d6ca7e8ba672e78945139a5ea96391427e240bd299ae87c66cedd3ba8ff",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Chinese",
+          "kind": "Label",
+          "line": 221,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o8a9779f42128\")] Chinese = 2,",
+          "sourceLineSha256": "24f19bcf559d98a4be9f41ea53915d482b5827887e553619fa1bc7dd00d6e90b"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o8b463ea23a7e",
+      "source": "Czech",
+      "sourceFingerprint": "e2e4089f82fa7c4df98aab49ab040d08f0bfcd8f397d5ae193d8224fc75892dd",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Czech",
+          "kind": "Label",
+          "line": 223,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o8b463ea23a7e\")] Czech = 20,",
+          "sourceLineSha256": "8bf8a6f44ed4eb31898e654762d50334a999265a24edd858d076be20c1a50f66"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o8e03b3c29d2b",
+      "source": "Jellyfin",
+      "sourceFingerprint": "a2d97618e05c0e3873eae39fb800c2b37141f6ab64f07e4c987ed921365463fa",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/EmbyJellyfin/EmbyJellyfinServerType.cs",
+          "enum": "EmbyJellyfinServerType",
+          "member": "Jellyfin",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o8e03b3c29d2b\")]",
+          "sourceLineSha256": "059dc8fc421c074cedccc238695e5f0a925f6ec9631a8550c51e6e78348e8543"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o907bf9a40f9c",
+      "source": "PUT",
+      "sourceFingerprint": "07d117dfb53009e9a68b82353a1f33c1613f360c9126480bfb3ae2b50abc91a6",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Webhook/WebhookMethod.cs",
+          "enum": "WebhookMethod",
+          "member": "PUT",
+          "kind": "Label",
+          "line": 9,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o907bf9a40f9c\")]",
+          "sourceLineSha256": "09d28e5fcf61314e9430869a985c26db707269807443aa908c4d5b30dbe935d9"
+        }
+      ],
+      "protectedLiterals": [
+        "PUT"
+      ]
+    },
+    {
+      "id": "provider.option.o911140b89c71",
+      "source": "Brazilian Portuguese (BP)",
+      "sourceFingerprint": "a6d84e7179e155d88fdf9c23982137ab9de4dcc3ec99464ef28c52d6faadd0c8",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "BrazilianPortuguese",
+          "kind": "Label",
+          "line": 255,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o911140b89c71\")] BrazilianPortuguese = 52,",
+          "sourceLineSha256": "2ec142d3392bf99dfdab5cc1ebc87e059a20d79858a092ed7f4cd71905b40da3"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o94dfd46d9dae",
+      "source": "Poor",
+      "sourceFingerprint": "802327394ba8fa1896fdd108c25086beef3faa3e9b14354dcfa7579cb48be2c1",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Goodreads/OwnedBooks/GoodreadsOwnedBooksNotificationSettings.cs",
+          "enum": "OwnedBookCondition",
+          "member": "Poor",
+          "kind": "Label",
+          "line": 18,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o94dfd46d9dae\")]",
+          "sourceLineSha256": "d7eac5de8ef5a3d1d0b44a30a3f8eb21dd8e8929131a8c683f1c9649112658b7"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o986e2890737d",
+      "source": "VIP",
+      "sourceFingerprint": "b11a254e3ac279e747d8a6f4e9a92878494dab9d596f8bba741d3e6c87a7288d",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchType",
+          "member": "Vip",
+          "kind": "Label",
+          "line": 203,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o986e2890737d\", Hint = \"provider.option.o7c3056a206f0\")]",
+          "sourceLineSha256": "19c92cea9f6c9873f6c5dbb4d9889c71e5b9e987ed2bda73b83863ea15abc9de"
+        }
+      ],
+      "protectedLiterals": [
+        "VIP"
+      ]
+    },
+    {
+      "id": "provider.option.o98950fca2b5e",
+      "source": "Very High",
+      "sourceFingerprint": "c84548e4820d089f47cbfbb36b5aecbe8dcba88894b7c0fe2265d7885f3e8cfd",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Nzbget/NzbgetPriority.cs",
+          "enum": "NzbgetPriority",
+          "member": "VeryHigh",
+          "kind": "Label",
+          "line": 15,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o98950fca2b5e\")]",
+          "sourceLineSha256": "de724797f77934385a55c69081fb990dc733286012f189f3cba746894b5b083f"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o98b01b890687",
+      "source": "Portuguese",
+      "sourceFingerprint": "6402f73cd374742ea51c7eb3f84bff2c1383f2cfccacc237d95c59c9700d96a0",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Portuguese",
+          "kind": "Label",
+          "line": 254,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o98b01b890687\")] Portuguese = 34,",
+          "sourceLineSha256": "0b1930b75e277822f05ffb7a61c27b3c9b28e00b0d44a0e7898b1d98163af740"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o99a1dca2bd66",
+      "source": "Last update had 1+ seeders",
+      "sourceFingerprint": "c8d972950ddfc10629709ed25c269fd8e1e384e9cfe28681d4165a78d921e47d",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchType",
+          "member": "Active",
+          "kind": "Hint",
+          "line": 194,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc83a723bae52\", Hint = \"provider.option.o99a1dca2bd66\")]",
+          "sourceLineSha256": "81d144e5e961d67ee3272358834376c8171359839c91177b4315f861695fbd78"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o99a4b3998d1c",
+      "source": "At Most Once",
+      "sourceFingerprint": "31957ac586c29246d4a5d8a1ff615097d07c02a36d5bdac1679477f4db8ff04c",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/MqttGateway/MqttGatewaySettings.cs",
+          "enum": "MqttGatewayQos",
+          "member": "AtMostOnce",
+          "kind": "Label",
+          "line": 11,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o99a4b3998d1c\")]",
+          "sourceLineSha256": "71fdc376c6d70c5a68f9fcd47a79af0c3dc097467800af488ab39a29a96cad5d"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o9aee6b1bcdf6",
+      "source": "POST",
+      "sourceFingerprint": "b80109b79d8f2f950f023adeadb3b96a02301df3f4faa06e87298445064781f2",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Webhook/WebhookMethod.cs",
+          "enum": "WebhookMethod",
+          "member": "POST",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o9aee6b1bcdf6\")]",
+          "sourceLineSha256": "8059c1da571d49720f6fab5bb64b85ba48f7e9b4685f044fc111cc154a80eec2"
+        }
+      ],
+      "protectedLiterals": [
+        "POST"
+      ]
+    },
+    {
+      "id": "provider.option.o9cb1fa5198db",
+      "source": "Request a personal freeleech wedge when eligible, then fall back to a normal download if unavailable",
+      "sourceFingerprint": "5055afe52db9f234c51ec68928e178ea739b632af9e1c3efd1cc12267851fc42",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseFreeleechWedgeAction",
+          "member": "Preferred",
+          "kind": "Hint",
+          "line": 282,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o6c3105944211\", Hint = \"provider.option.o9cb1fa5198db\")]",
+          "sourceLineSha256": "4dbc8b7f03634221d27c7c2f3af79fedfdbfd1513e3c01dcba6c229dccc273da"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.o9e61f8c4fbca",
+      "source": "Punjabi",
+      "sourceFingerprint": "1abecaf530c063d9b134354c0c8738bff6818b4980fbfc2ac0a83284f8b00306",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Punjabi",
+          "kind": "Label",
+          "line": 256,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o9e61f8c4fbca\")] Punjabi = 14,",
+          "sourceLineSha256": "ef17128bc39f96d995402a4bf490096a8d39c1db6067dacbbfbf412f180f999e"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oa151ceb1711a",
+      "source": "First",
+      "sourceFingerprint": "720894fbb0b0f13182ca0454b62ed9a7e60c5efa66f79a824a1e978c7fdc1285",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Deluge/DelugePriority.cs",
+          "enum": "DelugePriority",
+          "member": "First",
+          "kind": "Label",
+          "line": 9,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa151ceb1711a\")]",
+          "sourceLineSha256": "a53dbd49331e94f20e940b3e2e1d065967835638f9074607e5386dd3e886878f"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/QBittorrent/QBittorrentPriority.cs",
+          "enum": "QBittorrentPriority",
+          "member": "First",
+          "kind": "Label",
+          "line": 9,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa151ceb1711a\")]",
+          "sourceLineSha256": "a53dbd49331e94f20e940b3e2e1d065967835638f9074607e5386dd3e886878f"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Transmission/TransmissionPriority.cs",
+          "enum": "TransmissionPriority",
+          "member": "First",
+          "kind": "Label",
+          "line": 9,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa151ceb1711a\")]",
+          "sourceLineSha256": "a53dbd49331e94f20e940b3e2e1d065967835638f9074607e5386dd3e886878f"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/uTorrent/UTorrentPriority.cs",
+          "enum": "UTorrentPriority",
+          "member": "First",
+          "kind": "Label",
+          "line": 9,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa151ceb1711a\")]",
+          "sourceLineSha256": "a53dbd49331e94f20e940b3e2e1d065967835638f9074607e5386dd3e886878f"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oa3ab29b2b806",
+      "source": "Sanskrit",
+      "sourceFingerprint": "b9529b91f56d688151dd66f2957e9084cbd4b684c9f14aacf8204925633e4d9e",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Sanskrit",
+          "kind": "Label",
+          "line": 260,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa3ab29b2b806\")] Sanskrit = 60,",
+          "sourceLineSha256": "92101bddfdbe913f3bba5e0572e632fec85ae505c5581de781b1f10ea217dd03"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oa4504b3d0ff7",
+      "source": "Telugu",
+      "sourceFingerprint": "6dfd4c29fc238a767c0082da3d3b9abd98d72b70ba2164df94f654070fcaa2ee",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Telugu",
+          "kind": "Label",
+          "line": 268,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa4504b3d0ff7\")] Telugu = 10,",
+          "sourceLineSha256": "4b4d570826d962c366d5e63f22232823e1e0d165a2bffa1b08c799aaf1e98704"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oa515fc82b14f",
+      "source": "Brand New",
+      "sourceFingerprint": "e05f624ded2349507f1f5719fb5624c1ee92885e53594d5d0ef5d682eeffd61c",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Goodreads/OwnedBooks/GoodreadsOwnedBooksNotificationSettings.cs",
+          "enum": "OwnedBookCondition",
+          "member": "BrandNew",
+          "kind": "Label",
+          "line": 8,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa515fc82b14f\")]",
+          "sourceLineSha256": "d344fee83520088dd0c60e8e11221a044398bde6cda903ec8e3bed1e03c76ca9"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oa659b60d246d",
+      "source": "German",
+      "sourceFingerprint": "8f6122d008ba22c86e350aa6c5f28586847c398fcde76b38dab3173d1b41badd",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "German",
+          "kind": "Label",
+          "line": 230,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa659b60d246d\")] German = 37,",
+          "sourceLineSha256": "dc0c9ff4b9be773984b85a49ebfe7c8cc0390ebd48aac83cc9e124b8ca57259c"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oa7248eeb45eb",
+      "source": "Normal",
+      "sourceFingerprint": "85545359c5a0d510b7c5de9a7ddfecb34a24c56e9c6769901e60762bfc37baf4",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Gotify/GotifyPriority.cs",
+          "enum": "GotifyPriority",
+          "member": "Normal",
+          "kind": "Label",
+          "line": 11,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa7248eeb45eb\")]",
+          "sourceLineSha256": "8d1d2313c243a140902efa7997544224971f4c97a99c62a01eb2f4b732213494"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Join/JoinPriority.cs",
+          "enum": "JoinPriority",
+          "member": "Normal",
+          "kind": "Label",
+          "line": 11,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa7248eeb45eb\")]",
+          "sourceLineSha256": "8d1d2313c243a140902efa7997544224971f4c97a99c62a01eb2f4b732213494"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/NzbVortex/NzbVortexPriority.cs",
+          "enum": "NzbVortexPriority",
+          "member": "Normal",
+          "kind": "Label",
+          "line": 9,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa7248eeb45eb\")]",
+          "sourceLineSha256": "8d1d2313c243a140902efa7997544224971f4c97a99c62a01eb2f4b732213494"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Nzbget/NzbgetPriority.cs",
+          "enum": "NzbgetPriority",
+          "member": "Normal",
+          "kind": "Label",
+          "line": 11,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa7248eeb45eb\")]",
+          "sourceLineSha256": "8d1d2313c243a140902efa7997544224971f4c97a99c62a01eb2f4b732213494"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Prowl/ProwlPriority.cs",
+          "enum": "ProwlPriority",
+          "member": "Normal",
+          "kind": "Label",
+          "line": 11,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa7248eeb45eb\")]",
+          "sourceLineSha256": "8d1d2313c243a140902efa7997544224971f4c97a99c62a01eb2f4b732213494"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Pushover/PushoverPriority.cs",
+          "enum": "PushoverPriority",
+          "member": "Normal",
+          "kind": "Label",
+          "line": 11,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa7248eeb45eb\")]",
+          "sourceLineSha256": "8d1d2313c243a140902efa7997544224971f4c97a99c62a01eb2f4b732213494"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/rTorrent/RTorrentPriority.cs",
+          "enum": "RTorrentPriority",
+          "member": "Normal",
+          "kind": "Label",
+          "line": 11,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa7248eeb45eb\")]",
+          "sourceLineSha256": "8d1d2313c243a140902efa7997544224971f4c97a99c62a01eb2f4b732213494"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdPriority.cs",
+          "enum": "SabnzbdPriority",
+          "member": "Normal",
+          "kind": "Label",
+          "line": 13,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa7248eeb45eb\")]",
+          "sourceLineSha256": "8d1d2313c243a140902efa7997544224971f4c97a99c62a01eb2f4b732213494"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oa89a9329d3d4",
+      "source": "Swedish",
+      "sourceFingerprint": "f96a7d34e33b9807896516a6f0608560267c1e5ad6f253df3f73284c9e3bf09d",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Swedish",
+          "kind": "Label",
+          "line": 265,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oa89a9329d3d4\")] Swedish = 40,",
+          "sourceLineSha256": "899a680f44fce4c79d60951668efa053815415f81a5246809fe539afc74ee706"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oaa1324f5df47",
+      "source": "Gujarati",
+      "sourceFingerprint": "b6171ced651f6719afdbea5d401d5e91f538c66e6fc1b70c480beedbb5a992e7",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Gujarati",
+          "kind": "Label",
+          "line": 233,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oaa1324f5df47\")] Gujarati = 3,",
+          "sourceLineSha256": "6ac0cb3786a2f1052f689adac441879d9b2bf1fb06e1dc2ff8e1d625ab96b6e7"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oaab534cd510a",
+      "source": "Freeleech torrents",
+      "sourceFingerprint": "9b908cb2e1d97424f294036464abbb041fc2606a9425a06f68105d738389058e",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchType",
+          "member": "Freeleech",
+          "kind": "Hint",
+          "line": 197,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o294a0c3d28c4\", Hint = \"provider.option.oaab534cd510a\")]",
+          "sourceLineSha256": "89b1183cbfd5ee45b864925281273f218b19d81eda9c825c379a3fddb8bb8677"
+        }
+      ],
+      "protectedLiterals": [
+        "Freeleech"
+      ]
+    },
+    {
+      "id": "provider.option.oad705ee19c04",
+      "source": "Thai",
+      "sourceFingerprint": "4179f59384dff5c64d905ba7ecdf410c3afcd88e3d9e8735263437a7849d687d",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Thai",
+          "kind": "Label",
+          "line": 269,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oad705ee19c04\")] Thai = 7,",
+          "sourceLineSha256": "dda8f4a6c83375aa29ed49c0aa2b13773b41b38a8b1d2e11bf0450f19f04c525"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oad83a00f609f",
+      "source": "Cantonese",
+      "sourceFingerprint": "71da23333268a57029f8ed0f335b9808dbcb025a24f77defbd5c56125e254650",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Cantonese",
+          "kind": "Label",
+          "line": 219,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oad83a00f609f\")] Cantonese = 44,",
+          "sourceLineSha256": "3e2fa887cbe08f346da92c9660edf838284160cdcbe35c05e0be3c2286bb76f4"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.ob07913e85f96",
+      "source": "Very Low",
+      "sourceFingerprint": "9d38d54280eabf74031eb6283d78c84187861aef8ee510668cb4201be90b6a68",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Nzbget/NzbgetPriority.cs",
+          "enum": "NzbgetPriority",
+          "member": "VeryLow",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"provider.option.ob07913e85f96\")]",
+          "sourceLineSha256": "afb7c33666eebc5ef3c872bd0089418809a192490492d8ac91cfae1896b3cc2e"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Prowl/ProwlPriority.cs",
+          "enum": "ProwlPriority",
+          "member": "VeryLow",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"provider.option.ob07913e85f96\")]",
+          "sourceLineSha256": "afb7c33666eebc5ef3c872bd0089418809a192490492d8ac91cfae1896b3cc2e"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/rTorrent/RTorrentPriority.cs",
+          "enum": "RTorrentPriority",
+          "member": "VeryLow",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"provider.option.ob07913e85f96\")]",
+          "sourceLineSha256": "afb7c33666eebc5ef3c872bd0089418809a192490492d8ac91cfae1896b3cc2e"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.ob31cf1a5e75d",
+      "source": "Freeleech or VIP torrents",
+      "sourceFingerprint": "78a72b750c33e5640a4dfc26a6dd6d577005dd64eb92514ced30a21f2b92097a",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchType",
+          "member": "FreeleechOrVip",
+          "kind": "Hint",
+          "line": 200,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o72a071498ead\", Hint = \"provider.option.ob31cf1a5e75d\")]",
+          "sourceLineSha256": "14954c8153c1b1d9306d2e1d08dcb313429f5c96d575c40c0c73e7c0955ea044"
+        }
+      ],
+      "protectedLiterals": [
+        "VIP",
+        "Freeleech"
+      ]
+    },
+    {
+      "id": "provider.option.ob4a077dadb30",
+      "source": "Serbian",
+      "sourceFingerprint": "5f00be1a3c8930ffdb173a50388d287f0876c8da9a606eaf5674eb16cc8b00c3",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Serbian",
+          "kind": "Label",
+          "line": 261,
+          "sourceLine": "[FieldOption(Label = \"provider.option.ob4a077dadb30\")] Serbian = 31,",
+          "sourceLineSha256": "4678e8464228b5708b22cc60a5f6e640d0a75857cfbba04de449a0568020a7a9"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oba118bf7fc9c",
+      "source": "English",
+      "sourceFingerprint": "3bbe9b3cd1ba57827fcfadb884e747518adb6819b303b7e38765b5767e5ea619",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "English",
+          "kind": "Label",
+          "line": 212,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oba118bf7fc9c\")] English = 1,",
+          "sourceLineSha256": "ce3b96ea59730b3ee0cf32a2d6c844d115978adb48e2f22ef8c0bc475e015f65"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.obafb66f32cd7",
+      "source": "Arabic",
+      "sourceFingerprint": "afa33543cf0f49505016ae2641145f2e8e81a2196c6d9102c0b1711a5c3cc93f",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Arabic",
+          "kind": "Label",
+          "line": 214,
+          "sourceLine": "[FieldOption(Label = \"provider.option.obafb66f32cd7\")] Arabic = 32,",
+          "sourceLineSha256": "da053dbdceab2108dbe8a89bd7c83175ba3dc4ab98975d0e79fe484542e973b6"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.obe4ee906d3ef",
+      "source": "Japanese",
+      "sourceFingerprint": "1959a7c38c7f1de9656372725e9e038a86ede55ea33fb4635957d96126b7ad25",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Japanese",
+          "kind": "Label",
+          "line": 241,
+          "sourceLine": "[FieldOption(Label = \"provider.option.obe4ee906d3ef\")] Japanese = 38,",
+          "sourceLineSha256": "98ec9a849bbbad436241873f6a6c41c786b69805329016382467d08eaf4ff905"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.obff67db96859",
+      "source": "Not VIP",
+      "sourceFingerprint": "84dfc0828453b2eb9fa6c12960c78e529123b2cdb2223e176b164279625fc465",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchType",
+          "member": "NotVip",
+          "kind": "Label",
+          "line": 206,
+          "sourceLine": "[FieldOption(Label = \"provider.option.obff67db96859\", Hint = \"provider.option.o7a21be239c11\")]",
+          "sourceLineSha256": "95df83476f41eae32a28c9e3325d6420bb8808945869811abae2305ea07bb2dd"
+        }
+      ],
+      "protectedLiterals": [
+        "VIP"
+      ]
+    },
+    {
+      "id": "provider.option.oc0ebb7d6b693",
+      "source": "Quiet",
+      "sourceFingerprint": "ec6c8de06a19c879cc2f110c944538dd8f51e422bbdb74801f112344b99902eb",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Join/JoinPriority.cs",
+          "enum": "JoinPriority",
+          "member": "Quiet",
+          "kind": "Label",
+          "line": 9,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc0ebb7d6b693\")]",
+          "sourceLineSha256": "e590e247795fcdc0a60bba1470f5c05c1f30effa989ea549a8272fbca6d5a9c8"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Pushover/PushoverPriority.cs",
+          "enum": "PushoverPriority",
+          "member": "Quiet",
+          "kind": "Label",
+          "line": 9,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc0ebb7d6b693\")]",
+          "sourceLineSha256": "e590e247795fcdc0a60bba1470f5c05c1f30effa989ea549a8272fbca6d5a9c8"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oc13abe78e554",
+      "source": "At Least Once",
+      "sourceFingerprint": "934c7cfaa1267f3dcdfa12317988fa93a8411d50fdbc7bc174ee9c3c89965fb2",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/MqttGateway/MqttGatewaySettings.cs",
+          "enum": "MqttGatewayQos",
+          "member": "AtLeastOnce",
+          "kind": "Label",
+          "line": 13,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc13abe78e554\")]",
+          "sourceLineSha256": "5b47f902a09f7e5f0311e23d65f6d773bf57d050e1529ae623c0193a64d1d722"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oc4b0cebd57bf",
+      "source": "VIP Freeleech",
+      "sourceFingerprint": "fd2eb1d44de1ad0daa714f821accf353f610915c297cac2909cd435464bf71c0",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Parser/Model/ReleaseInfo.cs",
+          "enum": "IndexerFlags",
+          "member": "VipFreeleech",
+          "kind": "Label",
+          "line": 126,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc4b0cebd57bf\")]",
+          "sourceLineSha256": "a2f67a7bb778c5757cfa9e98ea59517c82b041a7231e49684a35078a3bca4c23"
+        }
+      ],
+      "protectedLiterals": [
+        "Freeleech",
+        "VIP"
+      ]
+    },
+    {
+      "id": "provider.option.oc4ebc6d4a583",
+      "source": "High",
+      "sourceFingerprint": "fecd6ff5725283ca083b00374891cc3c55c023559f0c3c55415c6b754155bad3",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Gotify/GotifyPriority.cs",
+          "enum": "GotifyPriority",
+          "member": "High",
+          "kind": "Label",
+          "line": 13,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc4ebc6d4a583\")]",
+          "sourceLineSha256": "c18e8dbe191754fbe20f75fa6e6f5eec0d491dfbaacfabbacc8b5a9144abc01d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Join/JoinPriority.cs",
+          "enum": "JoinPriority",
+          "member": "High",
+          "kind": "Label",
+          "line": 13,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc4ebc6d4a583\")]",
+          "sourceLineSha256": "c18e8dbe191754fbe20f75fa6e6f5eec0d491dfbaacfabbacc8b5a9144abc01d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Ntfy/NtfyPriority.cs",
+          "enum": "NtfyPriority",
+          "member": "High",
+          "kind": "Label",
+          "line": 13,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc4ebc6d4a583\")]",
+          "sourceLineSha256": "c18e8dbe191754fbe20f75fa6e6f5eec0d491dfbaacfabbacc8b5a9144abc01d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/NzbVortex/NzbVortexPriority.cs",
+          "enum": "NzbVortexPriority",
+          "member": "High",
+          "kind": "Label",
+          "line": 11,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc4ebc6d4a583\")]",
+          "sourceLineSha256": "c18e8dbe191754fbe20f75fa6e6f5eec0d491dfbaacfabbacc8b5a9144abc01d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Nzbget/NzbgetPriority.cs",
+          "enum": "NzbgetPriority",
+          "member": "High",
+          "kind": "Label",
+          "line": 13,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc4ebc6d4a583\")]",
+          "sourceLineSha256": "c18e8dbe191754fbe20f75fa6e6f5eec0d491dfbaacfabbacc8b5a9144abc01d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Prowl/ProwlPriority.cs",
+          "enum": "ProwlPriority",
+          "member": "High",
+          "kind": "Label",
+          "line": 13,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc4ebc6d4a583\")]",
+          "sourceLineSha256": "c18e8dbe191754fbe20f75fa6e6f5eec0d491dfbaacfabbacc8b5a9144abc01d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Pushover/PushoverPriority.cs",
+          "enum": "PushoverPriority",
+          "member": "High",
+          "kind": "Label",
+          "line": 13,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc4ebc6d4a583\")]",
+          "sourceLineSha256": "c18e8dbe191754fbe20f75fa6e6f5eec0d491dfbaacfabbacc8b5a9144abc01d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/rTorrent/RTorrentPriority.cs",
+          "enum": "RTorrentPriority",
+          "member": "High",
+          "kind": "Label",
+          "line": 13,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc4ebc6d4a583\")]",
+          "sourceLineSha256": "c18e8dbe191754fbe20f75fa6e6f5eec0d491dfbaacfabbacc8b5a9144abc01d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdPriority.cs",
+          "enum": "SabnzbdPriority",
+          "member": "High",
+          "kind": "Label",
+          "line": 15,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc4ebc6d4a583\")]",
+          "sourceLineSha256": "c18e8dbe191754fbe20f75fa6e6f5eec0d491dfbaacfabbacc8b5a9144abc01d"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oc83a723bae52",
+      "source": "Only active",
+      "sourceFingerprint": "2aa7d3e070cb4f26629b363db0fb90654a950f4213b21cbb39505c49221a8d57",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchType",
+          "member": "Active",
+          "kind": "Label",
+          "line": 194,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc83a723bae52\", Hint = \"provider.option.o99a1dca2bd66\")]",
+          "sourceLineSha256": "81d144e5e961d67ee3272358834376c8171359839c91177b4315f861695fbd78"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oc88a0b907419",
+      "source": "Success",
+      "sourceFingerprint": "63d35ac1ba17eced661607e4225bac5480ec4108cddf9d4a677a606623dc730e",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Apprise/AppriseNotificationType.cs",
+          "enum": "AppriseNotificationType",
+          "member": "Success",
+          "kind": "Label",
+          "line": 14,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc88a0b907419\")]",
+          "sourceLineSha256": "4522a879c2cd10e5ccd0e3aa4430389a50fbcbaecd5485ef18b78708815d2ae8"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oc939327ca16d",
+      "source": "Good",
+      "sourceFingerprint": "49c3c77a1b0cd119feaedb8e10387a295ee31faa834e5a0a80980262ccae898d",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Goodreads/OwnedBooks/GoodreadsOwnedBooksNotificationSettings.cs",
+          "enum": "OwnedBookCondition",
+          "member": "Good",
+          "kind": "Label",
+          "line": 14,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc939327ca16d\")]",
+          "sourceLineSha256": "ac9158cc95c50a4955f73f7fb9cada2387012cec76e58737e061c062715f03a8"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oc97537256ada",
+      "source": "Freeleech75",
+      "sourceFingerprint": "ce11b325198c7eaeff03c28cb2e48580226279c32d4d54f68616602db4a3a0ce",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Parser/Model/ReleaseInfo.cs",
+          "enum": "IndexerFlags",
+          "member": "Freeleech75",
+          "kind": "Label",
+          "line": 120,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oc97537256ada\")]",
+          "sourceLineSha256": "078dbccd9646a25cbb25d79a7685e9664c8cd8a08caabbecda176d3783a2b6d6"
+        }
+      ],
+      "protectedLiterals": [
+        "Freeleech75"
+      ]
+    },
+    {
+      "id": "provider.option.ocae7d57bc067",
+      "source": "Stop",
+      "sourceFingerprint": "d15e3bad4c0ad6d2edd4f52059977f6a74965a24c19c462360b4a9e2193afbe7",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/uTorrent/UtorrentState.cs",
+          "enum": "UTorrentState",
+          "member": "Stop",
+          "kind": "Label",
+          "line": 13,
+          "sourceLine": "[FieldOption(Label = \"provider.option.ocae7d57bc067\")]",
+          "sourceLineSha256": "af72b297a17c82c4045de65aa0b5c82dba8a8060d7cfe876ee822e97ff7eb493"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.ocd43b2d3b020",
+      "source": "Malay",
+      "sourceFingerprint": "b3aba24783fbb6605bed8a7e33d31e1824a73628f07ad28863319f3144645ab6",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Malay",
+          "kind": "Label",
+          "line": 248,
+          "sourceLine": "[FieldOption(Label = \"provider.option.ocd43b2d3b020\")] Malay = 33,",
+          "sourceLineSha256": "d09668c55a606b225758be4986efa478b32a04d96af05a1f596b7d0efd5fe496"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.ocfda1755ffb1",
+      "source": "Force",
+      "sourceFingerprint": "51867194cc21cd16767013cc4e1d987b3624a456916b08c1ff910a162fcf8e59",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Nzbget/NzbgetPriority.cs",
+          "enum": "NzbgetPriority",
+          "member": "Force",
+          "kind": "Label",
+          "line": 17,
+          "sourceLine": "[FieldOption(Label = \"provider.option.ocfda1755ffb1\")]",
+          "sourceLineSha256": "1751e958fcdc3ac698ae974bb61c36ed65f0f99c30de837ac085d2b8c936c02c"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdPriority.cs",
+          "enum": "SabnzbdPriority",
+          "member": "Force",
+          "kind": "Label",
+          "line": 17,
+          "sourceLine": "[FieldOption(Label = \"provider.option.ocfda1755ffb1\")]",
+          "sourceLineSha256": "1751e958fcdc3ac698ae974bb61c36ed65f0f99c30de837ac085d2b8c936c02c"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.od54cdf586b7b",
+      "source": "Do not force a wedge; let your MAM account preferences decide",
+      "sourceFingerprint": "a76d00f6eb7c2b0e5271cd12b98aaa2797c5ebc201774be9fb27b6f8cdc3512f",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseFreeleechWedgeAction",
+          "member": "Never",
+          "kind": "Hint",
+          "line": 279,
+          "sourceLine": "[FieldOption(Label = \"provider.option.o687198870652\", Hint = \"provider.option.od54cdf586b7b\")]",
+          "sourceLineSha256": "851075f9d5f3f4c6f09fb70fdcc099c6e34c88e3f4ddabe192e9c0699c3efefa"
+        }
+      ],
+      "protectedLiterals": [
+        "MAM"
+      ]
+    },
+    {
+      "id": "provider.option.od65819e43e55",
+      "source": "Irish",
+      "sourceFingerprint": "135d6bfc43c92f76da5982ff00318901316d5d8763abf265740b4466bb2b6ead",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Irish",
+          "kind": "Label",
+          "line": 239,
+          "sourceLine": "[FieldOption(Label = \"provider.option.od65819e43e55\")] Irish = 56,",
+          "sourceLineSha256": "3a029410550cde64847ffcd163febb930072e546a9e58214a53fad09101c50d5"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.odb5f7e5b90f2",
+      "source": "Freeleech25",
+      "sourceFingerprint": "0d10b240203b048ff3401bc1fd94f4dd13dc9efcb22259a7f6972a67afc8663d",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Parser/Model/ReleaseInfo.cs",
+          "enum": "IndexerFlags",
+          "member": "Freeleech25",
+          "kind": "Label",
+          "line": 122,
+          "sourceLine": "[FieldOption(Label = \"provider.option.odb5f7e5b90f2\")]",
+          "sourceLineSha256": "b6bfcd3dd14a3c37032c9bf0795969c292c4c982a2fa0f31033d621bb9d912c0"
+        }
+      ],
+      "protectedLiterals": [
+        "Freeleech25"
+      ]
+    },
+    {
+      "id": "provider.option.oddbcf0672648",
+      "source": "Silent",
+      "sourceFingerprint": "2459b45a434c1c3711dae90963d4a21117aaacf6929f97c3ba6fb145449243d9",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Join/JoinPriority.cs",
+          "enum": "JoinPriority",
+          "member": "Silent",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oddbcf0672648\")]",
+          "sourceLineSha256": "c94a28bac2c5468e4ef561c9facb97ca71e498fa33b2903e50e77d443b5497c2"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Pushover/PushoverPriority.cs",
+          "enum": "PushoverPriority",
+          "member": "Silent",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oddbcf0672648\")]",
+          "sourceLineSha256": "c94a28bac2c5468e4ef561c9facb97ca71e498fa33b2903e50e77d443b5497c2"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.odea070feef80",
+      "source": "Slovenian",
+      "sourceFingerprint": "43da9d96ebe20933aea67b4e2b1e6f5932959f903231da304ec925e4665ee1c2",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Slovenian",
+          "kind": "Label",
+          "line": 262,
+          "sourceLine": "[FieldOption(Label = \"provider.option.odea070feef80\")] Slovenian = 54,",
+          "sourceLineSha256": "b57c9a2be1ce196935a4a386143ef485d68ab251ec94f245d486cf9280af76ac"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oe4bb9f1ece9a",
+      "source": "Start",
+      "sourceFingerprint": "e7a052538806f0cabf710d0d8f602290432245bb87c45ea5320d34dc77df7901",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/uTorrent/UtorrentState.cs",
+          "enum": "UTorrentState",
+          "member": "Start",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oe4bb9f1ece9a\")]",
+          "sourceLineSha256": "6dd45ce9a0162c76506a880048e3597da73bb823963269548bccaeb59f16c8d0"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oe4d40d318e99",
+      "source": "Farsi",
+      "sourceFingerprint": "c1d2b4727c6e4f4fc997247b21d7c0e3efd6f363852c6e104f8919f7f84252cb",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Farsi",
+          "kind": "Label",
+          "line": 227,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oe4d40d318e99\")] Farsi = 39,",
+          "sourceLineSha256": "f5d4949a027898035ebdc208e5b505ab527469b8ee9dacb239ed09799d43a26c"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oe7f4fe2631bb",
+      "source": "Bengali",
+      "sourceFingerprint": "937268aca34a30f1eb66c0bf63017cbea7e53c96205c74aa960a90070e1b7059",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Bengali",
+          "kind": "Label",
+          "line": 215,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oe7f4fe2631bb\")] Bengali = 35,",
+          "sourceLineSha256": "c8f69c4315ccf8e0308ebf64384d67b9ac1b4491c7cfb121fdda21adf114843c"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oeb970eb0951c",
+      "source": "Last",
+      "sourceFingerprint": "12cbe4ba111c4642d2d683acf8b295b8e73b45b36effc00bb3baf7a7b11500fb",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Deluge/DelugePriority.cs",
+          "enum": "DelugePriority",
+          "member": "Last",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oeb970eb0951c\")]",
+          "sourceLineSha256": "973e7c210cee30453041a9da160999335fd91ef6c85d1c60ac555549900fda26"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/QBittorrent/QBittorrentPriority.cs",
+          "enum": "QBittorrentPriority",
+          "member": "Last",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oeb970eb0951c\")]",
+          "sourceLineSha256": "973e7c210cee30453041a9da160999335fd91ef6c85d1c60ac555549900fda26"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Transmission/TransmissionPriority.cs",
+          "enum": "TransmissionPriority",
+          "member": "Last",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oeb970eb0951c\")]",
+          "sourceLineSha256": "973e7c210cee30453041a9da160999335fd91ef6c85d1c60ac555549900fda26"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/uTorrent/UTorrentPriority.cs",
+          "enum": "UTorrentPriority",
+          "member": "Last",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oeb970eb0951c\")]",
+          "sourceLineSha256": "973e7c210cee30453041a9da160999335fd91ef6c85d1c60ac555549900fda26"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.oecd986094baf",
+      "source": "Bulgarian",
+      "sourceFingerprint": "cbce3f2cec7923488b585a33ad2cef42950ccc5ea96f533798bd0d253ec7ee11",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Bulgarian",
+          "kind": "Label",
+          "line": 217,
+          "sourceLine": "[FieldOption(Label = \"provider.option.oecd986094baf\")] Bulgarian = 18,",
+          "sourceLineSha256": "6427b48c2cf702c1cc2d13e292437090dc776612b89470e7dae808259669080d"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.of25499e9df5c",
+      "source": "Vietnamese",
+      "sourceFingerprint": "5633f46d9f1c3a27f44f400cf06e1c2a7b629d74a78c625752f0f28d477483da",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Vietnamese",
+          "kind": "Label",
+          "line": 273,
+          "sourceLine": "[FieldOption(Label = \"provider.option.of25499e9df5c\")] Vietnamese = 13,",
+          "sourceLineSha256": "4f6297a3ab6d641748b7c1335cdce8e77a24fe1b1371d690cc90c6afba16fd8d"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.of44c2676f52a",
+      "source": "VIP Exclusive",
+      "sourceFingerprint": "ae362754450797697fcaeb0eaa06d7d426251ad43bf7ae6a4017deb24f46e586",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Parser/Model/ReleaseInfo.cs",
+          "enum": "IndexerFlags",
+          "member": "VipExclusive",
+          "kind": "Label",
+          "line": 124,
+          "sourceLine": "[FieldOption(Label = \"provider.option.of44c2676f52a\")]",
+          "sourceLineSha256": "e756c7fd09d1a7f32b632974cecc41b7d6c39cf81ae0d337473ac271ff146354"
+        }
+      ],
+      "protectedLiterals": [
+        "VIP"
+      ]
+    },
+    {
+      "id": "provider.option.of793de205ead",
+      "source": "Low",
+      "sourceFingerprint": "52ab9ecd03e9f04c0bb88027b06451434152ecea513d87e26e3b3207e2ec4c19",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Gotify/GotifyPriority.cs",
+          "enum": "GotifyPriority",
+          "member": "Low",
+          "kind": "Label",
+          "line": 9,
+          "sourceLine": "[FieldOption(Label = \"provider.option.of793de205ead\")]",
+          "sourceLineSha256": "19ded8fcb2597cc5170fcd99f17f2f57f2dc86380f1fc76c769f6a6c9258036d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Ntfy/NtfyPriority.cs",
+          "enum": "NtfyPriority",
+          "member": "Low",
+          "kind": "Label",
+          "line": 9,
+          "sourceLine": "[FieldOption(Label = \"provider.option.of793de205ead\")]",
+          "sourceLineSha256": "19ded8fcb2597cc5170fcd99f17f2f57f2dc86380f1fc76c769f6a6c9258036d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/NzbVortex/NzbVortexPriority.cs",
+          "enum": "NzbVortexPriority",
+          "member": "Low",
+          "kind": "Label",
+          "line": 7,
+          "sourceLine": "[FieldOption(Label = \"provider.option.of793de205ead\")]",
+          "sourceLineSha256": "19ded8fcb2597cc5170fcd99f17f2f57f2dc86380f1fc76c769f6a6c9258036d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Nzbget/NzbgetPriority.cs",
+          "enum": "NzbgetPriority",
+          "member": "Low",
+          "kind": "Label",
+          "line": 9,
+          "sourceLine": "[FieldOption(Label = \"provider.option.of793de205ead\")]",
+          "sourceLineSha256": "19ded8fcb2597cc5170fcd99f17f2f57f2dc86380f1fc76c769f6a6c9258036d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Prowl/ProwlPriority.cs",
+          "enum": "ProwlPriority",
+          "member": "Low",
+          "kind": "Label",
+          "line": 9,
+          "sourceLine": "[FieldOption(Label = \"provider.option.of793de205ead\")]",
+          "sourceLineSha256": "19ded8fcb2597cc5170fcd99f17f2f57f2dc86380f1fc76c769f6a6c9258036d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/rTorrent/RTorrentPriority.cs",
+          "enum": "RTorrentPriority",
+          "member": "Low",
+          "kind": "Label",
+          "line": 9,
+          "sourceLine": "[FieldOption(Label = \"provider.option.of793de205ead\")]",
+          "sourceLineSha256": "19ded8fcb2597cc5170fcd99f17f2f57f2dc86380f1fc76c769f6a6c9258036d"
+        },
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/Sabnzbd/SabnzbdPriority.cs",
+          "enum": "SabnzbdPriority",
+          "member": "Low",
+          "kind": "Label",
+          "line": 11,
+          "sourceLine": "[FieldOption(Label = \"provider.option.of793de205ead\")]",
+          "sourceLineSha256": "19ded8fcb2597cc5170fcd99f17f2f57f2dc86380f1fc76c769f6a6c9258036d"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.ofe1d9c7db376",
+      "source": "Italian",
+      "sourceFingerprint": "f05c4eee668dbb294bdf150917aaba4e65b2ea7ab06c50f14b1fe5a6dd351414",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Italian",
+          "kind": "Label",
+          "line": 240,
+          "sourceLine": "[FieldOption(Label = \"provider.option.ofe1d9c7db376\")] Italian = 43,",
+          "sourceLineSha256": "efbc1440d20fc4de873e35e3e8cdd4f4f1417094db2fd745ae51c97751d74d5b"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.ofe4338ad620c",
+      "source": "Danish",
+      "sourceFingerprint": "f4453a2138e3beaf425db5d0b74508c4fee6bfe6e03f41c7fe16eb4742836771",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Indexers/MyAnonaMouse/MyAnonaMouseSettings.cs",
+          "enum": "MyAnonaMouseSearchLanguages",
+          "member": "Danish",
+          "kind": "Label",
+          "line": 224,
+          "sourceLine": "[FieldOption(Label = \"provider.option.ofe4338ad620c\")] Danish = 21,",
+          "sourceLineSha256": "bbbe37cee1ce10c3d0f8c49d3c702691a9c353edc517ee062f84146e639f160b"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "provider.option.offfe404b2285",
+      "source": "Force Started",
+      "sourceFingerprint": "2fd15c83ea254ad701521c10b361330b8bbf990bcc453f02ee71f86d06d4d6ec",
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Download/Clients/QBittorrent/QBittorrentState.cs",
+          "enum": "QBittorrentState",
+          "member": "ForceStart",
+          "kind": "Label",
+          "line": 10,
+          "sourceLine": "[FieldOption(Label = \"provider.option.offfe404b2285\")]",
+          "sourceLineSha256": "25bdf929c7cffcdbe100722909f0182a2669a70ab1362e1fcc0d4ab1991e3f0d"
+        }
+      ],
+      "protectedLiterals": []
+    }
+  ],
+  "enumMembers": {
+    "AdditionalTags": 5,
+    "AppriseNotificationType": 4,
+    "DelugePriority": 2,
+    "EmbyJellyfinServerType": 2,
+    "FileListCategories": 1,
+    "GotifyPriority": 4,
+    "IndexerFlags": 9,
+    "JoinPriority": 5,
+    "MqttGatewayQos": 3,
+    "MyAnonaMouseFreeleechWedgeAction": 3,
+    "MyAnonaMouseSearchLanguages": 63,
+    "MyAnonaMouseSearchType": 6,
+    "NtfyPriority": 5,
+    "NzbVortexPriority": 3,
+    "NzbgetPriority": 6,
+    "OwnedBookCondition": 6,
+    "ProwlPriority": 5,
+    "PushoverPriority": 5,
+    "QBittorrentContentLayout": 3,
+    "QBittorrentPriority": 2,
+    "QBittorrentState": 3,
+    "RTorrentPriority": 4,
+    "SabnzbdPriority": 6,
+    "TransmissionPriority": 2,
+    "UTorrentPriority": 2,
+    "UTorrentState": 4,
+    "WebhookMethod": 2
+  },
+  "counts": {
+    "messages": 136,
+    "sourceCallsites": 174,
+    "enumTypes": 27,
+    "enumMembers": 165
+  }
+}

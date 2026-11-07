@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Serialization;
 using FluentValidation;
 using Newtonsoft.Json;
@@ -43,25 +44,26 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
             Port = 13378;
             UseSsl = false;
             SignIn = "startOAuth";
+            IgnoreTags = Array.Empty<string>();
         }
 
         // Legacy property (no longer exposed in the UI). When present in older configs, it will be migrated
         // to Host/Port/UseSsl/UrlBase on deserialization.
         public string ServerUrl { get; set; }
 
-        [FieldDefinition(0, Label = "Host", Placeholder = "audiobookshelf", HelpText = "AudioBookShelf server hostname or IP address (no http://). For Docker, use the container/service name (e.g. 'audiobookshelf').")]
+        [FieldDefinition(0, Label = "Host", Placeholder = "audiobookshelf", HelpText = "provider.field.ff24039287584")]
         public string Host { get; set; }
 
         [FieldDefinition(1, Label = "Port")]
         public int Port { get; set; }
 
-        [FieldDefinition(2, Label = "Use SSL", Type = FieldType.Checkbox, HelpText = "Connect to AudioBookShelf over HTTPS instead of HTTP")]
+        [FieldDefinition(2, Label = "UseSSL", Type = FieldType.Checkbox, HelpText = "provider.field.fcdb8bc7fbe78")]
         public bool UseSsl { get; set; }
 
-        [FieldDefinition(3, Label = "Url Base", Type = FieldType.Textbox, Advanced = true, HelpText = "Adds a prefix to the AudioBookShelf url, e.g. http://[host]:[port]/[urlBase]/api")]
+        [FieldDefinition(3, Label = "provider.field.fafbbcc619aac", Type = FieldType.Textbox, Advanced = true, HelpText = "provider.field.fe914fa2a68af")]
         public string UrlBase { get; set; }
 
-        [FieldDefinition(4, Label = "API Key", Type = FieldType.Password, Privacy = PrivacyLevel.ApiKey, HelpText = "AudioBookShelf API key for authentication")]
+        [FieldDefinition(4, Label = "ApiKey", Type = FieldType.Password, Privacy = PrivacyLevel.ApiKey, HelpText = "provider.field.f1a590a9b00ad")]
         public string ApiKey { get; set; }
 
         public string AudiobookLibraryId { get; set; }
@@ -71,7 +73,26 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
         [FieldDefinition(5, Type = FieldType.Textbox, Hidden = HiddenType.Hidden)]
         public string LibraryMappingsJson { get; set; }
 
-        [FieldDefinition(9, Label = "Authenticate with AudioBookShelf (OIDC)", Type = FieldType.OAuth, Hidden = HiddenType.Hidden, HelpText = "Uses AudioBookShelf OpenID Connect (SSO) to generate an API key automatically. This will open a browser popup to the configured AudioBookShelf URL, so it must be reachable from your browser. Your AudioBookShelf server must allow this app's callback URL under OpenID Connect → Mobile Redirect URIs.")]
+        [FieldDefinition(6, Label = "provider.field.fc3cc7aa655e3", Type = FieldType.Checkbox, HelpText = "provider.field.f9655ad429894")]
+        public bool RemoveMissingItems { get; set; }
+
+        [FieldDefinition(7, Label = "provider.field.f2a41808a7b7a", Type = FieldType.Checkbox, HelpText = "provider.field.f304db1c9fce7")]
+        public bool PushLibraryEdits { get; set; }
+
+        [FieldDefinition(8, Label = "provider.field.f8d36ffb94feb", Type = FieldType.Tag, HelpText = "provider.field.f919541514a06")]
+        public IEnumerable<string> IgnoreTags { get; set; }
+
+        public bool HasIgnoreTag(IEnumerable<string> tags)
+        {
+            var ignored = (IgnoreTags ?? Enumerable.Empty<string>())
+                .Where(t => t.IsNotNullOrWhiteSpace())
+                .Select(t => t.Trim())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            return ignored.Count > 0 && (tags ?? Enumerable.Empty<string>()).Any(t => t != null && ignored.Contains(t.Trim()));
+        }
+
+        [FieldDefinition(9, Label = "provider.field.fcfc86a7ed0ca", Type = FieldType.OAuth, Hidden = HiddenType.Hidden, HelpText = "provider.field.fc4e474afa1aa")]
         public string SignIn { get; set; }
 
         public string LibraryId { get; set; } // Maintained for migration purposes

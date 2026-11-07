@@ -5,6 +5,7 @@ interface CssExports {
   'book': string;
   'bookType': string;
   'books': string;
+  'formatLink': string;
   'info': string;
   'missingWanted': string;
 }

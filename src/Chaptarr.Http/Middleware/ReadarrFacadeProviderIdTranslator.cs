@@ -45,15 +45,20 @@ namespace Chaptarr.Http.Middleware
             return id.Length > 0 && id.All(char.IsDigit);
         }
 
-        public static string NormalizeWorkTerm(string term, ReadarrFacadeContext facadeContext)
+        public static string NormalizeLookupTerm(string term, ReadarrFacadeContext facadeContext)
         {
-            if (!IsBareWorkTerm(term) || facadeContext == null)
+            if (facadeContext == null || string.IsNullOrWhiteSpace(term))
             {
                 return term;
             }
 
-            var id = term.Trim().Substring("work:".Length).Trim();
-            return facadeContext.IsGoodreads ? "gr:" + id : "hc:" + id;
+            if (IsBareWorkTerm(term))
+            {
+                var id = term.Trim().Substring("work:".Length).Trim();
+                return facadeContext.IsGoodreads ? "gr:" + id : "hc:" + id;
+            }
+
+            return NormalizeBareProviderId(term, facadeContext);
         }
 
         public static string ProviderPrefixRequiredMessage(string field)

@@ -25,6 +25,47 @@ namespace Chaptarr.Core.Test.Api
 
 
         [Test]
+        public void should_read_no_previous_selection_when_several_editions_are_monitored()
+        {
+            // e.g. the author add pre-selected one edition and a request monitored another
+            var stored = new List<Edition>
+            {
+                new Edition { Id = 1, Monitored = true },
+                new Edition { Id = 2, Monitored = true },
+                new Edition { Id = 3, Monitored = false }
+            };
+
+            Assert.That(BookController.GetSingleMonitoredEditionId(stored), Is.Null);
+        }
+
+        [Test]
+        public void should_read_the_previous_selection_when_one_edition_is_monitored()
+        {
+            var stored = new List<Edition>
+            {
+                new Edition { Id = 1, Monitored = false },
+                null,
+                new Edition { Id = 2, Monitored = true }
+            };
+
+            Assert.That(BookController.GetSingleMonitoredEditionId(stored), Is.EqualTo(2));
+            Assert.That(BookController.GetSingleMonitoredEditionId(new List<Edition>()), Is.Null);
+            Assert.That(BookController.GetSingleMonitoredEditionId(null), Is.Null);
+        }
+
+        [Test]
+        public void should_treat_choosing_one_of_several_monitored_editions_as_an_explicit_change()
+        {
+            var submitted = new List<Edition>
+            {
+                new Edition { Id = 1, Monitored = false },
+                new Edition { Id = 2, Monitored = true }
+            };
+
+            Assert.That(BookController.ShouldPinExplicitEditionSelection(true, null, submitted), Is.True);
+        }
+
+        [Test]
         public void should_pin_explicit_edition_change_only_for_id_route()
         {
             var submitted = new List<Edition>

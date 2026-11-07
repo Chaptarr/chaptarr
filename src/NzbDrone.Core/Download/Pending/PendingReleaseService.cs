@@ -245,6 +245,18 @@ namespace NzbDrone.Core.Download.Pending
                 var firstQuality = g.First().Quality.Quality;
                 var qualityProfile = author?.GetQualityProfileForQuality(firstQuality);
 
+                if (_configService?.BookshelfMatchCompatibility == true &&
+                    QualityMediaTypeHelper.IsAudiobookQuality(firstQuality) &&
+                    qualityProfile?.Items?.Any() == true)
+                {
+                    // BookshelfNG selected pending candidates by quality and revision, then
+                    // the shared author-tag protocol preference. The
+                    // migration marker keeps that visible queue choice for converted installs.
+                    return g.OrderByDescending(e => e.Quality, new QualityModelComparer(qualityProfile))
+                        .ThenBy(q => PrioritizeBookshelfDownloadProtocol(q.Author, q.Protocol))
+                        .First();
+                }
+
                 var ordered = qualityProfile?.Items != null && qualityProfile.Items.Any()
                     ? g.OrderByDescending(
                         e => e,
@@ -418,7 +430,9 @@ namespace NzbDrone.Core.Download.Pending
         private int GetDelay(RemoteBook remoteBook)
         {
             var mediaType = remoteBook.GetPreferredMediaType();
-            var tags = remoteBook.Author.GetTagsForMediaType(mediaType);
+            var tags = _configService?.BookshelfMatchCompatibility == true
+                ? remoteBook.Author?.Tags
+                : remoteBook.Author?.GetTagsForMediaType(mediaType);
             var delayProfile = _delayProfileService.AllForTags(tags).OrderBy(d => d.Order).First();
             var delay = delayProfile.GetProtocolDelay(remoteBook.Release.DownloadProtocol);
             var minimumAge = _configService.MinimumAge;
@@ -506,6 +520,13 @@ namespace NzbDrone.Core.Download.Pending
             }
 
             return 1;
+        }
+
+        private int PrioritizeBookshelfDownloadProtocol(Author author, DownloadProtocol downloadProtocol)
+        {
+            var delayProfile = _delayProfileService.BestForTags(author?.Tags ?? new HashSet<int>());
+
+            return downloadProtocol == delayProfile?.PreferredProtocol ? 0 : 1;
         }
 
         public void Handle(AuthorDeletedEvent message)

@@ -8,17 +8,17 @@ function createBookQualityProfileSelector() {
 
   return createSelector(
     (state) => state.settings.qualityProfiles.items,
-    selectBook,
-    selectAuthor,
+    (state, ownProps) => ownProps.book || selectBook(state, ownProps),
+    (state, ownProps) => ownProps.author || ownProps.book?.author || selectAuthor(state, ownProps),
     (qualityProfiles, book, author) => {
       if (!author) {
         return {};
       }
 
       const mediaType = String(book?.mediaType || author.lastSelectedMediaType || 'audiobook').toLowerCase();
-      const qualityProfileId = mediaType === 'ebook'
-        ? author.ebookQualityProfileId
-        : author.audiobookQualityProfileId;
+      const qualityProfileId = mediaType === 'ebook' ?
+        author.ebookQualityProfileId :
+        author.audiobookQualityProfileId;
 
       return qualityProfiles.find((profile) => profile.id === qualityProfileId) || {};
     }

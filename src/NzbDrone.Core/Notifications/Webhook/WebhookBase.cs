@@ -11,11 +11,52 @@ namespace NzbDrone.Core.Notifications.Webhook
         where TSettings : IProviderConfig, new()
     {
         private readonly IConfigFileProvider _configFileProvider;
+        private readonly IBookshelfLegacyIdentityMapService _legacyIdentityMapService;
 
-        protected WebhookBase(IConfigFileProvider configFileProvider)
+        protected WebhookBase(
+            IConfigFileProvider configFileProvider,
+            IBookshelfLegacyIdentityMapService legacyIdentityMapService)
             : base()
         {
             _configFileProvider = configFileProvider;
+            _legacyIdentityMapService = legacyIdentityMapService;
+        }
+
+        private WebhookBook CreateWebhookBook(Book book, Edition edition = null)
+        {
+            var webhookBook = new WebhookBook(book, edition);
+            var mapping = _legacyIdentityMapService.GetMappingsByTargetIds("Book", new[] { book.Id })
+                .OrderBy(item => item.SourceId)
+                .ThenBy(item => item.MediaType)
+                .FirstOrDefault();
+            if (mapping != null)
+            {
+                webhookBook.Id = mapping.SourceId;
+            }
+
+            return webhookBook;
+        }
+
+        private List<WebhookBook> CreateWebhookBooks(IEnumerable<Book> books)
+        {
+            var sourceBooks = books?.ToList() ?? new List<Book>();
+            var legacyIds = _legacyIdentityMapService
+                .GetMappingsByTargetIds("Book", sourceBooks.Select(book => book.Id))
+                .GroupBy(mapping => mapping.TargetId)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.OrderBy(mapping => mapping.SourceId).ThenBy(mapping => mapping.MediaType).First().SourceId);
+
+            return sourceBooks.Select(book =>
+            {
+                var webhookBook = new WebhookBook(book);
+                if (legacyIds.TryGetValue(book.Id, out var legacyId))
+                {
+                    webhookBook.Id = legacyId;
+                }
+
+                return webhookBook;
+            }).ToList();
         }
 
         public WebhookGrabPayload BuildOnGrabPayload(GrabMessage message)
@@ -28,7 +69,7 @@ namespace NzbDrone.Core.Notifications.Webhook
                 EventType = WebhookEventType.Grab,
                 InstanceName = _configFileProvider.InstanceName,
                 Author = new WebhookAuthor(message.Author),
-                Books = remoteBook.Books.ConvertAll(x => new WebhookBook(x)),
+                Books = CreateWebhookBooks(remoteBook.Books),
                 Release = new WebhookRelease(quality, remoteBook),
                 DownloadClient = message.DownloadClientName,
                 DownloadClientType = message.DownloadClientType,
@@ -46,7 +87,7 @@ namespace NzbDrone.Core.Notifications.Webhook
                 EventType = WebhookEventType.Download,
                 InstanceName = _configFileProvider.InstanceName,
                 Author = new WebhookAuthor(message.Author),
-                Book = new WebhookBook(message.Book, primaryEdition),
+                Book = CreateWebhookBook(message.Book, primaryEdition),
                 BookFiles = trackFiles.ConvertAll(x => new WebhookBookFile(x)),
                 IsUpgrade = message.OldFiles.Any(),
                 DownloadClient = message.DownloadClientInfo?.Name,
@@ -91,7 +132,7 @@ namespace NzbDrone.Core.Notifications.Webhook
                 EventType = WebhookEventType.BookDelete,
                 InstanceName = _configFileProvider.InstanceName,
                 Author = new WebhookAuthor(deleteMessage.Book.Author),
-                Book = new WebhookBook(deleteMessage.Book),
+                Book = CreateWebhookBook(deleteMessage.Book),
                 DeletedFiles = deleteMessage.DeletedFiles
             };
         }
@@ -103,7 +144,7 @@ namespace NzbDrone.Core.Notifications.Webhook
                 EventType = WebhookEventType.BookFileDelete,
                 InstanceName = _configFileProvider.InstanceName,
                 Author = new WebhookAuthor(deleteMessage.Book.Author),
-                Book = new WebhookBook(deleteMessage.Book, deleteMessage.BookFile?.Edition),
+                Book = CreateWebhookBook(deleteMessage.Book, deleteMessage.BookFile?.Edition),
                 BookFile = new WebhookBookFile(deleteMessage.BookFile)
             };
         }
@@ -125,7 +166,7 @@ namespace NzbDrone.Core.Notifications.Webhook
                 EventType = WebhookEventType.BookAdded,
                 InstanceName = _configFileProvider.InstanceName,
                 Author = new WebhookAuthor(book.Author),
-                Book = new WebhookBook(book)
+                Book = CreateWebhookBook(book)
             };
         }
 

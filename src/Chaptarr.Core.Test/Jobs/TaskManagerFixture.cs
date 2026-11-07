@@ -9,6 +9,7 @@ using NzbDrone.Core.Backup;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Configuration.Events;
 using NzbDrone.Core.Indexers;
+using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Indexers.MyAnonaMouse;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Jobs;
@@ -77,6 +78,7 @@ namespace Chaptarr.Core.Test.Jobs
         {
             public int RssSyncIntervalValue { get; set; } = 15;
             public int BackupIntervalValue { get; set; } = 7;
+            public int MissingBookSearchIntervalValue { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -84,6 +86,7 @@ namespace Chaptarr.Core.Test.Jobs
                 {
                     "get_RssSyncInterval" => RssSyncIntervalValue,
                     "get_BackupInterval" => BackupIntervalValue,
+                    "get_MissingBookSearchInterval" => MissingBookSearchIntervalValue,
                     _ => throw new NotImplementedException($"Test proxy does not implement IConfigService.{targetMethod?.Name}")
                 };
             }
@@ -180,7 +183,49 @@ namespace Chaptarr.Core.Test.Jobs
             Assert.That(rssNextExecution, Is.EqualTo(lastExecution.AddMinutes(17)));
             Assert.That(backupNextExecution, Is.EqualTo(lastExecution.AddMinutes(2 * 60 * 24)));
             Assert.That(repositoryProxy.UpdatedTasks.Select(t => t.TypeName), Is.EquivalentTo(new[] { typeof(RssSyncCommand).FullName, typeof(BackupCommand).FullName }));
-            Assert.That(repositoryProxy.GetDefinitionCalls, Is.EqualTo(2));
+            Assert.That(repositoryProxy.GetDefinitionCalls, Is.EqualTo(3));
+        }
+
+        [TestCase(0, 0)]
+        [TestCase(-5, 0)]
+        [TestCase(30, 60)]
+        [TestCase(60, 60)]
+        [TestCase(240, 240)]
+        public void should_schedule_missing_book_search_from_config_on_startup(int configured, int expected)
+        {
+            var repository = DispatchProxy.Create<IScheduledTaskRepository, ScheduledTaskRepositoryProxy>();
+            var repositoryProxy = (ScheduledTaskRepositoryProxy)(object)repository;
+            var configService = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
+            ((ConfigServiceProxy)(object)configService).MissingBookSearchIntervalValue = configured;
+            var subject = new TaskManager(repository, configService, new CacheManager(), LogManager.GetCurrentClassLogger());
+
+            subject.Handle(new ApplicationStartedEvent());
+
+            var task = repositoryProxy.UpsertedTasks.Single(t => t.TypeName == typeof(MissingBookSearchCommand).FullName);
+            Assert.That(task.Interval, Is.EqualTo(expected));
+            Assert.That(subject.GetPending().Any(t => t.TypeName == task.TypeName), Is.False);
+        }
+
+        [Test]
+        public void should_update_missing_book_search_interval_when_config_is_saved()
+        {
+            var repository = DispatchProxy.Create<IScheduledTaskRepository, ScheduledTaskRepositoryProxy>();
+            var repositoryProxy = (ScheduledTaskRepositoryProxy)(object)repository;
+            var configService = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
+            ((ConfigServiceProxy)(object)configService).MissingBookSearchIntervalValue = 120;
+            var lastExecution = new DateTime(2026, 05, 10, 01, 08, 53, DateTimeKind.Utc);
+
+            foreach (var type in new[] { typeof(RssSyncCommand), typeof(BackupCommand), typeof(MissingBookSearchCommand) })
+            {
+                repositoryProxy.Definitions[type] = new ScheduledTask { Id = 1, TypeName = type.FullName, Interval = 0, LastExecution = lastExecution };
+            }
+
+            var subject = new TaskManager(repository, configService, new CacheManager(), LogManager.GetCurrentClassLogger());
+
+            subject.HandleAsync(new ConfigSavedEvent());
+
+            Assert.That(subject.GetNextExecution(typeof(MissingBookSearchCommand)), Is.EqualTo(lastExecution.AddMinutes(120)));
+            Assert.That(repositoryProxy.UpdatedTasks.Select(t => t.TypeName), Does.Contain(typeof(MissingBookSearchCommand).FullName));
         }
     }
 }

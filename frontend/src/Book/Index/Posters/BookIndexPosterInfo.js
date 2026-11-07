@@ -3,6 +3,7 @@ import React from 'react';
 import getBookAuthorPath from 'Utilities/Book/getBookAuthorPath';
 import getRelativeDate from 'Utilities/Date/getRelativeDate';
 import formatBytes from 'Utilities/Number/formatBytes';
+import translate from 'Utilities/String/translate';
 import styles from './BookIndexPosterInfo.css';
 
 function BookIndexPosterInfo(props) {
@@ -42,7 +43,7 @@ function BookIndexPosterInfo(props) {
 
     return (
       <div className={styles.info}>
-        {`Added ${addedDate}`}
+        {`${translate('Added')} ${addedDate}`}
       </div>
     );
   }
@@ -60,23 +61,23 @@ function BookIndexPosterInfo(props) {
 
     return (
       <div className={styles.info}>
-        {`Released ${date}`}
+        {`${translate('Released')} ${date}`}
       </div>
     );
   }
 
   if (sortKey === 'bookFileCount') {
-    let books = '1 file';
+    let files = translate('FileCountMessage');
 
     if (bookFileCount === 0) {
-      books = 'No files';
+      files = translate('NoFiles');
     } else if (bookFileCount > 1) {
-      books = `${bookFileCount} files`;
+      files = translate('FilesCountMessage', { count: bookFileCount });
     }
 
     return (
       <div className={styles.info}>
-        {books}
+        {files}
       </div>
     );
   }

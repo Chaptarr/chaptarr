@@ -33,15 +33,20 @@ namespace NzbDrone.Core.Configuration
         bool SkipFreeSpaceCheckWhenImporting { get; set; }
         int MinimumFreeSpaceWhenImporting { get; set; }
         bool CopyUsingHardlinks { get; set; }
+        bool KeepExistingLibraryFileOnImportConflict { get; set; }
         bool ImportExtraFiles { get; set; }
         string ExtraFileExtensions { get; set; }
+        bool MoveExtraFilesOnRename { get; set; }
         bool WatchLibraryForChanges { get; set; }
         bool GranularFileSystemScanning { get; set; }
         RescanAfterRefreshType RescanAfterRefresh { get; set; }
         AllowFingerprinting AllowFingerprinting { get; set; }
         BookMatchingStrictness BookMatchingStrictness { get; set; }
+        int BookImportMinimumMatchPercent { get; set; }
+        bool BookshelfMatchCompatibility { get; set; }
         bool UsePathAsTagsFallback { get; set; }
         bool AutoAddMissingAuthorsFromCompletedDownloads { get; set; }
+        bool AutoInitializeFormatSpecificAuthorPaths { get; set; }
         string DefaultAudiobookRootFolderPath { get; set; }
         string DefaultEbookRootFolderPath { get; set; }
 
@@ -63,6 +68,7 @@ namespace NzbDrone.Core.Configuration
         //Indexers
         int Retention { get; set; }
         int RssSyncInterval { get; set; }
+        int MissingBookSearchInterval { get; set; }
         int MaximumSize { get; set; }
         int MinimumAge { get; set; }
 
@@ -75,6 +81,7 @@ namespace NzbDrone.Core.Configuration
         string TimeFormat { get; set; }
         bool ShowRelativeDates { get; set; }
         bool EnableColorImpairedMode { get; set; }
+        string ExperienceMode { get; set; }
         int UILanguage { get; set; }
         string AddNewDefaultMediaType { get; set; }
 
@@ -86,10 +93,31 @@ namespace NzbDrone.Core.Configuration
         string PlexClientIdentifier { get; }
 
         //Metadata
+        string AudibleMarketplace { get; set; }
         string MetadataSource { get; set; }
+        string MetadataCatalogSources { get; set; }
+        string AdditionalMetadataSources { get; set; }
+        string OpenLibraryContactEmail { get; set; }
+        string MetadataTitleSourcePreference { get; set; }
+        string MetadataDescriptionSourcePreference { get; set; }
+        string MetadataPublisherSourcePreference { get; set; }
+        string MetadataLanguageSourcePreference { get; set; }
+        string MetadataReleaseDateSourcePreference { get; set; }
+        string MetadataPageCountSourcePreference { get; set; }
+        string MetadataCoverSourcePreference { get; set; }
+        string MetadataAuthorImageSourcePreference { get; set; }
+        string MetadataGenresSourcePreference { get; set; }
+        string GoogleBooksApiKey { get; set; }
+        string EuropeanaApiKey { get; set; }
+        string ApifyGoodreadsActor { get; set; }
+        string ApifyToken { get; set; }
+        string ApifyGoodreadsInputTemplate { get; set; }
         string MetadataServerUrl { get; set; }
         string HardcoverApiToken { get; set; }
         bool HardcoverEnabled { get; set; }
+        bool BookshelfNGDatabaseMigrated { get; }
+        string BookshelfNGProviderDialect { get; }
+        BookshelfNGCompatibilityProfile BookshelfNGMigrationProfile { get; }
         string HardcoverUsername { get; set; }
         string HardcoverUserImageUrl { get; set; }
         string MatchingLogsUploadToken { get; set; }

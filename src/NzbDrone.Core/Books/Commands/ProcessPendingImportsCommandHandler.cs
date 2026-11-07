@@ -10,6 +10,7 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Commands;
@@ -27,6 +28,7 @@ namespace NzbDrone.Core.Books.Commands
         private readonly IProvideBookInfo _bookInfo;
         private readonly IManageCommandQueue _commandQueueManager;
         private readonly IEventAggregator _eventAggregator;
+        private readonly IImportListExclusionService _importListExclusionService;
         private readonly Logger _logger;
 
         public ProcessPendingImportsCommandHandler(
@@ -37,6 +39,7 @@ namespace NzbDrone.Core.Books.Commands
             IProvideBookInfo bookInfo,
             IManageCommandQueue commandQueueManager,
             IEventAggregator eventAggregator,
+            IImportListExclusionService importListExclusionService,
             Logger logger)
         {
             _pendingImportService = pendingImportService;
@@ -46,6 +49,7 @@ namespace NzbDrone.Core.Books.Commands
             _bookInfo = bookInfo;
             _commandQueueManager = commandQueueManager;
             _eventAggregator = eventAggregator;
+            _importListExclusionService = importListExclusionService;
             _logger = logger;
         }
 
@@ -195,6 +199,43 @@ namespace NzbDrone.Core.Books.Commands
             _eventAggregator.PublishEvent(evt);
         }
 
+        private bool IsExcludedAndNotInLibrary(PendingAuthorImport item)
+        {
+            try
+            {
+                if (_importListExclusionService == null || string.IsNullOrWhiteSpace(item.ProviderId))
+                {
+                    return false;
+                }
+
+                var separator = item.ProviderId.IndexOf(':');
+                var lookupIds = new List<string> { item.ProviderId };
+                if (separator > 0 && separator < item.ProviderId.Length - 1)
+                {
+                    lookupIds.Add(item.ProviderId.Substring(separator + 1));
+                }
+
+                var exclusions = _importListExclusionService.FindByForeignId(lookupIds);
+                var excluded = exclusions != null && exclusions.Any(exclusion =>
+                    (item.HasAudiobook() && ImportListExclusionBookMatcher.AppliesToProviderId(exclusion, item.ProviderId, BookMediaType.Audiobook)) ||
+                    (item.HasEbook() && ImportListExclusionBookMatcher.AppliesToProviderId(exclusion, item.ProviderId, BookMediaType.Ebook)));
+                if (!excluded)
+                {
+                    return false;
+                }
+
+                var existing = separator > 0
+                    ? _authorService.FindByProviderId(item.ProviderId.Substring(0, separator), item.ProviderId.Substring(separator + 1))
+                    : null;
+                return existing == null || existing.Id <= 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Could not check import exclusions for pending import {0}", item.Id);
+                return false;
+            }
+        }
+
         private async Task<PendingAuthorImport> ProcessPendingImportAsync(PendingAuthorImport item)
         {
             _logger.Info("Processing pending import {0} for provider {1}", item.Id, item.ProviderId);
@@ -202,6 +243,17 @@ namespace NzbDrone.Core.Books.Commands
             try
             {
                 _logger.Info("Processing queued author import for provider {0}", item.ProviderId);
+
+                // A request that is already retrying must not bring back an author the user removed with an
+                // exclusion in the meantime. First attempts are explicit requests and are never blocked here.
+                if (item.AttemptCount > 0 && IsExcludedAndNotInLibrary(item))
+                {
+                    var excludedReason = "Author is on the import exclusion list; automatic retry stopped.";
+                    _logger.Warn("Pending author import {0} for {1} stopped: {2}", item.Id, item.ProviderId, excludedReason);
+                    _pendingImportService.UpdateStatus(item, PendingImportStatus.Failed, excludedReason);
+                    _eventAggregator.PublishEvent(new PendingAuthorImportFailedEvent(item));
+                    return item;
+                }
 
                 // Fire importing notification event. AddAuthorAsync performs the metadata fetch; avoid
                 // fetching the same large author payload twice just to populate this progress label.
@@ -227,6 +279,7 @@ namespace NzbDrone.Core.Books.Commands
 
                 if (addedAuthor != null && addedAuthor.Id > 0)
                 {
+                    addedAuthor = await MaterializeSelectedRemoteEditions(config, addedAuthor);
                     var requestedWorks = GetRequestedWorks(item);
                     ResolveLocalBooks(requestedWorks, addedAuthor);
 
@@ -366,7 +419,10 @@ namespace NzbDrone.Core.Books.Commands
                 AudiobookBooksToMonitor = audiobookMonitorTargets,
                 AudiobookBooksToSearch = audiobookSearchTargets,
                 EbookBooksToMonitor = ebookMonitorTargets,
-                EbookBooksToSearch = ebookSearchTargets
+                EbookBooksToSearch = ebookSearchTargets,
+                SelectedRemoteEditions = string.IsNullOrWhiteSpace(item.SelectedRemoteEditions)
+                    ? new List<UserSelectedRemoteEdition>()
+                    : JsonConvert.DeserializeObject<List<UserSelectedRemoteEdition>>(item.SelectedRemoteEditions) ?? new List<UserSelectedRemoteEdition>()
             };
 
             // Deserialize tags if present
@@ -386,6 +442,41 @@ namespace NzbDrone.Core.Books.Commands
             }
 
             return config;
+        }
+
+        private async Task<Author> MaterializeSelectedRemoteEditions(MonitoringConfig config, Author author)
+        {
+            foreach (var selection in config?.SelectedRemoteEditions ?? new List<UserSelectedRemoteEdition>())
+            {
+                if (selection == null ||
+                    string.IsNullOrWhiteSpace(selection.AuthorProviderId) ||
+                    string.IsNullOrWhiteSpace(selection.WorkProviderId))
+                {
+                    throw new InvalidOperationException("Pending selected-edition request is missing its author or work identity.");
+                }
+
+                var materialized = await _authorLibraryService.MaterializeUserSelectedEditionAsync(
+                    new UserSelectedRemoteEdition
+                    {
+                        AuthorProviderId = selection.AuthorProviderId,
+                        WorkProviderId = selection.WorkProviderId,
+                        EditionProviderId = selection.EditionProviderId,
+                        EditionTitle = selection.EditionTitle,
+                        MediaType = selection.MediaType,
+                        QueueIfUnavailable = false
+                    },
+                    config);
+
+                if (materialized?.Author?.Id != author.Id || materialized.Book == null || materialized.Edition == null)
+                {
+                    throw new InvalidOperationException(
+                        $"Pending selected edition '{selection.EditionProviderId ?? selection.EditionTitle}' for work '{selection.WorkProviderId}' could not be materialized.");
+                }
+
+                author = materialized.Author;
+            }
+
+            return author;
         }
 
         private Author ApplyRequestedMonitoring(PendingAuthorImport item, Author author, List<RequestedWork> requestedWorks)

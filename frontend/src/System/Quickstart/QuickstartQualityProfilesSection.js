@@ -316,7 +316,8 @@ class QuickstartQualityProfilesSection extends Component {
       isFetching,
       isPopulated,
       isDeleting,
-      items
+      items,
+      mediaTypes
     } = this.props;
 
     const {
@@ -346,27 +347,33 @@ class QuickstartQualityProfilesSection extends Component {
     const audiobookProfiles = items.filter(isAudiobookProfile);
     const ebookProfiles = items.filter(isEbookProfile);
     const otherProfiles = items.filter((profile) => !isAudiobookProfile(profile) && !isEbookProfile(profile));
+    const showAudiobooks = mediaTypes.includes('audiobook');
+    const showEbooks = mediaTypes.includes('ebook');
     const deleteProfile = items.find((profile) => profile.id === deleteProfileId);
 
     return (
       <div className={styles.profilesContainer}>
         <div className={styles.profilesTwoColumn}>
-          <div className={styles.profileColumn}>
-            <h3 className={styles.columnHeader}>{translate('AudiobookQualityProfiles')}</h3>
+          {showAudiobooks && (
+            <div className={styles.profileColumn}>
+              <h3 className={styles.columnHeader}>{translate('AudiobookQualityProfiles')}</h3>
 
-            {
-              audiobookProfiles.map((profile) => this.renderQualityProfile(profile))
-            }
-            {this.renderAddQualityProfileCard(translate('AddAudiobookQualityProfile'), 'audiobook')}
-          </div>
+              {
+                audiobookProfiles.map((profile) => this.renderQualityProfile(profile))
+              }
+              {this.renderAddQualityProfileCard(translate('AddAudiobookQualityProfile'), 'audiobook')}
+            </div>
+          )}
 
-          <div className={styles.profileColumn}>
-            <h3 className={styles.columnHeader}>{translate('EbookQualityProfiles')}</h3>
-            {
-              ebookProfiles.map((profile) => this.renderQualityProfile(profile))
-            }
-            {this.renderAddQualityProfileCard(translate('AddEbookQualityProfile'), 'ebook')}
-          </div>
+          {showEbooks && (
+            <div className={styles.profileColumn}>
+              <h3 className={styles.columnHeader}>{translate('EbookQualityProfiles')}</h3>
+              {
+                ebookProfiles.map((profile) => this.renderQualityProfile(profile))
+              }
+              {this.renderAddQualityProfileCard(translate('AddEbookQualityProfile'), 'ebook')}
+            </div>
+          )}
         </div>
 
         {
@@ -410,7 +417,8 @@ QuickstartQualityProfilesSection.propTypes = {
   fetchQualityProfiles: PropTypes.func.isRequired,
   deleteQualityProfile: PropTypes.func.isRequired,
   cloneQualityProfile: PropTypes.func.isRequired,
-  markSectionInteracted: PropTypes.func
+  markSectionInteracted: PropTypes.func,
+  mediaTypes: PropTypes.arrayOf(PropTypes.oneOf(['audiobook', 'ebook'])).isRequired
 };
 
 export default connect(createMapStateToProps, mapDispatchToProps)(QuickstartQualityProfilesSection);

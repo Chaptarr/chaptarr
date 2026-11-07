@@ -21,9 +21,9 @@ function getTooltip(title, quality, size, isMonitored, isCutoffNotMet) {
   }
 
   if (!isMonitored) {
-    title += ' [Not Monitored]';
+    title += ` [${translate('NotMonitored')}]`;
   } else if (isCutoffNotMet) {
-    title += ' [Cutoff Not Met]';
+    title += ` [${translate('CutoffNotMetLabel')}]`;
   }
 
   return title;

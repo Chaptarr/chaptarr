@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -16,6 +17,7 @@ namespace NzbDrone.Core.MediaFiles
         List<BookFile> GetMappedFilePathEvidenceByAuthor(int authorId, string mediaType);
         List<BookFile> GetFilesByBook(int bookId);
         List<BookFile> GetFilesByBooks(List<int> bookIds);
+        DateTime? GetLatestImportDate() => null;
         List<BookFile> GetFilesByEdition(int editionId);
         List<BookFile> GetUnmappedFiles();
         List<BookFile> GetUnmappedFiles(string mediaType);
@@ -46,6 +48,16 @@ namespace NzbDrone.Core.MediaFiles
             .LeftJoin<Edition, Book>((e, b) => e.BookId == b.Id)
             .LeftJoin<Book, Author>((book, author) => book.AuthorId == author.Id);
 
+        // For lookups that filter on the book or its author. Those can only match files that
+        // have an edition and a book, so the INNER JOINs return the same rows as Builder().
+        // They also let the database start from the book or author and follow the indexes
+        // down to the files. With LEFT JOINs, SQLite has to read every BookFiles row to
+        // answer a lookup for one book or author.
+        private SqlBuilder MappedFilesBuilder() => new SqlBuilder(_database.DatabaseType)
+            .Join<BookFile, Edition>((b, e) => b.EditionId == e.Id)
+            .Join<Edition, Book>((e, b) => e.BookId == b.Id)
+            .LeftJoin<Book, Author>((book, author) => book.AuthorId == author.Id);
+
         protected override List<BookFile> Query(SqlBuilder builder) => Query(_database, builder).ToList();
 
         public static IEnumerable<BookFile> Query(IDatabase database, SqlBuilder builder)
@@ -74,7 +86,16 @@ namespace NzbDrone.Core.MediaFiles
 
         public List<BookFile> GetFilesByAuthor(int authorId)
         {
-            return Query(Builder().Where<Book>(b => b.AuthorId == authorId));
+            return Query(MappedFilesBuilder().Where<Book>(b => b.AuthorId == authorId));
+        }
+
+        public DateTime? GetLatestImportDate()
+        {
+            using var conn = _database.OpenConnection();
+            return conn.ExecuteScalar<DateTime?>(@"SELECT MAX(bf.""DateAdded"")
+                                                  FROM ""BookFiles"" bf
+                                                  INNER JOIN ""Editions"" e ON e.""Id"" = bf.""EditionId""
+                                                  INNER JOIN ""Books"" b ON b.""Id"" = e.""BookId""");
         }
 
         public List<BookFile> GetMappedFilePathEvidenceByAuthor(int authorId, string mediaType)
@@ -97,7 +118,7 @@ namespace NzbDrone.Core.MediaFiles
 
         public List<BookFile> GetFilesByBook(int bookId)
         {
-            return Query(Builder().Where<Book>(b => b.Id == bookId));
+            return Query(MappedFilesBuilder().Where<Book>(b => b.Id == bookId));
         }
 
         public List<BookFile> GetFilesByBooks(List<int> bookIds)
@@ -391,25 +412,25 @@ namespace NzbDrone.Core.MediaFiles
 	                        (""Path"", ""Size"", ""Modified"", ""DateAdded"", ""OriginalFilePath"", ""SceneName"",
 	                         ""ReleaseGroup"", ""Quality"", ""IndexerFlags"", ""MediaInfo"", ""EditionId"",
 	                         ""CalibreId"", ""Part"", ""IsGraphicAudio"", ""AudioProductionType"", ""Narrator"",
-	                         ""LastMatchAttempt"", ""MatchDetails"", ""MatchProvenance"", ""MediaType"", ""ReplicaPaths"",
+	                         ""LastMatchAttempt"", ""LastRemoteSearchTime"", ""MatchDetails"", ""MatchProvenance"", ""MediaType"", ""ReplicaPaths"",
 	                         ""AllTags"", ""DurationSeconds"")
 	                    VALUES
 	                        (@Path, @Size, @Modified, @DateAdded, @OriginalFilePath, @SceneName,
 	                         @ReleaseGroup, @Quality, @IndexerFlags, @MediaInfo, @EditionId,
 	                         @CalibreId, @Part, @IsGraphicAudio, @AudioProductionType, @Narrator,
-	                         @LastMatchAttempt, @MatchDetails, @MatchProvenance, @MediaType, @ReplicaPaths,
+	                         @LastMatchAttempt, @LastRemoteSearchTime, @MatchDetails, @MatchProvenance, @MediaType, @ReplicaPaths,
 	                         @AllTags, @DurationSeconds);"
 	                : @"INSERT INTO ""BookFiles""
 	                        (""Path"", ""Size"", ""Modified"", ""DateAdded"", ""OriginalFilePath"", ""SceneName"",
 	                         ""ReleaseGroup"", ""Quality"", ""IndexerFlags"", ""MediaInfo"", ""EditionId"",
 	                         ""CalibreId"", ""Part"", ""IsGraphicAudio"", ""AudioProductionType"", ""Narrator"",
-	                         ""LastMatchAttempt"", ""MatchDetails"", ""MatchProvenance"", ""MediaType"", ""ReplicaPaths"",
+	                         ""LastMatchAttempt"", ""LastRemoteSearchTime"", ""MatchDetails"", ""MatchProvenance"", ""MediaType"", ""ReplicaPaths"",
 	                         ""AllTags"", ""DurationSeconds"")
 	                    VALUES
 	                        (@Path, @Size, @Modified, @DateAdded, @OriginalFilePath, @SceneName,
 	                         @ReleaseGroup, @Quality, @IndexerFlags, @MediaInfo, @EditionId,
 	                         @CalibreId, @Part, @IsGraphicAudio, @AudioProductionType, @Narrator,
-	                         @LastMatchAttempt, @MatchDetails, @MatchProvenance, @MediaType, @ReplicaPaths,
+	                         @LastMatchAttempt, @LastRemoteSearchTime, @MatchDetails, @MatchProvenance, @MediaType, @ReplicaPaths,
 	                         @AllTags, @DurationSeconds)
 	                    ON CONFLICT(""Path"") DO NOTHING;";
 

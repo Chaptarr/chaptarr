@@ -1,4 +1,7 @@
-import _ from 'lodash';
+import filter from 'lodash/filter';
+import find from 'lodash/find';
+import indexOf from 'lodash/indexOf';
+import sortBy from 'lodash/sortBy';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -22,12 +25,12 @@ function createMapStateToProps() {
     (state, { value }) => value,
     createTagsSelector(),
     (tags = [], tagList) => {
-      const sortedTags = _.sortBy(tagList, 'label');
-      const filteredTagList = _.filter(sortedTags, (tag) => _.indexOf(tags, tag.id) === -1);
+      const sortedTags = sortBy(tagList, 'label');
+      const filteredTagList = filter(sortedTags, (tag) => indexOf(tags, tag.id) === -1);
 
       return {
         tags: tags.reduce((acc, tag) => {
-          const matchingTag = _.find(tagList, { id: tag });
+          const matchingTag = find(tagList, { id: tag });
 
           if (matchingTag) {
             acc.push({
@@ -70,7 +73,7 @@ class TagInputConnector extends Component {
 
     if (!tag.id) {
       const normalizedName = (tag.name || '').trim().toLowerCase();
-      const existingTag = _.find(allTags, (t) => (t.label || '').trim().toLowerCase() === normalizedName);
+      const existingTag = find(allTags, (t) => (t.label || '').trim().toLowerCase() === normalizedName);
 
       if (existingTag) {
         const currentValue = value || [];
@@ -109,14 +112,14 @@ class TagInputConnector extends Component {
     } = this.props;
 
     const currentValue = value || [];
-    const newValue = id != null
-      ? currentValue.filter((tagId) => tagId !== id)
-      : currentValue.slice();
-
     if (id == null) {
+      const newValue = currentValue.slice();
       newValue.splice(index, 1);
+      this.props.onChange({ name, value: newValue });
+      return;
     }
 
+    const newValue = currentValue.filter((tagId) => tagId !== id);
     this.props.onChange({
       name,
       value: newValue
@@ -164,6 +167,7 @@ TagInputConnector.propTypes = {
   value: PropTypes.arrayOf(PropTypes.number).isRequired,
   tags: PropTypes.arrayOf(PropTypes.object).isRequired,
   allTags: PropTypes.arrayOf(PropTypes.object).isRequired,
+  values: PropTypes.array,
   onChange: PropTypes.func.isRequired,
   addTag: PropTypes.func.isRequired
 };

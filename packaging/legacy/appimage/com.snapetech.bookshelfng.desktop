@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ChaptarrNG
+Comment=Standalone book library manager and download automation server
+Exec=AppRun
+Icon=bookshelfng
+Terminal=true
+Categories=Utility;Network;

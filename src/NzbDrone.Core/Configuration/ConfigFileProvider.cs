@@ -49,6 +49,7 @@ namespace NzbDrone.Core.Configuration
         string UrlBase { get; }
         string UiFolder { get; }
         string InstanceName { get; }
+        string GetBookshelfInstanceName() => InstanceName;
         string InstallationId { get; }
         bool UpdateAutomatically { get; }
         UpdateMechanism UpdateMechanism { get; }
@@ -56,6 +57,7 @@ namespace NzbDrone.Core.Configuration
         string SyslogServer { get; }
         int SyslogPort { get; }
         string SyslogLevel { get; }
+        string SeerrApiKey { get; }
         string Theme { get; }
         string PostgresHost { get; }
         int PostgresPort { get; }
@@ -64,6 +66,12 @@ namespace NzbDrone.Core.Configuration
         string PostgresMainDb { get; }
         string PostgresLogDb { get; }
         string PostgresCacheDb { get; }
+        bool IsPostgresMainDbExplicitlyConfigured();
+        bool IsPostgresLogDbExplicitlyConfigured();
+        bool IsPostgresCacheDbExplicitlyConfigured();
+        string PostgresSslMode { get; }
+        string PostgresRootCert { get; }
+        bool PostgresNoResetOnClose { get; }
         bool TrustCgnatIpAddresses { get; }
         string OidcAuthority { get; }
         string OidcClientId { get; }
@@ -182,7 +190,26 @@ namespace NzbDrone.Core.Configuration
             }
         }
 
-        public int Port => _serverOptions.Port ?? GetValueInt("Port", 8789);
+        public int Port
+        {
+            get
+            {
+                if (_serverOptions.Port.HasValue)
+                {
+                    return _serverOptions.Port.Value;
+                }
+
+                var configuredPort = GetValue("Port", string.Empty, persist: false);
+                if (!string.IsNullOrWhiteSpace(configuredPort))
+                {
+                    return Convert.ToInt32(configuredPort);
+                }
+
+                var defaultPort = ServerConfigurationDefaults.Port;
+                SetValue("Port", defaultPort);
+                return defaultPort;
+            }
+        }
 
         public int SslPort => _serverOptions.SslPort ?? GetValueInt("SslPort", 6868);
 
@@ -205,6 +232,8 @@ namespace NzbDrone.Core.Configuration
                 return apiKey;
             }
         }
+
+        public string SeerrApiKey => _authOptions.SeerrApiKey?.Trim();
 
         public AuthenticationType ConfiguredAuthenticationMethod
         {
@@ -266,20 +295,32 @@ namespace NzbDrone.Core.Configuration
             }
         }
 
-        public string OidcAuthority => GetValue("OidcAuthority", string.Empty).Trim();
-        public string OidcClientId => GetValue("OidcClientId", string.Empty).Trim();
-        public string OidcClientSecret => GetValue("OidcClientSecret", string.Empty);
-        public string OidcScopes => GetValue("OidcScopes", "openid profile email").Trim();
-        public string OidcAllowedEmails => GetValue("OidcAllowedEmails", string.Empty).Trim();
-        public string OidcAllowedEmailDomains => GetValue("OidcAllowedEmailDomains", string.Empty).Trim();
-        public bool OidcRequireEmailVerified => GetValueBoolean("OidcRequireEmailVerified", true);
-        public bool OidcAllowAnyVerifiedUser => GetValueBoolean("OidcAllowAnyVerifiedUser", false);
+        public string OidcAuthority => GetBookshelfOidcSetting("OidcAuthority", BookshelfOidcEnvironmentSettings.Authority).Trim();
+        public string OidcClientId => GetBookshelfOidcSetting("OidcClientId", BookshelfOidcEnvironmentSettings.ClientId).Trim();
+        public string OidcClientSecret => GetBookshelfOidcSetting("OidcClientSecret", BookshelfOidcEnvironmentSettings.ClientSecret);
+        public string OidcScopes => GetBookshelfOidcSetting("OidcScopes", BookshelfOidcEnvironmentSettings.Scopes, "openid profile email").Trim();
+        public string OidcAllowedEmails => GetBookshelfOidcSetting("OidcAllowedEmails", BookshelfOidcEnvironmentSettings.AllowedEmails).Trim();
+        public string OidcAllowedEmailDomains => GetBookshelfOidcSetting("OidcAllowedEmailDomains", BookshelfOidcEnvironmentSettings.AllowedEmailDomains).Trim();
+        // Retained as a read-only compatibility setting. OIDC admission always
+        // requires an affirmative email_verified claim.
+        public bool OidcRequireEmailVerified => true;
+        public bool OidcAllowAnyVerifiedUser => BookshelfOidcEnvironmentSettings.ResolveBoolean(
+            GetValue("OidcAllowAnyVerifiedUser", string.Empty, persist: false),
+            BookshelfOidcEnvironmentSettings.AllowAnyVerifiedUser,
+            false);
 
         public string PlexAuthUserId => GetValue("PlexAuthUserId", string.Empty).Trim();
         public string PlexAuthUsername => GetValue("PlexAuthUsername", string.Empty).Trim();
 
-        // TODO: Change back to "master" for the first stable release
-        public string Branch => _updateOptions.Branch ?? GetValue("Branch", "develop").ToLowerInvariant();
+        private string GetBookshelfOidcSetting(string key, string environmentVariable, string defaultValue = "")
+        {
+            return BookshelfOidcEnvironmentSettings.Resolve(
+                GetValue(key, string.Empty, persist: false),
+                environmentVariable,
+                defaultValue);
+        }
+
+        public string Branch => NormalizeReleaseBranch(_updateOptions.Branch ?? GetValue("Branch", "main"));
 
         public string LogLevel => _logOptions.Level ?? GetValue("LogLevel", "info").ToLowerInvariant();
         public string ConsoleLogLevel => _logOptions.ConsoleLevel ?? GetValue("ConsoleLogLevel", string.Empty, persist: false);
@@ -290,6 +331,12 @@ namespace NzbDrone.Core.Configuration
         public string PostgresMainDb => _postgresOptions?.MainDb ?? GetValue("PostgresMainDb", "chaptarr-main", persist: false);
         public string PostgresLogDb => _postgresOptions?.LogDb ?? GetValue("PostgresLogDb", "chaptarr-log", persist: false);
         public string PostgresCacheDb => _postgresOptions?.CacheDb ?? GetValue("PostgresCacheDb", "chaptarr-cache", persist: false);
+        public bool IsPostgresMainDbExplicitlyConfigured() => IsPostgresDatabaseNameExplicitlyConfigured("PostgresMainDb", _postgresOptions?.MainDb);
+        public bool IsPostgresLogDbExplicitlyConfigured() => IsPostgresDatabaseNameExplicitlyConfigured("PostgresLogDb", _postgresOptions?.LogDb);
+        public bool IsPostgresCacheDbExplicitlyConfigured() => IsPostgresDatabaseNameExplicitlyConfigured("PostgresCacheDb", _postgresOptions?.CacheDb);
+        public string PostgresSslMode => _postgresOptions?.SslMode ?? GetValue("PostgresSslMode", string.Empty, persist: false);
+        public string PostgresRootCert => _postgresOptions?.RootCert ?? GetValue("PostgresRootCert", string.Empty, persist: false);
+        public bool PostgresNoResetOnClose => _postgresOptions?.NoResetOnClose ?? GetValueBoolean("PostgresNoResetOnClose", true, persist: false);
         public int PostgresPort => (_postgresOptions?.Port ?? 0) != 0 ? _postgresOptions.Port : GetValueInt("PostgresPort", 5432, persist: false);
 
         public string Theme => _appOptions.Theme ?? GetValue("Theme", "auto", persist: false);
@@ -331,7 +378,19 @@ namespace NzbDrone.Core.Configuration
             }
         }
 
-        public string InstallationId => GetValue("InstallationId", Guid.NewGuid().ToString());
+        public string GetBookshelfInstanceName()
+        {
+            var name = _appOptions.InstanceName ?? GetValue("InstanceName", "Readarr", false);
+            return ResolveBookshelfInstanceName(name);
+        }
+
+        internal static string ResolveBookshelfInstanceName(string name)
+        {
+            // Match the predecessor's default and accepted custom instance names.
+            return name?.Contains("Readarr", StringComparison.OrdinalIgnoreCase) == true ? name : "Readarr";
+        }
+
+        public string InstallationId => GetValue("InstallationId", Guid.NewGuid().ToString("N"), true);
 
         public bool UpdateAutomatically => _updateOptions.Automatically ?? GetValueBoolean("UpdateAutomatically", OsInfo.IsWindows, false);
 
@@ -388,6 +447,17 @@ namespace NzbDrone.Core.Configuration
                     //return the default value
                     return defaultValue.ToString();
                 });
+        }
+
+        private bool IsPostgresDatabaseNameExplicitlyConfigured(string key, string environmentValue)
+        {
+            if (environmentValue != null)
+            {
+                return true;
+            }
+
+            var config = LoadConfigFile().Descendants(CONFIG_ELEMENT_NAME).Single();
+            return config.Descendants(key).Any();
         }
 
         public void SetValue(string key, object value)
@@ -542,5 +612,13 @@ namespace NzbDrone.Core.Configuration
         }
 
         public bool TrustCgnatIpAddresses => _authOptions.TrustCgnatIpAddresses ?? GetValueBoolean("TrustCgnatIpAddresses", false, persist: false);
+
+        private static string NormalizeReleaseBranch(string branch)
+        {
+            var normalized = (branch ?? "main").Trim().ToLowerInvariant();
+            return normalized == "develop" || normalized == "master" || normalized == "nightly"
+                ? "main"
+                : normalized;
+        }
     }
 }

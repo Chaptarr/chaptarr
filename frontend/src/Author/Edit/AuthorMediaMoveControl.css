@@ -1,0 +1,141 @@
+.moveButton {
+  composes: button from '~Components/Link/Button.css';
+
+  margin-top: 8px;
+}
+
+.pathSummary {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+
+  margin-bottom: 16px;
+}
+
+.pathSummary > div {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 10px;
+
+  align-items: baseline;
+}
+
+.pathLabel {
+  color: var(--helpTextColor);
+}
+
+.pathSummary code,
+.fileRow code {
+  overflow-wrap: anywhere;
+
+  white-space: normal;
+}
+
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+
+  padding: 12px 0;
+  border-top: 1px solid var(--borderColor);
+  border-bottom: 1px solid var(--borderColor);
+}
+
+.spaceSummary {
+  margin: 12px 0;
+
+  color: var(--helpTextColor);
+}
+
+.fileList {
+  overflow: auto;
+
+  margin-top: 14px;
+  max-height: 220px;
+}
+
+.authorGroup {
+  display: grid;
+  gap: 7px;
+
+  padding: 12px 0;
+  border-bottom: 1px solid var(--borderColor);
+}
+
+.authorGroup > span {
+  color: var(--helpTextColor);
+}
+
+.fileRow {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 5px 10px;
+
+  padding: 8px 0;
+  border-bottom: 1px solid var(--borderColor);
+}
+
+.fileStatus {
+  grid-row: span 2;
+
+  color: var(--helpTextColor);
+}
+
+.pathArrow {
+  display: none;
+}
+
+.moreFiles {
+  padding: 9px 0;
+  color: var(--helpTextColor);
+}
+
+.notices {
+  overflow: auto;
+
+  margin-top: 12px;
+  max-height: 170px;
+}
+
+.warning,
+.conflict,
+.queued,
+.error {
+  padding: 9px 11px;
+  border-left: 3px solid var(--warningColor);
+  background-color: var(--defaultBackgroundColor);
+}
+
+.warning + .warning,
+.warning + .conflict,
+.conflict + .warning,
+.conflict + .conflict {
+  margin-top: 6px;
+}
+
+.conflict,
+.error {
+  border-left-color: var(--dangerColor);
+}
+
+.queued {
+  border-left-color: var(--successColor);
+}
+
+@media only screen and (min-width: 768px) {
+  .fileRow {
+    grid-template-columns: 116px minmax(0, 1fr) 20px minmax(0, 1fr);
+
+    align-items: baseline;
+  }
+
+  .fileStatus {
+    grid-row: auto;
+  }
+
+  .pathArrow {
+    display: inline;
+    color: var(--helpTextColor);
+    text-align: center;
+  }
+}

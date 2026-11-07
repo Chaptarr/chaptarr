@@ -8,27 +8,27 @@ import styles from './UMaskInput.css';
 const umaskOptions = [
   {
     key: '755',
-    value: '755 - Owner write, Everyone else read',
+    translationKey: 'UMask755',
     hint: 'drwxr-xr-x'
   },
   {
     key: '775',
-    value: '775 - Owner & Group write, Other read',
+    translationKey: 'UMask775',
     hint: 'drwxrwxr-x'
   },
   {
     key: '770',
-    value: '770 - Owner & Group write',
+    translationKey: 'UMask770',
     hint: 'drwxrwx---'
   },
   {
     key: '750',
-    value: '750 - Owner write, Group read',
+    translationKey: 'UMask750',
     hint: 'drwxr-x---'
   },
   {
     key: '777',
-    value: '777 - Everyone write',
+    translationKey: 'UMask777',
     hint: 'drwxrwxrwx'
   }
 ];
@@ -80,7 +80,11 @@ class UMaskInput extends Component {
     const unit = formatPermissions(folderNum);
 
     const values = umaskOptions.map((v) => {
-      return { ...v, hint: <span className={styles.unit}>{v.hint}</span> };
+      return {
+        key: v.key,
+        value: translate(v.translationKey),
+        hint: <span className={styles.unit}>{v.hint}</span>
+      };
     });
 
     return (

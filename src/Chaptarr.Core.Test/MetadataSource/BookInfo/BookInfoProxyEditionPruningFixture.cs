@@ -55,6 +55,18 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                     return MetadataServerUrl;
                 }
 
+                if (targetMethod?.Name == "IsDefined")
+                {
+                    return false;
+                }
+
+                if (targetMethod?.Name.StartsWith("get_", StringComparison.Ordinal) == true)
+                {
+                    return targetMethod.ReturnType.IsValueType
+                        ? Activator.CreateInstance(targetMethod.ReturnType)
+                        : null;
+                }
+
                 throw new NotImplementedException($"Test proxy does not implement {targetMethod?.Name}");
             }
         }

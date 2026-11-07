@@ -14,6 +14,7 @@ import ModalHeader from 'Components/Modal/ModalHeader';
 import { inputTypes, kinds } from 'Helpers/Props';
 import { authenticationMethodOptions, authenticationRequiredOptions, getOidcCallbackUrl } from 'Settings/General/SecuritySettings';
 import translate from 'Utilities/String/translate';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import styles from './AuthenticationRequiredModalContent.css';
 
 function onModalClose() {
@@ -38,11 +39,12 @@ function AuthenticationRequiredModalContent(props) {
     if (Array.isArray(responseJSON)) {
       return responseJSON
         .map((e) => e?.errorMessage)
-        .filter(Boolean);
+        .filter(Boolean)
+        .map(translateServerMessage);
     }
 
     const message = responseJSON?.message || saveError?.responseText;
-    return message ? [message] : [];
+    return message ? [translateServerMessage(message)] : [];
   })();
 
   const {

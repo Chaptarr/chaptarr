@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Chaptarr.Api.V1.Author;
 using Chaptarr.Api.V1.CustomFormats;
+using Chaptarr.Http.Middleware;
 using Chaptarr.Http.REST;
+using NzbDrone.Core.Books;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Qualities;
 
@@ -58,6 +61,43 @@ namespace Chaptarr.Api.V1.Blocklist
                 Indexer = model.Indexer,
                 Message = model.Message
             };
+        }
+
+        public static BlocklistResource MapToResource(
+            NzbDrone.Core.Blocklisting.Blocklist model,
+            NzbDrone.Core.Books.Author author,
+            ReadarrFacadeContext facadeContext,
+            int? legacyAuthorId,
+            int? legacyAuthorMetadataId,
+            IEnumerable<int> legacyBookIds)
+        {
+            var resource = MapToResource(model);
+            if (resource == null)
+            {
+                return null;
+            }
+
+            if (author != null)
+            {
+                resource.AuthorId = facadeContext?.IsBookshelfCompatibility == true
+                    ? legacyAuthorId ?? author.Id
+                    : author.Id;
+                resource.Author = AuthorResourceMapper.ToResource(author, facadeContext);
+                if (facadeContext?.IsBookshelfCompatibility == true && legacyAuthorMetadataId.HasValue)
+                {
+                    resource.Author.AuthorMetadataId = legacyAuthorMetadataId.Value;
+                }
+            }
+
+            if (facadeContext?.IsBookshelfCompatibility == true)
+            {
+                resource.BookIds = (legacyBookIds ?? Enumerable.Empty<int>())
+                    .Where(id => id > 0)
+                    .Distinct()
+                    .ToList();
+            }
+
+            return resource;
         }
     }
 }

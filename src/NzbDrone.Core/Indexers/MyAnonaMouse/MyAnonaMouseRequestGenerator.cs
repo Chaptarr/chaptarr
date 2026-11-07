@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
@@ -20,7 +21,8 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         private const int RecentPageSize = 500;
         private const int SearchPageSize = 100;
         private const int SearchMaxPages = 10;
-        private static readonly Regex BookNumberSuffixRegex = new Regex(@"\s*,?\s*book\s+\d+\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        // the query is decoded before this runs, so "Book 0.5" can arrive as "Book 0 5"
+        private static readonly Regex BookNumberSuffixRegex = new Regex(@"\s*,?\s*book\s+\d+([.\s]\d+)?\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex MultiWhitespaceRegex = new Regex(@"\s{2,}", RegexOptions.Compiled);
 
         public MyAnonaMouseSettings Settings { get; set; }
@@ -43,9 +45,10 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
             // MAM_TRACE: Log search criteria
             Logger.Trace("MAM_SEARCH_START: Book search initiated");
-            Logger.Trace("MAM_SEARCH_CRITERIA: Author='{0}', BookTitle='{1}', BookQuery='{2}'",
+            Logger.Trace("MAM_SEARCH_CRITERIA: Author='{0}', BookTitle='{1}', SearchTitle='{2}', BookQuery='{3}'",
                 searchCriteria.Author?.Name ?? "Unknown",
                 searchCriteria.BookTitle ?? "Unknown",
+                searchCriteria.SearchTitleOverride ?? "(primary)",
                 bookQuery ?? "Unknown");
 
             Logger.Trace("MAM_SEARCH_MODE: Using JSON API");
@@ -163,8 +166,9 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 AddSearchTerm(decodedTitle, "MAM_SEARCH_FALLBACK_TERM: '{0}' (title-only fallback)", isFallback: true);
             }
 
-            // Interactive search: add a fallback query for verbose titles like "... , Book 3" that can hurt recall.
-            if (searchCriteria.InteractiveSearch && !string.IsNullOrWhiteSpace(decodedTitle))
+            // Last-resort query for verbose titles like "... , Book 3" that can hurt recall, for automatic
+            // and interactive searches alike (it only runs when the queries above found nothing).
+            if (!string.IsNullOrWhiteSpace(decodedTitle))
             {
                 var fallbackTitle = BookNumberSuffixRegex.Replace(decodedTitle, string.Empty).Trim();
                 if (!string.IsNullOrWhiteSpace(fallbackTitle) &&
@@ -221,7 +225,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
         private static string GetSafeBookQuery(BookSearchCriteria searchCriteria)
         {
-            var title = BookSearchCriteria.GetMainSearchTitle(searchCriteria?.BookTitle, searchCriteria?.Author?.Name);
+            var title = BookSearchCriteria.GetMainSearchTitle(searchCriteria?.SearchTitleOverride ?? searchCriteria?.BookTitle, searchCriteria?.Author?.Name);
             return string.IsNullOrWhiteSpace(title) ? string.Empty : SearchCriteriaBase.GetQueryTitle(title);
         }
 
@@ -272,12 +276,23 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         private object BuildJsonSearchPayload(string searchText, int? startNumber = null, int? perPage = null, SearchCriteriaBase searchCriteria = null, bool includeDescription = true)
         {
             var browseLanguages = BuildBrowseLanguages(searchCriteria);
+            var searchType = Settings.SearchType switch
+            {
+                (int)MyAnonaMouseSearchType.All => "all",
+                (int)MyAnonaMouseSearchType.Active => "active",
+                (int)MyAnonaMouseSearchType.Freeleech => "fl",
+                (int)MyAnonaMouseSearchType.FreeleechOrVip => "fl-VIP",
+                (int)MyAnonaMouseSearchType.Vip => "VIP",
+                (int)MyAnonaMouseSearchType.NotVip => "nVIP",
+                null => Settings.MinimumSeeders > 0 ? "active" : "all",
+                _ => "all"
+            };
 
             var torrentParams = new Dictionary<string, object>
             {
                 ["text"] = searchText ?? "",
-                ["srchIn"] = new[] { "title", "author", "narrator", "series", "tags" },
-                ["searchType"] = Settings.MinimumSeeders > 0 ? "active" : "all",
+                ["srchIn"] = BuildSearchFields(),
+                ["searchType"] = searchType,
                 ["searchIn"] = "torrents",
                 ["cat"] = new[] { "0" },
                 ["main_cat"] = BuildMainCategories(searchCriteria),
@@ -309,6 +324,28 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             return payload;
         }
 
+        private List<string> BuildSearchFields()
+        {
+            var fields = new List<string> { "title", "author", "narrator" };
+            if (Settings.SearchInSeries)
+            {
+                fields.Add("series");
+            }
+
+            fields.Add("tags");
+            if (Settings.SearchInDescription)
+            {
+                fields.Add("description");
+            }
+
+            if (Settings.SearchInFilenames)
+            {
+                fields.Add("filenames");
+            }
+
+            return fields;
+        }
+
         private static string[] BuildMainCategories(SearchCriteriaBase searchCriteria)
         {
             var mediaType = SearchMediaTypeHelper.GetRequestedMediaType(searchCriteria);
@@ -323,6 +360,15 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
         private List<string> BuildBrowseLanguages(SearchCriteriaBase searchCriteria)
         {
+            var configuredLanguages = Settings.SearchLanguages?
+                .Distinct()
+                .Select(language => language.ToString(CultureInfo.InvariantCulture))
+                .ToList();
+            if (configuredLanguages?.Count > 0)
+            {
+                return configuredLanguages;
+            }
+
             if (!TryGetProfileLanguagePolicy(
                     searchCriteria,
                     out var profileLanguages,

@@ -1,4 +1,5 @@
 using NLog;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch.Definitions;
@@ -9,16 +10,20 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
     public class TorrentSeedingSpecification : IDecisionEngineSpecification
     {
         private readonly IIndexerFactory _indexerFactory;
+        private readonly IConfigService _configService;
         private readonly Logger _logger;
 
-        public TorrentSeedingSpecification(IIndexerFactory indexerFactory, Logger logger)
+        public TorrentSeedingSpecification(IIndexerFactory indexerFactory, IConfigService configService, Logger logger)
         {
             _indexerFactory = indexerFactory;
+            _configService = configService;
             _logger = logger;
         }
 
         public SpecificationPriority Priority => SpecificationPriority.Default;
-        public RejectionType Type => RejectionType.Temporary; // Changed to Temporary for soft filtering
+        public RejectionType Type => _configService?.BookshelfMatchCompatibility == true
+            ? RejectionType.Permanent
+            : RejectionType.Temporary;
 
         public Decision IsSatisfiedBy(RemoteBook remoteBook, SearchCriteriaBase searchCriteria)
         {
@@ -50,7 +55,11 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 {
                     _logger.Trace("Not enough seeders: {0}. Minimum seeders: {1}", torrentInfo.Seeders, minimumSeeders);
 
-                    // Soft filter: Seeder requirements can be bypassed by user choice
+                    if (_configService?.BookshelfMatchCompatibility == true)
+                    {
+                        return Decision.Reject("Not enough seeders: {0}. Minimum seeders: {1}", torrentInfo.Seeders, minimumSeeders);
+                    }
+
                     return Decision.RejectSoftFilter("Not enough seeders: {0}. Minimum seeders: {1}", "Seeders", torrentInfo.Seeders, minimumSeeders);
                 }
             }

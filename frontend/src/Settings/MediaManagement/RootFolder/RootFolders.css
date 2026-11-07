@@ -41,7 +41,21 @@
 }
 
 .addRootFolderContainer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+
   margin-top: 15px;
+}
+
+.backfillRootFoldersButton {
+  margin-left: 0;
+}
+
+.backfillError {
+  margin-top: 10px;
+  color: var(--dangerColor);
 }
 
 .addRootFolderIcon {

@@ -4,6 +4,7 @@ import AuthorMonitoringGatePopoverContent from 'AddAuthor/AuthorMonitoringGatePo
 import AuthorMonitoringOptionsPopoverContent from 'AddAuthor/AuthorMonitoringOptionsPopoverContent';
 import AuthorMonitorNewItemsOptionsPopoverContent from 'AddAuthor/AuthorMonitorNewItemsOptionsPopoverContent';
 import BookMonitoringOptionsPopoverContent from 'AddAuthor/BookMonitoringOptionsPopoverContent';
+import Alert from 'Components/Alert';
 import Form from 'Components/Form/Form';
 import FormGroup from 'Components/Form/FormGroup';
 import FormInputGroup from 'Components/Form/FormInputGroup';
@@ -11,11 +12,23 @@ import FormLabel from 'Components/Form/FormLabel';
 import MediaTypeToggle from 'Components/Form/MediaTypeToggle';
 import Icon from 'Components/Icon';
 import Button from 'Components/Link/Button';
+import Link from 'Components/Link/Link';
 import Popover from 'Components/Tooltip/Popover';
-import { icons, inputTypes, kinds, sizes, tooltipPositions } from 'Helpers/Props';
-import monitorNewItemsOptions, { resolveMonitorNewItemsOptionValue } from 'Utilities/Author/monitorNewItemsOptions';
-import monitorOptions, { resolveMonitorOptionValue } from 'Utilities/Author/monitorOptions';
+import {
+  icons,
+  inputTypes,
+  kinds,
+  sizes,
+  tooltipPositions
+} from 'Helpers/Props';
+import monitorNewItemsOptions, {
+  resolveMonitorNewItemsOptionValue
+} from 'Utilities/Author/monitorNewItemsOptions';
+import monitorOptions, {
+  resolveMonitorOptionValue
+} from 'Utilities/Author/monitorOptions';
 import translate from 'Utilities/String/translate';
+import { getMissingAddFormatSetup } from './addFormatSetup.cjs';
 import styles from './AddAuthorOptionsForm.css';
 
 const specificBookMonitorOptions = [
@@ -24,7 +37,6 @@ const specificBookMonitorOptions = [
 ];
 
 class AddAuthorOptionsForm extends Component {
-
   //
   // Listeners
 
@@ -89,18 +101,37 @@ class AddAuthorOptionsForm extends Component {
       isWindows,
       isExistingAuthor,
       onInputChange,
+      rootFoldersPopulated,
+      rootFoldersFetching,
+      rootFoldersError,
+      fetchRootFolders,
       ...otherProps
     } = this.props;
 
-    const normalizedDefaultMediaType = (defaultMediaType ?? '').trim().toLowerCase();
-    const normalizedSelectedMediaType = (selectedMediaType ?? '').trim().toLowerCase();
-    const isOnDefault = normalizedDefaultMediaType && normalizedSelectedMediaType === normalizedDefaultMediaType;
-    const showSetDefaultButton = !!onSetDefaultMediaType && (!normalizedDefaultMediaType || !isOnDefault);
+    const normalizedDefaultMediaType = (defaultMediaType ?? '')
+      .trim()
+      .toLowerCase();
+    const normalizedSelectedMediaType = (selectedMediaType ?? '')
+      .trim()
+      .toLowerCase();
+    const isOnDefault =
+      normalizedDefaultMediaType &&
+      normalizedSelectedMediaType === normalizedDefaultMediaType;
+    const showSetDefaultButton =
+      !!onSetDefaultMediaType && (!normalizedDefaultMediaType || !isOnDefault);
 
     // Root folder option availability is resolved inside RootFolderSelectInputConnector.
     // Keep the media-type toggle enabled so users can switch media types and configure settings.
     const hasAudiobookRootFolder = true;
     const hasEbookRootFolder = true;
+    const missingSetup = rootFoldersPopulated ?
+      getMissingAddFormatSetup(this.props) :
+      [];
+    const isLoadingRootFolders = !rootFoldersPopulated &&
+      (rootFoldersFetching || !rootFoldersError);
+    const showRootFoldersError = !rootFoldersPopulated &&
+      rootFoldersError &&
+      !rootFoldersFetching;
 
     return (
       <Form {...otherProps}>
@@ -111,27 +142,51 @@ class AddAuthorOptionsForm extends Component {
           hasEbookRootFolder={hasEbookRootFolder}
           includeBoth={includeBothMediaType}
         >
-          {
-            showSetDefaultButton ?
-              <Button
-                kind={kinds.PRIMARY}
-                size={sizes.SMALL}
-                isDisabled={isSavingDefaultMediaType}
-                onPress={this.onSetDefaultMediaTypePress}
-              >
-                {translate('SetAsDefault')}
-              </Button> :
-              null
-          }
+          {showSetDefaultButton ? (
+            <Button
+              kind={kinds.PRIMARY}
+              size={sizes.SMALL}
+              isDisabled={isSavingDefaultMediaType}
+              onPress={this.onSetDefaultMediaTypePress}
+            >
+              {translate('SetAsDefault')}
+            </Button>
+          ) : null}
         </MediaTypeToggle>
+
+        {isLoadingRootFolders && (
+          <Alert kind={kinds.INFO}>
+            {translate('LoadingRootFoldersForAdd')}
+          </Alert>
+        )}
+
+        {showRootFoldersError && (
+          <Alert kind={kinds.DANGER}>
+            {translate('UnableToLoadRootFolders')}{' '}
+            {fetchRootFolders ? (
+              <Button
+                kind={kinds.DEFAULT}
+                size={sizes.SMALL}
+                onPress={fetchRootFolders}
+              >
+                {translate('Retry')}
+              </Button>
+            ) : null}
+          </Alert>
+        )}
+
+        {missingSetup.length > 0 && (
+          <Alert kind={kinds.WARNING}>
+            {translate('AddFormatSetupRequired')}{' '}
+            <Link to="/system/quickstart">{translate('Quickstart')}</Link>
+          </Alert>
+        )}
 
         {(() => {
           const audiobookSettings = (
             <>
               <FormGroup>
-                <FormLabel>
-                  {translate('AudiobookRootFolder')}
-                </FormLabel>
+                <FormLabel>{translate('AudiobookRootFolder')}</FormLabel>
 
                 {isExistingAuthor ? (
                   <FormInputGroup
@@ -163,79 +218,7 @@ class AddAuthorOptionsForm extends Component {
               </FormGroup>
 
               <FormGroup>
-                <FormLabel>
-                  {translate('MonitorAuthorAudiobooks')}
-                  <Popover
-                    anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
-                    title={translate('MonitorAuthorAudiobooks')}
-                    body={<AuthorMonitoringGatePopoverContent />}
-                    position={tooltipPositions.RIGHT}
-                  />
-                </FormLabel>
-
-                <FormInputGroup
-                  type={inputTypes.CHECK}
-                  name="audiobookMonitored"
-                  {...(audiobookMonitored || { value: true })}
-                  value={audiobookMonitored?.value !== false}
-                  onChange={onInputChange}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>
-                  {translate('InitialBookMonitoring')}
-                  <Popover
-                    anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
-                    title={translate('InitialBookMonitoring')}
-                    body={includeSpecificBookMonitor ? <BookMonitoringOptionsPopoverContent /> : <AuthorMonitoringOptionsPopoverContent />}
-                    position={tooltipPositions.RIGHT}
-                  />
-                </FormLabel>
-
-                <FormInputGroup
-                  type={inputTypes.SELECT}
-                  name="audiobookMonitor"
-                  {...(audiobookMonitor || monitor)}
-                  values={includeSpecificBookMonitor ? specificBookMonitorOptions : monitorOptions}
-                  value={(() => {
-                    const currentValue = resolveMonitorOptionValue(audiobookMonitor?.value, monitor?.value);
-
-                    if (includeSpecificBookMonitor) {
-                      return currentValue === 'all' ? 'all' : 'specificBook';
-                    }
-
-                    return currentValue;
-                  })()}
-                  onChange={onInputChange}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>
-                  {translate('MonitorNewBooks')}
-                  <Popover
-                    anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
-                    title={translate('MonitorNewBooks')}
-                    body={<AuthorMonitorNewItemsOptionsPopoverContent />}
-                    position={tooltipPositions.RIGHT}
-                  />
-                </FormLabel>
-
-                <FormInputGroup
-                  type={inputTypes.SELECT}
-                  name="audiobookMonitorNewItems"
-                  values={monitorNewItemsOptions}
-                  {...(audiobookMonitorNewItems || monitorNewItems)}
-                  value={resolveMonitorNewItemsOptionValue(audiobookMonitorNewItems?.value, monitorNewItems?.value)}
-                  onChange={onInputChange}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>
-                  {translate('AudiobookQualityProfile')}
-                </FormLabel>
+                <FormLabel>{translate('AudiobookQualityProfile')}</FormLabel>
 
                 <FormInputGroup
                   type={inputTypes.QUALITY_PROFILE_SELECT}
@@ -248,8 +231,102 @@ class AddAuthorOptionsForm extends Component {
                 />
               </FormGroup>
 
-              {
-                showMetadataProfile ?
+              <details className={styles.advancedOptions}>
+                <summary>{translate('AddMoreOptions')}</summary>
+
+                <FormGroup>
+                  <FormLabel>
+                    {translate('MonitorAuthorAudiobooks')}
+                    <Popover
+                      anchor={
+                        <Icon className={styles.labelIcon} name={icons.INFO} />
+                      }
+                      title={translate('MonitorAuthorAudiobooks')}
+                      body={<AuthorMonitoringGatePopoverContent />}
+                      position={tooltipPositions.RIGHT}
+                    />
+                  </FormLabel>
+
+                  <FormInputGroup
+                    type={inputTypes.CHECK}
+                    name="audiobookMonitored"
+                    {...(audiobookMonitored || { value: true })}
+                    value={audiobookMonitored?.value !== false}
+                    onChange={onInputChange}
+                  />
+                </FormGroup>
+
+                <FormGroup>
+                  <FormLabel>
+                    {translate('InitialBookMonitoring')}
+                    <Popover
+                      anchor={
+                        <Icon className={styles.labelIcon} name={icons.INFO} />
+                      }
+                      title={translate('InitialBookMonitoring')}
+                      body={
+                        includeSpecificBookMonitor ? (
+                          <BookMonitoringOptionsPopoverContent />
+                        ) : (
+                          <AuthorMonitoringOptionsPopoverContent />
+                        )
+                      }
+                      position={tooltipPositions.RIGHT}
+                    />
+                  </FormLabel>
+
+                  <FormInputGroup
+                    type={inputTypes.SELECT}
+                    name="audiobookMonitor"
+                    {...(audiobookMonitor || monitor)}
+                    values={
+                      includeSpecificBookMonitor ?
+                        specificBookMonitorOptions :
+                        monitorOptions
+                    }
+                    value={(() => {
+                      const currentValue = resolveMonitorOptionValue(
+                        audiobookMonitor?.value,
+                        monitor?.value
+                      );
+
+                      if (includeSpecificBookMonitor) {
+                        return currentValue === 'all' ? 'all' : 'specificBook';
+                      }
+
+                      return currentValue;
+                    })()}
+                    onChange={onInputChange}
+                  />
+                </FormGroup>
+
+                <FormGroup>
+                  <FormLabel>
+                    {translate('MonitorNewBooks')}
+                    <Popover
+                      anchor={
+                        <Icon className={styles.labelIcon} name={icons.INFO} />
+                      }
+                      title={translate('MonitorNewBooks')}
+                      body={<AuthorMonitorNewItemsOptionsPopoverContent />}
+                      position={tooltipPositions.RIGHT}
+                    />
+                  </FormLabel>
+
+                  <FormInputGroup
+                    type={inputTypes.SELECT}
+                    name="audiobookMonitorNewItems"
+                    values={monitorNewItemsOptions}
+                    {...(audiobookMonitorNewItems || monitorNewItems)}
+                    value={resolveMonitorNewItemsOptionValue(
+                      audiobookMonitorNewItems?.value,
+                      monitorNewItems?.value
+                    )}
+                    onChange={onInputChange}
+                  />
+                </FormGroup>
+
+                {showMetadataProfile ? (
                   <FormGroup>
                     <FormLabel>
                       {translate('AudiobookMetadataProfile')}
@@ -264,31 +341,27 @@ class AddAuthorOptionsForm extends Component {
                       onChange={this.onAudiobookMetadataProfileIdChange}
                       {...audiobookMetadataProfileId}
                     />
-                  </FormGroup> :
-                  null
-              }
+                  </FormGroup>
+                ) : null}
 
-              <FormGroup>
-                <FormLabel>
-                  {translate('Tags')}
-                </FormLabel>
+                <FormGroup>
+                  <FormLabel>{translate('Tags')}</FormLabel>
 
-                <FormInputGroup
-                  type={inputTypes.TAG}
-                  name="audiobookTags"
-                  onChange={onInputChange}
-                  {...(audiobookTags || tags)}
-                />
-              </FormGroup>
+                  <FormInputGroup
+                    type={inputTypes.TAG}
+                    name="audiobookTags"
+                    onChange={onInputChange}
+                    {...(audiobookTags || tags)}
+                  />
+                </FormGroup>
+              </details>
             </>
           );
 
           const ebookSettings = (
             <>
               <FormGroup>
-                <FormLabel>
-                  {translate('EbookRootFolder')}
-                </FormLabel>
+                <FormLabel>{translate('EbookRootFolder')}</FormLabel>
 
                 {isExistingAuthor ? (
                   <FormInputGroup
@@ -320,79 +393,7 @@ class AddAuthorOptionsForm extends Component {
               </FormGroup>
 
               <FormGroup>
-                <FormLabel>
-                  {translate('MonitorAuthorEbooks')}
-                  <Popover
-                    anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
-                    title={translate('MonitorAuthorEbooks')}
-                    body={<AuthorMonitoringGatePopoverContent />}
-                    position={tooltipPositions.RIGHT}
-                  />
-                </FormLabel>
-
-                <FormInputGroup
-                  type={inputTypes.CHECK}
-                  name="ebookMonitored"
-                  {...(ebookMonitored || { value: true })}
-                  value={ebookMonitored?.value !== false}
-                  onChange={onInputChange}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>
-                  {translate('InitialBookMonitoring')}
-                  <Popover
-                    anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
-                    title={translate('InitialBookMonitoring')}
-                    body={includeSpecificBookMonitor ? <BookMonitoringOptionsPopoverContent /> : <AuthorMonitoringOptionsPopoverContent />}
-                    position={tooltipPositions.RIGHT}
-                  />
-                </FormLabel>
-
-                <FormInputGroup
-                  type={inputTypes.SELECT}
-                  name="ebookMonitor"
-                  {...(ebookMonitor || monitor)}
-                  values={includeSpecificBookMonitor ? specificBookMonitorOptions : monitorOptions}
-                  value={(() => {
-                    const currentValue = resolveMonitorOptionValue(ebookMonitor?.value, monitor?.value);
-
-                    if (includeSpecificBookMonitor) {
-                      return currentValue === 'all' ? 'all' : 'specificBook';
-                    }
-
-                    return currentValue;
-                  })()}
-                  onChange={onInputChange}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>
-                  {translate('MonitorNewBooks')}
-                  <Popover
-                    anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
-                    title={translate('MonitorNewBooks')}
-                    body={<AuthorMonitorNewItemsOptionsPopoverContent />}
-                    position={tooltipPositions.RIGHT}
-                  />
-                </FormLabel>
-
-                <FormInputGroup
-                  type={inputTypes.SELECT}
-                  name="ebookMonitorNewItems"
-                  values={monitorNewItemsOptions}
-                  {...(ebookMonitorNewItems || monitorNewItems)}
-                  value={resolveMonitorNewItemsOptionValue(ebookMonitorNewItems?.value, monitorNewItems?.value)}
-                  onChange={onInputChange}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>
-                  {translate('EbookQualityProfile')}
-                </FormLabel>
+                <FormLabel>{translate('EbookQualityProfile')}</FormLabel>
 
                 <FormInputGroup
                   type={inputTypes.QUALITY_PROFILE_SELECT}
@@ -405,12 +406,104 @@ class AddAuthorOptionsForm extends Component {
                 />
               </FormGroup>
 
-              {
-                showMetadataProfile ?
+              <details className={styles.advancedOptions}>
+                <summary>{translate('AddMoreOptions')}</summary>
+
+                <FormGroup>
+                  <FormLabel>
+                    {translate('MonitorAuthorEbooks')}
+                    <Popover
+                      anchor={
+                        <Icon className={styles.labelIcon} name={icons.INFO} />
+                      }
+                      title={translate('MonitorAuthorEbooks')}
+                      body={<AuthorMonitoringGatePopoverContent />}
+                      position={tooltipPositions.RIGHT}
+                    />
+                  </FormLabel>
+
+                  <FormInputGroup
+                    type={inputTypes.CHECK}
+                    name="ebookMonitored"
+                    {...(ebookMonitored || { value: true })}
+                    value={ebookMonitored?.value !== false}
+                    onChange={onInputChange}
+                  />
+                </FormGroup>
+
+                <FormGroup>
+                  <FormLabel>
+                    {translate('InitialBookMonitoring')}
+                    <Popover
+                      anchor={
+                        <Icon className={styles.labelIcon} name={icons.INFO} />
+                      }
+                      title={translate('InitialBookMonitoring')}
+                      body={
+                        includeSpecificBookMonitor ? (
+                          <BookMonitoringOptionsPopoverContent />
+                        ) : (
+                          <AuthorMonitoringOptionsPopoverContent />
+                        )
+                      }
+                      position={tooltipPositions.RIGHT}
+                    />
+                  </FormLabel>
+
+                  <FormInputGroup
+                    type={inputTypes.SELECT}
+                    name="ebookMonitor"
+                    {...(ebookMonitor || monitor)}
+                    values={
+                      includeSpecificBookMonitor ?
+                        specificBookMonitorOptions :
+                        monitorOptions
+                    }
+                    value={(() => {
+                      const currentValue = resolveMonitorOptionValue(
+                        ebookMonitor?.value,
+                        monitor?.value
+                      );
+
+                      if (includeSpecificBookMonitor) {
+                        return currentValue === 'all' ? 'all' : 'specificBook';
+                      }
+
+                      return currentValue;
+                    })()}
+                    onChange={onInputChange}
+                  />
+                </FormGroup>
+
+                <FormGroup>
+                  <FormLabel>
+                    {translate('MonitorNewBooks')}
+                    <Popover
+                      anchor={
+                        <Icon className={styles.labelIcon} name={icons.INFO} />
+                      }
+                      title={translate('MonitorNewBooks')}
+                      body={<AuthorMonitorNewItemsOptionsPopoverContent />}
+                      position={tooltipPositions.RIGHT}
+                    />
+                  </FormLabel>
+
+                  <FormInputGroup
+                    type={inputTypes.SELECT}
+                    name="ebookMonitorNewItems"
+                    values={monitorNewItemsOptions}
+                    {...(ebookMonitorNewItems || monitorNewItems)}
+                    value={resolveMonitorNewItemsOptionValue(
+                      ebookMonitorNewItems?.value,
+                      monitorNewItems?.value
+                    )}
+                    onChange={onInputChange}
+                  />
+                </FormGroup>
+
+                {showMetadataProfile ? (
                   <FormGroup>
-                    <FormLabel>
-                      {translate('EbookMetadataProfile')}
-                    </FormLabel>
+                    <FormLabel>{translate('EbookMetadataProfile')}</FormLabel>
 
                     <FormInputGroup
                       type={inputTypes.METADATA_PROFILE_SELECT}
@@ -421,22 +514,20 @@ class AddAuthorOptionsForm extends Component {
                       onChange={this.onEbookMetadataProfileIdChange}
                       {...ebookMetadataProfileId}
                     />
-                  </FormGroup> :
-                  null
-              }
+                  </FormGroup>
+                ) : null}
 
-              <FormGroup>
-                <FormLabel>
-                  {translate('Tags')}
-                </FormLabel>
+                <FormGroup>
+                  <FormLabel>{translate('Tags')}</FormLabel>
 
-                <FormInputGroup
-                  type={inputTypes.TAG}
-                  name="ebookTags"
-                  onChange={onInputChange}
-                  {...(ebookTags || tags)}
-                />
-              </FormGroup>
+                  <FormInputGroup
+                    type={inputTypes.TAG}
+                    name="ebookTags"
+                    onChange={onInputChange}
+                    {...(ebookTags || tags)}
+                  />
+                </FormGroup>
+              </details>
             </>
           );
 
@@ -490,6 +581,10 @@ AddAuthorOptionsForm.propTypes = {
   ebookTags: PropTypes.object,
   isWindows: PropTypes.bool.isRequired,
   isExistingAuthor: PropTypes.bool,
+  rootFoldersPopulated: PropTypes.bool,
+  rootFoldersFetching: PropTypes.bool,
+  rootFoldersError: PropTypes.object,
+  fetchRootFolders: PropTypes.func,
   selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook', 'both']).isRequired,
   onMediaTypeChange: PropTypes.func.isRequired,
   onInputChange: PropTypes.func.isRequired

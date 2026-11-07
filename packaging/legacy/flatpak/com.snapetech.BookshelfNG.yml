@@ -1,0 +1,37 @@
+app-id: com.snapetech.BookshelfNG
+branch: stable
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+command: bookshelfng-wrapper
+finish-args:
+  - --share=network
+  - --filesystem=xdg-config/bookshelfng:create
+modules:
+  - name: chaptarrng
+    buildsystem: simple
+    build-commands:
+      - install -d /app/lib/bookshelfng /app/bin
+      - cp -a . /app/lib/bookshelfng/
+      - chmod 0755 /app/lib/bookshelfng/Chaptarr
+      - install -D -m 0644 com.snapetech.BookshelfNG.desktop /app/share/applications/com.snapetech.BookshelfNG.desktop
+      - install -D -m 0644 com.snapetech.BookshelfNG.metainfo.xml /app/share/metainfo/com.snapetech.BookshelfNG.metainfo.xml
+      - install -D -m 0644 com.snapetech.BookshelfNG.png /app/share/icons/hicolor/512x512/apps/com.snapetech.BookshelfNG.png
+      - install -D -m 0755 bookshelfng-supervisor.sh /app/libexec/bookshelfng-supervisor.sh
+      - install -D -m 0755 bookshelfng-journal /app/libexec/bookshelfng-journal
+      - |
+        cat > /app/bin/bookshelfng-wrapper <<'EOF'
+        #!/usr/bin/env sh
+        set -eu
+        data_dir="${XDG_CONFIG_HOME:-$HOME/.config}/bookshelfng"
+        mkdir -p "$data_dir"
+        export HARDCOVER="${HARDCOVER:-false}"
+        export BOOKSHELFNG_DESKTOP_CHANNEL=flatpak
+        export CHAPTARR_PACKAGE_UPDATE_MECHANISM="${CHAPTARR_PACKAGE_UPDATE_MECHANISM:-External}"
+        export CHAPTARR_PACKAGE_UPDATE_MECHANISM_MESSAGE="${CHAPTARR_PACKAGE_UPDATE_MECHANISM_MESSAGE:-Update ChaptarrNG through Flatpak.}"
+        exec /app/libexec/bookshelfng-supervisor.sh /app/lib/bookshelfng/Chaptarr "$data_dir" "$@"
+        EOF
+      - chmod 0755 /app/bin/bookshelfng-wrapper
+    sources:
+      - type: dir
+        path: src

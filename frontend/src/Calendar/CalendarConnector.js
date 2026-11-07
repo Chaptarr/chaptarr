@@ -102,6 +102,13 @@ class CalendarConnector extends Component {
     this.props.fetchCalendar({ time, view });
   };
 
+  onRetryPress = () => {
+    this.props.fetchCalendar({
+      time: this.props.time,
+      view: this.props.view
+    });
+  };
+
   scheduleUpdate = () => {
     this.clearUpdateTimeout();
 
@@ -146,6 +153,7 @@ class CalendarConnector extends Component {
       <Calendar
         {...this.props}
         onCalendarViewChange={this.onCalendarViewChange}
+        onRetryPress={this.onRetryPress}
         onTodayPress={this.onTodayPress}
         onPreviousPress={this.onPreviousPress}
         onNextPress={this.onNextPress}

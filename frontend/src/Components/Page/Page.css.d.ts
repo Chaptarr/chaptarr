@@ -2,7 +2,9 @@
 // Please do not change this file!
 interface CssExports {
   'main': string;
+  'mainContent': string;
   'page': string;
+  'skipLink': string;
 }
 export const cssExports: CssExports;
 export default cssExports;

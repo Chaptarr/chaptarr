@@ -24,57 +24,57 @@ namespace NzbDrone.Core.Notifications.Twitter
 
         public override void OnGrab(GrabMessage message)
         {
-            _twitterService.SendNotification($"Grabbed: {message.Message}", Settings);
+            _twitterService.SendNotification(Localize("notification.prefix.grabbed", "Grabbed: {message}", new Dictionary<string, object> { ["message"] = message.Message }), Settings);
         }
 
         public override void OnReleaseImport(BookDownloadMessage message)
         {
-            _twitterService.SendNotification($"Imported: {message.Message}", Settings);
+            _twitterService.SendNotification(Localize("notification.prefix.imported", "Imported: {message}", new Dictionary<string, object> { ["message"] = message.Message }), Settings);
         }
 
         public override void OnAuthorAdded(Author author)
         {
-            _twitterService.SendNotification($"Author added: {author.Name}", Settings);
+            _twitterService.SendNotification(Localize("notification.prefix.authorAdded", "Author added: {message}", new Dictionary<string, object> { ["message"] = author.Name }), Settings);
         }
 
         public override void OnBookAdded(Book book)
         {
-            _twitterService.SendNotification($"Book added: {book.Author.Name} - {book.Title}", Settings);
+            _twitterService.SendNotification(Localize("notification.prefix.bookAdded", "Book added: {message}", new Dictionary<string, object> { ["message"] = $"{book.Author.Name} - {book.Title}" }), Settings);
         }
 
         public override void OnAuthorDelete(AuthorDeleteMessage deleteMessage)
         {
-            _twitterService.SendNotification($"Deleted: {deleteMessage.Message}", Settings);
+            _twitterService.SendNotification(Localize("notification.prefix.deleted", "Deleted: {message}", new Dictionary<string, object> { ["message"] = deleteMessage.Message }), Settings);
         }
 
         public override void OnBookDelete(BookDeleteMessage deleteMessage)
         {
-            _twitterService.SendNotification($"Deleted: {deleteMessage.Message}", Settings);
+            _twitterService.SendNotification(Localize("notification.prefix.deleted", "Deleted: {message}", new Dictionary<string, object> { ["message"] = deleteMessage.Message }), Settings);
         }
 
         public override void OnBookFileDelete(BookFileDeleteMessage deleteMessage)
         {
-            _twitterService.SendNotification($"Deleted: {deleteMessage.Message}", Settings);
+            _twitterService.SendNotification(Localize("notification.prefix.deleted", "Deleted: {message}", new Dictionary<string, object> { ["message"] = deleteMessage.Message }), Settings);
         }
 
         public override void OnHealthIssue(HealthCheck.HealthCheck healthCheck)
         {
-            _twitterService.SendNotification($"Health Issue: {healthCheck.Message}", Settings);
+            _twitterService.SendNotification(Localize("notification.prefix.healthIssue", "Health issue: {message}", new Dictionary<string, object> { ["message"] = healthCheck.Message }), Settings);
         }
 
         public override void OnDownloadFailure(DownloadFailedMessage message)
         {
-            _twitterService.SendNotification($"Download Failed: {message.Message}", Settings);
+            _twitterService.SendNotification(Localize("notification.prefix.downloadFailed", "Download failed: {message}", new Dictionary<string, object> { ["message"] = message.Message }), Settings);
         }
 
         public override void OnImportFailure(BookDownloadMessage message)
         {
-            _twitterService.SendNotification($"Import Failed: {message.Message}", Settings);
+            _twitterService.SendNotification(Localize("notification.prefix.importFailed", "Import failed: {message}", new Dictionary<string, object> { ["message"] = message.Message }), Settings);
         }
 
         public override void OnApplicationUpdate(ApplicationUpdateMessage updateMessage)
         {
-            _twitterService.SendNotification($"Application Updated: {updateMessage.Message}", Settings);
+            _twitterService.SendNotification(Localize("notification.prefix.applicationUpdated", "Application updated: {message}", new Dictionary<string, object> { ["message"] = updateMessage.Message }), Settings);
         }
 
         public override object RequestAction(string action, IDictionary<string, string> query)

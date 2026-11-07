@@ -7,10 +7,10 @@ namespace NzbDrone.Core.Download.Clients.QBittorrent
         [FieldOption(Label = "Started")]
         Start = 0,
 
-        [FieldOption(Label = "Force Started")]
+        [FieldOption(Label = "provider.option.offfe404b2285")]
         ForceStart = 1,
 
-        [FieldOption(Label = "Stopped")]
+        [FieldOption(Label = "provider.option.o1a4f630ac1b6")]
         Stop = 2
     }
 }

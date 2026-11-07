@@ -36,6 +36,9 @@ namespace Prowlarr.Api.V1.Config
             _httpClient = httpClient;
 
             SharedValidator.RuleFor(c => c.MetadataServerUrl).IsValidUrl().When(c => !c.MetadataServerUrl.IsNullOrWhiteSpace());
+            SharedValidator.RuleFor(c => c.MetadataSource)
+                           .IsValidUrl()
+                           .When(c => !c.MetadataServerUrlWasProvided && !c.MetadataSource.IsNullOrWhiteSpace());
         }
 
         protected override DevelopmentConfigResource GetResourceById(int id)
@@ -55,8 +58,10 @@ namespace Prowlarr.Api.V1.Config
         [RestPutById]
         public ActionResult<DevelopmentConfigResource> SaveDevelopmentConfig([FromBody] DevelopmentConfigResource resource)
         {
+            resource.ApplyBookshelfCompatibilityAliases();
             var dictionary = resource.GetType()
                                      .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+                                     .Where(prop => prop.Name != nameof(DevelopmentConfigResource.MetadataSource))
                                      .ToDictionary(prop => prop.Name, prop => prop.GetValue(resource, null));
 
             _configFileProvider.SaveConfigDictionary(dictionary);

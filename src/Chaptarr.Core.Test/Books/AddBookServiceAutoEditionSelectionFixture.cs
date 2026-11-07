@@ -170,6 +170,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> AddOptionsBooks { get; private set; }
             public Book AddedBook { get; private set; }
             public Book UpdatedBook { get; private set; }
+            public Book ProviderMatch { get; set; }
 
             public Book UpdateBook(Book book)
             {
@@ -177,7 +178,7 @@ namespace Chaptarr.Core.Test.Books
                 return book;
             }
 
-            public Book GetBook(int bookId) => throw new NotImplementedException();
+            public Book GetBook(int bookId) => AuthorBooks.FirstOrDefault(book => book.Id == bookId);
             public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new NotImplementedException();
             public List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
@@ -205,7 +206,7 @@ namespace Chaptarr.Core.Test.Books
             public Book FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public Book FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
             public Book FindByProviderId(string provider, string providerId) => throw new NotImplementedException();
-            public Book FindByProviderId(string provider, string providerId, BookMediaType mediaType) => null;
+            public Book FindByProviderId(string provider, string providerId, BookMediaType mediaType) => ProviderMatch;
             public List<Book> FindAllByProviderId(string provider, string providerId, BookMediaType mediaType) => throw new NotImplementedException();
             public List<Book> FindAllByWorkProviderId(string provider, string providerId, BookMediaType mediaType)
             {
@@ -236,7 +237,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public Book AddWantedEdition(int bookId, int editionId, bool asNewVariant = false) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -261,6 +262,7 @@ namespace Chaptarr.Core.Test.Books
                 foreach (var item in _editions.Where(e => e.BookId == edition.BookId))
                 {
                     item.Monitored = item.Id == edition.Id;
+                    item.ManualAdd = isManualSelection && item.Id == edition.Id;
                 }
 
                 return _editions.Where(e => e.BookId == edition.BookId).ToList();
@@ -275,7 +277,7 @@ namespace Chaptarr.Core.Test.Books
             public Edition GetEditionByOpenLibraryEditionId(string openLibraryEditionId) => throw new NotImplementedException();
             public Edition GetEditionByProviderAndId(string providerPrefix, string providerId) => throw new NotImplementedException();
             public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
-            public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
+            public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
@@ -1086,6 +1088,47 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void should_allow_format_four_ebook_as_audiobook_representative_with_none_metadata_profile()
+        {
+            var profile = new MetadataProfile
+            {
+                Id = 33,
+                Name = MetadataProfileService.NONE_PROFILE_NAME,
+                MinPopularity = MetadataProfileService.NONE_PROFILE_MIN_POPULARITY
+            };
+            var author = new Author { Id = 33, AudiobookMetadataProfileId = profile.Id };
+            var book = new Book
+            {
+                AuthorId = author.Id,
+                Author = author,
+                Title = "Brave New World",
+                MediaType = BookMediaType.Audiobook,
+                Editions = new List<Edition>
+                {
+                    new Edition
+                    {
+                        ForeignEditionId = "hc:format-four-ebook",
+                        Title = "Brave New World",
+                        Language = "eng",
+                        ReadingFormatId = 4
+                    }
+                }
+            };
+
+            var service = BuildService(
+                new StubAuthorService(author),
+                new StubBookService(),
+                new StubEditionService(Array.Empty<Edition>()),
+                new StubMetadataProfileService(profile));
+
+            InvokeApplyEditionRetentionForAdd(service, book, requestedEditionId: null);
+
+            Assert.That(book.Editions.Select(e => e.ForeignEditionId), Is.EqualTo(new[] { "hc:format-four-ebook" }));
+            AssertSingleMonitoredEdition(book.Editions, "hc:format-four-ebook");
+            Assert.That(book.ForeignEditionId, Is.EqualTo("hc:format-four-ebook"));
+        }
+
+        [Test]
         public void should_protect_requested_representative_when_pruning_before_direct_book_insert_if_no_native_survives()
         {
             var profile = new MetadataProfile { Id = 17, AllowedLanguages = "eng" };
@@ -1276,6 +1319,283 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(mediaType == BookMediaType.Audiobook ? config.AudiobookBooksToSearch : config.EbookBooksToSearch,
                 Is.EqualTo(new[] { "hc:1001" }));
             Assert.That(bookAddedService.AuthorIds, Is.EqualTo(new[] { existingAuthor.Id }));
+        }
+
+        [Test]
+        public async Task existing_author_request_should_choose_exact_duplicate_work_rows_deterministically()
+        {
+            var author = CreateExistingAuthor();
+            var requestedBook = CreateRequestedBook(author, "ol:edition-1");
+            var higherIdCopy = CreateLocalBook(102, author, "ol:edition-1");
+            var lowerIdCopy = CreateLocalBook(101, author, "ol:edition-1");
+            var bookService = new StubBookService
+            {
+                AuthorBooks = new List<Book> { higherIdCopy, lowerIdCopy }
+            };
+            var authorLibrary = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryProxy>();
+            ((AuthorLibraryProxy)authorLibrary).AddedAuthor = author;
+            var service = BuildService(
+                new StubAuthorService(author, (_, _) => author),
+                bookService,
+                new StubEditionService(Array.Empty<Edition>()),
+                new StubMetadataProfileService(
+                    new MetadataProfile { Id = 1, AllowedLanguages = "eng" },
+                    new MetadataProfile { Id = 2, AllowedLanguages = "eng" }),
+                authorLibraryService: authorLibrary,
+                importListExclusionService: DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>());
+
+            var result = await service.AddBook(requestedBook);
+
+            Assert.That(result.Id, Is.EqualTo(lowerIdCopy.Id));
+            Assert.That(bookService.UpdatedBook, Is.SameAs(lowerIdCopy));
+            Assert.That(lowerIdCopy.AudiobookMonitored, Is.True);
+            Assert.That(higherIdCopy.AudiobookMonitored, Is.False);
+        }
+
+        [Test]
+        public async Task existing_author_request_should_use_a_unique_selected_edition_to_choose_a_local_work_pocket()
+        {
+            var author = CreateExistingAuthor();
+            var requestedBook = CreateRequestedBook(author, "ol:edition-2");
+            var firstPocket = CreateLocalBook(101, author, "ol:edition-1");
+            var selectedPocket = CreateLocalBook(102, author, "ol:edition-2");
+            var bookService = new StubBookService
+            {
+                AuthorBooks = new List<Book> { firstPocket, selectedPocket }
+            };
+            var authorLibrary = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryProxy>();
+            ((AuthorLibraryProxy)authorLibrary).AddedAuthor = author;
+            var service = BuildService(
+                new StubAuthorService(author, (_, _) => author),
+                bookService,
+                new StubEditionService(Array.Empty<Edition>()),
+                new StubMetadataProfileService(
+                    new MetadataProfile { Id = 1, AllowedLanguages = "eng" },
+                    new MetadataProfile { Id = 2, AllowedLanguages = "eng" }),
+                authorLibraryService: authorLibrary,
+                importListExclusionService: DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>());
+
+            var result = await service.AddBook(requestedBook);
+
+            Assert.That(result.Id, Is.EqualTo(selectedPocket.Id));
+            Assert.That(bookService.UpdatedBook, Is.SameAs(selectedPocket));
+            Assert.That(firstPocket.AudiobookMonitored, Is.False);
+            Assert.That(selectedPocket.AudiobookMonitored, Is.True);
+        }
+
+        [Test]
+        public async Task existing_author_request_should_pin_the_requested_edition_on_the_selected_work_pocket()
+        {
+            var author = CreateExistingAuthor();
+            var requestedBook = CreateRequestedBook(author, "ol:edition-2");
+            var localBook = CreateLocalBook(101, author, "ol:edition-1");
+            localBook.AnyEditionOk = true;
+            localBook.Editions = new List<Edition>
+            {
+                new Edition
+                {
+                    Id = 1101,
+                    BookId = localBook.Id,
+                    ForeignEditionId = "ol:edition-1",
+                    OpenLibraryEditionId = "edition-1",
+                    Title = "Requested Edition One",
+                    ReadingFormatId = 2,
+                    Language = "eng",
+                    Monitored = true
+                },
+                new Edition
+                {
+                    Id = 1102,
+                    BookId = localBook.Id,
+                    ForeignEditionId = "ol:edition-2",
+                    OpenLibraryEditionId = "edition-2",
+                    Title = "Requested Edition Two",
+                    ReadingFormatId = 2,
+                    Language = "eng"
+                }
+            };
+            var bookService = new StubBookService
+            {
+                AuthorBooks = new List<Book> { localBook }
+            };
+            var editionService = new StubEditionService(localBook.Editions);
+            var authorLibrary = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryProxy>();
+            ((AuthorLibraryProxy)authorLibrary).AddedAuthor = author;
+            var service = BuildService(
+                new StubAuthorService(author, (_, _) => author),
+                bookService,
+                editionService,
+                new StubMetadataProfileService(
+                    new MetadataProfile { Id = 1, AllowedLanguages = "eng" },
+                    new MetadataProfile { Id = 2, AllowedLanguages = "eng" }),
+                authorLibraryService: authorLibrary,
+                importListExclusionService: DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>());
+
+            var result = await service.AddBook(requestedBook);
+
+            Assert.That(editionService.MonitoredEdition?.Id, Is.EqualTo(1102));
+            Assert.That(result.Editions.Single(edition => edition.Monitored).OpenLibraryEditionId, Is.EqualTo("edition-2"));
+            Assert.That(result.Editions.Single(edition => edition.Monitored).ManualAdd, Is.True);
+            Assert.That(result.AnyEditionOk, Is.False);
+            Assert.That(result.ForeignEditionId, Is.EqualTo("ol:edition-2"));
+        }
+
+        [Test]
+        public async Task existing_book_request_should_pin_the_requested_edition_before_persistence()
+        {
+            var author = CreateExistingAuthor();
+            var requestedBook = CreateRequestedBook(author, "ol:edition-2");
+            var localBook = CreateLocalBook(101, author, "ol:edition-1");
+            localBook.AnyEditionOk = true;
+            var bookService = new StubBookService { ProviderMatch = localBook };
+            var storedEditions = new List<Edition>
+            {
+                new Edition
+                {
+                    Id = 1101,
+                    BookId = localBook.Id,
+                    ForeignEditionId = "ol:edition-1",
+                    OpenLibraryEditionId = "edition-1",
+                    Title = "Existing Edition",
+                    ReadingFormatId = 2,
+                    Language = "eng",
+                    Monitored = true
+                },
+                new Edition
+                {
+                    Id = 1102,
+                    BookId = localBook.Id,
+                    ForeignEditionId = "ol:edition-2",
+                    OpenLibraryEditionId = "edition-2",
+                    Title = "Requested Edition",
+                    ReadingFormatId = 2,
+                    Language = "eng"
+                }
+            };
+            var service = BuildService(
+                new StubAuthorService(author, (_, _) => author),
+                bookService,
+                new StubEditionService(storedEditions),
+                new StubMetadataProfileService(
+                    new MetadataProfile { Id = 1, AllowedLanguages = "eng" },
+                    new MetadataProfile { Id = 2, AllowedLanguages = "eng" }),
+                importListExclusionService: DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>());
+
+            var result = await service.AddBook(requestedBook);
+
+            Assert.That(result.Id, Is.EqualTo(localBook.Id));
+            Assert.That(result.Editions, Has.Count.EqualTo(2), "The selected edition should reuse the catalog row instead of adding a duplicate.");
+            Assert.That(result.AnyEditionOk, Is.False);
+            Assert.That(result.ForeignEditionId, Is.EqualTo("ol:edition-2"));
+            var monitoredEdition = result.Editions.Single(edition => edition.Monitored);
+            Assert.That(monitoredEdition.Id, Is.EqualTo(1102));
+            Assert.That(monitoredEdition.ForeignEditionId, Is.EqualTo("ol:edition-2"));
+            Assert.That(monitoredEdition.ManualAdd, Is.True);
+        }
+
+        [Test]
+        public void existing_author_request_should_keep_distinct_ambiguous_work_pockets_separate()
+        {
+            var author = CreateExistingAuthor();
+            var requestedBook = CreateRequestedBook(author, "ol:edition-not-present");
+            var firstPocket = CreateLocalBook(101, author, "ol:edition-1");
+            var secondPocket = CreateLocalBook(102, author, "ol:edition-2");
+            var bookService = new StubBookService
+            {
+                AuthorBooks = new List<Book> { firstPocket, secondPocket }
+            };
+            var authorLibrary = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryProxy>();
+            ((AuthorLibraryProxy)authorLibrary).AddedAuthor = author;
+            var service = BuildService(
+                new StubAuthorService(author, (_, _) => author),
+                bookService,
+                new StubEditionService(Array.Empty<Edition>()),
+                new StubMetadataProfileService(
+                    new MetadataProfile { Id = 1, AllowedLanguages = "eng" },
+                    new MetadataProfile { Id = 2, AllowedLanguages = "eng" }),
+                authorLibraryService: authorLibrary,
+                importListExclusionService: DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>());
+
+            var exception = Assert.ThrowsAsync<AmbiguousLocalBookMatchException>(() => service.AddBook(requestedBook));
+
+            Assert.That(exception.Candidates.Select(book => book.Id), Is.EquivalentTo(new[] { firstPocket.Id, secondPocket.Id }));
+            Assert.That(exception.Message, Does.Contain("Open the intended record below"));
+            Assert.That(bookService.UpdatedBook, Is.Null);
+        }
+
+        private static Author CreateExistingAuthor()
+        {
+            return new Author
+            {
+                Id = 42,
+                Name = "Existing Author",
+                HardcoverAuthorId = "hc:777",
+                AudiobookMetadataProfileId = 1,
+                EbookMetadataProfileId = 2,
+                AudiobookMonitored = false,
+                EbookMonitored = false
+            };
+        }
+
+        private static Book CreateRequestedBook(Author author, string editionProviderId)
+        {
+            return new Book
+            {
+                Title = "Requested Book",
+                HardcoverBookId = "hc:1001",
+                GoodreadsWorkId = "gr:2002",
+                MediaType = BookMediaType.Audiobook,
+                Author = new Author
+                {
+                    Name = author.Name,
+                    HardcoverAuthorId = author.HardcoverAuthorId,
+                    AudiobookMonitored = true,
+                    AddOptions = new AddAuthorOptions { Monitor = MonitorTypes.SpecificBook }
+                },
+                AddOptions = new AddBookOptions(),
+                Editions = new List<Edition>
+                {
+                    new Edition
+                    {
+                        ForeignEditionId = editionProviderId,
+                        OpenLibraryEditionId = editionProviderId,
+                        Title = "Requested Edition",
+                        ReadingFormatId = 2,
+                        Language = "eng",
+                        Monitored = true
+                    }
+                }
+            };
+        }
+
+        private static Book CreateLocalBook(int id, Author author, string editionProviderId)
+        {
+            return new Book
+            {
+                Id = id,
+                AuthorId = author.Id,
+                Author = author,
+                Title = "Requested Book",
+                HardcoverBookId = "hc:1001",
+                GoodreadsWorkId = "gr:2002",
+                BaseBookId = "hc:1001",
+                MediaType = BookMediaType.Audiobook,
+                AnyEditionOk = true,
+                Editions = new List<Edition>
+                {
+                    new Edition
+                    {
+                        Id = id + 1000,
+                        BookId = id,
+                        ForeignEditionId = editionProviderId,
+                        OpenLibraryEditionId = editionProviderId,
+                        Title = "Requested Edition",
+                        ReadingFormatId = 2,
+                        Language = "eng",
+                        Monitored = true
+                    }
+                }
+            };
         }
 
         [Test]

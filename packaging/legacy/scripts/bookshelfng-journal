@@ -1,0 +1,176 @@
+#!/bin/sh
+set -eu
+
+data_dir=${BOOKSHELF_DATA_DIR:-/var/lib/bookshelfng}
+case "$data_dir" in
+  /*) ;;
+  *) data_dir=./$data_dir ;;
+esac
+journal_dir="$data_dir/.chaptarrng-bookshelfng-journal"
+
+fail() {
+  echo "BookshelfNG handoff journal: $*" >&2
+  exit 2
+}
+
+valid_key() {
+  case "$1" in
+    ''|*[!A-Za-z0-9_.-]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+write_atomic() {
+  target=$1
+  value=$2
+  tmp="$target.tmp.$$"
+  umask 077
+  printf '%s\n' "$value" > "$tmp"
+  chmod 0600 "$tmp"
+  mv -f "$tmp" "$target"
+}
+
+hash_stream() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    hash_output=$(sha256sum) || return 1
+    set -- $hash_output
+    [ -n "${1:-}" ] || return 1
+    printf '%s\n' "$1"
+  elif command -v shasum >/dev/null 2>&1; then
+    hash_output=$(shasum -a 256) || return 1
+    set -- $hash_output
+    [ -n "${1:-}" ] || return 1
+    printf '%s\n' "$1"
+  elif command -v sha256 >/dev/null 2>&1; then
+    sha256 -q
+  else
+    fail 'no SHA-256 utility is available'
+  fi
+}
+
+file_state() {
+  case "$(uname -s)" in
+    Linux) stat -c '%s:%y:%i' "$1" ;;
+    FreeBSD|Darwin) stat -f '%z:%m:%i' "$1" ;;
+    *) fail "unsupported stat implementation on $(uname -s)" ;;
+  esac
+}
+
+fingerprint_walk() (
+  directory=$1
+  prefix=$2
+  LC_ALL=C
+  export LC_ALL
+
+  for entry in "$directory"/* "$directory"/.[!.]* "$directory"/..?*; do
+    if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then
+      continue
+    fi
+
+    entry_name=${entry##*/}
+    if [ -L "$entry" ]; then
+      fail "fingerprint directory contains a symbolic link at '$prefix$entry_name'"
+    elif [ -d "$entry" ]; then
+      fingerprint_walk "$entry" "$prefix$entry_name/" || exit $?
+    elif [ -f "$entry" ]; then
+      [ ! -L "$entry" ] || fail "fingerprint file '$prefix$entry_name' became a symbolic link"
+      before=$(file_state "$entry") || fail "cannot inspect fingerprint file '$prefix$entry_name'"
+      file_digest=$(hash_stream < "$entry") || fail "cannot hash fingerprint file '$prefix$entry_name'"
+      after=$(file_state "$entry") || fail "cannot inspect fingerprint file '$prefix$entry_name'"
+      [ ! -L "$entry" ] || fail "fingerprint file '$prefix$entry_name' became a symbolic link"
+      [ "$before" = "$after" ] || fail "fingerprint file '$prefix$entry_name' changed while it was being recorded"
+      printf '%s\000%s\n' "$prefix$entry_name" "$file_digest"
+    else
+      fail "fingerprint directory contains a non-regular entry at '$prefix$entry_name'"
+    fi
+  done
+)
+
+ensure_journal_directory() {
+  path=$1
+  [ ! -L "$path" ] || fail "journal path '$path' is a symbolic link"
+  if [ -e "$path" ]; then
+    [ -d "$path" ] || fail "journal path '$path' is not a directory"
+  else
+    mkdir -m 0700 "$path" || fail "cannot create journal directory '$path'"
+  fi
+  [ ! -L "$path" ] || fail "journal path '$path' became a symbolic link"
+  chmod 0700 "$path" || fail "cannot protect journal directory '$path'"
+}
+
+mkdir -p "$data_dir" || fail "cannot create data directory '$data_dir'"
+ensure_journal_directory "$journal_dir"
+ensure_journal_directory "$journal_dir/outcomes"
+ensure_journal_directory "$journal_dir/fingerprints"
+ensure_journal_directory "$journal_dir/states"
+if [ "${BOOKSHELF_JOURNAL_PRESERVE_OWNER:-false}" != true ] && id bookshelfng >/dev/null 2>&1; then
+  chown -R bookshelfng:bookshelfng "$journal_dir" 2>/dev/null || true
+fi
+
+action=${1:-}
+case "$action" in
+  state)
+    state=${2:-}
+    case "$state" in
+      detected|deferred|preflighted|snapshotted|converted|promoted|healthy|rolled-back|intervention-required) ;;
+      *) fail "invalid state '$state'" ;;
+    esac
+    now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+    write_atomic "$journal_dir/state" "$state"
+    write_atomic "$journal_dir/states/$state" "$now"
+    ;;
+  outcome)
+    name=${2:-}
+    value=${3:-}
+    valid_key "$name" || fail 'outcome name must use letters, numbers, dot, underscore, or dash'
+    case "$value" in
+      ''|*[!A-Za-z0-9:._-]*) fail 'outcome value must be a non-empty token' ;;
+    esac
+    write_atomic "$journal_dir/outcomes/$name" "$value"
+    ;;
+  fingerprint)
+    name=${2:-}
+    path=${3:-}
+    refresh=${4:-}
+    valid_key "$name" || fail 'fingerprint name must use letters, numbers, dot, underscore, or dash'
+    [ -n "$path" ] || fail 'fingerprint path is required'
+    target="$journal_dir/fingerprints/$name"
+    [ ! -L "$target" ] || fail "fingerprint record '$name' is a symbolic link"
+    if [ -f "$target" ] && [ "$refresh" != --refresh ]; then
+      exit 0
+    fi
+    case "$path" in
+      /*) fingerprint_path=$path ;;
+      *) fingerprint_path=./$path ;;
+    esac
+    if [ -L "$fingerprint_path" ]; then
+      fail "fingerprint path '$path' is a symbolic link"
+    elif [ -f "$fingerprint_path" ]; then
+      before=$(file_state "$fingerprint_path") || fail "cannot inspect fingerprint path '$path'"
+      file_digest=$(hash_stream < "$fingerprint_path") || fail "cannot hash fingerprint path '$path'"
+      after=$(file_state "$fingerprint_path") || fail "cannot inspect fingerprint path '$path'"
+      [ ! -L "$fingerprint_path" ] || fail "fingerprint path '$path' became a symbolic link"
+      [ "$before" = "$after" ] || fail "fingerprint path '$path' changed while it was being recorded"
+      value="sha256:$file_digest"
+    elif [ -d "$fingerprint_path" ]; then
+      manifest=$(mktemp "$journal_dir/.fingerprint.XXXXXX") || fail 'cannot create a temporary fingerprint manifest'
+      trap 'rm -f "$manifest"' 0
+      fingerprint_walk "$fingerprint_path" '' > "$manifest" || fail "fingerprint directory '$path' changed or could not be read"
+      manifest_digest=$(hash_stream < "$manifest") || fail "cannot hash fingerprint directory '$path'"
+      value="sha256:$manifest_digest"
+    else
+      value=missing
+    fi
+    write_atomic "$target" "$value"
+    ;;
+  get-state)
+    if [ -f "$journal_dir/state" ]; then
+      cat "$journal_dir/state"
+    else
+      printf '%s\n' unknown
+    fi
+    ;;
+  *)
+    fail 'usage: bookshelfng-journal state STATE | outcome NAME VALUE | fingerprint NAME PATH [--refresh] | get-state'
+    ;;
+esac

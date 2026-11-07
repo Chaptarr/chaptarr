@@ -56,6 +56,11 @@ namespace NzbDrone.Core.Books
         public string AudiobookPath { get; set; }
         public string EbookPath { get; set; }
         public DateTime Added { get; set; }
+        // Retain the original single-profile field for BookshelfNG API compatibility.
+        public int QualityProfileId { get; set; }
+        public int? BookshelfNGQualityProfileId { get; set; }
+        public int? BookshelfNGAudiobookQualityProfileId { get; set; }
+        public int? BookshelfNGEbookQualityProfileId { get; set; }
         public int? AudiobookQualityProfileId { get; set; }
         public int? EbookQualityProfileId { get; set; }
         public int? MetadataProfileId { get; set; } // DEPRECATED: Legacy field, being phased out in favor of media-specific profiles
@@ -96,6 +101,8 @@ namespace NzbDrone.Core.Books
         public string AudnexusAuthorId { get; set; }
         public string OpenLibraryAuthorId { get; set; }
         public string GoogleBooksAuthorId { get; set; }
+        public string RanobeDbAuthorId { get; set; }
+        public string AdditionalMetadataProviderId { get; set; }
 
         // Optional in-memory provider ID sets from upstream metadata payloads (not persisted).
         // Used for robust matching when an entity gains new provider IDs upstream.
@@ -130,6 +137,16 @@ namespace NzbDrone.Core.Books
         public LazyLoaded<MetadataProfile> AudiobookMetadataProfile { get; set; }
         [MemberwiseEqualityIgnore]
         public LazyLoaded<MetadataProfile> EbookMetadataProfile { get; set; }
+
+        public MetadataProfile GetMetadataProfileFor(BookMediaType mediaType)
+        {
+            var mediaSpecificProfile = mediaType == BookMediaType.Ebook
+                ? EbookMetadataProfile?.Value
+                : AudiobookMetadataProfile?.Value;
+
+            return mediaSpecificProfile ?? MetadataProfile?.Value;
+        }
+
         [MemberwiseEqualityIgnore]
         public List<Book> Books { get; set; }
         [MemberwiseEqualityIgnore]
@@ -179,6 +196,8 @@ namespace NzbDrone.Core.Books
             AudnexusAuthorId = other.AudnexusAuthorId;
             OpenLibraryAuthorId = other.OpenLibraryAuthorId;
             GoogleBooksAuthorId = other.GoogleBooksAuthorId;
+            RanobeDbAuthorId = other.RanobeDbAuthorId;
+            AdditionalMetadataProviderId = other.AdditionalMetadataProviderId;
             RemoteProviderIds = CloneProviderIds(other.RemoteProviderIds);
 
             // Standard identifiers
@@ -253,6 +272,10 @@ namespace NzbDrone.Core.Books
             AudiobookRootFolderPath = other.AudiobookRootFolderPath;
             EbookRootFolderPath = other.EbookRootFolderPath;
             Added = other.Added;
+            QualityProfileId = other.QualityProfileId;
+            BookshelfNGQualityProfileId = other.BookshelfNGQualityProfileId;
+            BookshelfNGAudiobookQualityProfileId = other.BookshelfNGAudiobookQualityProfileId;
+            BookshelfNGEbookQualityProfileId = other.BookshelfNGEbookQualityProfileId;
             AudiobookQualityProfileId = other.AudiobookQualityProfileId;
             AudiobookQualityProfile = other.AudiobookQualityProfile;
             EbookQualityProfileId = other.EbookQualityProfileId;
@@ -272,7 +295,36 @@ namespace NzbDrone.Core.Books
 
         public override void ApplyChanges(Author other)
         {
-            Path = other.Path;
+            // Only overwrite when a value is supplied. ApplyChanges is called both from
+            // the API -- where a PUT may legitimately omit fields it is not changing --
+            // and from metadata refresh, where the incoming Author is built from remote
+            // metadata and carries no local paths at all. That is the same reason the
+            // quality and metadata profiles below are guarded; these three were not, so
+            // an update that omitted them wiped the stored paths.
+            if (other.Path != null)
+            {
+                Path = other.Path;
+            }
+
+            if (other.QualityProfileId > 0)
+            {
+                QualityProfileId = other.QualityProfileId;
+            }
+
+            if (other.BookshelfNGQualityProfileId.HasValue)
+            {
+                BookshelfNGQualityProfileId = other.BookshelfNGQualityProfileId;
+            }
+
+            if (other.BookshelfNGAudiobookQualityProfileId.HasValue)
+            {
+                BookshelfNGAudiobookQualityProfileId = other.BookshelfNGAudiobookQualityProfileId;
+            }
+
+            if (other.BookshelfNGEbookQualityProfileId.HasValue)
+            {
+                BookshelfNGEbookQualityProfileId = other.BookshelfNGEbookQualityProfileId;
+            }
 
             // Don't overwrite quality profiles if they're already set
             // Quality profiles from metadata sources are always null/0
@@ -327,8 +379,18 @@ namespace NzbDrone.Core.Books
 
             Tags = (AudiobookTags ?? new HashSet<int>()).Concat(EbookTags ?? new HashSet<int>()).ToHashSet();
             AddOptions = other.AddOptions;
-            AudiobookRootFolderPath = other.AudiobookRootFolderPath;
-            EbookRootFolderPath = other.EbookRootFolderPath;
+            if (other.AudiobookRootFolderPath != null)
+            {
+                AudiobookRootFolderPath = other.AudiobookRootFolderPath;
+            }
+
+            if (other.EbookRootFolderPath != null)
+            {
+                EbookRootFolderPath = other.EbookRootFolderPath;
+            }
+
+            AudiobookPath = other.AudiobookPath ?? AudiobookPath;
+            EbookPath = other.EbookPath ?? EbookPath;
             Monitored = other.Monitored;
             // Copy optional monitoring values only when explicitly provided. This keeps
             // partial metadata updates from wiping a user's monitoring choices.

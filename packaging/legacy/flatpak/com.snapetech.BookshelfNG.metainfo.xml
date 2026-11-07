@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.snapetech.BookshelfNG</id>
+  <name>ChaptarrNG</name>
+  <summary>Book library management and download automation</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <developer id="tech.snapetech">
+    <name>Snapetech</name>
+  </developer>
+  <description>
+    <p>Manage ebook and audiobook libraries and automate book downloads.</p>
+  </description>
+  <launchable type="desktop-id">com.snapetech.BookshelfNG.desktop</launchable>
+  <url type="homepage">https://github.com/snapetech-org/chaptarrng</url>
+  <categories>
+    <category>Utility</category>
+    <category>Network</category>
+  </categories>
+</component>

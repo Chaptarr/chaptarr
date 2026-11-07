@@ -1,0 +1,112 @@
+# ng-runner-policy: trusted-hosted-or-private-jit-v1
+name: BookshelfNG standalone macOS handoff acceptance
+run-name: ${{ format('action:{0}:pool:{1}:arch:{2}', inputs.action, inputs.runner_pool, inputs.architecture) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Run trusted standalone handoff acceptance
+        required: true
+        type: choice
+        options: [ci]
+      runner_pool:
+        description: Select compatible GitHub-hosted or private JIT runners
+        required: true
+        type: choice
+        default: public
+        options: [public, private]
+      architecture:
+        description: Run both architectures or retry one native architecture
+        required: true
+        type: choice
+        default: all
+        options: [all, x64, arm64]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bookshelfng-standalone-macos-acceptance-${{ github.ref }}-${{ inputs.runner_pool }}-${{ inputs.architecture }}
+  cancel-in-progress: false
+
+jobs:
+  installed-handoff:
+    name: BookshelfNG .76 to current ${{ matrix.rid }} archive
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      inputs.action == 'ci' &&
+      (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
+    runs-on: >-
+      ${{ inputs.runner_pool == 'public' &&
+          (matrix.architecture == 'X64' && 'macos-15-intel' || 'macos-15') ||
+          (matrix.architecture == 'X64' && fromJSON(format('{{"group":"private-apple-builds","labels":["self-hosted","macOS","X64","private-apple","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-{1}-installed-handoff"]}}', github.run_id, strategy.job-index)) ||
+           fromJSON(format('{{"group":"private-apple-builds","labels":["self-hosted","macOS","ARM64","private-apple","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-{1}-installed-handoff"]}}', github.run_id, strategy.job-index))) }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: >-
+        ${{
+          fromJSON(
+            inputs.architecture == 'all' &&
+            '{"include":[{"rid":"osx-x64","architecture":"X64","predecessor_version":"0.4.21.76","predecessor_sha256":"4f660a1367e28c01660c2e082c4f1778f652cca34affc0dba55d3f47ef67f747"},{"rid":"osx-arm64","architecture":"ARM64","predecessor_version":"0.4.21.76","predecessor_sha256":"d964bb1146b6c9e313758a967815f53f8d9aa45314bc30cfa55e96bb299433ce"}]}' ||
+            inputs.architecture == 'x64' &&
+            '{"include":[{"rid":"osx-x64","architecture":"X64","predecessor_version":"0.4.21.76","predecessor_sha256":"4f660a1367e28c01660c2e082c4f1778f652cca34affc0dba55d3f47ef67f747"}]}' ||
+            '{"include":[{"rid":"osx-arm64","architecture":"ARM64","predecessor_version":"0.4.21.76","predecessor_sha256":"d964bb1146b6c9e313758a967815f53f8d9aa45314bc30cfa55e96bb299433ce"}]}'
+          )
+        }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 26.12.1
+        package-manager-cache: false
+
+    - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+      with:
+        dotnet-version: 10.0.403
+
+    - name: Build frontend
+      run: |
+        npm install --global yarn@1.22.22
+        yarn install --frozen-lockfile
+        yarn build
+
+    - name: Build the current macOS standalone candidate
+      run: |
+        version="$(node -p 'require("./package.json").version')"
+        bash packaging/scripts/build-standalone.sh "$version" "${{ matrix.rid }}" "$RUNNER_TEMP/release-assets"
+
+    - name: Download and verify the public BookshelfNG predecessor
+      env:
+        PREDECESSOR_SHA256: ${{ matrix.predecessor_sha256 }}
+      run: |
+        set -euo pipefail
+        name='BookshelfNG-v${{ matrix.predecessor_version }}-${{ matrix.rid }}.tar.gz'
+        url="https://github.com/snapetech-org/bookshelfng/releases/download/v${{ matrix.predecessor_version }}/$name"
+        archive="$RUNNER_TEMP/$name"
+        curl --fail --location --retry 3 --retry-all-errors "$url" --output "$archive"
+        curl --fail --location --retry 3 --retry-all-errors "$url.sha256" --output "$archive.sha256"
+        (cd "$RUNNER_TEMP" && shasum -a 256 --check "$name.sha256")
+        printf '%s  %s\n' "$PREDECESSOR_SHA256" "$archive" | shasum -a 256 --check -
+        printf 'BOOKSHELFNG_PREDECESSOR_ARCHIVE=%s\n' "$archive" >> "$GITHUB_ENV"
+
+    - name: Verify the exact candidate archive
+      run: |
+        set -euo pipefail
+        archive="$RUNNER_TEMP/release-assets/ChaptarrNG-$(node -p 'require("./package.json").version')-${{ matrix.rid }}.tar.gz"
+        (cd "$(dirname "$archive")" && shasum -a 256 --check "$(basename "$archive").sha256")
+        printf 'CHAPTARRNG_CANDIDATE_ARCHIVE=%s\n' "$archive" >> "$GITHUB_ENV"
+
+    - name: Accept No, headless Manual, Yes, health, source backup, and failed-start rollback
+      env:
+        TMPDIR: ${{ runner.temp }}/bookshelfng-standalone-handoff-acceptance
+      run: |
+        mkdir -p "$TMPDIR"
+        python3 packaging/scripts/test-bookshelf-standalone-handoff.py \
+          "$BOOKSHELFNG_PREDECESSOR_ARCHIVE" "$CHAPTARRNG_CANDIDATE_ARCHIVE"

@@ -22,10 +22,10 @@ namespace NzbDrone.Core.ImportLists.LazyLibrarianImport
             BaseUrl = "http://localhost:5299";
         }
 
-        [FieldDefinition(0, Label = "Url")]
+        [FieldDefinition(0, Label = "provider.field.f157ce98b9a37")]
         public string BaseUrl { get; set; }
 
-        [FieldDefinition(1, Label = "API Key", Privacy = PrivacyLevel.ApiKey)]
+        [FieldDefinition(1, Label = "ApiKey", Privacy = PrivacyLevel.ApiKey)]
         public string ApiKey { get; set; }
 
         public NzbDroneValidationResult Validate()

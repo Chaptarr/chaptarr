@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using NzbDrone.Core.Parser;
 using NLog;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.MediaFiles.BookImport.Services
 {
@@ -70,8 +71,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 	        
 	        // Unicode-aware word boundary pattern
 	        private static readonly Regex WordPattern = new Regex(@"\p{L}+", RegexOptions.Compiled);
-        // Numeric tokens (e.g., 1984)
-        private static readonly Regex NumberPattern = new Regex(@"\b\d+\b", RegexOptions.Compiled);
+        private static readonly Regex TitleTokenPattern = new Regex(@"\p{L}+|\b\d+\b", RegexOptions.Compiled);
         // Roman numerals (conservative)
         private static readonly Regex RomanRegex = new Regex(@"^(M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3}))$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         
@@ -202,7 +202,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
                     if (CheckWordContainment(authorWords, fieldValue, tagField.Key))
                     {
-                            _logger.Trace("[CONTAINMENT] Author '{0}' MATCHED in field '{1}' = '{2}'",
+                            _logger.TraceSafe("[CONTAINMENT] Author '{0}' MATCHED in field '{1}' = '{2}'",
                                 authorName, tagField.Key,
                                 fieldValue.Length > 100 ? fieldValue.Substring(0, 100) + "..." : fieldValue);
                         return true;
@@ -487,7 +487,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                         continue;
                     }
 
-                    if (TitleTokenAlignment.TryAlignStructural(editionTokens, fieldTokens, allowNearExact: true, allowTransposition: includeDurationGatedNearExact, out var alignment) &&
+                    if (TitleTokenAlignment.TryAlignStructural(editionTokens, GetFieldTokensForTitleAlignment(editionTokens, fieldTokens), allowNearExact: true, allowTransposition: includeDurationGatedNearExact, out var alignment) &&
                         alignment.UsedNearExact)
                     {
                         evidence.Add(new EditionTitleEvidence(
@@ -887,12 +887,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             var list = new List<string>();
             if (string.IsNullOrWhiteSpace(normalized)) return list;
 
-            foreach (Match m in WordPattern.Matches(normalized))
-            {
-                var v = m.Value.ToLowerInvariant();
-                if (!string.IsNullOrEmpty(v)) list.Add(v);
-            }
-            foreach (Match m in NumberPattern.Matches(normalized))
+            foreach (Match m in TitleTokenPattern.Matches(normalized))
             {
                 var v = m.Value.ToLowerInvariant();
                 if (!string.IsNullOrEmpty(v)) list.Add(v);
@@ -908,10 +903,20 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
         {
             return TitleTokenAlignment.TryAlignStructural(
                 editionTokens,
-                fieldTokens,
+                GetFieldTokensForTitleAlignment(editionTokens, fieldTokens),
                 allowNearExact: false,
                 allowTransposition: false,
+                // When the candidate title contains its own number, a second number in the
+                // observed title is a competing identity signal, not harmless volume decoration.
+                allowVolumeMarkerGaps: !editionTokens.Any(token => token.All(char.IsDigit)),
                 out _);
+        }
+
+        private static List<string> GetFieldTokensForTitleAlignment(List<string> editionTokens, List<string> fieldTokens)
+        {
+            return editionTokens.Any(token => token.All(char.IsDigit))
+                ? fieldTokens
+                : fieldTokens.Where(token => !token.All(char.IsDigit)).ToList();
         }
 
         private List<AuthorWord> ParseIntoWords(string authorName)

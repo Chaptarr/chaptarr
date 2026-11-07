@@ -18,6 +18,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.Net.Http.Headers;
 using NLog;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Instrumentation;
 using NzbDrone.Common.Http.Dispatchers;
 using NzbDrone.Common.Http.Proxy;
 using NzbDrone.Core.Authentication;
@@ -31,6 +32,9 @@ namespace Chaptarr.Http.Authentication
         internal const string OidcOpenIdConnectScheme = "OidcOpenIdConnect";
         internal const string UiAuthScheme = "UIAuth";
         internal const string AuthStampClaim = "auth_stamp";
+        private const string OidcEmailRequiredFailure = "Email claim is required to sign in.";
+        private const string OidcVerifiedEmailRequiredFailure = "Verified email claim is required to sign in.";
+        private const string OidcUserNotAllowedFailure = "User is not allowed to sign in.";
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         private static readonly Regex CookieNameRegex = new Regex(@"[^a-z0-9]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
@@ -272,6 +276,7 @@ namespace Chaptarr.Http.Authentication
                     // Use a safe placeholder configuration when OIDC isn't configured. The scheme will
                     // not be challenged unless the user selects OIDC as the active auth method.
                     var oidcAuthority = configFileProvider.OidcAuthority;
+                    var isAppleIssuer = IsAppleIssuer(oidcAuthority);
                     var oidcClientId = configFileProvider.OidcClientId;
                     var oidcClientSecret = configFileProvider.OidcClientSecret;
 
@@ -299,13 +304,16 @@ namespace Chaptarr.Http.Authentication
                     options.ClientSecret = isConfigured ? oidcClientSecret : string.Empty;
 
                     options.ResponseType = OpenIdConnectResponseType.Code;
-                    options.UsePkce = true;
+                    options.UsePkce = !isAppleIssuer;
                     options.SaveTokens = false;
-                    options.GetClaimsFromUserInfoEndpoint = true;
+                    options.GetClaimsFromUserInfoEndpoint = !isAppleIssuer;
                     options.ClaimActions.MapUniqueJsonKey("email_verified", "email_verified");
 
                     options.Scope.Clear();
-                    foreach (var scope in ParseOidcScopes(configFileProvider.OidcScopes))
+                    var oidcScopes = isAppleIssuer
+                        ? new[] { "openid", "email" }
+                        : ParseOidcScopes(configFileProvider.OidcScopes);
+                    foreach (var scope in oidcScopes)
                     {
                         options.Scope.Add(scope);
                     }
@@ -315,13 +323,18 @@ namespace Chaptarr.Http.Authentication
                     options.TokenValidationParameters.RoleClaimType = "identifier";
 
                     // Support providers that use form_post response_mode (POST callback) by allowing correlation cookies cross-site.
-                    options.CorrelationCookie.SameSite = Microsoft.AspNetCore.Http.SameSiteMode.None;
-                    options.NonceCookie.SameSite = Microsoft.AspNetCore.Http.SameSiteMode.None;
+                    options.CorrelationCookie.SameSite = isAppleIssuer
+                        ? Microsoft.AspNetCore.Http.SameSiteMode.None
+                        : Microsoft.AspNetCore.Http.SameSiteMode.Lax;
+                    options.NonceCookie.SameSite = isAppleIssuer
+                        ? Microsoft.AspNetCore.Http.SameSiteMode.None
+                        : Microsoft.AspNetCore.Http.SameSiteMode.Lax;
                     options.CorrelationCookie.SecurePolicy = CookieSecurePolicy.Always;
                     options.NonceCookie.SecurePolicy = CookieSecurePolicy.Always;
 
                     var discoveryUrl = options.MetadataAddress ?? options.Authority;
-                    options.RequireHttpsMetadata = isConfigured && !IsLoopbackHttpUrl(discoveryUrl);
+                    var allowPrivateIssuer = BookshelfOidcEnvironmentSettings.AllowPrivateIssuer;
+                    options.RequireHttpsMetadata = !allowPrivateIssuer;
 
                     HttpProxySettings proxySettings = null;
                     Exception proxyConfigurationError = null;
@@ -341,27 +354,28 @@ namespace Chaptarr.Http.Authentication
 
                     // Ensure OIDC backchannel traffic (discovery, token exchange, userinfo) uses the same
                     // proxy/certificate validation and IPv4/IPv6 fallback behavior as the rest of the app.
+                    options.BackchannelTimeout = TimeSpan.FromSeconds(15);
                     options.BackchannelHttpHandler = proxyConfigurationError == null
-                        ? socketsHttpHandlerFactory.CreateHandler(proxySettings,
-                            allowAutoRedirect: true,
-                            useCookies: false,
-                            credentials: null,
-                            preAuthenticate: false,
-                            maxConnectionsPerServer: 12)
+                        ? OidcBackchannelHandlerFactory.Create(socketsHttpHandlerFactory, proxySettings, allowPrivateIssuer)
                         : new ConfigurationErrorHttpMessageHandler(proxyConfigurationError);
 
+                    var legacyRedirectUri = BookshelfOidcEnvironmentSettings.GetRedirectUri();
                     options.Events = new OpenIdConnectEvents
                     {
-                        OnTicketReceived = context =>
+                        OnRedirectToIdentityProvider = context =>
                         {
-                            var failure = ValidateAndNormalizeOidcPrincipal(context.Principal, configFileProvider);
-                            if (failure.IsNotNullOrWhiteSpace())
+                            if (!string.IsNullOrWhiteSpace(legacyRedirectUri))
                             {
-                                context.Fail(failure);
+                                context.ProtocolMessage.RedirectUri = legacyRedirectUri;
+                            }
+                            if (isAppleIssuer)
+                            {
+                                context.ProtocolMessage.ResponseMode = OpenIdConnectResponseMode.FormPost;
                             }
 
                             return System.Threading.Tasks.Task.CompletedTask;
                         },
+                        OnTicketReceived = context => HandleOidcTicketReceived(context, configFileProvider),
                         OnRemoteFailure = context =>
                         {
                             var baseException = context.Failure?.GetBaseException();
@@ -398,18 +412,8 @@ namespace Chaptarr.Http.Authentication
                             LogManager.GetCurrentClassLogger()
                                 .Warn(context.Failure, "OIDC remote login failed: {0}", exceptionMessage);
 
-                            var urlBase = configFileProvider.UrlBase ?? string.Empty;
-                            var returnUrl = context.Properties?.RedirectUri;
-
-                            if (string.IsNullOrWhiteSpace(returnUrl) || !returnUrl.StartsWith("/"))
-                            {
-                                returnUrl = urlBase + "/";
-                            }
-
-                            var loginUrl = $"{urlBase}/login?ssoFailed=true&ssoError={Uri.EscapeDataString(errorCode)}&returnUrl={Uri.EscapeDataString(returnUrl)}";
-
                             context.HandleResponse();
-                            context.Response.Redirect(loginUrl);
+                            context.Response.Redirect(BuildSsoFailedLoginUrl(configFileProvider, context.Properties?.RedirectUri, errorCode));
                             return System.Threading.Tasks.Task.CompletedTask;
                         }
                     };
@@ -448,7 +452,7 @@ namespace Chaptarr.Http.Authentication
                         options.ResponseType = OpenIdConnectResponseType.Code;
                     }
 
-                    options.UsePkce = true;
+                    options.UsePkce = !IsAppleIssuer(options.Authority);
                 })
                 // Route UI auth dynamically based on the current config so switching auth methods does not require a restart.
                 .AddPolicyScheme(UiAuthScheme, UiAuthScheme, options =>
@@ -508,54 +512,98 @@ namespace Chaptarr.Http.Authentication
                 });
         }
 
+        private static System.Threading.Tasks.Task HandleOidcTicketReceived(TicketReceivedContext context, IConfigFileProvider configFileProvider)
+        {
+            var failure = ValidateAndNormalizeOidcPrincipal(context.Principal, configFileProvider);
+            if (failure.IsNullOrWhiteSpace())
+            {
+                return System.Threading.Tasks.Task.CompletedTask;
+            }
+
+            // TicketReceivedContext.Fail() does not stop the remote handler: ASP.NET only honours
+            // HandleResponse()/SkipHandler() here and otherwise signs the ticket in regardless. That
+            // issued a cookie without the auth_stamp claim, which the cookie validator then rejected,
+            // so a policy rejection surfaced as a silent redirect loop back to /login.
+            var errorCode = GetOidcPolicyErrorCode(failure);
+            Logger.WarnSafe("OIDC sign-in rejected by Chaptarr policy: {0}", errorCode);
+
+            context.HandleResponse();
+            context.Response.Redirect(BuildSsoFailedLoginUrl(configFileProvider, context.ReturnUri, errorCode));
+            return System.Threading.Tasks.Task.CompletedTask;
+        }
+
+        private static string GetOidcPolicyErrorCode(string failure)
+        {
+            return failure switch
+            {
+                OidcEmailRequiredFailure => "oidc_email_missing",
+                OidcVerifiedEmailRequiredFailure => "oidc_email_not_verified",
+                OidcUserNotAllowedFailure => "oidc_user_not_allowed",
+                _ => "sso_failed"
+            };
+        }
+
+        private static string BuildSsoFailedLoginUrl(IConfigFileProvider configFileProvider, string returnUrl, string errorCode)
+        {
+            var urlBase = configFileProvider.UrlBase ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(returnUrl) || !returnUrl.StartsWith("/"))
+            {
+                returnUrl = urlBase + "/";
+            }
+
+            return $"{urlBase}/login?ssoFailed=true&ssoError={Uri.EscapeDataString(errorCode)}&returnUrl={Uri.EscapeDataString(returnUrl)}";
+        }
+
         private static string ValidateAndNormalizeOidcPrincipal(ClaimsPrincipal principal, IConfigFileProvider configFileProvider)
         {
             var allowedEmails = ParseCsvToSet(configFileProvider.OidcAllowedEmails);
             var allowedDomains = ParseCsvToSet(configFileProvider.OidcAllowedEmailDomains);
             var requiresTrustedEmail = allowedEmails.Count > 0 || allowedDomains.Count > 0;
             var allowAnyVerifiedUser = configFileProvider.OidcAllowAnyVerifiedUser;
-            var requiresVerifiedEmail = configFileProvider.OidcRequireEmailVerified || allowAnyVerifiedUser;
+            const bool requiresVerifiedEmail = true;
 
             var identity = principal?.Identity as ClaimsIdentity;
             var email = GetOidcEmail(principal);
 
             if ((requiresTrustedEmail || requiresVerifiedEmail) && string.IsNullOrWhiteSpace(email))
             {
-                return "Email claim is required to sign in.";
+                return OidcEmailRequiredFailure;
             }
 
             var emailVerified = GetEmailVerifiedClaimValue(principal);
 
             if ((requiresTrustedEmail || requiresVerifiedEmail) && IsEmailExplicitlyUnverified(emailVerified))
             {
-                return "Verified email claim is required to sign in.";
+                return OidcVerifiedEmailRequiredFailure;
             }
 
             if (string.IsNullOrWhiteSpace(emailVerified))
             {
                 if (requiresVerifiedEmail)
                 {
-                    return "Verified email claim is required to sign in.";
+                    return OidcVerifiedEmailRequiredFailure;
                 }
 
-                if (requiresTrustedEmail)
+            }
+
+            if (!allowAnyVerifiedUser)
+            {
+                if (!requiresTrustedEmail)
                 {
-                    Logger.Warn("OIDC identity provider did not emit an email_verified claim while an email/domain allow-list is configured. Missing verification claims are allowed because OidcRequireEmailVerified is false.");
+                    return OidcUserNotAllowedFailure;
                 }
-            }
 
-            if (allowedEmails.Count > 0 && !allowedEmails.Contains(email.ToLowerInvariant()))
-            {
-                return "User is not allowed to sign in.";
-            }
-
-            if (allowedDomains.Count > 0)
-            {
-                var at = email.LastIndexOf('@');
-                var domain = at >= 0 && at < email.Length - 1 ? email[(at + 1)..] : string.Empty;
-                if (string.IsNullOrWhiteSpace(domain) || !allowedDomains.Contains(domain.ToLowerInvariant()))
+                var normalizedEmail = email.ToLowerInvariant();
+                var at = normalizedEmail.LastIndexOf('@');
+                var domain = at >= 0 && at < normalizedEmail.Length - 1
+                    ? normalizedEmail[(at + 1)..]
+                    : string.Empty;
+                var emailAllowed = allowedEmails.Contains(normalizedEmail);
+                var domainAllowed = !string.IsNullOrWhiteSpace(domain) && allowedDomains.Contains(domain);
+                if (!emailAllowed && !domainAllowed)
                 {
-                    return "User is not allowed to sign in.";
+                    return OidcUserNotAllowedFailure;
                 }
             }
 
@@ -583,6 +631,22 @@ namespace Chaptarr.Http.Authentication
                                  principal?.FindFirst("sub")?.Value ??
                                  "0";
                 identity.AddClaim(new Claim("identifier", identifier));
+            }
+
+            var issuer = principal?.FindFirst("iss")?.Value;
+            var subject = principal?.FindFirst("sub")?.Value ??
+                          principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (!string.IsNullOrWhiteSpace(issuer) && !string.IsNullOrWhiteSpace(subject))
+            {
+                if (!identity.HasClaim(c => c.Type == "oidc_issuer"))
+                {
+                    identity.AddClaim(new Claim("oidc_issuer", issuer));
+                }
+
+                if (!identity.HasClaim(c => c.Type == "oidc_subject"))
+                {
+                    identity.AddClaim(new Claim("oidc_subject", subject));
+                }
             }
 
             if (!identity.HasClaim(c => c.Type == "AuthType"))
@@ -618,13 +682,6 @@ namespace Chaptarr.Http.Authentication
 
             return !string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) &&
                    !string.Equals(value, "1", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static bool IsLoopbackHttpUrl(string value)
-        {
-            return Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
-                   uri.Scheme == Uri.UriSchemeHttp &&
-                   uri.IsLoopback;
         }
 
         private static bool IsXhr(HttpRequest request)
@@ -687,6 +744,11 @@ namespace Chaptarr.Http.Authentication
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
 
+        private static bool IsAppleIssuer(string issuer)
+        {
+            return string.Equals(issuer?.Trim(), "https://appleid.apple.com", StringComparison.Ordinal);
+        }
+
         private static IEnumerable<string> ParseOidcScopes(string raw)
         {
             if (string.IsNullOrWhiteSpace(raw))
@@ -710,6 +772,14 @@ namespace Chaptarr.Http.Authentication
             if (!scopes.Contains("openid", StringComparer.OrdinalIgnoreCase))
             {
                 scopes.Insert(0, "openid");
+            }
+
+            // BookshelfNG always requested email because its admission policy is
+            // based on verified email addresses, even when operators supplied a
+            // custom scope list.
+            if (!scopes.Contains("email", StringComparer.OrdinalIgnoreCase))
+            {
+                scopes.Add("email");
             }
 
             return scopes;

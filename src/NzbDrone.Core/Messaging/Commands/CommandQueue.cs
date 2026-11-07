@@ -11,9 +11,11 @@ namespace NzbDrone.Core.Messaging.Commands
         private readonly object _mutex = new object();
         private readonly List<CommandModel> _items;
         private readonly Func<string, int> _getDiskAccessGroupLimit;
+        private readonly Func<int> _getThreadLimit;
 
-        public CommandQueue(Func<string, int> getDiskAccessGroupLimit = null)
+        public CommandQueue(Func<string, int> getDiskAccessGroupLimit = null, Func<int> getThreadLimit = null)
         {
+            _getThreadLimit = getThreadLimit;
             _items = new List<CommandModel>();
             _getDiskAccessGroupLimit = getDiskAccessGroupLimit ?? (_ => 1);
         }
@@ -220,6 +222,21 @@ namespace NzbDrone.Core.Messaging.Commands
                                 continue;
                             }
 
+                            // Commands that leave a thread free never take the last one, so short commands
+                            // keep running while a backlog of these is waiting on shared resources.
+                            if (candidate.Body.LeavesThreadForOtherCommands && IsAtThreadReserveLimit(candidate, startedCommands))
+                            {
+                                continue;
+                            }
+
+                            // Release selection must observe a stable library inventory. Searches wait for
+                            // active disk work, and disk work waits for an active search, independent of the
+                            // configured concurrency for ordinary disk-access groups.
+                            if (IsBlockedByLibraryState(candidate.Body, startedCommands))
+                            {
+                                continue;
+                            }
+
                             // Respect disk access groups: most disk work remains exclusive, while selected
                             // groups can opt into a bounded concurrency limit.
                             if (IsBlockedByDiskAccess(candidate.Body, startedCommands))
@@ -256,6 +273,19 @@ namespace NzbDrone.Core.Messaging.Commands
             return rval;
         }
 
+        private bool IsAtThreadReserveLimit(CommandModel candidate, List<CommandModel> startedCommands)
+        {
+            if (_getThreadLimit == null)
+            {
+                return false;
+            }
+
+            var limit = Math.Max(1, _getThreadLimit() - 1);
+            var running = startedCommands.Count(r => string.Equals(r.Name, candidate.Name, StringComparison.OrdinalIgnoreCase));
+
+            return running >= limit;
+        }
+
         private bool IsBlockedByDiskAccess(Command candidate, List<CommandModel> startedCommands)
         {
             if (!candidate.RequiresDiskAccess)
@@ -263,25 +293,37 @@ namespace NzbDrone.Core.Messaging.Commands
                 return false;
             }
 
-            var startedDiskCommands = startedCommands
-                .Where(c => c.Body.RequiresDiskAccess)
-                .ToList();
-
-            if (!startedDiskCommands.Any())
-            {
-                return false;
-            }
-
+            // Each disk access group enforces its own limit independently -- a command must never be
+            // blocked by a started command in a DIFFERENT group. (Most commands share the implicit
+            // "default" group and so remain exclusive with each other by virtue of that group's limit,
+            // matching "most disk work remains exclusive" above; only a command that explicitly opts
+            // into its own named group, e.g. RetryFailedImportCommand/DownloadedBooksScanCommand's
+            // "downloadImport", is meant to run independently of "default", e.g. a long-running
+            // ProcessMonitoredDownloads sweep.) A prior version of this check blocked a candidate
+            // whenever ANY started disk command was in a different group, which collapsed every group
+            // into one global mutex and defeated the point of naming groups at all -- see chaptarr #188.
             var candidateGroup = candidate.DiskAccessGroup ?? candidate.Name;
-            if (startedDiskCommands.Any(c => !string.Equals(c.Body.DiskAccessGroup ?? c.Name, candidateGroup, StringComparison.OrdinalIgnoreCase)))
-            {
-                return true;
-            }
-
             var limit = Math.Max(1, _getDiskAccessGroupLimit(candidateGroup));
-            var startedInGroup = startedDiskCommands.Count(c => string.Equals(c.Body.DiskAccessGroup ?? c.Name, candidateGroup, StringComparison.OrdinalIgnoreCase));
+            var startedInGroup = startedCommands.Count(c =>
+                c.Body.RequiresDiskAccess &&
+                string.Equals(c.Body.DiskAccessGroup ?? c.Name, candidateGroup, StringComparison.OrdinalIgnoreCase));
 
             return startedInGroup >= limit;
+        }
+
+        private static bool IsBlockedByLibraryState(Command candidate, List<CommandModel> startedCommands)
+        {
+            if (candidate.RequiresLibraryState)
+            {
+                return startedCommands.Any(command => command.Body.RequiresDiskAccess || command.Body.RequiresLibraryState);
+            }
+
+            if (candidate.RequiresDiskAccess)
+            {
+                return startedCommands.Any(command => command.Body.RequiresLibraryState);
+            }
+
+            return false;
         }
     }
 }

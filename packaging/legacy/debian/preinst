@@ -1,0 +1,83 @@
+#!/bin/sh
+set -e
+run_dir="${DPKG_ROOT:-}/run"
+root="${DPKG_ROOT:-}"
+source_binary="$root/usr/lib/bookshelfng/Readarr"
+source_dir="$root/usr/lib/bookshelfng"
+target_package_info="$root/usr/lib/chaptarrng/package_info"
+data_dir="$root/var/lib/bookshelfng"
+pending_marker="$data_dir/.chaptarrng-bookshelfng-migration-pending"
+handoff_dir="$data_dir/.chaptarrng-bookshelfng-handoff"
+
+has_controlling_tty() {
+  [ -t 0 ] && ( : </dev/tty >/dev/tty ) 2>/dev/null
+}
+
+snapshot_source_package() {
+  if [ -f "$handoff_dir/snapshot-ready" ]; then
+    return
+  fi
+
+  rm -rf "$handoff_dir"
+  install -d -m 0700 "$handoff_dir"
+  cp -a "$source_dir" "$handoff_dir/source-app"
+
+  for candidate in "$root/lib/systemd/system/bookshelfng.service" "$root/usr/lib/systemd/system/bookshelfng.service"; do
+    if [ -f "$candidate" ]; then
+      cp -a "$candidate" "$handoff_dir/source-unit"
+      unit_path=${candidate#"$root"}
+      printf '%s\n' "$unit_path" > "$handoff_dir/source-unit-path"
+      break
+    fi
+  done
+
+  bin_entry="$root/usr/bin/bookshelfng"
+  if [ -e "$bin_entry" ] || [ -L "$bin_entry" ]; then
+    cp -a "$bin_entry" "$handoff_dir/source-bin-entry"
+  else
+    touch "$handoff_dir/source-bin-entry-absent"
+  fi
+
+  touch "$handoff_dir/snapshot-ready"
+}
+
+if [ "$1" = install ] || [ "$1" = upgrade ]; then
+  if [ ! -e "$target_package_info" ] && [ -x "$source_binary" ]; then
+    migration_mode=${BOOKSHELFNG_MIGRATION_MODE:-automatic}
+    case "$migration_mode" in
+      automatic) ;;
+      manual)
+        echo 'BookshelfNG replacement cancelled before changes. Review docs/MIGRATE_FROM_BOOKSHELFNG.md and run the ChaptarrNG Console migration commands when ready.' >&2
+        exit 1
+        ;;
+      ask)
+        if ! has_controlling_tty; then
+          echo 'Interactive migration choice requested but no terminal is available. Set BOOKSHELFNG_MIGRATION_MODE=automatic or manual.' >&2
+          exit 1
+        fi
+        printf 'Replace BookshelfNG with ChaptarrNG now? A still-legacy database will be migrated automatically. [y/N] ' >/dev/tty
+        IFS= read -r migration_choice </dev/tty || migration_choice=
+        case "$migration_choice" in
+          y|Y|yes|YES|Yes) ;;
+          *) echo 'BookshelfNG replacement cancelled; the service and data were left untouched.' >&2; exit 1 ;;
+        esac
+        ;;
+      *)
+        echo 'BOOKSHELFNG_MIGRATION_MODE must be automatic, ask, or manual.' >&2
+        exit 1
+        ;;
+    esac
+    install -d -m 0750 "$data_dir"
+    snapshot_source_package
+    touch "$pending_marker"
+    chmod 0600 "$pending_marker"
+  fi
+
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet bookshelfng.service; then
+    mkdir -p "$run_dir"
+    touch "$run_dir/bookshelfng-package-was-active"
+    systemctl stop bookshelfng.service
+  fi
+fi
+
+exit 0

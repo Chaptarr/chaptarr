@@ -34,7 +34,7 @@ namespace NzbDrone.Core.Notifications.Discord
                     Color = (int)DiscordColors.Warning
                 }
             };
-            var payload = CreatePayload($"Grabbed: {message.Message}", embeds);
+            var payload = CreatePayload(Localize("notification.prefix.grabbed", "Grabbed: {message}", new Dictionary<string, object> { ["message"] = message.Message }), embeds);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -51,7 +51,7 @@ namespace NzbDrone.Core.Notifications.Discord
                     Color = (int)DiscordColors.Success
                 }
             };
-            var payload = CreatePayload($"Imported: {message.Message}", attachments);
+            var payload = CreatePayload(Localize("notification.prefix.imported", "Imported: {message}", new Dictionary<string, object> { ["message"] = message.Message }), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -66,7 +66,7 @@ namespace NzbDrone.Core.Notifications.Discord
                 }
             };
 
-            var payload = CreatePayload("Renamed", attachments);
+            var payload = CreatePayload(Localize("notification.heading.renamed", "Renamed"), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -82,13 +82,13 @@ namespace NzbDrone.Core.Notifications.Discord
                     {
                         new ()
                         {
-                            Name = "Links",
+                            Name = Localize("notification.field.links", "Links"),
                             Value = string.Join(" / ", author.Links.Select(link => $"[{link.Name}]({link.Url})"))
                         }
                     },
                 }
             };
-            var payload = CreatePayload("Author Added", attachments);
+            var payload = CreatePayload(Localize("notification.heading.authorAdded", "Author Added"), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -103,7 +103,7 @@ namespace NzbDrone.Core.Notifications.Discord
                     Color = (int)DiscordColors.Success
                 }
             };
-            var payload = CreatePayload("Book Added", attachments);
+            var payload = CreatePayload(Localize("notification.heading.bookAdded", "Book Added"), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -119,7 +119,7 @@ namespace NzbDrone.Core.Notifications.Discord
                 }
             };
 
-            var payload = CreatePayload("Author Deleted", attachments);
+            var payload = CreatePayload(Localize("notification.heading.authorDeleted", "Author Deleted"), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -130,12 +130,12 @@ namespace NzbDrone.Core.Notifications.Discord
             {
                 new ()
                 {
-                    Title = $"{deleteMessage.Book.Author.Name} - ${deleteMessage.Book.Title}",
+                    Title = $"{deleteMessage.Book.Author.Name} - {deleteMessage.Book.Title}",
                     Description = deleteMessage.DeletedFilesMessage
                 }
             };
 
-            var payload = CreatePayload("Book Deleted", attachments);
+            var payload = CreatePayload(Localize("notification.heading.bookDeleted", "Book Deleted"), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -146,12 +146,13 @@ namespace NzbDrone.Core.Notifications.Discord
             {
                 new ()
                 {
-                    Title = $"{deleteMessage.Book.Author.Name} - ${deleteMessage.Book.Title} - file deleted",
+                    Title = Localize("notification.body.fileDeleted", "{author} - {book} - file deleted",
+                        new Dictionary<string, object> { ["author"] = deleteMessage.Book.Author.Name, ["book"] = deleteMessage.Book.Title }),
                     Description = deleteMessage.BookFile.Path
                 }
             };
 
-            var payload = CreatePayload("Book File Deleted", attachments);
+            var payload = CreatePayload(Localize("notification.heading.bookFileDeleted", "Book File Deleted"), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -168,7 +169,7 @@ namespace NzbDrone.Core.Notifications.Discord
                 }
             };
 
-            var payload = CreatePayload("Health Issue", attachments);
+            var payload = CreatePayload(Localize("notification.heading.healthIssue", "Health Check Failure"), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -184,7 +185,7 @@ namespace NzbDrone.Core.Notifications.Discord
                 }
             };
 
-            var payload = CreatePayload($"Track file tags updated: {message.Message}", attachments);
+            var payload = CreatePayload(Localize("notification.prefix.retagged", "Book file tags updated: {message}", new Dictionary<string, object> { ["message"] = message.Message }), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -201,7 +202,7 @@ namespace NzbDrone.Core.Notifications.Discord
                     Color = (int)DiscordColors.Danger
                 }
             };
-            var payload = CreatePayload($"Download Failed: {message.Message}", attachments);
+            var payload = CreatePayload(Localize("notification.prefix.downloadFailed", "Download failed: {message}", new Dictionary<string, object> { ["message"] = message.Message }), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -218,7 +219,7 @@ namespace NzbDrone.Core.Notifications.Discord
                     Color = (int)DiscordColors.Warning
                 }
             };
-            var payload = CreatePayload($"Import Failed: {message.Message}", attachments);
+            var payload = CreatePayload(Localize("notification.prefix.importFailed", "Import failed: {message}", new Dictionary<string, object> { ["message"] = message.Message }), attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -232,7 +233,7 @@ namespace NzbDrone.Core.Notifications.Discord
                     Author = new DiscordAuthor
                     {
                         Name = Settings.Author.IsNullOrWhiteSpace() ? Environment.MachineName : Settings.Author,
-                        IconUrl = "https://raw.githubusercontent.com/Chaptarr/Chaptarr/develop/Logo/256.png"
+                        IconUrl = "https://raw.githubusercontent.com/snapetech-org/chaptarrng/main/Logo/256.png"
                     },
                     Title = APPLICATION_UPDATE_TITLE,
                     Timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
@@ -241,12 +242,12 @@ namespace NzbDrone.Core.Notifications.Discord
                     {
                         new ()
                         {
-                            Name = "Previous Version",
+                            Name = Localize("notification.field.previousVersion", "Previous Version"),
                             Value = updateMessage.PreviousVersion.ToString()
                         },
                         new ()
                         {
-                            Name = "New Version",
+                            Name = Localize("notification.field.newVersion", "New Version"),
                             Value = updateMessage.NewVersion.ToString()
                         }
                     },
@@ -271,7 +272,8 @@ namespace NzbDrone.Core.Notifications.Discord
         {
             try
             {
-                var message = $"Test message from Chaptarr posted at {DateTime.Now}";
+                var message = Localize("notification.test.timestampedBody", "Test message from Chaptarr posted at {timestamp}",
+                    new Dictionary<string, object> { ["timestamp"] = DateTime.Now });
                 var payload = CreatePayload(message);
 
                 _proxy.SendPayload(payload, Settings);
@@ -290,7 +292,6 @@ namespace NzbDrone.Core.Notifications.Discord
 
             var payload = new DiscordPayload
             {
-                Username = Settings.Username,
                 Content = message,
                 Embeds = embeds
             };

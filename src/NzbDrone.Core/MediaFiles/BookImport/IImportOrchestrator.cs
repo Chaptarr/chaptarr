@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using NzbDrone.Core.Authors;
@@ -47,6 +48,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         public string FilePath { get; set; }
         public string Reason { get; set; }
         public AuthorSuggestion SuggestedAuthor { get; set; }
+        public DateTime? LastRemoteSearchTime { get; set; }
     }
 
     /// <summary>

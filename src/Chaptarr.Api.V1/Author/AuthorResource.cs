@@ -5,6 +5,8 @@ using Chaptarr.Api.V1.Books;
 using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http.Middleware;
 using Chaptarr.Http.REST;
+using FluentValidation;
+using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
@@ -23,6 +25,7 @@ namespace Chaptarr.Api.V1.Author
         public AuthorStatusType Status { get; set; }
 
         public bool Ended => AuthorExtensions.GetLifeStatus(Died) == AuthorStatusType.Ended;
+        public int AuthorMetadataId { get; set; }
 
         public string AuthorName { get; set; }
         public string AuthorNameLastFirst { get; set; }
@@ -34,8 +37,10 @@ namespace Chaptarr.Api.V1.Author
         public DateTime? Died { get; set; }
         public List<Links> Links { get; set; }
 
-        public BookResource NextBook { get; set; }
-        public BookResource LastBook { get; set; }
+        // BookshelfNG serialized its core Book model here. Keep that response shape for
+        // existing clients while projecting fields from ChaptarrNG's unified Book model.
+        public AuthorIndexBookResource NextBook { get; set; }
+        public AuthorIndexBookResource LastBook { get; set; }
 
         public List<MediaCover> Images { get; set; }
 
@@ -47,14 +52,27 @@ namespace Chaptarr.Api.V1.Author
         public int? QualityProfileId { get; set; }
         public int? AudiobookQualityProfileId { get; set; }
         public int? EbookQualityProfileId { get; set; }
+        [Newtonsoft.Json.JsonIgnore]
+        [global::System.Text.Json.Serialization.JsonIgnore]
+        internal int? OriginalBookshelfNGQualityProfileId { get; set; }
+        [Newtonsoft.Json.JsonIgnore]
+        [global::System.Text.Json.Serialization.JsonIgnore]
+        internal int? OriginalBookshelfNGAudiobookQualityProfileId { get; set; }
+        [Newtonsoft.Json.JsonIgnore]
+        [global::System.Text.Json.Serialization.JsonIgnore]
+        internal int? OriginalBookshelfNGEbookQualityProfileId { get; set; }
+        [Newtonsoft.Json.JsonIgnore]
+        [global::System.Text.Json.Serialization.JsonIgnore]
+        internal bool OriginalBookshelfQualityProfileIdsCaptured { get; set; }
         public int? MetadataProfileId { get; set; }  // DEPRECATED: Made nullable to handle legacy data gracefully
         
         // Per-type metadata profiles
         public int? AudiobookMetadataProfileId { get; set; }
         public int? EbookMetadataProfileId { get; set; }
 
-        //Editing Only
-        public bool Monitored { get; set; }
+        // Editing only. Responses always populate this legacy aggregate; nullable
+        // input distinguishes an explicit monitor choice from an omitted field.
+        public bool? Monitored { get; set; }
         // Author-level monitoring gates. NULL means unconfigured; false is an explicit pause.
         public bool? AudiobookMonitored { get; set; }
         // One-time action for the catalog in an add/import request; not persisted on Author.
@@ -76,9 +94,13 @@ namespace Chaptarr.Api.V1.Author
         public string EbookRootFolderPath { get; set; }
         // Readarr/Seerr compatibility (single root folder)
         public string RootFolderPath { get; set; }
-        // Readarr/Seerr compatibility (monitor mode string, e.g. "none")
-        public string MonitorNewItems { get; set; }
+        // BookshelfNG and Readarr compatibility (single monitor enum)
+        public NewItemMonitorTypes? MonitorNewItems { get; set; }
         public string Folder { get; set; }
+        // Writable per-media author paths. The edit UI submits these; AudiobookFolder/
+        // EbookFolder below remain the read-only display values set by the controller.
+        public string AudiobookPath { get; set; }
+        public string EbookPath { get; set; }
         public string AudiobookFolder { get; set; }
         public string EbookFolder { get; set; }
         public List<string> Genres { get; set; }
@@ -121,13 +143,18 @@ namespace Chaptarr.Api.V1.Author
                 return null;
             }
 
-            // Do not expose a provider placeholder while an existing row waits for the
-            // startup repair or its next metadata refresh to scrub persistence.
-            var displayImages = MediaCoverRendition.SelectCandidates(model.Images).ToList();
+            // Native display filters provider placeholders. The compatibility response
+            // retains the predecessor's stored image list, including those placeholders.
+            var displayImages = facadeContext?.IsBookshelfCompatibility == true
+                ? model.Images?.Where(image => image != null).ToList() ?? new List<MediaCover>()
+                : MediaCoverRendition.SelectCandidates(model.Images).ToList();
 
             var resource = new AuthorResource
             {
                 Id = model.Id,
+                // ChaptarrNG has a unified author identity. The controller replaces
+                // this with the imported BookshelfNG metadata identity when available.
+                AuthorMetadataId = model.Id,
 
                 AuthorName = model.Name,
                 AuthorNameLastFirst = model.NameLastFirst,
@@ -145,14 +172,23 @@ namespace Chaptarr.Api.V1.Author
                 Images = displayImages.JsonClone(),
 
                 Path = model.Path,
-                AudiobookQualityProfileId = model.AudiobookQualityProfileId,
-                EbookQualityProfileId = model.EbookQualityProfileId,
-                MetadataProfileId = model.MetadataProfileId,
+                AudiobookPath = model.AudiobookPath,
+                EbookPath = model.EbookPath,
+                QualityProfileId = GetBookshelfQualityProfileId(model, facadeContext) ?? 0,
+                RootFolderPath = GetBookshelfRootFolderPath(model),
+                MonitorNewItems = GetBookshelfMonitorNewItems(model),
+                AudiobookQualityProfileId = facadeContext?.IsBookshelfCompatibility == true
+                    ? model.BookshelfNGAudiobookQualityProfileId ?? model.AudiobookQualityProfileId
+                    : model.AudiobookQualityProfileId,
+                EbookQualityProfileId = facadeContext?.IsBookshelfCompatibility == true
+                    ? model.BookshelfNGEbookQualityProfileId ?? model.EbookQualityProfileId
+                    : model.EbookQualityProfileId,
+                MetadataProfileId = GetBookshelfMetadataProfileId(model, facadeContext) ?? 0,
                 AudiobookMetadataProfileId = model.AudiobookMetadataProfileId,
                 EbookMetadataProfileId = model.EbookMetadataProfileId,
                 Links = CloneLinks(model.Links),
 
-                // The legacy aggregate is a projection for Readarr-compatible clients;
+                // The legacy aggregate supports BookshelfNG and Readarr-compatible clients;
                 // never let a stale stored value override the per-media gates.
                 Monitored = model.IsMonitoredFromMediaSettings(),
                 AudiobookMonitored = model.AudiobookMonitored,
@@ -251,7 +287,7 @@ namespace Chaptarr.Api.V1.Author
                 resource.RootFolderPath = resource.AudiobookRootFolderPath;
                 resource.Tags = resource.AudiobookTags ?? new HashSet<int>();
                 resource.Monitored = model.AudiobookMonitored == true;
-                resource.MonitorNewItems = ToMonitorNewItems(model.AudiobookMonitorNewItems);
+                resource.MonitorNewItems = model.AudiobookMonitorNewItems;
             }
             else if (facadeContext?.MediaType == "ebook")
             {
@@ -260,19 +296,48 @@ namespace Chaptarr.Api.V1.Author
                 resource.RootFolderPath = resource.EbookRootFolderPath;
                 resource.Tags = resource.EbookTags ?? new HashSet<int>();
                 resource.Monitored = model.EbookMonitored == true;
-                resource.MonitorNewItems = ToMonitorNewItems(model.EbookMonitorNewItems);
+                resource.MonitorNewItems = model.EbookMonitorNewItems;
             }
         }
 
-        private static string ToMonitorNewItems(NewItemMonitorTypes? monitorNewItems)
+        private static int? GetBookshelfQualityProfileId(NzbDrone.Core.Books.Author model, ReadarrFacadeContext facadeContext)
         {
-            return monitorNewItems switch
+            if (facadeContext?.IsBookshelfCompatibility == true)
             {
-                NewItemMonitorTypes.All => "all",
-                NewItemMonitorTypes.New => "new",
-                NewItemMonitorTypes.None => "none",
-                _ => null
-            };
+                return model.BookshelfNGQualityProfileId ?? model.QualityProfileId;
+            }
+
+            return string.Equals(model.LastSelectedMediaType, "ebook", StringComparison.OrdinalIgnoreCase)
+                ? model.EbookQualityProfileId ?? model.AudiobookQualityProfileId
+                : model.AudiobookQualityProfileId ?? model.EbookQualityProfileId;
+        }
+
+        private static string GetBookshelfRootFolderPath(NzbDrone.Core.Books.Author model)
+        {
+            return string.Equals(model.LastSelectedMediaType, "ebook", StringComparison.OrdinalIgnoreCase)
+                ? model.EbookRootFolderPath ?? model.AudiobookRootFolderPath
+                : model.AudiobookRootFolderPath ?? model.EbookRootFolderPath;
+        }
+
+        private static int? GetBookshelfMetadataProfileId(NzbDrone.Core.Books.Author model, ReadarrFacadeContext facadeContext)
+        {
+            if (facadeContext?.IsBookshelfCompatibility == true)
+            {
+                return model.MetadataProfileId;
+            }
+
+            return string.Equals(model.LastSelectedMediaType, "ebook", StringComparison.OrdinalIgnoreCase)
+                ? model.EbookMetadataProfileId ?? model.MetadataProfileId ?? model.AudiobookMetadataProfileId
+                : model.AudiobookMetadataProfileId ?? model.MetadataProfileId ?? model.EbookMetadataProfileId;
+        }
+
+        private static NewItemMonitorTypes GetBookshelfMonitorNewItems(NzbDrone.Core.Books.Author model)
+        {
+            var selected = string.Equals(model.LastSelectedMediaType, "ebook", StringComparison.OrdinalIgnoreCase)
+                ? model.EbookMonitorNewItems ?? model.AudiobookMonitorNewItems
+                : model.AudiobookMonitorNewItems ?? model.EbookMonitorNewItems;
+
+            return selected ?? NewItemMonitorTypes.All;
         }
 
         private static int? ToLegacyMonitorExisting(bool? monitored, NewItemMonitorTypes? monitorNewItems)
@@ -292,22 +357,6 @@ namespace Chaptarr.Api.V1.Author
             {
                 NewItemMonitorTypes.All or NewItemMonitorTypes.New => true,
                 NewItemMonitorTypes.None => false,
-                _ => null
-            };
-        }
-
-        private static NewItemMonitorTypes? ParseMonitorNewItems(string monitorNewItems)
-        {
-            if (string.IsNullOrWhiteSpace(monitorNewItems))
-            {
-                return null;
-            }
-
-            return monitorNewItems.Trim().ToLowerInvariant() switch
-            {
-                "all" => NewItemMonitorTypes.All,
-                "new" => NewItemMonitorTypes.New,
-                "none" => NewItemMonitorTypes.None,
                 _ => null
             };
         }
@@ -401,6 +450,8 @@ namespace Chaptarr.Api.V1.Author
             string openLibraryAuthorId = null;
             string googleBooksAuthorId = null;
             string audnexusAuthorId = null;
+            string ranobeDbAuthorId = null;
+            string additionalMetadataProviderId = null;
             if (!string.IsNullOrWhiteSpace(resource.ForeignAuthorId))
             {
                 if (long.TryParse(resource.ForeignAuthorId, out _) && facadeContext != null)
@@ -433,6 +484,12 @@ namespace Chaptarr.Api.V1.Author
                         case "az":
                             audnexusAuthorId = ProviderIdHelper.Normalize(normalizedProviderId, "az");
                             break;
+                        case "rn":
+                            ranobeDbAuthorId = ProviderIdHelper.Normalize(normalizedProviderId, "rn");
+                            break;
+                        case "meta":
+                            additionalMetadataProviderId = ProviderIdHelper.Normalize(normalizedProviderId, "meta");
+                            break;
                     }
                 }
             }
@@ -447,7 +504,7 @@ namespace Chaptarr.Api.V1.Author
             var addOptions = resource.AddOptions;
             NormalizeFacadeBooksToMonitor(addOptions, facadeContext);
             if (addOptions != null &&
-                string.Equals(resource.MonitorNewItems, "none", StringComparison.OrdinalIgnoreCase) &&
+                resource.MonitorNewItems == NewItemMonitorTypes.None &&
                 addOptions.BooksToMonitor?.Any() == true)
             {
                 addOptions.Monitor = MonitorTypes.SpecificBook;
@@ -472,13 +529,13 @@ namespace Chaptarr.Api.V1.Author
 
             if (facadeContext?.MediaType == "audiobook")
             {
-                audiobookMonitored = resource.Monitored;
-                audiobookMonitorNewItems = ParseMonitorNewItems(resource.MonitorNewItems) ?? audiobookMonitorNewItems;
+                audiobookMonitored = resource.Monitored ?? false;
+                audiobookMonitorNewItems = resource.MonitorNewItems ?? audiobookMonitorNewItems;
             }
             else if (facadeContext?.MediaType == "ebook")
             {
-                ebookMonitored = resource.Monitored;
-                ebookMonitorNewItems = ParseMonitorNewItems(resource.MonitorNewItems) ?? ebookMonitorNewItems;
+                ebookMonitored = resource.Monitored ?? false;
+                ebookMonitorNewItems = resource.MonitorNewItems ?? ebookMonitorNewItems;
             }
 
             var hasTagInput = resource.Tags != null || resource.AudiobookTags != null || resource.EbookTags != null;
@@ -510,13 +567,27 @@ namespace Chaptarr.Api.V1.Author
 
                 //AlternateTitles
                 Path = resource.Path,
+                AudiobookPath = resource.AudiobookPath,
+                EbookPath = resource.EbookPath,
+                QualityProfileId = resource.QualityProfileId ?? audiobookQualityProfileId ?? ebookQualityProfileId ?? 1,
+                BookshelfNGQualityProfileId = resource.OriginalBookshelfQualityProfileIdsCaptured
+                    ? resource.OriginalBookshelfNGQualityProfileId
+                    : resource.QualityProfileId,
+                BookshelfNGAudiobookQualityProfileId = resource.OriginalBookshelfQualityProfileIdsCaptured
+                    ? resource.OriginalBookshelfNGAudiobookQualityProfileId
+                    : resource.AudiobookQualityProfileId,
+                BookshelfNGEbookQualityProfileId = resource.OriginalBookshelfQualityProfileIdsCaptured
+                    ? resource.OriginalBookshelfNGEbookQualityProfileId
+                    : resource.EbookQualityProfileId,
                 AudiobookQualityProfileId = audiobookQualityProfileId,
                 EbookQualityProfileId = ebookQualityProfileId,
                 MetadataProfileId = resource.MetadataProfileId,
                 AudiobookMetadataProfileId = resource.AudiobookMetadataProfileId,
                 EbookMetadataProfileId = resource.EbookMetadataProfileId,
 
-                Monitored = resource.Monitored,
+                // The persisted legacy field is non-nullable. The service recomputes
+                // it from media-specific gates on save; retain the old default here.
+                Monitored = resource.Monitored ?? false,
                 AudiobookMonitored = audiobookMonitored,
                 AudiobookMonitorNewItems = audiobookMonitorNewItems,
                 EbookMonitored = ebookMonitored,
@@ -540,7 +611,9 @@ namespace Chaptarr.Api.V1.Author
                 GoodreadsAuthorId = goodreadsAuthorId,
                 OpenLibraryAuthorId = openLibraryAuthorId,
                 GoogleBooksAuthorId = googleBooksAuthorId,
-                AudnexusAuthorId = audnexusAuthorId
+                AudnexusAuthorId = audnexusAuthorId,
+                RanobeDbAuthorId = ranobeDbAuthorId,
+                AdditionalMetadataProviderId = additionalMetadataProviderId
                 // LocalAuthorId removed - using database ID directly
             };
         }
@@ -580,14 +653,14 @@ namespace Chaptarr.Api.V1.Author
 
             if (facadeContext != null)
             {
-                var facadeMonitorNewItems = ParseMonitorNewItems(resource.MonitorNewItems);
+                var facadeMonitorNewItems = resource.MonitorNewItems;
                 if (facadeContext.MediaType == "audiobook")
                 {
                     resource.AudiobookQualityProfileId ??= resource.QualityProfileId;
                     resource.AudiobookMetadataProfileId ??= resource.MetadataProfileId;
                     resource.AudiobookRootFolderPath ??= resource.RootFolderPath;
                     resource.AudiobookTags ??= resource.Tags;
-                    resource.AudiobookMonitored = resource.Monitored;
+                    resource.AudiobookMonitored = resource.Monitored ?? false;
                     resource.AudiobookMonitorNewItems = facadeMonitorNewItems ?? resource.AudiobookMonitorNewItems;
                 }
                 else if (facadeContext.MediaType == "ebook")
@@ -596,7 +669,7 @@ namespace Chaptarr.Api.V1.Author
                     resource.EbookMetadataProfileId ??= resource.MetadataProfileId;
                     resource.EbookRootFolderPath ??= resource.RootFolderPath;
                     resource.EbookTags ??= resource.Tags;
-                    resource.EbookMonitored = resource.Monitored;
+                    resource.EbookMonitored = resource.Monitored ?? false;
                     resource.EbookMonitorNewItems = facadeMonitorNewItems ?? resource.EbookMonitorNewItems;
                 }
 
@@ -604,7 +677,14 @@ namespace Chaptarr.Api.V1.Author
                 return;
             }
 
-            var hasLegacySingleSettings = resource.QualityProfileId.HasValue ||
+            var hasFormatSpecificSettings = HasAudiobookSpecificSettings(resource) || HasEbookSpecificSettings(resource);
+            var legacyMonitored = hasFormatSpecificSettings ? null : resource.Monitored;
+            var legacyMonitorNewItems = hasFormatSpecificSettings ? null : resource.MonitorNewItems;
+            var legacyTags = hasFormatSpecificSettings ? null : resource.Tags;
+            var hasLegacySingleSettings = legacyMonitored.HasValue ||
+                                          legacyMonitorNewItems.HasValue ||
+                                          legacyTags != null ||
+                                          resource.QualityProfileId.HasValue ||
                                           resource.MetadataProfileId.HasValue ||
                                           !string.IsNullOrWhiteSpace(resource.RootFolderPath);
             if (!hasLegacySingleSettings)
@@ -618,18 +698,18 @@ namespace Chaptarr.Api.V1.Author
             var targetEbook = legacyRootFolder == null
                 ? HasEbookSpecificSettings(resource) || !HasAudiobookSpecificSettings(resource)
                 : RootFolderDefaultResolver.IsCompatibleRootFolder(legacyRootFolder, FolderType.Ebook);
-            var monitorNewItems = ParseMonitorNewItems(resource.MonitorNewItems);
+            var monitorNewItems = legacyMonitorNewItems;
 
             if (targetAudiobook)
             {
                 resource.AudiobookQualityProfileId ??= resource.QualityProfileId;
                 resource.AudiobookMetadataProfileId ??= resource.MetadataProfileId;
                 resource.AudiobookRootFolderPath ??= resource.RootFolderPath;
-                resource.AudiobookMonitored ??= resource.Monitored;
+                resource.AudiobookMonitored ??= legacyMonitored ?? false;
                 resource.AudiobookMonitorNewItems ??= monitorNewItems;
-                if (resource.Tags != null)
+                if (legacyTags != null)
                 {
-                    resource.AudiobookTags ??= new HashSet<int>(resource.Tags);
+                    resource.AudiobookTags ??= new HashSet<int>(legacyTags);
                 }
             }
 
@@ -638,11 +718,11 @@ namespace Chaptarr.Api.V1.Author
                 resource.EbookQualityProfileId ??= resource.QualityProfileId;
                 resource.EbookMetadataProfileId ??= resource.MetadataProfileId;
                 resource.EbookRootFolderPath ??= resource.RootFolderPath;
-                resource.EbookMonitored ??= resource.Monitored;
+                resource.EbookMonitored ??= legacyMonitored ?? false;
                 resource.EbookMonitorNewItems ??= monitorNewItems;
-                if (resource.Tags != null)
+                if (legacyTags != null)
                 {
-                    resource.EbookTags ??= new HashSet<int>(resource.Tags);
+                    resource.EbookTags ??= new HashSet<int>(legacyTags);
                 }
             }
         }
@@ -753,6 +833,16 @@ namespace Chaptarr.Api.V1.Author
             if (resource.Path == null)
             {
                 updatedAuthor.Path = storedAuthor.Path;
+            }
+
+            if (resource.AudiobookPath == null)
+            {
+                updatedAuthor.AudiobookPath = storedAuthor.AudiobookPath;
+            }
+
+            if (resource.EbookPath == null)
+            {
+                updatedAuthor.EbookPath = storedAuthor.EbookPath;
             }
 
             if (resource.AddOptions == null)
@@ -888,6 +978,66 @@ namespace Chaptarr.Api.V1.Author
         public static List<NzbDrone.Core.Books.Author> ToModel(this IEnumerable<AuthorResource> resources)
         {
             return resources.Select(ToModel).ToList();
+        }
+
+        internal static void MapBookshelfQualityProfileIds(
+            AuthorResource resource,
+            IEnumerable<BookshelfLegacyIdentityMapEntry> mappings,
+            BookMediaType? mediaType = null)
+        {
+            if (resource == null)
+            {
+                return;
+            }
+
+            if (!resource.OriginalBookshelfQualityProfileIdsCaptured)
+            {
+                resource.OriginalBookshelfNGQualityProfileId = resource.QualityProfileId;
+                resource.OriginalBookshelfNGAudiobookQualityProfileId = resource.AudiobookQualityProfileId;
+                resource.OriginalBookshelfNGEbookQualityProfileId = resource.EbookQualityProfileId;
+                resource.OriginalBookshelfQualityProfileIdsCaptured = true;
+            }
+            var identityMappings = mappings?.ToList() ?? new List<BookshelfLegacyIdentityMapEntry>();
+
+            int? Map(int? sourceId, int mediaType, string fieldName)
+            {
+                if (!sourceId.HasValue || sourceId.Value <= 0)
+                {
+                    return sourceId;
+                }
+
+                var sourceMappings = identityMappings.Where(mapping => mapping.SourceId == sourceId.Value).ToList();
+                if (sourceMappings.Count == 0)
+                {
+                    return sourceId;
+                }
+
+                var matchingTargets = sourceMappings
+                    .Where(mapping => mapping.MediaType == mediaType)
+                    .Select(mapping => mapping.TargetId)
+                    .Distinct()
+                    .ToList();
+
+                if (matchingTargets.Count == 1)
+                {
+                    return matchingTargets[0];
+                }
+
+                throw new ValidationException(new[]
+                {
+                    new ValidationFailure(fieldName, "The BookshelfNG quality profile mapping is missing or ambiguous for this media type.")
+                });
+            }
+
+            resource.QualityProfileId = Map(resource.QualityProfileId, (int)(mediaType ?? BookMediaType.Audiobook), "QualityProfileId");
+            resource.AudiobookQualityProfileId = Map(
+                resource.AudiobookQualityProfileId,
+                (int)BookMediaType.Audiobook,
+                "AudiobookQualityProfileId");
+            resource.EbookQualityProfileId = Map(
+                resource.EbookQualityProfileId,
+                (int)BookMediaType.Ebook,
+                "EbookQualityProfileId");
         }
     }
 }

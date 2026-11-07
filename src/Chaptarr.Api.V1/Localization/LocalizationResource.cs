@@ -6,11 +6,12 @@ namespace Chaptarr.Api.V1.Localization
     public class LocalizationResource : RestResource
     {
         public Dictionary<string, string> Strings { get; set; }
+        public string Locale { get; set; }
     }
 
     public static class LocalizationResourceMapper
     {
-        public static LocalizationResource ToResource(this Dictionary<string, string> localization)
+        public static LocalizationResource ToResource(this Dictionary<string, string> localization, string locale)
         {
             if (localization == null)
             {
@@ -20,6 +21,7 @@ namespace Chaptarr.Api.V1.Localization
             return new LocalizationResource
             {
                 Strings = localization,
+                Locale = locale,
             };
         }
     }

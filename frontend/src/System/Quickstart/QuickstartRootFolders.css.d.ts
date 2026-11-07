@@ -12,6 +12,11 @@ interface CssExports {
   'rootFolderName': string;
   'rootFolderPath': string;
   'rootFolderScope': string;
+  'rootFolderScopeError': string;
+  'rootFolderScopeHelp': string;
+  'rootFolderScopeOption': string;
+  'rootFolderScopeOptions': string;
+  'rootFolderScopePrompt': string;
   'rootFoldersContainer': string;
   'rootFoldersStack': string;
 }

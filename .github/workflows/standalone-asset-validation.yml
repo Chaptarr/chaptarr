@@ -1,0 +1,514 @@
+# ng-runner-policy: trusted-hosted-or-private-jit-v1
+name: Validate standalone release assets
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' &&
+      format('action:{0}:pool:{1}', inputs.action, inputs.runner_pool) || github.workflow }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Admit this workflow to the private JIT broker
+        required: true
+        type: choice
+        options:
+          - ci
+      runner_pool:
+        description: Select compatible GitHub-hosted or private JIT runners
+        required: true
+        type: choice
+        default: public
+        options:
+          - public
+          - private
+      installed_handoff:
+        description: Retain candidate archives and run native Linux installed handoff acceptance
+        required: false
+        type: boolean
+        default: false
+      runtime_packs_run_id:
+        description: Optional trusted archive run with matching successful runtime-pack producer
+        required: false
+        type: string
+permissions:
+  contents: read
+
+concurrency:
+  group: ng-standalone-asset-validation-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.action == 'edited' && 'metadata' || 'code' }}
+  cancel-in-progress: false
+
+jobs:
+  verify-runtime-pack-install:
+    name: Preserve existing .NET directory permissions
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'ci' &&
+          (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
+        )
+      ) &&
+      (
+        true
+      )
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-verify-runtime-pack-install"]}}', github.run_id)) }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Test Linux x86 and FreeBSD runtime pack installation
+      run: bash packaging/scripts/test-install-extra-platform-runtime-packs.sh
+    - name: Test extra-platform NuGet source mapping
+      run: bash packaging/scripts/test-create-standalone-nuget-config.sh
+    - name: Test writable .NET SDK root preparation
+      run: bash packaging/scripts/test-prepare-writable-dotnet-root.sh
+    - name: Test SDK reference-pack collection across servicing versions
+      run: bash packaging/scripts/test-copy-dotnet-sdk-reference-packs.sh
+    - name: Test trusted runtime-pack reuse guards
+      run: python3 -m unittest discover -s packaging/scripts -p test_runtime_pack_reuse.py
+
+  frontend:
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'ci' &&
+          (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
+        )
+      ) &&
+      (
+        github.event_name != 'pull_request'
+      )
+    name: Build frontend once
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-frontend"]}}', github.run_id)) }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+
+    - name: Verify archive runtime ID matrices
+      run: python3 packaging/scripts/check-standalone-rids.py
+
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 26.12.1
+        package-manager-cache: false
+
+    - name: Build frontend
+      run: |
+        npm install --global yarn@1.22.22
+        yarn install --frozen-lockfile
+        yarn build
+
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: standalone-validation-ui
+        path: _output/UI/**
+        retention-days: 7
+        if-no-files-found: error
+
+  extra-platform-runtimes:
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'ci' &&
+          (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
+        )
+      ) &&
+      (
+        github.event_name != 'pull_request'
+      )
+    name: Build Linux x86 and FreeBSD runtime packs
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-jit-linux-22-04","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-extra-platform-runtimes"]}}', github.run_id)) }}
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      actions: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+
+    - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+      if: inputs.runtime_packs_run_id == ''
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+      with:
+        dotnet-version: |
+          10.0.110
+          10.0.111
+          10.0.403
+
+    - name: Build pinned extra-platform runtime packs
+      if: inputs.runtime_packs_run_id == ''
+      env:
+        DOTNETVERSION: 10.0.403
+        DOTNET_ROOT: ${{ runner.temp }}/dotnet
+        PLATFORM_RUNTIME_WORK_DIR: ${{ runner.temp }}/chaptarrng-platform-runtime-work
+        PLATFORM_RUNTIME_PACKS_OUTPUT: ${{ runner.temp }}/chaptarrng-platform-runtime-packs
+      run: bash packaging/scripts/build-extra-platform-runtime-packs.sh
+
+    - name: Verify reused runtime pack provenance
+      if: inputs.runtime_packs_run_id != ''
+      env:
+        GH_TOKEN: ${{ github.token }}
+        SOURCE_RUN_ID: ${{ inputs.runtime_packs_run_id }}
+      run: |
+        python3 packaging/scripts/verify-runtime-pack-reuse.py "$SOURCE_RUN_ID" \
+          "$RUNNER_TEMP/runtime-pack-provenance.json"
+
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      if: inputs.runtime_packs_run_id != ''
+      with:
+        name: chaptarrng-platform-runtime-packs
+        run-id: ${{ inputs.runtime_packs_run_id }}
+        github-token: ${{ github.token }}
+        path: ${{ runner.temp }}/chaptarrng-platform-runtime-packs
+
+    - name: Retain original producer identity
+      if: inputs.runtime_packs_run_id != ''
+      run: cp "$RUNNER_TEMP/runtime-pack-provenance.json" "$RUNNER_TEMP/chaptarrng-platform-runtime-packs/reuse-provenance.json"
+
+    - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+      if: inputs.runtime_packs_run_id != ''
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+      with:
+        dotnet-version: 10.0.403
+
+    - name: Qualify native x86 delegates, exception collection and nullable validation
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/x86-qualified-runtime"
+        tar -xzf "$RUNNER_TEMP/chaptarrng-platform-runtime-packs/runtimes/linux-x86-runtime.tar.gz" \
+          -C "$RUNNER_TEMP/x86-qualified-runtime"
+        "$RUNNER_TEMP/dotnet/dotnet" build integration/runtime-x86/RuntimeProbe.csproj \
+          --configuration Release --output "$RUNNER_TEMP/x86-runtime-probe" \
+          -p:BaseIntermediateOutputPath="$RUNNER_TEMP/x86-runtime-probe-obj/"
+        docker build --platform linux/386 -t "chaptarrng-runtime-qualification:$GITHUB_RUN_ID" \
+          -f integration/standalone-handoff/Dockerfile.x86 integration/standalone-handoff
+        docker run --rm --platform linux/386 --network none \
+          --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
+          --pids-limit 128 --memory 1g --cpus 2 \
+          -e DOTNET_ROOT=/runtime -e DOTNET_MULTILEVEL_LOOKUP=0 \
+          -v "$RUNNER_TEMP/x86-qualified-runtime:/runtime:ro" \
+          -v "$RUNNER_TEMP/x86-runtime-probe:/probe:ro" \
+          --entrypoint /runtime/dotnet "chaptarrng-runtime-qualification:$GITHUB_RUN_ID" \
+          /probe/RuntimeProbe.dll | tee "$RUNNER_TEMP/chaptarrng-platform-runtime-packs/x86-runtime-qualification.log"
+
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: chaptarrng-platform-runtime-packs
+        path: ${{ runner.temp }}/chaptarrng-platform-runtime-packs/**
+        retention-days: 7
+        if-no-files-found: error
+
+  extra-standalone:
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'ci' &&
+          (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
+        )
+      ) &&
+      (
+        github.event_name != 'pull_request'
+      )
+    name: Build and verify ${{ matrix.rid }} archive
+    needs: [frontend, extra-platform-runtimes]
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-{1}-extra-standalone"]}}', github.run_id, strategy.job-index)) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [linux-x86, freebsd-x64]
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: standalone-validation-ui
+        path: _output/UI
+
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: chaptarrng-platform-runtime-packs
+        path: ${{ runner.temp }}/platform-runtime-packs
+
+    - name: Configure user-writable .NET install directory
+      shell: bash
+      run: |
+        set -euo pipefail
+        dotnet_dir="$RUNNER_TEMP/dotnet"
+        mkdir -p -- "$dotnet_dir"
+        printf 'DOTNET_INSTALL_DIR=%s\n' "$dotnet_dir" >> "$GITHUB_ENV"
+
+    - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+      with:
+        dotnet-version: 10.0.403
+
+    # Extra runtime packs must go into an owned copy of the runner-managed SDK.
+    - name: Prepare writable .NET SDK root for extra platform packs
+      env:
+        DOTNET_ROOT: ${{ runner.temp }}/chaptarrng-dotnet
+      shell: bash
+      run: |
+        set -euo pipefail
+        source_dotnet_root="$(dirname -- "$(readlink -f -- "$(command -v dotnet)")")"
+        bash packaging/scripts/prepare-writable-dotnet-root.sh "$source_dotnet_root" "$DOTNET_ROOT"
+
+    - name: Build standalone application archive
+      env:
+        CUSTOM_RUNTIME_PACKS_DIR: ${{ runner.temp }}/platform-runtime-packs/packages
+        DOTNET_ROOT: ${{ runner.temp }}/chaptarrng-dotnet
+        DOTNETVERSION: 10.0.403
+      run: bash packaging/scripts/build-standalone.sh 0.0.0 "${{ matrix.rid }}" "$RUNNER_TEMP/release-assets"
+
+    - name: Verify archive and checksum sidecar
+      env:
+        RID: ${{ matrix.rid }}
+      run: |
+        set -euo pipefail
+        asset="ChaptarrNG-0.0.0-${RID}.tar.gz"
+        tar -tzf "$RUNNER_TEMP/release-assets/$asset" >/dev/null
+        (cd "$RUNNER_TEMP/release-assets" && sha256sum --check "$asset.sha256")
+
+    - name: Retain exact candidate archive for installed handoff
+      if: inputs.installed_handoff
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: standalone-candidate-${{ matrix.rid }}
+        path: ${{ runner.temp }}/release-assets/*-${{ matrix.rid }}.*
+        compression-level: 0
+        retention-days: 7
+        if-no-files-found: error
+
+  standalone:
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'ci' &&
+          (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
+        )
+      ) &&
+      (
+        github.event_name != 'pull_request'
+      )
+    name: Build and verify ${{ matrix.rid }} archive
+    needs: frontend
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-{1}-standalone"]}}', github.run_id, strategy.job-index)) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [linux-x64, linux-arm64, linux-musl-x64, linux-musl-arm64, osx-x64, osx-arm64, win-x64, win-x86]
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: standalone-validation-ui
+        path: _output/UI
+
+    - name: Configure user-writable .NET install directory
+      shell: bash
+      run: |
+        set -euo pipefail
+        dotnet_dir="$RUNNER_TEMP/dotnet"
+        mkdir -p -- "$dotnet_dir"
+        printf 'DOTNET_INSTALL_DIR=%s\n' "$dotnet_dir" >> "$GITHUB_ENV"
+
+    - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+      with:
+        dotnet-version: 10.0.403
+
+    - name: Build standalone application archive
+      run: bash packaging/scripts/build-standalone.sh 0.0.0 "${{ matrix.rid }}" "$RUNNER_TEMP/release-assets"
+
+    - name: Verify archive and checksum sidecar
+      env:
+        RID: ${{ matrix.rid }}
+      run: |
+        set -euo pipefail
+        if [[ "$RID" == win-* ]]; then
+          asset="ChaptarrNG-0.0.0-${RID}.zip"
+          unzip -t "$RUNNER_TEMP/release-assets/$asset" >/dev/null
+        else
+          asset="ChaptarrNG-0.0.0-${RID}.tar.gz"
+          tar -tzf "$RUNNER_TEMP/release-assets/$asset" >/dev/null
+          if [[ "$RID" == linux-* || "$RID" == osx-* ]]; then
+            tar -tzf "$RUNNER_TEMP/release-assets/$asset" \
+              | grep -Fx 'ChaptarrNG/scripts/bookshelfng-to-chaptarrng.sh' >/dev/null
+            tar -tzf "$RUNNER_TEMP/release-assets/$asset" \
+              | grep -Fx 'ChaptarrNG/scripts/capture-bookshelf-metadata-env.py' >/dev/null
+            tar -tzf "$RUNNER_TEMP/release-assets/$asset" \
+              | grep -Fx 'ChaptarrNG/scripts/bookshelfng-standalone-launch.sh' >/dev/null
+          fi
+        fi
+        (cd "$RUNNER_TEMP/release-assets" && sha256sum --check "$asset.sha256")
+
+    - name: Retain exact candidate archive for installed handoff
+      if: inputs.installed_handoff
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: standalone-candidate-${{ matrix.rid }}
+        path: ${{ runner.temp }}/release-assets/*-${{ matrix.rid }}.*
+        compression-level: 0
+        retention-days: 7
+        if-no-files-found: error
+
+    - name: Exercise migrated SeerrNG acquisition with real qBittorrent
+      if: matrix.rid == 'linux-musl-x64'
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/acquisition-candidate"
+        tar -xzf "$RUNNER_TEMP/release-assets/ChaptarrNG-0.0.0-linux-musl-x64.tar.gz" \
+          -C "$RUNNER_TEMP/acquisition-candidate"
+        timeout --foreground 10m docker build -t chaptarrng-acquisition-qbittorrent:20261105 \
+          -f integration/acquisition/Dockerfile.qbittorrent integration/acquisition
+        timeout --foreground 10m python3 integration/run-acquisition-smoke.py \
+          --candidate "$RUNNER_TEMP/acquisition-candidate/ChaptarrNG" \
+          --output "$RUNNER_TEMP/acquisition-evidence"
+        if ! command -v ffmpeg >/dev/null; then
+          timeout --foreground 10m sudo apt-get update
+          timeout --foreground 10m sudo apt-get install -y ffmpeg
+        fi
+        timeout --foreground 10m python3 integration/run-acquisition-smoke.py --media-type audiobook \
+          --candidate "$RUNNER_TEMP/acquisition-candidate/ChaptarrNG" \
+          --output "$RUNNER_TEMP/acquisition-audio-evidence"
+        timeout --foreground 10m python3 integration/run-cover-proxy-smoke.py \
+          --candidate "$RUNNER_TEMP/acquisition-candidate/ChaptarrNG" \
+          --output "$RUNNER_TEMP/cover-proxy-evidence" \
+          --source-commit "$GITHUB_SHA"
+
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      if: always() && matrix.rid == 'linux-musl-x64'
+      with:
+        name: migrated-acquisition-evidence
+        path: |
+          ${{ runner.temp }}/acquisition-evidence/*.json
+          ${{ runner.temp }}/acquisition-evidence/*.log
+          ${{ runner.temp }}/acquisition-audio-evidence/*.json
+          ${{ runner.temp }}/acquisition-audio-evidence/*.log
+          ${{ runner.temp }}/cover-proxy-evidence/*.json
+          ${{ runner.temp }}/cover-proxy-evidence/*.log
+          ${{ runner.temp }}/release-assets/ChaptarrNG-0.0.0-linux-musl-x64.tar.gz.sha256
+        retention-days: 7
+        if-no-files-found: error
+
+
+  installed-linux:
+    name: Installed ${{ matrix.rid }} No/Manual/Yes and rollback
+    needs: [standalone, extra-standalone]
+    if: inputs.installed_handoff
+    timeout-minutes: 30
+    runs-on: ${{ inputs.runner_pool == 'public' && matrix.runner || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","{0}","ng-shared-main-chaptarrng","ng-main-run-{1}","gha-{1}-installed-linux-{2}"]}}', matrix.arch, github.run_id, strategy.job-index)) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            runner: ubuntu-24.04
+            arch: x64
+            flavor: glibc
+            predecessor_sha256: a490b90bfcc608a40844d5c3ce09f3cc95b767e3fbea93c71401b33326ab30f2
+          - rid: linux-arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+            flavor: glibc
+            predecessor_sha256: 1aeca17ed8cd8ed862e7d88ef334fda825fe796832cbfbf7e66e8d102fee4d03
+          - rid: linux-musl-x64
+            runner: ubuntu-24.04
+            arch: x64
+            flavor: musl
+            predecessor_sha256: f0d8983f72663fcb5ccbeb4758bc4adcb1e9d5d19ed57c62e91a0409b3500bba
+          - rid: linux-musl-arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+            flavor: musl
+            predecessor_sha256: 95968365c66772193c53264831dd1ef7ff6954ebdbd26e423b1cd777ddf3caad
+          - rid: linux-x86
+            runner: ubuntu-24.04
+            arch: x64
+            flavor: x86
+            predecessor_sha256: 1c6f2ecf34d5c39358c8a3d1b2ab165b0de5f59501c44e11353fb897199fd9b1
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: standalone-candidate-${{ matrix.rid }}
+        path: ${{ runner.temp }}/standalone-candidate
+    - name: Verify candidate and public .76 predecessor
+      env:
+        RID: ${{ matrix.rid }}
+        PREDECESSOR_SHA256: ${{ matrix.predecessor_sha256 }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        predecessor="BookshelfNG-v0.4.21.76-${RID}.tar.gz"
+        mkdir -p "$RUNNER_TEMP/standalone-predecessor"
+        curl --fail --location --retry 3 --retry-all-errors \
+          "https://github.com/snapetech-org/bookshelfng/releases/download/v0.4.21.76/$predecessor" \
+          --output "$RUNNER_TEMP/standalone-predecessor/$predecessor"
+        printf '%s  %s\n' "$PREDECESSOR_SHA256" "$RUNNER_TEMP/standalone-predecessor/$predecessor" | sha256sum --check -
+        (cd "$RUNNER_TEMP/standalone-candidate" && sha256sum --check "ChaptarrNG-0.0.0-${RID}.tar.gz.sha256")
+    - name: Exercise installed archive and export evidence after consumers exit
+      env:
+        RID: ${{ matrix.rid }}
+        FLAVOR: ${{ matrix.flavor }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/standalone-handoff/work"
+        predecessor="BookshelfNG-v0.4.21.76-${RID}.tar.gz"
+        candidate="ChaptarrNG-0.0.0-${RID}.tar.gz"
+        if [[ "$FLAVOR" == glibc ]]; then
+          TMPDIR="$RUNNER_TEMP/standalone-handoff/work" python3 packaging/scripts/test-bookshelf-standalone-handoff.py \
+            "$RUNNER_TEMP/standalone-predecessor/$predecessor" \
+            "$RUNNER_TEMP/standalone-candidate/$candidate" \
+            --output "$RUNNER_TEMP/standalone-handoff/evidence" --candidate-revision "$GITHUB_SHA" --runtime-id "$RID" \
+            2>&1 | tee "$RUNNER_TEMP/standalone-handoff/acceptance.log"
+        else
+          image="chaptarrng-standalone-handoff-${RID}:$GITHUB_RUN_ID"
+          docker_platform=()
+          fixture_options=()
+          fixture_library="$RUNNER_TEMP/standalone-handoff/library"
+          mkdir -p "$fixture_library/Fixture Author/Ebooks" "$fixture_library/Fixture Author/Audiobooks"
+          if [[ "$FLAVOR" == x86 ]]; then
+            docker_platform=(--platform linux/386)
+            fixture_options=(--preinitialized-source-auxiliary-databases --exclude-legacy-x86-mam-indexer)
+          fi
+          docker build "${docker_platform[@]}" -t "$image" -f "integration/standalone-handoff/Dockerfile.$FLAVOR" integration/standalone-handoff
+          docker run "${docker_platform[@]}" --rm --network none --user "$(id -u):$(id -g)" \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 512 --memory 6g --cpus 2 \
+            -e TMPDIR=/work/work -v "$PWD:/repo:ro" \
+            -v "$RUNNER_TEMP/standalone-predecessor:/predecessor:ro" \
+            -v "$RUNNER_TEMP/standalone-candidate:/candidate:ro" \
+            -v "$fixture_library:/library" \
+            -v "$RUNNER_TEMP/standalone-handoff:/work" \
+            "$image" "/predecessor/$predecessor" "/candidate/$candidate" \
+            --output /work/evidence --candidate-revision "$GITHUB_SHA" --runtime-id "$RID" "${fixture_options[@]}" \
+            2>&1 | tee "$RUNNER_TEMP/standalone-handoff/acceptance.log"
+        fi
+    - name: Retain installed handoff evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: standalone-installed-${{ matrix.rid }}
+        path: |
+          ${{ runner.temp }}/standalone-handoff/acceptance.log
+          ${{ runner.temp }}/standalone-handoff/evidence/
+        retention-days: 7
+        if-no-files-found: warn

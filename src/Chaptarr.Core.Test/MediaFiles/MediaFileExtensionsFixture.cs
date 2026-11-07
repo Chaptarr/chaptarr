@@ -66,5 +66,31 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(MediaFileExtensions.IsSingleFileBookContainer(".m4b"), Is.False);
             Assert.That(MediaFileExtensions.IsSingleFileBookContainer(".mka"), Is.False);
         }
+
+        [Test]
+        public void should_only_replace_audio_with_audio()
+        {
+            Assert.That(MediaFileExtensions.AreCompatibleFormats(Quality.MP3, "book.mp3", Quality.M4B, "book.m4b"), Is.True);
+            Assert.That(MediaFileExtensions.AreCompatibleFormats(Quality.EPUB, "book.epub", Quality.M4B, "book.m4b"), Is.False);
+        }
+
+        [Test]
+        public void should_only_replace_ebooks_with_the_same_container()
+        {
+            Assert.That(MediaFileExtensions.AreCompatibleFormats(Quality.EPUB, "book.epub", Quality.EPUB, "replacement.EPUB"), Is.True);
+            Assert.That(MediaFileExtensions.AreCompatibleFormats(Quality.EPUB, "book.epub", Quality.MOBI, "book.mobi"), Is.False);
+        }
+
+        [Test]
+        public void should_only_compare_ebook_quality_with_the_same_format_and_audio_with_audio()
+        {
+            Assert.That(MediaFileExtensions.AreCompatibleQualities(Quality.EPUB, Quality.EPUB), Is.True);
+            Assert.That(MediaFileExtensions.AreCompatibleQualities(Quality.EPUB, Quality.MOBI), Is.False);
+            Assert.That(MediaFileExtensions.AreCompatibleQualities(Quality.MOBI, Quality.PDF), Is.False);
+            Assert.That(MediaFileExtensions.AreCompatibleQualities(Quality.MP3, Quality.M4B), Is.True);
+            Assert.That(MediaFileExtensions.AreCompatibleQualities(Quality.UnknownAudio, Quality.FLAC), Is.True);
+            Assert.That(MediaFileExtensions.AreCompatibleQualities(Quality.EPUB, Quality.MP3), Is.False);
+            Assert.That(MediaFileExtensions.AreCompatibleQualities(Quality.Unknown, Quality.EPUB), Is.False);
+        }
     }
 }

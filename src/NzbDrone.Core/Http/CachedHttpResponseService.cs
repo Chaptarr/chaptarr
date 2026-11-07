@@ -1,5 +1,6 @@
 using System;
 using System.Net;
+using System.Threading;
 using NLog;
 using NzbDrone.Common.Http;
 
@@ -7,6 +8,7 @@ namespace NzbDrone.Core.Http
 {
     public interface ICachedHttpResponseService
     {
+        IDisposable BeginReadOnlyScope() => null;
         HttpResponse Get(HttpRequest request, bool useCache, TimeSpan ttl);
         HttpResponse Get(HttpRequest request, bool useCache, TimeSpan ttl, Func<HttpResponse, bool> isPositive);
         HttpResponse<T> Get<T>(HttpRequest request, bool useCache, TimeSpan ttl)
@@ -20,6 +22,7 @@ namespace NzbDrone.Core.Http
         private readonly ICachedHttpResponseRepository _repo;
         private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
+        private readonly AsyncLocal<int> _readOnlyScopeCount = new();
 
         public CachedHttpResponseService(ICachedHttpResponseRepository httpResponseRepository,
                                          IHttpClient httpClient,
@@ -30,6 +33,12 @@ namespace NzbDrone.Core.Http
             _logger = logger;
         }
 
+        public IDisposable BeginReadOnlyScope()
+        {
+            _readOnlyScopeCount.Value++;
+            return new ReadOnlyScope(_readOnlyScopeCount);
+        }
+
         public HttpResponse Get(HttpRequest request, bool useCache, TimeSpan ttl)
         {
             return Get(request, useCache, ttl, null);
@@ -37,14 +46,19 @@ namespace NzbDrone.Core.Http
 
         public HttpResponse Get(HttpRequest request, bool useCache, TimeSpan ttl, Func<HttpResponse, bool> isPositive)
         {
-            var cached = _repo.FindByUrl(request.Url.ToString());
+            var cacheWritesAllowed = _readOnlyScopeCount.Value == 0;
+            var cached = useCache ? _repo.FindByUrl(request.Url.ToString()) : null;
 
             // Historical versions could persist transitional 2xx responses such as
             // 202/null. They are negative discovery state, so remove them instead of
             // allowing them to mask a later positive response until their TTL expires.
             if (cached != null && cached.StatusCode != (int)HttpStatusCode.OK)
             {
-                _repo.Delete(cached);
+                if (cacheWritesAllowed)
+                {
+                    _repo.Delete(cached);
+                }
+
                 cached = null;
             }
 
@@ -52,7 +66,11 @@ namespace NzbDrone.Core.Http
                     new HttpResponse(request, new HttpHeader(), cached.Value, (HttpStatusCode)cached.StatusCode),
                     isPositive))
             {
-                _repo.Delete(cached);
+                if (cacheWritesAllowed)
+                {
+                    _repo.Delete(cached);
+                }
+
                 cached = null;
             }
 
@@ -70,7 +88,7 @@ namespace NzbDrone.Core.Http
 
             var positiveResponse = result.StatusCode == HttpStatusCode.OK && IsPositiveResponse(result, isPositive);
             var storageDisabled = ResponseDisablesStorage(result);
-            var shouldStore = useCache && positiveResponse && !storageDisabled;
+            var shouldStore = useCache && positiveResponse && !storageDisabled && cacheWritesAllowed;
 
             // Preserve an origin marker. Otherwise report whether this response
             // was eligible for local storage, rather than labelling negatives MISS.
@@ -96,7 +114,7 @@ namespace NzbDrone.Core.Http
                 cached.Value = result.Content;
                 cached.StatusCode = (int)result.StatusCode;
 
-                _repo.Upsert(cached);
+                _repo.UpsertByUrl(cached);
             }
 
             return result;
@@ -131,6 +149,25 @@ namespace NzbDrone.Core.Http
                    ContainsNoStore(response.Headers.GetSingleValue("Cache-Control")) ||
                    ContainsNoStore(response.Headers.GetSingleValue("CDN-Cache-Control")) ||
                    ContainsNoStore(response.Headers.GetSingleValue("Cloudflare-CDN-Cache-Control"));
+        }
+
+        private sealed class ReadOnlyScope : IDisposable
+        {
+            private AsyncLocal<int> _scopeCount;
+
+            public ReadOnlyScope(AsyncLocal<int> scopeCount)
+            {
+                _scopeCount = scopeCount;
+            }
+
+            public void Dispose()
+            {
+                var scopeCount = Interlocked.Exchange(ref _scopeCount, null);
+                if (scopeCount != null && scopeCount.Value > 0)
+                {
+                    scopeCount.Value--;
+                }
+            }
         }
 
         private static bool ContainsNoStore(string value)

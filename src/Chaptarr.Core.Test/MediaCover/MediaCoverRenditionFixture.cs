@@ -18,9 +18,7 @@ using NzbDrone.Core.Configuration;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaCover.Commands;
 using NzbDrone.Core.Messaging.Commands;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Png;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 
 namespace Chaptarr.Core.Test.MediaCover
 {
@@ -49,6 +47,25 @@ namespace Chaptarr.Core.Test.MediaCover
             }
         }
 
+        private class ConfigServiceProxy : DispatchProxy
+        {
+            public string MetadataServerUrl { get; set; }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                return targetMethod?.Name == "get_MetadataServerUrl"
+                    ? MetadataServerUrl
+                    : throw new NotImplementedException(targetMethod?.Name);
+            }
+        }
+
+        private static IConfigService CreateConfigServiceForImageHost(string host)
+        {
+            var configService = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
+            ((ConfigServiceProxy)(object)configService).MetadataServerUrl = $"https://{host}/";
+            return configService;
+        }
+
         private class ConfigFileProxy : DispatchProxy
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
@@ -62,6 +79,15 @@ namespace Chaptarr.Core.Test.MediaCover
         private class DiskProviderProxy : DispatchProxy
         {
             public HashSet<string> ExistingPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> MissingFolders { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Action<string> OnFolderExists { get; set; }
+
+            private bool FolderExistsWithHook(string path)
+            {
+                var exists = !MissingFolders.Contains(path);
+                OnFolderExists?.Invoke(path);
+                return exists;
+            }
             public Dictionary<string, string> TextByPath { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, byte[]> BinaryByPath { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<string> DeletedFolders { get; } = new();
@@ -82,7 +108,7 @@ namespace Chaptarr.Core.Test.MediaCover
                     nameof(IDiskProvider.FileExists) => ExistingPaths.Contains(path),
                     nameof(IDiskProvider.GetFileSize) => BinaryByPath.TryGetValue(path, out var bytes) ? bytes.LongLength : ExistingPaths.Contains(path) ? 1024L : 0L,
                     nameof(IDiskProvider.FileGetLastWrite) => new DateTime(1234),
-                    nameof(IDiskProvider.FolderExists) => true,
+                    nameof(IDiskProvider.FolderExists) => FolderExistsWithHook(path),
                     nameof(IDiskProvider.GetFiles) => ExistingPaths.Where(existing =>
                         string.Equals(Path.GetDirectoryName(existing), path, StringComparison.OrdinalIgnoreCase)).ToArray(),
                     nameof(IDiskProvider.EnsureFolder) => null,
@@ -210,6 +236,14 @@ namespace Chaptarr.Core.Test.MediaCover
             public int ProxyCalls { get; private set; }
 
             public string RegisterUrl(string url) => "/MediaCoverProxy/hash/cover.jpg";
+
+            public bool IsProxyUrl(string url) => false;
+
+            public bool TryResolveProxyUrl(string url, out string resolved)
+            {
+                resolved = null;
+                return false;
+            }
 
             public void ProxyRemoteUrls(IEnumerable<NzbDrone.Core.MediaCover.MediaCover> covers)
             {
@@ -554,7 +588,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 diskProvider: diskProvider,
                 appFolderInfo: appFolder,
                 coverExistsSpecification: null,
-                configService: null,
+                configService: CreateConfigServiceForImageHost("assets.hardcover.app"),
                 configFileProvider: null,
                 eventAggregator: null,
                 deferredCoverService: null,
@@ -606,7 +640,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 diskProvider: diskProvider,
                 appFolderInfo: appFolder,
                 coverExistsSpecification: null,
-                configService: null,
+                configService: CreateConfigServiceForImageHost("assets.hardcover.app"),
                 configFileProvider: null,
                 eventAggregator: null,
                 deferredCoverService: null,
@@ -640,7 +674,7 @@ namespace Chaptarr.Core.Test.MediaCover
             var httpClient = DispatchProxy.Create<IHttpClient, ImageHttpClientProxy>();
             var responses = (ImageHttpClientProxy)(object)httpClient;
             var mascotBytes = Convert.FromBase64String(MascotWebpBase64);
-            var realImageBytes = BuildPngBytes(32, 48, new Rgba32(30, 120, 210));
+            var realImageBytes = BuildPngBytes(32, 48, new SKColor(30, 120, 210));
             responses.ResponseQueue.Enqueue(mascotBytes); // range/header probe
             responses.ResponseQueue.Enqueue(mascotBytes); // full download
             responses.ResponseQueue.Enqueue(realImageBytes); // range/header probe
@@ -654,7 +688,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 diskProvider: diskProvider,
                 appFolderInfo: appFolder,
                 coverExistsSpecification: null,
-                configService: null,
+                configService: CreateConfigServiceForImageHost("assets.hardcover.app"),
                 configFileProvider: null,
                 eventAggregator: null,
                 deferredCoverService: null,
@@ -713,7 +747,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 diskProvider: diskProvider,
                 appFolderInfo: appFolder,
                 coverExistsSpecification: null,
-                configService: null,
+                configService: CreateConfigServiceForImageHost("assets.hardcover.app"),
                 configFileProvider: null,
                 eventAggregator: null,
                 deferredCoverService: null,
@@ -844,6 +878,65 @@ namespace Chaptarr.Core.Test.MediaCover
         }
 
         [Test]
+        public void converting_a_book_without_a_cover_folder_should_not_probe_for_its_metadata_file()
+        {
+            // IDiskProvider.FileExists enumerates the whole MediaCover/Books directory when a file is
+            // missing, so a book with no cover folder must be answered from FolderExists alone.
+            var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
+            ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProxy>();
+            var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var disk = (DiskProviderProxy)(object)diskProvider;
+            disk.MissingFolders.Add(Path.Combine(ConfigRoot, "MediaCover", "Books", "900"));
+            var deferred = DispatchProxy.Create<IDeferredCoverService, DeferredCoverProxy>();
+            var subject = new MediaCoverService(null, null, null, null, diskProvider, appFolder, null, null, config, null, deferred, LogManager.GetCurrentClassLogger());
+            var covers = new List<NzbDrone.Core.MediaCover.MediaCover>
+            {
+                new() { CoverType = MediaCoverTypes.Cover, Url = "cover.jpg" }
+            };
+
+            subject.ConvertToLocalUrls(900, MediaCoverEntity.Book, covers);
+            subject.ConvertToLocalUrls(900, MediaCoverEntity.Book, covers);
+
+            Assert.That(disk.GetCallCount(nameof(IDiskProvider.FileExists)), Is.Zero);
+            Assert.That(covers[0].Url, Is.EqualTo("cover.jpg"));
+        }
+
+        [Test]
+        public void a_concurrent_cover_write_should_not_be_overwritten_by_the_missing_folder_negative_cache_entry()
+        {
+            // The reader stats the folder (missing), a cover download then stores its metadata, and only afterwards does the
+            // reader cache its negative result. A plain indexer assignment let the stale negative clobber the fresh entry.
+            var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
+            ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
+            var config = DispatchProxy.Create<IConfigFileProvider, ConfigFileProxy>();
+            var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var disk = (DiskProviderProxy)(object)diskProvider;
+            disk.MissingFolders.Add(Path.Combine(ConfigRoot, "MediaCover", "Books", "901"));
+            var deferred = DispatchProxy.Create<IDeferredCoverService, DeferredCoverProxy>();
+            var subject = new MediaCoverService(null, null, null, null, diskProvider, appFolder, null, null, config, null, deferred, LogManager.GetCurrentClassLogger());
+
+            const System.Reflection.BindingFlags nonPublic = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            var cache = (System.Collections.IDictionary)typeof(MediaCoverService).GetField("_bookCoverMetadataByBookId", nonPublic).GetValue(subject);
+            var metadataType = typeof(MediaCoverService).GetNestedType("BookCoverMetadata", System.Reflection.BindingFlags.NonPublic);
+            var editionType = typeof(MediaCoverService).GetNestedType("BookCoverMetadataSelectedEdition", System.Reflection.BindingFlags.NonPublic);
+            disk.OnFolderExists = _ =>
+            {
+                var edition = Activator.CreateInstance(editionType);
+                editionType.GetProperty("EditionProviderId").SetValue(edition, "gr:1");
+                var fresh = Activator.CreateInstance(metadataType);
+                metadataType.GetProperty("SelectedEdition").SetValue(fresh, edition);
+                cache[901] = fresh;
+            };
+            var covers = new List<NzbDrone.Core.MediaCover.MediaCover> { new() { CoverType = MediaCoverTypes.Cover, Url = "cover.jpg" } };
+
+            subject.ConvertToLocalUrls(901, MediaCoverEntity.Book, covers);
+
+            var stored = cache[901];
+            Assert.That(metadataType.GetProperty("SelectedEdition").GetValue(stored), Is.Not.Null, "the fresh positive entry was overwritten by the stale negative one");
+        }
+
+        [Test]
         public void selecting_a_coverless_edition_should_remove_the_previous_edition_local_cover()
         {
             var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
@@ -951,6 +1044,11 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(MediaCoverRendition.GetOriginalPath(Path.Combine(folder, rendition)), Is.EqualTo(Path.Combine(folder, original)));
         }
 
+        [TestCase("/MediaCover/Books/12/cover.tiff")]
+        [TestCase("/MediaCover/Books/12/cover.tif")]
+        [TestCase("/MediaCover/Books/12/cover")]
+        [TestCase("/MediaCover/12/poster?lastWrite=1234")]
+        [TestCase("cover")]
         [TestCase("/MediaCover/Books/12/cover-250.jpeg?lastWrite=1234")]
         [TestCase("/MediaCover/Books/12/cover-250.jfif")]
         [TestCase("/MediaCover/Books/12/cover-250.webp")]
@@ -959,6 +1057,8 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(MediaCoverRendition.IsSupportedImagePath(path), Is.True);
         }
 
+        [TestCase("/MediaCover/Books/config/cover")]
+        [TestCase("/MediaCover/Books/12/../config/cover")]
         [TestCase("/MediaCover/Books/12/cover-metadata.json")]
         [TestCase("/MediaCover/Books/12/readme.txt")]
         [TestCase("/MediaCover/Books/12/no-extension")]
@@ -967,27 +1067,29 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(MediaCoverRendition.IsSupportedImagePath(path), Is.False);
         }
 
-        [Test]
-        public void books_page_jpeg_rendition_request_should_fall_back_to_the_real_original()
+        [TestCase("Books/12", "cover")]
+        [TestCase("12", "poster")]
+        public void page_jpeg_rendition_request_should_fall_back_to_the_real_original(string folder, string filename)
         {
             var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
             ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
             var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
             var disk = (DiskProviderProxy)(object)diskProvider;
-            disk.ExistingPaths.Add(Path.Combine(ConfigRoot, "MediaCover", "Books", "12", "cover.jpeg"));
+            var original = Path.Combine(ConfigRoot, "MediaCover", folder.Replace('/', Path.DirectorySeparatorChar), filename + ".jpeg");
+            disk.ExistingPaths.Add(original);
             var mapper = new MediaCoverMapper(appFolder, diskProvider, LogManager.GetCurrentClassLogger());
 
-            var mapped = mapper.Map("/MediaCover/Books/12/cover-500.jpeg");
+            var mapped = mapper.Map("/MediaCover/" + folder + "/" + filename + "-500.jpeg");
 
-            Assert.That(mapped, Is.EqualTo(Path.Combine(ConfigRoot, "MediaCover", "Books", "12", "cover.jpeg")));
+            Assert.That(mapped, Is.EqualTo(original));
             Assert.That(mapper.CanHandle("/MediaCover/Books/12/cover-metadata.json"), Is.False);
         }
 
-        [TestCase(".png", "PNG")]
-        [TestCase(".jpeg", "JPEG")]
-        [TestCase(".jfif", "JPEG")]
-        [TestCase(".webp", "Webp")]
-        public void image_resizer_should_preserve_the_destination_file_format(string extension, string expectedFormat)
+        [TestCase(".png", SKEncodedImageFormat.Png)]
+        [TestCase(".jpeg", SKEncodedImageFormat.Jpeg)]
+        [TestCase(".jfif", SKEncodedImageFormat.Jpeg)]
+        [TestCase(".webp", SKEncodedImageFormat.Webp)]
+        public void image_resizer_should_preserve_the_destination_file_format(string extension, SKEncodedImageFormat expectedFormat)
         {
             var folder = Path.Combine(Path.GetTempPath(), "chaptarr-image-resizer-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(folder);
@@ -996,15 +1098,59 @@ namespace Chaptarr.Core.Test.MediaCover
 
             try
             {
-                using (var image = new Image<Rgba32>(20, 40))
-                {
-                    image.Save(source, new PngEncoder());
-                }
+                CreatePng(source, 20, 40);
 
                 new ImageResizer(null, null).Resize(source, destination, 10);
 
-                Assert.That(Image.DetectFormat(destination)?.Name, Is.EqualTo(expectedFormat));
-                Assert.That(Image.Identify(destination)?.Height, Is.EqualTo(10));
+                using var codec = SKCodec.Create(destination);
+                using var resized = SKBitmap.Decode(destination);
+                Assert.That(codec, Is.Not.Null);
+                Assert.That(codec!.EncodedFormat, Is.EqualTo(expectedFormat));
+                Assert.That(resized!.Height, Is.EqualTo(10));
+                Assert.That(resized.Width, Is.EqualTo(5));
+            }
+            finally
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+        }
+
+        private static void CreatePng(string path, int width, int height)
+        {
+            using var surface = SKSurface.Create(new SKImageInfo(width, height));
+            if (surface == null)
+            {
+                throw new InvalidOperationException("Could not create a test image surface.");
+            }
+
+            surface.Canvas.Clear(SKColors.White);
+            using var image = surface.Snapshot();
+            using var encoded = image.Encode(SKEncodedImageFormat.Png, 100);
+            if (encoded == null)
+            {
+                throw new InvalidOperationException("Could not encode the test image.");
+            }
+
+            using var output = File.Create(path);
+            encoded.SaveTo(output);
+        }
+
+        [Test]
+        public void image_resizer_should_remove_stale_output_when_source_cannot_be_decoded()
+        {
+            var folder = Path.Combine(Path.GetTempPath(), "chaptarr-image-resizer-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(folder);
+            var source = Path.Combine(folder, "invalid.png");
+            var destination = Path.Combine(folder, "resized.png");
+
+            try
+            {
+                File.WriteAllText(source, "not an image");
+                File.WriteAllText(destination, "stale output");
+
+                Assert.Throws<InvalidDataException>(() => new ImageResizer(null, null).Resize(source, destination, 10));
+
+                Assert.That(File.Exists(destination), Is.False);
             }
             finally
             {
@@ -1351,11 +1497,24 @@ namespace Chaptarr.Core.Test.MediaCover
             };
         }
 
-        private static byte[] BuildPngBytes(int width, int height, Rgba32 color)
+        private static byte[] BuildPngBytes(int width, int height, SKColor color)
         {
-            using var image = new Image<Rgba32>(width, height, color);
+            using var surface = SKSurface.Create(new SKImageInfo(width, height));
+            if (surface == null)
+            {
+                throw new InvalidOperationException("Could not create a test image surface.");
+            }
+
+            surface.Canvas.Clear(color);
+            using var image = surface.Snapshot();
+            using var encoded = image.Encode(SKEncodedImageFormat.Png, 100);
+            if (encoded == null)
+            {
+                throw new InvalidOperationException("Could not encode the test image.");
+            }
+
             using var stream = new MemoryStream();
-            image.Save(stream, new PngEncoder());
+            encoded.SaveTo(stream);
             return stream.ToArray();
         }
     }

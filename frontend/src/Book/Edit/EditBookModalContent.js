@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import Alert from 'Components/Alert';
 import Form from 'Components/Form/Form';
 import FormGroup from 'Components/Form/FormGroup';
 import FormInputGroup from 'Components/Form/FormInputGroup';
@@ -11,7 +12,7 @@ import ModalBody from 'Components/Modal/ModalBody';
 import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
-import { inputTypes } from 'Helpers/Props';
+import { inputTypes, kinds } from 'Helpers/Props';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 
@@ -42,6 +43,7 @@ class EditBookModalContent extends Component {
       isPopulated,
       error,
       isSaving,
+      onRetryPress,
       onInputChange,
       onModalClose,
       ...otherProps
@@ -54,7 +56,7 @@ class EditBookModalContent extends Component {
     } = item;
 
     const hasFile = statistics ? statistics.bookFileCount > 0 : false;
-    const errorMessage = getErrorMessage(error, 'Unable to load editions');
+    const errorMessage = getErrorMessage(error, translate('UnableToLoadEditions'));
 
     return (
       <ModalContent onModalClose={onModalClose}>
@@ -100,8 +102,13 @@ class EditBookModalContent extends Component {
             }
 
             {
-              error &&
-                <div>{errorMessage}</div>
+              error && !isFetching &&
+                <Alert kind={kinds.DANGER} role="alert">
+                  <div>{errorMessage}</div>
+                  <Button size="small" onPress={onRetryPress}>
+                    {translate('Retry')}
+                  </Button>
+                </Alert>
             }
 
             {
@@ -152,6 +159,7 @@ EditBookModalContent.propTypes = {
   item: PropTypes.object.isRequired,
   isFetching: PropTypes.bool.isRequired,
   error: PropTypes.object,
+  onRetryPress: PropTypes.func.isRequired,
   isPopulated: PropTypes.bool.isRequired,
   isSaving: PropTypes.bool.isRequired,
   onInputChange: PropTypes.func.isRequired,

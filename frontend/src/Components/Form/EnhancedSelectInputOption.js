@@ -45,6 +45,11 @@ class EnhancedSelectInputOption extends Component {
 
     return (
       <Link
+        id={String(id)}
+        role="option"
+        aria-selected={isSelected}
+        aria-disabled={isDisabled || undefined}
+        tabIndex={-1}
         className={classNames(
           className,
           isSelected && !isMultiSelect && styles.isSelected,

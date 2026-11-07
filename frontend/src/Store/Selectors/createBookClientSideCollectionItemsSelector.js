@@ -1,5 +1,5 @@
-import { createSelector, createSelectorCreator, defaultMemoize } from 'reselect';
-import hasDifferentItemsOrOrder from 'Utilities/Object/hasDifferentItemsOrOrder';
+import { createSelector, createSelectorCreator, lruMemoize } from 'reselect';
+import clientSideCollectionEqual from 'Utilities/Object/clientSideCollectionEqual.cjs';
 import createBooksClientSideCollectionSelector from './createBooksClientSideCollectionSelector';
 
 function createUnoptimizedSelector(uiSection) {
@@ -28,13 +28,9 @@ function createUnoptimizedSelector(uiSection) {
   );
 }
 
-function bookListEqual(a, b) {
-  return hasDifferentItemsOrOrder(a, b);
-}
-
 const createBookEqualSelector = createSelectorCreator(
-  defaultMemoize,
-  bookListEqual
+  lruMemoize,
+  clientSideCollectionEqual
 );
 
 function createBookClientSideCollectionItemsSelector(uiSection) {

@@ -48,7 +48,7 @@ namespace Chaptarr.Core.Test.Indexers
                 innerException);
             var memory = ConfigureLogging();
             var cacheManager = new CacheManager();
-            var controller = CreateController(cacheManager, rejection);
+            var controller = CreateController(cacheManager, new RejectingDownloadService(rejection));
             var resource = new ReleaseResource
             {
                 IndexerId = 1,
@@ -76,14 +76,45 @@ namespace Chaptarr.Core.Test.Indexers
             });
         }
 
-        private static ReleaseController CreateController(ICacheManager cacheManager, DownloadClientRejectedReleaseException rejection)
+        [Test]
+        public async Task should_return_a_specific_conflict_when_a_torrent_is_already_in_the_client()
+        {
+            var releaseInfo = new ReleaseInfo { Title = "Test Release" };
+            var cacheManager = new CacheManager();
+            var controller = CreateController(cacheManager, new ExistingTorrentDownloadService());
+            var resource = new ReleaseResource
+            {
+                IndexerId = 1,
+                Guid = "test-release"
+            };
+
+            cacheManager.GetCache<DownloadDecision>(typeof(ReleaseController), "downloadDecisions")
+                .Set("1_test-release", new DownloadDecision(new RemoteBook
+                {
+                    Release = releaseInfo,
+                    Author = new Author(),
+                    Books = new List<Book> { new() { Id = 1, Title = "Test Book" } }
+                }));
+
+            var result = await controller.DownloadRelease(resource);
+            Assert.That(result.Result, Is.InstanceOf<ConflictObjectResult>());
+            var conflict = (ConflictObjectResult)result.Result;
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(conflict.StatusCode, Is.EqualTo((int)HttpStatusCode.Conflict));
+                Assert.That(conflict.Value.GetType().GetProperty("code")?.GetValue(conflict.Value), Is.EqualTo("existingTorrent"));
+            });
+        }
+
+        private static ReleaseController CreateController(ICacheManager cacheManager, IDownloadService downloadService)
         {
             var controller = new ReleaseController(
                 rssFetcherAndParser: null,
                 releaseSearchService: null,
                 downloadDecisionMaker: null,
                 prioritizeDownloadDecision: null,
-                downloadService: new RejectingDownloadService(rejection),
+                downloadService: downloadService,
                 authorService: null,
                 bookService: null,
                 parsingService: null,
@@ -127,6 +158,26 @@ namespace Chaptarr.Core.Test.Indexers
             public Task DownloadReport(RemoteBook remoteBook, int? downloadClientId)
             {
                 return Task.FromException(_rejection);
+            }
+
+            public Task AdoptExistingTorrent(RemoteBook remoteBook, int? downloadClientId)
+            {
+                return Task.FromException(_rejection);
+            }
+        }
+
+        private sealed class ExistingTorrentDownloadService : IDownloadService
+        {
+            public Task DownloadReport(RemoteBook remoteBook, int? downloadClientId)
+            {
+                return Task.FromException(new ExistingTorrentFoundException(
+                    "Test client",
+                    new DownloadClientItem { DownloadId = "abcdef123456", Title = "Already queued" }));
+            }
+
+            public Task AdoptExistingTorrent(RemoteBook remoteBook, int? downloadClientId)
+            {
+                return DownloadReport(remoteBook, downloadClientId);
             }
         }
     }

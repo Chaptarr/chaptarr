@@ -25,9 +25,15 @@ namespace Chaptarr.Core.Test.AuthorStats
             Assert.Multiple(() =>
             {
                 StringAssert.Contains("FROM \"Books\"", authorSql);
-                StringAssert.Contains("FROM \"BookFiles\"", authorSql);
-                StringAssert.Contains("CROSS JOIN \"Editions\"", authorSql);
+                StringAssert.Contains("FROM \"Editions\"", authorSql);
+                StringAssert.Contains("CROSS JOIN \"BookFiles\"", authorSql);
                 StringAssert.Contains("GROUP BY \"Editions\".\"BookId\"", authorSql);
+                StringAssert.Contains("AS \"EbookFileCount\"", authorSql);
+                StringAssert.Contains("AS \"AudiobookFileCount\"", authorSql);
+                StringAssert.Contains("AS \"EbookSizeOnDisk\"", authorSql);
+                StringAssert.Contains("AS \"AudiobookSizeOnDisk\"", authorSql);
+                StringAssert.Contains("LOWER(\"BookFiles\".\"Path\") LIKE '%.epub'", authorSql);
+                StringAssert.Contains("LOWER(\"BookFiles\".\"Path\") LIKE '%.m4b'", authorSql);
                 StringAssert.Contains(booleanComparison, authorSql);
                 StringAssert.DoesNotContain("MIN(\"BookFiles\"", authorSql);
                 StringAssert.Contains(@"""Editions"".""BookId"" = ""Books"".""Id""", authorSql);

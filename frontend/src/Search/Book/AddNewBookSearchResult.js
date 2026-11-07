@@ -1,4 +1,3 @@
-import moment from 'moment';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import TextTruncate from 'react-text-truncate';
@@ -11,9 +10,12 @@ import Link from 'Components/Link/Link';
 import { icons, sizes } from 'Helpers/Props';
 import dimensions from 'Styles/Variables/dimensions';
 import fonts from 'Styles/Variables/fonts';
+import dayjs from 'Utilities/Date/dayjsSetup';
+import formatDurationMinutes from 'Utilities/Date/formatDurationMinutes';
 import stripHtml from 'Utilities/String/stripHtml';
 import translate from 'Utilities/String/translate';
 import AddNewBookModal from './AddNewBookModal';
+import { shouldShowMissingCatalogIdentityHelp } from './AddNewBookSearchResult.cjs';
 import styles from './AddNewBookSearchResult.css';
 
 const columnPadding = parseInt(dimensions.authorIndexColumnPadding);
@@ -194,6 +196,11 @@ class AddNewBookSearchResult extends Component {
       ...ebookInstances
     ];
     const hasLocalBook = localInstances.length > 0;
+    const showMissingIdentityHelp = shouldShowMissingCatalogIdentityHelp(
+      canAdd,
+      audiobookInstances,
+      ebookInstances
+    );
 
     const linkProps = getRowLinkProps(hasLocalBook, localInstances, canAdd, this.onPress);
 
@@ -255,12 +262,12 @@ class AddNewBookSearchResult extends Component {
                 />
 
                 {
-                  !canAdd ?
+                  showMissingIdentityHelp ?
                     <Icon
                       className={styles.notAddableIcon}
                       name={icons.BAN}
                       size={28}
-                      title="Not addable: missing upstream provider book/work ID or author ID"
+                      title={translate('BookNotAddableMissingProviderIds')}
                     /> :
                     null
                 }
@@ -281,6 +288,14 @@ class AddNewBookSearchResult extends Component {
                 }
               </div>
             </div>
+
+            {
+              showMissingIdentityHelp ?
+                <div className={styles.notAddableMessage}>
+                  {translate('BookNotAddableMissingProviderIdsHelpText')}
+                </div> :
+                null
+            }
 
             {
               !!authorName &&
@@ -318,14 +333,14 @@ class AddNewBookSearchResult extends Component {
               {
                 durationMinutes > 0 &&
                   <Label size={sizes.LARGE}>
-                    {Math.floor(durationMinutes / 60)}h {Math.round(durationMinutes % 60)}m
+                    {formatDurationMinutes(durationMinutes)}
                   </Label>
               }
 
               {
-                !!releaseDate && moment(releaseDate).year() > 1 &&
+                !!releaseDate && dayjs(releaseDate).year() > 1 &&
                   <Label size={sizes.LARGE}>
-                    {moment(releaseDate).format('YYYY')}
+                    {dayjs(releaseDate).format('YYYY')}
                   </Label>
               }
 

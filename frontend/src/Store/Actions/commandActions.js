@@ -3,11 +3,11 @@ import { messageTypes } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
 import { isSameCommand } from 'Utilities/Command';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
+import translate from 'Utilities/String/translate';
 import { hideMessage, showMessage } from './appActions';
 import { removeItem, set, update, updateItem } from './baseActions';
 import createHandleActions from './Creators/createHandleActions';
 import createRemoveItemHandler from './Creators/createRemoveItemHandler';
-import translate from 'Utilities/String/translate';
 
 //
 // Variables
@@ -87,8 +87,8 @@ function showCommandMessage(payload, dispatch) {
 
   let type = messageTypes.INFO;
   let hideAfter = 0;
-  let clickable = false;
-  let onClick = undefined;
+  const clickable = false;
+  const onClick = undefined;
 
   // Handle scan commands specially
   if (name === 'RescanFolders' &&
@@ -150,7 +150,6 @@ function scheduleRemoveCommand(command, dispatch) {
 }
 
 export function executeCommandHelper(payload, dispatch) {
-  // TODO: show a message for the user
   if (lastCommand && isSameCommand(lastCommand, payload)) {
     console.warn('Please wait at least 5 seconds before running this command again');
   }
@@ -168,6 +167,7 @@ export function executeCommandHelper(payload, dispatch) {
 
   const {
     commandFinished,
+    suppressStartErrorMessage = false,
     ...requestPayload
   } = payload;
 
@@ -184,6 +184,18 @@ export function executeCommandHelper(payload, dispatch) {
     }
 
     dispatch(addCommand(data));
+  }).catch((error) => {
+    if (!suppressStartErrorMessage) {
+      dispatch(showMessage({
+        id: 'command-start-error',
+        name: 'CommandStartFailed',
+        message: translate('UnableToStartCommand'),
+        type: messageTypes.ERROR,
+        hideAfter: 8
+      }));
+    }
+
+    throw error;
   });
 }
 
@@ -235,24 +247,24 @@ export const actionHandlers = handleThunks({
   },
 
   [CANCEL_COMMAND]: createRemoveItemHandler(section, '/command'),
-  
+
   [PAUSE_COMMAND]: function(getState, payload, dispatch) {
     const promise = createAjaxRequest({
       url: `/command/${payload.id}/pause`,
       method: 'POST'
     }).request;
-    
+
     promise.always(() => {
       dispatch(fetchCommands());
     });
   },
-  
+
   [RESUME_COMMAND]: function(getState, payload, dispatch) {
     const promise = createAjaxRequest({
       url: `/command/${payload.id}/resume`,
       method: 'POST'
     }).request;
-    
+
     promise.always(() => {
       dispatch(fetchCommands());
     });
@@ -263,7 +275,7 @@ export const actionHandlers = handleThunks({
       url: '/command/pause/all',
       method: 'POST'
     }).request;
-    
+
     promise.done((data) => {
       dispatch(showMessage({
         id: 'bulk-commands-pause',
@@ -278,7 +290,7 @@ export const actionHandlers = handleThunks({
       dispatch(showMessage({
         id: 'bulk-commands-pause',
         name: 'PauseAllCommands',
-        message: xhr?.responseJSON?.message || xhr?.responseText || 'Unable to pause commands',
+        message: xhr?.responseJSON?.message || xhr?.responseText || translate('UnableToPauseCommands'),
         type: messageTypes.ERROR,
         hideAfter: 8
       }));
@@ -294,7 +306,7 @@ export const actionHandlers = handleThunks({
       url: '/command/cancel/all',
       method: 'POST'
     }).request;
-    
+
     promise.done((data) => {
       dispatch(showMessage({
         id: 'bulk-commands-cancel',
@@ -309,7 +321,7 @@ export const actionHandlers = handleThunks({
       dispatch(showMessage({
         id: 'bulk-commands-cancel',
         name: 'CancelAllCommands',
-        message: xhr?.responseJSON?.message || xhr?.responseText || 'Unable to cancel commands',
+        message: xhr?.responseJSON?.message || xhr?.responseText || translate('UnableToCancelCommands'),
         type: messageTypes.ERROR,
         hideAfter: 8
       }));
@@ -325,7 +337,7 @@ export const actionHandlers = handleThunks({
       url: '/command/resume/all',
       method: 'POST'
     }).request;
-    
+
     promise.done((data) => {
       dispatch(showMessage({
         id: 'bulk-commands-resume',
@@ -340,7 +352,7 @@ export const actionHandlers = handleThunks({
       dispatch(showMessage({
         id: 'bulk-commands-resume',
         name: 'ResumeAllCommands',
-        message: xhr?.responseJSON?.message || xhr?.responseText || 'Unable to resume commands',
+        message: xhr?.responseJSON?.message || xhr?.responseText || translate('UnableToResumeCommands'),
         type: messageTypes.ERROR,
         hideAfter: 8
       }));
@@ -356,19 +368,14 @@ export const actionHandlers = handleThunks({
   },
 
   [UPDATE_COMMAND]: function(getState, payload, dispatch) {
-    // If command status changed to paused, add to pausedCommands
     if (payload.status === 'paused') {
       pausedCommands.add(payload.id);
-    }
-    // If command resumed (started), remove from pausedCommands
-    else if (payload.status === 'started') {
+    } else if (payload.status === 'started') {
+      pausedCommands.delete(payload.id);
+    } else if (payload.status === 'completed' || payload.status === 'failed') {
       pausedCommands.delete(payload.id);
     }
-    // If command completed or failed, remove from paused set
-    else if (payload.status === 'completed' || payload.status === 'failed') {
-      pausedCommands.delete(payload.id);
-    }
-    
+
     dispatch(updateItem({ section: 'commands', ...payload }));
 
     showCommandMessage(payload, dispatch);

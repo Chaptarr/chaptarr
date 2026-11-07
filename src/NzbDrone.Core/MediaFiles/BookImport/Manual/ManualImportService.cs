@@ -29,6 +29,7 @@ using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport.Identification;
 using NzbDrone.Core.MediaFiles.BookImport;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 {
@@ -78,6 +79,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 	        private readonly IDownloadImportModeResolver _downloadImportModeResolver;
 	        private readonly IEventAggregator _eventAggregator;
 	        private readonly Logger _logger;
+        private readonly ICommandResultReporter _commandResultReporter;
 
         public ManualImportService(IDiskProvider diskProvider,
                                    IParsingService parsingService,
@@ -101,7 +103,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 	                                   IProvideImportItemService provideImportItemService,
 	                                   IDownloadImportModeResolver downloadImportModeResolver,
 	                                   IEventAggregator eventAggregator,
-	                                   Logger logger)
+	                                   Logger logger,
+	                                   ICommandResultReporter commandResultReporter = null)
 	        {
 	            _diskProvider = diskProvider;
 	            _parsingService = parsingService;
@@ -126,6 +129,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 	            _downloadImportModeResolver = downloadImportModeResolver;
 	            _eventAggregator = eventAggregator;
 	            _logger = logger;
+	            _commandResultReporter = commandResultReporter;
 	        }
 
 	        public List<ManualImportItem> GetMediaFiles(string path, string downloadId, Author author, FilterFilesType filter, bool replaceExistingFiles, CancellationToken cancellationToken = default, IReadOnlyCollection<string> exactPaths = null)
@@ -211,7 +215,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 	                }
 	                catch (Exception ex)
 	                {
-	                    _logger.Debug(ex, "Failed to build tracked-download overrides for manual import (downloadId={0})", downloadId);
+	                    _logger.DebugSafe(ex, "Failed to build tracked-download overrides for manual import (downloadId={0})", downloadId);
 	                    downloadOverrides = null;
 	                    downloadItemInfo = null;
 	                }
@@ -272,7 +276,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 		            cancellationToken.ThrowIfCancellationRequested();
                 if (_logger.IsDebugEnabled)
                 {
-                    _logger.Debug("[MEMORY] Manual import preview start for '{0}': {1}", folder, MemorySnapshot.CaptureDetailed());
+                    _logger.DebugSafe("[MEMORY] Manual import preview start for '{0}': {1}", folder, MemorySnapshot.CaptureDetailed());
                 }
 
 	            DownloadClientItem downloadClientItem = null;
@@ -309,7 +313,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 	                }
 	                catch (Exception ex)
 	                {
-	                    _logger.Debug(ex, "Failed to resolve tracked-download book override for manual import (downloadId={0})", downloadId);
+	                    _logger.DebugSafe(ex, "Failed to resolve tracked-download book override for manual import (downloadId={0})", downloadId);
 	                }
 	            }
 
@@ -386,7 +390,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
             var result = newItems.Concat(existingItems).ToList();
             if (_logger.IsDebugEnabled)
             {
-                _logger.Debug("[MEMORY] Manual import preview complete for '{0}' ({1} items): {2}", folder, result.Count, MemorySnapshot.CaptureDetailed());
+                _logger.DebugSafe("[MEMORY] Manual import preview complete for '{0}' ({1} items): {2}", folder, result.Count, MemorySnapshot.CaptureDetailed());
             }
             return result;
         }
@@ -455,6 +459,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                     }
 
                     item.Rejections = decision.Rejections;
+                    item.MatchProvenance = decision.Item.MatchProvenance?.Clone();
                     item.Size = decision.Item.Size;
 
                     result.Add(item);
@@ -465,6 +470,63 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
             }
 
             return result;
+        }
+
+        private string GetUnresolvableSuggestionWarning(LocalBook localBook, string path)
+        {
+            if (localBook?.Book != null ||
+                _authorService == null ||
+                _bookService == null ||
+                string.IsNullOrWhiteSpace(localBook?.SuggestedForeignAuthorId) ||
+                string.IsNullOrWhiteSpace(localBook.SuggestedForeignBookId))
+            {
+                return null;
+            }
+
+            try
+            {
+                if (!ProviderIdHelper.TryNormalize(localBook.SuggestedForeignAuthorId, defaultPrefix: null, out var authorId) ||
+                    !ProviderIdHelper.TryNormalize(localBook.SuggestedForeignBookId, defaultPrefix: null, out var workId))
+                {
+                    return null;
+                }
+
+                var author = _authorService.FindByProviderId(authorId.Substring(0, authorId.IndexOf(':')), ProviderIdHelper.StripPrefix(authorId));
+                if (author == null || author.Id <= 0)
+                {
+                    return null;
+                }
+
+                var mediaType = MediaFileExtensions.TextExtensions.Contains(Path.GetExtension(path ?? string.Empty))
+                    ? BookMediaType.Ebook
+                    : BookMediaType.Audiobook;
+                var catalogHasWork = _bookService
+                    .FindAllByWorkProviderId(workId.Substring(0, workId.IndexOf(':')), ProviderIdHelper.StripPrefix(workId), mediaType)
+                    .Any(book => book != null && book.AuthorId == author.Id && book.MediaType == mediaType);
+
+                return SuggestionCannotBeAddedFromMetadata(true, localBook.SuggestedForeignEditionId, catalogHasWork)
+                    ? $"Suggestion '{localBook.SuggestedBookTitle ?? workId}' cannot be added from metadata. Select a local book instead."
+                    : null;
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug(ex, "Could not check suggested match for '{0}'", path);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// A suggestion is unresolvable when its author is already local but the author's catalog has no entry
+        /// for the suggested work and the suggestion carries no edition to build one from.
+        /// </summary>
+        internal static bool SuggestionCannotBeAddedFromMetadata(bool authorIsLocal, string suggestedForeignEditionId, bool catalogHasWork)
+        {
+            return authorIsLocal && !catalogHasWork && string.IsNullOrWhiteSpace(suggestedForeignEditionId);
+        }
+
+        private static string Truncate(string value, int max)
+        {
+            return value == null || value.Length <= max ? value : value.Substring(0, max) + "...";
         }
 
         private ManualImportItem MapItem(ImportDecision<LocalBook> decision, string downloadId, bool replaceExistingFiles, bool disableReleaseSwitching)
@@ -508,9 +570,32 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
             }
 
             item.Quality = decision.Item.Quality;
+            item.DurationSeconds = decision.Item.DurationSeconds;
             item.IndexerFlags = (int)decision.Item.IndexerFlags;
-            item.Size = fileInfo.Length;
-            item.Rejections = decision.Rejections;
+            item.Size = fileInfo.Exists ? fileInfo.Length : 0;
+
+            var rejections = decision.Rejections?.ToList() ?? new List<Rejection>();
+
+            // chaptarr #184: the preview never checked for an existing-file conflict at the computed
+            // destination in either Combine or Replace mode, so a book that's already imported (under a
+            // different download) showed a clean "Ready now (local)" status with no warning - see
+            // ImportApprovedBooks.CheckExistingDestinationConflict for why this needs the same check the
+            // real import runs, not a re-derived one. Warning-severity (CanBypass) - informational only,
+            // doesn't block either mode, matches how other *arr apps surface this in Manual Import.
+            var conflictReason = _importApprovedBooks?.CheckExistingDestinationConflict(decision.Item, decision.Item.Book, decision.Item.Author);
+            if (conflictReason.IsNotNullOrWhiteSpace())
+            {
+                rejections.Add(new Rejection(conflictReason, RejectionType.Temporary));
+            }
+
+            var unresolvableSuggestion = GetUnresolvableSuggestionWarning(decision.Item, actualPath);
+            if (unresolvableSuggestion.IsNotNullOrWhiteSpace())
+            {
+                rejections.Add(new Rejection(unresolvableSuggestion, RejectionType.Temporary));
+            }
+
+            item.Rejections = rejections;
+            item.MatchProvenance = decision.Item.MatchProvenance?.Clone();
             item.Tags = decision.Item.RawTags?.AllTags ?? new Dictionary<string, List<string>>();
             item.AdditionalFile = decision.Item.AdditionalFile;
             item.ReplaceExistingFiles = replaceExistingFiles;
@@ -769,8 +854,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                 }
 
                 var isExplicitRemoteEditionSelection =
-                    first.Request.SelectionSource == ManualImportSelectionSource.UserMetadataSuggestion &&
-                    !string.IsNullOrWhiteSpace(first.Request.ForeignEditionId);
+                    first.Request.SelectionSource == ManualImportSelectionSource.UserMetadataSuggestion;
                 UserSelectedEditionMaterialization explicitMaterialization = null;
                 if (groupRejection == null && isExplicitRemoteEditionSelection)
                 {
@@ -784,6 +868,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                                     AuthorProviderId = first.Request.ForeignAuthorId,
                                     WorkProviderId = first.Request.ForeignBookId,
                                     EditionProviderId = first.Request.ForeignEditionId,
+                                    EditionTitle = first.Request.ForeignEditionTitle,
                                     MediaType = first.MediaType
                                 },
                                 config)
@@ -796,7 +881,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                             ex,
                             "Manual import could not materialize explicitly selected provider edition '{0}'",
                             first.Request.ForeignEditionId);
-                        groupRejection = ex.Message;
+                        if (!string.IsNullOrWhiteSpace(first.Request.ForeignEditionId))
+                        {
+                            groupRejection = ex.Message;
+                        }
                     }
                 }
 
@@ -938,6 +1026,25 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                     _logger.Warn("Manual import recovered file path '{0}' as '{1}' during execution", requestedPath, actualPath);
                 }
 
+                if (!fileInfo.Exists)
+                {
+                    // The file was selected in the preview but is gone now. Reading its size would throw and abort the
+                    // whole batch, so reject just this file (as the grouped-suggestion path above does) and go on.
+                    var vanishedDecision = new ImportDecision<LocalBook>(new LocalBook
+                    {
+                        Path = actualPath,
+                        Part = 1,
+                        PartCount = 1,
+                        Quality = file.Quality,
+                        IndexerFlags = (IndexerFlags)file.IndexerFlags
+                    });
+                    vanishedDecision.Reject(new Rejection($"Selected file no longer exists: '{requestedPath}'."));
+                    decisions.Add(vanishedDecision);
+                    fileCount += 1;
+
+                    continue;
+                }
+
                 var fileRootFolder = _rootFolderService.GetBestRootFolder(actualPath);
                 var mediaType = GetMediaTypeFromPath(actualPath);
 
@@ -951,7 +1058,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                     Size = fileInfo.Length,
                     Modified = fileInfo.LastWriteTimeUtc,
                     Quality = file.Quality,
-                    IndexerFlags = (IndexerFlags)file.IndexerFlags
+                    IndexerFlags = (IndexerFlags)file.IndexerFlags,
+                    IsGraphicAudio = file.IsGraphicAudio == true,
+                    AudioProductionType = file.AudioProductionType
                 };
 
                 var importDecision = new ImportDecision<LocalBook>(localTrack);
@@ -990,6 +1099,17 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                         catch (Exception ex)
                         {
                             _logger.Debug(ex, "Failed to load edition {0} for manual import file '{1}'", file.EditionId, actualPath);
+                        }
+                    }
+                    else if (!string.IsNullOrWhiteSpace(file.ForeignEditionId) && book != null)
+                    {
+                        try
+                        {
+                            edition = SelectEditionOfBook(_editionService.GetEditionByForeignEditionId(file.ForeignEditionId), book);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.Debug(ex, "Failed to resolve foreign edition {0} for manual import file '{1}'", file.ForeignEditionId, actualPath);
                         }
                     }
                 }
@@ -1072,7 +1192,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                 }
 
                 if (isExplicitLocalSelection &&
-                    !ManualEditionSelectionMatchesBook(edition, book, file.EditionId, out var manualEditionRejection))
+                    !ManualEditionSelectionMatchesBook(edition, book, edition?.Id ?? file.EditionId, out var manualEditionRejection))
                 {
                     throw new InvalidOperationException(manualEditionRejection);
                 }
@@ -1224,7 +1344,33 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 
             var importedCount = imported.Count(i => i.Result == ImportResultType.Imported);
             var failedCount = imported.Count - importedCount;
-            _logger.ProgressTrace("Manually imported {0} files{1}", importedCount, failedCount > 0 ? $" ({failedCount} failed/skipped)" : string.Empty);
+
+            // The reasons live on the decision's rejections and the result's errors. They used to be dropped, so
+            // a manual import that imported nothing looked like a success ("0 files (1 failed/skipped)") with no
+            // way to tell why.
+            string firstFailureReason = null;
+            foreach (var notImported in imported.Where(i => i.Result != ImportResultType.Imported))
+            {
+                var reasons = notImported.ImportDecision.Rejections.Select(r => r.Reason)
+                    .Concat(notImported.Errors)
+                    .Where(r => r.IsNotNullOrWhiteSpace())
+                    .Distinct()
+                    .ToList();
+                var reasonText = reasons.Any() ? string.Join("; ", reasons) : "no reason reported";
+
+                _logger.Warn("[MANUAL-IMPORT] Not imported ({0}) '{1}': {2}", notImported.Result, notImported.ImportDecision.Item?.Path, reasonText);
+                firstFailureReason ??= reasonText;
+            }
+
+            _logger.ProgressTrace(
+                "Manually imported {0} files{1}",
+                importedCount,
+                failedCount > 0 ? $" ({failedCount} failed/skipped: {Truncate(firstFailureReason, 160)})" : string.Empty);
+
+            if (importedCount == 0 && failedCount > 0)
+            {
+                _commandResultReporter?.Report(CommandResult.Unsuccessful);
+            }
 
             foreach (var groupedTrackedDownload in importedTrackedDownload.GroupBy(i => i.TrackedDownload.DownloadItem.DownloadId).ToList())
             {
@@ -1366,6 +1512,15 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                 .ToList();
 
             if (importedBookIds.Count == 0 || !expectedBookIds.SequenceEqual(importedBookIds))
+            {
+                return false;
+            }
+
+            // Another part of an expected book that was rejected or failed (for example a vanished file)
+            // means the download is incomplete even though a sibling part imported that same book.
+            if (importResults.Any(result => result.Result != ImportResultType.Imported &&
+                                            result.ImportDecision?.Item?.Book != null &&
+                                            expectedBookIds.Contains(result.ImportDecision.Item.Book.Id)))
             {
                 return false;
             }
@@ -1556,7 +1711,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 
             if (requestedEditionId <= 0)
             {
-                rejectionReason = $"Edition must be selected for '{book.Title}'.";
+                rejectionReason = $"Edition must be selected for '{book.Title}'. Pass a numeric editionId, or a foreignEditionId that belongs to this book.";
                 return false;
             }
 
@@ -1597,6 +1752,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
             }
 
             return true;
+        }
+
+        internal static Edition SelectEditionOfBook(Edition candidate, Book book)
+        {
+            return candidate != null && book != null && candidate.BookId == book.Id ? candidate : null;
         }
 
         internal static bool EditionBelongsToBook(Edition edition, Book book)

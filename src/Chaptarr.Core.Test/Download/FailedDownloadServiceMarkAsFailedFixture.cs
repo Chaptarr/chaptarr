@@ -61,6 +61,8 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(failed.AuthorId, Is.EqualTo(7));
             Assert.That(failed.SourceTitle, Is.EqualTo("Learn My Lesson [mobi]"));
             Assert.That(failed.Message, Does.Contain("MOBI"));
+            Assert.That(failed.MessageId, Is.EqualTo("notification.failure.profileDisallowed"));
+            Assert.That(failed.MessageTokens["value0"], Is.EqualTo("MOBI"));
             Assert.That(failed.SkipRedownload, Is.False, "a replacement search should be allowed to run");
             Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.DownloadFailed));
         }
@@ -90,6 +92,37 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(_eventAggregator.Events.OfType<DownloadFailedEvent>(), Is.Empty);
             Assert.That(trackedDownload.State, Is.Not.EqualTo(TrackedDownloadState.DownloadFailed));
             Assert.That(trackedDownload.StatusMessages, Is.Not.Empty);
+        }
+
+        [Test]
+        public void should_not_treat_provider_text_as_a_project_message_even_when_its_text_matches()
+        {
+            _historyProxy.GrabbedItems = new List<EntityHistory> { BuildGrab(bookId: 901) };
+            var tracked = BuildTrackedDownload();
+            tracked.State = TrackedDownloadState.DownloadFailedPending;
+            tracked.DownloadItem.Status = DownloadItemStatus.Failed;
+            tracked.DownloadItem.Message = "Encrypted download detected";
+
+            _subject.ProcessFailed(tracked);
+
+            var failed = _eventAggregator.Events.OfType<DownloadFailedEvent>().Single();
+            Assert.That(failed.Message, Is.EqualTo("Encrypted download detected"));
+            Assert.That(failed.MessageId, Is.Null);
+        }
+
+        [Test]
+        public void should_attach_provenance_only_to_an_app_determined_download_failure()
+        {
+            _historyProxy.GrabbedItems = new List<EntityHistory> { BuildGrab(bookId: 901) };
+            var tracked = BuildTrackedDownload();
+            tracked.State = TrackedDownloadState.DownloadFailedPending;
+            tracked.DownloadItem.IsEncrypted = true;
+
+            _subject.ProcessFailed(tracked);
+
+            var failed = _eventAggregator.Events.OfType<DownloadFailedEvent>().Single();
+            Assert.That(failed.Message, Is.EqualTo("Encrypted download detected"));
+            Assert.That(failed.MessageId, Is.EqualTo("notification.failure.encrypted"));
         }
 
         private static EntityHistory BuildGrab(int bookId)

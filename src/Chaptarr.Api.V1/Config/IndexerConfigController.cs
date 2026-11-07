@@ -22,6 +22,9 @@ namespace Chaptarr.Api.V1.Config
 
             SharedValidator.RuleFor(c => c.RssSyncInterval)
                            .IsValidRssSyncInterval();
+
+            SharedValidator.RuleFor(c => c.MissingBookSearchInterval)
+                           .IsValidMissingBookSearchInterval();
         }
 
         protected override IndexerConfigResource ToResource(IConfigService model)

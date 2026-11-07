@@ -27,26 +27,41 @@ namespace NzbDrone.Core.Instrumentation
 
         public void Register()
         {
+            var configuration = LogManager.Configuration;
+            if (configuration == null)
+            {
+                return;
+            }
+
             var target = new SlowRunningAsyncTargetWrapper(this) { TimeToSleepBetweenBatches = 500 };
 
             Rule = new LoggingRule("*", LogLevel.Warn, target);
 
-            LogManager.Configuration.AddTarget("DbLogger", target);
-            LogManager.Configuration.LoggingRules.Add(Rule);
-            LogManager.ConfigurationReloaded += OnLogManagerOnConfigurationReloaded;
+            configuration.AddTarget("DbLogger", target);
+            configuration.LoggingRules.Add(Rule);
+            LogManager.ConfigurationChanged += OnLogManagerOnConfigurationChanged;
             LogManager.ReconfigExistingLoggers();
         }
 
         public void UnRegister()
         {
-            LogManager.ConfigurationReloaded -= OnLogManagerOnConfigurationReloaded;
-            LogManager.Configuration.RemoveTarget("DbLogger");
-            LogManager.Configuration.LoggingRules.Remove(Rule);
-            LogManager.ReconfigExistingLoggers();
+            LogManager.ConfigurationChanged -= OnLogManagerOnConfigurationChanged;
+            var configuration = LogManager.Configuration;
+            if (configuration != null)
+            {
+                configuration.RemoveTarget("DbLogger");
+                if (Rule != null)
+                {
+                    configuration.LoggingRules.Remove(Rule);
+                }
+
+                LogManager.ReconfigExistingLoggers();
+            }
+
             Dispose();
         }
 
-        private void OnLogManagerOnConfigurationReloaded(object sender, LoggingConfigurationReloadedEventArgs args)
+        private void OnLogManagerOnConfigurationChanged(object sender, LoggingConfigurationChangedEventArgs args)
         {
             Register();
         }
@@ -124,7 +139,7 @@ namespace NzbDrone.Core.Instrumentation
                 connection.Open();
                 using (var sqlCommand = connection.CreateCommand())
                 {
-                    sqlCommand.CommandText = INSERT_COMMAND;
+                    sqlCommand.CommandText = INSERT_COMMAND; // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli -- fixed SQL command; all log fields are bound as parameters below.
                     sqlCommand.Parameters.Add(new NpgsqlParameter("Message", DbType.String) { Value = log.Message });
                     sqlCommand.Parameters.Add(new NpgsqlParameter("Time", DbType.DateTime) { Value = log.Time.ToUniversalTime() });
                     sqlCommand.Parameters.Add(new NpgsqlParameter("Logger", DbType.String) { Value = log.Logger });
@@ -144,7 +159,7 @@ namespace NzbDrone.Core.Instrumentation
                 connection.Open();
                 using (var sqlCommand = connection.CreateCommand())
                 {
-                    sqlCommand.CommandText = INSERT_COMMAND;
+                    sqlCommand.CommandText = INSERT_COMMAND; // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli -- fixed SQL command; all log fields are bound as parameters below.
                     sqlCommand.Parameters.Add(new SqliteParameter("Message", DbType.String) { Value = log.Message });
                     sqlCommand.Parameters.Add(new SqliteParameter("Time", DbType.DateTime) { Value = log.Time.ToUniversalTime() });
                     sqlCommand.Parameters.Add(new SqliteParameter("Logger", DbType.String) { Value = log.Logger });

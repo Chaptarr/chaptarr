@@ -10,9 +10,26 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Qualities;
+using CoreTrackedDownloadState = NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadState;
 
 namespace Chaptarr.Api.V1.Queue
 {
+    /// <summary>
+    /// BookshelfNG v1 queue-state contract. ChaptarrNG's retryable ImportBlocked state
+    /// is exposed as the legacy ImportFailed value while its richer behavior stays internal.
+    /// </summary>
+    public enum TrackedDownloadState
+    {
+        Downloading,
+        DownloadFailed,
+        DownloadFailedPending,
+        ImportPending,
+        Importing,
+        ImportFailed,
+        Imported,
+        Ignored
+    }
+
     public class QueueResource : RestResource
     {
         public int? AuthorId { get; set; }
@@ -85,7 +102,7 @@ namespace Chaptarr.Api.V1.Queue
                 Added = model.Added,
                 Status = model.Status.FirstCharToLower(),
                 TrackedDownloadStatus = model.TrackedDownloadStatus,
-                TrackedDownloadState = model.TrackedDownloadState,
+                TrackedDownloadState = ToBookshelfTrackedDownloadState(model.TrackedDownloadState),
                 StatusMessages = model.StatusMessages,
                 ErrorMessage = model.ErrorMessage,
                 DownloadId = model.DownloadId,
@@ -102,6 +119,22 @@ namespace Chaptarr.Api.V1.Queue
                 Indexer = model.Indexer,
                 OutputPath = model.OutputPath,
                 DownloadForced = model.DownloadForced
+            };
+        }
+
+        private static TrackedDownloadState? ToBookshelfTrackedDownloadState(CoreTrackedDownloadState? state)
+        {
+            return state switch
+            {
+                CoreTrackedDownloadState.Downloading => TrackedDownloadState.Downloading,
+                CoreTrackedDownloadState.DownloadFailed => TrackedDownloadState.DownloadFailed,
+                CoreTrackedDownloadState.DownloadFailedPending => TrackedDownloadState.DownloadFailedPending,
+                CoreTrackedDownloadState.ImportPending => TrackedDownloadState.ImportPending,
+                CoreTrackedDownloadState.Importing => TrackedDownloadState.Importing,
+                CoreTrackedDownloadState.ImportBlocked => TrackedDownloadState.ImportFailed,
+                CoreTrackedDownloadState.Imported => TrackedDownloadState.Imported,
+                CoreTrackedDownloadState.Ignored => TrackedDownloadState.Ignored,
+                _ => null
             };
         }
 

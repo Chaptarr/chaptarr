@@ -72,13 +72,15 @@ function createMapDispatchToProps(dispatch, props) {
         name: commandNames.BULK_REFRESH_AUTHOR,
         authorIds: items,
         rescanFolders: false,
-        mediaType
+        mediaType,
+        suppressStartErrorMessage: true
       }));
     },
 
     onRssSyncPress() {
-      dispatch(executeCommand({
-        name: commandNames.RSS_SYNC
+      return dispatch(executeCommand({
+        name: commandNames.RSS_SYNC,
+        suppressStartErrorMessage: true
       }));
     }
   };

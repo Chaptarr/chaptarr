@@ -1,0 +1,36 @@
+#!/bin/sh
+set -e
+run_dir="${DPKG_ROOT:-}/run"
+
+if command -v systemd-sysusers >/dev/null 2>&1; then
+  systemd-sysusers
+fi
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+  systemd-tmpfiles --create /usr/lib/tmpfiles.d/bookshelfng.conf
+fi
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload || true
+fi
+if [ -x /usr/lib/chaptarrng/handoff/bookshelfng-prepare ]; then
+  /usr/lib/chaptarrng/handoff/bookshelfng-prepare
+fi
+
+if [ "$1" = configure ]; then
+  was_active="$run_dir/bookshelfng-package-was-active"
+  if [ -e "$was_active" ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl start bookshelfng.service
+    elif command -v deb-systemd-invoke >/dev/null 2>&1; then
+      deb-systemd-invoke start bookshelfng.service
+    fi
+    rm -f "$was_active"
+  elif [ -z "${2:-}" ]; then
+    if command -v deb-systemd-invoke >/dev/null 2>&1; then
+      deb-systemd-invoke start bookshelfng.service
+    elif command -v systemctl >/dev/null 2>&1; then
+      systemctl start bookshelfng.service
+    fi
+  fi
+fi
+
+exit 0

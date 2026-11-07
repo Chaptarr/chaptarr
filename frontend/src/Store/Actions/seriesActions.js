@@ -1,12 +1,12 @@
 import { createAction } from 'redux-actions';
 import { sortDirections } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
+import translate from 'Utilities/String/translate';
 import createFetchHandler from './Creators/createFetchHandler';
 import createHandleActions from './Creators/createHandleActions';
 import createSetClientSideCollectionSortReducer from './Creators/Reducers/createSetClientSideCollectionSortReducer';
 import createSetSettingValueReducer from './Creators/Reducers/createSetSettingValueReducer';
 import createSetTableOptionReducer from './Creators/Reducers/createSetTableOptionReducer';
-
 //
 // Variables
 
@@ -28,66 +28,66 @@ export const defaultState = {
   columns: [
     {
       name: 'monitored',
-      columnLabel: 'Monitored',
+      columnLabel: () => translate('Monitored'),
       isVisible: true,
       isModifiable: false
     },
     {
       name: 'title',
-      label: 'Title',
+      label: () => translate('Title'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'series',
-      label: 'Series',
+      label: () => translate('Series'),
       isSortable: true,
       isVisible: false
     },
     {
       name: 'position',
-      label: 'Number',
+      label: () => translate('Number'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'narrator',
-      label: 'Narrator',
+      label: () => translate('Narrator'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'releaseDate',
-      label: 'Release Date',
+      label: () => translate('ReleaseDate'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'pageCount',
-      label: 'Pages',
+      label: () => translate('Pages'),
       isSortable: true,
       isVisible: false
     },
     {
       name: 'duration',
-      label: 'Duration',
+      label: () => translate('Duration'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'rating',
-      label: 'Rating',
+      label: () => translate('Rating'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'status',
-      label: 'Status',
+      label: () => translate('Status'),
       isVisible: true
     },
     {
       name: 'actions',
-      columnLabel: 'Actions',
+      columnLabel: () => translate('Actions'),
       isVisible: true,
       isModifiable: false
     }

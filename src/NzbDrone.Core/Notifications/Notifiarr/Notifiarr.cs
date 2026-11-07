@@ -12,8 +12,11 @@ namespace NzbDrone.Core.Notifications.Notifiarr
     {
         private readonly INotifiarrProxy _proxy;
 
-        public Notifiarr(INotifiarrProxy proxy, IConfigFileProvider configFileProvider)
-            : base(configFileProvider)
+        public Notifiarr(
+            INotifiarrProxy proxy,
+            IConfigFileProvider configFileProvider,
+            IBookshelfLegacyIdentityMapService legacyIdentityMapService)
+            : base(configFileProvider, legacyIdentityMapService)
         {
             _proxy = proxy;
         }

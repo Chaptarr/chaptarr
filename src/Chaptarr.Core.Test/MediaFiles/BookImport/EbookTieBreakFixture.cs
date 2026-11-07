@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using NLog;
 using NUnit.Framework;
 using Chaptarr.Core.Test;
@@ -73,7 +74,27 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public void ClearAuthorCache() => throw new NotImplementedException();
         }
 
-        private static FileMatchingService CreateSut(List<EditionFtsMatch> candidates)
+        public class StubBookServiceProxy : DispatchProxy
+        {
+            public Book Book { get; set; }
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (targetMethod.Name == nameof(IBookService.GetBooks))
+                {
+                    return new List<Book> { Book };
+                }
+
+                if (targetMethod.Name == nameof(IBookService.GetBook))
+                {
+                    return Book;
+                }
+
+                throw new NotImplementedException($"Unexpected book service call: {targetMethod.Name}");
+            }
+        }
+
+        private static FileMatchingService CreateSut(List<EditionFtsMatch> candidates, IBookService bookService = null)
         {
             return new FileMatchingService(
                 matchingLogger: null,
@@ -88,7 +109,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 eventAggregator: null,
                 authorLibraryService: null,
                 editionFtsRepository: new StubEditionFtsRepository(candidates),
-                bookService: null,
+                bookService: bookService,
                 editionService: null,
                 editionRepository: null,
                 mediaInfoExtractor: null,
@@ -175,6 +196,124 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
             Assert.That(match, Is.Not.Null);
             Assert.That(match.EditionId, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void should_apply_preferred_edition_terms_after_existing_match_evidence()
+        {
+            var candidates = new List<EditionFtsMatch>
+            {
+                new EditionFtsMatch { EditionId = 1, BookId = 1, EditionTitle = "Some Book", EditionFormat = "Paperback", BookTitle = "Some Book", AuthorId = 25, AuthorName = "Test Author", ReleaseDate = new DateTime(2010, 1, 1), ReadingFormatId = 3, MatchScore = 9.0 },
+                new EditionFtsMatch { EditionId = 2, BookId = 1, EditionTitle = "Some Book", EditionFormat = "Kindle Edition", BookTitle = "Some Book", AuthorId = 25, AuthorName = "Test Author", ReleaseDate = new DateTime(2020, 1, 1), ReadingFormatId = 3, MatchScore = 8.0 }
+            };
+            var author = new Author
+            {
+                Id = 25,
+                Name = "Test Author",
+                EbookMetadataProfile = new NzbDrone.Core.Profiles.Metadata.MetadataProfile
+                {
+                    PreferredEditionTerms = "3|paperback"
+                }
+            };
+            var book = new Book { Id = 1, Author = author, MediaType = BookMediaType.Ebook };
+            var bookService = DispatchProxy.Create<IBookService, StubBookServiceProxy>();
+            ((StubBookServiceProxy)(object)bookService).Book = book;
+            var sut = CreateSut(candidates, bookService);
+
+            var file = new DiscoveredFileWithMetadata
+            {
+                Path = "/ebooks/Test Author/Some Book/Some Book.epub",
+                AllTags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "TITLE", new List<string> { "Some Book" } },
+                    { "YEAR", new List<string> { "2020" } }
+                }
+            };
+
+            var match = sut.HolyGrailMatchFile(file, BookMediaType.Ebook, restrictToAuthorId: 25);
+
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.EditionId, Is.EqualTo(2), "the exact year must remain stronger than a profile preference");
+        }
+
+        [Test]
+        public void should_prefer_a_matching_weighted_edition_term_when_other_signals_tie()
+        {
+            var candidates = new List<EditionFtsMatch>
+            {
+                new EditionFtsMatch { EditionId = 1, BookId = 1, EditionTitle = "Some Book", EditionFormat = "Paperback", BookTitle = "Some Book", AuthorId = 25, AuthorName = "Test Author", ReleaseDate = new DateTime(2020, 1, 1), ReadingFormatId = 3, MatchScore = 9.0 },
+                new EditionFtsMatch { EditionId = 2, BookId = 1, EditionTitle = "Some Book", EditionFormat = "Kindle Edition", BookTitle = "Some Book", AuthorId = 25, AuthorName = "Test Author", ReleaseDate = new DateTime(2020, 1, 1), ReadingFormatId = 3, MatchScore = 8.0 }
+            };
+            var author = new Author
+            {
+                Id = 25,
+                Name = "Test Author",
+                EbookMetadataProfile = new NzbDrone.Core.Profiles.Metadata.MetadataProfile
+                {
+                    PreferredEditionTerms = "3|kindle\n1|paperback"
+                }
+            };
+            var book = new Book { Id = 1, Author = author, MediaType = BookMediaType.Ebook };
+            var bookService = DispatchProxy.Create<IBookService, StubBookServiceProxy>();
+            ((StubBookServiceProxy)(object)bookService).Book = book;
+            var sut = CreateSut(candidates, bookService);
+
+            var file = new DiscoveredFileWithMetadata
+            {
+                Path = "/ebooks/Test Author/Some Book/Some Book.epub",
+                AllTags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "TITLE", new List<string> { "Some Book" } },
+                    { "YEAR", new List<string> { "2020" } }
+                }
+            };
+
+            var match = sut.HolyGrailMatchFile(file, BookMediaType.Ebook, restrictToAuthorId: 25);
+
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.EditionId, Is.EqualTo(2), "the highest matching configured weight must beat the BM25 fallback");
+        }
+
+        [Test]
+        public void audiobook_matching_should_use_the_audiobook_metadata_profile_preferences()
+        {
+            var candidates = new List<EditionFtsMatch>
+            {
+                new EditionFtsMatch { EditionId = 1, BookId = 1, EditionTitle = "Some Book", EditionFormat = "AAC", BookTitle = "Some Book", AuthorId = 25, AuthorName = "Test Author", ReleaseDate = new DateTime(2020, 1, 1), ReadingFormatId = 2, MatchScore = 8.0 },
+                new EditionFtsMatch { EditionId = 2, BookId = 1, EditionTitle = "Some Book", EditionFormat = "MP3", BookTitle = "Some Book", AuthorId = 25, AuthorName = "Test Author", ReleaseDate = new DateTime(2020, 1, 1), ReadingFormatId = 2, MatchScore = 8.0 }
+            };
+            var author = new Author
+            {
+                Id = 25,
+                Name = "Test Author",
+                AudiobookMetadataProfile = new NzbDrone.Core.Profiles.Metadata.MetadataProfile
+                {
+                    PreferredEditionTerms = "2|mp3"
+                },
+                EbookMetadataProfile = new NzbDrone.Core.Profiles.Metadata.MetadataProfile
+                {
+                    PreferredEditionTerms = "2|aac"
+                }
+            };
+            var book = new Book { Id = 1, Author = author, MediaType = BookMediaType.Audiobook };
+            var bookService = DispatchProxy.Create<IBookService, StubBookServiceProxy>();
+            ((StubBookServiceProxy)(object)bookService).Book = book;
+            var sut = CreateSut(candidates, bookService);
+
+            var file = new DiscoveredFileWithMetadata
+            {
+                Path = "/audiobooks/Test Author/Some Book/Some Book.m4b",
+                AllTags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    { "TITLE", new List<string> { "Some Book" } },
+                    { "YEAR", new List<string> { "2020" } }
+                }
+            };
+
+            var match = sut.HolyGrailMatchFile(file, BookMediaType.Audiobook, restrictToAuthorId: 25);
+
+            Assert.That(match, Is.Not.Null);
+            Assert.That(match.EditionId, Is.EqualTo(2), "the ebook profile preference must not override audiobook profile preferences");
         }
     }
 }

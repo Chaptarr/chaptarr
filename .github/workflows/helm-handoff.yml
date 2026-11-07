@@ -1,0 +1,142 @@
+# ng-runner-policy: trusted-hosted-or-private-jit-v1
+name: BookshelfNG Helm handoff
+run-name: ${{ format('action:{0}:pool:{1}', inputs.action, inputs.runner_pool) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Run trusted BookshelfNG handoff acceptance
+        required: true
+        type: choice
+        options:
+          - ci
+      runner_pool:
+        description: Select compatible GitHub-hosted or private JIT runners
+        required: true
+        type: choice
+        default: public
+        options:
+          - public
+          - private
+permissions:
+  contents: read
+
+jobs:
+  helm-handoff:
+    name: Render and install the BookshelfNG handoff
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'ci' &&
+          (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
+        )
+      ) &&
+      (
+        true
+      )
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-helm-handoff"]}}', github.run_id)) }}
+    timeout-minutes: 120
+    env:
+      BOOKSHELFNG_CHART_SOURCE_SHA: adea130aeea2b6ea29c28a6ea8bf4706169d15e4
+      BUILDKIT_EGRESS_PROXY: ${{ inputs.runner_pool == 'private' && github.ref == 'refs/heads/main' && 'http://10.0.2.100:3128' || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Fetch BookshelfNG history containing the pinned source chart
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: snapetech-org/bookshelfng
+          ref: main
+          path: bookshelfng-reference
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Position the BookshelfNG checkout at the pinned chart revision
+        run: git -C bookshelfng-reference checkout --detach "$BOOKSHELFNG_CHART_SOURCE_SHA"
+
+      - name: Verify BookshelfNG reference pin
+        run: |
+          actual="$(git -C bookshelfng-reference rev-parse --verify 'HEAD^{commit}' | tr -d '\r\n')"
+          printf 'BookshelfNG chart source: expected=%s actual=%s\n' "$BOOKSHELFNG_CHART_SOURCE_SHA" "$actual"
+          test "$actual" = "$BOOKSHELFNG_CHART_SOURCE_SHA"
+
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.20.0
+
+      - name: Lint compatibility chart
+        run: >-
+          helm lint charts/bookshelfng
+          --set bookshelfMigration.confirmed=true
+          --set bookshelfMigration.providerMode=hardcover
+          --set-string image.digest=sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+      - name: Prepare writable Ruby tool cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" /opt/hostedtoolcache
+          test -w /opt/hostedtoolcache
+
+      - uses: ruby/setup-ruby@824c0e29fdfc7d689c191c27acc969d2d04b7dd8 # v1.331.0
+        with:
+          ruby-version: "3.4"
+
+      - name: Verify stable resources and fail-closed inputs
+        env:
+          BOOKSHELFNG_REFERENCE_CHART: ${{ github.workspace }}/bookshelfng-reference/charts/bookshelfng
+        run: ruby scripts/test_bookshelfng_helm_handoff.rb
+
+      - name: Install pinned Kubernetes tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HTTP_PROXY="$BUILDKIT_EGRESS_PROXY" HTTPS_PROXY="$BUILDKIT_EGRESS_PROXY"
+          export http_proxy="$BUILDKIT_EGRESS_PROXY" https_proxy="$BUILDKIT_EGRESS_PROXY"
+          export NO_PROXY=localhost,127.0.0.1 no_proxy=localhost,127.0.0.1
+          kind_version=v0.33.0
+          kind_asset=kind-linux-amd64
+          curl -fsSLo "$RUNNER_TEMP/$kind_asset" \
+            "https://github.com/kubernetes-sigs/kind/releases/download/$kind_version/$kind_asset"
+          curl -fsSLo "$RUNNER_TEMP/$kind_asset.sha256sum" \
+            "https://github.com/kubernetes-sigs/kind/releases/download/$kind_version/$kind_asset.sha256sum"
+          (cd "$RUNNER_TEMP" && sha256sum --check "$kind_asset.sha256sum")
+          install -m 0755 "$RUNNER_TEMP/$kind_asset" "$RUNNER_TEMP/kind"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+          kubectl_version=v1.37.0
+          curl -fsSLo "$RUNNER_TEMP/kubectl" \
+            "https://dl.k8s.io/release/$kubectl_version/bin/linux/amd64/kubectl"
+          curl -fsSLo "$RUNNER_TEMP/kubectl.sha256" \
+            "https://dl.k8s.io/release/$kubectl_version/bin/linux/amd64/kubectl.sha256"
+          printf '%s  %s\n' "$(cat "$RUNNER_TEMP/kubectl.sha256")" "$RUNNER_TEMP/kubectl" | sha256sum --check
+          chmod 0755 "$RUNNER_TEMP/kubectl"
+
+          "$RUNNER_TEMP/kind" version
+          "$RUNNER_TEMP/kubectl" version --client
+          docker version
+
+      - name: Check installed-handoff script syntax
+        run: bash -n scripts/test_bookshelfng_helm_install_handoff.sh
+
+      - name: Install BookshelfNG .76, defer migration, upgrade, and roll back in Kind
+        env:
+          RUNNER_POOL: ${{ inputs.runner_pool }}
+          BOOKSHELFNG_REFERENCE_CHART: ${{ github.workspace }}/bookshelfng-reference/charts/bookshelfng
+          BOOKSHELFNG_LEGACY_IMAGE_REF: docker.io/snapetech/bookshelfng:hardcover-v0.4.21.76
+          BOOKSHELFNG_LEGACY_IMAGE_DIGEST: sha256:40a53ac528b6789ca78686b4303bb6c436cd191cd813f915ea171d72b47a8c38
+          BOOKSHELFNG_HELM_EVIDENCE_DIR: ${{ runner.temp }}/bookshelfng-helm-install-evidence
+        run: bash scripts/test_bookshelfng_helm_install_handoff.sh
+
+      - name: Upload Helm installed-handoff evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bookshelfng-helm-installed-handoff-${{ github.run_id }}
+          path: ${{ runner.temp }}/bookshelfng-helm-install-evidence/
+          if-no-files-found: warn
+          retention-days: 30
+

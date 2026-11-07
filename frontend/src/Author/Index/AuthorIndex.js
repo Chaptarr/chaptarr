@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import reduce from 'lodash/reduce';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import RetagAuthorModal from 'Author/Editor/AudioTags/RetagAuthorModal';
@@ -6,6 +6,7 @@ import AuthorEditorFooter from 'Author/Editor/AuthorEditorFooter';
 import OrganizeAuthorModal from 'Author/Editor/Organize/OrganizeAuthorModal';
 import NoAuthor from 'Author/NoAuthor';
 import Alert from 'Components/Alert';
+import Button from 'Components/Link/Button';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import PageContent from 'Components/Page/PageContent';
 import PageContentBody from 'Components/Page/PageContentBody';
@@ -90,11 +91,17 @@ class AuthorIndex extends Component {
       allUnselected: false,
       lastToggled: null,
       selectedState: {},
-      isStartingRefresh: false
+      isStartingRefresh: false,
+      refreshError: null,
+      failedRefreshAuthorIds: [],
+      failedRefreshMediaType: null,
+      isStartingRssSync: false,
+      rssSyncError: null
     };
   }
 
   componentDidMount() {
+    this._isUnmounted = false;
     this.setJumpBarItems();
     this.setSelectedState();
   }
@@ -103,6 +110,7 @@ class AuthorIndex extends Component {
     const {
       items,
       isRefreshingAuthor,
+      isRssSyncExecuting,
       selectedMediaType,
       sortKey,
       sortDirection
@@ -124,6 +132,14 @@ class AuthorIndex extends Component {
     if (this.state.isStartingRefresh && isRefreshingAuthor) {
       this.setState({ isStartingRefresh: false });
     }
+
+    if (this.state.isStartingRssSync && isRssSyncExecuting) {
+      this.setState({ isStartingRssSync: false });
+    }
+  }
+
+  componentWillUnmount() {
+    this._isUnmounted = true;
   }
 
   //
@@ -186,7 +202,7 @@ class AuthorIndex extends Component {
       return;
     }
 
-    const characters = _.reduce(items, (acc, item) => {
+    const characters = reduce(items, (acc, item) => {
       const sortValue = item[sortKey];
       if (!sortValue || typeof sortValue !== 'string') {
         return acc;
@@ -301,20 +317,75 @@ class AuthorIndex extends Component {
     }
   };
 
-  onRefreshAuthorPress = () => {
+  onRefreshAuthorPress = (authorIds = null, mediaType = null) => {
+    if (this.state.isStartingRefresh || this.props.isRefreshingAuthor) {
+      return;
+    }
+
     const selectedIds = this.getSelectedIds();
-    const refreshIds = this.state.isEditorActive && selectedIds.length > 0 ? selectedIds : [];
+    const refreshIds = authorIds || (this.state.isEditorActive && selectedIds.length > 0 ? selectedIds : []);
+    const refreshMediaType = mediaType || this.props.selectedMediaType;
 
-    this.setState({ isStartingRefresh: true });
+    this.setState({
+      isStartingRefresh: true,
+      refreshError: null,
+      failedRefreshAuthorIds: refreshIds,
+      failedRefreshMediaType: refreshMediaType
+    });
 
-    Promise.resolve(this.props.onRefreshAuthorPress(refreshIds, this.props.selectedMediaType))
-      .catch(() => {
-        this.setState({ isStartingRefresh: false });
+    Promise.resolve()
+      .then(() => this.props.onRefreshAuthorPress(refreshIds, refreshMediaType))
+      .catch((error) => {
+        if (this._isUnmounted) {
+          return;
+        }
+
+        this.setState({
+          isStartingRefresh: false,
+          refreshError: getErrorMessage(error, translate('UnableToQueueAuthorRefresh'))
+        });
       })
       .then(() => {
+        if (this._isUnmounted) {
+          return;
+        }
+
         if (!this.props.isRefreshingAuthor) {
           this.setState({ isStartingRefresh: false });
         }
+      });
+  };
+
+  onRetryRefreshPress = () => {
+    this.onRefreshAuthorPress(this.state.failedRefreshAuthorIds, this.state.failedRefreshMediaType);
+  };
+
+  onRssSyncPress = () => {
+    if (this.state.isStartingRssSync || this.props.isRssSyncExecuting) {
+      return;
+    }
+
+    this.setState({ isStartingRssSync: true, rssSyncError: null });
+    Promise.resolve()
+      .then(() => this.props.onRssSyncPress())
+      .then(() => {
+        if (this._isUnmounted) {
+          return;
+        }
+
+        if (!this.props.isRssSyncExecuting) {
+          this.setState({ isStartingRssSync: false });
+        }
+      })
+      .catch((error) => {
+        if (this._isUnmounted) {
+          return;
+        }
+
+        this.setState({
+          isStartingRssSync: false,
+          rssSyncError: getErrorMessage(error, translate('UnableToStartRssSync'))
+        });
       });
   };
 
@@ -353,7 +424,6 @@ class AuthorIndex extends Component {
       onSortSelect,
       onFilterSelect,
       onViewSelect,
-      onRssSyncPress,
       ...otherProps
     } = this.props;
 
@@ -367,7 +437,10 @@ class AuthorIndex extends Component {
       selectedState,
       allSelected,
       allUnselected,
-      isStartingRefresh
+      isStartingRefresh,
+      refreshError,
+      isStartingRssSync,
+      rssSyncError
     } = this.state;
 
     const filteredItems = filterAuthorsByMediaType(items, selectedMediaType);
@@ -381,6 +454,7 @@ class AuthorIndex extends Component {
 
     const refreshLabel = isEditorActive && selectedAuthorIds.length > 0 ? translate('UpdateSelected') : translate('UpdateAll');
     const isBulkRefreshPending = isRefreshingAuthor || isStartingRefresh;
+    const isRssSyncPending = isRssSyncExecuting || isStartingRssSync;
 
     return (
       <PageContent>
@@ -404,9 +478,9 @@ class AuthorIndex extends Component {
             <PageToolbarButton
               label={translate('RSSSync')}
               iconName={icons.RSS}
-              isSpinning={isRssSyncExecuting}
-              isDisabled={hasNoAuthor}
-              onPress={onRssSyncPress}
+              isSpinning={isRssSyncPending}
+              isDisabled={hasNoAuthor || isRssSyncPending}
+              onPress={this.onRssSyncPress}
             />
 
             <PageToolbarSeparator />
@@ -521,8 +595,28 @@ class AuthorIndex extends Component {
             {
               !isFetching && !!error &&
                 <div className={styles.errorMessage}>
-                  {getErrorMessage(error, 'Failed to load author from API')}
+                  {getErrorMessage(error, translate('ErrorPageAuthorUnavailable'))}
                 </div>
+            }
+
+            {
+              !!refreshError &&
+                <Alert kind={kinds.DANGER} role="alert">
+                  <div>{refreshError}</div>
+                  <Button onPress={this.onRetryRefreshPress}>
+                    {translate('Retry')}
+                  </Button>
+                </Alert>
+            }
+
+            {
+              !!rssSyncError &&
+                <Alert kind={kinds.DANGER} role="alert">
+                  <div>{rssSyncError}</div>
+                  <Button onPress={this.onRssSyncPress}>
+                    {translate('Retry')}
+                  </Button>
+                </Alert>
             }
 
             {

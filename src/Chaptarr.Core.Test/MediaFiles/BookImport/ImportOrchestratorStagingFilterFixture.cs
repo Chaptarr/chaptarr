@@ -29,7 +29,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             File.WriteAllText(path, contents);
             File.SetLastWriteTimeUtc(path, modifiedUtc);
 
-            return new FileSystem().FileInfo.FromFileName(path);
+            return new FileSystem().FileInfo.New(path);
         }
 
         [Test]
@@ -57,7 +57,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         }
 
         [Test]
-        public void routine_scan_should_skip_known_unchanged_unmapped_file()
+        public void matched_scan_should_retry_known_unchanged_unmapped_file_without_search_marker()
         {
             var root = Directory.CreateDirectory(Path.Combine(TestContext.CurrentContext.WorkDirectory, $"stage_filter_{Guid.NewGuid():N}")).FullName;
             try
@@ -72,7 +72,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     EditionId = 0
                 };
 
-                Assert.That(ShouldStageFile(diskFile, knownFile, forceStage: false), Is.False);
+                Assert.That(ShouldStageFile(diskFile, knownFile, forceStage: false, FilterFilesType.Matched), Is.True,
+                    "an unmapped file with no completed remote-search marker remains eligible for routine matching");
             }
             finally
             {
@@ -145,7 +146,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         }
 
         [Test]
-        public void matched_filter_should_stage_unchanged_unmapped_file_but_skip_mapped_file()
+        public void matched_filter_should_stage_unsought_unmapped_and_skip_mapped_or_searched_files()
         {
             var root = Directory.CreateDirectory(Path.Combine(TestContext.CurrentContext.WorkDirectory, $"stage_filter_{Guid.NewGuid():N}")).FullName;
             try
@@ -164,6 +165,16 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
                 knownFile.EditionId = 10;
                 Assert.That(ShouldStageFile(diskFile, knownFile, false, FilterFilesType.Matched), Is.False);
+
+                knownFile.EditionId = 0;
+                knownFile.LastRemoteSearchTime = modified;
+                Assert.That(ShouldStageFile(diskFile, knownFile, false, FilterFilesType.Matched), Is.False,
+                    "a completed remote search is not repeated until the file changes or a forced scan is requested");
+
+                File.SetLastWriteTimeUtc(diskFile.FullName, modified.AddMinutes(1));
+                diskFile.Refresh();
+                Assert.That(ShouldStageFile(diskFile, knownFile, false, FilterFilesType.Matched), Is.True,
+                    "a changed file clears the effective backoff and becomes eligible again");
             }
             finally
             {

@@ -17,7 +17,7 @@ using NzbDrone.Core.MediaFiles.TagExtraction;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.RootFolders;
-using PdfSharpCore.Pdf.IO;
+using PdfSharp.Pdf.IO;
 using VersOne.Epub;
 using VersOne.Epub.Schema;
 
@@ -41,6 +41,7 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IRootFolderService _rootFolderService;
         private readonly IConfigService _configService;
         private readonly ICalibreProxy _calibre;
+        private readonly IEpubSeriesTagWriter _epubSeriesTagWriter;
         private readonly Logger _logger;
         private readonly IFileMutationSafetyService _fileMutationSafetyService;
 
@@ -50,6 +51,7 @@ namespace NzbDrone.Core.MediaFiles
             IConfigService configService,
             ICalibreProxy calibre,
             IFileMutationSafetyService fileMutationSafetyService,
+            IEpubSeriesTagWriter epubSeriesTagWriter,
             Logger logger)
         {
             _authorService = authorService;
@@ -57,6 +59,7 @@ namespace NzbDrone.Core.MediaFiles
             _rootFolderService = rootFolderService;
             _configService = configService;
             _calibre = calibre;
+            _epubSeriesTagWriter = epubSeriesTagWriter;
             _logger = logger;
             _fileMutationSafetyService = fileMutationSafetyService;
         }
@@ -125,13 +128,13 @@ namespace NzbDrone.Core.MediaFiles
 
                 _logger.Debug($"Syncing ebook tags for {edition}");
 
-                foreach (var file in bookFiles.Where(x => x.CalibreId != 0))
+                foreach (var file in bookFiles.Where(CanWriteTags))
                 {
                     // populate tracks (which should also have release/book/author set) because
                     // not all of the updates will have been committed to the database yet
                     file.Edition = edition;
 
-                    WriteTagsInternal(file, _configService.UpdateCovers, _configService.EmbedMetadata);
+                    TryWriteTagsInternal(file, _configService.UpdateCovers, _configService.EmbedMetadata);
                 }
             }
         }
@@ -183,9 +186,9 @@ namespace NzbDrone.Core.MediaFiles
 
             _logger.ProgressInfo("Re-tagging {0} ebook files for {1}", files.Count, author.Name);
 
-            foreach (var file in files.Where(x => x.CalibreId != 0))
+            foreach (var file in files.Where(CanWriteTags))
             {
-                WriteTagsInternal(file, message.UpdateCovers, message.EmbedMetadata);
+                TryWriteTagsInternal(file, message.UpdateCovers, message.EmbedMetadata);
             }
 
             _logger.ProgressInfo("Selected ebook files re-tagged for {0}", author.Name);
@@ -202,22 +205,40 @@ namespace NzbDrone.Core.MediaFiles
 
                 _logger.ProgressInfo("Re-tagging all ebook files for author: {0}", author.Name);
 
-                foreach (var file in files.Where(x => x.CalibreId != 0))
+                foreach (var file in files.Where(CanWriteTags))
                 {
-                    WriteTagsInternal(file, message.UpdateCovers, message.EmbedMetadata);
+                    TryWriteTagsInternal(file, message.UpdateCovers, message.EmbedMetadata);
                 }
 
                 _logger.ProgressInfo("All ebook files re-tagged for {0}", author.Name);
             }
         }
 
+        /// <summary>
+        /// Bulk re-tagging walks a whole author or library, so one unreadable book must not
+        /// strand every file after it. Mirrors how the import path treats tag writing as
+        /// optional post-processing.
+        /// </summary>
+        private void TryWriteTagsInternal(BookFile file, bool updateCover, bool embedMetadata)
+        {
+            try
+            {
+                WriteTagsInternal(file, updateCover, embedMetadata);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException)
+            {
+                _logger.Warn(ex, "Failed writing tags for {0}, continuing with the remaining files", file?.Path);
+            }
+        }
+
+        // A file is taggable if Calibre owns it, or if we can write into the book file ourselves.
+        private static bool CanWriteTags(BookFile file)
+        {
+            return file.CalibreId != 0 || MediaFileExtensions.CanWriteEbookSeriesTags(Path.GetExtension(file.Path));
+        }
+
         private void WriteTagsInternal(BookFile file, bool updateCover, bool embedMetadata)
         {
-            if (file.CalibreId == 0)
-            {
-                _logger.Trace($"No calibre id for {file.Path}, skipping writing tags");
-            }
-
             _fileMutationSafetyService.EnsureMutableFile(file.Path);
 
             var rootFolder = _rootFolderService.GetBestRootFolder(file.Path);
@@ -227,7 +248,76 @@ namespace NzbDrone.Core.MediaFiles
                 throw new Exception($"File '{file.Path}' is not in a root folder.");
             }
 
+            if (!rootFolder.IsCalibreLibrary)
+            {
+                WriteSeriesTagsDirectly(file);
+                return;
+            }
+
+            if (file.CalibreId == 0)
+            {
+                _logger.Trace($"No calibre id for {file.Path}, skipping writing tags");
+                return;
+            }
+
             _calibre.SetFields(file, rootFolder.CalibreSettings, updateCover, embedMetadata);
+        }
+
+        /// <summary>
+        /// Writes series metadata into the book file itself. Chaptarr already knows the series
+        /// and position for every book, but outside a Calibre library it previously had no way
+        /// to record them where a reader would look.
+        /// </summary>
+        private void WriteSeriesTagsDirectly(BookFile file)
+        {
+            if (!MediaFileExtensions.CanWriteEbookSeriesTags(Path.GetExtension(file.Path)))
+            {
+                _logger.Trace("No series tag writer for {0}, skipping", file.Path);
+                return;
+            }
+
+            var book = file.Edition?.Book;
+
+            if (book == null)
+            {
+                return;
+            }
+
+            var preferredSeries = book.Author?.GetMetadataProfileFor(BookMediaType.Ebook)?.PreferredSeries;
+            var (seriesName, position) = BookSeriesLabel.Resolve(book.SeriesLinks, preferredSeries);
+            if (seriesName.IsNullOrWhiteSpace())
+            {
+                seriesName = book.SeriesName;
+                position = book.SeriesPosition;
+            }
+
+            if (seriesName.IsNullOrWhiteSpace())
+            {
+                _logger.Trace("No series known for {0}, skipping series tags", file.Path);
+                return;
+            }
+
+            double? seriesIndex = null;
+
+            if (position.IsNotNullOrWhiteSpace())
+            {
+                if (double.TryParse(position, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) && double.IsFinite(parsed))
+                {
+                    seriesIndex = parsed;
+                }
+                else
+                {
+                    // Positions like "2 - Heavy Metal" are common in imported metadata. A reader
+                    // needs a plain number, so record the series without a position rather than
+                    // writing something it cannot use.
+                    _logger.Debug("Series position '{0}' for {1} is not numeric, writing series without a position", position, file.Path);
+                }
+            }
+
+            if (_epubSeriesTagWriter.WriteSeriesTags(file.Path, seriesName, seriesIndex))
+            {
+                _logger.Debug("Wrote series tags to {0}: {1} #{2}", file.Path, seriesName, seriesIndex?.ToString(CultureInfo.InvariantCulture) ?? "-");
+            }
         }
 
         private IEnumerable<RetagBookFilePreview> GetPreviews(List<BookFile> files)
@@ -307,16 +397,58 @@ namespace NzbDrone.Core.MediaFiles
 
         public string GetIsbn(IEnumerable<EpubMetadataIdentifier> ids)
         {
-            var candidates = ids.Select(x => StripIsbn(x?.Identifier))
+            return SelectPreferredIsbn(ids?.Select(x => x?.Identifier));
+        }
+
+        internal static string SelectPreferredIsbn(IEnumerable<string> identifiers)
+        {
+            var candidates = (identifiers ?? Enumerable.Empty<string>())
+                .Select(StripIsbn)
                 .Where(x => x != null)
                 .OrderByDescending(x => x.Length);
 
-            return candidates.FirstOrDefault(x => x.StartsWith("978"))
-                ?? candidates.FirstOrDefault(x => x.StartsWith("979"))
+            return candidates.FirstOrDefault(x => x.StartsWith("978", StringComparison.Ordinal))
+                ?? candidates.FirstOrDefault(x => x.StartsWith("979", StringComparison.Ordinal))
                 ?? candidates.FirstOrDefault();
         }
 
-        private string GetIsbnChars(string input)
+        // StripIsbn returns null for an unparseable/invalid ISBN; a null tag value must never be stored.
+        internal static void AddIsbnTag(Dictionary<string, string> tags, string rawIsbn)
+        {
+            var strippedIsbn = StripIsbn(rawIsbn);
+            if (!string.IsNullOrWhiteSpace(strippedIsbn))
+            {
+                tags["isbn"] = strippedIsbn;
+            }
+        }
+
+        internal static string GetUnschemedEpubIsbn(string identifier)
+        {
+            var candidate = identifier?.Trim();
+            if (string.IsNullOrEmpty(candidate))
+            {
+                return null;
+            }
+
+            if (candidate.StartsWith("urn:isbn:", StringComparison.OrdinalIgnoreCase))
+            {
+                candidate = candidate.Substring("urn:isbn:".Length);
+            }
+
+            // Recognize ISBN URNs and bare ISBNs without interpreting another
+            // identifier namespace (for example a UUID or DOI) as ISBN digits.
+            if (candidate.Any(character => !char.IsDigit(character) && character != 'X' &&
+                character != 'x' && character != '-' && !char.IsWhiteSpace(character)))
+            {
+                return null;
+            }
+
+            var isbn = StripIsbn(candidate.ToUpperInvariant());
+            return isbn?.Length == 13 && !isbn.StartsWith("978", StringComparison.Ordinal) &&
+                !isbn.StartsWith("979", StringComparison.Ordinal) ? null : isbn;
+        }
+
+        private static string GetIsbnChars(string input)
         {
             if (input == null)
             {
@@ -326,7 +458,7 @@ namespace NzbDrone.Core.MediaFiles
             return new string(input.Where(c => char.IsDigit(c) || c == 'X' || c == 'x').ToArray());
         }
 
-        private string StripIsbn(string input)
+        internal static string StripIsbn(string input)
         {
             var isbn = GetIsbnChars(input);
 
@@ -410,6 +542,9 @@ namespace NzbDrone.Core.MediaFiles
             {
                 using (var bookRef = EpubReader.OpenBook(file))
                 {
+                    var isbnCandidates = new List<string>();
+                    string asin = null;
+
                     // Basic fields
                     if (!string.IsNullOrWhiteSpace(bookRef.Title))
                     {
@@ -471,11 +606,23 @@ namespace NzbDrone.Core.MediaFiles
                                     // Also add standard fields
                                     if (scheme.Contains("isbn"))
                                     {
-                                        tags["isbn"] = id.Identifier;
+                                        var isbn = StripIsbn(id.Identifier);
+                                        if (isbn != null)
+                                        {
+                                            isbnCandidates.Add(isbn);
+                                        }
+                                    }
+                                    else if (string.IsNullOrWhiteSpace(id.Scheme))
+                                    {
+                                        var isbn = GetUnschemedEpubIsbn(id.Identifier);
+                                        if (isbn != null)
+                                        {
+                                            isbnCandidates.Add(isbn);
+                                        }
                                     }
                                     else if (scheme.Contains("asin"))
                                     {
-                                        tags["asin"] = id.Identifier;
+                                        asin ??= id.Identifier;
                                     }
                                 }
                             }
@@ -577,6 +724,17 @@ namespace NzbDrone.Core.MediaFiles
                         }
                     }
 
+                    var selectedIsbn = SelectPreferredIsbn(isbnCandidates);
+                    if (selectedIsbn != null)
+                    {
+                        tags["isbn"] = selectedIsbn;
+                    }
+
+                    if (asin != null)
+                    {
+                        tags["asin"] = asin;
+                    }
+
                     // Log all extracted fields
                     _logger.Debug("[METADATA-EXTRACTION] Extracted {0} fields from EPUB", tags.Count);
                     foreach (var tag in tags.OrderBy(t => t.Key))
@@ -586,7 +744,7 @@ namespace NzbDrone.Core.MediaFiles
 
                 }
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
             {
                 _logger.Error(e, "[METADATA-EXTRACTION] Error reading EPUB tags");
                 throw new TagExtractionException(file, e);
@@ -617,10 +775,7 @@ namespace NzbDrone.Core.MediaFiles
                     tags["authors"] = authors;
                 }
 
-                if (!string.IsNullOrWhiteSpace(book.Isbn))
-                {
-                    tags["isbn"] = StripIsbn(book.Isbn);
-                }
+                AddIsbnTag(tags, book.Isbn);
 
                 if (!string.IsNullOrWhiteSpace(book.Asin))
                 {
@@ -667,7 +822,7 @@ namespace NzbDrone.Core.MediaFiles
                 }
 
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
             {
                 _logger.Error(e, "[METADATA-EXTRACTION] Error reading AZW3/MOBI tags");
                 throw new TagExtractionException(file, e);
@@ -683,7 +838,7 @@ namespace NzbDrone.Core.MediaFiles
 
             try
             {
-                using var book = PdfReader.Open(file, PdfDocumentOpenMode.InformationOnly);
+                using var book = PdfReader.Open(file, PdfDocumentOpenMode.Import);
                 if (book.Info != null)
                 {
                     // Basic fields
@@ -743,7 +898,7 @@ namespace NzbDrone.Core.MediaFiles
                     _logger.Debug("[METADATA-EXTRACTION] No metadata found in PDF");
                 }
             }
-            catch (Exception e)
+            catch (Exception e) when (e is not OperationCanceledException && e is not OutOfMemoryException)
             {
                 _logger.Error(e, "[METADATA-EXTRACTION] Error reading PDF tags");
                 throw new TagExtractionException(file, e);

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>chaptarrng</id>
+    <version>__VERSION__</version>
+    <title>ChaptarrNG</title>
+    <authors>Chaptarr, Snapetech</authors>
+    <owners>Snapetech</owners>
+    <projectUrl>https://github.com/snapetech/chaptarrng</projectUrl>
+    <packageSourceUrl>https://github.com/snapetech/chaptarrng/tree/main/packaging/chocolatey</packageSourceUrl>
+    <docsUrl>https://github.com/snapetech/chaptarrng#readme</docsUrl>
+    <bugTrackerUrl>https://github.com/snapetech/chaptarrng/issues</bugTrackerUrl>
+    <licenseUrl>https://github.com/snapetech/chaptarrng/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>ChaptarrNG is a standalone audiobook and ebook library manager with a local web interface. It is a fork of Chaptarr that adds optional SeerrNG integration for format-aware ebook and audiobook requests, library discovery, and request status management; SeerrNG is not required to run ChaptarrNG.</description>
+    <copyright>Copyright © 2026 Snapetech and SeerrNG contributors for ChaptarrNG fork-specific changes; copyright © 2026 Chaptarr contributors for inherited Chaptarr changes; portions copyright © 2010–2026 the Servarr team and contributors.</copyright>
+    <summary>Standalone audiobook and ebook library manager</summary>
+    <tags>books audiobook ebook library chaptarrng</tags>
+    <dependencies>
+      <dependency id="nssm" version="2.24.101" />
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

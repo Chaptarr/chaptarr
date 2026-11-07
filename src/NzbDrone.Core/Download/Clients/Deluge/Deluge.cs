@@ -41,8 +41,8 @@ namespace NzbDrone.Core.Download.Clients.Deluge
         private string GetPostImportCategory(DownloadClientItem downloadClientItem)
         {
             return PostImportCategoryResolver.Resolve(downloadClientItem,
-                Settings.AudiobookCategory,
-                Settings.EbookCategory,
+                BookDownloadCategorySettings.GetCategory(Settings, BookMediaType.Audiobook),
+                BookDownloadCategorySettings.GetCategory(Settings, BookMediaType.Ebook),
                 Settings.AudiobookImportedCategory,
                 Settings.EbookImportedCategory);
         }
@@ -72,8 +72,8 @@ namespace NzbDrone.Core.Download.Clients.Deluge
         public bool ShouldPreserveItemAfterImport(DownloadClientItem downloadClientItem)
         {
             return PostImportCategoryResolver.IsInResolvedPostImportCategory(downloadClientItem,
-                Settings.AudiobookCategory,
-                Settings.EbookCategory,
+                BookDownloadCategorySettings.GetCategory(Settings, BookMediaType.Audiobook),
+                BookDownloadCategorySettings.GetCategory(Settings, BookMediaType.Ebook),
                 Settings.AudiobookImportedCategory,
                 Settings.EbookImportedCategory);
         }
@@ -89,7 +89,7 @@ namespace NzbDrone.Core.Download.Clients.Deluge
 
             _proxy.SetTorrentSeedingConfiguration(actualHash, remoteBook.SeedConfiguration, Settings);
 
-            var category = remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? Settings.EbookCategory : Settings.AudiobookCategory;
+            var category = BookDownloadCategorySettings.GetCategory(Settings, remoteBook.GetPreferredMediaType());
 
             if (category.IsNotNullOrWhiteSpace())
             {
@@ -118,7 +118,7 @@ namespace NzbDrone.Core.Download.Clients.Deluge
 
             _proxy.SetTorrentSeedingConfiguration(actualHash, remoteBook.SeedConfiguration, Settings);
 
-            var category = remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? Settings.EbookCategory : Settings.AudiobookCategory;
+            var category = BookDownloadCategorySettings.GetCategory(Settings, remoteBook.GetPreferredMediaType());
 
             if (category.IsNotNullOrWhiteSpace())
             {
@@ -159,10 +159,7 @@ namespace NzbDrone.Core.Download.Clients.Deluge
 
         public override IEnumerable<DownloadClientItem> GetItems()
         {
-            var categories = new[] { Settings.AudiobookCategory, Settings.EbookCategory }
-                .Where(c => c.IsNotNullOrWhiteSpace())
-                .Distinct(StringComparer.InvariantCultureIgnoreCase)
-                .ToList();
+            var categories = BookDownloadCategorySettings.GetConfiguredCategories(Settings).ToList();
 
             var torrentsByHash = new Dictionary<string, (DelugeTorrent Torrent, string Category)>(StringComparer.InvariantCultureIgnoreCase);
 
@@ -556,10 +553,7 @@ namespace NzbDrone.Core.Download.Clients.Deluge
 
         private ValidationFailure TestCategory()
         {
-            var initialCategories = new[] { Settings.AudiobookCategory, Settings.EbookCategory }
-                .Where(c => c.IsNotNullOrWhiteSpace())
-                .Distinct(StringComparer.InvariantCultureIgnoreCase)
-                .ToList();
+            var initialCategories = BookDownloadCategorySettings.GetConfiguredCategories(Settings).ToList();
 
             var postImportCategories = new[] { Settings.AudiobookImportedCategory, Settings.EbookImportedCategory }
                 .Where(c => c.IsNotNullOrWhiteSpace())
@@ -584,13 +578,19 @@ namespace NzbDrone.Core.Download.Clients.Deluge
 
             var labels = _proxy.GetAvailableLabels(Settings);
 
-            foreach (var pair in new[]
-                     {
-                         new { Field = nameof(DelugeSettings.AudiobookCategory), Value = Settings.AudiobookCategory },
-                         new { Field = nameof(DelugeSettings.EbookCategory), Value = Settings.EbookCategory },
-                         new { Field = nameof(DelugeSettings.AudiobookImportedCategory), Value = Settings.AudiobookImportedCategory },
-                         new { Field = nameof(DelugeSettings.EbookImportedCategory), Value = Settings.EbookImportedCategory }
-                     })
+            var categoriesToValidate = initialCategories
+                .Select(category => new
+                {
+                    Field = BookDownloadCategorySettings.GetCategoryFieldName(Settings, category),
+                    Value = category
+                })
+                .Concat(new[]
+                {
+                    new { Field = nameof(DelugeSettings.AudiobookImportedCategory), Value = Settings.AudiobookImportedCategory },
+                    new { Field = nameof(DelugeSettings.EbookImportedCategory), Value = Settings.EbookImportedCategory }
+                });
+
+            foreach (var pair in categoriesToValidate)
             {
                 if (pair.Value.IsNullOrWhiteSpace() || labels.Contains(pair.Value))
                 {

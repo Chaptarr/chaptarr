@@ -12,8 +12,11 @@ namespace NzbDrone.Core.Notifications.Webhook
     {
         private readonly IWebhookProxy _proxy;
 
-        public Webhook(IWebhookProxy proxy, IConfigFileProvider configFileProvider)
-            : base(configFileProvider)
+        public Webhook(
+            IWebhookProxy proxy,
+            IConfigFileProvider configFileProvider,
+            IBookshelfLegacyIdentityMapService legacyIdentityMapService)
+            : base(configFileProvider, legacyIdentityMapService)
         {
             _proxy = proxy;
         }

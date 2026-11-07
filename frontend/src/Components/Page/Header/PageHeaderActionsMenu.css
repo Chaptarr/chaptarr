@@ -9,11 +9,42 @@
   }
 }
 
+.experienceModeButton {
+  composes: button from '~Components/Link/Button.css';
+
+  margin-right: 8px;
+  padding: 4px 10px;
+  border-color: rgba(255, 255, 255, 0.55);
+  border-radius: 16px;
+  background-color: rgba(255, 255, 255, 0.08);
+  color: var(--white);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+
+  &:hover {
+    border-color: var(--white);
+    background-color: rgba(255, 255, 255, 0.18);
+    color: var(--white);
+  }
+
+  &:focus {
+    outline: 2px solid var(--white);
+    outline-offset: 2px;
+  }
+}
+
 .itemIcon {
   margin-right: 8px;
 }
 
 @media only screen and (max-width: $breakpointSmall) {
+  .experienceModeButton {
+    margin-right: 4px;
+    padding: 3px 7px;
+    font-size: 11px;
+  }
+
   .menuButton {
     margin-right: 5px;
   }

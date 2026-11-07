@@ -38,7 +38,9 @@ namespace NzbDrone.Core.Books
         public string GoodreadsAuthorId { get; set; }
         public string OpenLibraryAuthorId { get; set; }
         public string GoogleBooksAuthorId { get; set; }
+        public string RanobeDbAuthorId { get; set; }
         public string HardcoverBookId { get; set; }
+        public string RanobeDbBookId { get; set; }
         public string GoodreadsBookId { get; set; }
         public string OpenLibraryWorkId { get; set; }
         public string GoogleBooksId { get; set; }

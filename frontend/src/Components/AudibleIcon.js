@@ -1,7 +1,8 @@
 import PropTypes from 'prop-types';
 import React from 'react';
+import translate from 'Utilities/String/translate';
 
-function AudibleIcon({ size = 16, title = 'Audible Match', className = '', style = {} }) {
+function AudibleIcon({ size = 16, title = translate('AudibleMatchTitle'), className = '', style = {} }) {
   return (
     <svg
       width={size}

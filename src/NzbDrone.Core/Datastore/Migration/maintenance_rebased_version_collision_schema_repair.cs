@@ -4,9 +4,11 @@ using System.Data;
 using Dapper;
 using FluentMigrator;
 using FluentMigrator.Builders.IfDatabase;
+using Microsoft.Data.Sqlite;
 using NLog;
 using NzbDrone.Common.Instrumentation;
 using NzbDrone.Core.Datastore.Migration.Framework;
+using Npgsql;
 
 namespace NzbDrone.Core.Datastore.Migration
 {
@@ -27,7 +29,7 @@ namespace NzbDrone.Core.Datastore.Migration
                 return;
             }
 
-            if (!Schema.Table("VersionInfo").Exists())
+            if (!VersionInfoTableExists())
             {
                 // Fresh installs haven't created VersionInfo yet.
                 return;
@@ -101,6 +103,22 @@ namespace NzbDrone.Core.Datastore.Migration
                 repairs += EnsureDownloadClientMediaTags();
             }
 
+            if (applied.Contains(114))
+            {
+                // The active backlog branch used 114 for RanobeDB identities;
+                // the consolidation branch used it for root-folder Calibre gates.
+                repairs += EnsureRanobeDbProviderIds();
+                repairs += EnsureRootFolderCalibreGates();
+            }
+
+            if (applied.Contains(115))
+            {
+                // The active backlog branch used 115 for import-list history;
+                // the consolidation branch used it for metadata preferences.
+                repairs += EnsureImportListSyncHistory();
+                repairs += EnsureMetadataProfilePreferences();
+            }
+
             if (repairs > 0)
             {
                 _logger.Info("[MIGRATION-REPAIR] Applied {0} schema repair(s) for rebased migration version collisions", repairs);
@@ -124,6 +142,44 @@ namespace NzbDrone.Core.Datastore.Migration
             });
 
             return applied;
+        }
+
+        private bool VersionInfoTableExists()
+        {
+            var exists = false;
+
+            Execute.WithConnection((connection, transaction) =>
+            {
+                if (connection is NpgsqlConnection)
+                {
+                    // FluentMigrator's schema probe can resolve a table outside the
+                    // selected search_path schema. A staged Bookshelf conversion
+                    // must only inspect the VersionInfo table in its target schema.
+                    exists = connection.QuerySingle<bool>(@"
+                        SELECT to_regclass(format('%I.%I', current_schema(), @quotedName)) IS NOT NULL
+                            OR to_regclass(format('%I.%I', current_schema(), @unquotedName)) IS NOT NULL;",
+                        new { quotedName = "VersionInfo", unquotedName = "versioninfo" },
+                        transaction);
+                    return;
+                }
+
+                if (connection is SqliteConnection)
+                {
+                    exists = connection.QuerySingle<bool>(@"
+                        SELECT EXISTS (
+                            SELECT 1
+                              FROM sqlite_master
+                             WHERE type = 'table'
+                               AND name = @tableName COLLATE NOCASE);",
+                        new { tableName = "VersionInfo" },
+                        transaction);
+                    return;
+                }
+
+                throw new InvalidOperationException($"Unsupported migration database provider '{connection.GetType().Name}'.");
+            });
+
+            return exists;
         }
 
         private static IEnumerable<long> QueryVersions(IDbConnection connection, IDbTransaction transaction)
@@ -158,6 +214,151 @@ namespace NzbDrone.Core.Datastore.Migration
             return IfDatabase(dbType =>
                 !string.IsNullOrWhiteSpace(dbType) &&
                 dbType.IndexOf("postgres", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private int EnsureRanobeDbProviderIds()
+        {
+            var repairs = 0;
+
+            if (Schema.Table("Books").Exists() && !Schema.Table("Books").Column("RanobeDbBookId").Exists())
+            {
+                Alter.Table("Books").AddColumn("RanobeDbBookId").AsString(128).Nullable();
+                repairs++;
+            }
+
+            if (Schema.Table("Authors").Exists() && !Schema.Table("Authors").Column("RanobeDbAuthorId").Exists())
+            {
+                Alter.Table("Authors").AddColumn("RanobeDbAuthorId").AsString(128).Nullable();
+                repairs++;
+            }
+
+            if (Schema.Table("Books").Exists() &&
+                Schema.Table("Books").Column("RanobeDbBookId").Exists() &&
+                Schema.Table("Books").Column("MediaType").Exists() &&
+                !Schema.Table("Books").Index("UX_Books_RanobeDbBookId_MediaType").Exists())
+            {
+                Create.Index("UX_Books_RanobeDbBookId_MediaType")
+                    .OnTable("Books")
+                    .OnColumn("RanobeDbBookId").Ascending()
+                    .OnColumn("MediaType").Ascending()
+                    .WithOptions().Unique();
+                repairs++;
+            }
+
+            if (Schema.Table("Authors").Exists() &&
+                Schema.Table("Authors").Column("RanobeDbAuthorId").Exists() &&
+                !Schema.Table("Authors").Index("UX_Authors_RanobeDbAuthorId").Exists())
+            {
+                Create.Index("UX_Authors_RanobeDbAuthorId")
+                    .OnTable("Authors")
+                    .OnColumn("RanobeDbAuthorId").Ascending()
+                    .WithOptions().Unique();
+                repairs++;
+            }
+
+            return repairs;
+        }
+
+        private int EnsureRootFolderCalibreGates()
+        {
+            if (!Schema.Table("RootFolders").Exists())
+            {
+                return 0;
+            }
+
+            var repairs = 0;
+            if (!Schema.Table("RootFolders").Column("ReapCalibreDuplicates").Exists())
+            {
+                Alter.Table("RootFolders")
+                    .AddColumn("ReapCalibreDuplicates").AsBoolean().NotNullable().WithDefaultValue(false);
+                repairs++;
+            }
+
+            if (!Schema.Table("RootFolders").Column("AutoPushCalibreMetadata").Exists())
+            {
+                Alter.Table("RootFolders")
+                    .AddColumn("AutoPushCalibreMetadata").AsBoolean().NotNullable().WithDefaultValue(false);
+                repairs++;
+            }
+
+            return repairs;
+        }
+
+        private int EnsureMetadataProfilePreferences()
+        {
+            const string tableName = "MetadataProfiles";
+            if (!Schema.Table(tableName).Exists())
+            {
+                return 0;
+            }
+
+            var repairs = 0;
+            if (!Schema.Table(tableName).Column("PreferredEditionTerms").Exists())
+            {
+                Alter.Table(tableName).AddColumn("PreferredEditionTerms").AsString().Nullable();
+                repairs++;
+            }
+
+            if (!Schema.Table(tableName).Column("PreferredSeries").Exists())
+            {
+                Alter.Table(tableName).AddColumn("PreferredSeries").AsString().Nullable();
+                repairs++;
+            }
+
+            return repairs;
+        }
+
+        private int EnsureImportListSyncHistory()
+        {
+            const string tableName = "ImportListSyncHistory";
+            var repairs = 0;
+
+            if (!Schema.Table(tableName).Exists())
+            {
+                Create.Table(tableName)
+                    .WithColumn("Id").AsInt32().PrimaryKey().Identity()
+                    .WithColumn("ImportListId").AsInt32().NotNullable()
+                    .WithColumn("ImportListName").AsString(512).NotNullable()
+                    .WithColumn("StartedAt").AsDateTime().NotNullable()
+                    .WithColumn("EndedAt").AsDateTime().Nullable()
+                    .WithColumn("DurationMilliseconds").AsInt64().NotNullable().WithDefaultValue(0)
+                    .WithColumn("Result").AsString(32).NotNullable()
+                    .WithColumn("FailureStage").AsString(32).Nullable()
+                    .WithColumn("DryRun").AsBoolean().NotNullable().WithDefaultValue(false)
+                    .WithColumn("ProcessedCount").AsInt32().NotNullable().WithDefaultValue(0)
+                    .WithColumn("NewCount").AsInt32().NotNullable().WithDefaultValue(0)
+                    .WithColumn("ExistingCount").AsInt32().NotNullable().WithDefaultValue(0)
+                    .WithColumn("ChangedCount").AsInt32().NotNullable().WithDefaultValue(0)
+                    .WithColumn("ExcludedCount").AsInt32().NotNullable().WithDefaultValue(0)
+                    .WithColumn("UnresolvedCount").AsInt32().NotNullable().WithDefaultValue(0)
+                    .WithColumn("SearchEligibleCount").AsInt32().NotNullable().WithDefaultValue(0)
+                    .WithColumn("ProviderStateCommitted").AsBoolean().NotNullable().WithDefaultValue(false);
+                repairs++;
+            }
+
+            if (Schema.Table(tableName).Exists() &&
+                Schema.Table(tableName).Column("ImportListId").Exists() &&
+                Schema.Table(tableName).Column("StartedAt").Exists() &&
+                !Schema.Table(tableName).Index("IX_ImportListSyncHistory_ImportListId_StartedAt").Exists())
+            {
+                Create.Index("IX_ImportListSyncHistory_ImportListId_StartedAt")
+                    .OnTable(tableName)
+                    .OnColumn("ImportListId").Ascending()
+                    .OnColumn("StartedAt").Descending();
+                repairs++;
+            }
+
+            if (Schema.Table(tableName).Exists() &&
+                Schema.Table(tableName).Column("StartedAt").Exists() &&
+                !Schema.Table(tableName).Index("IX_ImportListSyncHistory_StartedAt").Exists())
+            {
+                Create.Index("IX_ImportListSyncHistory_StartedAt")
+                    .OnTable(tableName)
+                    .OnColumn("StartedAt").Descending();
+                repairs++;
+            }
+
+            return repairs;
         }
 
         private int EnsureBooksIsOmnibus()

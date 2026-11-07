@@ -106,7 +106,8 @@ function createLibraryOption(library, folder) {
 
   return {
     key: `${library.id}:${folder.id}`,
-    value: `${library.name} — ${folder.fullPath} (${libraryMode}${watcherStatus})`,
+    value: `${library.name} (${libraryMode}${watcherStatus})`,
+    hint: folder.fullPath,
     libraryId: library.id,
     libraryFolderId: folder.id,
     libraryFolderPath: folder.fullPath
@@ -141,7 +142,8 @@ function getOptionsForSlot(slot, libraries, mapping, isFetchingLibraries, canLoa
   if (mapping?.libraryId && mapping?.libraryFolderId && !options.some((option) => option.key === `${mapping.libraryId}:${mapping.libraryFolderId}`)) {
     options.unshift({
       key: `${mapping.libraryId}:${mapping.libraryFolderId}`,
-      value: mapping.libraryFolderPath || mapping.libraryId,
+      value: mapping.libraryId,
+      hint: mapping.libraryFolderPath,
       libraryId: mapping.libraryId,
       libraryFolderId: mapping.libraryFolderId,
       libraryFolderPath: mapping.libraryFolderPath
@@ -391,6 +393,7 @@ function AudioBookShelfLibraryMappings(props) {
         </div>
 
         <SpinnerButton
+          className={styles.absMappingLoadButton}
           isSpinning={isFetchingLibraries}
           isDisabled={!canLoadLibraries}
           onPress={loadLibraries}
@@ -444,7 +447,7 @@ function AudioBookShelfLibraryMappings(props) {
                 </span>
 
                 <span className={styles.absMappingPath}>
-                  {slot.path}
+                  <span title={slot.path}>{slot.path}</span>
                 </span>
               </div>
 

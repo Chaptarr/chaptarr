@@ -1,0 +1,228 @@
+{
+  "version": 1,
+  "sourceLocale": "en",
+  "literalPolicy": [
+    "Keep translation placeholders such as {appName}, {author}, and {count} intact.",
+    "Do not translate or normalize filenames, filesystem paths, API values, identifiers, or imported metadata.",
+    "Preserve book, author, and series names exactly as supplied; isolate mixed-script text for display.",
+    "Preserve product and provider names, configuration variable names, URLs, and permission labels exactly."
+  ],
+  "terms": [
+    {
+      "id": "domain.audiobook",
+      "sourceId": "AudiobookLabel",
+      "source": "Audiobook",
+      "meaning": "An audio edition of a book.",
+      "guidance": "Use the product's established term consistently.",
+      "preferredTranslations": {}
+    },
+    {
+      "id": "domain.ebook",
+      "sourceId": "EbookLabel",
+      "source": "eBook",
+      "meaning": "A digital text edition of a book.",
+      "guidance": "Preserve the product's established capitalization where the target language permits.",
+      "preferredTranslations": {}
+    },
+    {
+      "id": "domain.author",
+      "sourceId": "Author",
+      "source": "Author",
+      "meaning": "The creator credited for a book.",
+      "guidance": "Use consistently across library, search, and metadata screens.",
+      "preferredTranslations": {
+        "es": "Autor",
+        "zh-Hans": "作者",
+        "hi": "लेखक",
+        "de": "Autor",
+        "ja": "作者",
+        "fr": "Auteur",
+        "pt-BR": "Autor",
+        "ar": "مؤلف",
+        "ko": "저자",
+        "zh-Hant": "作者",
+        "vi": "Tác giả",
+        "id": "Penulis"
+      }
+    },
+    {
+      "id": "domain.edition",
+      "sourceId": "Edition",
+      "source": "Edition",
+      "meaning": "A particular publication or version of a book.",
+      "guidance": "Keep distinct from file format and release.",
+      "preferredTranslations": {}
+    },
+    {
+      "id": "domain.downloadClient",
+      "sourceId": "DownloadClient",
+      "source": "Download Client",
+      "meaning": "An external application used to retrieve book files.",
+      "guidance": "Keep consistent in settings and queue screens.",
+      "preferredTranslations": {
+        "es": "Cliente de descarga",
+        "zh-Hans": "下载客户端",
+        "hi": "डाउनलोड क्लाइंट",
+        "de": "Download-Client",
+        "ja": "ダウンロードクライアント",
+        "fr": "Client de téléchargement",
+        "pt-BR": "Cliente de download",
+        "ar": "عميل التنزيل",
+        "ko": "다운로드 클라이언트",
+        "zh-Hant": "下載用戶端",
+        "vi": "Ứng dụng khách tải xuống",
+        "id": "Klien Unduhan"
+      }
+    },
+    {
+      "id": "domain.qualityProfile",
+      "sourceId": "QualityProfile",
+      "source": "Quality Profile",
+      "meaning": "Rules used to select preferred media quality.",
+      "guidance": "Use consistently in settings and item details.",
+      "preferredTranslations": {}
+    },
+    {
+      "id": "domain.rootFolder",
+      "sourceId": "RootFolder",
+      "source": "Root Folder",
+      "meaning": "A configured top-level storage location for the library.",
+      "guidance": "Do not confuse with a folder within an individual book path.",
+      "preferredTranslations": {}
+    },
+    {
+      "id": "domain.unmappedFiles",
+      "sourceId": "UnmappedFiles",
+      "source": "Unmapped Files",
+      "meaning": "Files that ChaptarrNG cannot currently match to a library item.",
+      "guidance": "Use consistently in the import workflow.",
+      "preferredTranslations": {}
+    },
+    {
+      "id": "domain.monitored",
+      "sourceId": "Monitored",
+      "source": "Monitored",
+      "meaning": "An item that ChaptarrNG continues to watch for wanted releases.",
+      "guidance": "Keep distinct from downloaded or available.",
+      "preferredTranslations": {
+        "es": "Monitorizado",
+        "zh-Hans": "已追踪",
+        "hi": "निगरानी में",
+        "de": "Überwacht",
+        "ja": "監視",
+        "fr": "Surveillé",
+        "pt-BR": "Monitorado",
+        "ar": "مراقب",
+        "ko": "모니터링",
+        "zh-Hant": "已監控",
+        "vi": "Giám sát",
+        "id": "Dimonitor"
+      }
+    },
+    {
+      "id": "domain.import",
+      "sourceId": "Import",
+      "source": "Import",
+      "meaning": "Adding an existing file to a matched library item.",
+      "guidance": "Use consistently for file intake and matching actions.",
+      "preferredTranslations": {
+        "es": "Importar",
+        "zh-Hans": "导入",
+        "hi": "आयात",
+        "de": "Importieren",
+        "ja": "インポート",
+        "fr": "Importer",
+        "pt-BR": "Importar",
+        "ar": "استيراد",
+        "ko": "가져오기",
+        "zh-Hant": "匯入",
+        "vi": "Nhập",
+        "id": "Impor"
+      }
+    },
+    {
+      "id": "domain.commandQueue",
+      "sourceId": "Queue",
+      "source": "Queue",
+      "meaning": "The app page listing pending and recently processed commands.",
+      "guidance": "Use the term for the command queue page, distinct from the action of adding a task to the queue.",
+      "preferredTranslations": {
+        "es": "Cola",
+        "zh-Hans": "队列",
+        "hi": "कतार",
+        "de": "Warteschlange",
+        "ja": "キュー",
+        "fr": "File d'attente",
+        "pt-BR": "Fila",
+        "ar": "طابور",
+        "ko": "대기열",
+        "zh-Hant": "佇列",
+        "vi": "Hàng đợi",
+        "id": "Antrean"
+      }
+    },
+    {
+      "id": "domain.mode",
+      "sourceId": "Mode",
+      "source": "Mode",
+      "meaning": "The runtime mode shown in the system status page.",
+      "guidance": "Use the equivalent of software operating mode, not method or procedure.",
+      "preferredTranslations": {
+        "es": "Modo",
+        "zh-Hans": "模式",
+        "hi": "मोड",
+        "de": "Modus",
+        "ja": "モード",
+        "fr": "Mode",
+        "pt-BR": "Modo",
+        "ar": "الوضع",
+        "ko": "모드",
+        "zh-Hant": "模式",
+        "vi": "Chế độ",
+        "id": "Mode"
+      }
+    },
+    {
+      "id": "domain.mediumSize",
+      "sourceId": "Medium",
+      "source": "Medium",
+      "meaning": "The middle size option for book and author poster or overview layouts.",
+      "guidance": "Keep consistent with the Small and Large size options.",
+      "preferredTranslations": {
+        "es": "Mediano",
+        "zh-Hans": "中",
+        "hi": "मध्यम",
+        "de": "Medium",
+        "ja": "中",
+        "fr": "Moyen",
+        "pt-BR": "Médio",
+        "ar": "متوسط",
+        "ko": "중간",
+        "zh-Hant": "中",
+        "vi": "Trung bình",
+        "id": "Sedang"
+      }
+    },
+    {
+      "id": "domain.hardcoverProvider",
+      "sourceId": "Hardcover",
+      "source": "Hardcover",
+      "meaning": "The Hardcover book metadata and search provider, not a generic printed-book binding.",
+      "guidance": "Preserve the exact product spelling, capitalization, and Latin-script form in every locale.",
+      "preferredTranslations": {
+        "es": "Hardcover",
+        "zh-Hans": "Hardcover",
+        "hi": "Hardcover",
+        "de": "Hardcover",
+        "ja": "Hardcover",
+        "fr": "Hardcover",
+        "pt-BR": "Hardcover",
+        "ar": "Hardcover",
+        "ko": "Hardcover",
+        "zh-Hant": "Hardcover",
+        "vi": "Hardcover",
+        "id": "Hardcover"
+      }
+    }
+  ]
+}

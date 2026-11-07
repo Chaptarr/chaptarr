@@ -4,6 +4,11 @@
     <OutputType>Library</OutputType>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="FluentValidation" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="NLog" />
+    <PackageReference Include="System.IO.Abstractions" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
     <ProjectReference Include="..\NzbDrone.Core\Chaptarr.Core.csproj" />
   </ItemGroup>
 </Project>

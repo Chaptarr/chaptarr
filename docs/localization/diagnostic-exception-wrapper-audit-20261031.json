@@ -1,0 +1,544 @@
+{
+  "version": 1,
+  "scope": "Fixed or bounded API error wrappers emitted by app code and consumed by the existing OAuthInput/Form translateServerMessage boundary.",
+  "baseHead": "d94dd0746a1981f3adb8c575fccc31bdb7ca3af6",
+  "includedMessageCount": 17,
+  "includedSourceCallsites": 25,
+  "included": [
+    {
+      "id": "server.message.m0e8c0447c3c8",
+      "source": "QueryParam state invalid.",
+      "sourceFingerprint": "a9110e19838c9a06dc540a1b305c7b4ee766c33f423941dbf1b5d766e544d06d",
+      "parameters": [],
+      "patterns": [
+        "QueryParam state invalid."
+      ],
+      "sourceTemplates": [
+        "QueryParam state invalid."
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/AudioBookShelf/AudioBookShelf.cs",
+          "line": 866,
+          "sourceLine": "throw new BadRequestException(\"QueryParam state invalid.\");",
+          "sourceLineSha256": "6654582937ebb62e7e63f25e6e7b131ced0b9c1c1a7f9b4421ebf5ced42e9bb3",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": [
+        "QueryParam",
+        "state"
+      ]
+    },
+    {
+      "id": "server.message.m12739b954cdf",
+      "source": "QueryParam pinId invalid.",
+      "sourceFingerprint": "d4d7792488e6796c5d6933d967d6a3efa7186c850289eb016d07a30aac871092",
+      "parameters": [],
+      "patterns": [
+        "QueryParam pinId invalid."
+      ],
+      "sourceTemplates": [
+        "QueryParam pinId invalid."
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Plex/Server/PlexServer.cs",
+          "line": 228,
+          "sourceLine": "throw new BadRequestException(\"QueryParam pinId invalid.\");",
+          "sourceLineSha256": "2ead9f0be70da6694d7043127b4fd53e89e8ce4fb087b685e851e38a80d43801",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": [
+        "QueryParam",
+        "pinId"
+      ]
+    },
+    {
+      "id": "server.message.m262dfad1709a",
+      "source": "Goodreads did not return an account ID for the authenticated user.",
+      "sourceFingerprint": "d9f514b3177f3d13c5afedcf0ecab15ddf504016f18d21e03ee81bbc24e83630",
+      "parameters": [],
+      "patterns": [
+        "Goodreads did not return an account ID for the authenticated user."
+      ],
+      "sourceTemplates": [
+        "Goodreads did not return an account ID for the authenticated user."
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Goodreads/GoodreadsNotificationBase.cs",
+          "line": 173,
+          "sourceLine": "throw new BadRequestException(\"Goodreads did not return an account ID for the authenticated user.\");",
+          "sourceLineSha256": "0393f00b9e5dc5361bb725c6dfb6e3bb8c6ad62f0a30d76910a0ca1a26057d45",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        },
+        {
+          "file": "src/NzbDrone.Core/ImportLists/Goodreads/GoodreadsImportListBase.cs",
+          "line": 211,
+          "sourceLine": "throw new BadRequestException(\"Goodreads did not return an account ID for the authenticated user.\");",
+          "sourceLineSha256": "0393f00b9e5dc5361bb725c6dfb6e3bb8c6ad62f0a30d76910a0ca1a26057d45",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": [
+        "Goodreads"
+      ]
+    },
+    {
+      "id": "server.message.m2689d50f7d87",
+      "source": "QueryParam code invalid.",
+      "sourceFingerprint": "306e3cd9ee6ac057cdff1af89396f4400e873440b63c11672edb92b88309e380",
+      "parameters": [],
+      "patterns": [
+        "QueryParam code invalid."
+      ],
+      "sourceTemplates": [
+        "QueryParam code invalid."
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/AudioBookShelf/AudioBookShelf.cs",
+          "line": 861,
+          "sourceLine": "throw new BadRequestException(\"QueryParam code invalid.\");",
+          "sourceLineSha256": "8510dd55c6d63b20b622367a0917867d60204efbaf1f829ec9dd356dc4a82a20",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": [
+        "QueryParam",
+        "code"
+      ]
+    },
+    {
+      "id": "server.message.m415b9b0835fe",
+      "source": "Goodreads user ID must be numeric or a Goodreads profile URL containing a numeric ID.",
+      "sourceFingerprint": "991669795bf8d870ede04d42eb559102e5cb467adf5038324aa4e7230a0d126e",
+      "parameters": [],
+      "patterns": [
+        "Goodreads user ID must be numeric or a Goodreads profile URL containing a numeric ID."
+      ],
+      "sourceTemplates": [
+        "Goodreads user ID must be numeric or a Goodreads profile URL containing a numeric ID."
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/ImportLists/Goodreads/GoodreadsImportListBase.cs",
+          "line": 192,
+          "sourceLine": "throw new BadRequestException(\"Goodreads user ID must be numeric or a Goodreads profile URL containing a numeric ID.\");",
+          "sourceLineSha256": "f811fc4227be32b7ec2d9f643891d6581e1101aaa1ece9b19dea54b6781df15c",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": [
+        "Goodreads",
+        "URL"
+      ]
+    },
+    {
+      "id": "server.message.m46149c6c2146",
+      "source": "AudioBookShelf did not return an API key.",
+      "sourceFingerprint": "42ca0d548c67ae5e23f357c63a3bcd3d42628e36948690e4d5842e7b57c2c8ea",
+      "parameters": [],
+      "patterns": [
+        "AudioBookShelf did not return an API key."
+      ],
+      "sourceTemplates": [
+        "AudioBookShelf did not return an API key."
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/AudioBookShelf/AudioBookShelf.cs",
+          "line": 960,
+          "sourceLine": "throw new BadRequestException(\"AudioBookShelf did not return an API key.\");",
+          "sourceLineSha256": "82fc670d7cdc06891536e4fdee05630d8738ad1c70a9324ac0a7c79c809474e6",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": [
+        "API",
+        "AudioBookShelf"
+      ]
+    },
+    {
+      "id": "server.message.m4d95930d7f57",
+      "source": "AudioBookShelf did not return a valid access token.",
+      "sourceFingerprint": "b01cc4c9d0e2b136492077d610e94e9b4f7a4369eec771bbada048d89761d12b",
+      "parameters": [],
+      "patterns": [
+        "AudioBookShelf did not return a valid access token."
+      ],
+      "sourceTemplates": [
+        "AudioBookShelf did not return a valid access token."
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/AudioBookShelf/AudioBookShelf.cs",
+          "line": 912,
+          "sourceLine": "throw new BadRequestException(\"AudioBookShelf did not return a valid access token.\");",
+          "sourceLineSha256": "01beba37c35a4c47130d02075f5ac325994ac30aa9542d161a61372f1a7bde4d",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": [
+        "AudioBookShelf"
+      ]
+    },
+    {
+      "id": "server.message.m4fb2bd070194",
+      "source": "AudioBookShelf did not return any cookies for the OIDC session.",
+      "sourceFingerprint": "870cbdb1f9e4b0c5c1937827d691b95712d1bf19fe8081c8278f6c5aaf27642b",
+      "parameters": [],
+      "patterns": [
+        "AudioBookShelf did not return any cookies for the OIDC session."
+      ],
+      "sourceTemplates": [
+        "AudioBookShelf did not return any cookies for the OIDC session."
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/AudioBookShelf/AudioBookShelf.cs",
+          "line": 841,
+          "sourceLine": "throw new BadRequestException(\"AudioBookShelf did not return any cookies for the OIDC session.\");",
+          "sourceLineSha256": "1975df1c17fd16d1391c0fbbf663a5925511c2d36f6837da75455bacbdd159bc",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": [
+        "AudioBookShelf",
+        "OIDC"
+      ]
+    },
+    {
+      "id": "server.message.m6928cb52f90a",
+      "source": "AudioBookShelf OIDC redirect missing Location header.",
+      "sourceFingerprint": "b9a7189319482f2532d3443ea26b34d80c26f9c7fca23becec8c567aad99fede",
+      "parameters": [],
+      "patterns": [
+        "AudioBookShelf OIDC redirect missing Location header."
+      ],
+      "sourceTemplates": [
+        "AudioBookShelf OIDC redirect missing Location header."
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/AudioBookShelf/AudioBookShelf.cs",
+          "line": 835,
+          "sourceLine": "throw new BadRequestException(\"AudioBookShelf OIDC redirect missing Location header.\");",
+          "sourceLineSha256": "c4ac035c95a0c5bbec7ea41f2bb0fabf766114d3d8788c0444941931eb85af66",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": [
+        "AudioBookShelf",
+        "Location",
+        "OIDC"
+      ]
+    },
+    {
+      "id": "server.message.m7c3fbbf71490",
+      "source": "QueryParam oauth_verifier invalid.",
+      "sourceFingerprint": "982698e278b208ae467085279ca0427130f55b958214795d6c8be7ab75c16d51",
+      "parameters": [],
+      "patterns": [
+        "QueryParam oauth_verifier invalid."
+      ],
+      "sourceTemplates": [
+        "QueryParam oauth_verifier invalid."
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Twitter/Twitter.cs",
+          "line": 108,
+          "sourceLine": "throw new BadRequestException(\"QueryParam oauth_verifier invalid.\");",
+          "sourceLineSha256": "46620bafd1f57cc2321c0082e27f49e892cf11b119bfb4f173fd8c3433162bf0",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": [
+        "QueryParam",
+        "oauth_verifier"
+      ]
+    },
+    {
+      "id": "server.message.m90ee48cf606f",
+      "source": "QueryParam callbackUrl invalid.",
+      "sourceFingerprint": "ae4cb11c790f2ac2e53e637416c8fb62dea5a2529e82fb097d22771315014c32",
+      "parameters": [],
+      "patterns": [
+        "QueryParam callbackUrl invalid."
+      ],
+      "sourceTemplates": [
+        "QueryParam callbackUrl invalid."
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/AudioBookShelf/AudioBookShelf.cs",
+          "line": 782,
+          "sourceLine": "throw new BadRequestException(\"QueryParam callbackUrl invalid.\");",
+          "sourceLineSha256": "56c521eeba8919bae70369b6da72bae2ddd39cb13fbfe7d493b135f4525bc28c",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Goodreads/GoodreadsNotificationBase.cs",
+          "line": 52,
+          "sourceLine": "throw new BadRequestException(\"QueryParam callbackUrl invalid.\");",
+          "sourceLineSha256": "56c521eeba8919bae70369b6da72bae2ddd39cb13fbfe7d493b135f4525bc28c",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Twitter/Twitter.cs",
+          "line": 88,
+          "sourceLine": "throw new BadRequestException(\"QueryParam callbackUrl invalid.\");",
+          "sourceLineSha256": "56c521eeba8919bae70369b6da72bae2ddd39cb13fbfe7d493b135f4525bc28c",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Plex/Server/PlexServer.cs",
+          "line": 215,
+          "sourceLine": "throw new BadRequestException(\"QueryParam callbackUrl invalid.\");",
+          "sourceLineSha256": "56c521eeba8919bae70369b6da72bae2ddd39cb13fbfe7d493b135f4525bc28c",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        },
+        {
+          "file": "src/NzbDrone.Core/ImportLists/Goodreads/GoodreadsImportListBase.cs",
+          "line": 80,
+          "sourceLine": "throw new BadRequestException(\"QueryParam callbackUrl invalid.\");",
+          "sourceLineSha256": "56c521eeba8919bae70369b6da72bae2ddd39cb13fbfe7d493b135f4525bc28c",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": [
+        "QueryParam",
+        "callbackUrl"
+      ]
+    },
+    {
+      "id": "server.message.ma45de3679283",
+      "source": "Provider authorization expired. Please sign in again.",
+      "sourceFingerprint": "e648f8d303e3b72889fd84c6ef5eb71170fd179ccf2bda1537f69d4d14c091c3",
+      "parameters": [],
+      "patterns": [
+        "Provider authorization expired. Please sign in again."
+      ],
+      "sourceTemplates": [
+        "Provider authorization expired. Please sign in again."
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/ThingiProvider/PendingProviderSecretService.cs",
+          "line": 52,
+          "sourceLine": "throw new BadRequestException(\"Provider authorization expired. Please sign in again.\");",
+          "sourceLineSha256": "08e4226958902acfa1ef3110bd1c0e75c56cc8fc6534dcc2f7fbc1a669a4cc50",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": []
+    },
+    {
+      "id": "server.message.ma6e1d81614c2",
+      "source": "AudioBookShelf OIDC did not redirect (status {value0}). Ensure OpenID Connect is enabled and configured on your AudioBookShelf server.",
+      "sourceFingerprint": "530a56dcd849a67b7e398d3be0007b6b91ef7fcf767d66673a7a756137f5a52e",
+      "parameters": [
+        {
+          "name": "value0",
+          "sourceToken": "{dynamic} {dynamic}",
+          "kind": "dynamic-data"
+        }
+      ],
+      "patterns": [
+        "AudioBookShelf OIDC did not redirect (status {value0}). Ensure OpenID Connect is enabled and configured on your AudioBookShelf server."
+      ],
+      "sourceTemplates": [
+        "AudioBookShelf OIDC did not redirect (status {dynamic}). Ensure OpenID Connect is enabled and configured on your AudioBookShelf server."
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/AudioBookShelf/AudioBookShelf.cs",
+          "line": 829,
+          "sourceLine": "throw new BadRequestException($\"AudioBookShelf OIDC did not redirect (status {(int)response.StatusCode} {response.StatusCode}). Ensure OpenID Connect is enabled and configured on your AudioBookShelf server.\");",
+          "sourceLineSha256": "c6c6900704b9ce3d111163e90df47ff5da1cee57d868ab03959f56f10772112f",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": [
+        "AudioBookShelf",
+        "OIDC",
+        "OpenID Connect"
+      ]
+    },
+    {
+      "id": "server.message.mc9032616fbb4",
+      "source": "QueryParam oauth_token invalid.",
+      "sourceFingerprint": "8ba6eabd8258e86b764e70d0201f169b8210469eabb480476d518e32fbfa6910",
+      "parameters": [],
+      "patterns": [
+        "QueryParam oauth_token invalid."
+      ],
+      "sourceTemplates": [
+        "QueryParam oauth_token invalid."
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Goodreads/GoodreadsNotificationBase.cs",
+          "line": 71,
+          "sourceLine": "throw new BadRequestException(\"QueryParam oauth_token invalid.\");",
+          "sourceLineSha256": "6cad1e2fa2d22f404d41ed08a45d81888c3a1956b8365202216be72c33f5ce2a",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        },
+        {
+          "file": "src/NzbDrone.Core/Notifications/Twitter/Twitter.cs",
+          "line": 103,
+          "sourceLine": "throw new BadRequestException(\"QueryParam oauth_token invalid.\");",
+          "sourceLineSha256": "6cad1e2fa2d22f404d41ed08a45d81888c3a1956b8365202216be72c33f5ce2a",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        },
+        {
+          "file": "src/NzbDrone.Core/ImportLists/Goodreads/GoodreadsImportListBase.cs",
+          "line": 99,
+          "sourceLine": "throw new BadRequestException(\"QueryParam oauth_token invalid.\");",
+          "sourceLineSha256": "6cad1e2fa2d22f404d41ed08a45d81888c3a1956b8365202216be72c33f5ce2a",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": [
+        "QueryParam",
+        "oauth_token"
+      ]
+    },
+    {
+      "id": "server.message.mc95460cab48b",
+      "source": "Missing requestTokenSecret.",
+      "sourceFingerprint": "b640c407649355aa921ae341d0de9e75b4ad2a19bf0725b005fdb78db72fa58e",
+      "parameters": [],
+      "patterns": [
+        "Missing requestTokenSecret."
+      ],
+      "sourceTemplates": [
+        "Missing requestTokenSecret."
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/Goodreads/GoodreadsNotificationBase.cs",
+          "line": 76,
+          "sourceLine": "throw new BadRequestException(\"Missing requestTokenSecret.\");",
+          "sourceLineSha256": "54b57688eeba3a4180a1588c0e888c6c9cd363c451bbd9183a60db2455f79342",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        },
+        {
+          "file": "src/NzbDrone.Core/ImportLists/Goodreads/GoodreadsImportListBase.cs",
+          "line": 104,
+          "sourceLine": "throw new BadRequestException(\"Missing requestTokenSecret.\");",
+          "sourceLineSha256": "54b57688eeba3a4180a1588c0e888c6c9cd363c451bbd9183a60db2455f79342",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": [
+        "requestTokenSecret"
+      ]
+    },
+    {
+      "id": "server.message.mccef5f1c0beb",
+      "source": "Invalid Hardcover {value0} id: {value1}",
+      "sourceFingerprint": "fb442ff2e5b09b04c060a022abc68d04738aea948257353176a3b359892d946a",
+      "parameters": [
+        {
+          "name": "value0",
+          "sourceToken": "{dynamic}",
+          "kind": "dynamic-data"
+        },
+        {
+          "name": "value1",
+          "sourceToken": "{dynamic}",
+          "kind": "dynamic-data"
+        }
+      ],
+      "patterns": [
+        "Invalid Hardcover {value0} id: {value1}"
+      ],
+      "sourceTemplates": [
+        "Invalid Hardcover {dynamic} id: {dynamic}"
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/MetadataSource/Hardcover/HardcoverMetadataProxy.cs",
+          "line": 1515,
+          "sourceLine": "throw new BadRequestException($\"Invalid Hardcover {type} id: {value}\");",
+          "sourceLineSha256": "c4f9ceeef971ea6d5bcd53fbf6280877db621683230c305f056b70fa3110b7c8",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": [
+        "Hardcover"
+      ]
+    },
+    {
+      "id": "server.message.mf32c030ec635",
+      "source": "OIDC session expired. Please try again.",
+      "sourceFingerprint": "58111305eff2d46237be05a1fd36501776aa2728156006b439d0ba775cb093b3",
+      "parameters": [],
+      "patterns": [
+        "OIDC session expired. Please try again."
+      ],
+      "sourceTemplates": [
+        "OIDC session expired. Please try again."
+      ],
+      "callsites": [
+        {
+          "file": "src/NzbDrone.Core/Notifications/AudioBookShelf/AudioBookShelf.cs",
+          "line": 879,
+          "sourceLine": "throw new BadRequestException(\"OIDC session expired. Please try again.\");",
+          "sourceLineSha256": "4428f0846fe161cb0664b1791a95b11d35f3eb9632baffc4d770b7104de12b0e",
+          "category": "api-error",
+          "surface": "server/API text; may be user-visible"
+        }
+      ],
+      "protectedLiterals": [
+        "OIDC"
+      ]
+    }
+  ],
+  "excluded": [
+    {
+      "source": "Failed to register URLs for Chaptarr. Chaptarr will not be accessible remotely",
+      "file": "src/NzbDrone.Host/AccessControl/RemoteAccessAdapter.cs",
+      "line": 32,
+      "reason": "Startup-only remote-access exception; not a UI presenter input."
+    },
+    {
+      "source": "Raw provider response, callback URL, exception, library, and user-entered values",
+      "reason": "Dynamic/external values are preserved byte-for-byte; only registered app-authored wrappers are translated."
+    }
+  ],
+  "presentationEvidence": [
+    "frontend/src/Components/Form/OAuthInput.js uses translateServerMessage for OAuth action errors.",
+    "frontend/src/Components/Form/Form.js uses translateServerMessage for validation results."
+  ],
+  "nativeSpeakerReview": false,
+  "translationGeneration": "not started; wait for Questarr serialized runner to exit"
+}

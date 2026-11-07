@@ -2,6 +2,11 @@ using System.Data;
 using FluentMigrator;
 using FluentMigrator.Builders.Create;
 using FluentMigrator.Builders.Create.Table;
+using FluentMigrator.Runner;
+using FluentMigrator.Runner.BatchParser;
+using FluentMigrator.Runner.Generators.SQLite;
+using FluentMigrator.Runner.Processors.SQLite;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace NzbDrone.Core.Datastore.Migration.Framework
 {
@@ -16,7 +21,7 @@ namespace NzbDrone.Core.Datastore.Migration.Framework
         {
             var command = conn.CreateCommand();
             command.Transaction = tran;
-            command.CommandText = query;
+            command.CommandText = query; // nosemgrep: csharp.lang.security.sqli.csharp-sqli.csharp-sqli -- callers pass migration-authored fixed SQL; dynamic values are added as parameters.
 
             return command;
         }
@@ -28,6 +33,17 @@ namespace NzbDrone.Core.Datastore.Migration.Framework
             command.Parameters.Add(parameter);
         }
 
-        // Note: Custom SQLite processor removed; using FluentMigrator's SQLite.MS runner.
+        public static IMigrationRunnerBuilder AddNzbDroneSQLite(this IMigrationRunnerBuilder builder)
+        {
+            builder.Services
+                .AddTransient<SQLiteBatchParser>()
+                .AddScoped<SQLiteDbFactory>()
+                .AddScoped<NzbDroneSQLiteProcessor>()
+                .AddScoped<IMigrationProcessor>(sp => sp.GetRequiredService<NzbDroneSQLiteProcessor>())
+                .AddScoped<SQLiteQuoter>()
+                .AddScoped<SQLiteGenerator>()
+                .AddScoped<IMigrationGenerator>(sp => sp.GetRequiredService<SQLiteGenerator>());
+            return builder;
+        }
     }
 }

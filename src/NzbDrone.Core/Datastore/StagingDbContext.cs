@@ -111,6 +111,7 @@ namespace NzbDrone.Core.Datastore
                         author_id INTEGER,
                         quality TEXT,
                         error_message TEXT,
+                        last_remote_search_time_ticks INTEGER,
                         created_at INTEGER NOT NULL,
                         FOREIGN KEY(queue_item_id) REFERENCES ingest_queue(id)
                     );
@@ -172,6 +173,13 @@ namespace NzbDrone.Core.Datastore
                     _logger.Debug(ex, "[STAGING-DB] Failed to ensure file_tag_cache.extraction_status column exists");
                 }
 
+                var importResultColumns = conn.Query<string>("SELECT name FROM pragma_table_info('import_results')").ToList();
+                if (!importResultColumns.Any(column => column.Equals("last_remote_search_time_ticks", StringComparison.OrdinalIgnoreCase)))
+                {
+                    conn.Execute("ALTER TABLE import_results ADD COLUMN last_remote_search_time_ticks INTEGER;");
+                    _logger.Info("[STAGING-DB] Added import_results.last_remote_search_time_ticks column");
+                }
+
                 RepairImportResultsOutcomeConstraint(conn);
 
                 // Safety: if the app crashed/restarted mid-import, queue items can be left in status='in_progress'.
@@ -229,14 +237,15 @@ namespace NzbDrone.Core.Datastore
                             author_id INTEGER,
                             quality TEXT,
                             error_message TEXT,
+                            last_remote_search_time_ticks INTEGER,
                             created_at INTEGER NOT NULL,
                             FOREIGN KEY(queue_item_id) REFERENCES ingest_queue(id)
                         );
                     ", transaction: transaction);
 
                     conn.Execute(@"
-                        INSERT INTO import_results (id, queue_item_id, path, outcome, book_id, author_id, quality, error_message, created_at)
-                        SELECT id, queue_item_id, path, outcome, book_id, author_id, quality, error_message, created_at
+                        INSERT INTO import_results (id, queue_item_id, path, outcome, book_id, author_id, quality, error_message, last_remote_search_time_ticks, created_at)
+                        SELECT id, queue_item_id, path, outcome, book_id, author_id, quality, error_message, last_remote_search_time_ticks, created_at
                         FROM import_results_old;
                     ", transaction: transaction);
 

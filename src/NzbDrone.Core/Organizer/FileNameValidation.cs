@@ -2,8 +2,9 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using FluentValidation;
-using FluentValidation.Validators;
 using NzbDrone.Common.Extensions;
+
+using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Organizer
 {
@@ -14,7 +15,7 @@ namespace NzbDrone.Core.Organizer
 
         public static IRuleBuilderOptions<T, string> ValidBookFormat<T>(this IRuleBuilder<T, string> ruleBuilder)
         {
-            ruleBuilder.SetValidator(new NotEmptyValidator(null));
+            ruleBuilder.NotEmpty();
             ruleBuilder.SetValidator(new IllegalCharactersValidator());
 
             return ruleBuilder.SetValidator(new ValidStandardTrackFormatValidator());
@@ -22,18 +23,18 @@ namespace NzbDrone.Core.Organizer
 
         public static IRuleBuilderOptions<T, string> ValidAuthorFolderFormat<T>(this IRuleBuilder<T, string> ruleBuilder)
         {
-            ruleBuilder.SetValidator(new NotEmptyValidator(null));
+            ruleBuilder.NotEmpty();
             ruleBuilder.SetValidator(new IllegalCharactersValidator());
 
-            return ruleBuilder.SetValidator(new RegularExpressionValidator(FileNameBuilder.AuthorNameRegex)).WithMessage("Must contain Author name");
+            return ruleBuilder.Matches(FileNameBuilder.AuthorNameRegex).WithMessage("Must contain Author name");
         }
     }
 
-    public class ValidStandardTrackFormatValidator : PropertyValidator
+    public class ValidStandardTrackFormatValidator : NzbDronePropertyValidator
     {
         protected override string GetDefaultMessageTemplate() => "Must contain Book Title AND PartNumber, OR Original Title";
 
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             if (context.PropertyValue is not string value)
             {
@@ -45,13 +46,13 @@ namespace NzbDrone.Core.Organizer
         }
     }
 
-    public class IllegalCharactersValidator : PropertyValidator
+    public class IllegalCharactersValidator : NzbDronePropertyValidator
     {
         private readonly char[] _invalidPathChars = Path.GetInvalidPathChars();
 
         protected override string GetDefaultMessageTemplate() => "Contains illegal characters: {InvalidCharacters}";
 
-        protected override bool IsValid(PropertyValidatorContext context)
+        protected override bool IsValid(NzbDronePropertyValidatorContext context)
         {
             var value = context.PropertyValue as string;
 

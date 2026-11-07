@@ -1,12 +1,74 @@
-# Chaptarr API Identity and Lifecycle Contract
+# ChaptarrNG API Identity and Lifecycle Contract
 
-This document is the public-facing contract for clients building against Chaptarr and the Chaptarr Metadata Server. It describes identity semantics that the generated OpenAPI schema cannot express by itself.
+This document is the public-facing contract for clients building against ChaptarrNG and the Chaptarr Metadata Server. It describes identity semantics that the generated OpenAPI schema cannot express by itself. ChaptarrNG's system-status API continues to report the app name `Chaptarr` for Readarr-compatible client detection; this fork's additional API behavior is maintained in the `snapetech-org/chaptarrng` repository.
+
+## System Integration Capabilities
+
+`GET /api/v1/system/capabilities` is an additive discovery endpoint for
+integrations such as SeerrNG. The existing `GET /api/v1/system/status`
+response continues to report `appName: "Chaptarr"` for Readarr-compatible
+detection.
+
+The response declares the integration contract and version, the configured
+provider-ID dialect, supported facade dialects and media types, and the
+available integration features. Clients should ignore unknown fields and
+require a recognized `contract` and `contractVersion` before relying on the
+feature list. The current contract is:
+
+```json
+{
+  "contract": "chaptarrng-seerr-bookshelf",
+  "contractVersion": 1,
+  "appName": "Chaptarr",
+  "providerIdDialect": "hc",
+  "facadePathTemplate": "/readarr/{dialect}/{mediaType}/api/v1",
+  "facadeDialects": ["hc", "gr"],
+  "mediaTypes": ["ebook", "audiobook"],
+  "features": {
+    "formatScopedFacade": true,
+    "pagedLibrary": true,
+    "providerScopedEditionIdentity": true,
+    "pendingAuthorImports": true,
+    "pendingImportCancellation": true,
+    "bookshelfLegacyIdentityMap": true
+  }
+}
+```
+
+`providerIdDialect` is `hc` when Hardcover is enabled and `gr` otherwise.
+Older ChaptarrNG builds do not expose this endpoint; SeerrNG keeps its existing
+Hardcover-setting fallback for those builds.
 
 ## Identity Model
 
 Provider IDs are durable identity. Local database row IDs are not.
 
 Use provider IDs such as `hc:149559`, `gr:173491`, `az:B001IOF7SC`, `ol:OL...`, and `gb:...` for matching, crosswalks, caches, sync state, and external integrations. Chaptarr local row IDs are only handles inside one user's database. A local ID can change if metadata is repaired, merged, split, or reimported.
+
+For a BookshelfNG conversion, Chaptarr stores a durable old-to-new map for
+authors, books, editions, and book files. A source book that becomes both media
+types has one mapping row per target book. Existing format-aware API reads use
+that map: `GET /api/v1/book?bookIds=30&mediaType=ebook` resolves the ebook row,
+while a request without `mediaType` returns each mapped format row. The legacy
+Bookshelf monitoring endpoint also expands selected source book IDs to their
+target rows. The map is also used by book-scoped edition and file reads,
+history, queue and release requests, format actions, manual import, and
+book mutations. When an operation is format-scoped, its `mediaType` selects the
+matching target row; Chaptarr's own selection actions send that scope so a
+single-format change does not affect the sibling format.
+
+Clients that keep BookshelfNG numeric IDs can retrieve mappings in batches of
+up to 500 with:
+
+```text
+GET /api/v1/bookshelf/legacy-identities?entityType=Book&sourceIds=30
+```
+
+Supported `entityType` values are `Author`, `Book`, `Edition`, and `BookFile`.
+Each result includes `source`, `entityType`, `sourceId`, `targetId`, and an
+optional `mediaType` (`audiobook` or `ebook`). The map is migration provenance
+for existing installations; new integrations should continue to persist
+provider IDs rather than local row IDs.
 
 ### Books Are Provider Pockets
 

@@ -18,13 +18,17 @@ namespace Chaptarr.Core.Test.Api
     {
         private class EditionServiceProxy : DispatchProxy
         {
+            public List<List<int>> RequestedBookIds { get; } = new();
+
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IEditionService.GetEditionsByBook) &&
                     args.Length == 1 &&
                     args[0] is IEnumerable<int> bookIds)
                 {
-                    return bookIds.Contains(10)
+                    var ids = bookIds.ToList();
+                    RequestedBookIds.Add(ids);
+                    return ids.Contains(10)
                         ? new List<Edition>
                         {
                             new Edition
@@ -58,6 +62,20 @@ namespace Chaptarr.Core.Test.Api
                 }
 
                 throw new NotImplementedException(targetMethod?.Name);
+            }
+        }
+
+        private class LegacyIdentityMapProxy : DispatchProxy
+        {
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                return targetMethod?.Name switch
+                {
+                    nameof(IBookshelfLegacyIdentityMapService.ResolveBookIds) => new List<int> { 10, 11 },
+                    nameof(IBookshelfLegacyIdentityMapService.GetMappings) => new List<BookshelfLegacyIdentityMapEntry>(),
+                    nameof(IBookshelfLegacyIdentityMapService.GetMappingsByTargetIds) => new List<BookshelfLegacyIdentityMapEntry>(),
+                    _ => throw new NotImplementedException(targetMethod?.Name)
+                };
             }
         }
 
@@ -126,6 +144,29 @@ namespace Chaptarr.Core.Test.Api
             Assert.That(resources.Single().ForeignEditionId, Is.EqualTo("30643037"));
             Assert.That(resources.Single().Id, Is.EqualTo(1481726));
             Assert.That(resources.Single().Images.Single().Url, Is.EqualTo("/MediaCoverProxy/test/cover.jpg"));
+        }
+
+        [Test]
+        public void should_expand_a_migrated_bookshelf_book_id_when_loading_editions()
+        {
+            var editionService = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+            var controller = new EditionController(
+                editionService,
+                DispatchProxy.Create<IBookService, BookServiceProxy>(),
+                DispatchProxy.Create<IMediaCoverProxy, MediaCoverProxy>(),
+                DispatchProxy.Create<IBookshelfLegacyIdentityMapService, LegacyIdentityMapProxy>())
+            {
+                ControllerContext = new ControllerContext
+                {
+                    HttpContext = new DefaultHttpContext()
+                }
+            };
+            controller.ControllerContext.HttpContext.Items[ReadarrFacadeContext.ItemKey] =
+                new ReadarrFacadeContext("hc", null, "/api", isBookshelfCompatibility: true);
+
+            controller.GetEditions(new List<int> { 10 });
+
+            Assert.That(((EditionServiceProxy)(object)editionService).RequestedBookIds[0], Is.EqualTo(new[] { 10, 11 }));
         }
 
         [Test]

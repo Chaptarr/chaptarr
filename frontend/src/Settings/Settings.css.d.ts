@@ -2,6 +2,10 @@
 // Please do not change this file!
 interface CssExports {
   'link': string;
+  'section': string;
+  'sectionItem': string;
+  'sectionTitle': string;
+  'sections': string;
   'summary': string;
 }
 export const cssExports: CssExports;

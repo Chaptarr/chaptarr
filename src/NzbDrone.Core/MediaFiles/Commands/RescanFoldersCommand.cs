@@ -8,7 +8,7 @@ namespace NzbDrone.Core.MediaFiles.Commands
         public RescanFoldersCommand()
         {
             // These are the settings used in the scheduled task
-            Filter = FilterFilesType.Known;
+            Filter = FilterFilesType.Matched;
             IsInitialImport = false;
         }
 
@@ -53,6 +53,13 @@ namespace NzbDrone.Core.MediaFiles.Commands
 
         public override bool SendUpdatesToClient => true;
         public override bool RequiresDiskAccess => true;
+    }
+
+    public class RetryUnmappedFilesCommand : Command
+    {
+        public override bool SendUpdatesToClient => true;
+        public override bool RequiresDiskAccess => true;
+        public override bool IsTypeExclusive => true;
     }
 
     public class RefreshUnmappedFilesCommand : Command

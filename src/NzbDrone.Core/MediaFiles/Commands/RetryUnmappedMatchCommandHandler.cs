@@ -8,12 +8,14 @@ using NzbDrone.Common.Disk;
 using NzbDrone.Core.Authors;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.MediaFiles.BookImport.Manual;
 using NzbDrone.Core.MediaFiles.BookImport.Services;
-using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Messaging.Commands;
+using NzbDrone.Core.MetadataSource;
+using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.RootFolders;
 
@@ -34,6 +36,9 @@ namespace NzbDrone.Core.MediaFiles.Commands
         private readonly IPendingAuthorImportService _pendingAuthorImportService;
         private readonly IRootFolderService _rootFolderService;
         private readonly IAuthorService _authorService;
+        private readonly ISearchForNewBook _catalogSearch;
+        private readonly IConfigService _configService;
+        private readonly IMetadataProfileService _metadataProfileService;
         private readonly Logger _logger;
 
         public RetryUnmappedMatchCommandHandler(
@@ -50,7 +55,10 @@ namespace NzbDrone.Core.MediaFiles.Commands
             IPendingAuthorImportService pendingAuthorImportService,
             IRootFolderService rootFolderService,
             IAuthorService authorService,
-            Logger logger)
+            ISearchForNewBook catalogSearch,
+            Logger logger,
+            IConfigService configService = null,
+            IMetadataProfileService metadataProfileService = null)
         {
             _mediaFileService = mediaFileService;
             _metadataTagService = metadataTagService;
@@ -65,6 +73,9 @@ namespace NzbDrone.Core.MediaFiles.Commands
             _pendingAuthorImportService = pendingAuthorImportService;
             _rootFolderService = rootFolderService;
             _authorService = authorService;
+            _catalogSearch = catalogSearch;
+            _configService = configService;
+            _metadataProfileService = metadataProfileService;
             _logger = logger;
         }
 
@@ -148,6 +159,7 @@ namespace NzbDrone.Core.MediaFiles.Commands
                 .Where(unmatched => unmatched?.File?.Path != null && byPath.ContainsKey(unmatched.File.Path) && !matchedPaths.Contains(unmatched.File.Path))
                 .ToList();
 
+            var catalogSuggestions = AddCatalogSearchSuggestions(finalUnmatched);
             var existingAuthorImported = RematchExistingSuggestedAuthors(finalUnmatched, byPath, matchedPaths, alreadyLinkedPaths, applyFailedPaths);
             serverImported += existingAuthorImported;
             finalUnmatched = finalUnmatched
@@ -157,14 +169,41 @@ namespace NzbDrone.Core.MediaFiles.Commands
             MarkUnmatchedAttempts(finalUnmatched, byPath);
             var queuedAuthors = QueueSuggestedAuthorImports(finalUnmatched, byPath);
 
-            _logger.Info("[UNMAPPED-RETRY] Retry match complete: localImported={0}, serverImported={1}, alreadyLinked={2}, unmatched={3}, applyFailed={4}, queuedAuthors={5}, skipped={6}",
+            _logger.Info("[UNMAPPED-RETRY] Retry match complete: localImported={0}, serverImported={1}, catalogSuggestions={2}, alreadyLinked={3}, unmatched={4}, applyFailed={5}, queuedAuthors={6}, skipped={7}",
                 localImported,
                 serverImported,
+                catalogSuggestions,
                 alreadyLinkedPaths.Count,
                 finalUnmatched.Count,
                 applyFailedPaths.Count,
                 queuedAuthors,
                 skipped);
+        }
+
+        private int AddCatalogSearchSuggestions(IReadOnlyCollection<UnmatchedFile> unmatchedFiles)
+        {
+            var useBookshelfMatchCompatibility = _configService?.BookshelfMatchCompatibility == true;
+            var added = UnmappedCatalogSuggestionHelper.AddSuggestions(
+                _catalogSearch,
+                _logger,
+                unmatchedFiles,
+                stopAfterFirstCandidate: useBookshelfMatchCompatibility,
+                useBookshelfMatchCompatibility: useBookshelfMatchCompatibility,
+                minimumMatchPercent: _configService?.BookImportMinimumMatchPercent ?? 70,
+                preferredEditionTermsResolver: useBookshelfMatchCompatibility
+                    ? (author, unmatched, mediaType) => BookshelfMatchCompatibilityProfileResolver.GetPreferredEditionTerms(
+                        author,
+                        unmatched?.File?.Path,
+                        mediaType,
+                        _metadataProfileService,
+                        _rootFolderService,
+                        _logger)
+                    : null);
+
+            return added > 0
+                ? added
+                : (unmatchedFiles ?? Array.Empty<UnmatchedFile>())
+                    .Count(unmatched => unmatched?.PotentialAuthors?.Any(author => !string.IsNullOrWhiteSpace(author?.ProviderId)) == true);
         }
 
         private DiscoveredFileWithMetadata BuildDiscoveredFile(BookFile file)
@@ -217,7 +256,8 @@ namespace NzbDrone.Core.MediaFiles.Commands
                 Modified = MediaFileFreshness.GetLastWriteUtc(fileInfo),
                 AllTags = evidence.Tags,
                 DurationSeconds = evidence.DurationSeconds,
-                Quality = UnmappedFileStoredEvidence.ResolveQuality(file, file.Path)
+                Quality = UnmappedFileStoredEvidence.ResolveQuality(file, file.Path),
+                LastRemoteSearchTime = file.LastRemoteSearchTime
             };
         }
 
@@ -692,6 +732,7 @@ namespace NzbDrone.Core.MediaFiles.Commands
                 }
 
                 bookFile.LastMatchAttempt = now;
+                bookFile.LastRemoteSearchTime = unmatched.File.LastRemoteSearchTime;
                 bookFile.MatchDetails = unmatched.Reason ?? "NO_MATCH";
                 updated.Add(bookFile);
             }
@@ -913,7 +954,8 @@ namespace NzbDrone.Core.MediaFiles.Commands
 
         private static IEnumerable<string> GetSpecificBookProviderIds(AuthorSuggestion suggestion)
         {
-            var normalized = NormalizeProviderId(suggestion?.BookProviderId, "hc");
+            var normalized = NormalizeProviderId(suggestion?.BookProviderId, null) ??
+                NormalizeProviderId(suggestion?.BookProviderId, "hc");
             if (!string.IsNullOrWhiteSpace(normalized))
             {
                 yield return normalized;

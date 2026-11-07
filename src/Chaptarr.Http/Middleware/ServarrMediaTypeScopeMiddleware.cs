@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
+using NzbDrone.Core.Configuration;
 
 namespace Chaptarr.Http.Middleware
 {
@@ -19,35 +20,61 @@ namespace Chaptarr.Http.Middleware
             _next = next;
         }
 
-        public async Task InvokeAsync(HttpContext context)
+        public async Task InvokeAsync(HttpContext context, IConfigService configService)
         {
             if (context == null)
             {
                 throw new ArgumentNullException(nameof(context));
             }
 
-            if (TryReadarrFacadeScope(context) ||
-                TryScope(context, EbookPrefix, "ebook", dialect: "hc") ||
-                TryScope(context, EbooksPrefix, "ebook", dialect: "hc") ||
-                TryScope(context, AudiobookPrefix, "audiobook", dialect: "hc") ||
-                TryScope(context, AudiobooksPrefix, "audiobook", dialect: "hc") ||
-                TryScope(context, AudioboksPrefix, "audiobook", dialect: "hc"))
+            if (TryReadarrFacadeScope(context, configService) ||
+                TryScope(context, EbookPrefix, "ebook", configService, dialect: "hc") ||
+                TryScope(context, EbooksPrefix, "ebook", configService, dialect: "hc") ||
+                TryScope(context, AudiobookPrefix, "audiobook", configService, dialect: "hc") ||
+                TryScope(context, AudiobooksPrefix, "audiobook", configService, dialect: "hc") ||
+                TryScope(context, AudioboksPrefix, "audiobook", configService, dialect: "hc"))
             {
                 // Scoped successfully.
+            }
+            else if (context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase) &&
+                     !IsNativeChaptarrRequest(context) &&
+                     HasBookshelfCompatibilityProfile(configService))
+            {
+                // A migrated BookshelfNG installation keeps its old API address. On that
+                // address bare numeric IDs retain the provider meaning they had before the
+                // conversion; Chaptarr's own prefixed IDs remain valid as well.
+                var dialect = configService.BookshelfNGMigrationProfile.ProviderDialect;
+                context.Items[ReadarrFacadeContext.ItemKey] = new ReadarrFacadeContext(
+                    dialect,
+                    mediaType: null,
+                    prefix: string.Empty,
+                    isBookshelfCompatibility: true);
             }
 
             await _next(context);
         }
 
-        private static bool TryReadarrFacadeScope(HttpContext context)
+        private static bool IsNativeChaptarrRequest(HttpContext context)
+        {
+            return string.Equals(
+                       context.Request.Headers["X-ChaptarrNG-Client"].ToString(),
+                       "native",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(
+                       context.Request.Query["chaptarrngClient"].ToString(),
+                       "native",
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TryReadarrFacadeScope(HttpContext context, IConfigService configService)
         {
             foreach (var dialect in new[] { "hc", "gr" })
             {
-                if (TryScope(context, new PathString($"/readarr/{dialect}/ebook"), "ebook", dialect) ||
-                    TryScope(context, new PathString($"/readarr/{dialect}/ebooks"), "ebook", dialect) ||
-                    TryScope(context, new PathString($"/readarr/{dialect}/audiobook"), "audiobook", dialect) ||
-                    TryScope(context, new PathString($"/readarr/{dialect}/audiobooks"), "audiobook", dialect) ||
-                    TryScope(context, new PathString($"/readarr/{dialect}/audioboks"), "audiobook", dialect))
+                if (TryScope(context, new PathString($"/readarr/{dialect}/ebook"), "ebook", configService, dialect) ||
+                    TryScope(context, new PathString($"/readarr/{dialect}/ebooks"), "ebook", configService, dialect) ||
+                    TryScope(context, new PathString($"/readarr/{dialect}/audiobook"), "audiobook", configService, dialect) ||
+                    TryScope(context, new PathString($"/readarr/{dialect}/audiobooks"), "audiobook", configService, dialect) ||
+                    TryScope(context, new PathString($"/readarr/{dialect}/audioboks"), "audiobook", configService, dialect))
                 {
                     return true;
                 }
@@ -56,7 +83,12 @@ namespace Chaptarr.Http.Middleware
             return false;
         }
 
-        private static bool TryScope(HttpContext context, PathString scopePrefix, string mediaType, string dialect = null)
+        private static bool TryScope(
+            HttpContext context,
+            PathString scopePrefix,
+            string mediaType,
+            IConfigService configService,
+            string dialect = null)
         {
             if (!context.Request.Path.StartsWithSegments(scopePrefix, out var remaining))
             {
@@ -70,7 +102,14 @@ namespace Chaptarr.Http.Middleware
             }
 
             context.Request.Path = remaining;
-            context.Items[ReadarrFacadeContext.ItemKey] = new ReadarrFacadeContext(dialect ?? "hc", mediaType, scopePrefix.Value);
+            var acceptsBookshelfLegacyBookIds = configService?.BookshelfNGDatabaseMigrated == true &&
+                                                configService.BookshelfNGMigrationProfile?.IsCompatible == true &&
+                                                !IsNativeChaptarrRequest(context);
+            context.Items[ReadarrFacadeContext.ItemKey] = new ReadarrFacadeContext(
+                dialect ?? "hc",
+                mediaType,
+                scopePrefix.Value,
+                acceptsBookshelfLegacyBookIds: acceptsBookshelfLegacyBookIds);
 
             // Inject mediaType query param unless explicitly provided.
             if (!context.Request.Query.ContainsKey("mediaType"))
@@ -82,6 +121,12 @@ namespace Chaptarr.Http.Middleware
             }
 
             return true;
+        }
+
+        private static bool HasBookshelfCompatibilityProfile(IConfigService configService)
+        {
+            return configService?.BookshelfNGDatabaseMigrated == true &&
+                   configService.BookshelfNGMigrationProfile?.IsCompatible == true;
         }
     }
 }

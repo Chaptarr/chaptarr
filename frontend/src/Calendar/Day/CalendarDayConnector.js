@@ -1,9 +1,10 @@
-import _ from 'lodash';
-import moment from 'moment';
+import filter from 'lodash/filter';
+import sortBy from 'lodash/sortBy';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import CalendarDay from './CalendarDay';
 
 function createCalendarEventsConnector() {
@@ -11,11 +12,11 @@ function createCalendarEventsConnector() {
     (state, { date }) => date,
     (state) => state.calendar.items,
     (date, items) => {
-      const filtered = _.filter(items, (item) => {
-        return moment(date).isSame(moment(item.releaseDate), 'day');
+      const filtered = filter(items, (item) => {
+        return dayjs(date).isSame(dayjs(item.releaseDate), 'day');
       });
 
-      return _.sortBy(filtered, (item) => moment(item.releaseDate).unix());
+      return sortBy(filtered, (item) => dayjs(item.releaseDate).unix());
     }
   );
 }

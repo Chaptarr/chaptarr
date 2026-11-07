@@ -20,6 +20,8 @@ namespace NzbDrone.Core.Download
         public string DownloadClient { get; set; }
         public string DownloadId { get; set; }
         public string Message { get; set; }
+        public string MessageId { get; set; }
+        public Dictionary<string, object> MessageTokens { get; set; }
         public Dictionary<string, string> Data { get; set; }
         public TrackedDownload TrackedDownload { get; set; }
         public bool SkipRedownload { get; set; }

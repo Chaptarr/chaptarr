@@ -10,6 +10,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Parser.Model;
@@ -39,7 +40,7 @@ namespace NzbDrone.Core.Download.Clients.Sabnzbd
 
         protected override string AddFromNzbFile(RemoteBook remoteBook, string filename, byte[] fileContent)
         {
-            var category = remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? Settings.EbookCategory : Settings.AudiobookCategory;
+            var category = BookDownloadCategorySettings.GetCategory(Settings, remoteBook.GetPreferredMediaType());
             var priority = remoteBook.IsRecentBook() ? Settings.RecentTvPriority : Settings.OlderTvPriority;
 
             var response = _proxy.DownloadNzb(fileContent, filename, category, priority, Settings);
@@ -196,20 +197,8 @@ namespace NzbDrone.Core.Download.Clients.Sabnzbd
 
         private bool IsConfiguredCategory(string itemCategory)
         {
-            var configuredCategories = new[] { Settings.AudiobookCategory, Settings.EbookCategory };
-
-            if (itemCategory == "*")
-            {
-                // SAB uses "*" for the default category when none is specified.
-                return configuredCategories.Any(c => c.IsNullOrWhiteSpace());
-            }
-
-            if (itemCategory.IsNullOrWhiteSpace())
-            {
-                return configuredCategories.Any(c => c.IsNullOrWhiteSpace());
-            }
-
-            return configuredCategories.Any(c => c.IsNotNullOrWhiteSpace() && c.Equals(itemCategory, StringComparison.InvariantCultureIgnoreCase));
+            // SAB uses "*" for the default category when none is specified.
+            return BookDownloadCategorySettings.MatchesConfiguredCategory(Settings, itemCategory);
         }
 
         public override void RemoveItem(DownloadClientItem item, bool deleteData)
@@ -266,10 +255,7 @@ namespace NzbDrone.Core.Download.Clients.Sabnzbd
             var config = _proxy.GetConfig(Settings);
             var categories = GetCategories(config).ToArray();
 
-            var configured = new[] { Settings.AudiobookCategory, Settings.EbookCategory }
-                .Where(c => c.IsNotNullOrWhiteSpace())
-                .Distinct(StringComparer.InvariantCultureIgnoreCase)
-                .ToList();
+            var configured = BookDownloadCategorySettings.GetConfiguredCategories(Settings).ToList();
 
             var matchedCategories = categories
                 .Where(v => configured.Contains(v.Name, StringComparer.InvariantCultureIgnoreCase))
@@ -472,11 +458,12 @@ namespace NzbDrone.Core.Download.Clients.Sabnzbd
             var config = _proxy.GetConfig(Settings);
             var categories = GetCategories(config).ToList();
 
-            foreach (var pair in new[]
-                     {
-                         new { Field = nameof(SabnzbdSettings.AudiobookCategory), Value = Settings.AudiobookCategory },
-                         new { Field = nameof(SabnzbdSettings.EbookCategory), Value = Settings.EbookCategory }
-                     })
+            foreach (var pair in BookDownloadCategorySettings.GetConfiguredCategories(Settings)
+                         .Select(category => new
+                         {
+                             Field = BookDownloadCategorySettings.GetCategoryFieldName(Settings, category),
+                             Value = category
+                         }))
             {
                 if (pair.Value.IsNullOrWhiteSpace())
                 {

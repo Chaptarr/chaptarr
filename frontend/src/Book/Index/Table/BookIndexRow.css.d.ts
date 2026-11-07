@@ -12,6 +12,7 @@ interface CssExports {
   'duration': string;
   'genres': string;
   'link': string;
+  'mediaTypeBadge': string;
   'metadataProfileId': string;
   'narrator': string;
   'overlayTitle': string;

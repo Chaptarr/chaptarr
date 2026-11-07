@@ -105,6 +105,25 @@ function IndexerOptions(props) {
                 {...settings.rssSyncInterval}
               />
             </FormGroup>
+
+            <FormGroup
+              advancedSettings={advancedSettings}
+              isAdvanced={true}
+            >
+              <FormLabel>
+                {translate('MissingBookSearchInterval')}
+              </FormLabel>
+
+              <FormInputGroup
+                type={inputTypes.NUMBER}
+                name="missingBookSearchInterval"
+                min={0}
+                unit="minutes"
+                helpText={translate('MissingBookSearchIntervalHelpText')}
+                onChange={onInputChange}
+                {...settings.missingBookSearchInterval}
+              />
+            </FormGroup>
           </Form>
       }
     </FieldSet>

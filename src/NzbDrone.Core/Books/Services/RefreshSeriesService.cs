@@ -603,6 +603,15 @@ namespace NzbDrone.Core.Books
                 updated |= RefreshEntityInfo(item, providerBackedRemoteSeries, remoteData, forceBookRefresh, forceUpdateFileTags, lastUpdate);
             }
 
+            try
+            {
+                _bookService.ResyncDenormalizedSeriesFields(authorId);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not OutOfMemoryException)
+            {
+                _logger.Warn(ex, "[SERIES] Failed to repair denormalized series fields for authorId {0}", authorId);
+            }
+
             return updated;
         }
     }

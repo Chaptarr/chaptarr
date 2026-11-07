@@ -21,7 +21,8 @@ namespace NzbDrone.Common.Http.Dispatchers
             bool useCookies,
             ICredentials credentials,
             bool preAuthenticate,
-            int maxConnectionsPerServer);
+            int maxConnectionsPerServer,
+            bool allowPrivateNetworkTargets = true);
     }
 
     public class ManagedSocketsHttpHandlerFactory : ICreateManagedSocketsHttpHandler
@@ -48,8 +49,11 @@ namespace NzbDrone.Common.Http.Dispatchers
             bool useCookies,
             ICredentials credentials,
             bool preAuthenticate,
-            int maxConnectionsPerServer)
+            int maxConnectionsPerServer,
+            bool allowPrivateNetworkTargets = true)
         {
+            // A proxy configured by the operator is trusted to resolve its own destination. Direct
+            // requests can additionally enforce this policy at the socket boundary to prevent DNS rebinding.
             var handler = new SocketsHttpHandler
             {
                 AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Brotli,
@@ -59,7 +63,7 @@ namespace NzbDrone.Common.Http.Dispatchers
                 Credentials = credentials,
                 PreAuthenticate = preAuthenticate,
                 MaxConnectionsPerServer = maxConnectionsPerServer,
-                ConnectCallback = OnConnectAsync,
+                ConnectCallback = (context, cancellationToken) => OnConnectAsync(context, cancellationToken, allowPrivateNetworkTargets),
                 SslOptions = new SslClientAuthenticationOptions
                 {
                     RemoteCertificateValidationCallback = _certificateValidationService.ShouldByPassValidationError
@@ -93,7 +97,10 @@ namespace NzbDrone.Common.Http.Dispatchers
             }
         }
 
-        private async ValueTask<Stream> OnConnectAsync(SocketsHttpConnectionContext context, CancellationToken cancellationToken)
+        private async ValueTask<Stream> OnConnectAsync(
+            SocketsHttpConnectionContext context,
+            CancellationToken cancellationToken,
+            bool allowPrivateNetworkTargets)
         {
             if (_useIPv6)
             {
@@ -103,10 +110,10 @@ namespace NzbDrone.Common.Http.Dispatchers
                     {
                         using var quickFailCts = new CancellationTokenSource(ConnectionEstablishTimeoutMs);
                         using var linkedTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, quickFailCts.Token);
-                        return await AttemptConnection(AddressFamily.InterNetworkV6, context, linkedTokenSource.Token);
+                        return await AttemptConnection(AddressFamily.InterNetworkV6, context, linkedTokenSource.Token, allowPrivateNetworkTargets);
                     }
 
-                    return await AttemptConnection(AddressFamily.InterNetworkV6, context, cancellationToken);
+                    return await AttemptConnection(AddressFamily.InterNetworkV6, context, cancellationToken, allowPrivateNetworkTargets);
                 }
                 catch
                 {
@@ -120,10 +127,14 @@ namespace NzbDrone.Common.Http.Dispatchers
                 }
             }
 
-            return await AttemptConnection(AddressFamily.InterNetwork, context, cancellationToken);
+            return await AttemptConnection(AddressFamily.InterNetwork, context, cancellationToken, allowPrivateNetworkTargets);
         }
 
-        private static async ValueTask<Stream> AttemptConnection(AddressFamily addressFamily, SocketsHttpConnectionContext context, CancellationToken cancellationToken)
+        private static async ValueTask<Stream> AttemptConnection(
+            AddressFamily addressFamily,
+            SocketsHttpConnectionContext context,
+            CancellationToken cancellationToken,
+            bool allowPrivateNetworkTargets)
         {
             EndPoint endpoint = context.DnsEndPoint;
 
@@ -135,7 +146,7 @@ namespace NzbDrone.Common.Http.Dispatchers
 
             if (endpoint is IPEndPoint ipEndPoint)
             {
-                EnsureAllowedTarget(ipEndPoint.Address, context.DnsEndPoint.Host);
+                EnsureAllowedTarget(ipEndPoint.Address, context.DnsEndPoint.Host, allowPrivateNetworkTargets);
                 return await ConnectSocket(addressFamily, ipEndPoint, cancellationToken).ConfigureAwait(false);
             }
 
@@ -152,20 +163,35 @@ namespace NzbDrone.Common.Http.Dispatchers
             }
             catch
             {
+                if (!allowPrivateNetworkTargets)
+                {
+                    throw;
+                }
+
                 // Fall back to letting the socket resolve if DNS resolution fails here.
                 return await ConnectSocket(addressFamily, dnsEndPoint, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (!allowPrivateNetworkTargets && resolvedAddresses.Any(address => !NetworkAddressPolicy.IsPublicAddress(address)))
+            {
+                throw new WebException($"Request target '{dnsEndPoint.Host}' resolved to a private or reserved network address.", WebExceptionStatus.ProtocolError);
             }
 
             var candidates = resolvedAddresses.Where(a => a.AddressFamily == addressFamily).ToArray();
             if (candidates.Length == 0)
             {
+                if (!allowPrivateNetworkTargets)
+                {
+                    throw new SocketException((int)SocketError.AddressFamilyNotSupported);
+                }
+
                 return await ConnectSocket(addressFamily, dnsEndPoint, cancellationToken).ConfigureAwait(false);
             }
 
             Exception lastException = null;
             foreach (var address in candidates)
             {
-                EnsureAllowedTarget(address, dnsEndPoint.Host);
+                EnsureAllowedTarget(address, dnsEndPoint.Host, allowPrivateNetworkTargets);
 
                 try
                 {
@@ -199,9 +225,9 @@ namespace NzbDrone.Common.Http.Dispatchers
             }
         }
 
-        private static void EnsureAllowedTarget(IPAddress ip, string host)
+        private static void EnsureAllowedTarget(IPAddress ip, string host, bool allowPrivateNetworkTargets)
         {
-            if (CloudMetadataTargetPolicy.IsBlocked(ip))
+            if (CloudMetadataTargetPolicy.IsBlocked(ip) || (!allowPrivateNetworkTargets && !NetworkAddressPolicy.IsPublicAddress(ip)))
             {
                 throw new WebException($"Request target '{host}' resolved to a disallowed address.", WebExceptionStatus.ProtocolError);
             }

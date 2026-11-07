@@ -7,150 +7,86 @@ import SettingsToolbarConnector from './SettingsToolbarConnector';
 import styles from './Settings.css';
 
 function Settings() {
+  const sections = [
+    {
+      title: 'Library',
+      items: [
+        [
+          'MediaManagement',
+          '/settings/mediamanagement',
+          'MediaManagementSettingsSummary'
+        ],
+        ['Conversion', '/settings/conversion', 'ConversionSettingsSummary'],
+        ['Profiles', '/settings/profiles', 'ProfilesSettingsSummary'],
+        [
+          'CustomFormats',
+          '/settings/customformats',
+          'CustomFormatsAndSettings'
+        ],
+        ['Tags', '/settings/tags', 'TagsSettingsSummary']
+      ]
+    },
+    {
+      title: 'Search',
+      items: [
+        ['Metadata', '/settings/metadata', 'MetadataSettingsSummary'],
+        ['Indexers', '/settings/indexers', 'IndexersSettingsSummary'],
+        ['ImportLists', '/settings/importlists', 'ListsSettingsSummary']
+      ]
+    },
+    {
+      title: 'Connect',
+      items: [
+        [
+          'DownloadClients',
+          '/settings/downloadclients',
+          'DownloadClientsSettingsSummary'
+        ],
+        ['Connect', '/settings/connect', 'ConnectSettingsSummary']
+      ]
+    },
+    {
+      title: 'General',
+      items: [
+        ['General', '/settings/general', 'GeneralSettingsSummary'],
+        ['Ui', '/settings/ui', 'UISettingsSummary']
+      ]
+    },
+    {
+      title: 'System',
+      items: [
+        ['Quickstart', '/system/quickstart', 'QuickstartReviewDescription']
+      ]
+    }
+  ];
+
   return (
     <PageContent title={translate('Settings')}>
-      <SettingsToolbarConnector
-        hasPendingChanges={false}
-      />
+      <SettingsToolbarConnector hasPendingChanges={false} />
 
       <PageContentBody>
-        <Link
-          className={styles.link}
-          to="/settings/mediamanagement"
-        >
-          {translate('MediaManagement')}
-        </Link>
-
-        <div className={styles.summary}>
-          {translate('MediaManagementSettingsSummary')}
-        </div>
-
-        <Link
-          className={styles.link}
-          to="/settings/conversion"
-        >
-          {translate('Conversion')}
-        </Link>
-
-        <div className={styles.summary}>
-          {translate('ConversionSettingsSummary')}
-        </div>
-
-        <Link
-          className={styles.link}
-          to="/settings/profiles"
-        >
-          {translate('Profiles')}
-        </Link>
-
-        <div className={styles.summary}>
-          {translate('ProfilesSettingsSummary')}
-        </div>
-
-        <Link
-          className={styles.link}
-          to="/settings/customformats"
-        >
-          {translate('CustomFormats')}
-        </Link>
-
-        <div className={styles.summary}>
-          {translate('CustomFormatsAndSettings')}
-        </div>
-
-        <Link
-          className={styles.link}
-          to="/settings/indexers"
-        >
-          {translate('Indexers')}
-        </Link>
-
-        <div className={styles.summary}>
-          {translate('IndexersSettingsSummary')}
-        </div>
-
-        <Link
-          className={styles.link}
-          to="/settings/downloadclients"
-        >
-          {translate('DownloadClients')}
-        </Link>
-
-        <div className={styles.summary}>
-          {translate('DownloadClientsSettingsSummary')}
-        </div>
-
-        <Link
-          className={styles.link}
-          to="/settings/importlists"
-        >
-          {translate('Lists')}
-        </Link>
-
-        <div className={styles.summary}>
-          {translate('ListsSettingsSummary')}
-        </div>
-
-        <Link
-          className={styles.link}
-          to="/settings/connect"
-        >
-          {translate('Connect')}
-        </Link>
-
-        <div className={styles.summary}>
-          {translate('ConnectSettingsSummary')}
-        </div>
-
-        <Link
-          className={styles.link}
-          to="/settings/metadata"
-        >
-          {translate('Metadata')}
-        </Link>
-
-        <div className={styles.summary}>
-          {translate('MetadataSettingsSummary')}
-        </div>
-
-        <Link
-          className={styles.link}
-          to="/settings/tags"
-        >
-          {translate('Tags')}
-        </Link>
-
-        <div className={styles.summary}>
-          {translate('TagsSettingsSummary')}
-        </div>
-
-        <Link
-          className={styles.link}
-          to="/settings/general"
-        >
-          {translate('General')}
-        </Link>
-
-        <div className={styles.summary}>
-          {translate('GeneralSettingsSummary')}
-        </div>
-
-        <Link
-          className={styles.link}
-          to="/settings/ui"
-        >
-          {translate('Ui')}
-        </Link>
-
-        <div className={styles.summary}>
-          {translate('UISettingsSummary')}
+        <div className={styles.sections}>
+          {sections.map((section) => (
+            <section key={section.title} className={styles.section}>
+              <h2 className={styles.sectionTitle}>
+                {translate(section.title)}
+              </h2>
+              {section.items.map(([title, to, summary]) => (
+                <div key={to} className={styles.sectionItem}>
+                  <Link className={styles.link} to={to}>
+                    {translate(title)}
+                  </Link>
+                  <div className={styles.summary}>{translate(summary)}</div>
+                </div>
+              ))}
+            </section>
+          ))}
         </div>
       </PageContentBody>
     </PageContent>
   );
 }
 
-Settings.propTypes = {
-};
+Settings.propTypes = {};
 
 export default Settings;

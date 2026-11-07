@@ -1,11 +1,13 @@
 using System.Linq;
 using NLog;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
 {
@@ -13,11 +15,13 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
     {
         private readonly Logger _logger;
         private readonly IIndexerFactory _indexerFactory;
+        private readonly IConfigService _configService;
 
-        public IndexerTagSpecification(Logger logger, IIndexerFactory indexerFactory)
+        public IndexerTagSpecification(Logger logger, IIndexerFactory indexerFactory, IConfigService configService)
         {
             _logger = logger;
             _indexerFactory = indexerFactory;
+            _configService = configService;
         }
 
         public SpecificationPriority Priority => SpecificationPriority.Default;
@@ -44,11 +48,13 @@ namespace NzbDrone.Core.DecisionEngine.Specifications.RssSync
             // If indexer has tags, check that at least one of them is present on the series
             var indexerTags = indexer.Tags;
             var mediaType = subject.GetPreferredMediaType();
-            var authorTags = subject.Author.GetTagsForMediaType(mediaType);
+            var authorTags = _configService?.BookshelfMatchCompatibility == true
+                ? subject.Author.Tags
+                : subject.Author.GetTagsForMediaType(mediaType);
 
             if (indexerTags.Any() && indexerTags.Intersect(authorTags).Empty())
             {
-                _logger.Trace("Indexer {0} has tags. None of these are present on author {1}. Rejecting", subject.Release.Indexer, subject.Author);
+                _logger.TraceSafe("Indexer {0} has tags. None of these are present on author {1}. Rejecting", subject.Release.Indexer, subject.Author);
 
                 return Decision.Reject("Author tags do not match any of the indexer tags");
             }

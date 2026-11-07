@@ -1,9 +1,9 @@
 import classNames from 'classnames';
-import moment from 'moment';
 import PropTypes from 'prop-types';
-import React from 'react';
+import React, { memo } from 'react';
 import * as calendarViews from 'Calendar/calendarViews';
 import CalendarEventConnector from 'Calendar/Events/CalendarEventConnector';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import styles from './CalendarDay.css';
 
 function CalendarDay(props) {
@@ -27,10 +27,10 @@ function CalendarDay(props) {
           <div className={classNames(
             styles.dayOfMonth,
             isTodaysDate && styles.isToday,
-            !moment(date).isSame(moment(time), 'month') && styles.isDifferentMonth
+            !dayjs(date).isSame(dayjs(time), 'month') && styles.isDifferentMonth
           )}
           >
-            {moment(date).date()}
+            {dayjs(date).date()}
           </div>
       }
       <div>
@@ -60,4 +60,4 @@ CalendarDay.propTypes = {
   onEventModalOpenToggle: PropTypes.func.isRequired
 };
 
-export default CalendarDay;
+export default memo(CalendarDay);

@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import find from 'lodash/find';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -6,6 +6,7 @@ import { createSelector } from 'reselect';
 import { clearPendingChanges } from 'Store/Actions/baseActions';
 import { clearCustomFormatSpecificationPending, deleteAllCustomFormatSpecification, fetchCustomFormatSpecificationSchema, saveCustomFormatSpecification, selectCustomFormatSpecificationSchema, setCustomFormatSpecificationFieldValue, setCustomFormatSpecificationValue, setCustomFormatValue } from 'Store/Actions/settingsActions';
 import createProviderSettingsSelector from 'Store/Selectors/createProviderSettingsSelector';
+import translate from 'Utilities/String/translate';
 import ImportCustomFormatModalContent from './ImportCustomFormatModalContent';
 
 function createMapStateToProps() {
@@ -85,10 +86,10 @@ class ImportCustomFormatModalContentConnector extends Component {
   };
 
   parseSpecification = (spec) => {
-    const selectedImplementation = _.find(this.props.specificationSchema, { implementation: spec.implementation });
+    const selectedImplementation = find(this.props.specificationSchema, { implementation: spec.implementation });
 
     if (!selectedImplementation) {
-      throw new Error(`Unknown Custom Format condition '${spec.implementation}'`);
+      throw new Error(translate('UnknownCustomFormatCondition', { condition: spec.implementation }));
     }
 
     this.props.selectCustomFormatSpecificationSchema({ implementation: spec.implementation });
@@ -106,9 +107,12 @@ class ImportCustomFormatModalContentConnector extends Component {
 
   parseFields = (fields, schema) => {
     for (const [key, value] of Object.entries(fields)) {
-      const field = _.find(schema.fields, { name: key });
+      const field = find(schema.fields, { name: key });
       if (!field) {
-        throw new Error(`Unknown option '${key}' for condition '${schema.implementationName}'`);
+        throw new Error(translate('UnknownCustomFormatConditionOption', {
+          option: key,
+          condition: schema.implementationName
+        }));
       }
 
       this.props.setCustomFormatSpecificationFieldValue({ name: key, value });

@@ -135,28 +135,28 @@ class Naming extends Component {
       { key: 4, value: translate('SmartReplace'), hint: translate('DashOrSpaceDashDependingOnName') }
     ];
 
-    const standardBookFormatHelpTexts = ['Empty tokens and surrounding punctuation are automatically omitted'];
+    const standardBookFormatHelpTexts = [translate('NamingEmptyTokensOmitted')];
     const standardBookFormatErrors = [];
     const authorFolderFormatHelpTexts = [];
     const authorFolderFormatErrors = [];
 
     if (examplesPopulated) {
       if (examples.singleBookExample) {
-        standardBookFormatHelpTexts.push(`Single Book: ${examples.singleBookExample}`);
+        standardBookFormatHelpTexts.push(translate('SingleBookNamingExample', { example: examples.singleBookExample }));
       } else {
-        standardBookFormatErrors.push({ message: 'Single Book: Invalid Format' });
+        standardBookFormatErrors.push({ message: translate('SingleBookInvalidNamingFormat') });
       }
 
       if (examples.multiPartBookExample) {
-        standardBookFormatHelpTexts.push(`Multi-part Book: ${examples.multiPartBookExample}`);
+        standardBookFormatHelpTexts.push(translate('MultipartBookNamingExample', { example: examples.multiPartBookExample }));
       } else {
-        standardBookFormatErrors.push({ message: 'Multi-part Book: Invalid Format' });
+        standardBookFormatErrors.push({ message: translate('MultipartBookInvalidNamingFormat') });
       }
 
       if (examples.authorFolderExample) {
-        authorFolderFormatHelpTexts.push(`Example: ${examples.authorFolderExample}`);
+        authorFolderFormatHelpTexts.push(translate('AuthorFolderNamingExample', { example: examples.authorFolderExample }));
       } else {
-        authorFolderFormatErrors.push({ message: 'Invalid Format' });
+        authorFolderFormatErrors.push({ message: translate('InvalidNamingFormat') });
       }
     }
 
@@ -289,7 +289,7 @@ class Naming extends Component {
                   buttons={<FormInputButton onPress={this.onAuthorFolderNamingModalOpenClick}>?</FormInputButton>}
                   onChange={onInputChange}
                   {...authorFolderFormatSetting}
-                  helpTexts={['Used when adding a new author or moving an author via the author editor', ...authorFolderFormatHelpTexts]}
+                  helpTexts={[translate('NamingAuthorFolderFormatHelpText'), ...authorFolderFormatHelpTexts]}
                   errors={[...authorFolderFormatErrors, ...authorFolderFormatSetting.errors]}
                 />
               </FormGroup>

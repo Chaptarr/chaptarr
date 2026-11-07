@@ -3,8 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http;
+using Chaptarr.Http.Middleware;
 using FluentValidation;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using NLog;
 using NzbDrone.Common.Cache;
@@ -24,6 +27,7 @@ using HttpStatusCode = System.Net.HttpStatusCode;
 namespace Chaptarr.Api.V1.Indexers
 {
     [V1ApiController]
+    [BookshelfReleaseCompatibility]
     public class ReleaseController : ReleaseControllerBase
     {
         private readonly IFetchAndParseRss _rssFetcherAndParser;
@@ -35,6 +39,7 @@ namespace Chaptarr.Api.V1.Indexers
         private readonly IBookService _bookService;
         private readonly IParsingService _parsingService;
         private readonly IIndexerFactory _indexerFactory;
+        private readonly IBookshelfLegacyIdentityMapService _bookshelfLegacyIdentityMapService;
         private readonly Logger _logger;
 
         private readonly ICached<DownloadDecision> _downloadDecisionCache;
@@ -49,7 +54,8 @@ namespace Chaptarr.Api.V1.Indexers
                              IParsingService parsingService,
                              IIndexerFactory indexerFactory,
                              ICacheManager cacheManager,
-                             Logger logger)
+                             Logger logger,
+                             IBookshelfLegacyIdentityMapService bookshelfLegacyIdentityMapService = null)
         {
             _rssFetcherAndParser = rssFetcherAndParser;
             _releaseSearchService = releaseSearchService;
@@ -60,6 +66,7 @@ namespace Chaptarr.Api.V1.Indexers
             _bookService = bookService;
             _parsingService = parsingService;
             _indexerFactory = indexerFactory;
+            _bookshelfLegacyIdentityMapService = bookshelfLegacyIdentityMapService;
             _logger = logger;
 
             PostValidator.RuleFor(s => s.IndexerId).ValidId();
@@ -90,7 +97,11 @@ namespace Chaptarr.Api.V1.Indexers
                 {
                     if (release.BookId.HasValue)
                     {
-                        var book = _bookService.GetBook(release.BookId.Value);
+                        var book = GetBookByCompatibleId(release.BookId.Value);
+                        if (book == null)
+                        {
+                            throw new NzbDroneClientException(HttpStatusCode.NotFound, "Unable to find the requested book");
+                        }
 
                         remoteBook.Author = _authorService.GetAuthor(book.AuthorId);
                         remoteBook.Books = new List<Book> { book };
@@ -119,7 +130,11 @@ namespace Chaptarr.Api.V1.Indexers
 
                     if (books.Empty() && release.BookId.HasValue)
                     {
-                        var book = _bookService.GetBook(release.BookId.Value);
+                        var book = GetBookByCompatibleId(release.BookId.Value);
+                        if (book == null)
+                        {
+                            throw new NzbDroneClientException(HttpStatusCode.NotFound, "Unable to find the requested book");
+                        }
 
                         books = new List<Book> { book };
                     }
@@ -137,7 +152,30 @@ namespace Chaptarr.Api.V1.Indexers
                     throw new NzbDroneClientException(HttpStatusCode.NotFound, "Unable to parse books in the release");
                 }
 
-                await _downloadService.DownloadReport(remoteBook, release.DownloadClientId);
+                if (release.AdoptExistingTorrent)
+                {
+                    await _downloadService.AdoptExistingTorrent(remoteBook, release.DownloadClientId);
+                }
+                else
+                {
+                    await _downloadService.DownloadReport(remoteBook, release.DownloadClientId);
+                }
+            }
+            catch (ExistingTorrentFoundException ex)
+            {
+                return Conflict(new
+                {
+                    code = "existingTorrent",
+                    message = ex.Message
+                });
+            }
+            catch (ExistingTorrentNotFoundException ex)
+            {
+                return Conflict(new
+                {
+                    code = "existingTorrentUnavailable",
+                    message = ex.Message
+                });
             }
             catch (DownloadClientRejectedReleaseException ex)
             {
@@ -175,30 +213,183 @@ namespace Chaptarr.Api.V1.Indexers
         }
 
         [HttpGet]
-        public async Task<object> GetReleases(int? bookId, int? authorId, bool bypassFilters = false)
+        [ProducesResponseType(typeof(List<ReleaseResource>), StatusCodes.Status200OK)]
+        public async Task<List<ReleaseResource>> GetReleases(int? bookId, int? authorId, int? seriesId)
         {
             if (bookId.HasValue)
             {
-                return await GetBookReleases(int.Parse(Request.Query["bookId"]), bypassFilters);
+                return ProjectLegacyReleaseBookIds(await GetLegacyBookReleases(bookId.Value));
+            }
+
+            if (seriesId.HasValue)
+            {
+                if (!authorId.HasValue)
+                {
+                    throw new NzbDroneClientException(HttpStatusCode.BadRequest, "An authorId is required when searching for a series pack");
+                }
+
+                return ProjectLegacyReleaseBookIds(await GetLegacySeriesReleases(seriesId.Value, authorId.Value));
             }
 
             if (authorId.HasValue)
             {
-                return await GetAuthorReleases(int.Parse(Request.Query["authorId"]), bypassFilters);
+                return ProjectLegacyReleaseBookIds(await GetLegacyAuthorReleases(authorId.Value));
             }
 
-            return await GetRss();
+            return ProjectLegacyReleaseBookIds(await GetRss());
         }
 
-        private async Task<object> GetBookReleases(int bookId, bool bypassFilters = false)
+        [HttpGet("search")]
+        [ProducesResponseType(typeof(ReleaseSearchResponse), StatusCodes.Status200OK)]
+        public async Task<ActionResult<ReleaseSearchResponse>> GetInteractiveReleases(
+            int? bookId,
+            int? authorId,
+            bool bypassFilters = false,
+            int? seriesId = null)
+        {
+            if (bookId.HasValue)
+            {
+                return Ok(ProjectLegacyReleaseBookIds(await GetBookReleases(bookId.Value, bypassFilters)));
+            }
+
+            if (seriesId.HasValue)
+            {
+                if (!authorId.HasValue)
+                {
+                    throw new NzbDroneClientException(HttpStatusCode.BadRequest, "An authorId is required when searching for a series pack");
+                }
+
+                return Ok(ProjectLegacyReleaseBookIds(await GetSeriesReleases(seriesId.Value, authorId.Value, bypassFilters)));
+            }
+
+            if (authorId.HasValue)
+            {
+                return Ok(ProjectLegacyReleaseBookIds(await GetAuthorReleases(authorId.Value, bypassFilters)));
+            }
+
+            throw new NzbDroneClientException(HttpStatusCode.BadRequest, "A bookId, authorId, or seriesId is required for interactive search");
+        }
+
+        private async Task<List<ReleaseResource>> GetLegacyBookReleases(int bookId)
+        {
+            var facadeMediaType = MediaTypeParameterParser.ParseOptional(HttpContext?.GetReadarrFacadeContext()?.MediaType);
+            var targetBookIds = HttpContext.ResolveBookshelfLegacyBookIds(
+                _bookshelfLegacyIdentityMapService,
+                new[] { bookId },
+                facadeMediaType);
+            var books = targetBookIds.Select(targetBookId => _bookService.GetBook(targetBookId)).ToList();
+            if (books.Count == 0 || books.Any(book => book == null))
+            {
+                throw new NzbDroneClientException(HttpStatusCode.NotFound, "Unable to find the requested book");
+            }
+
+            try
+            {
+                var decisions = new List<DownloadDecision>();
+                foreach (var book in books)
+                {
+                    decisions.AddRange(await _releaseSearchService.BookSearch(book.Id, true, true, true));
+                }
+
+                return MapDecisions(_prioritizeDownloadDecision.PrioritizeDecisions(decisions));
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Book search failed");
+                throw new NzbDroneClientException(HttpStatusCode.InternalServerError, ex.Message);
+            }
+        }
+
+        private async Task<List<ReleaseResource>> GetLegacyAuthorReleases(int authorId)
         {
             try
             {
-                var book = _bookService.GetBook(bookId);
+                var mapping = HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility == true
+                    ? _bookshelfLegacyIdentityMapService?.GetMappings("Author", new[] { authorId }).FirstOrDefault()
+                    : null;
+                var targetAuthorId = mapping?.TargetId ?? authorId;
+                var decisions = await _releaseSearchService.AuthorSearch(targetAuthorId, false, true, true);
+                return MapDecisions(_prioritizeDownloadDecision.PrioritizeDecisions(decisions));
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Author search failed");
+                throw new NzbDroneClientException(HttpStatusCode.InternalServerError, ex.Message);
+            }
+        }
+
+        private async Task<List<ReleaseResource>> GetLegacySeriesReleases(int seriesId, int authorId)
+        {
+            try
+            {
+                var decisions = await _releaseSearchService.SeriesSearch(seriesId, authorId, true, true);
+                return MapDecisions(_prioritizeDownloadDecision.PrioritizeDecisions(decisions));
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Series pack search failed");
+                throw new NzbDroneClientException(HttpStatusCode.InternalServerError, ex.Message);
+            }
+        }
+
+        private List<ReleaseResource> ProjectLegacyReleaseBookIds(List<ReleaseResource> releases)
+        {
+            if (HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility != true ||
+                _bookshelfLegacyIdentityMapService == null || releases == null || releases.Count == 0)
+            {
+                return releases;
+            }
+
+            var mappingsByTargetId = _bookshelfLegacyIdentityMapService
+                .GetMappingsByTargetIds("Book", releases.Where(release => release?.BookId > 0).Select(release => release.BookId.Value))
+                .GroupBy(mapping => mapping.TargetId)
+                .ToDictionary(group => group.Key, group => group.First());
+
+            foreach (var release in releases)
+            {
+                if (release?.BookId > 0 && mappingsByTargetId.TryGetValue(release.BookId.Value, out var mapping))
+                {
+                    release.BookId = mapping.SourceId;
+                }
+            }
+
+            return releases;
+        }
+
+        private ReleaseSearchResponse ProjectLegacyReleaseBookIds(ReleaseSearchResponse response)
+        {
+            if (response == null || HttpContext?.GetReadarrFacadeContext()?.IsBookshelfCompatibility != true)
+            {
+                return response;
+            }
+
+            ProjectLegacyReleaseBookIds(response.Releases);
+            ProjectLegacyReleaseBookIds(response.HiddenReleases);
+            if (response.SiblingBookId.HasValue)
+            {
+                var mapping = _bookshelfLegacyIdentityMapService?.GetMappingsByTargetIds("Book", new[] { response.SiblingBookId.Value }).FirstOrDefault();
+                if (mapping != null)
+                {
+                    response.SiblingBookId = mapping.SourceId;
+                }
+            }
+
+            return response;
+        }
+
+        private async Task<ReleaseSearchResponse> GetBookReleases(int bookId, bool bypassFilters = false)
+        {
+            try
+            {
+                var book = GetBookByCompatibleId(bookId);
+                if (book == null)
+                {
+                    throw new NzbDroneClientException(HttpStatusCode.NotFound, "Unable to find the requested book");
+                }
                 var author = _authorService.GetAuthor(book.AuthorId);
 
                 // Start indexer search
-                var indexerSearchTask = _releaseSearchService.BookSearch(bookId, true, true, true);
+                var indexerSearchTask = _releaseSearchService.BookSearch(book.Id, true, true, true);
 
                 // Wait for indexer search to complete
                 var decisions = await indexerSearchTask;
@@ -239,7 +430,7 @@ namespace Chaptarr.Api.V1.Indexers
             }
         }
 
-        private async Task<object> GetAuthorReleases(int authorId, bool bypassFilters = false)
+        private async Task<ReleaseSearchResponse> GetAuthorReleases(int authorId, bool bypassFilters = false)
         {
             try
             {
@@ -269,6 +460,37 @@ namespace Chaptarr.Api.V1.Indexers
             catch (Exception ex)
             {
                 _logger.Error(ex, "Author search failed");
+                throw new NzbDroneClientException(HttpStatusCode.InternalServerError, ex.Message);
+            }
+        }
+
+        private async Task<ReleaseSearchResponse> GetSeriesReleases(int seriesId, int authorId, bool bypassFilters = false)
+        {
+            try
+            {
+                var decisions = await _releaseSearchService.SeriesSearch(seriesId, authorId, true, true);
+                var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(decisions);
+                var (results, hiddenResults, filterSummary) = MapDecisionsForInteractiveSearchWithSummary(prioritizedDecisions, bypassFilters);
+
+                if (filterSummary.FilteredCount > 0)
+                {
+                    _logger.Debug("SERIES_SEARCH_FILTER_SUMMARY: {0}", filterSummary.SummaryText);
+                    if (filterSummary.FilterWarnings.Any())
+                    {
+                        _logger.Debug("FILTER_WARNINGS: [{0}]", string.Join(", ", filterSummary.FilterWarnings));
+                    }
+                }
+
+                return new ReleaseSearchResponse
+                {
+                    Releases = results,
+                    HiddenReleases = hiddenResults,
+                    FilterSummary = filterSummary
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Series pack search failed");
                 throw new NzbDroneClientException(HttpStatusCode.InternalServerError, ex.Message);
             }
         }
@@ -577,6 +799,22 @@ namespace Chaptarr.Api.V1.Indexers
         private string GetCacheKey(ReleaseResource resource)
         {
             return string.Concat(resource.IndexerId, "_", resource.Guid);
+        }
+
+        private Book GetBookByCompatibleId(int bookId)
+        {
+            var facadeMediaType = MediaTypeParameterParser.ParseOptional(HttpContext?.GetReadarrFacadeContext()?.MediaType);
+            var resolvedBookIds = HttpContext.ResolveBookshelfLegacyBookIds(
+                _bookshelfLegacyIdentityMapService,
+                new[] { bookId },
+                facadeMediaType);
+            if (resolvedBookIds.Count == 0)
+            {
+                return null;
+            }
+
+            var resolvedBookId = resolvedBookIds[0];
+            return _bookService.GetBook(resolvedBookId);
         }
 
         private SiblingToggleInfo BuildSiblingToggleInfo(Book book, NzbDrone.Core.Books.Author author)

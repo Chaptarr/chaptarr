@@ -14,18 +14,22 @@ import translate from 'Utilities/String/translate';
 import NamingOption from './NamingOption';
 import styles from './NamingModal.css';
 
-const separatorOptions = [
-  { key: ' ', value: 'Space ( )' },
-  { key: '.', value: 'Period (.)' },
-  { key: '_', value: 'Underscore (_)' },
-  { key: '-', value: 'Dash (-)' }
-];
+function getSeparatorOptions() {
+  return [
+    { key: ' ', value: translate('SeparatorSpace') },
+    { key: '.', value: translate('SeparatorPeriod') },
+    { key: '_', value: translate('SeparatorUnderscore') },
+    { key: '-', value: translate('SeparatorDash') }
+  ];
+}
 
-const caseOptions = [
-  { key: 'title', value: 'Default Case' },
-  { key: 'lower', value: 'Lowercase' },
-  { key: 'upper', value: 'Uppercase' }
-];
+function getCaseOptions() {
+  return [
+    { key: 'title', value: translate('DefaultCase') },
+    { key: 'lower', value: translate('Lowercase') },
+    { key: 'upper', value: translate('Uppercase') }
+  ];
+}
 
 const fileNameTokens = [
   {
@@ -82,6 +86,8 @@ const bookTokens = [
   { token: '{Book CleanSubtitle}', example: 'Subtitle' },
 
   { token: '{Book Disambiguation}', example: 'Disambiguation' },
+
+  { token: '{Edition AudibleAsin}', example: 'B0ABCDEFGH' },
 
   { token: '{PartNumber:0}', example: '2' },
   { token: '{PartNumber:00}', example: '02' },
@@ -243,7 +249,7 @@ class NamingModal extends Component {
                 className={styles.namingSelect}
                 name="separator"
                 value={tokenSeparator}
-                values={separatorOptions}
+                values={getSeparatorOptions()}
                 onChange={this.onTokenSeparatorChange}
               />
 
@@ -251,7 +257,7 @@ class NamingModal extends Component {
                 className={styles.namingSelect}
                 name="case"
                 value={tokenCase}
-                values={caseOptions}
+                values={getCaseOptions()}
                 onChange={this.onTokenCaseChange}
               />
             </div>

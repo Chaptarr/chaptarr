@@ -1,4 +1,4 @@
-import _ from 'lodash';
+import isEmpty from 'lodash/isEmpty';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Form from 'Components/Form/Form';
@@ -13,11 +13,13 @@ import ModalHeader from 'Components/Modal/ModalHeader';
 import { inputTypes } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 
-const posterSizeOptions = [
-  { key: 'small', value: 'Small' },
-  { key: 'medium', value: 'Medium' },
-  { key: 'large', value: 'Large' }
-];
+function getPosterSizeOptions() {
+  return [
+    { key: 'small', value: translate('Small') },
+    { key: 'medium', value: translate('Medium') },
+    { key: 'large', value: translate('Large') }
+  ];
+}
 
 class BookIndexOverviewOptionsModalContent extends Component {
 
@@ -91,7 +93,7 @@ class BookIndexOverviewOptionsModalContent extends Component {
       state.showSearchAction = showSearchAction;
     }
 
-    if (!_.isEmpty(state)) {
+    if (!isEmpty(state)) {
       this.setState(state);
     }
   }
@@ -144,7 +146,7 @@ class BookIndexOverviewOptionsModalContent extends Component {
                 type={inputTypes.SELECT}
                 name="size"
                 value={size}
-                values={posterSizeOptions}
+                values={getPosterSizeOptions()}
                 onChange={this.onChangeOverviewOption}
               />
             </FormGroup>

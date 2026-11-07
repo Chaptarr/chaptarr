@@ -52,10 +52,15 @@ class ConversionSettingsConnector extends Component {
     this.props.saveConversionSettings();
   };
 
+  onRetryPress = () => {
+    this.props.fetchConversionSettings();
+  };
+
   render() {
     return (
       <ConversionSettings
         onInputChange={this.onInputChange}
+        onRetryPress={this.onRetryPress}
         onSavePress={this.onSavePress}
         {...this.props}
       />

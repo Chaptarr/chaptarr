@@ -9,6 +9,7 @@ import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { kinds } from 'Helpers/Props';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import getSelectedIds from 'Utilities/Table/getSelectedIds';
 import selectAll from 'Utilities/Table/selectAll';
@@ -88,6 +89,7 @@ class OrganizePreviewModalContent extends Component {
       renameBooksEnabled,
       canMoveToCanonicalAuthorFolder,
       moveToCanonicalAuthorFolder,
+      onRetryPress,
       onModalClose
     } = this.props;
 
@@ -130,9 +132,12 @@ class OrganizePreviewModalContent extends Component {
 
           {
             !isFetching && error &&
-              <div>
-                {translate('ErrorLoadingPreviews')}
-              </div>
+              <Alert kind={kinds.DANGER} role="alert">
+                <div>{getErrorMessage(error, translate('ErrorLoadingPreviews'))}</div>
+                <Button size="small" onPress={onRetryPress}>
+                  {translate('Retry')}
+                </Button>
+              </Alert>
           }
 
           {
@@ -248,6 +253,7 @@ OrganizePreviewModalContent.propTypes = {
   canMoveToCanonicalAuthorFolder: PropTypes.bool.isRequired,
   moveToCanonicalAuthorFolder: PropTypes.bool.isRequired,
   onMoveToCanonicalAuthorFolderChange: PropTypes.func.isRequired,
+  onRetryPress: PropTypes.func.isRequired,
   onOrganizePress: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired
 };

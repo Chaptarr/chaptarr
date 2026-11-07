@@ -190,7 +190,7 @@ class QuickstartMatchingSection extends Component {
       return (
         <QuickstartSection
           sectionKey="matching"
-          title={`6. ${translate('Matching')}`}
+          title={translate('Matching')}
         >
           <LoadingIndicator />
         </QuickstartSection>
@@ -200,7 +200,7 @@ class QuickstartMatchingSection extends Component {
     return (
       <QuickstartSection
         sectionKey="matching"
-        title={`6. ${translate('Matching')}`}
+        title={translate('Matching')}
         isComplete={!!interactions.matching}
       >
         {error && (

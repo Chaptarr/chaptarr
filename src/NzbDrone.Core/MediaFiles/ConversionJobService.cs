@@ -19,6 +19,7 @@ namespace NzbDrone.Core.MediaFiles
     {
         int WorkerConcurrency { get; }
         ConversionJob Get(string downloadId);
+        List<ConversionJob> GetNonCompleted();
         ConversionJob Enqueue(ConversionJobRequest request);
         bool IsActive(string downloadId);
         bool Cancel(string downloadId);
@@ -35,6 +36,7 @@ namespace NzbDrone.Core.MediaFiles
         private const string ArtifactManifestFileName = "conversion-artifact.json";
         private static readonly TimeSpan LeaseTimeout = TimeSpan.FromMinutes(2);
         private static readonly TimeSpan SchedulerPollInterval = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan SchedulerErrorBackoff = TimeSpan.FromSeconds(5);
         private static readonly TimeSpan QueueCoalesceDelay = TimeSpan.FromMilliseconds(100);
         private static readonly TimeSpan CompletedRetention = TimeSpan.FromDays(7);
         private readonly object _sync = new();
@@ -70,6 +72,11 @@ namespace NzbDrone.Core.MediaFiles
         public ConversionJob Get(string downloadId)
         {
             return _repository.FindByDownloadId(downloadId);
+        }
+
+        public List<ConversionJob> GetNonCompleted()
+        {
+            return _repository.NonCompleted();
         }
 
         public ConversionJob Enqueue(ConversionJobRequest request)
@@ -163,6 +170,7 @@ namespace NzbDrone.Core.MediaFiles
                     _repository.Update(job);
 
                     _activeConversions.TryGetValue(downloadId, out active);
+                    active?.Cancellation.Cancel();
                 }
                 else
                 {
@@ -178,7 +186,6 @@ namespace NzbDrone.Core.MediaFiles
             if (active != null)
             {
                 _trackingService?.Cancel(downloadId);
-                active.Cancellation.Cancel();
                 _signal.Set();
             }
             else
@@ -320,9 +327,9 @@ namespace NzbDrone.Core.MediaFiles
         {
             var waitHandles = new[] { _signal, _shutdown.Token.WaitHandle };
 
-            try
+            while (!_shutdown.IsCancellationRequested)
             {
-                while (!_shutdown.IsCancellationRequested)
+                try
                 {
                     var signalled = WaitHandle.WaitAny(waitHandles, SchedulerPollInterval);
                     if (signalled == 1 || _shutdown.IsCancellationRequested)
@@ -338,15 +345,28 @@ namespace NzbDrone.Core.MediaFiles
                     RecoverExpiredLeases();
                     DispatchQueuedJobs();
                 }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    // The scheduler thread is only started from ApplicationStartedEvent. If an
+                    // iteration error escapes this loop, queued conversions remain stranded until
+                    // the process restarts. Keep the scheduler alive, but back off so persistent
+                    // faults do not produce a tight retry loop.
+                    _logger.Error(ex, "Detached audiobook conversion scheduler iteration failed");
+                    if (!_shutdown.Token.WaitHandle.WaitOne(SchedulerErrorBackoff))
+                    {
+                        // The signal that woke the failed iteration has already been consumed.
+                        // Wake the next pass after backoff so existing queued work does not wait
+                        // another full scheduler poll interval before retrying.
+                        _signal.Set();
+                    }
+                }
             }
-            catch (OperationCanceledException)
-            {
-                _logger.Debug("Detached audiobook conversion scheduler stopped");
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "Detached audiobook conversion scheduler failed");
-            }
+
+            _logger.Debug("Detached audiobook conversion scheduler stopped");
         }
 
         private int GetActiveCount()
@@ -476,19 +496,26 @@ namespace NzbDrone.Core.MediaFiles
                 }
 
                 var threadPlan = GetThreadPlan(request.ConversionInputFiles.Count, active.TokenBudget);
+                var attemptFolder = Path.Combine(
+                    request.WorkFolder,
+                    "attempts",
+                    $"{job.AttemptCount:D4}-{Guid.NewGuid():N}");
+                var attemptOutputPath = Path.Combine(attemptFolder, Path.GetFileName(request.OutputPath));
                 using var heartbeat = new Timer(_ => TouchHeartbeat(job), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
 
                 try
                 {
-                    Directory.CreateDirectory(request.WorkFolder);
+                    Directory.CreateDirectory(attemptFolder);
                     var result = _conversionService.ConvertToM4b(
                         request.ConversionInputFiles.ToArray(),
-                        request.OutputPath,
+                        attemptOutputPath,
                         new ConversionOptions
                         {
-                            TempDirectory = request.WorkFolder,
+                            TempDirectory = attemptFolder,
                             AudioBitrate = request.AudioBitrate,
+                            AudioSampleRate = request.AudioSampleRate,
                             AudioChannels = request.AudioChannels,
+                            NoConversion = request.NoConversion,
                             ExpectedSourceDuration = TimeSpan.FromTicks(request.ExpectedSourceDurationTicks),
                             Jobs = threadPlan.ParallelFiles,
                             FfmpegThreads = threadPlan.FfmpegThreads,
@@ -499,6 +526,7 @@ namespace NzbDrone.Core.MediaFiles
 
                     if (result.Success)
                     {
+                        PromoteAttemptOutput(attemptOutputPath, request.OutputPath);
                         WriteArtifactManifest(request);
                         MarkReady(job, "Converted M4B ready to import");
                     }
@@ -509,10 +537,10 @@ namespace NzbDrone.Core.MediaFiles
                     else
                     {
                         var error = result.ErrorMessage.IsNullOrWhiteSpace() ? "M4B conversion failed" : result.ErrorMessage;
-                        if (result.RetainOutputOnFailure && File.Exists(request.OutputPath))
+                        if (result.RetainOutputOnFailure && File.Exists(attemptOutputPath))
                         {
-                            WriteArtifactManifest(request);
-                            error = $"{error} Converted file retained at: {request.OutputPath}";
+                            WriteArtifactManifest(request, attemptOutputPath, importable: false);
+                            error = $"{error} Converted file retained at: {attemptOutputPath}";
                         }
                         else
                         {
@@ -790,6 +818,7 @@ namespace NzbDrone.Core.MediaFiles
 
             try
             {
+                var output = new FileInfo(request.OutputPath);
                 var manifestPath = Path.Combine(request.WorkFolder, ArtifactManifestFileName);
                 if (!File.Exists(manifestPath))
                 {
@@ -798,12 +827,23 @@ namespace NzbDrone.Core.MediaFiles
 
                 var manifest = JsonSerializer.Deserialize<ConversionArtifactManifest>(File.ReadAllText(manifestPath));
                 return manifest != null &&
+                       manifest.Version == ConversionArtifactManifest.CurrentVersion &&
+                       manifest.Importable &&
+                       manifest.OutputPath.PathEquals(request.OutputPath) &&
+                       manifest.OutputSize == output.Length &&
+                       manifest.OutputModifiedUtcTicks == output.LastWriteTimeUtc.Ticks &&
                        manifest.TargetQualityId == request.TargetQualityId &&
+                       string.Equals(manifest.TargetQualityName, request.TargetQualityName, StringComparison.Ordinal) &&
                        manifest.AudioBitrate == request.AudioBitrate &&
+                       manifest.AudioSampleRate == request.AudioSampleRate &&
                        manifest.AudioChannels == request.AudioChannels &&
+                       manifest.NoConversion == request.NoConversion &&
+                       string.Equals(manifest.TagMode, request.TagOptions?.Mode, StringComparison.Ordinal) &&
                        string.Equals(manifest.TagSignature, request.TagSignature, StringComparison.Ordinal) &&
+                       manifest.Sources != null &&
                        manifest.Sources.Count == request.Sources.Count &&
-                       manifest.Sources.Zip(request.Sources, SourcesMatch).All(matches => matches);
+                       manifest.Sources.Zip(request.Sources, SourcesMatch).All(matches => matches) &&
+                       ConversionArtifactFingerprint.Matches(request.OutputPath, manifest.OutputSha256);
             }
             catch
             {
@@ -820,16 +860,25 @@ namespace NzbDrone.Core.MediaFiles
                    left.ModifiedUtcTicks == right.ModifiedUtcTicks;
         }
 
-        private static void WriteArtifactManifest(ConversionJobRequest request)
+        private static void WriteArtifactManifest(ConversionJobRequest request, string artifactPath = null, bool importable = true)
         {
+            artifactPath ??= request.OutputPath;
+            var output = new FileInfo(artifactPath);
             var manifest = new ConversionArtifactManifest
             {
+                Version = ConversionArtifactManifest.CurrentVersion,
+                Importable = importable,
                 CreatedUtc = DateTime.UtcNow,
-                OutputPath = request.OutputPath,
+                OutputPath = artifactPath,
+                OutputSize = output.Length,
+                OutputModifiedUtcTicks = output.LastWriteTimeUtc.Ticks,
+                OutputSha256 = ConversionArtifactFingerprint.ComputeSha256(artifactPath),
                 TargetQualityId = request.TargetQualityId,
                 TargetQualityName = request.TargetQualityName,
                 AudioBitrate = request.AudioBitrate,
+                AudioSampleRate = request.AudioSampleRate,
                 AudioChannels = request.AudioChannels,
+                NoConversion = request.NoConversion,
                 TagMode = request.TagOptions?.Mode,
                 TagSignature = request.TagSignature,
                 Sources = request.Sources
@@ -840,6 +889,17 @@ namespace NzbDrone.Core.MediaFiles
             var temporaryPath = manifestPath + ".tmp";
             File.WriteAllText(temporaryPath, JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }));
             File.Move(temporaryPath, manifestPath, true);
+        }
+
+        private static void PromoteAttemptOutput(string attemptOutputPath, string outputPath)
+        {
+            if (!File.Exists(attemptOutputPath))
+            {
+                throw new FileNotFoundException("The M4B converter reported success without creating its attempt output.", attemptOutputPath);
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
+            File.Move(attemptOutputPath, outputPath, overwrite: true);
         }
 
         private void QueueImportSweep()

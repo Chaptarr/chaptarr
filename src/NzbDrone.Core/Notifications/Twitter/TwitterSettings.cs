@@ -38,25 +38,25 @@ namespace NzbDrone.Core.Notifications.Twitter
             AuthorizeNotification = "startOAuth";
         }
 
-        [FieldDefinition(0, Label = "Consumer Key", Privacy = PrivacyLevel.ApiKey, HelpText = "Consumer key from a Twitter application", HelpLink = "https://discord.gg/nqFGsGUug2")]
+        [FieldDefinition(0, Label = "provider.field.f282690e03cd8", Privacy = PrivacyLevel.ApiKey, HelpText = "provider.field.f3e9c99374508", HelpLink = "https://discord.gg/nqFGsGUug2")]
         public string ConsumerKey { get; set; }
 
-        [FieldDefinition(1, Label = "Consumer Secret", Privacy = PrivacyLevel.ApiKey, HelpText = "Consumer secret from a Twitter application", HelpLink = "https://discord.gg/nqFGsGUug2")]
+        [FieldDefinition(1, Label = "provider.field.f190fd47bff2e", Privacy = PrivacyLevel.ApiKey, HelpText = "provider.field.fedec108b0608", HelpLink = "https://discord.gg/nqFGsGUug2")]
         public string ConsumerSecret { get; set; }
 
-        [FieldDefinition(2, Label = "Access Token", Privacy = PrivacyLevel.ApiKey, Advanced = true)]
+        [FieldDefinition(2, Label = "provider.field.ff9db72ced1ee", Privacy = PrivacyLevel.ApiKey, Advanced = true)]
         public string AccessToken { get; set; }
 
-        [FieldDefinition(3, Label = "Access Token Secret", Privacy = PrivacyLevel.ApiKey, Advanced = true)]
+        [FieldDefinition(3, Label = "provider.field.f3efeb5b0889f", Privacy = PrivacyLevel.ApiKey, Advanced = true)]
         public string AccessTokenSecret { get; set; }
 
-        [FieldDefinition(4, Label = "Mention", HelpText = "Mention this user in sent tweets")]
+        [FieldDefinition(4, Label = "provider.field.fd820d8de70e4", HelpText = "provider.field.f14f23b87f76a")]
         public string Mention { get; set; }
 
-        [FieldDefinition(5, Label = "Direct Message", Type = FieldType.Checkbox, HelpText = "Send a direct message instead of a public message")]
+        [FieldDefinition(5, Label = "provider.field.fa22fdec85d18", Type = FieldType.Checkbox, HelpText = "provider.field.f17181a60f2c1")]
         public bool DirectMessage { get; set; }
 
-        [FieldDefinition(6, Label = "Connect to Twitter", Type = FieldType.OAuth)]
+        [FieldDefinition(6, Label = "provider.field.fc91a944bf6b7", Type = FieldType.OAuth)]
         public string AuthorizeNotification { get; set; }
 
         public NzbDroneValidationResult Validate()

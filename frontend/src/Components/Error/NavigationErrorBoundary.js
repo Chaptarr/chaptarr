@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { withRouter } from 'react-router-dom';
+import { translateWithFallback } from 'Utilities/String/translate';
 import ErrorBoundaryError from './ErrorBoundaryError';
 
 class NavigationErrorBoundary extends Component {
@@ -42,7 +43,10 @@ class NavigationErrorBoundary extends Component {
           className={this.props.errorClassName}
           messageClassName={this.props.messageClassName}
           detailsClassName={this.props.detailsClassName}
-          message={this.props.errorMessage}
+          message={this.props.errorMessage || translateWithFallback(
+            'NavigationErrorFallback',
+            'Oops... this is awkward.'
+          )}
           error={this.state.error}
           info={this.state.info}
         />
@@ -62,10 +66,6 @@ NavigationErrorBoundary.propTypes = {
   location: PropTypes.shape({
     pathname: PropTypes.string.isRequired
   }).isRequired
-};
-
-NavigationErrorBoundary.defaultProps = {
-  errorMessage: 'Oops......well this is awkward'
 };
 
 export default withRouter(NavigationErrorBoundary);

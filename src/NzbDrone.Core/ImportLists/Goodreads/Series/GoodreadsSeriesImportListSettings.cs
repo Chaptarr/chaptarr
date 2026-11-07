@@ -27,40 +27,40 @@ namespace NzbDrone.Core.ImportLists.Goodreads
 
         public string BaseUrl { get; set; }
 
-        [FieldDefinition(0, Label = "Series ID", HelpText = "Goodreads series ID")]
+        [FieldDefinition(0, Label = "provider.field.fbe17b52bf053", HelpText = "provider.field.f50daa23e691a")]
         public int SeriesId { get; set; }
 
-        [FieldDefinition(1, Label = "Monitor Audiobooks", Type = FieldType.Checkbox, HelpText = "When enabled, audiobook items will be created/monitored for books from this series.")]
+        [FieldDefinition(1, Label = "MonitorAudiobooks", Type = FieldType.Checkbox, HelpText = "provider.field.fa207a3b75949")]
         public bool MonitorAudiobooks { get; set; }
 
-        [FieldDefinition(2, Label = "Monitor Ebooks", Type = FieldType.Checkbox, HelpText = "When enabled, ebook items will be created/monitored for books from this series.")]
+        [FieldDefinition(2, Label = "provider.field.f686d3f04e7e0", Type = FieldType.Checkbox, HelpText = "provider.field.f91bc6fc1d38a")]
         public bool MonitorEbooks { get; set; }
 
-        [FieldDefinition(3, Label = "Import Limit", Type = FieldType.Number, HelpText = "Maximum number of unique source books to import from this series. 0 is unlimited.", Advanced = true)]
+        [FieldDefinition(3, Label = "provider.field.f0f701a8deb7c", Type = FieldType.Number, HelpText = "provider.field.ffbbc0487f001", Advanced = true)]
         public int ImportLimit { get; set; }
 
-        [FieldDefinition(4, Label = "Audiobook Quality Profile", Type = FieldType.Select, SelectOptionsProviderAction = "getAudiobookQualityProfiles", HelpText = "Quality profile used when importing audiobooks from this series.")]
+        [FieldDefinition(4, Label = "AudiobookQualityProfile", Type = FieldType.Select, SelectOptionsProviderAction = "getAudiobookQualityProfiles", HelpText = "provider.field.f285fb519aa1a")]
         public int AudiobookQualityProfileId { get; set; }
 
-        [FieldDefinition(5, Label = "Ebook Quality Profile", Type = FieldType.Select, SelectOptionsProviderAction = "getEbookQualityProfiles", HelpText = "Quality profile used when importing ebooks from this series.")]
+        [FieldDefinition(5, Label = "EbookQualityProfile", Type = FieldType.Select, SelectOptionsProviderAction = "getEbookQualityProfiles", HelpText = "provider.field.ffd272adc2f58")]
         public int EbookQualityProfileId { get; set; }
 
-        [FieldDefinition(6, Label = "Audiobook Metadata Profile", Type = FieldType.Select, SelectOptionsProviderAction = "getAudiobookMetadataProfiles", HelpText = "Metadata profile used when importing audiobooks from this series.")]
+        [FieldDefinition(6, Label = "AudiobookMetadataProfile", Type = FieldType.Select, SelectOptionsProviderAction = "getAudiobookMetadataProfiles", HelpText = "provider.field.f29b6b9e083cc")]
         public int AudiobookMetadataProfileId { get; set; }
 
-        [FieldDefinition(7, Label = "Ebook Metadata Profile", Type = FieldType.Select, SelectOptionsProviderAction = "getEbookMetadataProfiles", HelpText = "Metadata profile used when importing ebooks from this series.")]
+        [FieldDefinition(7, Label = "EbookMetadataProfile", Type = FieldType.Select, SelectOptionsProviderAction = "getEbookMetadataProfiles", HelpText = "provider.field.f4891b0209fad")]
         public int EbookMetadataProfileId { get; set; }
 
-        [FieldDefinition(8, Label = "Audiobook Root Folder", Type = FieldType.Path, HelpText = "Root folder used when importing audiobooks from this series.")]
+        [FieldDefinition(8, Label = "AudiobookRootFolder", Type = FieldType.Path, HelpText = "provider.field.f1ee0e50bc744")]
         public string AudiobookRootFolderPath { get; set; }
 
-        [FieldDefinition(9, Label = "Ebook Root Folder", Type = FieldType.Path, HelpText = "Root folder used when importing ebooks from this series.")]
+        [FieldDefinition(9, Label = "EbookRootFolder", Type = FieldType.Path, HelpText = "provider.field.fa4f2502db2e0")]
         public string EbookRootFolderPath { get; set; }
 
-        [FieldDefinition(10, Label = "Audiobook Tags", Type = FieldType.TagSelect, SelectOptionsProviderAction = "getTags", HelpText = "Optional: tags to apply when importing audiobooks from this series.")]
+        [FieldDefinition(10, Label = "AudiobookTags", Type = FieldType.TagSelect, SelectOptionsProviderAction = "getTags", HelpText = "provider.field.fd296d5ee89d3")]
         public List<int> AudiobookTags { get; set; } = new();
 
-        [FieldDefinition(11, Label = "Ebook Tags", Type = FieldType.TagSelect, SelectOptionsProviderAction = "getTags", HelpText = "Optional: tags to apply when importing ebooks from this series.")]
+        [FieldDefinition(11, Label = "EbookTags", Type = FieldType.TagSelect, SelectOptionsProviderAction = "getTags", HelpText = "provider.field.f1ee868fd9557")]
         public List<int> EbookTags { get; set; } = new();
 
         public NzbDroneValidationResult Validate()

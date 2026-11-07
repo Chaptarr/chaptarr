@@ -11,6 +11,7 @@ using NzbDrone.Common.Http;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
@@ -38,7 +39,7 @@ namespace NzbDrone.Core.Download.Clients.Nzbget
 
         protected override string AddFromNzbFile(RemoteBook remoteBook, string filename, byte[] fileContent)
         {
-            var category = remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? Settings.EbookCategory : Settings.AudiobookCategory;
+            var category = BookDownloadCategorySettings.GetCategory(Settings, remoteBook.GetPreferredMediaType());
             var priority = remoteBook.IsRecentBook() ? Settings.RecentTvPriority : Settings.OlderTvPriority;
 
             var addpaused = Settings.AddPaused;
@@ -196,14 +197,7 @@ namespace NzbDrone.Core.Download.Clients.Nzbget
 
         private bool IsConfiguredCategory(string itemCategory)
         {
-            var configuredCategories = new[] { Settings.AudiobookCategory, Settings.EbookCategory };
-
-            if (itemCategory.IsNullOrWhiteSpace())
-            {
-                return configuredCategories.Any(c => c.IsNullOrWhiteSpace());
-            }
-
-            return configuredCategories.Any(c => c.IsNotNullOrWhiteSpace() && c.Equals(itemCategory, StringComparison.InvariantCultureIgnoreCase));
+            return BookDownloadCategorySettings.MatchesConfiguredCategory(Settings, itemCategory);
         }
 
         public override void RemoveItem(DownloadClientItem item, bool deleteData)
@@ -220,10 +214,7 @@ namespace NzbDrone.Core.Download.Clients.Nzbget
         {
             var config = _proxy.GetConfig(Settings);
             var categories = GetCategories(config).ToList();
-            var configured = new[] { Settings.AudiobookCategory, Settings.EbookCategory }
-                .Where(c => c.IsNotNullOrWhiteSpace())
-                .Distinct(StringComparer.InvariantCultureIgnoreCase)
-                .ToList();
+            var configured = BookDownloadCategorySettings.GetConfiguredCategories(Settings).ToList();
 
             var matchedCategories = categories
                 .Where(v => configured.Contains(v.Name, StringComparer.InvariantCultureIgnoreCase))
@@ -326,20 +317,11 @@ namespace NzbDrone.Core.Download.Clients.Nzbget
             var config = _proxy.GetConfig(Settings);
             var categories = GetCategories(config);
 
-            foreach (var pair in new[]
-                     {
-                         new { Field = nameof(NzbgetSettings.AudiobookCategory), Value = Settings.AudiobookCategory },
-                         new { Field = nameof(NzbgetSettings.EbookCategory), Value = Settings.EbookCategory }
-                     })
+            foreach (var category in BookDownloadCategorySettings.GetConfiguredCategories(Settings))
             {
-                if (pair.Value.IsNullOrWhiteSpace())
+                if (!categories.Any(v => v.Name == category))
                 {
-                    continue;
-                }
-
-                if (!categories.Any(v => v.Name == pair.Value))
-                {
-                    return new NzbDroneValidationFailure(pair.Field, "Category does not exist")
+                    return new NzbDroneValidationFailure(BookDownloadCategorySettings.GetCategoryFieldName(Settings, category), "Category does not exist")
                     {
                         InfoLink = _proxy.GetBaseUrl(Settings),
                         DetailedDescription = "The Category you entered doesn't exist in NzbGet. Go to NzbGet to create it."

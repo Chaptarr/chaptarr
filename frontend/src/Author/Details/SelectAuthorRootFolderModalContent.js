@@ -58,7 +58,7 @@ class SelectAuthorRootFolderModalContent extends Component {
           {
             saveError &&
               <Alert kind={kinds.DANGER}>
-                {getErrorMessage(saveError, 'Unable to save author')}
+                {getErrorMessage(saveError, translate('UnableToSaveAuthorSettings'))}
               </Alert>
           }
 

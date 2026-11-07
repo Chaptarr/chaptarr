@@ -75,7 +75,8 @@ class BookIndexOverviews extends Component {
       jumpToCharacter,
       scrollTop,
       isEditorActive,
-      selectedState
+      selectedState,
+      scrollToIndex
     } = this.props;
 
     const {
@@ -105,7 +106,13 @@ class BookIndexOverviews extends Component {
       this._grid.scrollToPosition({ scrollTop });
     }
 
-    if (jumpToCharacter != null && jumpToCharacter !== prevProps.jumpToCharacter) {
+    // Paged lists resolve jump bar letters on the server and pass the row index in.
+    if (this._grid && scrollToIndex != null && scrollToIndex !== prevProps.scrollToIndex) {
+      this._grid.scrollToCell({
+        rowIndex: scrollToIndex,
+        columnIndex: 0
+      });
+    } else if (jumpToCharacter != null && jumpToCharacter !== prevProps.jumpToCharacter) {
       const index = getIndexOfFirstCharacter(items, sortKey, jumpToCharacter);
 
       if (this._grid && index != null) {
@@ -155,7 +162,8 @@ class BookIndexOverviews extends Component {
       isSmallScreen,
       selectedState,
       isEditorActive,
-      onSelectedChange
+      onSelectedChange,
+      getBookAtIndex
     } = this.props;
 
     const {
@@ -164,10 +172,16 @@ class BookIndexOverviews extends Component {
       rowHeight
     } = this.state;
 
-    const book = items[rowIndex];
+    const book = getBookAtIndex ? getBookAtIndex(rowIndex) : items[rowIndex];
 
     if (!book) {
-      return null;
+      // Placeholder while the page holding this row loads.
+      return (
+        <div
+          key={key}
+          style={style}
+        />
+      );
     }
 
     return (
@@ -188,6 +202,7 @@ class BookIndexOverviews extends Component {
           longDateFormat={longDateFormat}
           timeFormat={timeFormat}
           isSmallScreen={isSmallScreen}
+          book={getBookAtIndex ? book : undefined}
           bookId={book.id}
           authorId={book.authorId}
           isSelected={selectedState[book.id]}
@@ -201,6 +216,14 @@ class BookIndexOverviews extends Component {
   //
   // Listeners
 
+  onSectionRendered = ({ rowOverscanStartIndex, rowOverscanStopIndex }) => {
+    const { onRowsRendered } = this.props;
+
+    if (onRowsRendered) {
+      onRowsRendered({ startIndex: rowOverscanStartIndex, stopIndex: rowOverscanStopIndex });
+    }
+  };
+
   onMeasure = ({ width }) => {
     this.calculateGrid(width, this.props.isSmallScreen);
   };
@@ -212,7 +235,10 @@ class BookIndexOverviews extends Component {
     const {
       items,
       isSmallScreen,
-      scroller
+      scroller,
+      rowCount,
+      getBookAtIndex,
+      dataVersion
     } = this.props;
 
     const {
@@ -241,7 +267,8 @@ class BookIndexOverviews extends Component {
                   height={height}
                   columnCount={1}
                   columnWidth={width}
-                  rowCount={items.length}
+                  rowCount={getBookAtIndex ? rowCount : items.length}
+                  dataVersion={dataVersion}
                   rowHeight={rowHeight}
                   width={width}
                   onScroll={onChildScroll}
@@ -276,7 +303,12 @@ BookIndexOverviews.propTypes = {
   timeFormat: PropTypes.string.isRequired,
   selectedState: PropTypes.object.isRequired,
   onSelectedChange: PropTypes.func.isRequired,
-  isEditorActive: PropTypes.bool.isRequired
+  isEditorActive: PropTypes.bool.isRequired,
+  rowCount: PropTypes.number,
+  getBookAtIndex: PropTypes.func,
+  dataVersion: PropTypes.number,
+  scrollToIndex: PropTypes.number,
+  onRowsRendered: PropTypes.func
 };
 
 export default BookIndexOverviews;

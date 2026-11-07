@@ -5,6 +5,17 @@ export const rootFolderMediaTypes = {
   EBOOK: 'ebook'
 };
 
+const rootFolderProfileFields = {
+  audiobook: {
+    quality: 'audiobookQualityProfileId',
+    metadata: 'audiobookMetadataProfileId'
+  },
+  ebook: {
+    quality: 'ebookQualityProfileId',
+    metadata: 'ebookMetadataProfileId'
+  }
+};
+
 export function cleanRootFolderPath(path) {
   if (!path) {
     return '';
@@ -23,6 +34,19 @@ export function cleanRootFolderPath(path) {
 
 export function rootFolderSupportsMediaType(rootFolder, mediaType) {
   return getRootFolderMediaTypes(rootFolder).includes(mediaType);
+}
+
+export function hasRootFolderProfileDefault(rootFolder, mediaType, profileType) {
+  const profileField = rootFolderProfileFields[mediaType]?.[profileType];
+
+  if (!profileField) {
+    return false;
+  }
+
+  const profileId = rootFolder?.[profileField] ?? rootFolder?.[mediaType]?.[`${profileType}ProfileId`];
+  const numericProfileId = Number(profileId);
+
+  return profileId != null && Number.isInteger(numericProfileId) && numericProfileId > 0;
 }
 
 export function getCompatibleRootFolders(rootFolders, mediaType) {

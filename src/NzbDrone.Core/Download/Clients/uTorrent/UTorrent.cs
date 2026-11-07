@@ -12,6 +12,7 @@ using NzbDrone.Core.Blocklisting;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.MediaFiles.TorrentInfo;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
@@ -43,8 +44,8 @@ namespace NzbDrone.Core.Download.Clients.UTorrent
         private string GetPostImportCategory(DownloadClientItem downloadClientItem)
         {
             return PostImportCategoryResolver.Resolve(downloadClientItem,
-                Settings.AudiobookCategory,
-                Settings.EbookCategory,
+                BookDownloadCategorySettings.GetCategory(Settings, BookMediaType.Audiobook),
+                BookDownloadCategorySettings.GetCategory(Settings, BookMediaType.Ebook),
                 Settings.AudiobookImportedCategory,
                 Settings.EbookImportedCategory);
         }
@@ -72,8 +73,8 @@ namespace NzbDrone.Core.Download.Clients.UTorrent
         public bool ShouldPreserveItemAfterImport(DownloadClientItem downloadClientItem)
         {
             return PostImportCategoryResolver.IsInResolvedPostImportCategory(downloadClientItem,
-                Settings.AudiobookCategory,
-                Settings.EbookCategory,
+                BookDownloadCategorySettings.GetCategory(Settings, BookMediaType.Audiobook),
+                BookDownloadCategorySettings.GetCategory(Settings, BookMediaType.Ebook),
                 Settings.AudiobookImportedCategory,
                 Settings.EbookImportedCategory);
         }
@@ -83,7 +84,7 @@ namespace NzbDrone.Core.Download.Clients.UTorrent
             _proxy.AddTorrentFromUrl(magnetLink, Settings);
             _proxy.SetTorrentSeedingConfiguration(hash, remoteBook.SeedConfiguration, Settings);
 
-            var category = remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? Settings.EbookCategory : Settings.AudiobookCategory;
+            var category = BookDownloadCategorySettings.GetCategory(Settings, remoteBook.GetPreferredMediaType());
             if (category.IsNotNullOrWhiteSpace())
             {
                 _proxy.SetTorrentLabel(hash, category, Settings);
@@ -107,7 +108,7 @@ namespace NzbDrone.Core.Download.Clients.UTorrent
             _proxy.AddTorrentFromFile(filename, fileContent, Settings);
             _proxy.SetTorrentSeedingConfiguration(hash, remoteBook.SeedConfiguration, Settings);
 
-            var category = remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? Settings.EbookCategory : Settings.AudiobookCategory;
+            var category = BookDownloadCategorySettings.GetCategory(Settings, remoteBook.GetPreferredMediaType());
             if (category.IsNotNullOrWhiteSpace())
             {
                 _proxy.SetTorrentLabel(hash, category, Settings);
@@ -131,10 +132,7 @@ namespace NzbDrone.Core.Download.Clients.UTorrent
         public override IEnumerable<DownloadClientItem> GetItems()
         {
             var torrents = GetTorrents();
-            var categories = new[] { Settings.AudiobookCategory, Settings.EbookCategory }
-                .Where(c => c.IsNotNullOrWhiteSpace())
-                .Distinct(StringComparer.InvariantCultureIgnoreCase)
-                .ToList();
+            var categories = BookDownloadCategorySettings.GetConfiguredCategories(Settings).ToList();
 
             var queueItems = new List<DownloadClientItem>();
 
@@ -210,7 +208,8 @@ namespace NzbDrone.Core.Download.Clients.UTorrent
         {
             List<UTorrentTorrent> torrents;
 
-            var cacheKey = string.Format("{0}:{1}:{2}", Settings.Host, Settings.Port, Settings.MusicCategory);
+            var categoriesKey = string.Join(",", BookDownloadCategorySettings.GetConfiguredCategories(Settings));
+            var cacheKey = string.Format("{0}:{1}:{2}", Settings.Host, Settings.Port, categoriesKey);
             var cache = _torrentCache.Find(cacheKey);
 
             var response = _proxy.GetTorrents(cache == null ? null : cache.CacheID, Settings);
@@ -262,10 +261,7 @@ namespace NzbDrone.Core.Download.Clients.UTorrent
 
                 if (config.GetValueOrDefault("dir_add_label") == "true")
                 {
-                    var categories = new[] { Settings.AudiobookCategory, Settings.EbookCategory }
-                        .Where(c => c.IsNotNullOrWhiteSpace())
-                        .Distinct(StringComparer.InvariantCultureIgnoreCase)
-                        .ToList();
+                    var categories = BookDownloadCategorySettings.GetConfiguredCategories(Settings).ToList();
 
                     if (categories.Any())
                     {

@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Core.Profiles.Metadata.Events;
 
@@ -14,6 +17,23 @@ namespace Chaptarr.Core.Test.Books
     [TestFixture]
     public class UpdateEditionSelectionOnMetadataProfileChangeServiceFixture
     {
+        private class RecordingCommandQueue : DispatchProxy
+        {
+            public List<Command> PushedCommands { get; } = new List<Command>();
+
+            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            {
+                if (string.Equals(targetMethod?.Name, nameof(IManageCommandQueue.Push), StringComparison.Ordinal) &&
+                    args?.FirstOrDefault() is Command command)
+                {
+                    PushedCommands.Add(command);
+                    return null;
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IManageCommandQueue.{targetMethod?.Name}");
+            }
+        }
+
         private sealed class StubAuthorService : IAuthorService
         {
             private readonly List<Author> _authors;
@@ -106,7 +126,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public Book AddWantedEdition(int bookId, int editionId, bool asNewVariant = false) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -140,7 +160,7 @@ namespace Chaptarr.Core.Test.Books
             public Edition GetEditionByOpenLibraryEditionId(string openLibraryEditionId) => throw new NotImplementedException();
             public Edition GetEditionByProviderAndId(string providerPrefix, string providerId) => throw new NotImplementedException();
             public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
-            public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
+            public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
             public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
@@ -190,7 +210,8 @@ namespace Chaptarr.Core.Test.Books
             StubAuthorService authorService,
             StubBookService bookService,
             StubEditionService editionService,
-            StubMediaFileService mediaFileService)
+            StubMediaFileService mediaFileService,
+            IManageCommandQueue commandQueueManager = null)
         {
             return new UpdateEditionSelectionOnMetadataProfileChangeService(
                 authorService,
@@ -199,7 +220,15 @@ namespace Chaptarr.Core.Test.Books
                 mediaFileService,
                 new EditionSelector(LogManager.GetCurrentClassLogger()),
                 new EditionMetadataProfileFilter(new TestTermMatcherService()),
+                commandQueueManager ?? DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueue>(),
                 LogManager.GetCurrentClassLogger());
+        }
+
+        private static IManageCommandQueue CreateRecordingCommandQueue(out RecordingCommandQueue recorder)
+        {
+            var commandQueue = DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueue>();
+            recorder = (RecordingCommandQueue)(object)commandQueue;
+            return commandQueue;
         }
 
         [Test]
@@ -297,11 +326,13 @@ namespace Chaptarr.Core.Test.Books
 
             var bookService = new StubBookService(book);
             var editionService = new StubEditionService(new Dictionary<int, List<Edition>> { [book.Id] = editions });
+            var commandQueue = CreateRecordingCommandQueue(out var commandQueueRecorder);
             var sut = CreateSut(
                 new StubAuthorService(author),
                 bookService,
                 editionService,
-                new StubMediaFileService());
+                new StubMediaFileService(),
+                commandQueue);
 
             sut.Handle(new MetadataProfileUpdatedEvent(profile, previousProfile));
 
@@ -310,6 +341,7 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(book.ForeignEditionId, Is.EqualTo("fra-audio"));
             Assert.That(editionService.UpdatedEditions, Is.Null);
             Assert.That(bookService.UpdatedBooks, Is.Empty);
+            Assert.That(commandQueueRecorder.PushedCommands, Is.Empty);
         }
 
         [Test]
@@ -345,6 +377,71 @@ namespace Chaptarr.Core.Test.Books
 
             Assert.That(editionService.UpdatedEditions, Is.Null);
             Assert.That(bookService.UpdatedBooks, Is.Empty);
+        }
+
+        [Test]
+        public void should_force_metadata_refresh_when_allowed_languages_expand()
+        {
+            var previousProfile = new MetadataProfile { Id = 17, Name = "Dutch", AllowedLanguages = "nld" };
+            var profile = new MetadataProfile { Id = 17, Name = "Dutch and English", AllowedLanguages = "nld,eng" };
+            var author = new Author { Id = 21, Name = "Karin Slaughter", EbookMetadataProfileId = profile.Id };
+            var commandQueue = CreateRecordingCommandQueue(out var commandQueueRecorder);
+            var sut = CreateSut(
+                new StubAuthorService(author),
+                new StubBookService(),
+                new StubEditionService(new Dictionary<int, List<Edition>>()),
+                new StubMediaFileService(),
+                commandQueue);
+
+            sut.Handle(new MetadataProfileUpdatedEvent(profile, previousProfile));
+
+            var command = commandQueueRecorder.PushedCommands.OfType<BulkRefreshAuthorCommand>().Single();
+            Assert.That(command.AuthorIds, Is.EqualTo(new[] { author.Id }));
+            Assert.That(command.RefreshMetadata, Is.True);
+            Assert.That(command.RescanFolders, Is.False);
+            Assert.That(command.ForceRefresh, Is.True);
+        }
+
+        [Test]
+        public void should_refresh_metadata_when_language_restrictions_are_cleared()
+        {
+            var previousProfile = new MetadataProfile { Id = 18, Name = "English", AllowedLanguages = "eng" };
+            var profile = new MetadataProfile { Id = 18, Name = "Any language", AllowedLanguages = string.Empty };
+            var author = new Author { Id = 22, Name = "Frank Herbert", AudiobookMetadataProfileId = profile.Id };
+            var commandQueue = CreateRecordingCommandQueue(out var commandQueueRecorder);
+            var sut = CreateSut(
+                new StubAuthorService(author),
+                new StubBookService(),
+                new StubEditionService(new Dictionary<int, List<Edition>>()),
+                new StubMediaFileService(),
+                commandQueue);
+
+            sut.Handle(new MetadataProfileUpdatedEvent(profile, previousProfile));
+
+            var command = commandQueueRecorder.PushedCommands.OfType<BulkRefreshAuthorCommand>().Single();
+            Assert.That(command.AuthorIds, Is.EqualTo(new[] { author.Id }));
+            Assert.That(command.RefreshMetadata, Is.True);
+            Assert.That(command.RescanFolders, Is.False);
+            Assert.That(command.ForceRefresh, Is.True);
+        }
+
+        [Test]
+        public void should_not_refresh_metadata_when_language_restrictions_narrow()
+        {
+            var previousProfile = new MetadataProfile { Id = 19, Name = "Any language", AllowedLanguages = string.Empty };
+            var profile = new MetadataProfile { Id = 19, Name = "English", AllowedLanguages = "eng" };
+            var author = new Author { Id = 23, Name = "Ursula K. Le Guin", EbookMetadataProfileId = profile.Id };
+            var commandQueue = CreateRecordingCommandQueue(out var commandQueueRecorder);
+            var sut = CreateSut(
+                new StubAuthorService(author),
+                new StubBookService(),
+                new StubEditionService(new Dictionary<int, List<Edition>>()),
+                new StubMediaFileService(),
+                commandQueue);
+
+            sut.Handle(new MetadataProfileUpdatedEvent(profile, previousProfile));
+
+            Assert.That(commandQueueRecorder.PushedCommands, Is.Empty);
         }
     }
 }

@@ -53,6 +53,7 @@ config.xml
 # Runtime data directory created when the app is started from a checkout.
 # Root-anchored so source directories named "config" are unaffected.
 /config/
+/secrets/
 *.pid
 appsettings.Development.json
 appsettings.Local.json
@@ -61,6 +62,8 @@ src/postgres.runsettings
 .env
 .env.local
 .env.*.local
+.env.sixlabors
+sixlabors.lic
 
 # Test artifacts
 test/
@@ -86,6 +89,10 @@ build.log
 
 # SQL dumps
 *.sql
+!src/Chaptarr.Core.Test/Datastore/Fixtures/BookshelfNG.PopulatedMigration158.sql
+!src/Chaptarr.Core.Test/Datastore/Fixtures/BookshelfNG.Schema.158.sql
+!integration/standalone-handoff/fixtures/BookshelfNG.cache.158.sql
+!integration/standalone-handoff/fixtures/BookshelfNG.logs.158.sql
 
 # Databases
 # The -wal/-shm sidecars carry the freshest rows, so ignoring only *.db is not enough.
@@ -141,6 +148,7 @@ Logo/*
 !src/NzbDrone.Core/Resources/**/*.svg
 !Logo/**/*.png
 !Logo/**/*.svg
+!packaging/legacy/startos/candidate/icon.png
 !Logo/**/*.ico
 
 # Generated docs
@@ -150,3 +158,6 @@ docs/api/
 Tools/ffmpeg/*/
 Tools/ffprobe/*/
 !Tools/README.md
+
+# Local dependency links
+node_modules

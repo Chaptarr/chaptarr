@@ -1,0 +1,175 @@
+%global _libdir /usr/lib
+%{!?_unitdir:%global _unitdir /usr/lib/systemd/system}
+# This self-contained release has no separate debuginfo sources.
+%global debug_package %{nil}
+# The archive ships Playwright's Node runtime; playwright.ps1 is Windows-only.
+%global __requires_exclude ^(liblttng-ust[.]so[.]0.*|/usr/bin/(node|pwsh))$
+
+Name:           bookshelfng
+Version:        __VERSION__
+Release:        1%{?dist}
+Summary:        BookshelfNG package identity carrying the standard ChaptarrNG application
+License:        GPL-3.0-only
+URL:            https://github.com/snapetech/chaptarrng
+Source0:        https://github.com/snapetech/chaptarrng/releases/download/v%{version}/ChaptarrNG-%{version}-linux-x64.tar.gz
+Source1:        bookshelfng.service
+Source2:        bookshelfng.sysusers
+Source3:        bookshelfng.tmpfiles
+Source4:        bookshelfng.env
+Source5:        chaptarrng.package_info
+Source6:        bookshelfng-healthcheck
+Source7:        bookshelfng-begin
+Source8:        bookshelfng-cleanup
+Source9:        bookshelfng-rollback
+Source10:       bookshelfng-prepare
+Source11:       bookshelfng-journal
+Source12:       bookshelfng-finalize
+BuildArch:      x86_64
+Requires:       glibc
+Requires:       libgcc
+Requires:       libstdc++
+Requires:       libicu
+Requires:       openssl-libs
+Requires:       python3
+Requires:       sqlite-libs
+Requires:       util-linux
+Requires:       zlib
+Requires(post): systemd
+Requires(preun): systemd
+Requires(postun): systemd
+Conflicts:      chaptarrng
+
+%description
+This transition package keeps the installed BookshelfNG RPM identity and data
+directory while installing the ordinary ChaptarrNG release payload. ChaptarrNG
+converts supported BookshelfNG SQLite data during normal startup and retains a
+source database backup.
+
+%prep
+%setup -q -c -T
+tar -xzf %{SOURCE0} --strip-components=1 -C .
+
+%build
+
+%install
+install -d %{buildroot}/usr/lib/chaptarrng/bin
+install -d %{buildroot}/usr/lib/chaptarrng/handoff
+install -d %{buildroot}%{_bindir} %{buildroot}%{_licensedir}/bookshelfng
+install -d %{buildroot}%{_sysconfdir}/bookshelfng %{buildroot}%{_unitdir}
+install -d %{buildroot}%{_prefix}/lib/sysusers.d %{buildroot}%{_prefix}/lib/tmpfiles.d
+cp -a ./. %{buildroot}/usr/lib/chaptarrng/bin/
+install -m 0644 %{SOURCE1} %{buildroot}%{_unitdir}/bookshelfng.service
+install -m 0644 %{SOURCE2} %{buildroot}%{_prefix}/lib/sysusers.d/bookshelfng.conf
+install -m 0644 %{SOURCE3} %{buildroot}%{_prefix}/lib/tmpfiles.d/bookshelfng.conf
+install -m 0600 %{SOURCE4} %{buildroot}%{_sysconfdir}/bookshelfng/bookshelfng.env
+install -m 0644 %{SOURCE5} %{buildroot}/usr/lib/chaptarrng/package_info
+install -m 0755 %{SOURCE6} %{buildroot}/usr/lib/chaptarrng/handoff/bookshelfng-healthcheck
+install -m 0755 %{SOURCE7} %{buildroot}/usr/lib/chaptarrng/handoff/bookshelfng-begin
+install -m 0755 %{SOURCE8} %{buildroot}/usr/lib/chaptarrng/handoff/bookshelfng-cleanup
+install -m 0755 %{SOURCE9} %{buildroot}/usr/lib/chaptarrng/handoff/bookshelfng-rollback
+install -m 0755 %{SOURCE10} %{buildroot}/usr/lib/chaptarrng/handoff/bookshelfng-prepare
+install -m 0755 %{SOURCE11} %{buildroot}/usr/lib/chaptarrng/handoff/bookshelfng-journal
+install -m 0755 %{SOURCE12} %{buildroot}/usr/lib/chaptarrng/handoff/bookshelfng-finalize
+install -m 0644 LICENSE %{buildroot}%{_licensedir}/bookshelfng/LICENSE
+ln -s ../lib/chaptarrng/bin/Chaptarr %{buildroot}%{_bindir}/bookshelfng
+chmod -R u=rwX,go=rX %{buildroot}/usr/lib/chaptarrng
+
+%pre
+set -e
+bookshelfng_has_controlling_tty() {
+    ( : </dev/tty >/dev/tty ) 2>/dev/null
+}
+if [ ! -e /usr/lib/chaptarrng/package_info ] && [ -x /usr/lib/bookshelfng/Readarr ]; then
+    migration_mode=${BOOKSHELFNG_MIGRATION_MODE:-automatic}
+    case "$migration_mode" in
+      automatic) ;;
+      manual)
+        echo 'BookshelfNG replacement cancelled before changes. Review docs/MIGRATE_FROM_BOOKSHELFNG.md and run the ChaptarrNG Console migration commands when ready.' >&2
+        exit 1
+        ;;
+      ask)
+        if ! bookshelfng_has_controlling_tty; then
+          echo 'Interactive migration choice requested but no terminal is available. Set BOOKSHELFNG_MIGRATION_MODE=automatic or manual.' >&2
+          exit 1
+        fi
+        printf 'Replace BookshelfNG with ChaptarrNG now? A still-legacy database will be migrated automatically. [y/N] ' >/dev/tty
+        IFS= read -r migration_choice </dev/tty || migration_choice=
+        case "$migration_choice" in
+          y|Y|yes|YES|Yes) ;;
+          *) echo 'BookshelfNG replacement cancelled; the service and data were left untouched.' >&2; exit 1 ;;
+        esac
+        ;;
+      *)
+        echo 'BOOKSHELFNG_MIGRATION_MODE must be automatic, ask, or manual.' >&2
+        exit 1
+        ;;
+    esac
+  install -d -m 0750 /var/lib/bookshelfng
+  handoff_dir=/var/lib/bookshelfng/.chaptarrng-bookshelfng-handoff
+  if [ ! -f "$handoff_dir/snapshot-ready" ]; then
+    rm -rf "$handoff_dir"
+    install -d -m 0700 "$handoff_dir"
+    cp -a /usr/lib/bookshelfng "$handoff_dir/source-app"
+    for candidate in /lib/systemd/system/bookshelfng.service /usr/lib/systemd/system/bookshelfng.service; do
+      if [ -f "$candidate" ]; then
+        cp -a "$candidate" "$handoff_dir/source-unit"
+        printf '%s\n' "$candidate" > "$handoff_dir/source-unit-path"
+        break
+      fi
+    done
+    if [ -e /usr/bin/bookshelfng ] || [ -L /usr/bin/bookshelfng ]; then
+      cp -a /usr/bin/bookshelfng "$handoff_dir/source-bin-entry"
+    else
+      touch "$handoff_dir/source-bin-entry-absent"
+    fi
+    touch "$handoff_dir/snapshot-ready"
+  fi
+  touch /var/lib/bookshelfng/.chaptarrng-bookshelfng-migration-pending
+  chmod 0600 /var/lib/bookshelfng/.chaptarrng-bookshelfng-migration-pending
+fi
+if systemctl is-active --quiet bookshelfng.service; then
+  touch /run/bookshelfng-package-was-active
+  systemctl stop bookshelfng.service
+fi
+getent group bookshelfng >/dev/null || groupadd --system bookshelfng
+getent passwd bookshelfng >/dev/null || useradd --system --gid bookshelfng --home-dir /var/lib/bookshelfng --shell /sbin/nologin bookshelfng
+
+%post
+set -e
+systemd-sysusers
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/bookshelfng.conf
+systemctl daemon-reload >/dev/null 2>&1 || :
+
+%posttrans
+set -e
+/usr/lib/chaptarrng/handoff/bookshelfng-prepare
+if [ -e /run/bookshelfng-package-was-active ]; then
+  systemctl start bookshelfng.service
+  if [ -f /var/lib/bookshelfng/.chaptarrng-bookshelfng-migration-pending ] &&
+     [ "$(cat /var/lib/bookshelfng/.chaptarrng-bookshelfng-handoff-status 2>/dev/null || true)" = starting ]; then
+    if ! /usr/lib/chaptarrng/handoff/bookshelfng-finalize; then
+      systemctl stop bookshelfng.service >/dev/null 2>&1 || :
+      rm -f /run/bookshelfng-package-was-active
+      exit 1
+    fi
+    /usr/lib/chaptarrng/handoff/bookshelfng-cleanup
+  fi
+  rm -f /run/bookshelfng-package-was-active
+fi
+
+%preun
+if [ "$1" -eq 0 ]; then
+  systemctl disable --now bookshelfng.service >/dev/null 2>&1 || :
+fi
+
+%postun
+systemctl daemon-reload >/dev/null 2>&1 || :
+
+%files
+%license %{_licensedir}/bookshelfng/LICENSE
+%config(noreplace) %{_sysconfdir}/bookshelfng/bookshelfng.env
+%{_bindir}/bookshelfng
+/usr/lib/chaptarrng/
+%{_unitdir}/bookshelfng.service
+%{_prefix}/lib/sysusers.d/bookshelfng.conf
+%{_prefix}/lib/tmpfiles.d/bookshelfng.conf

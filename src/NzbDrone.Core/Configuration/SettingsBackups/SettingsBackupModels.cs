@@ -40,6 +40,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
         public MediaManagementBackup MediaManagement { get; set; }
         public string MetadataServerUrl { get; set; }
         public string MetadataSource { get; set; }
+        public string AudibleMarketplace { get; set; }
         public HardcoverSettingsBackup Hardcover { get; set; }
 
         public List<RemotePathMappingBackup> RemotePathMappings { get; set; } = new();
@@ -222,6 +223,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
         public bool PreferCustomFormatsOverQuality { get; set; }
         public bool ConvertMp3ToM4b { get; set; }
         public int? ConvertToQualityId { get; set; }
+        public bool MergeMultiPartFiles { get; set; }
         public int Cutoff { get; set; }
         public int MinFormatScore { get; set; }
         public int CutoffFormatScore { get; set; }
@@ -260,8 +262,10 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
         public bool SkipFreeSpaceCheckWhenImporting { get; set; }
         public int MinimumFreeSpaceWhenImporting { get; set; }
         public bool CopyUsingHardlinks { get; set; }
+        public bool KeepExistingLibraryFileOnImportConflict { get; set; }
         public bool ImportExtraFiles { get; set; }
         public string ExtraFileExtensions { get; set; }
+        public bool MoveExtraFilesOnRename { get; set; }
 
         public int AudiobookConversionConcurrentConversions { get; set; }
         public int AudiobookConversionMaxBitrate { get; set; }

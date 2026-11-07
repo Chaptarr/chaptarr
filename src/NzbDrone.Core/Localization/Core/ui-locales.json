@@ -1,0 +1,343 @@
+{
+  "version": 1,
+  "localeSet": "PlezyNG-compatible",
+  "locales": [
+    {
+      "id": 1,
+      "tag": "en",
+      "name": "English",
+      "file": "en",
+      "direction": "ltr",
+      "englishName": "English",
+      "uiSelectable": true
+    },
+    {
+      "id": 31,
+      "tag": "ar",
+      "name": "العربية",
+      "file": "ar",
+      "direction": "rtl",
+      "englishName": "Arabic",
+      "uiSelectable": true
+    },
+    {
+      "id": 1001,
+      "tag": "az",
+      "name": "azərbaycan dili",
+      "file": "az",
+      "direction": "ltr",
+      "englishName": "Azerbaijani",
+      "uiSelectable": false
+    },
+    {
+      "id": 29,
+      "tag": "bg",
+      "name": "български",
+      "file": "bg",
+      "direction": "ltr",
+      "englishName": "Bulgarian",
+      "uiSelectable": true
+    },
+    {
+      "id": 1002,
+      "tag": "bn",
+      "name": "বাংলা",
+      "file": "bn",
+      "direction": "ltr",
+      "englishName": "Bengali",
+      "uiSelectable": true
+    },
+    {
+      "id": 25,
+      "tag": "cs",
+      "name": "čeština",
+      "file": "cs",
+      "direction": "ltr",
+      "englishName": "Czech",
+      "uiSelectable": true
+    },
+    {
+      "id": 6,
+      "tag": "da",
+      "name": "dansk",
+      "file": "da",
+      "direction": "ltr",
+      "englishName": "Danish",
+      "uiSelectable": true
+    },
+    {
+      "id": 4,
+      "tag": "de",
+      "name": "Deutsch",
+      "file": "de",
+      "direction": "ltr",
+      "englishName": "German",
+      "uiSelectable": true
+    },
+    {
+      "id": 3,
+      "tag": "es",
+      "name": "español",
+      "file": "es",
+      "direction": "ltr",
+      "englishName": "Spanish",
+      "uiSelectable": true
+    },
+    {
+      "id": 1003,
+      "tag": "fa",
+      "name": "فارسی",
+      "file": "fa",
+      "direction": "rtl",
+      "englishName": "Persian",
+      "uiSelectable": true
+    },
+    {
+      "id": 2,
+      "tag": "fr",
+      "name": "français",
+      "file": "fr",
+      "direction": "ltr",
+      "englishName": "French",
+      "uiSelectable": true
+    },
+    {
+      "id": 23,
+      "tag": "he",
+      "name": "עברית",
+      "file": "he",
+      "direction": "rtl",
+      "englishName": "Hebrew",
+      "uiSelectable": true
+    },
+    {
+      "id": 26,
+      "tag": "hi",
+      "name": "हिन्दी",
+      "file": "hi",
+      "direction": "ltr",
+      "englishName": "Hindi",
+      "uiSelectable": true
+    },
+    {
+      "id": 22,
+      "tag": "hu",
+      "name": "magyar",
+      "file": "hu",
+      "direction": "ltr",
+      "englishName": "Hungarian",
+      "uiSelectable": true
+    },
+    {
+      "id": 32,
+      "tag": "id",
+      "name": "Bahasa Indonesia",
+      "file": "id",
+      "direction": "ltr",
+      "englishName": "Indonesian",
+      "uiSelectable": true
+    },
+    {
+      "id": 5,
+      "tag": "it",
+      "name": "italiano",
+      "file": "it",
+      "direction": "ltr",
+      "englishName": "Italian",
+      "uiSelectable": true
+    },
+    {
+      "id": 8,
+      "tag": "ja",
+      "name": "日本語",
+      "file": "ja",
+      "direction": "ltr",
+      "englishName": "Japanese",
+      "uiSelectable": true
+    },
+    {
+      "id": 1004,
+      "tag": "kk",
+      "name": "қазақ тілі",
+      "file": "kk",
+      "direction": "ltr",
+      "englishName": "Kazakh",
+      "uiSelectable": false
+    },
+    {
+      "id": 21,
+      "tag": "ko",
+      "name": "한국어",
+      "file": "ko",
+      "direction": "ltr",
+      "englishName": "Korean",
+      "uiSelectable": true
+    },
+    {
+      "id": 1005,
+      "tag": "ms",
+      "name": "Bahasa Melayu",
+      "file": "ms",
+      "direction": "ltr",
+      "englishName": "Malay",
+      "uiSelectable": false
+    },
+    {
+      "id": 15,
+      "tag": "nb",
+      "name": "norsk bokmål",
+      "file": "nb_NO",
+      "direction": "ltr",
+      "englishName": "Norwegian Bokmål",
+      "uiSelectable": true
+    },
+    {
+      "id": 7,
+      "tag": "nl",
+      "name": "Nederlands",
+      "file": "nl",
+      "direction": "ltr",
+      "englishName": "Dutch",
+      "uiSelectable": true
+    },
+    {
+      "id": 12,
+      "tag": "pl",
+      "name": "polski",
+      "file": "pl",
+      "direction": "ltr",
+      "englishName": "Polish",
+      "uiSelectable": true
+    },
+    {
+      "id": 18,
+      "tag": "pt",
+      "name": "português",
+      "file": "pt",
+      "direction": "ltr",
+      "englishName": "Portuguese",
+      "uiSelectable": true
+    },
+    {
+      "id": 11,
+      "tag": "ru",
+      "name": "русский",
+      "file": "ru",
+      "direction": "ltr",
+      "englishName": "Russian",
+      "uiSelectable": true
+    },
+    {
+      "id": 14,
+      "tag": "sv",
+      "name": "svenska",
+      "file": "sv",
+      "direction": "ltr",
+      "englishName": "Swedish",
+      "uiSelectable": true
+    },
+    {
+      "id": 28,
+      "tag": "th",
+      "name": "ไทย",
+      "file": "th",
+      "direction": "ltr",
+      "englishName": "Thai",
+      "uiSelectable": true
+    },
+    {
+      "id": 17,
+      "tag": "tr",
+      "name": "Türkçe",
+      "file": "tr",
+      "direction": "ltr",
+      "englishName": "Turkish",
+      "uiSelectable": true
+    },
+    {
+      "id": 1006,
+      "tag": "uk",
+      "name": "українська",
+      "file": "uk",
+      "direction": "ltr",
+      "englishName": "Ukrainian",
+      "uiSelectable": true
+    },
+    {
+      "id": 1007,
+      "tag": "uz",
+      "name": "o‘zbek",
+      "file": "uz",
+      "direction": "ltr",
+      "englishName": "Uzbek",
+      "uiSelectable": false
+    },
+    {
+      "id": 13,
+      "tag": "vi",
+      "name": "Tiếng Việt",
+      "file": "vi",
+      "direction": "ltr",
+      "englishName": "Vietnamese",
+      "uiSelectable": true
+    },
+    {
+      "id": 10,
+      "tag": "zh-Hans",
+      "name": "简体中文",
+      "file": "zh_CN",
+      "direction": "ltr",
+      "englishName": "Simplified Chinese",
+      "uiSelectable": true
+    },
+    {
+      "id": 1008,
+      "tag": "es-419",
+      "name": "español (Latinoamérica)",
+      "file": "es_419",
+      "fallback": "es",
+      "direction": "ltr",
+      "englishName": "Latin American Spanish",
+      "uiSelectable": true
+    },
+    {
+      "id": 1009,
+      "tag": "fr-CA",
+      "name": "français (Canada)",
+      "file": "fr_CA",
+      "fallback": "fr",
+      "direction": "ltr",
+      "englishName": "Canadian French",
+      "uiSelectable": true
+    },
+    {
+      "id": 30,
+      "tag": "pt-BR",
+      "name": "português (Brasil)",
+      "file": "pt_BR",
+      "fallback": "pt",
+      "direction": "ltr",
+      "englishName": "Brazilian Portuguese",
+      "uiSelectable": true
+    },
+    {
+      "id": 1010,
+      "tag": "pt-PT",
+      "name": "português (Portugal)",
+      "file": "pt_PT",
+      "fallback": "pt",
+      "direction": "ltr",
+      "englishName": "European Portuguese",
+      "uiSelectable": true
+    },
+    {
+      "id": 33,
+      "tag": "zh-Hant",
+      "name": "繁體中文",
+      "file": "zh_TW",
+      "direction": "ltr",
+      "englishName": "Traditional Chinese",
+      "uiSelectable": true
+    }
+  ]
+}

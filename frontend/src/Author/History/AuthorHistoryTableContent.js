@@ -2,10 +2,12 @@ import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
 import Icon from 'Components/Icon';
+import Button from 'Components/Link/Button';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import Table from 'Components/Table/Table';
 import TableBody from 'Components/Table/TableBody';
 import { icons, kinds } from 'Helpers/Props';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import AuthorHistoryRowConnector from './AuthorHistoryRowConnector';
 import styles from './AuthorHistoryTableContent.css';
@@ -68,6 +70,7 @@ class AuthorHistoryTableContent extends Component {
       isPopulated,
       error,
       items,
+      onRetryPress,
       onMarkAsFailedPress
     } = this.props;
 
@@ -83,8 +86,11 @@ class AuthorHistoryTableContent extends Component {
 
         {
           !isFetching && !!error &&
-            <Alert kind={kinds.DANGER}>
-              {translate('UnableToLoadHistory')}
+            <Alert kind={kinds.DANGER} role="alert">
+              <div>{getErrorMessage(error, translate('UnableToLoadHistory'))}</div>
+              <Button size="small" onPress={onRetryPress}>
+                {translate('Retry')}
+              </Button>
             </Alert>
         }
 
@@ -125,6 +131,7 @@ AuthorHistoryTableContent.propTypes = {
   isPopulated: PropTypes.bool.isRequired,
   error: PropTypes.object,
   items: PropTypes.arrayOf(PropTypes.object).isRequired,
+  onRetryPress: PropTypes.func.isRequired,
   onMarkAsFailedPress: PropTypes.func.isRequired
 };
 

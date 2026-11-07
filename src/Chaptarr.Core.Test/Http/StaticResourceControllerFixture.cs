@@ -31,6 +31,15 @@ namespace Chaptarr.Core.Test.Http
         }
 
         [Test]
+        public void controller_should_allow_cookie_redirects_for_static_ui_routes()
+        {
+            var attributes = typeof(StaticResourceController)
+                .GetCustomAttributes(typeof(AllowCookieRedirectAttribute), inherit: true);
+
+            Assert.That(attributes, Has.Length.EqualTo(1));
+        }
+
+        [Test]
         public void index_routes_should_keep_api_and_feed_exclusions_anchored_to_path_segments()
         {
             var indexTemplates = typeof(StaticResourceController)
@@ -91,6 +100,71 @@ namespace Chaptarr.Core.Test.Http
             var result = controller.Index("missing.js");
 
             Assert.That(result, Is.TypeOf<NotFoundResult>());
+        }
+
+        [TestCase(false, "/MediaCover/21/poster.jpg")]
+        [TestCase(true, "/MediaCover/Books/21/poster.jpg")]
+        public void cached_covers_should_use_the_existing_mapper(bool book, string expectedPath)
+        {
+            var mapper = new StubMapper
+            {
+                CanHandleFunc = path => path == expectedPath,
+                GetResponseFunc = _ => new FileContentResult(new byte[] { 1 }, "image/jpeg")
+            };
+            var controller = CreateController(mapper);
+
+            var result = book ? controller.BookCover(21, "poster.jpg") : controller.AuthorCover(21, "poster.jpg");
+
+            Assert.That(result, Is.TypeOf<FileContentResult>());
+            Assert.That(mapper.GetResponseCalls, Is.EqualTo(1));
+        }
+
+        [TestCase(0, "poster.jpg")]
+        [TestCase(21, "../config.xml")]
+        [TestCase(21, "..\\poster.jpg")]
+        [TestCase(21, "config.xml")]
+        [TestCase(21, "poster.jpg?path=config.xml")]
+        public void cached_cover_routes_should_reject_unsafe_or_non_image_paths(int id, string filename)
+        {
+            var mapper = new StubMapper { CanHandleFunc = _ => true };
+            var controller = CreateController(mapper);
+
+            Assert.That(controller.AuthorCover(id, filename), Is.TypeOf<NotFoundResult>());
+            Assert.That(controller.BookCover(id, filename), Is.TypeOf<NotFoundResult>());
+            Assert.That(mapper.GetResponseCalls, Is.Zero);
+        }
+
+        [Test]
+        public void registered_proxy_cover_should_use_existing_image_mapper_and_api_authentication()
+        {
+            var hash = new string('a', 64);
+            var expectedPath = "/MediaCoverProxy/" + hash + "/cover.jpg";
+            var mapper = new StubMapper
+            {
+                CanHandleFunc = path => path == expectedPath,
+                GetResponseFunc = _ => new FileContentResult(new byte[] { 1 }, "image/jpeg")
+            };
+            var controller = CreateController(mapper);
+            Assert.That(controller.RegisteredProxyCover(hash, "cover.jpg"), Is.TypeOf<FileContentResult>());
+            Assert.That(mapper.GetResponseCalls, Is.EqualTo(1));
+            var method = typeof(StaticResourceController).GetMethod(nameof(StaticResourceController.RegisteredProxyCover));
+            var auth = method.GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), false)
+                .Cast<Microsoft.AspNetCore.Authorization.AuthorizeAttribute>().Single();
+            Assert.That(auth.AuthenticationSchemes, Is.EqualTo("API"));
+        }
+
+        [TestCase("short", "cover.jpg")]
+        [TestCase("", "cover.jpg")]
+        [TestCase(null, "cover.jpg")]
+        [TestCase("gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg", "cover.jpg")]
+        [TestCase("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "config.xml")]
+        [TestCase("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "../cover.jpg")]
+        [TestCase("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "cover.jpg?x=config.xml")]
+        public void registered_proxy_cover_should_reject_unsafe_paths(string hash, string filename)
+        {
+            var mapper = new StubMapper { CanHandleFunc = _ => true };
+            Assert.That(CreateController(mapper).RegisteredProxyCover(hash, filename), Is.TypeOf<NotFoundResult>());
+            Assert.That(mapper.GetResponseCalls, Is.Zero);
         }
 
         private static StaticResourceController CreateController(params IMapHttpRequestsToDisk[] mappers)

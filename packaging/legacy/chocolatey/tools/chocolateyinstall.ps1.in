@@ -1,0 +1,1403 @@
+$ErrorActionPreference = 'Stop'
+
+$installRoot = Join-Path $env:ProgramData 'BookshelfNG'
+$appDir = Join-Path $installRoot 'app'
+$stageDir = Join-Path $installRoot 'app.new'
+$backupDir = Join-Path $installRoot 'app.previous'
+$binDir = Join-Path $appDir 'bin'
+$dataDir = Join-Path $installRoot 'data'
+$exePath = Join-Path $binDir 'Chaptarr.Console.exe'
+$archivePath = Join-Path $installRoot 'ChaptarrNG-__VERSION__-win-x64.zip'
+$archiveUrl = 'https://github.com/snapetech/chaptarrng/releases/download/v__VERSION__/ChaptarrNG-__VERSION__-win-x64.zip'
+$handoffDirectory = Join-Path $installRoot 'handoff'
+$handoffManifestPath = Join-Path $handoffDirectory 'bookshelfng-migration-handoff.json'
+$recoveryScriptPath = Join-Path $handoffDirectory 'bookshelfng-startup-recovery.ps1'
+$recoveryTaskName = 'ChaptarrNG-BookshelfNG-Migration-Recovery'
+$handoffTimeoutSeconds = 14700
+$handoffTaskTimeoutMinutes = 510
+$testArchivePath = [Environment]::GetEnvironmentVariable('CHAPTARRNG_TEST_ARCHIVE_PATH', 'Process')
+$testHandoffFailure = [Environment]::GetEnvironmentVariable('CHAPTARRNG_TEST_FAIL_HANDOFF', 'Process')
+if (-not [string]::IsNullOrWhiteSpace($testHandoffFailure)) {
+  if ($testHandoffFailure -ne 'after-migration-health') {
+    throw 'CHAPTARRNG_TEST_FAIL_HANDOFF only accepts after-migration-health.'
+  }
+  if ([string]::IsNullOrWhiteSpace($testArchivePath)) {
+    throw 'The private Windows acceptance rollback injection requires a checksum-pinned test archive.'
+  }
+}
+$configuredHandoffTimeout = [Environment]::GetEnvironmentVariable('CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS', 'Process')
+if (-not [string]::IsNullOrWhiteSpace($configuredHandoffTimeout)) {
+  $parsedHandoffTimeout = 0
+  if (-not [int]::TryParse($configuredHandoffTimeout, [Globalization.NumberStyles]::None, [Globalization.CultureInfo]::InvariantCulture, [ref] $parsedHandoffTimeout) -or
+      $parsedHandoffTimeout -lt 1 -or $parsedHandoffTimeout -gt 14700) {
+    throw 'CHAPTARR_BOOKSHELF_HANDOFF_TIMEOUT_SECONDS must be an integer from 1 to 14700.'
+  }
+  $handoffTimeoutSeconds = $parsedHandoffTimeout
+}
+
+$nssm = Get-Command nssm.exe -ErrorAction Stop
+$packageParameters = ''
+if ($env:ChocolateyPackageParameters) {
+  $packageParameters = $env:ChocolateyPackageParameters.Trim().Trim('"').Trim("'")
+}
+$requestedProviderMode = $null
+$requestedMigrationMode = 'automatic'
+if (-not [string]::IsNullOrWhiteSpace($packageParameters)) {
+  $seenParameters = @{}
+  foreach ($parameter in ($packageParameters -split '\s+' | Where-Object { $_ })) {
+    $parameterMatch = [regex]::Match($parameter, '(?i)^[/-](?<name>ProviderMode|MigrationMode)\s*[:=]\s*(?<value>[^\s]+)$')
+    if (-not $parameterMatch.Success) {
+      throw "Unsupported bookshelfng package parameter '$parameter'. Use /ProviderMode=Hardcover|Goodreads and /MigrationMode=automatic|ask|manual."
+    }
+    $name = $parameterMatch.Groups['name'].Value.ToLowerInvariant()
+    if ($seenParameters.ContainsKey($name)) {
+      throw "The bookshelfng package parameter $name was specified more than once."
+    }
+    $seenParameters[$name] = $parameterMatch.Groups['value'].Value
+  }
+
+  if ($seenParameters.ContainsKey('providermode')) {
+    if ($seenParameters['providermode'] -notmatch '^(?i:Hardcover|Goodreads)$') {
+      throw 'ProviderMode must be Hardcover or Goodreads.'
+    }
+    $requestedProviderMode = $seenParameters['providermode']
+  }
+  if ($seenParameters.ContainsKey('migrationmode')) {
+    if ($seenParameters['migrationmode'] -notmatch '^(?i:automatic|ask|manual)$') {
+      throw 'MigrationMode must be automatic, ask, or manual.'
+    }
+    $requestedMigrationMode = $seenParameters['migrationmode'].ToLowerInvariant()
+  }
+}
+
+function Confirm-BookshelfMigrationChoice {
+  param(
+    [Parameter(Mandatory = $true)] [bool] $HasMigrationData,
+    [Parameter(Mandatory = $true)] [string] $Mode,
+    [bool] $InputIsRedirected = [Console]::IsInputRedirected,
+    [scriptblock] $Prompt = { param([string] $Message) Read-Host $Message }
+  )
+
+  if (-not $HasMigrationData) { return }
+  if ($Mode -eq 'manual') {
+    throw "MigrationMode=manual cancelled this package update before stopping BookshelfNG or changing its files. Use the ChaptarrNG Console migration commands in docs/MIGRATE_FROM_BOOKSHELFNG.md, then rerun the package update."
+  }
+  if ($Mode -eq 'ask') {
+    if ($InputIsRedirected) {
+      throw 'MigrationMode=ask requires an interactive terminal. No files, service settings, or databases were changed; rerun with MigrationMode=automatic or MigrationMode=manual.'
+    }
+
+    $migrationChoice = & $Prompt 'Replace BookshelfNG with ChaptarrNG now? A still-legacy database will be migrated automatically. [y/N]'
+    if ($migrationChoice -notmatch '^(?i:y|yes)$') {
+      throw 'BookshelfNG replacement cancelled before staging files or stopping the service. Run with MigrationMode=manual to review the independent migration steps.'
+    }
+  }
+}
+
+function Get-BookshelfServiceEnvironment {
+  param([Parameter(Mandatory = $true)] [string] $Setting)
+  $output = & $nssm.Source get BookshelfNG $Setting 2>$null
+  if ($LASTEXITCODE -ne 0) { return @() }
+  $text = $output | Out-String
+  return @($text -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^[^=]+=.*$' })
+}
+
+function Get-EnvironmentValue {
+  param(
+    [string[]] $Entries,
+    [Parameter(Mandatory = $true)] [string] $Name
+  )
+  $value = $null
+  foreach ($entry in $Entries) {
+    $separator = $entry.IndexOf('=')
+    if ($separator -gt 0 -and $entry.Substring(0, $separator).Equals($Name, [StringComparison]::OrdinalIgnoreCase)) {
+      $value = $entry.Substring($separator + 1)
+    }
+  }
+  return $value
+}
+
+function Get-ServiceDataDirectory {
+  param(
+    [string] $Parameters,
+    [string] $BaseDirectory,
+    [string] $Fallback
+  )
+  if ([string]::IsNullOrWhiteSpace($Parameters)) { return $Fallback }
+
+  $pattern = '(?i)(?:^|\s)(?:-data|--data)(?:=|\s+)(?:"(?<double>[^"]*)"|''(?<single>[^'']*)''|(?<plain>\S+))'
+  $matches = [regex]::Matches($Parameters, $pattern)
+  if ($matches.Count -eq 0) { return $Fallback }
+
+  $paths = @($matches | ForEach-Object {
+    if ($_.Groups['double'].Success) { $_.Groups['double'].Value }
+    elseif ($_.Groups['single'].Success) { $_.Groups['single'].Value }
+    else { $_.Groups['plain'].Value }
+  } | Select-Object -Unique)
+  if ($paths.Count -ne 1 -or [string]::IsNullOrWhiteSpace($paths[0])) {
+    throw 'The BookshelfNG service has conflicting or empty -data paths; the existing service was not changed.'
+  }
+
+  $path = [Environment]::ExpandEnvironmentVariables($paths[0])
+  if ([IO.Path]::IsPathRooted($path)) { return [IO.Path]::GetFullPath($path) }
+  $base = if ([string]::IsNullOrWhiteSpace($BaseDirectory)) { $installRoot } else { $BaseDirectory }
+  return [IO.Path]::GetFullPath((Join-Path $base $path))
+}
+
+function Get-BookshelfSqliteDatabaseNames {
+  param([Parameter(Mandatory = $true)] [string] $DataDirectory)
+  $result = @()
+  foreach ($name in @('readarr.db', 'audioarr.db')) {
+    $path = Join-Path $DataDirectory $name
+    $hasDurableSidecar = $false
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+      $file = Get-Item -LiteralPath $path -Force
+      if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "The BookshelfNG database '$name' is a reparse point. Resolve it to a regular file before updating."
+      }
+    } elseif (Test-Path -LiteralPath $path) {
+      throw "The BookshelfNG database '$name' is not a regular file. Resolve it before updating."
+    }
+
+    foreach ($suffix in @('-journal', '-wal', '-shm')) {
+      $sidecarPath = "$path$suffix"
+      if (Test-Path -LiteralPath $sidecarPath) {
+        $sidecar = Get-Item -LiteralPath $sidecarPath -Force
+        if (($sidecar.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $sidecar.PSIsContainer) {
+          throw "The BookshelfNG SQLite sidecar '$name$suffix' is not a regular file. Resolve it before updating."
+        }
+        if ($suffix -ne '-shm' -and $sidecar.Length -gt 0) { $hasDurableSidecar = $true }
+      }
+    }
+
+    if ((Test-Path -LiteralPath $path -PathType Leaf) -and ((Get-Item -LiteralPath $path -Force).Length -gt 0 -or $hasDurableSidecar)) {
+      $result += $name
+    } elseif ($hasDurableSidecar) {
+      # Include the source in the preview path so the converter reports a
+      # recoverable main-file/WAL inconsistency without discarding either side.
+      $result += $name
+    }
+  }
+  return $result
+}
+
+function Get-BookshelfSqliteBackupFiles {
+  param([Parameter(Mandatory = $true)] [string] $DataDirectory)
+  $prefixes = @(
+    'readarr.db.bookshelfng-backup-',
+    'audioarr.db.bookshelfng-backup-',
+    'chaptarr.db.bookshelfng-backup-'
+  )
+
+  return @(Get-ChildItem -LiteralPath $DataDirectory -File -Force -ErrorAction SilentlyContinue | Where-Object {
+    $name = $_.Name
+    if (-not $name.EndsWith('.db', [StringComparison]::OrdinalIgnoreCase)) { return $false }
+
+    foreach ($prefix in $prefixes) {
+      if ($name.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+
+    return $false
+  })
+}
+
+function Test-HasPopulatedSqliteDatabaseFamily {
+  param([Parameter(Mandatory = $true)] [string] $DatabasePath)
+  if ((Test-Path -LiteralPath $DatabasePath -PathType Leaf) -and
+      (Get-Item -LiteralPath $DatabasePath -Force).Length -gt 0) {
+    return $true
+  }
+
+  foreach ($suffix in @('-journal', '-wal')) {
+    $sidecarPath = "$DatabasePath$suffix"
+    if ((Test-Path -LiteralPath $sidecarPath -PathType Leaf) -and
+        (Get-Item -LiteralPath $sidecarPath -Force).Length -gt 0) {
+      return $true
+    }
+  }
+
+  return $false
+}
+
+function Resolve-ProviderMode {
+  param([string[]] $Entries)
+  if ($requestedProviderMode) { return $requestedProviderMode }
+
+  $hardcover = Get-EnvironmentValue $Entries 'HARDCOVER'
+  $native = Get-EnvironmentValue $Entries 'HARDCOVER_NATIVE'
+  if ($null -eq $hardcover) { $hardcover = [Environment]::GetEnvironmentVariable('HARDCOVER', 'Machine') }
+  if ($null -eq $native) { $native = [Environment]::GetEnvironmentVariable('HARDCOVER_NATIVE', 'Machine') }
+  if ($null -eq $hardcover) { $hardcover = $env:HARDCOVER }
+  if ($null -eq $native) { $native = $env:HARDCOVER_NATIVE }
+
+  if ($hardcover -eq 'true' -and $native -ne 'false') { return 'Hardcover' }
+  return 'Goodreads'
+}
+
+function Get-EffectiveEnvironment {
+  param([string[]] $Entries, [string] $ProviderMode)
+  $result = @($Entries)
+  if ($requestedProviderMode) {
+    $result = @($result | Where-Object { $_ -notmatch '(?i)^HARDCOVER(?:_NATIVE)?=' })
+    if ($ProviderMode -eq 'Hardcover') {
+      $result += 'HARDCOVER=true', 'HARDCOVER_NATIVE=true'
+    } else {
+      $result += 'HARDCOVER=false', 'HARDCOVER_NATIVE=false'
+    }
+  }
+  return $result
+}
+
+function Get-EffectiveExtraEnvironment {
+  param([string[]] $Entries, [string] $ProviderMode)
+  $result = @($Entries)
+  if ($requestedProviderMode) {
+    $result = @($result | Where-Object { $_ -notmatch '(?i)^HARDCOVER(?:_NATIVE)?=' })
+    if ($ProviderMode -eq 'Hardcover') {
+      $result += 'HARDCOVER=true', 'HARDCOVER_NATIVE=true'
+    } else {
+      $result += 'HARDCOVER=false', 'HARDCOVER_NATIVE=false'
+    }
+  }
+  return $result
+}
+
+function Get-ServerOverridesFromParameters {
+  param([string] $Parameters)
+  $names = @{
+    port = 'CHAPTARR__SERVER__PORT'
+    urlbase = 'CHAPTARR__SERVER__URLBASE'
+    bindaddress = 'CHAPTARR__SERVER__BINDADDRESS'
+    sslport = 'CHAPTARR__SERVER__SSLPORT'
+    sslcertpath = 'CHAPTARR__SERVER__SSLCERTPATH'
+    sslcertpassword = 'CHAPTARR__SERVER__SSLCERTPASSWORD'
+  }
+  $result = @{}
+  if ([string]::IsNullOrWhiteSpace($Parameters)) { return $result }
+
+  $pattern = '(?i)(?:^|\s)[/-](?<name>port|urlbase|bindaddress|sslport|sslcertpath|sslcertpassword)(?:=|\s+)(?:"(?<double>[^"]*)"|''(?<single>[^'']*)''|(?<plain>\S+))'
+  foreach ($match in [regex]::Matches($Parameters, $pattern)) {
+    $value = if ($match.Groups['double'].Success) { $match.Groups['double'].Value }
+      elseif ($match.Groups['single'].Success) { $match.Groups['single'].Value }
+      else { $match.Groups['plain'].Value }
+    $name = $match.Groups['name'].Value.ToLowerInvariant()
+    $result[$names[$name]] = $value
+  }
+
+  $enableSsl = [regex]::Match(
+    $Parameters,
+    '(?i)(?:^|\s)[/-]enablessl(?:\s*=\s*(?:"(?<double>true|false)"|''(?<single>true|false)''|(?<plain>true|false))|\s+(?:"(?<double>true|false)"|''(?<single>true|false)''|(?<plain>true|false)))?(?=\s|$)')
+  if ($enableSsl.Success) {
+    $value = if ($enableSsl.Groups['double'].Success) { $enableSsl.Groups['double'].Value }
+      elseif ($enableSsl.Groups['single'].Success) { $enableSsl.Groups['single'].Value }
+      elseif ($enableSsl.Groups['plain'].Success) { $enableSsl.Groups['plain'].Value }
+      else { 'true' }
+    $result['CHAPTARR__SERVER__ENABLESSL'] = $value
+  }
+  return $result
+}
+
+function Get-LocalHealthHost {
+  param([string] $BindAddress)
+  $value = if ($null -eq $BindAddress) { '' } else { $BindAddress.Trim() }
+  if ($value.StartsWith('[') -and $value.EndsWith(']')) { $value = $value.Substring(1, $value.Length - 2) }
+  if ([string]::IsNullOrWhiteSpace($value) -or $value -in @('*', '+', '0.0.0.0')) { return '127.0.0.1' }
+  if ($value -eq '::') { return '[::1]' }
+  if ($value -ieq 'localhost') { return '127.0.0.1' }
+
+  try {
+    $addresses = @([Net.Dns]::GetHostAddresses($value))
+  } catch {
+    throw "The configured BookshelfNG bind address '$value' could not be resolved for a local health check."
+  }
+  if ($addresses.Count -eq 0) { throw "The configured BookshelfNG bind address '$value' did not resolve for a local health check." }
+
+  $localAddresses = New-Object 'System.Collections.Generic.HashSet[System.Net.IPAddress]'
+  foreach ($network in [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+    foreach ($unicast in $network.GetIPProperties().UnicastAddresses) {
+      [void] $localAddresses.Add($unicast.Address)
+    }
+  }
+  foreach ($address in $addresses) {
+    if (-not [Net.IPAddress]::IsLoopback($address) -and -not $localAddresses.Contains($address)) {
+      throw "The configured BookshelfNG bind address '$value' resolves to an address that is not assigned to this machine."
+    }
+  }
+  $selected = $addresses[0]
+  if ($selected.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetworkV6) { return "[$($selected.ToString())]" }
+  return $selected.ToString()
+}
+
+function Invoke-BookshelfUtility {
+  param(
+    [Parameter(Mandatory = $true)] [string] $Executable,
+    [Parameter(Mandatory = $true)] [string[]] $Arguments,
+    [string[]] $EnvironmentEntries = @()
+  )
+  $originalValues = @{}
+  $originalNames = @{}
+  try {
+    foreach ($entry in $EnvironmentEntries) {
+      $separator = $entry.IndexOf('=')
+      if ($separator -le 0) { continue }
+      $name = $entry.Substring(0, $separator)
+      if (-not $originalNames.ContainsKey($name)) {
+        $originalNames[$name] = $true
+        $originalValues[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+      }
+      [Environment]::SetEnvironmentVariable($name, $entry.Substring($separator + 1), 'Process')
+    }
+
+    $utilityOutput = & $Executable @Arguments -exitimmediately 2>&1
+    $exitCode = $LASTEXITCODE
+    foreach ($line in $utilityOutput) {
+      Write-Host $line
+    }
+    return $exitCode
+  } finally {
+    foreach ($name in $originalNames.Keys) {
+      [Environment]::SetEnvironmentVariable($name, $originalValues[$name], 'Process')
+    }
+  }
+}
+
+function ConvertTo-WindowsNativeArgument {
+  param([AllowNull()][string] $Value)
+  if ($null -eq $Value) { return '""' }
+  if ($Value -notmatch '[\s"]') { return $Value }
+
+  $builder = New-Object System.Text.StringBuilder
+  [void] $builder.Append([char] 34)
+  $backslashCount = 0
+  foreach ($character in $Value.ToCharArray()) {
+    if ($character -eq [char] 92) {
+      $backslashCount++
+      continue
+    }
+    if ($character -eq [char] 34) {
+      if ($backslashCount -gt 0) {
+        [void] $builder.Append(('\' * (($backslashCount * 2) + 1)))
+      } else {
+        [void] $builder.Append('\')
+      }
+      [void] $builder.Append([char] 34)
+    } else {
+      if ($backslashCount -gt 0) { [void] $builder.Append(('\' * $backslashCount)) }
+      [void] $builder.Append($character)
+    }
+    $backslashCount = 0
+  }
+  if ($backslashCount -gt 0) { [void] $builder.Append(('\' * ($backslashCount * 2))) }
+  [void] $builder.Append([char] 34)
+  return $builder.ToString()
+}
+
+function Invoke-BookshelfNssm {
+  param([Parameter(Mandatory = $true)][string[]] $Arguments)
+  $argumentLine = (@($Arguments | ForEach-Object { ConvertTo-WindowsNativeArgument $_ }) -join ' ')
+  $process = Start-Process -FilePath $nssm.Source -ArgumentList $argumentLine -Wait -PassThru -NoNewWindow
+  try {
+    return [int] $process.ExitCode
+  } finally {
+    $process.Dispose()
+  }
+}
+
+function Set-BookshelfServiceSetting {
+  param(
+    [Parameter(Mandatory = $true)] [string] $Name,
+    [Parameter(Mandatory = $true)] [AllowEmptyString()] [AllowNull()] [string] $Value
+  )
+  if ([string]::IsNullOrEmpty($Value)) {
+    $exitCode = Invoke-BookshelfNssm -Arguments @('reset', 'BookshelfNG', $Name)
+  } else {
+    $exitCode = Invoke-BookshelfNssm -Arguments @('set', 'BookshelfNG', $Name, $Value)
+  }
+  if ($exitCode -ne 0) { throw "NSSM could not set BookshelfNG $Name (exit code $exitCode)." }
+}
+
+function Set-BookshelfServiceEnvironment {
+  param(
+    [Parameter(Mandatory = $true)] [string] $Setting,
+    [string[]] $Entries
+  )
+  if ($Entries.Count -gt 0) {
+    $arguments = @('set', 'BookshelfNG', $Setting) + $Entries
+  } else {
+    $arguments = @('reset', 'BookshelfNG', $Setting)
+  }
+  $exitCode = Invoke-BookshelfNssm -Arguments $arguments
+  if ($exitCode -ne 0) { throw "NSSM could not update the BookshelfNG service environment (exit code $exitCode)." }
+}
+
+function Test-BookshelfPostgresSource {
+  param([string[]] $EnvironmentEntries)
+  foreach ($prefix in @('CHAPTARR', 'READARR', 'AUDIOARR', 'BOOKSHELF')) {
+    $name = "${prefix}__POSTGRES__HOST"
+    $value = Get-EnvironmentValue $EnvironmentEntries $name
+    if ($null -ne $value) { return -not [string]::IsNullOrWhiteSpace($value) }
+  }
+  foreach ($scope in @('Process', 'Machine')) {
+    $variables = [Environment]::GetEnvironmentVariables($scope)
+    foreach ($prefix in @('CHAPTARR', 'READARR', 'AUDIOARR', 'BOOKSHELF')) {
+      $name = "${prefix}__POSTGRES__HOST"
+      if ($variables.Contains($name)) { return -not [string]::IsNullOrWhiteSpace([string] $variables[$name]) }
+    }
+  }
+
+  $configPath = Join-Path $dataDir 'config.xml'
+  if (Test-Path -LiteralPath $configPath) {
+    try {
+      [xml] $config = Get-Content -LiteralPath $configPath -Raw
+      $node = $config.SelectSingleNode("//*[local-name()='PostgresHost']")
+      if ($node -and -not [string]::IsNullOrWhiteSpace($node.InnerText)) { return $true }
+    } catch {
+      throw "The BookshelfNG config could not be read to determine its database type: $($_.Exception.Message)"
+    }
+  }
+
+  return $false
+}
+
+function Wait-BookshelfServiceReady {
+  param([string] $Url, [int] $TimeoutSeconds)
+  $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+  while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+    $current = Get-Service -Name 'BookshelfNG' -ErrorAction SilentlyContinue
+    if (-not $current -or $current.Status -ne 'Running') {
+      throw 'The ChaptarrNG process did not remain running under the BookshelfNG service identity.'
+    }
+    try {
+      $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 2 -MaximumRedirection 0
+      if ($response.StatusCode -eq 200) { return }
+    } catch { }
+    if ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) { Start-Sleep -Seconds 2 }
+  }
+  throw "ChaptarrNG did not return HTTP 200 from $Url within $TimeoutSeconds seconds."
+}
+
+function Write-BookshelfHandoffManifest {
+  param([object] $Manifest)
+  New-Item -ItemType Directory -Force -Path $handoffDirectory | Out-Null
+  & icacls.exe $handoffDirectory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)(F)' '*S-1-5-32-544:(OI)(CI)(F)' | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'Could not protect the Windows migration recovery directory.' }
+  $temporaryPath = "$handoffManifestPath.tmp-$([Guid]::NewGuid().ToString('N'))"
+  $Manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $temporaryPath -Encoding UTF8
+  Move-Item -LiteralPath $temporaryPath -Destination $handoffManifestPath -Force
+  & icacls.exe $handoffManifestPath /inheritance:r /grant:r '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'Could not protect the Windows migration recovery record.' }
+}
+
+function Get-BookshelfFileSha256 {
+  param([string] $LiteralPath)
+
+  $algorithm = [Security.Cryptography.SHA256]::Create()
+  try {
+    $stream = [IO.File]::OpenRead($LiteralPath)
+    try {
+      return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+      $stream.Dispose()
+    }
+  } finally {
+    $algorithm.Dispose()
+  }
+}
+
+function Get-BookshelfJournalFingerprint {
+  param([string] $Path)
+
+  try {
+    $rootItem = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+  } catch [System.Management.Automation.ItemNotFoundException] {
+    return 'missing'
+  } catch [System.IO.FileNotFoundException] {
+    return 'missing'
+  } catch [System.IO.DirectoryNotFoundException] {
+    return 'missing'
+  }
+
+  if (($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+    throw "Migration fingerprint '$Path' cannot follow a symbolic link or reparse point."
+  }
+
+  if (-not $rootItem.PSIsContainer) {
+    $before = Get-Item -LiteralPath $rootItem.FullName -Force -ErrorAction Stop
+    if (($before.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+      throw "Migration fingerprint '$Path' changed to a symbolic link or reparse point."
+    }
+    $hash = Get-BookshelfFileSha256 -LiteralPath $rootItem.FullName
+    $after = Get-Item -LiteralPath $rootItem.FullName -Force -ErrorAction Stop
+    if (($after.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        $after.Length -ne $before.Length -or
+        $after.LastWriteTimeUtc -ne $before.LastWriteTimeUtc) {
+      throw "Migration fingerprint '$Path' changed while it was being recorded."
+    }
+    return 'sha256:' + $hash
+  }
+
+  $root = $rootItem.FullName
+  $allItems = @(Get-ChildItem -LiteralPath $root -Force -Recurse -ErrorAction Stop)
+  $relativePaths = [Collections.Generic.List[string]]::new()
+  foreach ($item in $allItems) {
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+      throw "Migration fingerprint '$Path' contains a symbolic link or reparse point."
+    }
+    if (-not $item.PSIsContainer) {
+      $relativePaths.Add([IO.Path]::GetRelativePath($root, $item.FullName).Replace('\', '/'))
+    }
+  }
+  $relativePathArray = $relativePaths.ToArray()
+  [Array]::Sort($relativePathArray, [StringComparer]::Ordinal)
+  $entries = [Collections.Generic.List[string]]::new()
+  foreach ($relativePath in $relativePathArray) {
+    $filePath = Join-Path $root $relativePath.Replace('/', [IO.Path]::DirectorySeparatorChar)
+    $before = Get-Item -LiteralPath $filePath -Force -ErrorAction Stop
+    if (($before.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+      throw "Migration fingerprint '$Path' contains a symbolic link or reparse point."
+    }
+    $hash = Get-BookshelfFileSha256 -LiteralPath $filePath
+    $after = Get-Item -LiteralPath $filePath -Force -ErrorAction Stop
+    if (($after.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        $after.Length -ne $before.Length -or
+        $after.LastWriteTimeUtc -ne $before.LastWriteTimeUtc) {
+      throw "Migration fingerprint '$filePath' changed while it was being recorded."
+    }
+    $entries.Add([string]::Concat($relativePath, [char]0, $hash))
+  }
+
+  $algorithm = [Security.Cryptography.SHA256]::Create()
+  try {
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($entries -join [char]10))
+    return 'sha256:' + [BitConverter]::ToString($algorithm.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()
+  } finally {
+    $algorithm.Dispose()
+  }
+}
+
+function Write-SharedMigrationJournal {
+  param(
+    [string] $State,
+    [string] $OutcomeName,
+    [string] $OutcomeValue,
+    [string] $FingerprintName,
+    [string] $FingerprintPath
+  )
+
+  try {
+    $journalDirectory = Join-Path $dataDir '.chaptarrng-bookshelfng-journal'
+    $statesDirectory = Join-Path $journalDirectory 'states'
+    $outcomesDirectory = Join-Path $journalDirectory 'outcomes'
+    $fingerprintsDirectory = Join-Path $journalDirectory 'fingerprints'
+    foreach ($directoryPath in @($journalDirectory, $statesDirectory, $outcomesDirectory, $fingerprintsDirectory)) {
+      if (-not (Test-Path -LiteralPath $directoryPath -PathType Container)) {
+        New-Item -ItemType Directory -Force -Path $directoryPath | Out-Null
+      }
+      $directoryItem = Get-Item -LiteralPath $directoryPath -Force -ErrorAction Stop
+      if (-not $directoryItem.PSIsContainer -or
+          ($directoryItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Shared BookshelfNG journal path '$directoryPath' must be a regular directory."
+      }
+    }
+    $utf8 = [Text.UTF8Encoding]::new($false)
+
+    if (-not [string]::IsNullOrWhiteSpace($State)) {
+      if ($State -notin @('detected', 'preflighted', 'snapshotted', 'converted', 'promoted', 'healthy', 'rolled-back', 'intervention-required')) {
+        throw "Invalid shared BookshelfNG journal state '$State'."
+      }
+
+      $timestamp = [DateTime]::UtcNow.ToString('o')
+      foreach ($targetPath in @((Join-Path $statesDirectory $State), (Join-Path $journalDirectory 'state'))) {
+        $temporaryPath = "$targetPath.tmp-$([Guid]::NewGuid().ToString('N'))"
+        [IO.File]::WriteAllText($temporaryPath, "$timestamp`n", $utf8)
+        Move-Item -LiteralPath $temporaryPath -Destination $targetPath -Force
+      }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($OutcomeName)) {
+      if ($OutcomeName -notmatch '^[A-Za-z0-9_.-]+$' -or $OutcomeValue -notmatch '^[A-Za-z0-9:._-]+$') {
+        throw 'Invalid shared BookshelfNG journal outcome token.'
+      }
+
+      $targetPath = Join-Path $outcomesDirectory $OutcomeName
+      $temporaryPath = "$targetPath.tmp-$([Guid]::NewGuid().ToString('N'))"
+      [IO.File]::WriteAllText($temporaryPath, "$OutcomeValue`n", $utf8)
+      Move-Item -LiteralPath $temporaryPath -Destination $targetPath -Force
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($FingerprintName)) {
+      if ($FingerprintName -notmatch '^[A-Za-z0-9_.-]+$' -or [string]::IsNullOrWhiteSpace($FingerprintPath)) {
+        throw 'Invalid shared BookshelfNG journal fingerprint.'
+      }
+
+      $fingerprint = Get-BookshelfJournalFingerprint $FingerprintPath
+
+      $targetPath = Join-Path $fingerprintsDirectory $FingerprintName
+      $temporaryPath = "$targetPath.tmp-$([Guid]::NewGuid().ToString('N'))"
+      [IO.File]::WriteAllText($temporaryPath, "$fingerprint`n", $utf8)
+      Move-Item -LiteralPath $temporaryPath -Destination $targetPath -Force
+    }
+  } catch {
+    Write-Warning "The Windows migration result could not be written to the shared journal: $($_.Exception.Message)"
+  }
+}
+
+function Register-BookshelfRecoveryTask {
+  if (-not (Test-Path -LiteralPath $recoveryScriptPath)) {
+    throw "The Windows migration recovery script is missing at $recoveryScriptPath."
+  }
+  if (-not [Diagnostics.EventLog]::SourceExists('ChaptarrNG BookshelfNG Migration')) {
+    New-EventLog -LogName Application -Source 'ChaptarrNG BookshelfNG Migration'
+  }
+
+  $xmlPath = Join-Path $handoffDirectory 'bookshelfng-migration-recovery-task.xml'
+  $powershellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$recoveryScriptPath`" -ManifestPath `"$handoffManifestPath`""
+  $xmlArguments = [Security.SecurityElement]::Escape($arguments)
+  $xmlPowerShell = [Security.SecurityElement]::Escape($powershellPath)
+  $xml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>Verifies and recovers a deferred BookshelfNG to ChaptarrNG service migration.</Description></RegistrationInfo>
+  <Triggers>
+    <EventTrigger><Enabled>true</Enabled><Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="System"&gt;&lt;Select Path="System"&gt;*[System[Provider[@Name='Service Control Manager'] and EventID=7036]] and *[EventData[Data[@Name='param1']='BookshelfNG' and Data[@Name='param2']='running']]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription><Delay>PT15S</Delay></EventTrigger>
+  </Triggers>
+  <Principals><Principal id="System"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable><Enabled>true</Enabled><Hidden>true</Hidden>
+    <ExecutionTimeLimit>PT$($handoffTaskTimeoutMinutes)M</ExecutionTimeLimit><Priority>4</Priority>
+  </Settings>
+  <Actions Context="System"><Exec><Command>$xmlPowerShell</Command><Arguments>$xmlArguments</Arguments></Exec></Actions>
+</Task>
+"@
+  Set-Content -LiteralPath $xmlPath -Value $xml -Encoding Unicode
+  & schtasks.exe /Create /TN $recoveryTaskName /XML $xmlPath /F | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'Windows could not register the migration recovery task.' }
+}
+
+function Remove-BookshelfRecoveryTask {
+  & schtasks.exe /Delete /TN $recoveryTaskName /F 2>$null | Out-Null
+}
+
+function Complete-PriorBookshelfHandoff {
+  if (-not (Test-Path -LiteralPath $handoffManifestPath)) { return }
+
+  try {
+    $previousHandoff = Get-Content -LiteralPath $handoffManifestPath -Raw | ConvertFrom-Json
+  } catch {
+    throw "The previous Windows BookshelfNG recovery record cannot be read safely. Preserve it at $handoffManifestPath."
+  }
+
+  if ($previousHandoff.State -eq 'pending') {
+    $service = Get-Service -Name 'BookshelfNG' -ErrorAction SilentlyContinue
+    if ($service -and $service.Status -eq 'Running' -and (Test-Path -LiteralPath $exePath)) {
+      try {
+        $currentApplication = (& $nssm.Source get BookshelfNG Application | Out-String).Trim().Trim('"')
+        if ($LASTEXITCODE -ne 0 -or -not [string]::Equals(
+              [IO.Path]::GetFullPath($currentApplication),
+              [IO.Path]::GetFullPath($exePath),
+              [StringComparison]::OrdinalIgnoreCase)) {
+          throw 'The BookshelfNG service does not point to the expected ChaptarrNG executable.'
+        }
+        $response = Invoke-WebRequest -Uri $previousHandoff.HealthUrl -UseBasicParsing -TimeoutSec 3 -MaximumRedirection 0
+        if ($response.StatusCode -eq 200) {
+          $healthExit = Invoke-BookshelfUtility $exePath @('-check-bookshelf-migration', "-data=$($previousHandoff.DataDirectory)") @($previousHandoff.MigrationEnvironment)
+          if ($healthExit -eq 0) {
+            $previousHandoff.State = 'healthy'
+            Write-BookshelfHandoffManifest $previousHandoff
+            Write-SharedMigrationJournal -State 'healthy' -OutcomeName 'channel' -OutcomeValue 'chocolatey'
+            Write-SharedMigrationJournal -OutcomeName 'channel-state' -OutcomeValue 'healthy'
+          }
+        }
+      } catch {
+        # Leave the pending handoff and its retained app in place for the scheduled recovery task.
+      }
+    }
+  }
+
+  if ($previousHandoff.State -eq 'healthy') {
+    if (Test-Path -LiteralPath $backupDir) { Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction Stop }
+    Remove-BookshelfRecoveryTask
+    Remove-Item -LiteralPath $handoffManifestPath -Force -ErrorAction Stop
+    return
+  }
+
+  if ($previousHandoff.State -eq 'rolled-back') {
+    Remove-BookshelfRecoveryTask
+    Remove-Item -LiteralPath $handoffManifestPath -Force -ErrorAction Stop
+    return
+  }
+
+  throw "A previous deferred BookshelfNG migration is still $($previousHandoff.State). Start the BookshelfNG service and let its automatic health check finish before upgrading again. Recovery details are retained at $handoffManifestPath."
+}
+
+$service = Get-Service -Name 'BookshelfNG' -ErrorAction SilentlyContinue
+$hadService = $null -ne $service
+$wasRunning = $hadService -and $service.Status -ne 'Stopped'
+$hadApp = Test-Path $appDir
+$createdService = $false
+$oldApplication = $null
+$oldAppDirectory = $null
+$oldAppParameters = $null
+$oldAppEnvironment = @()
+$oldAppEnvironmentExtra = @()
+$serviceEnvironment = @()
+$oldStart = $null
+$backupNamesBefore = @()
+$postgresBackupDirectory = $null
+$migrationDatabaseMutationMayHaveStarted = $false
+$deferredRecoveryArmed = $false
+$alreadyMigrated = $false
+$mergeSqliteSources = $false
+$rollbackSqliteDatabaseName = $null
+$providerMode = $null
+$effectiveEnvironment = @()
+$healthPort = 8789
+$healthUrlBase = ''
+$healthBindAddress = '*'
+
+if ($hadService) {
+  $healthPort = 8787
+  $oldApplication = (& $nssm.Source get BookshelfNG Application | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0) { throw 'NSSM could not read the BookshelfNG application path.' }
+  $oldAppDirectory = (& $nssm.Source get BookshelfNG AppDirectory | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0) { throw 'NSSM could not read the BookshelfNG working directory.' }
+  $oldAppParameters = (& $nssm.Source get BookshelfNG AppParameters | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0) { throw 'NSSM could not read the BookshelfNG service parameters.' }
+  $oldStart = (& $nssm.Source get BookshelfNG Start | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0) { throw 'NSSM could not read the BookshelfNG service start setting.' }
+  $oldAppEnvironment = @(Get-BookshelfServiceEnvironment 'AppEnvironment')
+  $oldAppEnvironmentExtra = @(Get-BookshelfServiceEnvironment 'AppEnvironmentExtra')
+  $serviceEnvironment = @($oldAppEnvironment) + @($oldAppEnvironmentExtra)
+  $providerMode = Resolve-ProviderMode $serviceEnvironment
+  $effectiveEnvironment = Get-EffectiveEnvironment $serviceEnvironment $providerMode
+  $dataDir = Get-ServiceDataDirectory $oldAppParameters $oldAppDirectory $dataDir
+} else {
+  $providerMode = Resolve-ProviderMode @()
+  $effectiveEnvironment = Get-EffectiveEnvironment @() $providerMode
+}
+$serverOverrides = Get-ServerOverridesFromParameters $oldAppParameters
+foreach ($overrideName in $serverOverrides.Keys) {
+  $effectiveEnvironment = @($effectiveEnvironment | Where-Object {
+    $separator = $_.IndexOf('=')
+    $separator -le 0 -or -not $_.Substring(0, $separator).Equals($overrideName, [StringComparison]::OrdinalIgnoreCase)
+  })
+  $effectiveEnvironment += "$overrideName=$($serverOverrides[$overrideName])"
+}
+
+$dataDir = [IO.Path]::GetFullPath($dataDir)
+$hadApp = Test-Path -LiteralPath $appDir
+$postgresSourceForChoice = Test-BookshelfPostgresSource $serviceEnvironment
+[string[]] $sqliteSourceNames = @()
+if (-not $postgresSourceForChoice) {
+  $sqliteSourceNames = [string[]] @(Get-BookshelfSqliteDatabaseNames $dataDir)
+}
+$preMergedNativeDatabase = $false
+if ($sqliteSourceNames.Count -gt 1 -and -not $postgresSourceForChoice) {
+  $nativeDatabase = Join-Path $dataDir 'chaptarr.db'
+  $mergeReceipt = Join-Path $dataDir 'bookshelfng-merge.receipt'
+  $nativeIsRegular = (Test-Path -LiteralPath $nativeDatabase -PathType Leaf) -and
+    ((Get-Item -LiteralPath $nativeDatabase -Force).Length -gt 0) -and
+    (((Get-Item -LiteralPath $nativeDatabase -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0)
+  $receiptIsRegular = (Test-Path -LiteralPath $mergeReceipt -PathType Leaf) -and
+    (((Get-Item -LiteralPath $mergeReceipt -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0)
+  $receiptIsUsable = $false
+  if ($receiptIsRegular) {
+    $receiptLines = @(Get-Content -LiteralPath $mergeReceipt -TotalCount 2)
+    $receiptIsUsable = $receiptLines.Count -ge 2 -and
+      $receiptLines[0] -eq 'bookshelfng-merge-v1' -and
+      $receiptLines[1] -in @('state=prepared', 'state=complete')
+  }
+  if ($nativeIsRegular -and $receiptIsUsable) {
+    # The installed ChaptarrNG startup/health utility verifies both source and
+    # target fingerprints and promotes a matching prepared receipt. Do not run
+    # the legacy single-database choice against an explicit merge.
+    $preMergedNativeDatabase = $true
+    $sqliteSourceNames = @()
+  } else {
+    $mergeSqliteSources = $true
+    $rollbackSqliteDatabaseName = 'chaptarr.db'
+  }
+}
+$sqliteSourceName = if ($sqliteSourceNames.Count -gt 0) { $sqliteSourceNames[0] } else { $null }
+$rollbackSqliteDatabaseName = if ($rollbackSqliteDatabaseName) { $rollbackSqliteDatabaseName } else { $sqliteSourceName }
+$sqliteSourceExisted = $sqliteSourceNames.Count -gt 0 -or $preMergedNativeDatabase
+$alreadyMigratedForChoice = $preMergedNativeDatabase
+$choiceConsolePath = if ($oldApplication) { $oldApplication.Trim().Trim('"') } else { '' }
+if ($hadService -and (Test-Path -LiteralPath $choiceConsolePath) -and
+    [IO.Path]::GetFileName($choiceConsolePath) -match '(?i)^Chaptarr(?:\.Console)?\.exe$') {
+  $migrationStateExit = Invoke-BookshelfUtility $choiceConsolePath @(
+    '-check-bookshelf-migration',
+    "-data=$dataDir"
+  ) $effectiveEnvironment
+  $alreadyMigratedForChoice = $migrationStateExit -eq 0
+  if ($preMergedNativeDatabase -and -not $alreadyMigratedForChoice) {
+    throw 'The multi-database merge receipt failed ChaptarrNG validation. Preserve all source and target database files before updating.'
+  }
+}
+$hasMigrationDataForChoice = $false
+if (-not $alreadyMigratedForChoice) {
+  $hasMigrationDataForChoice = $hadService -or $sqliteSourceExisted -or $postgresSourceForChoice
+}
+
+Confirm-BookshelfMigrationChoice -HasMigrationData $hasMigrationDataForChoice -Mode $requestedMigrationMode
+
+$compatibilityDefaultPort = if ($alreadyMigratedForChoice) { '8789' } else { '8787' }
+if ($alreadyMigratedForChoice) {
+  $existingDefaultPort = Get-EnvironmentValue $serviceEnvironment 'CHAPTARR_DEFAULT_PORT'
+  if ($null -eq $existingDefaultPort) { $existingDefaultPort = [Environment]::GetEnvironmentVariable('CHAPTARR_DEFAULT_PORT', 'Machine') }
+  if (-not [string]::IsNullOrWhiteSpace($existingDefaultPort)) {
+    if ($existingDefaultPort -notmatch '^\d+$' -or [int] $existingDefaultPort -lt 1 -or [int] $existingDefaultPort -gt 65535) {
+      throw 'The existing ChaptarrNG default port is invalid; the current service was not changed.'
+    }
+    $compatibilityDefaultPort = $existingDefaultPort
+  }
+}
+if ($hadService) {
+  $effectiveEnvironment = @($effectiveEnvironment | Where-Object {
+    $separator = $_.IndexOf('=')
+    $separator -le 0 -or -not $_.Substring(0, $separator).Equals('CHAPTARR_DEFAULT_PORT', [StringComparison]::OrdinalIgnoreCase)
+  })
+  $effectiveEnvironment += "CHAPTARR_DEFAULT_PORT=$compatibilityDefaultPort"
+  $healthPort = [int] $compatibilityDefaultPort
+}
+
+Complete-PriorBookshelfHandoff
+$backupNamesBefore = @(Get-BookshelfSqliteBackupFiles -DataDirectory $dataDir | ForEach-Object Name)
+$configPath = Join-Path $dataDir 'config.xml'
+if (Test-Path -LiteralPath $configPath) {
+  try {
+    [xml] $config = Get-Content -LiteralPath $configPath -Raw
+    $portNode = $config.SelectSingleNode("//*[local-name()='Port']")
+    if ($portNode -and $portNode.InnerText -match '^\d+$') { $healthPort = [int] $portNode.InnerText }
+    $urlBaseNode = $config.SelectSingleNode("//*[local-name()='UrlBase']")
+    if ($urlBaseNode) { $healthUrlBase = $urlBaseNode.InnerText.Trim().Trim('/') }
+    $bindAddressNode = $config.SelectSingleNode("//*[local-name()='BindAddress']")
+    if ($bindAddressNode -and -not [string]::IsNullOrWhiteSpace($bindAddressNode.InnerText)) { $healthBindAddress = $bindAddressNode.InnerText.Trim() }
+  } catch {
+    throw "The BookshelfNG config could not be read safely: $($_.Exception.Message)"
+  }
+}
+foreach ($name in @('CHAPTARR__SERVER__PORT', 'READARR__SERVER__PORT', 'AUDIOARR__SERVER__PORT', 'BOOKSHELF__SERVER__PORT', 'BOOKSHELF_PORT')) {
+  $portValue = Get-EnvironmentValue $effectiveEnvironment $name
+  if ($null -eq $portValue) { $portValue = [Environment]::GetEnvironmentVariable($name, 'Machine') }
+  if ($null -eq $portValue) { $portValue = [Environment]::GetEnvironmentVariable($name, 'Process') }
+  if ($portValue -match '^\d+$') { $healthPort = [int] $portValue; break }
+}
+foreach ($name in @('CHAPTARR__SERVER__URLBASE', 'READARR__SERVER__URLBASE', 'AUDIOARR__SERVER__URLBASE', 'BOOKSHELF__SERVER__URLBASE', 'BOOKSHELF_URLBASE')) {
+  $urlBaseValue = Get-EnvironmentValue $effectiveEnvironment $name
+  if ($null -eq $urlBaseValue) { $urlBaseValue = [Environment]::GetEnvironmentVariable($name, 'Machine') }
+  if ($null -eq $urlBaseValue) { $urlBaseValue = [Environment]::GetEnvironmentVariable($name, 'Process') }
+  if ($null -ne $urlBaseValue) { $healthUrlBase = $urlBaseValue.Trim().Trim('/'); break }
+}
+foreach ($name in @('CHAPTARR__SERVER__BINDADDRESS', 'READARR__SERVER__BINDADDRESS', 'AUDIOARR__SERVER__BINDADDRESS', 'BOOKSHELF__SERVER__BINDADDRESS')) {
+  $bindAddressValue = Get-EnvironmentValue $effectiveEnvironment $name
+  if ($null -eq $bindAddressValue) { $bindAddressValue = [Environment]::GetEnvironmentVariable($name, 'Machine') }
+  if ($null -eq $bindAddressValue) { $bindAddressValue = [Environment]::GetEnvironmentVariable($name, 'Process') }
+  if ($null -ne $bindAddressValue) { $healthBindAddress = $bindAddressValue; break }
+}
+if (-not [string]::IsNullOrWhiteSpace($oldAppParameters)) {
+  $serverArgumentPattern = '(?i)(?:^|\s)[/-](?<name>port|urlbase|bindaddress)(?:=|\s+)(?:"(?<double>[^"]*)"|''(?<single>[^'']*)''|(?<plain>\S+))'
+  foreach ($argument in [regex]::Matches($oldAppParameters, $serverArgumentPattern)) {
+    $argumentValue = if ($argument.Groups['double'].Success) { $argument.Groups['double'].Value }
+      elseif ($argument.Groups['single'].Success) { $argument.Groups['single'].Value }
+      else { $argument.Groups['plain'].Value }
+    if ($argument.Groups['name'].Value -ieq 'port' -and $argumentValue -match '^\d+$') {
+      $healthPort = [int] $argumentValue
+    } elseif ($argument.Groups['name'].Value -ieq 'urlbase') {
+      $healthUrlBase = $argumentValue.Trim().Trim('/')
+    } elseif ($argument.Groups['name'].Value -ieq 'bindaddress') {
+      $healthBindAddress = $argumentValue
+    }
+  }
+}
+if ($healthPort -lt 1 -or $healthPort -gt 65535) { throw "The BookshelfNG configured port is invalid: $healthPort" }
+$healthHost = Get-LocalHealthHost $healthBindAddress
+$healthUrl = if ([string]::IsNullOrWhiteSpace($healthUrlBase)) {
+  "http://${healthHost}:$healthPort/ping"
+} else {
+  "http://${healthHost}:$healthPort/$healthUrlBase/ping"
+}
+
+$hasMigrationData = $hadService -or $sqliteSourceExisted
+$previewConsole = Join-Path $stageDir 'bin\Chaptarr.Console.exe'
+
+if (Test-Path -LiteralPath $backupDir) {
+  throw "A prior BookshelfNG package rollback directory exists at $backupDir. Restore or remove it before retrying."
+}
+if (Test-Path -LiteralPath $stageDir) {
+  throw "A prior BookshelfNG package staging directory exists at $stageDir. Inspect it before retrying."
+}
+
+try {
+  New-Item -ItemType Directory -Force -Path $installRoot, $dataDir, (Join-Path $stageDir 'bin') | Out-Null
+  # Private Windows acceptance may supply a local archive; the package's exact SHA-256 remains mandatory.
+  if ([string]::IsNullOrWhiteSpace($testArchivePath)) {
+    Get-ChocolateyWebFile -PackageName 'bookshelfng' -FileFullPath $archivePath `
+      -Url $archiveUrl -Checksum '__ARCHIVE_SHA256__' -ChecksumType 'sha256'
+  } else {
+    if (-not (Test-Path -LiteralPath $testArchivePath -PathType Leaf)) {
+      throw 'The private Windows acceptance archive path does not identify a file.'
+    }
+    $testArchiveHash = Get-BookshelfFileSha256 -LiteralPath $testArchivePath
+    if ($testArchiveHash -ne '__ARCHIVE_SHA256__') {
+      throw 'The private Windows acceptance archive checksum does not match this package candidate.'
+    }
+    Copy-Item -LiteralPath $testArchivePath -Destination $archivePath -Force
+  }
+  Expand-Archive -LiteralPath $archivePath -DestinationPath (Join-Path $stageDir 'bin') -Force
+  if (-not (Test-Path (Join-Path $stageDir 'bin\Chaptarr.Console.exe')) -or
+      -not (Test-Path (Join-Path $stageDir 'bin\UI\index.html'))) {
+    throw 'The verified ChaptarrNG archive is missing its executable or web UI.'
+  }
+  @(
+    'UpdateMethod=External',
+    'UpdateMethodMessage=Use Chocolatey to update ChaptarrNG.',
+    'Branch=main'
+  ) | Set-Content -Encoding ascii -Path (Join-Path $stageDir 'package_info')
+} catch {
+  if (Test-Path -LiteralPath $stageDir) { Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue }
+  if (Test-Path -LiteralPath $archivePath) { Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue }
+  throw
+}
+
+try {
+  $postgresSource = Test-BookshelfPostgresSource $serviceEnvironment
+  $hasMigrationData = $hasMigrationData -or $postgresSource
+  if ($hadService -and $wasRunning) {
+    Stop-Service -Name 'BookshelfNG' -Force
+    $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+  }
+
+  if ($hasMigrationData) {
+    $targetDatabaseExit = Invoke-BookshelfUtility $previewConsole @(
+      '-check-bookshelf-migration',
+      "-data=$dataDir"
+    ) $effectiveEnvironment
+    $alreadyMigrated = $targetDatabaseExit -eq 0
+  }
+
+  if ($hasMigrationData -and $postgresSource -and -not $alreadyMigrated) {
+    $checkExit = Invoke-BookshelfUtility $previewConsole @(
+      '-check-bookshelf-postgres-backup',
+      '-confirm-bookshelf-service-stopped',
+      "-data=$dataDir"
+    ) $effectiveEnvironment
+    if ($checkExit -ne 0) {
+      throw "PostgreSQL backup preflight failed with exit code $checkExit. Ensure pg_dump and pg_restore are installed and stop every other client of these databases."
+    }
+
+    $postgresBackupDirectory = Join-Path $dataDir ("bookshelfng-postgres-backup-{0}" -f [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))
+    if (Test-Path -LiteralPath $postgresBackupDirectory) {
+      throw "A PostgreSQL backup path already exists at $postgresBackupDirectory; inspect it before retrying."
+    }
+    New-Item -ItemType Directory -Path $postgresBackupDirectory | Out-Null
+    $backupExit = Invoke-BookshelfUtility $previewConsole @(
+      '-backup-bookshelf-postgres',
+      '-confirm-bookshelf-service-stopped',
+      "-bookshelf-postgres-backup=$postgresBackupDirectory",
+      "-data=$dataDir"
+    ) $effectiveEnvironment
+    if ($backupExit -ne 0) {
+      throw "Independent PostgreSQL backup failed with exit code $backupExit. The BookshelfNG database was not migrated."
+    }
+    Write-SharedMigrationJournal -FingerprintName 'source-postgres-backup' -FingerprintPath $postgresBackupDirectory
+  }
+
+  if ($hasMigrationData -and -not $alreadyMigrated) {
+    $previewArguments = @(
+      '-preview-bookshelf-migration',
+      "-data=$dataDir"
+    )
+    if ($mergeSqliteSources) { $previewArguments += '-merge-bookshelf-databases' }
+    $previewExit = Invoke-BookshelfUtility $previewConsole $previewArguments $effectiveEnvironment
+    if ($previewExit -ne 0) {
+      if (-not $providerMode) {
+        throw "BookshelfNG migration preview failed with exit code $previewExit. If the source uses bare numeric provider IDs, rerun with the Chocolatey package parameter /ProviderMode=Goodreads or /ProviderMode=Hardcover. The original service and database were preserved."
+      }
+      throw "BookshelfNG migration preview failed with exit code $previewExit. The original service and database were preserved."
+    }
+
+    Write-SharedMigrationJournal -State 'preflighted' -OutcomeName 'channel' -OutcomeValue 'chocolatey'
+    if ($choiceConsolePath -and (Test-Path -LiteralPath $choiceConsolePath -PathType Leaf)) {
+      Write-SharedMigrationJournal -FingerprintName 'source-application' -FingerprintPath $choiceConsolePath
+    }
+    Write-SharedMigrationJournal -FingerprintName 'source-config' -FingerprintPath (Join-Path $dataDir 'config.xml')
+    Write-SharedMigrationJournal -FingerprintName 'target-artifact' -FingerprintPath (Join-Path $stageDir 'bin\Chaptarr.Console.exe')
+
+    # The service's normal startup can migrate the Chaptarr schema in place,
+    # but it cannot perform the BookshelfNG data conversion. Apply that
+    # conversion explicitly while every source client is stopped, before the
+    # candidate service starts against the target database.
+    $migrationDatabaseMutationMayHaveStarted = $true
+    $migrationArguments = @(
+      '-migrate-bookshelf',
+      '-confirm-bookshelf-service-stopped',
+      "-data=$dataDir"
+    )
+    if ($mergeSqliteSources) { $migrationArguments += '-merge-bookshelf-databases' }
+    $migrationExit = Invoke-BookshelfUtility $previewConsole $migrationArguments $effectiveEnvironment
+    if ($migrationExit -ne 0) {
+      throw "BookshelfNG migration failed with exit code $migrationExit. The installer will attempt to restore the retained source database."
+    }
+  }
+
+  if ($hadService -and $hasMigrationData -and -not $wasRunning) {
+    New-Item -ItemType Directory -Force -Path $handoffDirectory | Out-Null
+    & icacls.exe $handoffDirectory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)(F)' '*S-1-5-32-544:(OI)(CI)(F)' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not protect the Windows migration recovery directory.' }
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'bookshelfng-startup-recovery.ps1') -Destination $recoveryScriptPath -Force
+    $manifest = [ordered]@{
+      State = 'pending'
+      LastError = ''
+      NewApplication = $exePath
+      ConsolePath = $exePath
+      ApplicationDirectory = $appDir
+      PreviousApplicationDirectory = $backupDir
+      DataDirectory = $dataDir
+      HealthTimeoutSeconds = $handoffTimeoutSeconds
+      HealthPort = $healthPort
+      HealthUrl = $healthUrl
+      NssmPath = $nssm.Source
+      HadApplication = $hadApp
+      WasRunning = $wasRunning
+      OldApplication = $oldApplication
+      OldAppDirectory = $oldAppDirectory
+      OldAppParameters = $oldAppParameters
+      OldAppEnvironment = @($oldAppEnvironment)
+      OldAppEnvironmentExtra = @($oldAppEnvironmentExtra)
+      MigrationEnvironment = @($effectiveEnvironment)
+      OldStart = $oldStart
+      SqliteSourceExisted = $sqliteSourceExisted
+      SqliteBackupNamesBefore = @($backupNamesBefore)
+      MergeSqliteSources = $mergeSqliteSources
+      PostgresSource = $postgresSource
+      PostgresBackupDirectory = $postgresBackupDirectory
+      TargetPostgresBackupDirectory = $null
+      BookshelfSource = -not $alreadyMigrated
+    }
+    Write-BookshelfHandoffManifest $manifest
+    $deferredRecoveryArmed = $true
+    Register-BookshelfRecoveryTask
+  }
+
+  if ($hadApp) { Move-Item -LiteralPath $appDir -Destination $backupDir }
+  Move-Item -LiteralPath $stageDir -Destination $appDir
+
+  if (-not $hadService) {
+    & $nssm.Source install BookshelfNG $exePath
+    if ($LASTEXITCODE -ne 0) { throw 'NSSM could not install the ChaptarrNG service under the existing BookshelfNG name.' }
+    $createdService = $true
+    Set-BookshelfServiceSetting 'AppDirectory' $binDir
+    Set-BookshelfServiceSetting 'AppParameters' "/nobrowser -data=$dataDir"
+    Set-BookshelfServiceSetting 'Start' 'SERVICE_AUTO_START'
+  } else {
+    Set-BookshelfServiceSetting 'Application' $exePath
+    Set-BookshelfServiceSetting 'AppDirectory' $binDir
+    if ([string]::IsNullOrWhiteSpace($oldAppParameters)) {
+      Set-BookshelfServiceSetting 'AppParameters' "/nobrowser -data=$dataDir"
+    } else {
+      Set-BookshelfServiceSetting 'AppParameters' $oldAppParameters
+    }
+  }
+
+  if ($hadService) {
+    if ($requestedProviderMode) {
+      $serviceAppEnvironment = @($oldAppEnvironment | Where-Object { $_ -notmatch '(?i)^HARDCOVER(?:_NATIVE)?=' })
+      $serviceExtraEnvironment = Get-EffectiveExtraEnvironment $oldAppEnvironmentExtra $providerMode
+      Set-BookshelfServiceEnvironment 'AppEnvironment' $serviceAppEnvironment
+    } else {
+      $serviceExtraEnvironment = @($oldAppEnvironmentExtra)
+    }
+
+    foreach ($overrideName in $serverOverrides.Keys) {
+      $serviceExtraEnvironment = @($serviceExtraEnvironment | Where-Object {
+        $separator = $_.IndexOf('=')
+        $separator -le 0 -or -not $_.Substring(0, $separator).Equals($overrideName, [StringComparison]::OrdinalIgnoreCase)
+      })
+      $serviceExtraEnvironment += "$overrideName=$($serverOverrides[$overrideName])"
+    }
+    $serviceExtraEnvironment = @($serviceExtraEnvironment | Where-Object {
+      $separator = $_.IndexOf('=')
+      $separator -le 0 -or -not $_.Substring(0, $separator).Equals('CHAPTARR_DEFAULT_PORT', [StringComparison]::OrdinalIgnoreCase)
+    })
+    $serviceExtraEnvironment += "CHAPTARR_DEFAULT_PORT=$compatibilityDefaultPort"
+    Set-BookshelfServiceEnvironment 'AppEnvironmentExtra' $serviceExtraEnvironment
+  }
+
+  if (-not $hadService -or $wasRunning) {
+    $migrationDatabaseMutationMayHaveStarted = $true
+    if ($hadService) { Start-Service -Name 'BookshelfNG' }
+    else {
+      & $nssm.Source start BookshelfNG
+      if ($LASTEXITCODE -ne 0) { throw 'NSSM could not start ChaptarrNG.' }
+    }
+    $service = Get-Service -Name 'BookshelfNG' -ErrorAction Stop
+    $service.WaitForStatus('Running', [TimeSpan]::FromSeconds(60))
+    Wait-BookshelfServiceReady $healthUrl $handoffTimeoutSeconds
+    if ($hasMigrationData) {
+      $readinessConsole = Join-Path $appDir 'bin\Chaptarr.Console.exe'
+      $readinessExit = Invoke-BookshelfUtility $readinessConsole @(
+        '-check-bookshelf-migration',
+        "-data=$dataDir"
+      ) $effectiveEnvironment
+      if ($readinessExit -ne 0) {
+        throw "ChaptarrNG started, but the migrated BookshelfNG database and provider profile were not readable (exit code $readinessExit)."
+      }
+      if ($testHandoffFailure -eq 'after-migration-health') {
+        throw 'Injected private Windows acceptance failure after BookshelfNG migration health passed.'
+      }
+      Write-SharedMigrationJournal -State 'healthy' -OutcomeName 'channel' -OutcomeValue 'chocolatey'
+      Write-SharedMigrationJournal -OutcomeName 'channel-state' -OutcomeValue 'healthy'
+    }
+  }
+
+  if ($deferredRecoveryArmed) {
+    Write-Warning "BookshelfNG was stopped before this update. Its previous application is retained at $backupDir until the first ChaptarrNG startup passes the database and provider-profile health check."
+  } elseif (Test-Path $backupDir) {
+    try { Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction Stop }
+    catch { Write-Warning "ChaptarrNG is installed, but the previous app files remain at $backupDir." }
+  }
+} catch {
+  $installFailure = $_
+  if ($deferredRecoveryArmed -and (Test-Path -LiteralPath $handoffManifestPath)) {
+    try {
+      $manifest = Get-Content -LiteralPath $handoffManifestPath -Raw | ConvertFrom-Json
+      $manifest.State = 'rolled-back'
+      $manifest.LastError = 'Chocolatey package installation rolled back before the deferred service start.'
+      Write-BookshelfHandoffManifest $manifest
+      Write-SharedMigrationJournal -State 'rolled-back' -OutcomeName 'channel' -OutcomeValue 'chocolatey'
+      Write-SharedMigrationJournal -OutcomeName 'channel-state' -OutcomeValue 'rolled-back'
+      Remove-BookshelfRecoveryTask
+    } catch {
+      Write-Warning "The deferred recovery marker could not be retired; preserve $handoffManifestPath for review. $($_.Exception.Message)"
+    }
+  }
+  $databaseRollbackSafe = $true
+  $applicationRollbackSafe = $true
+  $serviceRollbackSafe = $true
+  $currentService = Get-Service -Name 'BookshelfNG' -ErrorAction SilentlyContinue
+  $serviceStopped = -not $currentService -or $currentService.Status -eq 'Stopped'
+  if (-not $serviceStopped) {
+    try {
+      Stop-Service -Name 'BookshelfNG' -Force
+      $currentService.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+      $serviceStopped = $true
+    } catch {
+      $serviceStopped = $false
+      Write-Warning "Could not stop the failed BookshelfNG service; database and application rollback will be retained without restarting either version. $($_.Exception.Message)"
+    }
+  }
+
+  if ($alreadyMigrated -and $migrationDatabaseMutationMayHaveStarted) {
+    # The previous package may have applied ChaptarrNG schema changes before
+    # failing. A BookshelfNG backup cannot safely roll this target database
+    # back, so retain it and leave the restored prior app stopped for review.
+    $databaseRollbackSafe = $false
+    Write-Warning 'The install failed after a ChaptarrNG database was detected. The target database was preserved; the prior application was restored and the service will remain stopped until database compatibility is reviewed.'
+  } elseif ($migrationDatabaseMutationMayHaveStarted) {
+    if (-not $serviceStopped) {
+      $databaseRollbackSafe = $false
+    } elseif ($postgresSource) {
+      $rollbackConsole = Join-Path $appDir 'bin\Chaptarr.Console.exe'
+      if (-not (Test-Path -LiteralPath $rollbackConsole)) { $rollbackConsole = $previewConsole }
+      if ($postgresBackupDirectory -and (Test-Path -LiteralPath $postgresBackupDirectory) -and
+          (Test-Path -LiteralPath $rollbackConsole)) {
+        try {
+          $restorePreviewExit = Invoke-BookshelfUtility $rollbackConsole @(
+            '-preview-bookshelf-postgres-restore',
+            '-confirm-bookshelf-service-stopped',
+            "-bookshelf-postgres-backup=$postgresBackupDirectory",
+            "-data=$dataDir"
+          ) $effectiveEnvironment
+          if ($restorePreviewExit -ne 0) { throw "PostgreSQL rollback dump preview exited with code $restorePreviewExit." }
+
+          $targetPostgresBackupDirectory = Join-Path $postgresBackupDirectory ("target-chaptarr-log-cache-{0}" -f [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))
+          if (Test-Path -LiteralPath $targetPostgresBackupDirectory) {
+            throw "A ChaptarrNG PostgreSQL log/cache backup path already exists at $targetPostgresBackupDirectory; inspect it before retrying."
+          }
+          New-Item -ItemType Directory -Path $targetPostgresBackupDirectory | Out-Null
+          $targetBackupExit = Invoke-BookshelfUtility $rollbackConsole @(
+            '-backup-bookshelf-postgres',
+            '-confirm-bookshelf-service-stopped',
+            '-bookshelf-postgres-log-cache-only',
+            "-bookshelf-postgres-backup=$targetPostgresBackupDirectory",
+            "-data=$dataDir"
+          ) $effectiveEnvironment
+          if ($targetBackupExit -ne 0) { throw "Current ChaptarrNG PostgreSQL log/cache backup exited with code $targetBackupExit." }
+          $targetPostgresBackupFiles = @(Get-ChildItem -LiteralPath $targetPostgresBackupDirectory -File -ErrorAction SilentlyContinue)
+          if ($targetPostgresBackupFiles.Count -eq 0) {
+            Remove-Item -LiteralPath $targetPostgresBackupDirectory -Force
+          } else {
+            Write-SharedMigrationJournal -FingerprintName 'rollback-target-postgres-log-cache' -FingerprintPath $targetPostgresBackupDirectory
+            Write-SharedMigrationJournal -OutcomeName 'rollback-target-postgres-log-cache' -OutcomeValue 'retained'
+          }
+
+          $restoreExit = Invoke-BookshelfUtility $rollbackConsole @(
+            '-restore-bookshelf-postgres',
+            '-confirm-bookshelf-service-stopped',
+            "-bookshelf-postgres-backup=$postgresBackupDirectory",
+            "-data=$dataDir"
+          ) $effectiveEnvironment
+          if ($restoreExit -ne 0) { throw "PostgreSQL restore exited with code $restoreExit." }
+        } catch {
+          $databaseRollbackSafe = $false
+          Write-Warning "Could not restore the PostgreSQL migration backup. Keep the BookshelfNG service stopped. The independent backup remains at $postgresBackupDirectory. $($_.Exception.Message)"
+        }
+      } else {
+        $databaseRollbackSafe = $false
+        Write-Warning "PostgreSQL migration may have started, but its independent restore backup or utility is unavailable. Keep the BookshelfNG service stopped; inspect the retained database backup at $postgresBackupDirectory."
+      }
+    } elseif ($sqliteSourceExisted) {
+      $backupDatabaseName = if ($rollbackSqliteDatabaseName) { $rollbackSqliteDatabaseName } else { 'readarr.db' }
+      $backupPrefix = "$backupDatabaseName.bookshelfng-backup-"
+      $allDatabaseBackupsAfter = @(Get-BookshelfSqliteBackupFiles -DataDirectory $dataDir)
+      $databaseBackupsAfter = @($allDatabaseBackupsAfter | Where-Object {
+        $_.Name.StartsWith($backupPrefix, [StringComparison]::OrdinalIgnoreCase)
+      })
+      $newDatabaseBackup = $databaseBackupsAfter |
+        Where-Object {
+          $_.Name -notin $backupNamesBefore -and
+          ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0
+        } |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
+      if ($newDatabaseBackup) {
+        try {
+          if ($mergeSqliteSources) {
+            $databasePath = Join-Path $dataDir 'chaptarr.db'
+            if (Test-HasPopulatedSqliteDatabaseFamily $databasePath) {
+              $rollbackConsole = Join-Path $appDir 'bin\Chaptarr.Console.exe'
+              if (-not (Test-Path -LiteralPath $rollbackConsole)) { $rollbackConsole = $previewConsole }
+              $restoreExit = Invoke-BookshelfUtility $rollbackConsole @(
+                '-restore-bookshelf',
+                '-confirm-bookshelf-service-stopped',
+                "-bookshelf-backup=$($newDatabaseBackup.FullName)",
+                "-data=$dataDir"
+              ) $effectiveEnvironment
+              if ($restoreExit -ne 0) { throw "Merged BookshelfNG rollback exited with code $restoreExit." }
+              Write-Host 'The original readarr.db and audioarr.db sources remain in place for the prior BookshelfNG service.'
+            } else {
+              Write-Host 'The merge did not promote a ChaptarrNG database; both original BookshelfNG sources remain available for rollback.'
+            }
+          } else {
+            $databaseName = if ($rollbackSqliteDatabaseName) { $rollbackSqliteDatabaseName } else { 'readarr.db' }
+            $databasePath = Join-Path $dataDir $databaseName
+            $failedPath = "$databasePath.chaptarr-failed-$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))"
+            if (Test-Path -LiteralPath $databasePath) { Move-Item -LiteralPath $databasePath -Destination $failedPath }
+            foreach ($suffix in @('-wal', '-shm', '-journal')) {
+              $sidecar = "$databasePath$suffix"
+              if (Test-Path -LiteralPath $sidecar) { Move-Item -LiteralPath $sidecar -Destination "$failedPath$suffix" }
+            }
+            Copy-Item -LiteralPath $newDatabaseBackup.FullName -Destination $databasePath
+          }
+        } catch {
+          $databaseRollbackSafe = $false
+          Write-Warning "Could not restore the SQLite BookshelfNG database. Keep the BookshelfNG service stopped; the source backup remains at $($newDatabaseBackup.FullName). $($_.Exception.Message)"
+        }
+      } elseif ($mergeSqliteSources) {
+        $sourcePreviewArguments = @('-preview-bookshelf-migration', "-data=$dataDir", '-merge-bookshelf-databases')
+        $sourcePreviewExit = Invoke-BookshelfUtility $previewConsole $sourcePreviewArguments $effectiveEnvironment
+        if ($sourcePreviewExit -eq 0) {
+          Write-Host 'The dual BookshelfNG source databases still pass a read-only merge preview; no source restore was needed.'
+        } elseif (-not (Test-HasPopulatedSqliteDatabaseFamily (Join-Path $dataDir 'chaptarr.db'))) {
+          Write-Host 'The dual source merge was not promoted. The original BookshelfNG databases are unchanged and can be used by the previous service.'
+        } else {
+          $databaseRollbackSafe = $false
+          Write-Warning 'The dual BookshelfNG sources no longer pass preview and no merged-source rollback snapshot was found. Keep the service stopped and inspect all retained database files.'
+        }
+      } else {
+        $databaseRollbackSafe = $false
+        $backupNamesAfter = @($databaseBackupsAfter | ForEach-Object Name) -join ', '
+        $allBackupNamesAfter = @($allDatabaseBackupsAfter | ForEach-Object Name) -join ', '
+        $backupNamesBeforeSummary = @($backupNamesBefore) -join ', '
+        Write-Warning "Migration may have started, but no new SQLite source backup was found (data directory: [$dataDir]; source database: [$backupDatabaseName]; matching backups after migration: [$backupNamesAfter]; all BookshelfNG backups after migration: [$allBackupNamesAfter]; before migration: [$backupNamesBeforeSummary]). Keep the BookshelfNG service stopped and inspect the retained database before recovery."
+      }
+    } else {
+      try {
+        $databaseName = if ($sqliteSourceName) { $sqliteSourceName } else { 'chaptarr.db' }
+        $databasePath = Join-Path $dataDir $databaseName
+        $failedPath = "$databasePath.chaptarr-failed-$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))"
+        if (Test-Path -LiteralPath $databasePath) { Move-Item -LiteralPath $databasePath -Destination $failedPath -ErrorAction Stop }
+        foreach ($suffix in @('-wal', '-shm', '-journal')) {
+          $sidecar = "$databasePath$suffix"
+          if (Test-Path -LiteralPath $sidecar) { Move-Item -LiteralPath $sidecar -Destination "$failedPath$suffix" -ErrorAction Stop }
+        }
+      } catch {
+        $databaseRollbackSafe = $false
+        Write-Warning "Could not move the newly created SQLite database out of the install path. Keep BookshelfNG stopped and preserve the failed database for recovery. $($_.Exception.Message)"
+      }
+    }
+  }
+
+  if (-not $serviceStopped) {
+    $applicationRollbackSafe = $false
+    $serviceRollbackSafe = $false
+    Write-Warning "The BookshelfNG process is still active. Leaving its files, service registration, and retained backups in place for manual recovery."
+  } else {
+    if ($createdService) {
+      try {
+        & $nssm.Source remove BookshelfNG confirm | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "NSSM remove exited with code $LASTEXITCODE." }
+      } catch {
+        $applicationRollbackSafe = $false
+        Write-Warning "Could not remove the newly created BookshelfNG service during rollback. $($_.Exception.Message)"
+      }
+    }
+    try {
+      if ((Test-Path -LiteralPath $backupDir) -or -not $hadApp) {
+        if (Test-Path -LiteralPath $appDir) { Remove-Item -LiteralPath $appDir -Recurse -Force -ErrorAction Stop }
+      }
+      if (Test-Path -LiteralPath $backupDir) { Move-Item -LiteralPath $backupDir -Destination $appDir -ErrorAction Stop }
+      elseif ($hadApp -and -not (Test-Path -LiteralPath $appDir)) {
+        throw "The previous application files are unavailable at $backupDir."
+      }
+    } catch {
+      $applicationRollbackSafe = $false
+      Write-Warning "Could not restore the previous BookshelfNG application files. Preserve $backupDir for manual recovery. $($_.Exception.Message)"
+    }
+
+    if ($hadService) {
+      try {
+        Set-BookshelfServiceSetting 'Application' $oldApplication
+        Set-BookshelfServiceSetting 'AppDirectory' $oldAppDirectory
+        Set-BookshelfServiceSetting 'AppParameters' $oldAppParameters
+        Set-BookshelfServiceEnvironment 'AppEnvironment' $oldAppEnvironment
+        Set-BookshelfServiceEnvironment 'AppEnvironmentExtra' $oldAppEnvironmentExtra
+        Set-BookshelfServiceSetting 'Start' $oldStart
+      } catch {
+        $serviceRollbackSafe = $false
+        Write-Warning "Could not fully restore the previous BookshelfNG service configuration. Leave it stopped for manual recovery. $($_.Exception.Message)"
+      }
+    }
+  }
+  if ($wasRunning -and $serviceStopped -and $databaseRollbackSafe -and
+      $applicationRollbackSafe -and $serviceRollbackSafe) {
+    Write-SharedMigrationJournal -State 'rolled-back' -OutcomeName 'channel' -OutcomeValue 'chocolatey'
+    Write-SharedMigrationJournal -OutcomeName 'channel-state' -OutcomeValue 'rolled-back'
+    try { Start-Service -Name 'BookshelfNG' }
+    catch {
+      Write-SharedMigrationJournal -State 'intervention-required' -OutcomeName 'channel' -OutcomeValue 'chocolatey'
+      Write-SharedMigrationJournal -OutcomeName 'channel-state' -OutcomeValue 'intervention-required'
+      Write-Warning "The previous BookshelfNG service and data were restored, but the service could not be restarted. $($_.Exception.Message)"
+    }
+  } elseif ($wasRunning) {
+    Write-SharedMigrationJournal -State 'intervention-required' -OutcomeName 'channel' -OutcomeValue 'chocolatey'
+    Write-SharedMigrationJournal -OutcomeName 'channel-state' -OutcomeValue 'intervention-required'
+    Write-Warning 'Automatic rollback left BookshelfNG stopped because the restored app or source database could not be verified.'
+  } elseif (-not $databaseRollbackSafe -or -not $applicationRollbackSafe -or -not $serviceRollbackSafe) {
+    Write-SharedMigrationJournal -State 'intervention-required' -OutcomeName 'channel' -OutcomeValue 'chocolatey'
+    Write-SharedMigrationJournal -OutcomeName 'channel-state' -OutcomeValue 'intervention-required'
+  } elseif ($migrationDatabaseMutationMayHaveStarted) {
+    Write-SharedMigrationJournal -State 'rolled-back' -OutcomeName 'channel' -OutcomeValue 'chocolatey'
+    Write-SharedMigrationJournal -OutcomeName 'channel-state' -OutcomeValue 'rolled-back'
+  }
+  throw $installFailure
+} finally {
+  if (Test-Path $stageDir) { Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue }
+  if (Test-Path $archivePath) { Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue }
+}
+
+Write-Host 'The bookshelfng package now runs the standard ChaptarrNG release. Its service identity and data directory were preserved.'

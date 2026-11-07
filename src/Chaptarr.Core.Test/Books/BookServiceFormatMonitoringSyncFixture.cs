@@ -33,7 +33,7 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class StubBookRepository : IBookRepository
         {
-            private readonly Dictionary<int, Book> _booksById = new();
+            private readonly System.Collections.Concurrent.ConcurrentDictionary<int, Book> _booksById = new();
             private int _nextId = 1000;
 
             public StubBookRepository(IEnumerable<Book> books)
@@ -87,14 +87,14 @@ namespace Chaptarr.Core.Test.Books
             public Book Upsert(Book model) => throw new NotImplementedException();
             public void SetFields(Book model, params System.Linq.Expressions.Expression<Func<Book, object>>[] properties) => throw new NotImplementedException();
             public void Delete(Book model) => throw new NotImplementedException();
-            public void Delete(int id) => _booksById.Remove(id);
+            public void Delete(int id) => _booksById.TryRemove(id, out _);
             public void SetFields(IList<Book> models, params System.Linq.Expressions.Expression<Func<Book, object>>[] properties) => throw new NotImplementedException();
             public void DeleteMany(List<Book> model) => DeleteMany(model.Select(book => book.Id));
             public void DeleteMany(IEnumerable<int> ids)
             {
                 foreach (var id in ids ?? Enumerable.Empty<int>())
                 {
-                    _booksById.Remove(id);
+                    _booksById.TryRemove(id, out _);
                 }
             }
             public void Purge(bool vacuum = false) => throw new NotImplementedException();
@@ -163,13 +163,19 @@ namespace Chaptarr.Core.Test.Books
             public Edition GetEditionByOpenLibraryEditionId(string openLibraryEditionId) => throw new NotImplementedException();
             public Edition GetEditionByProviderAndId(string providerPrefix, string providerId) => throw new NotImplementedException();
             public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
-            public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
+            public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
             public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
-            public List<Edition> GetEditionsByAuthor(int authorId) => throw new NotImplementedException();
+            public int AuthorLookupCount { get; private set; }
+
+            public List<Edition> GetEditionsByAuthor(int authorId)
+            {
+                AuthorLookupCount++;
+                return _editions.ToList();
+            }
             public Edition FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();
@@ -331,6 +337,83 @@ namespace Chaptarr.Core.Test.Books
                 seriesBookLinkRepository: new StubSeriesBookLinkRepository(),
                 multiCopySeriesService: null,
                 logger: LogManager.GetCurrentClassLogger());
+        }
+
+        private sealed class CountingLazyEditions : NzbDrone.Core.Datastore.LazyLoaded<List<Edition>>
+        {
+            private readonly Counter _counter;
+
+            public CountingLazyEditions(Counter counter)
+            {
+                _counter = counter;
+            }
+
+            public override void LazyLoad()
+            {
+                if (IsLoaded)
+                {
+                    return;
+                }
+
+                _counter.Count++;
+                _value = new List<Edition>();
+                IsLoaded = true;
+            }
+        }
+
+        private sealed class Counter
+        {
+            public int Count { get; set; }
+        }
+
+        [Test]
+        public void update_many_should_load_author_editions_in_one_query_instead_of_one_per_book()
+        {
+            var author = BuildAuthor(1);
+            var counter = new Counter();
+            var books = Enumerable.Range(0, 25)
+                .Select(i => BuildBook(10 + i, author.Id, i % 2 == 0 ? BookMediaType.Audiobook : BookMediaType.Ebook, $"hc:work-{i / 2}", monitored: false))
+                .ToList();
+            foreach (var book in books)
+            {
+                book.LazyEditions = new CountingLazyEditions(counter);
+            }
+
+            var editions = books.Select(book => new Edition { Id = book.Id * 10, BookId = book.Id, Asin = $"ASIN{book.Id}" }).ToList();
+            var editionService = new StubEditionService(editions);
+            var repository = new StubBookRepository(books);
+            var service = BuildService(repository, new StubAuthorService(new[] { author }), editionService: editionService);
+
+            var changed = books[0];
+            changed.SetMonitored(true);
+            service.UpdateMany(new List<Book> { changed });
+
+            Assert.That(counter.Count, Is.EqualTo(0), "no per-book lazy Editions load should be needed");
+            Assert.That(editionService.AuthorLookupCount, Is.EqualTo(1), "exactly one author-wide query; the changed books use the by-book query");
+        }
+
+        [Test]
+        public void update_many_should_give_each_book_only_its_own_editions_and_not_touch_loaded_books()
+        {
+            var author = BuildAuthor(1);
+            var first = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: false);
+            var second = BuildBook(11, author.Id, BookMediaType.Ebook, "hc:work-1", monitored: false);
+            first.LazyEditions = new CountingLazyEditions(new Counter());
+            var preloaded = new List<Edition> { new Edition { Id = 999, BookId = 11, Asin = "KEEP" } };
+            second.Editions = preloaded;
+
+            var editionService = new StubEditionService(new[]
+            {
+                new Edition { Id = 100, BookId = 10, Asin = "A" },
+                new Edition { Id = 110, BookId = 11, Asin = "B" }
+            });
+            var service = BuildService(new StubBookRepository(new[] { first, second }), new StubAuthorService(new[] { author }), editionService: editionService);
+
+            first.SetMonitored(true);
+            service.UpdateMany(new List<Book> { first });
+
+            Assert.That(first.Editions.Select(e => e.Id), Is.EqualTo(new[] { 100 }));
+            Assert.That(second.Editions, Is.SameAs(preloaded), "an already-loaded book must keep its in-memory editions");
         }
 
         [Test]
@@ -686,6 +769,133 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(deleted.Single(item => item.Book.Id == first.Id).Book.Editions, Is.EqualTo(new[] { firstEdition }));
                 Assert.That(deleted.Single(item => item.Book.Id == second.Id).Book.Editions, Is.EqualTo(new[] { secondEdition }));
             });
+        }
+
+        [Test]
+        public void hinted_update_should_not_reuse_work_groups_after_a_book_changes_work()
+        {
+            var author = BuildAuthor(1);
+            var audio = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:w1", monitored: false);
+            var ebook = BuildBook(11, author.Id, BookMediaType.Ebook, "hc:w1", monitored: false);
+            var repository = new StubBookRepository(new[]
+            {
+                BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:w1", monitored: false),
+                BuildBook(11, author.Id, BookMediaType.Ebook, "hc:w1", monitored: false)
+            });
+            var service = BuildService(repository, new StubAuthorService(new[] { author }));
+            var hint = new AuthorBooksHint(new[] { audio, ebook });
+
+            audio.SetMonitored(true);
+            service.UpdateMany(new List<Book> { audio }, hint);
+            Assert.That(repository.Get(11).EbookMonitored, Is.True, "sanity: the sibling of the same work follows the audiobook");
+
+            // A refresh can move a book to another work in place mid-pass.
+            ebook.HardcoverBookId = "hc:w2";
+            ebook.BaseBookId = "hc:w2";
+            ebook.SetMonitored(false);
+            repository.Update(ebook);
+            repository.Update(BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:w1", monitored: false));
+
+            service.UpdateMany(new List<Book> { audio }, hint);
+
+            Assert.That(repository.Get(11).EbookMonitored, Is.Not.True, "a book that left the work must not keep following it from a cached grouping");
+        }
+
+        [Test]
+        public void hinted_update_should_sync_from_the_book_instance_being_saved()
+        {
+            var author = BuildAuthor(1);
+            var hintedAudio = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:w1", monitored: false);
+            var ebook = BuildBook(11, author.Id, BookMediaType.Ebook, "hc:w1", monitored: false);
+            var repository = new StubBookRepository(new[]
+            {
+                BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:w1", monitored: false),
+                BuildBook(11, author.Id, BookMediaType.Ebook, "hc:w1", monitored: false)
+            });
+            var service = BuildService(repository, new StubAuthorService(new[] { author }));
+            var hint = new AuthorBooksHint(new[] { hintedAudio, ebook });
+
+            // First save: nothing changes, but it builds (and would cache) the work groups from this instance.
+            var firstSave = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:w1", monitored: false);
+            service.UpdateMany(new List<Book> { firstSave }, hint);
+
+            var secondSave = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:w1", monitored: true);
+            service.UpdateMany(new List<Book> { secondSave }, hint);
+
+            Assert.That(repository.Get(11).EbookMonitored, Is.True, "the newly monitored audiobook being saved must drive the sibling sync, not an older instance from a cached grouping");
+        }
+
+        [Test]
+        public void author_books_hint_should_drop_a_removed_book_and_regroup()
+        {
+            var author = BuildAuthor(1);
+            var audio = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:w1", monitored: false);
+            var ebook = BuildBook(11, author.Id, BookMediaType.Ebook, "hc:w1", monitored: false);
+            var hint = new AuthorBooksHint(new[] { audio, ebook });
+            var builds = 0;
+            List<List<Book>> Build(List<Book> books)
+            {
+                builds++;
+                return books.Select(book => new List<Book> { book }).ToList();
+            }
+
+            var booksById = new Dictionary<int, Book> { [10] = audio, [11] = ebook };
+            hint.GetWorkGroups(booksById, Build);
+            hint.GetWorkGroups(booksById, Build);
+            Assert.That(builds, Is.EqualTo(1), "an unchanged set of books reuses the grouping");
+
+            hint.Remove(11);
+            Assert.That(hint.Books.Select(book => book.Id), Is.EqualTo(new[] { 10 }));
+
+            hint.GetWorkGroups(new Dictionary<int, Book> { [10] = audio }, Build);
+            Assert.That(builds, Is.EqualTo(2), "removing a book invalidates the grouping");
+        }
+
+        [Test]
+        public void concurrent_hinted_updates_for_different_authors_should_not_touch_each_others_books()
+        {
+            const int iterations = 1500;
+            var authors = new[] { BuildAuthor(1), BuildAuthor(2) };
+            var authorService = new StubAuthorService(authors);
+            var repository = new StubBookRepository(new[]
+            {
+                BuildBook(10, 1, BookMediaType.Audiobook, "hc:a1", monitored: false),
+                BuildBook(11, 1, BookMediaType.Ebook, "hc:a1", monitored: false),
+                BuildBook(20, 2, BookMediaType.Audiobook, "hc:a2", monitored: false),
+                BuildBook(21, 2, BookMediaType.Ebook, "hc:a2", monitored: false)
+            });
+            var service = BuildService(repository, authorService);
+            var failures = 0;
+
+            void Worker(int authorId, int audioId, int ebookId, string work)
+            {
+                var audio = BuildBook(audioId, authorId, BookMediaType.Audiobook, work, monitored: false);
+                var ebook = BuildBook(ebookId, authorId, BookMediaType.Ebook, work, monitored: false);
+                var hint = new AuthorBooksHint(new[] { audio, ebook });
+                for (var i = 0; i < iterations; i++)
+                {
+                    audio.SetMonitored(i % 2 == 0);
+                    try
+                    {
+                        service.UpdateMany(new List<Book> { audio }, hint);
+                    }
+                    catch (Exception)
+                    {
+                        System.Threading.Interlocked.Increment(ref failures);
+                    }
+                }
+            }
+
+            var t1 = new System.Threading.Thread(() => Worker(1, 10, 11, "hc:a1"));
+            var t2 = new System.Threading.Thread(() => Worker(2, 20, 21, "hc:a2"));
+            t1.Start();
+            t2.Start();
+            t1.Join();
+            t2.Join();
+
+            Assert.That(failures, Is.Zero, "concurrent refreshes of different authors must not fail or interfere");
+            Assert.That(repository.Get(11).AuthorId, Is.EqualTo(1));
+            Assert.That(repository.Get(21).AuthorId, Is.EqualTo(2));
         }
     }
 }

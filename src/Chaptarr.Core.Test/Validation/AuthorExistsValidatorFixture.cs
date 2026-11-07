@@ -8,6 +8,8 @@ using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Validation.Paths;
 
+using NzbDrone.Core.Validation;
+
 namespace Chaptarr.Core.Test.Validation
 {
     [TestFixture]

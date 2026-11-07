@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Chaptarr.Core.Test;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
@@ -44,11 +45,62 @@ namespace Chaptarr.Core.Test.DecisionEngine
             Assert.That(decision.CanBypass, Is.True);
         }
 
+        [Test]
+        public void should_keep_required_terms_hard_for_migrated_bookshelf_installs()
+        {
+            var profile = new ReleaseProfile
+            {
+                Enabled = true,
+                Required = new List<string> { "unabridged" }
+            };
+
+            var decision = CreateSubject(true, profile).IsSatisfiedBy(BuildRemoteBook("Golden Son Graphic Audio"), null);
+
+            Assert.That(decision.Accepted, Is.False);
+            Assert.That(decision.CanBypass, Is.False);
+        }
+
+        [Test]
+        public void should_keep_ignored_terms_hard_for_migrated_bookshelf_installs()
+        {
+            var profile = new ReleaseProfile
+            {
+                Enabled = true,
+                Ignored = new List<string> { "graphic audio" }
+            };
+
+            var decision = CreateSubject(true, profile).IsSatisfiedBy(BuildRemoteBook("Golden Son Graphic Audio"), null);
+
+            Assert.That(decision.Accepted, Is.False);
+            Assert.That(decision.CanBypass, Is.False);
+        }
+
+        [Test]
+        public void should_match_migrated_release_profile_terms_against_the_original_title()
+        {
+            var profile = new ReleaseProfile
+            {
+                Enabled = true,
+                Required = new List<string> { "dark matter" }
+            };
+
+            var decision = CreateSubject(true, profile).IsSatisfiedBy(BuildRemoteBook("Dark.Matter [EPUB]"), null);
+
+            Assert.That(decision.Accepted, Is.False);
+            Assert.That(decision.CanBypass, Is.False);
+        }
+
         private static ReleaseRestrictionsSpecification CreateSubject(params ReleaseProfile[] profiles)
+        {
+            return CreateSubject(false, profiles);
+        }
+
+        private static ReleaseRestrictionsSpecification CreateSubject(bool bookshelfMatchCompatibility, params ReleaseProfile[] profiles)
         {
             return new ReleaseRestrictionsSpecification(
                 new ContainsTermMatcherService(),
                 new StubReleaseProfileService(profiles),
+                ConfigServiceTestProxy.Create(bookshelfMatchCompatibility: bookshelfMatchCompatibility),
                 LogManager.GetCurrentClassLogger());
         }
 

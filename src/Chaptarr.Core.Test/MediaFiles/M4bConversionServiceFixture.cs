@@ -27,6 +27,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public Dictionary<string, TimeSpan> Durations { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> AudioFiles { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, string> StreamLayouts { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, string> ProbeJson { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<IReadOnlyList<string>> FFmpegCalls { get; } = new();
             public Action<IReadOnlyList<string>> OnFFmpegExecute { get; set; }
 
@@ -40,6 +41,11 @@ namespace Chaptarr.Core.Test.MediaFiles
             public string ExecuteFFprobe(IReadOnlyList<string> arguments, int timeoutMs = 10000)
             {
                 var path = arguments.LastOrDefault();
+                if (arguments.Contains("-show_chapters"))
+                {
+                    return path != null && ProbeJson.TryGetValue(path, out var json) ? json : string.Empty;
+                }
+
                 if (arguments.Any(a => a.Contains("stream_disposition=attached_pic", StringComparison.Ordinal)))
                 {
                     if (path != null && StreamLayouts.TryGetValue(path, out var layout))
@@ -208,6 +214,170 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(externalTools.M4bToolArguments, Does.Contain("--series-part=4"));
             Assert.That(externalTools.M4bToolArguments, Does.Contain("--use-filenames-as-chapters"));
             Assert.That(externalTools.M4bToolArguments, Does.Not.Contain("--ignore-source-tags"));
+        }
+
+        [Test]
+        public void should_copy_audio_and_remove_part_tags_when_merging_without_conversion()
+        {
+            var externalTools = new StreamingExternalToolsService();
+            var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var diskProxy = (DiskProviderProxy)(object)diskProvider;
+            diskProxy.ExistingFiles.Add("/input/part-01.m4b");
+            diskProxy.ExistingFiles.Add("/input/part-02.m4b");
+
+            var subject = new M4bConversionService(
+                externalTools,
+                diskProvider,
+                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
+                LogManager.GetCurrentClassLogger());
+
+            subject.ConvertToM4b(
+                new[] { "/input/part-01.m4b", "/input/part-02.m4b" },
+                "/output/book.m4b",
+                new ConversionOptions
+                {
+                    AudioBitrate = 64,
+                    AudioChannels = 1,
+                    NoConversion = true,
+                    TagOptions = new ConversionTagOptions
+                    {
+                        RemoveTags = new List<string> { "track", "tracks", "disk", "disks" }
+                    }
+                });
+
+            Assert.That(externalTools.M4bToolArguments, Does.Contain("--no-conversion"));
+            Assert.That(externalTools.M4bToolArguments.Any(a => a.StartsWith("--audio-", StringComparison.Ordinal)), Is.False);
+            Assert.That(externalTools.M4bToolArguments, Does.Contain("--remove=track,tracks,disk,disks"));
+        }
+
+        [Test]
+        public void should_offset_embedded_part_chapters_when_probing_merge_sources()
+        {
+            var externalTools = new StreamingExternalToolsService();
+            externalTools.ProbeJson["/input/part-01.m4b"] = """
+                {"streams":[{"codec_name":"aac","sample_rate":"22050","channels":1}],
+                 "chapters":[{"start_time":"0.000000","tags":{"title":"Opening"}},{"start_time":"600.500000","tags":{"title":"Chapter 1"}}],
+                 "format":{"duration":"1200.250000"}}
+                """;
+            externalTools.ProbeJson["/input/part-02.m4b"] = """
+                {"streams":[{"codec_name":"aac","sample_rate":"22050","channels":1}],
+                 "chapters":[],
+                 "format":{"duration":"900.000000"}}
+                """;
+
+            var subject = new M4bConversionService(
+                externalTools,
+                DispatchProxy.Create<IDiskProvider, DiskProviderProxy>(),
+                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
+                LogManager.GetCurrentClassLogger());
+
+            var info = subject.ProbeMergeSources(new[] { "/input/part-01.m4b", "/input/part-02.m4b" });
+
+            Assert.That(info.CanCopyAudio, Is.True);
+            Assert.That(info.EmbeddedChapterCount, Is.EqualTo(2));
+            Assert.That(info.ChaptersTxtContent.Split(Environment.NewLine), Is.EqualTo(new[]
+            {
+                "## total-length 00:35:00.250",
+                "00:00:00.000 Opening",
+                "00:10:00.500 Chapter 1",
+                "00:20:00.250 part-02"
+            }));
+        }
+
+        [Test]
+        public void should_use_legacy_track_titles_for_parts_without_embedded_chapters()
+        {
+            var externalTools = new StreamingExternalToolsService();
+            externalTools.ProbeJson["/input/part-01.mp3"] = """{"streams":[{"codec_name":"mp3","sample_rate":"44100","channels":2}],"format":{"duration":"60"}}""";
+            externalTools.ProbeJson["/input/part-02.mp3"] = """{"streams":[{"codec_name":"mp3","sample_rate":"44100","channels":2}],"format":{"duration":"90"}}""";
+
+            var subject = new M4bConversionService(
+                externalTools,
+                DispatchProxy.Create<IDiskProvider, DiskProviderProxy>(),
+                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
+                LogManager.GetCurrentClassLogger());
+
+            var info = subject.ProbeMergeSources(
+                new[] { "/input/part-01.mp3", "/input/part-02.mp3" },
+                new[] { "Opening", "The Journey" });
+
+            Assert.That(info.CanCopyAudio, Is.True);
+            Assert.That(info.HasCompleteDurations, Is.True);
+            Assert.That(info.EmbeddedChapterCount, Is.Zero);
+            Assert.That(info.ChaptersTxtContent.Split(Environment.NewLine), Is.EqualTo(new[]
+            {
+                "## total-length 00:02:30.000",
+                "00:00:00.000 Opening",
+                "00:01:00.000 The Journey"
+            }));
+        }
+
+        [Test]
+        public void should_not_claim_complete_durations_when_a_merge_part_cannot_be_probed()
+        {
+            var externalTools = new StreamingExternalToolsService();
+            externalTools.ProbeJson["/input/part-01.mp3"] = """{"streams":[{"codec_name":"mp3"}],"format":{}}""";
+            externalTools.ProbeJson["/input/part-02.mp3"] = """{"streams":[{"codec_name":"mp3"}],"format":{"duration":"90"}}""";
+
+            var subject = new M4bConversionService(
+                externalTools,
+                DispatchProxy.Create<IDiskProvider, DiskProviderProxy>(),
+                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
+                LogManager.GetCurrentClassLogger());
+
+            var info = subject.ProbeMergeSources(
+                new[] { "/input/part-01.mp3", "/input/part-02.mp3" },
+                new[] { "Opening", "The Journey" });
+
+            Assert.That(info.HasCompleteDurations, Is.False);
+            Assert.That(info.ChaptersTxtContent, Is.Null);
+        }
+
+        [Test]
+        public void should_pass_requested_aac_bitrate_sample_rate_and_channel_count_to_m4b_tool()
+        {
+            var externalTools = new StreamingExternalToolsService();
+            var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            ((DiskProviderProxy)(object)diskProvider).ExistingFiles.Add("/input/part-01.mp3");
+
+            var subject = new M4bConversionService(
+                externalTools,
+                diskProvider,
+                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
+                LogManager.GetCurrentClassLogger());
+
+            subject.ConvertToM4b(
+                new[] { "/input/part-01.mp3" },
+                "/output/book.m4b",
+                new ConversionOptions
+                {
+                    AudioBitrate = 128,
+                    AudioSampleRate = 44100,
+                    AudioChannels = 2
+                });
+
+            Assert.That(externalTools.M4bToolArguments, Does.Contain("--audio-bitrate=128k"));
+            Assert.That(externalTools.M4bToolArguments, Does.Contain("--audio-samplerate=44100"));
+            Assert.That(externalTools.M4bToolArguments, Does.Contain("--audio-channels=2"));
+        }
+
+        [Test]
+        public void should_not_copy_audio_when_merge_sources_differ_in_sample_rate()
+        {
+            var externalTools = new StreamingExternalToolsService();
+            externalTools.ProbeJson["/input/part-01.m4b"] = """{"streams":[{"codec_name":"aac","sample_rate":"22050","channels":1}],"format":{"duration":"60"}}""";
+            externalTools.ProbeJson["/input/part-02.m4b"] = """{"streams":[{"codec_name":"aac","sample_rate":"44100","channels":1}],"format":{"duration":"60"}}""";
+
+            var subject = new M4bConversionService(
+                externalTools,
+                DispatchProxy.Create<IDiskProvider, DiskProviderProxy>(),
+                DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
+                LogManager.GetCurrentClassLogger());
+
+            var info = subject.ProbeMergeSources(new[] { "/input/part-01.m4b", "/input/part-02.m4b" });
+
+            Assert.That(info.CanCopyAudio, Is.False);
+            Assert.That(info.ChaptersTxtContent, Is.Null);
         }
 
         [Test]

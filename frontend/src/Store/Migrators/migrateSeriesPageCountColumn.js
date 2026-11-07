@@ -1,4 +1,4 @@
-import { get } from 'lodash';
+import get from 'lodash/get';
 
 export default function migrateSeriesPageCountColumn(persistedState) {
   const seriesColumns = get(persistedState, 'series.columns');

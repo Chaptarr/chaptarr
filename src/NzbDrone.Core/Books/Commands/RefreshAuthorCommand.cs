@@ -11,6 +11,7 @@ namespace NzbDrone.Core.Books.Commands
         // New granular control flags
         public bool RefreshMetadata { get; set; }
         public bool RescanFolders { get; set; }
+        public bool RescanWhenMetadataUnchanged { get; set; }
         // ForceRefresh is a local reconciliation request: fetch the latest
         // published author blob, bypass If-None-Match, and compare it to local DB.
         public bool ForceRefresh { get; set; }
@@ -53,5 +54,7 @@ namespace NzbDrone.Core.Books.Commands
         public override bool IsLongRunning => !AuthorId.HasValue;
 
         public override bool IsTypeExclusive => !AuthorId.HasValue;
+
+        public override bool LeavesThreadForOtherCommands => true;
     }
 }

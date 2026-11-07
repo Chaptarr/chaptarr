@@ -6,6 +6,7 @@ using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.IndexerSearch.Definitions;
@@ -21,13 +22,18 @@ namespace NzbDrone.Core.IndexerSearch
         Task<List<DownloadDecision>> BookSearch(Book book, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false);
         Task<List<DownloadDecision>> BookSearch(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false);
         Task<List<DownloadDecision>> AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch);
+        Task<List<DownloadDecision>> SeriesSearch(int seriesId, int authorId, bool userInvokedSearch, bool interactiveSearch);
     }
 
     public class ReleaseSearchService : ISearchForReleases
     {
+        private const int MaxAlternateEditionSearchTitles = 5;
+
         private readonly IIndexerFactory _indexerFactory;
         private readonly IBookService _bookService;
         private readonly IAuthorService _authorService;
+        private readonly ISeriesService _seriesService;
+        private readonly ISeriesBookLinkService _seriesBookLinkService;
         private readonly IMakeDownloadDecision _makeDownloadDecision;
         private readonly Logger _logger;
 
@@ -36,11 +42,15 @@ namespace NzbDrone.Core.IndexerSearch
                                 IAuthorService authorService,
                                 IEditionSelector editionSelector,
                                 IMakeDownloadDecision makeDownloadDecision,
-                                Logger logger)
+                                Logger logger,
+                                ISeriesService seriesService = null,
+                                ISeriesBookLinkService seriesBookLinkService = null)
         {
             _indexerFactory = indexerFactory;
             _bookService = bookService;
             _authorService = authorService;
+            _seriesService = seriesService;
+            _seriesBookLinkService = seriesBookLinkService;
             _makeDownloadDecision = makeDownloadDecision;
             _logger = logger;
         }
@@ -79,6 +89,56 @@ namespace NzbDrone.Core.IndexerSearch
 
             var searchSpec = Get<AuthorSearchCriteria>(author, books, authorCatalog, userInvokedSearch, interactiveSearch);
             return await Dispatch(indexer => indexer.Fetch(searchSpec), searchSpec);
+        }
+
+        public async Task<List<DownloadDecision>> SeriesSearch(int seriesId, int authorId, bool userInvokedSearch, bool interactiveSearch)
+        {
+            var series = _seriesService?.GetSeries(seriesId);
+            var author = _authorService.GetAuthor(authorId);
+
+            if (series == null || author == null || _seriesBookLinkService == null)
+            {
+                return new List<DownloadDecision>();
+            }
+
+            // Series links are local and the legacy foreign-author filter is no longer
+            // supported. Restrict the links to this author through the local catalog below.
+            var links = _seriesBookLinkService.GetLinksBySeries(seriesId);
+            var positions = links
+                .GroupBy(link => link.BookId)
+                .ToDictionary(group => group.Key, group => group.Min(link => link.SeriesPosition > 0 ? link.SeriesPosition : int.MaxValue));
+
+            var authorCatalog = _bookService.GetBooksByAuthor(author.Id);
+            var books = authorCatalog
+                .Where(book => positions.ContainsKey(book.Id) && book.MediaType == series.MediaType)
+                .OrderBy(book => positions[book.Id])
+                .ToList();
+
+            books = FilterBooksByConfiguredMediaProfiles(author, books);
+
+            if (books.Count == 0)
+            {
+                return new List<DownloadDecision>();
+            }
+
+            var searchSpec = Get<BookSearchCriteria>(author, books, authorCatalog, userInvokedSearch, interactiveSearch, false);
+            searchSpec.BookTitle = series.Title;
+
+            var decisions = await Dispatch(indexer => indexer.Fetch(searchSpec), searchSpec);
+
+            foreach (var decision in decisions)
+            {
+                if (decision?.RemoteBook == null)
+                {
+                    continue;
+                }
+
+                decision.RemoteBook.Author = author;
+                decision.RemoteBook.Books = books;
+                decision.RemoteBook.DownloadAllowed = true;
+            }
+
+            return DeDupeDecisions(decisions);
         }
 
         public Task<List<DownloadDecision>> BookSearch(Book book, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
@@ -134,33 +194,165 @@ namespace NzbDrone.Core.IndexerSearch
                 .FirstOrDefault();
 
             searchSpec.BookTitle = GetSearchBookTitle(book, selectedEdition) ?? string.Empty;
-
-            // searchSpec.BookIsbn = book.Isbn13;
+            searchSpec.BookIsbn = GetSearchBookIsbn(book, selectedEdition);
+            var alternateSearchTitles = GetAlternateEditionSearchTitles(book, searchSpec.BookTitle, author?.Name);
             if (book.ReleaseDate.HasValue)
             {
                 searchSpec.BookYear = book.ReleaseDate.Value.Year;
             }
 
-            var decisions = await Dispatch(indexer => indexer.Fetch(searchSpec), searchSpec);
+            var decisions = await Dispatch(indexer => indexer.Fetch(searchSpec), searchSpec, alternateSearchTitles);
             return DeDupeDecisions(decisions);
+        }
+
+        internal static List<string> GetAlternateEditionSearchTitles(Book book, string primaryTitle, string authorName)
+        {
+            if (book == null)
+            {
+                return new List<string>();
+            }
+
+            var seenQueries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var primaryQuery = GetSearchQueryKey(primaryTitle, authorName);
+            if (!string.IsNullOrWhiteSpace(primaryQuery))
+            {
+                seenQueries.Add(primaryQuery);
+            }
+
+            // Search language variants already present for this work, preferring English
+            // titles when available. Matching and profile checks still use the monitored
+            // edition; these values only change the text sent to indexers.
+            var editionCandidates = (book.Editions ?? new List<Edition>())
+                .Where(edition => edition != null && !string.IsNullOrWhiteSpace(edition.Title))
+                .OrderByDescending(edition => edition.Language?.CanonicalizeLanguage() == "eng")
+                .ThenBy(edition => edition.Id)
+                .Select(edition => (Title: GetSearchBookTitle(book, edition), edition.Language, edition.Id))
+                .Where(candidate => !string.IsNullOrWhiteSpace(candidate.Title))
+                .ToList();
+
+            var candidates = editionCandidates
+                .Where(candidate => candidate.Language?.CanonicalizeLanguage() == "eng")
+                .ToList();
+
+            if (!string.IsNullOrWhiteSpace(book.OriginalTitle))
+            {
+                candidates.Add((book.OriginalTitle, null, int.MaxValue - 1));
+            }
+
+            if (!string.IsNullOrWhiteSpace(book.Title))
+            {
+                candidates.Add((book.Title, null, int.MaxValue));
+            }
+
+            candidates.AddRange(editionCandidates
+                .Where(candidate => candidate.Language?.CanonicalizeLanguage() != "eng"));
+
+            return candidates
+                .Where(candidate =>
+                {
+                    var query = GetSearchQueryKey(candidate.Title, authorName);
+                    return !string.IsNullOrWhiteSpace(query) && seenQueries.Add(query);
+                })
+                .Select(candidate => candidate.Title)
+                .Take(MaxAlternateEditionSearchTitles)
+                .ToList();
+        }
+
+        private static string GetSearchQueryKey(string title, string authorName)
+        {
+            var mainTitle = BookSearchCriteria.GetMainSearchTitle(title, authorName);
+            return string.IsNullOrWhiteSpace(mainTitle) ? null : SearchCriteriaBase.GetQueryTitle(mainTitle);
         }
 
         internal static string GetSearchBookTitle(Book book, Edition selectedEdition)
         {
-            if (book == null)
+            return BookEditionTitle.GetTitleForBook(book, selectedEdition);
+        }
+
+        internal static string GetSearchBookIsbn(Book book, Edition selectedEdition)
+        {
+            if (!string.IsNullOrWhiteSpace(selectedEdition?.Isbn13))
             {
-                return string.Empty;
+                return selectedEdition.Isbn13;
             }
 
-            // Keep searches honest: use the monitored edition title (the one displayed in the UI),
-            // falling back to the book title if needed.
+            if (!string.IsNullOrWhiteSpace(selectedEdition?.Isbn10))
+            {
+                return selectedEdition.Isbn10;
+            }
+
+            var fallbackEdition = book?.Editions?
+                .Where(edition => edition != null && edition != selectedEdition && IsSuitableEbookEdition(edition))
+                .Where(edition => !string.IsNullOrWhiteSpace(edition.Isbn13) || !string.IsNullOrWhiteSpace(edition.Isbn10))
+                .OrderBy(edition => GetEditionIsbnFallbackRank(edition, selectedEdition, book))
+                .ThenBy(edition => edition.Id)
+                .FirstOrDefault();
+
+            if (!string.IsNullOrWhiteSpace(fallbackEdition?.Isbn13))
+            {
+                return fallbackEdition.Isbn13;
+            }
+
+            if (!string.IsNullOrWhiteSpace(fallbackEdition?.Isbn10))
+            {
+                return fallbackEdition.Isbn10;
+            }
+
+            if (!string.IsNullOrWhiteSpace(book?.ISBN13))
+            {
+                return book.ISBN13;
+            }
+
+            return string.IsNullOrWhiteSpace(book?.ISBN10) ? null : book.ISBN10;
+        }
+
+        private static bool IsSuitableEbookEdition(Edition edition)
+        {
+            if (edition == null)
+            {
+                return false;
+            }
+
+            if (edition.ReadingFormatId == 3 || edition.IsEbook)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private static int GetEditionIsbnFallbackRank(Edition edition, Edition selectedEdition, Book book)
+        {
             var selectedTitle = selectedEdition?.Title;
-            if (!string.IsNullOrWhiteSpace(selectedTitle))
+            if (TitlesMatch(edition?.Title, selectedTitle))
             {
-                return selectedTitle;
+                return 0;
             }
 
-            return book.Title ?? string.Empty;
+            if (TitlesMatch(edition?.Title, book?.Title))
+            {
+                return 1;
+            }
+
+            return 2;
+        }
+
+        private static bool TitlesMatch(string left, string right)
+        {
+            if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+            {
+                return false;
+            }
+
+            return string.Equals(NormalizeComparisonTitle(left), NormalizeComparisonTitle(right), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizeComparisonTitle(string value)
+        {
+            return value?
+                .Trim()
+                .Replace('’', '\'')
+                .Replace('‘', '\'');
         }
 
         internal static bool HasConfiguredQualityProfileForMediaType(Author author, BookMediaType mediaType)
@@ -233,7 +425,10 @@ namespace NzbDrone.Core.IndexerSearch
             return author?.Id > 0 ? _bookService.GetBooksByAuthor(author.Id) : new List<Book>();
         }
 
-        private async Task<List<DownloadDecision>> Dispatch(Func<IIndexer, Task<IList<ReleaseInfo>>> searchAction, SearchCriteriaBase criteriaBase)
+        private async Task<List<DownloadDecision>> Dispatch(
+            Func<IIndexer, Task<IList<ReleaseInfo>>> searchAction,
+            SearchCriteriaBase criteriaBase,
+            IReadOnlyList<string> alternateSearchTitles = null)
         {
             var indexers = criteriaBase.InteractiveSearch ?
                 _indexerFactory.InteractiveSearchEnabled() :
@@ -256,23 +451,51 @@ namespace NzbDrone.Core.IndexerSearch
                 criteriaBase.Books != null ? string.Join(", ", criteriaBase.Books.Select(b => b.Title)) : "None",
                 string.Join(", ", indexers.Select(i => i.Definition.Name)));
 
-            var tasks = indexers.Select(indexer => DispatchIndexer(searchAction, indexer, criteriaBase));
+            var reports = await FetchReports(indexers, searchAction, criteriaBase);
+            var decisions = reports.Count == 0
+                ? new List<DownloadDecision>()
+                : MakeSearchDecisions(reports, requestedMediaType, criteriaBase);
 
-            var batch = await Task.WhenAll(tasks);
-
-            var reports = batch.SelectMany(x => x).ToList();
-
-            if (requestedMediaType.HasValue && criteriaBase?.Books?.Count == 1)
+            var bookSearchCriteria = criteriaBase as BookSearchCriteria;
+            if (bookSearchCriteria != null && indexers.Count > 0 && alternateSearchTitles?.Count > 0 && !decisions.Any(decision => decision.Approved))
             {
-                var originalCount = reports.Count;
-                reports = FilterReportsByRequestedMediaType(reports, requestedMediaType.Value);
-                var filteredOutCount = originalCount - reports.Count;
-
-                if (filteredOutCount > 0)
+                foreach (var alternateTitle in alternateSearchTitles)
                 {
-                    _logger.Debug("Filtered {0} cross-media releases for requested media type {1}", filteredOutCount, requestedMediaType.Value);
+                    _logger.Debug("No approved release found for the monitored edition title; trying alternate edition title '{0}'", alternateTitle);
+                    bookSearchCriteria.SearchTitleOverride = alternateTitle;
+
+                    try
+                    {
+                        var alternateReports = await FetchReports(indexers, searchAction, criteriaBase);
+                        if (alternateReports.Count > 0)
+                        {
+                            reports.AddRange(alternateReports);
+                            decisions = MakeSearchDecisions(reports, requestedMediaType, criteriaBase);
+                        }
+                    }
+                    finally
+                    {
+                        bookSearchCriteria.SearchTitleOverride = null;
+                    }
+
+                    if (decisions.Any(decision => decision.Approved))
+                    {
+                        break;
+                    }
                 }
             }
+
+            if (reports.Count == 0)
+            {
+                decisions = MakeSearchDecisions(reports, requestedMediaType, criteriaBase);
+            }
+
+            var filteredReports = FilterReportsByRequestedMediaType(reports, requestedMediaType, criteriaBase);
+            if (filteredReports.Count < reports.Count)
+            {
+                _logger.Debug("Filtered {0} cross-media releases for requested media type {1}", reports.Count - filteredReports.Count, requestedMediaType.Value);
+            }
+            reports = filteredReports;
 
             _logger.ProgressDebug("Total of {0} reports were found for {1} from {2} indexers", reports.Count, criteriaBase, indexers.Count);
 
@@ -308,7 +531,26 @@ namespace NzbDrone.Core.IndexerSearch
                 _bookService.UpdateLastSearchTime(criteriaBase.Books);
             }
 
-            return _makeDownloadDecision.GetSearchDecision(reports, criteriaBase).ToList();
+            return decisions;
+        }
+
+        private async Task<List<ReleaseInfo>> FetchReports(
+            IEnumerable<IIndexer> indexers,
+            Func<IIndexer, Task<IList<ReleaseInfo>>> searchAction,
+            SearchCriteriaBase criteriaBase)
+        {
+            var tasks = indexers.Select(indexer => DispatchIndexer(searchAction, indexer, criteriaBase));
+            var batch = await Task.WhenAll(tasks);
+            return batch.SelectMany(results => results).ToList();
+        }
+
+        private List<DownloadDecision> MakeSearchDecisions(
+            List<ReleaseInfo> reports,
+            BookMediaType? requestedMediaType,
+            SearchCriteriaBase criteriaBase)
+        {
+            var candidates = FilterReportsByRequestedMediaType(reports, requestedMediaType, criteriaBase);
+            return _makeDownloadDecision.GetSearchDecision(candidates, criteriaBase).ToList();
         }
 
         private async Task<IList<ReleaseInfo>> DispatchIndexer(Func<IIndexer, Task<IList<ReleaseInfo>>> searchAction, IIndexer indexer, SearchCriteriaBase criteriaBase)
@@ -334,10 +576,15 @@ namespace NzbDrone.Core.IndexerSearch
         }
 
 
-        private List<ReleaseInfo> FilterReportsByRequestedMediaType(List<ReleaseInfo> reports, BookMediaType requestedMediaType)
+        private List<ReleaseInfo> FilterReportsByRequestedMediaType(List<ReleaseInfo> reports, BookMediaType? requestedMediaType, SearchCriteriaBase criteriaBase)
         {
+            if (!requestedMediaType.HasValue || criteriaBase?.Books?.Count != 1)
+            {
+                return reports;
+            }
+
             return (reports ?? new List<ReleaseInfo>())
-                .Where(report => IsCompatibleWithRequestedMediaType(report, requestedMediaType))
+                .Where(report => IsCompatibleWithRequestedMediaType(report, requestedMediaType.Value))
                 .ToList();
         }
 

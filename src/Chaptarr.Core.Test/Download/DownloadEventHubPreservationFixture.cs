@@ -176,6 +176,21 @@ namespace Chaptarr.Core.Test.Download
         }
 
         [Test]
+        public void should_not_remove_completed_torrent_while_client_reports_it_is_not_removable()
+        {
+            var downloadClient = new StubDownloadClient();
+            var resolver = new StubDownloadImportModeResolver { Preserve = false };
+            var subject = BuildSubject(downloadClient, resolver);
+            var trackedDownload = TrackedDownload();
+            trackedDownload.DownloadItem.CanBeRemoved = false;
+
+            subject.Handle(new DownloadCompletedEvent(trackedDownload, 1));
+
+            Assert.That(downloadClient.MarkImportedCalls, Is.EqualTo(1));
+            Assert.That(downloadClient.RemoveCalls, Is.EqualTo(0));
+        }
+
+        [Test]
         public void should_not_remove_preserved_completed_download_when_client_allows_removal()
         {
             var downloadClient = new StubDownloadClient();
@@ -251,6 +266,7 @@ namespace Chaptarr.Core.Test.Download
 
             Assert.That(downloadClient.RemoveCalls, Is.EqualTo(0));
         }
+
 
         [Test]
         public void should_not_use_post_import_preservation_for_failed_downloads()

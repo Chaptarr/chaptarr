@@ -24,6 +24,28 @@
   color: #37bc9b;
 }
 
+.withLabel {
+  gap: 6px;
+
+  padding: 0 6px;
+  min-height: 32px;
+  width: auto;
+}
+
+.iconContainer {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+}
+
+.formatLabel {
+  white-space: nowrap;
+}
+
 .addFormat {
   color: var(--disabledColor);
 
@@ -34,15 +56,15 @@
 
 .unavailableFormat {
   color: var(--disabledColor);
-  cursor: not-allowed;
   opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .badge,
 .addBadge {
   position: absolute;
-  right: -2px;
-  bottom: -2px;
+  right: -3px;
+  bottom: -3px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

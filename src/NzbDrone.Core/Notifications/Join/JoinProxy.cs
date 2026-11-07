@@ -2,6 +2,7 @@ using System;
 using System.Net.Http;
 using FluentValidation.Results;
 using NLog;
+using NzbDrone.Core.Localization;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Common.Serializer;
@@ -19,11 +20,13 @@ namespace NzbDrone.Core.Notifications.Join
         private const string URL = "https://joinjoaomgcd.appspot.com/_ah/api/messaging/v1/sendPush?";
         private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
+        private readonly NotificationText _notificationText;
 
-        public JoinProxy(IHttpClient httpClient, Logger logger)
+        public JoinProxy(IHttpClient httpClient, ILocalizationService localizationService, Logger logger)
         {
             _httpClient = httpClient;
             _logger = logger;
+            _notificationText = new NotificationText(localizationService);
         }
 
         public void SendNotification(string title, string message, JoinSettings settings)
@@ -43,8 +46,8 @@ namespace NzbDrone.Core.Notifications.Join
 
         public ValidationFailure Test(JoinSettings settings)
         {
-            const string title = "Test Notification";
-            const string body = "This is a test message from Chaptarr.";
+            var title = _notificationText.Get("notification.test.title", "Test Notification");
+            var body = _notificationText.Get("notification.test.body", "This is a test message from Chaptarr.");
 
             try
             {
@@ -93,8 +96,8 @@ namespace NzbDrone.Core.Notifications.Join
             var request = requestBuilder.AddQueryParam("apikey", settings.ApiKey)
                           .AddQueryParam("title", title)
                           .AddQueryParam("text", message)
-                          .AddQueryParam("icon", "https://raw.githubusercontent.com/Chaptarr/Chaptarr/develop/Logo/256.png") // Use the Chaptarr logo.
-                          .AddQueryParam("smallicon", "https://raw.githubusercontent.com/Chaptarr/Chaptarr/develop/Logo/96-Outline-White.png") // 96x96px with outline at 88x88px on a transparent background.
+                          .AddQueryParam("icon", "https://raw.githubusercontent.com/snapetech-org/chaptarrng/main/Logo/256.png") // Use the ChaptarrNG logo.
+                          .AddQueryParam("smallicon", "https://raw.githubusercontent.com/snapetech-org/chaptarrng/main/Logo/96-Outline-White.png") // 96x96px with outline at 88x88px on a transparent background.
                           .AddQueryParam("priority", settings.Priority)
                           .Build();
 

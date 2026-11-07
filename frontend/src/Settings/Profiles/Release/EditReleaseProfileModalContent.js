@@ -40,7 +40,7 @@ function EditReleaseProfileModalContent(props) {
   return (
     <ModalContent onModalClose={onModalClose}>
       <ModalHeader>
-        {id ? 'Edit Release Profile' : 'Add Release Profile'}
+        {translate(id ? 'EditReleaseProfileTitle' : 'AddReleaseProfileTitle')}
       </ModalHeader>
 
       <ModalBody>

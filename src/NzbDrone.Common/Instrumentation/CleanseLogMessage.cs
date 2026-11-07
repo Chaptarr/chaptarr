@@ -10,7 +10,7 @@ namespace NzbDrone.Common.Instrumentation
         private static readonly Regex[] CleansingRules =
         {
             // Url
-            new (@"(?<=\?|&|: )((?:api|auth|pass)?key|(?:access[-_]?)?token|auth|user|uid|api|[a-z_]*apikey|account|passwd)=(?<secret>[^&=""]+?)(?=[ ""&=]|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+            new (@"(?<=\?|&|: )((?:api|auth|pass)?key|wskey|(?:access[-_]?)?token|auth|user|uid|api|[a-z_]*apikey|account|passwd)=(?<secret>[^&=""]+?)(?=[ ""&=]|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"\b(?:authorization_code|code|client_secret|id_token|refresh_token|secret)=(?<secret>[^&\s=""]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             new (@"(?<=\?|&)[^=]*?(username|password)=(?<secret>[^&=]+?)(?= |&|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
             // URL userinfo (http(s)://user:pass@host)
@@ -88,6 +88,12 @@ namespace NzbDrone.Common.Instrumentation
                     var value = m.Value;
                     foreach (var capture in m.Groups["secret"].Captures.OfType<Capture>().Reverse())
                     {
+                        // Preserve placeholders produced by the URL sanitizer when the safe logger cleanses again.
+                        if (capture.Value == "<REDACTED>")
+                        {
+                            continue;
+                        }
+
                         value = value.Replace(capture.Index - m.Index, capture.Length, "(removed)");
                     }
 
@@ -96,6 +102,12 @@ namespace NzbDrone.Common.Instrumentation
             }
 
             message = CleanseRemoteIPRegex.Replace(message, CleanseRemoteIP);
+
+            message = message.Replace("\r", "\\r")
+                             .Replace("\n", "\\n")
+                             .Replace("\u0085", "\\u0085")
+                             .Replace("\u2028", "\\u2028")
+                             .Replace("\u2029", "\\u2029");
 
             return message;
         }

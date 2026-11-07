@@ -64,6 +64,10 @@ class BackupsConnector extends Component {
     }
   }
 
+  onRetryPress = () => {
+    this.props.dispatchFetchBackups();
+  };
+
   //
   // Render
 
@@ -71,6 +75,7 @@ class BackupsConnector extends Component {
     return (
       <Backups
         {...this.props}
+        onRetryPress={this.onRetryPress}
       />
     );
   }

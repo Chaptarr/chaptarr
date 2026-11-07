@@ -1,0 +1,73 @@
+.experienceModeHelpText {
+  margin-top: 0;
+  color: var(--helpTextColor);
+}
+
+.experienceModeOptions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.experienceModeOption {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--inputBorderColor);
+  border-radius: 4px;
+  background-color: var(--inputBackgroundColor);
+  transition: border-color 120ms ease, background-color 120ms ease;
+  cursor: pointer;
+}
+
+.experienceModeOption:hover,
+.isSelected {
+  border-color: var(--themeDarkColor);
+  background-color: var(--inputHoverBackgroundColor);
+}
+
+.experienceModeOption:focus-within {
+  outline: 3px solid var(--themeDarkColor);
+  outline-offset: 2px;
+}
+
+.experienceModeRadio {
+  flex: 0 0 auto;
+  margin: 2px 0 0;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.experienceModeText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 6px;
+}
+
+.experienceModeTitle {
+  color: var(--textColor);
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.experienceModeDescription {
+  color: var(--helpTextColor);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+@media only screen and (max-width: $breakpointSmall) {
+  .experienceModeOptions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .experienceModeOption {
+    transition: none;
+  }
+}

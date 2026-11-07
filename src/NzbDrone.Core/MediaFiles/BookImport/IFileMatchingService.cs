@@ -8,11 +8,22 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 {
     public sealed class MatchingContext
     {
+        // Manual preview needs an exact verdict for every file, so sibling
+        // files must not share cached negative results.
+        public bool SuppressNegativeUnitCache { get; set; }
+
         /// <summary>
         /// When true, call V5 to identify potential authors for unmatched files.
         /// Populates <see cref="UnmatchedFile.PotentialAuthors"/>.
         /// </summary>
         public bool AllowV5Identification { get; set; }
+
+        /// <summary>
+        /// When true, search configured metadata catalogs for exact provider/identifier matches
+        /// and unambiguous title/author suggestions after local and V5 matching fail.
+        /// Suggestions remain reviewable and do not modify the library.
+        /// </summary>
+        public bool AllowCatalogSearch { get; set; }
 
         /// <summary>
         /// When true, the matcher may import authors into the local library as part of author gating.
@@ -195,6 +206,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         public string MatchedVia { get; set; }
         public MatchProvenance Provenance { get; set; }
 
+        // Internal compatibility score used to decide whether a migrated BookshelfNG
+        // match should run the legacy remote-candidate retry. It is not API or DB state.
+        internal double? BookshelfMatchPercent { get; set; }
+
         // Untruncated decision-time identity proof. This is intentionally internal:
         // persisted/display provenance must never become matching authority.
         internal MatchIdentityProof IdentityProof { get; set; }
@@ -205,6 +220,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         public DiscoveredFileWithMetadata File { get; set; }
         public string Reason { get; set; }
         public AuthorSuggestion[] PotentialAuthors { get; set; } = new AuthorSuggestion[0];
+
+        // Prevent a caller above FileMatchingService from immediately repeating the
+        // same catalog search after the matching pass already tried it.
+        internal bool CatalogSearchAttempted { get; set; }
     }
 
     public class AuthorSuggestion
@@ -214,7 +233,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         public double Confidence { get; set; }
         public string BookProviderId { get; set; } // Work/book provider ID from V5 match (optional)
         public string BookTitle { get; set; }
-        public string EditionHardcoverId { get; set; } // Edition ID from V5 match (optional)
+        public string EditionHardcoverId { get; set; } // Canonical edition provider ID; legacy JSON property name (optional)
         public string EditionTitle { get; set; }
     }
 }

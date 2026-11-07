@@ -1,9 +1,34 @@
+.sections {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 26px 48px;
+
+  align-items: start;
+}
+
+.section {
+  padding-top: 12px;
+  min-width: 0;
+  border-top: 1px solid var(--inputBorderColor);
+}
+
+.sectionTitle {
+  margin-top: 0;
+  margin-bottom: 14px;
+  font-weight: 600;
+  font-size: 18px;
+}
+
+.sectionItem {
+  margin-bottom: 16px;
+}
+
 .link {
   composes: link from '~Components/Link/Link.css';
 
   border-bottom: 1px solid #e5e5e5;
   color: var(--textColor);
-  font-size: 21px;
+  font-size: 18px;
 
   &:hover {
     color: #616573;
@@ -12,7 +37,15 @@
 }
 
 .summary {
-  margin-top: 10px;
-  margin-bottom: 30px;
+  margin-top: 5px;
+  margin-bottom: 0;
   color: var(--helpTextColor);
+  line-height: 1.4;
+}
+
+@media only screen and (max-width: $breakpointSmall) {
+  .sections {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 22px;
+  }
 }

@@ -207,6 +207,34 @@ namespace Chaptarr.Core.Test.Download
         }
 
         [Test]
+        public void explicit_move_should_become_copy_when_the_torrent_cannot_be_moved()
+        {
+            var resolver = BuildResolver(new StubDownloadHistoryService { LatestGrab = _ => null }, _ => null, _ => null);
+            var seeding = DownloadItem("ABC", downloadClientId: 5, protocol: DownloadProtocol.Torrent, canMove: false);
+
+            Assert.That(resolver.Resolve(ImportMode.Move, seeding), Is.EqualTo(ImportMode.Copy));
+            Assert.That(resolver.ShouldPreserveDownloadClientItem(seeding), Is.False);
+        }
+
+        [Test]
+        public void explicit_move_should_stay_move_when_the_torrent_can_be_moved()
+        {
+            var resolver = BuildResolver(new StubDownloadHistoryService { LatestGrab = _ => null }, _ => null, _ => null);
+            var finished = DownloadItem("ABC", downloadClientId: 5, protocol: DownloadProtocol.Torrent, canMove: true);
+
+            Assert.That(resolver.Resolve(ImportMode.Move, finished), Is.EqualTo(ImportMode.Move));
+        }
+
+        [Test]
+        public void explicit_move_should_stay_move_for_usenet_downloads()
+        {
+            var resolver = BuildResolver(new StubDownloadHistoryService { LatestGrab = _ => null }, _ => null, _ => null);
+            var usenet = DownloadItem("ABC", downloadClientId: 5, protocol: DownloadProtocol.Usenet, canMove: false);
+
+            Assert.That(resolver.Resolve(ImportMode.Move, usenet), Is.EqualTo(ImportMode.Move));
+        }
+
+        [Test]
         public void should_use_can_move_files_when_auto()
         {
             var history = new StubDownloadHistoryService { LatestGrab = _ => null };

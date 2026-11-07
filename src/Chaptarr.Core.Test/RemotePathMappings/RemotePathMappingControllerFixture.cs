@@ -202,11 +202,15 @@ namespace Chaptarr.Core.Test.RemotePathMappings
         }
 
         [Test]
-        public void mapping_resource_should_require_download_client_scope_in_the_json_payload()
+        public void mapping_resource_should_accept_bookshelf_host_scoped_payload_without_download_client_id()
         {
-            Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<RemotePathMappingResource>(
+            var resource = JsonSerializer.Deserialize<RemotePathMappingResource>(
                 "{\"host\":\"download-host\"}",
-                STJson.GetSerializerSettings()));
+
+                STJson.GetSerializerSettings());
+
+            Assert.That(resource.DownloadClientId, Is.Zero);
+            Assert.That(resource.Host, Is.EqualTo("download-host"));
         }
 
         [Test]

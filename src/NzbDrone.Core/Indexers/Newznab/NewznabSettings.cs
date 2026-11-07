@@ -73,31 +73,31 @@ namespace NzbDrone.Core.Indexers.Newznab
             Categories = new[] { 3030, 7020, 8010 };
         }
 
-        [FieldDefinition(0, Label = "URL")]
+        [FieldDefinition(0, Label = "provider.field.fe7a241debad5")]
         public string BaseUrl { get; set; }
 
-        [FieldDefinition(1, Label = "API Path", HelpText = "Path to the api, usually /api", Advanced = true)]
+        [FieldDefinition(1, Label = "provider.field.fa2802a05b95a", HelpText = "provider.field.f41feb484ad69", Advanced = true)]
         public string ApiPath { get; set; }
 
-        [FieldDefinition(2, Label = "API Key", Privacy = PrivacyLevel.ApiKey)]
+        [FieldDefinition(2, Label = "ApiKey", Privacy = PrivacyLevel.ApiKey)]
         public string ApiKey { get; set; }
 
-        [FieldDefinition(3, Label = "Categories", Type = FieldType.Select, SelectOptionsProviderAction = "newznabCategories", HelpText = "Select every category this indexer should search. At search time Chaptarr routes by media type — audiobook searches use only your selected Audio (3000-3999) categories, ebook searches use only your selected Books (7000-7999) categories.")]
+        [FieldDefinition(3, Label = "Categories", Type = FieldType.Select, SelectOptionsProviderAction = "newznabCategories", HelpText = "provider.field.ff8e41f202b43")]
         public IEnumerable<int> Categories { get; set; }
 
-        [FieldDefinition(4, Type = FieldType.Number, Label = "Early Download Limit", HelpText = "Time before release date Chaptarr will download from this indexer, empty is no limit", Unit = "days", Advanced = true)]
+        [FieldDefinition(4, Type = FieldType.Number, Label = "provider.field.fa4001360c131", HelpText = "provider.field.f8ef2df0a1d96", Unit = "days", Advanced = true)]
         public int? EarlyReleaseLimit { get; set; }
 
-        [FieldDefinition(5, Label = "Additional Parameters", HelpText = "Additional Newznab parameters", Advanced = true)]
+        [FieldDefinition(5, Label = "provider.field.f8d4ecad7c7e2", HelpText = "provider.field.f02bb1c85f42f", Advanced = true)]
         public string AdditionalParameters { get; set; }
 
-        [FieldDefinition(6, Type = FieldType.Checkbox, Label = "Fetch Narrator Metadata", HelpText = "When a narrator-specific edition is selected, Chaptarr can use extra indexer API requests to populate narrator metadata before custom format scoring.")]
+        [FieldDefinition(6, Type = FieldType.Checkbox, Label = "provider.field.f3364770903f3", HelpText = "provider.field.f0a18711a3171")]
         public bool EnableNarratorMetadata { get; set; }
 
-        [FieldDefinition(7, Label = "Narrator Metadata URL", HelpText = "Only needed when this indexer was added via Prowlarr. Leave blank to use the main URL.")]
+        [FieldDefinition(7, Label = "provider.field.f8a0beb68a93f", HelpText = "provider.field.fd39d57d52f36")]
         public string NarratorMetadataBaseUrl { get; set; }
 
-        [FieldDefinition(8, Label = "Narrator Metadata API Key", HelpText = "Only needed when this indexer was added via Prowlarr. Leave blank to use the main API key.", Privacy = PrivacyLevel.ApiKey)]
+        [FieldDefinition(8, Label = "provider.field.f826b98aab5a6", HelpText = "provider.field.f32c4953d91ca", Privacy = PrivacyLevel.ApiKey)]
         public string NarratorMetadataApiKey { get; set; }
 
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]

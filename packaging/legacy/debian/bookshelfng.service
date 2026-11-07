@@ -1,0 +1,30 @@
+[Unit]
+Description=ChaptarrNG (BookshelfNG package identity)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bookshelfng
+Group=bookshelfng
+WorkingDirectory=/var/lib/bookshelfng
+EnvironmentFile=-/etc/bookshelfng/bookshelfng.env
+Environment=CHAPTARR_DEFAULT_PORT=8787
+ExecStartPre=+/usr/lib/chaptarrng/handoff/bookshelfng-begin
+ExecStart=/usr/lib/chaptarrng/bin/Chaptarr /nobrowser -data=/var/lib/bookshelfng
+ExecStartPost=/usr/lib/chaptarrng/handoff/bookshelfng-healthcheck
+ExecStartPost=+/usr/lib/chaptarrng/handoff/bookshelfng-cleanup
+ExecStopPost=+/usr/lib/chaptarrng/handoff/bookshelfng-rollback
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=14700s
+KillSignal=SIGINT
+TimeoutStopSec=30600s
+UMask=0027
+ProtectSystem=full
+ProtectHome=read-only
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

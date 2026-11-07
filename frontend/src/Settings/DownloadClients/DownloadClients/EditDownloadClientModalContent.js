@@ -21,6 +21,7 @@ import { icons, inputTypes, kinds, sizes } from 'Helpers/Props';
 import AdvancedSettingsButton from 'Settings/AdvancedSettingsButton';
 import titleCase from 'Utilities/String/titleCase';
 import translate from 'Utilities/String/translate';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import styles from './EditDownloadClientModalContent.css';
 
 function LinkToggleButton({ isLinked, onPress, isLastButton, title, className }) {
@@ -45,6 +46,14 @@ function LinkToggleButton({ isLinked, onPress, isLastButton, title, className })
     </Button>
   );
 }
+
+LinkToggleButton.propTypes = {
+  isLinked: PropTypes.bool.isRequired,
+  onPress: PropTypes.func.isRequired,
+  isLastButton: PropTypes.bool,
+  title: PropTypes.string,
+  className: PropTypes.string
+};
 
 class EditDownloadClientModalContent extends Component {
   constructor(props) {
@@ -246,7 +255,9 @@ class EditDownloadClientModalContent extends Component {
     return (
       <ModalContent onModalClose={onModalClose}>
         <ModalHeader>
-          {`${id ? 'Edit' : 'Add'} Download Client - ${implementationName}`}
+          {id ?
+            translate('EditMetadataHeader', { name: `${translate('DownloadClient')} - ${implementationName}` }) :
+            translate('AddName', { name: `${translate('DownloadClient')} - ${implementationName}` })}
         </ModalHeader>
 
         <ModalBody>
@@ -271,7 +282,7 @@ class EditDownloadClientModalContent extends Component {
                       className={styles.message}
                       kind={message.value.type}
                     >
-                      {message.value.message}
+                      {translateServerMessage(message.value.message)}
                     </Alert>
                 }
 
@@ -371,7 +382,7 @@ class EditDownloadClientModalContent extends Component {
                                   className={styles.linkedPairToggle}
                                   isLinked={isLinked}
                                   isLastButton={true}
-                                  title={isLinked ? 'Unlink categories' : 'Link categories'}
+                                  title={translate(isLinked ? 'UnlinkCategories' : 'LinkCategories')}
                                   onPress={() => this.onToggleLink('linkCategories', 'audiobookCategory', 'ebookCategory')}
                                 />
                                 <div className={styles.linkedPairLine} />
@@ -446,7 +457,7 @@ class EditDownloadClientModalContent extends Component {
                                   className={styles.linkedPairToggle}
                                   isLinked={isLinked}
                                   isLastButton={true}
-                                  title={isLinked ? 'Unlink post-import categories' : 'Link post-import categories'}
+                                  title={translate(isLinked ? 'UnlinkPostImportCategories' : 'LinkPostImportCategories')}
                                   onPress={() => this.onToggleLink('linkPostImportCategories', 'audiobookImportedCategory', 'ebookImportedCategory')}
                                 />
                                 <div className={styles.linkedPairLine} />
@@ -521,7 +532,7 @@ class EditDownloadClientModalContent extends Component {
                                   className={styles.linkedPairToggle}
                                   isLinked={isLinked}
                                   isLastButton={true}
-                                  title={isLinked ? 'Unlink tags' : 'Link tags'}
+                                  title={translate(isLinked ? 'UnlinkTags' : 'LinkTags')}
                                   onPress={() => this.onToggleLink('linkClientTags', 'audiobookTags', 'ebookTags')}
                                 />
                                 <div className={styles.linkedPairLine} />
@@ -629,7 +640,7 @@ class EditDownloadClientModalContent extends Component {
                             className={styles.linkedPairToggle}
                             isLinked={this.state.linkTags}
                             isLastButton={true}
-                            title={this.state.linkTags ? 'Unlink tags' : 'Link tags'}
+                            title={translate(this.state.linkTags ? 'UnlinkTags' : 'LinkTags')}
                             onPress={() => this.onToggleInputLink('linkTags', 'audiobookTags', 'ebookTags')}
                           />
                           <div className={styles.linkedPairLine} />

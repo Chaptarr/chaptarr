@@ -1,11 +1,14 @@
 using System.Collections.Generic;
 using System.Linq;
 using Chaptarr.Api.V1.Author;
+using Chaptarr.Api.V1.BookFiles;
 using Chaptarr.Api.V1.Books;
 using Chaptarr.Api.V1.CustomFormats;
+using Chaptarr.Http.Middleware;
 using Chaptarr.Http.REST;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport.Manual;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
@@ -36,7 +39,9 @@ namespace Chaptarr.Api.V1.ManualImport
         public int IndexerFlags { get; set; }
         public IEnumerable<Rejection> Rejections { get; set; }
         public List<string> Warnings { get; set; }
+        public MatchProvenance MatchProvenance { get; set; }
         public Dictionary<string, List<string>> Tags { get; set; }
+        public ParsedTrackInfo AudioTags { get; set; }
         public bool AdditionalFile { get; set; }
         public bool ReplaceExistingFiles { get; set; }
         public bool DisableReleaseSwitching { get; set; }
@@ -45,6 +50,11 @@ namespace Chaptarr.Api.V1.ManualImport
     public static class ManualImportResourceMapper
     {
         public static ManualImportResource ToResource(this ManualImportItem model)
+        {
+            return ToResource(model, null);
+        }
+
+        public static ManualImportResource ToResource(this ManualImportItem model, ReadarrFacadeContext facadeContext)
         {
             if (model == null)
             {
@@ -57,6 +67,9 @@ namespace Chaptarr.Api.V1.ManualImport
                 ?? model.Book?.Editions?.FirstOrDefault();
             var suggestedForeignEditionId = BookEditionIdentity.GetTrustedForeignEditionId(suggestedEdition)
                 ?? model.SuggestedForeignEditionId;
+            var foreignEditionId = suggestedEdition == null
+                ? suggestedForeignEditionId
+                : ReadarrFacadeEditionIdentity.BuildForeignEditionId(suggestedEdition, facadeContext);
 
             return new ManualImportResource
             {
@@ -64,11 +77,11 @@ namespace Chaptarr.Api.V1.ManualImport
                 Path = model.Path,
                 Name = model.Name,
                 Size = model.Size,
-                Author = model.Author?.ToResource(),
-                Book = model.Book?.ToResource(),
-                Edition = model.Edition?.ToResource(),
+                Author = model.Author?.ToResource(facadeContext),
+                Book = model.Book?.ToResource(new BookResourceMappingOptions { FacadeContext = facadeContext }),
+                Edition = model.Edition?.ToResource(facadeContext),
                 EditionId = suggestedEdition?.Id > 0 ? suggestedEdition.Id : (int?)null,
-                ForeignEditionId = suggestedForeignEditionId,
+                ForeignEditionId = string.IsNullOrWhiteSpace(foreignEditionId) ? null : foreignEditionId,
                 SuggestedForeignAuthorId = model.SuggestedForeignAuthorId,
                 SuggestedAuthorName = model.SuggestedAuthorName,
                 SuggestedForeignBookId = model.SuggestedForeignBookId,
@@ -84,7 +97,9 @@ namespace Chaptarr.Api.V1.ManualImport
                 IndexerFlags = model.IndexerFlags,
                 Rejections = model.Rejections ?? new List<Rejection>(),
                 Warnings = model.Warnings ?? new List<string>(),
-                Tags = model.Tags ?? new Dictionary<string, List<string>>(),
+                MatchProvenance = model.MatchProvenance?.Clone(),
+                Tags = TagExclusionPolicy.ToPublicTags(model.Tags),
+                AudioTags = BookshelfAudioTagsCompatibilityMapper.ToParsedTrackInfo(model.Tags, model.Quality, null, model.DurationSeconds),
 
                 AdditionalFile = model.AdditionalFile,
                 ReplaceExistingFiles = model.ReplaceExistingFiles,

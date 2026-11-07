@@ -6,7 +6,8 @@ import { createThunk, handleThunks } from 'Store/thunks';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import serverSideCollectionHandlers from 'Utilities/serverSideCollectionHandlers';
 import translate from 'Utilities/String/translate';
-import { pingServer, showMessage, hideMessage } from './appActions';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
+import { hideMessage, pingServer, showMessage } from './appActions';
 import { set } from './baseActions';
 import createFetchHandler from './Creators/createFetchHandler';
 import createHandleActions from './Creators/createHandleActions';
@@ -122,12 +123,12 @@ export const defaultState = {
     filters: [
       {
         key: 'all',
-        label: 'All',
+        label: () => translate('All'),
         filters: []
       },
       {
         key: 'info',
-        label: 'Info',
+        label: () => translate('Information'),
         filters: [
           {
             key: 'level',
@@ -138,7 +139,7 @@ export const defaultState = {
       },
       {
         key: 'warn',
-        label: 'Warn',
+        label: () => translate('Warning'),
         filters: [
           {
             key: 'level',
@@ -149,7 +150,7 @@ export const defaultState = {
       },
       {
         key: 'error',
-        label: 'Error',
+        label: () => translate('Error'),
         filters: [
           {
             key: 'level',
@@ -287,7 +288,8 @@ export const actionHandlers = handleThunks({
   [RESTORE_BACKUP]: function(getState, payload, dispatch) {
     const {
       id,
-      file
+      file,
+      passphrase
     } = payload;
 
     dispatch(set({
@@ -316,6 +318,9 @@ export const actionHandlers = handleThunks({
         method: 'POST',
         processData: false,
         contentType: false,
+        headers: passphrase ? {
+          'X-Bookshelf-Backup-Passphrase': passphrase
+        } : undefined,
         data: formData
       };
     } else {
@@ -421,7 +426,6 @@ export const actionHandlers = handleThunks({
 
   [TEST_PROXY]: function(getState, payload, dispatch) {
     const {
-      proxyEnabled,
       proxyType,
       proxyHostname,
       proxyPort,
@@ -449,32 +453,32 @@ export const actionHandlers = handleThunks({
         const messageId = `proxy-test-${Date.now()}`;
         dispatch(showMessage({
           id: messageId,
-          message: `Proxy test successful: ${data.message}`,
+          message: translate('ProxyTestSuccessfulWithDetails', { details: translateServerMessage(data.message) }),
           type: 'success'
         }));
-        
+
         // Manually hide after 5 seconds
         setTimeout(() => {
           dispatch(hideMessage({ id: messageId }));
         }, 5000);
-        
+
         // Resolve the promise for success
         deferred.resolve(data);
       } else {
         const messageId = `proxy-test-error-${Date.now()}`;
         dispatch(showMessage({
           id: messageId,
-          message: `Proxy test failed: ${data.message}`,
+          message: translate('ProxyTestFailedWithDetails', { details: translateServerMessage(data.message) }),
           type: 'error'
         }));
-        
+
         // Manually hide after 8 seconds
         setTimeout(() => {
           dispatch(hideMessage({ id: messageId }));
         }, 8000);
-        
+
         // Reject the promise for validation failure
-        deferred.reject({ message: data.message || 'Proxy test failed' });
+        deferred.reject({ message: data.message || translate('ProxyTestFailed') });
       }
     });
 
@@ -482,17 +486,19 @@ export const actionHandlers = handleThunks({
       const messageId = `proxy-test-fail-${Date.now()}`;
       dispatch(showMessage({
         id: messageId,
-        message: `Proxy test failed: ${xhr.responseText || 'Connection failed'}`,
+        message: translate('ProxyTestFailedWithDetails', {
+          details: xhr.responseText || translate('ConnectionFailed')
+        }),
         type: 'error'
       }));
-      
+
       // Manually hide after 8 seconds
       setTimeout(() => {
         dispatch(hideMessage({ id: messageId }));
       }, 8000);
-      
+
       // Reject the promise for network failure
-      deferred.reject({ message: xhr.responseText || 'Connection failed' });
+      deferred.reject({ message: xhr.responseText || translate('ConnectionFailed') });
     });
 
     return deferred.promise();

@@ -15,6 +15,7 @@
     <ProjectReference Include="..\NzbDrone.Core\Chaptarr.Core.csproj" />
     <ProjectReference Include="..\NzbDrone.SignalR\Chaptarr.SignalR.csproj" />
     <ProjectReference Include="..\Chaptarr.Http\Chaptarr.Http.csproj" />
+    <ProjectReference Include="..\Chaptarr.Diagnostics\Chaptarr.Diagnostics.csproj" />
   </ItemGroup>
   <!-- Copy Tools directory to output -->
   <ItemGroup>

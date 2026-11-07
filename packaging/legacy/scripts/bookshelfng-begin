@@ -1,0 +1,108 @@
+#!/bin/sh
+set -eu
+
+data_dir=/var/lib/bookshelfng
+pending_marker="$data_dir/.chaptarrng-bookshelfng-migration-pending"
+handoff_status="$data_dir/.chaptarrng-bookshelfng-handoff-status"
+journal=/usr/lib/chaptarrng/handoff/bookshelfng-journal
+
+if [ ! -f "$pending_marker" ]; then
+  exit 0
+fi
+
+write_status() {
+  printf '%s\n' "$1" > "$handoff_status.tmp"
+  chmod 0600 "$handoff_status.tmp"
+  mv -f "$handoff_status.tmp" "$handoff_status"
+  case "$1" in
+    operator-review-required|preflight-failed|intervention-required)
+      "$journal" state intervention-required
+      ;;
+  esac
+}
+
+handoff_dir="$data_dir/.chaptarrng-bookshelfng-handoff"
+if [ ! -f "$handoff_dir/snapshot-ready" ] ||
+   [ ! -x "$handoff_dir/source-app/Readarr" ] ||
+   [ ! -f "$handoff_dir/source-unit" ] ||
+   [ ! -f "$handoff_dir/source-unit-path" ]; then
+  write_status operator-review-required
+  echo 'The pre-upgrade BookshelfNG application or systemd unit snapshot is missing; automatic conversion is blocked.' >&2
+  exit 1
+fi
+
+if ! command -v systemctl >/dev/null 2>&1; then
+  write_status operator-review-required
+  echo 'systemd is unavailable; automatic conversion is blocked.' >&2
+  exit 1
+fi
+
+fragment_path=$(systemctl show --property=FragmentPath --value bookshelfng.service 2>/dev/null || true)
+dropin_paths=$(systemctl show --property=DropInPaths --value bookshelfng.service 2>/dev/null || true)
+has_unit_specific_dropins=false
+for dropin_path in $dropin_paths; do
+  case "$dropin_path" in
+    */bookshelfng.service.d/*) has_unit_specific_dropins=true ;;
+  esac
+done
+case "$fragment_path" in
+  /lib/systemd/system/bookshelfng.service|/usr/lib/systemd/system/bookshelfng.service) ;;
+  *)
+    write_status operator-review-required
+    echo 'BookshelfNG uses a custom or missing systemd unit; automatic conversion is blocked.' >&2
+    exit 1
+    ;;
+esac
+if [ "$has_unit_specific_dropins" = true ]; then
+  write_status operator-review-required
+  echo 'BookshelfNG has unit-specific systemd drop-ins; automatic conversion is blocked.' >&2
+  exit 1
+fi
+
+write_status preflighting
+if runuser --preserve-environment --user bookshelfng -- \
+  /usr/lib/chaptarrng/bin/Chaptarr /check-bookshelf-migration \
+  -data="$data_dir" >/dev/null 2>&1; then
+  "$journal" outcome conversion already-promoted
+  "$journal" state converted
+  "$journal" outcome promotion verified
+  "$journal" state promoted
+  write_status starting
+  exit 0
+fi
+
+postgres_backup_dir=$(mktemp -d "$data_dir/.chaptarrng-bookshelfng-postgres-backup.XXXXXX")
+chown bookshelfng:bookshelfng "$postgres_backup_dir"
+chmod 0700 "$postgres_backup_dir"
+if ! runuser --preserve-environment --user bookshelfng -- \
+  /usr/lib/chaptarrng/bin/Chaptarr /backup-bookshelf-postgres \
+  -confirm-bookshelf-service-stopped \
+  -bookshelf-postgres-backup="$postgres_backup_dir" \
+  -data="$data_dir"; then
+  write_status preflight-failed
+  echo 'BookshelfNG preflight could not verify a PostgreSQL source backup; conversion is blocked.' >&2
+  exit 1
+fi
+
+if find "$postgres_backup_dir" -type f -name 'postgres-*.dump' -print -quit | grep -q .; then
+  "$journal" fingerprint source-postgres-backup "$postgres_backup_dir"
+  "$journal" outcome external-postgres-backup retained
+  printf '%s\n' "$postgres_backup_dir" > "$handoff_dir/postgres-backup-dir"
+  chmod 0600 "$handoff_dir/postgres-backup-dir"
+  touch "$handoff_dir/postgres-backup-ready"
+  printf '%s\n' "$postgres_backup_dir" > "$data_dir/.chaptarrng-bookshelfng-postgres-backup-current.tmp"
+  chmod 0600 "$data_dir/.chaptarrng-bookshelfng-postgres-backup-current.tmp"
+  mv -f "$data_dir/.chaptarrng-bookshelfng-postgres-backup-current.tmp" \
+    "$data_dir/.chaptarrng-bookshelfng-postgres-backup-current"
+else
+  rmdir "$postgres_backup_dir"
+fi
+
+"$journal" outcome preflight verified
+if [ -f "$handoff_dir/postgres-backup-ready" ]; then
+  "$journal" outcome source-backup retained
+else
+  "$journal" outcome source-backup not-required
+fi
+"$journal" state preflighted
+write_status starting

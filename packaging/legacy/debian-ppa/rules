@@ -1,0 +1,26 @@
+#!/usr/bin/make -f
+
+.PHONY: build build-arch build-indep binary binary-arch binary-indep clean
+
+build build-arch build-indep binary-indep:
+	@:
+
+binary-arch:
+	@set -eu; \
+	if [ -e .bookshelfng-ppa-built ]; then exit 0; fi; \
+	source_version="$$(dpkg-parsechangelog --show-field Version --file debian/changelog)"; \
+	app_version="$${source_version%%-*}"; \
+	archive="$(CURDIR)/ChaptarrNG-$${app_version}-linux-x64.tar.gz"; \
+	package="bookshelfng_$${source_version}_amd64.deb"; \
+	DEB_VERSION="$$source_version" \
+	  VERSION="$$app_version" \
+	  ARCHIVE_PATH="$$archive" \
+	  OUTPUT_DIR="$(CURDIR)/.." \
+	  bash "$(CURDIR)/packaging/scripts/build-bookshelfng-deb-bridge.sh"; \
+	dpkg-distaddfile "$$package" web optional; \
+	touch .bookshelfng-ppa-built
+
+binary: binary-arch binary-indep
+
+clean:
+	rm -f -- .bookshelfng-ppa-built

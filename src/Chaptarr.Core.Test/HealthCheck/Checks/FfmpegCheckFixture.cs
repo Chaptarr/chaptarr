@@ -35,6 +35,8 @@ namespace Chaptarr.Core.Test.HealthCheck.Checks
                 return new Dictionary<string, string>();
             }
 
+            public string GetCurrentLocale() => "en";
+
             public string GetLocalizedString(string phrase)
             {
                 return phrase == "ExternalToolsHealthCheckMessage"

@@ -28,7 +28,7 @@ namespace NzbDrone.Core.Indexers.Gazelle
         public string AuthKey;
         public string PassKey;
 
-        [FieldDefinition(0, Label = "URL", Advanced = true, HelpText = "Do not change this unless you know what you're doing. Since your cookie will be sent to that host.")]
+        [FieldDefinition(0, Label = "provider.field.fe7a241debad5", Advanced = true, HelpText = "provider.field.ff76d14398efa")]
         public string BaseUrl { get; set; }
 
         [FieldDefinition(1, Label = "Username", HelpText = "Username", Privacy = PrivacyLevel.UserName)]
@@ -38,19 +38,19 @@ namespace NzbDrone.Core.Indexers.Gazelle
         public string Password { get; set; }
 
         [NotSensitive]
-        [FieldDefinition(3, Type = FieldType.Checkbox, Label = "Use Freeleech Token", HelpText = "Will cause grabbing to fail if you do not have any tokens available", Advanced = true)]
+        [FieldDefinition(3, Type = FieldType.Checkbox, Label = "provider.field.ff65364a098fd", HelpText = "provider.field.f87dcdd74eed8", Advanced = true)]
         public bool UseFreeleechToken { get; set; }
 
-        [FieldDefinition(4, Type = FieldType.Number, Label = "Early Download Limit", Unit = "days", HelpText = "Time before release date Chaptarr will download from this indexer, empty is no limit", Advanced = true)]
+        [FieldDefinition(4, Type = FieldType.Number, Label = "provider.field.fa4001360c131", Unit = "days", HelpText = "provider.field.f8ef2df0a1d96", Advanced = true)]
         public int? EarlyReleaseLimit { get; set; }
 
-        [FieldDefinition(5, Type = FieldType.Textbox, Label = "Minimum Seeders", HelpText = "Minimum number of seeders required.", Advanced = true)]
+        [FieldDefinition(5, Type = FieldType.Textbox, Label = "provider.field.fd783e4d6293b", HelpText = "provider.field.fb8265760181c", Advanced = true)]
         public int MinimumSeeders { get; set; }
 
         [FieldDefinition(6)]
         public SeedCriteriaSettings SeedCriteria { get; set; } = new SeedCriteriaSettings();
 
-        [FieldDefinition(7, Type = FieldType.Checkbox, Label = "Reject Blocklisted Torrent Hashes While Grabbing", HelpText = "If a torrent is blocked by hash it may not properly be rejected during RSS/Search for some indexers, enabling this will allow it to be rejected after the torrent is grabbed, but before it is sent to the client.", Advanced = true)]
+        [FieldDefinition(7, Type = FieldType.Checkbox, Label = "provider.field.feaf93d215894", HelpText = "provider.field.f0af80d5651c2", Advanced = true)]
         public bool RejectBlocklistedTorrentHashesWhileGrabbing { get; set; }
 
         public NzbDroneValidationResult Validate()

@@ -4,19 +4,19 @@ namespace NzbDrone.Core.Download.Clients.Flood.Models
 {
     public enum AdditionalTags
     {
-        [FieldOption(Hint = "J.R.R. Tolkien")]
+        [FieldOption(Label = "NamingTokenCategoryAuthor", Hint = "J.R.R. Tolkien")]
         Author = 0,
 
-        [FieldOption(Hint = "EPUB")]
+        [FieldOption(Label = "Format", Hint = "EPUB")]
         Format = 1,
 
-        [FieldOption(Hint = "Example-Raws")]
+        [FieldOption(Label = "ReleaseGroup", Hint = "Example-Raws")]
         ReleaseGroup = 2,
 
-        [FieldOption(Hint = "1954")]
+        [FieldOption(Label = "Year", Hint = "1954")]
         Year = 3,
 
-        [FieldOption(Hint = "Torznab")]
+        [FieldOption(Label = "Indexer", Hint = "Torznab")]
         Indexer = 4,
     }
 }

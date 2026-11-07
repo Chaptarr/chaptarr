@@ -45,7 +45,7 @@ namespace NzbDrone.Core.Notifications.Plex.Server
         [FieldDefinition(3, Label = "Port")]
         public int Port { get; set; }
 
-        [FieldDefinition(4, Label = "UseSsl", Type = FieldType.Checkbox, HelpText = "NotificationsSettingsUseSslHelpText")]
+        [FieldDefinition(4, Label = "provider.field.f1bb2b1610fc9", Type = FieldType.Checkbox, HelpText = "NotificationsSettingsUseSslHelpText")]
         [FieldToken(TokenField.HelpText, "UseSsl", "serviceName", "Plex")]
         public bool UseSsl { get; set; }
 
@@ -57,7 +57,7 @@ namespace NzbDrone.Core.Notifications.Plex.Server
         [FieldDefinition(6, Label = "NotificationsPlexSettingsAuthToken", Type = FieldType.Textbox, Privacy = PrivacyLevel.ApiKey, Advanced = true)]
         public string AuthToken { get; set; }
 
-        [FieldDefinition(7, Label = "UrlBase", Type = FieldType.Textbox, Advanced = true, HelpText = "ConnectionSettingsUrlBaseHelpText")]
+        [FieldDefinition(7, Label = "provider.field.f39e9193cf08e", Type = FieldType.Textbox, Advanced = true, HelpText = "ConnectionSettingsUrlBaseHelpText")]
         [FieldToken(TokenField.HelpText, "UrlBase", "connectionName", "Plex")]
         [FieldToken(TokenField.HelpText, "UrlBase", "url", "http://[host]:[port]/[urlBase]/plex")]
         public string UrlBase { get; set; }

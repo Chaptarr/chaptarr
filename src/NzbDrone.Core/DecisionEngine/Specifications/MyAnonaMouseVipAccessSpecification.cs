@@ -6,6 +6,7 @@ using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.MyAnonaMouse;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Common.Instrumentation;
 
 namespace NzbDrone.Core.DecisionEngine.Specifications
 {
@@ -39,7 +40,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 return Decision.Accept();
             }
 
-            _logger.Trace("Rejecting MAM VIP-only release '{0}' because current MAM status is not VIP", release.Title);
+            _logger.TraceSafe("Rejecting MAM VIP-only release '{0}' because current MAM status is not VIP", release.Title);
             return Decision.RejectHardFilter("MAM VIP-only torrent requires VIP membership", "Indexer");
         }
 

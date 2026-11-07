@@ -96,7 +96,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 });
 
                 var sut = new MetadataTagService(new NullAudioTagService(), ebookTagService, LogManager.GetLogger("test"));
-                var tags = sut.ReadAllTags(fileSystem.FileInfo.FromFileName(path));
+                var tags = sut.ReadAllTags(fileSystem.FileInfo.New(path));
 
                 Assert.That(tags.ContainsKey("TITLE"), Is.True);
                 Assert.That(tags.ContainsKey("GENRE"), Is.True);

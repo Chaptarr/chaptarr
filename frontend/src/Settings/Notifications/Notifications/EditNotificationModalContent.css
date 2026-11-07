@@ -21,7 +21,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 16px;
+}
+
+.absMappingLoadButton {
+  flex: 0 0 auto;
 }
 
 .absMappingTitle {
@@ -86,6 +91,11 @@
 }
 
 @media only screen and (max-width: $breakpointSmall) {
+  .absMappingToolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .absMappingGridHeader {
     display: none;
   }

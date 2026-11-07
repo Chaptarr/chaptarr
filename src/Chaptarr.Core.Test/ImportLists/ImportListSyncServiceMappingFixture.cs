@@ -67,7 +67,7 @@ namespace Chaptarr.Core.Test.ImportLists
             public Edition GetEditionByOpenLibraryEditionId(string openLibraryEditionId) => null;
             public Edition GetEditionByProviderAndId(string providerPrefix, string providerId) => null;
             public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
-            public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
+            public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
@@ -103,7 +103,7 @@ namespace Chaptarr.Core.Test.ImportLists
             public Edition GetEditionByOpenLibraryEditionId(string openLibraryEditionId) => null;
             public Edition GetEditionByProviderAndId(string providerPrefix, string providerId) => null;
             public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
-            public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
+            public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
@@ -122,11 +122,11 @@ namespace Chaptarr.Core.Test.ImportLists
         {
             public Func<string, Tuple<string, Book, List<Author>>> GetEditionInfoFunc { get; set; }
 
-            public Tuple<string, Book, List<Author>> GetBookInfo(string id, BookMediaType mediaType = BookMediaType.Audiobook, string authorHintProviderId = null) => throw new NotImplementedException();
+            public Tuple<string, Book, List<Author>> GetBookInfo(string id, BookMediaType mediaType = BookMediaType.Audiobook, string authorHintProviderId = null, bool useCache = true) => throw new NotImplementedException();
 
-            public Tuple<string, Book, List<Author>> GetWorkInfo(string id, BookMediaType mediaType = BookMediaType.Audiobook, string authorHintProviderId = null) => throw new NotImplementedException();
+            public Tuple<string, Book, List<Author>> GetWorkInfo(string id, BookMediaType mediaType = BookMediaType.Audiobook, string authorHintProviderId = null, bool useCache = true) => throw new NotImplementedException();
 
-            public Tuple<string, Book, List<Author>> GetEditionInfo(string id, BookMediaType mediaType = BookMediaType.Audiobook) =>
+            public Tuple<string, Book, List<Author>> GetEditionInfo(string id, BookMediaType mediaType = BookMediaType.Audiobook, bool useCache = true) =>
                 GetEditionInfoFunc?.Invoke(id) ?? throw new NotImplementedException();
         }
 
@@ -203,6 +203,17 @@ namespace Chaptarr.Core.Test.ImportLists
             method.Invoke(service, new object[] { report });
         }
 
+        private static void MapBookReportWithoutWrites(ImportListSyncService service, ImportListItemInfo report)
+        {
+            var method = typeof(ImportListSyncService).GetMethod("MapBookReportWithoutWrites", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (method == null)
+            {
+                throw new InvalidOperationException("Could not find ImportListSyncService.MapBookReportWithoutWrites via reflection");
+            }
+
+            method.Invoke(service, new object[] { report });
+        }
+
         [Test]
         public void should_map_goodreads_bookshelf_book_id_via_metadata_server()
         {
@@ -251,6 +262,26 @@ namespace Chaptarr.Core.Test.ImportLists
             Assert.That(upsert.SourceProviderId, Is.EqualTo("gr:456"));
             Assert.That(upsert.BookProviderId, Is.EqualTo("gr:123"));
             Assert.That(upsert.AuthorProviderId, Is.EqualTo("gr:789"));
+        }
+
+        [Test]
+        public void should_map_preview_report_without_persisting_identity_cache()
+        {
+            var author = new Author { Name = "Mapped Author", GoodreadsAuthorId = "gr:789" };
+            var book = new Book { Title = "Mapped Book", GoodreadsWorkId = "gr:123", GoodreadsBookId = "gr:456", Author = author };
+            var bookInfoProxy = new StubBookInfoProxy
+            {
+                GetEditionInfoFunc = id => Tuple.Create(id, book, new List<Author> { author })
+            };
+            var identityCacheRepository = DispatchProxy.Create<IImportListBookIdentityCacheRepository, IdentityCacheRepositoryProxy>();
+            var service = BuildService(bookInfoProxy, new StubEditionService(), identityCacheRepository);
+            var report = new ImportListItemInfo { Book = "Test Book", EditionGoodreadsId = "456" };
+
+            MapBookReportWithoutWrites(service, report);
+
+            Assert.That(report.BookGoodreadsId, Is.EqualTo("gr:123"));
+            Assert.That(report.AuthorGoodreadsId, Is.EqualTo("gr:789"));
+            Assert.That(((IdentityCacheRepositoryProxy)(object)identityCacheRepository).Upserts, Is.Empty);
         }
 
         [Test]

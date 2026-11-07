@@ -43,6 +43,10 @@ class IgnoredDownloadsConnector extends Component {
     this.props.fetchIgnored();
   };
 
+  onRetryPress = () => {
+    this.props.fetchIgnored();
+  };
+
   //
   // Listeners
 
@@ -96,6 +100,7 @@ class IgnoredDownloadsConnector extends Component {
         onRemoveSelected={this.onRemoveSelected}
         onSortPress={this.onSortPress}
         onTableOptionChange={this.onTableOptionChange}
+        onRetryPress={this.onRetryPress}
         {...this.props}
       />
     );

@@ -25,6 +25,7 @@ namespace NzbDrone.Core.MediaFiles
         public string OutputPath { get; set; }
         public int TargetQualityId { get; set; }
         public string TargetQualityName { get; set; }
+        // SQLite NUMERIC can return whole-number progress values as INTEGER (for example 0 or 100).
         public decimal? Progress { get; set; }
         public string Message { get; set; }
         public string Error { get; set; }
@@ -48,7 +49,9 @@ namespace NzbDrone.Core.MediaFiles
         public int TargetQualityId { get; set; }
         public string TargetQualityName { get; set; }
         public int AudioBitrate { get; set; }
+        public int AudioSampleRate { get; set; }
         public int AudioChannels { get; set; }
+        public bool NoConversion { get; set; }
         public long ExpectedSourceDurationTicks { get; set; }
         public string TagSignature { get; set; }
         public ConversionTagOptions TagOptions { get; set; }
@@ -63,12 +66,21 @@ namespace NzbDrone.Core.MediaFiles
 
     public class ConversionArtifactManifest
     {
+        public const int CurrentVersion = 2;
+
+        public int Version { get; set; }
+        public bool Importable { get; set; }
         public DateTime CreatedUtc { get; set; }
         public string OutputPath { get; set; }
+        public long OutputSize { get; set; }
+        public long OutputModifiedUtcTicks { get; set; }
+        public string OutputSha256 { get; set; }
         public int TargetQualityId { get; set; }
         public string TargetQualityName { get; set; }
         public int AudioBitrate { get; set; }
+        public int AudioSampleRate { get; set; }
         public int AudioChannels { get; set; }
+        public bool NoConversion { get; set; }
         public string TagMode { get; set; }
         public string TagSignature { get; set; }
         public List<ConversionArtifactSource> Sources { get; set; } = new();

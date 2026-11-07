@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using NLog;
+using NzbDrone.Common;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
 using NzbDrone.Core.Books;
@@ -30,12 +31,17 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class RecordingImportApprovedBooks : IImportApprovedBooks
         {
             public List<ImportDecision<LocalBook>> Decisions { get; private set; } = new();
+            public bool ReturnResultForEachDecision { get; set; }
 
             public List<ImportResult> Import(List<ImportDecision<LocalBook>> decisions, bool replaceExisting, DownloadClientItem downloadClientItem = null, ImportMode importMode = ImportMode.Auto, CancellationToken cancellationToken = default)
             {
                 Decisions = decisions ?? new List<ImportDecision<LocalBook>>();
-                return new List<ImportResult>();
+                return ReturnResultForEachDecision
+                    ? Decisions.Select(decision => new ImportResult(decision, "Recorded test decision")).ToList()
+                    : new List<ImportResult>();
             }
+
+            public string CheckExistingDestinationConflict(LocalBook localBook, Book book, Author author) => null;
         }
 
         private sealed class StubFileMatchingService : IFileMatchingService
@@ -53,6 +59,13 @@ namespace Chaptarr.Core.Test.MediaFiles
             public FileMatchResult InitialResult { get; set; } = new();
             public FileMatchResult RematchResult { get; set; } = new();
             public bool UseRematchResultWhenAuthorRestricted { get; set; }
+            public bool ReturnUnmatchedWhenInitialResultIsEmpty { get; set; }
+
+            /// <summary>
+            /// When set, any call whose context permits path/filename evidence gets this result instead.
+            /// Models the manual-import-preview matching the automatic path now retries leftovers with.
+            /// </summary>
+            public FileMatchResult PathFallbackEnabledResult { get; set; }
 
             public Task<FileMatchResult> MatchFilesToLibraryAsync(DiscoveredFileWithMetadata[] filesWithMetadata)
             {
@@ -78,7 +91,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     return Task.FromResult(RematchResult);
                 }
 
-                return Task.FromResult(InitialResult);
+                return Task.FromResult(GetInitialResult(filesWithMetadata));
             }
 
             public Task<FileMatchResult> MatchFilesToLibraryAsync(DiscoveredFileWithMetadata[] filesWithMetadata, int? restrictToAuthorId, MatchingContext context)
@@ -91,12 +104,34 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Context = context
                 });
 
+                if (PathFallbackEnabledResult != null && context?.DisablePathFallback == false)
+                {
+                    return Task.FromResult(PathFallbackEnabledResult);
+                }
+
                 if (restrictToAuthorId.HasValue && UseRematchResultWhenAuthorRestricted)
                 {
                     return Task.FromResult(RematchResult);
                 }
 
-                return Task.FromResult(InitialResult);
+                return Task.FromResult(GetInitialResult(filesWithMetadata));
+            }
+
+            private FileMatchResult GetInitialResult(DiscoveredFileWithMetadata[] filesWithMetadata)
+            {
+                if (!ReturnUnmatchedWhenInitialResultIsEmpty ||
+                    InitialResult?.MatchedFiles?.Length > 0 ||
+                    InitialResult?.UnmatchedFiles?.Length > 0)
+                {
+                    return InitialResult;
+                }
+
+                return new FileMatchResult
+                {
+                    UnmatchedFiles = (filesWithMetadata ?? Array.Empty<DiscoveredFileWithMetadata>())
+                        .Select(file => new UnmatchedFile { File = file, Reason = "No local match" })
+                        .ToArray()
+                };
             }
 
             public EditionFtsMatch HolyGrailMatch(int? authorId, IEnumerable<string> allTagTokens, BookMediaType mediaType) => throw new NotImplementedException();
@@ -131,12 +166,22 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class StubAuthorLibraryService : IAuthorLibraryService
         {
             public List<(string providerId, MonitoringConfig config)> AddCalls { get; } = new();
+            public List<(UserSelectedRemoteEdition selection, MonitoringConfig config)> MaterializeCalls { get; } = new();
             public Author ResultAuthor { get; set; }
+            public UserSelectedEditionMaterialization MaterializedResult { get; set; }
 
             public Task<Author> AddAuthorAsync(string providerId, MonitoringConfig config = null)
             {
                 AddCalls.Add((providerId, config));
                 return Task.FromResult(ResultAuthor);
+            }
+
+            public Task<UserSelectedEditionMaterialization> MaterializeUserSelectedEditionAsync(
+                UserSelectedRemoteEdition selection,
+                MonitoringConfig config)
+            {
+                MaterializeCalls.Add((selection, config));
+                return Task.FromResult(MaterializedResult);
             }
 
             public Task<Author> AddAuthorMonitoringBookAsync(string authorProviderId, string bookProviderId) => throw new NotImplementedException();
@@ -173,7 +218,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public bool FileExists(string path) => File.Exists(path);
             public bool FileExistsCanonical(string path) => File.Exists(path);
             public bool FileExists(string path, StringComparison stringComparison) => File.Exists(path);
-            public IFileInfo GetFileInfo(string path) => _fileSystem.FileInfo.FromFileName(path);
+            public IFileInfo GetFileInfo(string path) => _fileSystem.FileInfo.New(path);
             public long GetFileSize(string path) => new FileInfo(path).Length;
             public DateTime FileGetLastWrite(string path) => new FileInfo(path).LastWriteTimeUtc;
             public bool IsFileLocked(string path) => LockedPaths.Contains(path);
@@ -191,7 +236,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public bool FolderWritable(string path) => throw new NotImplementedException();
             public bool FolderEmpty(string path) => throw new NotImplementedException();
             public IEnumerable<string> GetDirectories(string path) => throw new NotImplementedException();
-            public IEnumerable<string> GetFiles(string path, bool recursive) => throw new NotImplementedException();
+            public IEnumerable<string> GetFiles(string path, bool recursive) => Directory.Exists(path) ? Directory.GetFiles(path, "*", recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly) : Array.Empty<string>();
             public long GetFolderSize(string path) => throw new NotImplementedException();
             public void CreateFolder(string path) => throw new NotImplementedException();
             public void DeleteFile(string path) => throw new NotImplementedException();
@@ -213,20 +258,51 @@ namespace Chaptarr.Core.Test.MediaFiles
             public FileAttributes GetFileAttributes(string path) => throw new NotImplementedException();
             public void EmptyFolder(string path) => throw new NotImplementedException();
             public string GetVolumeLabel(string path) => throw new NotImplementedException();
-            public FileStream OpenReadStream(string path) => throw new NotImplementedException();
-            public FileStream OpenWriteStream(string path) => throw new NotImplementedException();
+            public Stream OpenReadStream(string path) => throw new NotImplementedException();
+            public Stream OpenWriteStream(string path) => throw new NotImplementedException();
             public List<IMount> GetMounts() => throw new NotImplementedException();
             public IMount GetMount(string path) => throw new NotImplementedException();
-            public IDirectoryInfo GetDirectoryInfo(string path) => _fileSystem.DirectoryInfo.FromDirectoryName(path);
+            public IDirectoryInfo GetDirectoryInfo(string path) => _fileSystem.DirectoryInfo.New(path);
             public List<IDirectoryInfo> GetDirectoryInfos(string path) => throw new NotImplementedException();
             public List<IFileInfo> GetFileInfos(string path, bool recursive = false)
             {
-                var option = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-                return Directory.EnumerateFiles(path, "*", option)
-                    .Select(file => _fileSystem.FileInfo.FromFileName(file))
+                var safePath = GetSafeTestPath(path);
+                var testRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "chaptarr-tests"));
+                var pathPrefix = Path.EndsInDirectorySeparator(safePath)
+                    ? safePath
+                    : safePath + Path.DirectorySeparatorChar;
+                var comparison = OperatingSystem.IsWindows()
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal;
+
+                return Directory.EnumerateFiles(testRoot, "*", SearchOption.AllDirectories)
+                    .Where(file => recursive
+                        ? file.StartsWith(pathPrefix, comparison)
+                        : string.Equals(Path.GetDirectoryName(file), safePath, comparison))
+                    .Select(file => _fileSystem.FileInfo.New(file))
                     .Cast<IFileInfo>()
                     .ToList();
             }
+
+            private static string GetSafeTestPath(string path)
+            {
+                var candidatePath = Path.GetFullPath(path);
+                var testRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "chaptarr-tests"));
+                var testRootPrefix = Path.EndsInDirectorySeparator(testRoot)
+                    ? testRoot
+                    : testRoot + Path.DirectorySeparatorChar;
+                var comparison = OperatingSystem.IsWindows()
+                    ? StringComparison.OrdinalIgnoreCase
+                    : StringComparison.Ordinal;
+
+                if (!candidatePath.StartsWith(testRootPrefix, comparison))
+                {
+                    throw new ArgumentException("Test paths must stay inside the dedicated temporary test directory.", nameof(path));
+                }
+
+                return candidatePath;
+            }
+
             public void RemoveEmptySubfolders(string path) => throw new NotImplementedException();
             public void SaveStream(Stream stream, string path) => throw new NotImplementedException();
             public bool IsValidFolderPermissionMask(string mask) => throw new NotImplementedException();
@@ -403,12 +479,11 @@ namespace Chaptarr.Core.Test.MediaFiles
             var missingNfo = Path.Combine(tempDir, "Missing.nfo");
             File.WriteAllBytes(existingArchive, new byte[] { 1, 2, 3, 4 });
             File.WriteAllBytes(existingNfo, new byte[] { 1, 2, 3, 4 });
-            File.WriteAllBytes(existingMedia, new byte[] { 1, 2, 3, 4 });
 
             try
             {
-                var matchingService = new StubFileMatchingService();
-                var importApprovedBooks = new RecordingImportApprovedBooks();
+                var matchingService = new StubFileMatchingService { ReturnUnmatchedWhenInitialResultIsEmpty = true };
+                var importApprovedBooks = new RecordingImportApprovedBooks { ReturnResultForEachDecision = true };
                 var service = new DownloadedBooksImportService(
                     new StubDiskProvider(),
                     new StubDiskScanService(),
@@ -430,12 +505,12 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 RejectionType Classify(DownloadClientItem downloadClientItem)
                 {
-                    return service.ProcessPath(tempDir, ImportMode.Auto, author: null, downloadClientItem: downloadClientItem)
-                        .Single()
-                        .ImportDecision
-                        .Rejections
-                        .Single()
-                        .Type;
+                    var results = service.ProcessPath(tempDir, ImportMode.Auto, author: null, downloadClientItem: downloadClientItem);
+                    Assert.That(results, Has.Count.EqualTo(1), $"Expected one classification result for {downloadClientItem.FileListConfidence} file list");
+                    var rejections = results[0].ImportDecision?.Rejections;
+                    Assert.That(rejections, Is.Not.Null.And.Not.Empty,
+                        $"Expected a rejection for {downloadClientItem.FileListConfidence} file list containing [{string.Join(", ", downloadClientItem.FilePaths ?? new List<string>())}]; result errors: {string.Join("; ", results[0].Errors ?? new List<string>())}");
+                    return rejections.Single().Type;
                 }
 
                 var authoritativeMediaList = new DownloadClientItem
@@ -462,7 +537,11 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Assert.That(Classify(authoritativeMediaList), Is.EqualTo(RejectionType.Temporary));
                 Assert.That(Classify(degradedMediaList), Is.EqualTo(RejectionType.Permanent));
                 Assert.That(Classify(authoritativeNonMediaList), Is.EqualTo(RejectionType.Permanent));
+                File.WriteAllBytes(existingMedia, new byte[] { 1, 2, 3, 4 });
                 Assert.That(Classify(partiallyVisibleAuthoritativeMediaList), Is.EqualTo(RejectionType.Temporary));
+
+                matchingService.Calls.Clear();
+                importApprovedBooks.Decisions.Clear();
 
                 var detailedResult = service.ProcessPath(
                     tempDir,
@@ -538,7 +617,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
-        public void should_auto_add_suggested_author_and_rematch_during_manual_download_import()
+        public void should_materialize_suggested_work_without_edition_id_and_rematch_during_manual_download_import()
         {
             var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempDir);
@@ -574,7 +653,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                                 {
                                     ProviderId = "hc:123",
                                     AuthorName = "Test Author",
-                                    Confidence = 0.8
+                                    Confidence = 0.8,
+                                    BookProviderId = "hc:9001"
                                 }
                             }
                         }
@@ -632,11 +712,15 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 var authorLibraryService = new StubAuthorLibraryService
                 {
-                    ResultAuthor = new Author { Id = 7, Name = "Test Author" }
+                    ResultAuthor = new Author { Id = 7, Name = "Test Author" },
+                    MaterializedResult = new UserSelectedEditionMaterialization
+                    {
+                        Author = new Author { Id = 7, Name = "Test Author" }
+                    }
                 };
 
                 var importOrchestrator = DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>();
-                var configService = ConfigServiceTestProxy.Create();
+                var configService = ConfigServiceTestProxy.Create(bookshelfMatchCompatibility: true);
                 var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
                 var eventAggregator = DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>();
                 var runtimeInfo = DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>();
@@ -662,9 +746,15 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 _ = service.ProcessPath(filePath, ImportMode.Auto, author: null, downloadClientItem: null);
 
-                Assert.That(authorLibraryService.AddCalls, Has.Count.EqualTo(1));
-                Assert.That(authorLibraryService.AddCalls[0].providerId, Is.EqualTo("hc:123"));
-                Assert.That(authorLibraryService.AddCalls[0].config.AudiobookRootFolderPath, Is.EqualTo("/library/audiobooks"));
+                Assert.That(authorLibraryService.AddCalls, Is.Empty);
+                Assert.That(authorLibraryService.MaterializeCalls, Has.Count.EqualTo(1));
+                Assert.That(authorLibraryService.MaterializeCalls[0].selection.AuthorProviderId, Is.EqualTo("hc:123"));
+                Assert.That(authorLibraryService.MaterializeCalls[0].selection.WorkProviderId, Is.EqualTo("hc:9001"));
+                Assert.That(authorLibraryService.MaterializeCalls[0].selection.EditionProviderId, Is.Null);
+                Assert.That(authorLibraryService.MaterializeCalls[0].selection.EditionTitle, Is.Null);
+                Assert.That(authorLibraryService.MaterializeCalls[0].selection.MediaType, Is.EqualTo(BookMediaType.Audiobook));
+                Assert.That(authorLibraryService.MaterializeCalls[0].selection.QueueIfUnavailable, Is.True);
+                Assert.That(authorLibraryService.MaterializeCalls[0].config.AudiobookRootFolderPath, Is.EqualTo("/library/audiobooks"));
                 Assert.That(matchingService.Calls.Select(c => c.RestrictToAuthorId).ToList(), Is.EqualTo(new List<int?> { null, 7 }));
 
                 Assert.That(importApproved.Decisions, Has.Count.EqualTo(1));
@@ -1868,6 +1958,247 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
+        // Twin rows: the same book stored twice because two catalogue listings were never linked.
+        // The rows share no work id and their editions share no ISBN/ASIN/edition id, but a human
+        // sees the same author, media type, edition title and narrator. Modelled on real data:
+        // 6698 (hc:429306, German work title) and 6875 (gr:6231171) for Chamber of Secrets.
+        private static RecordingImportApprovedBooks RunTrackedImportForTwinRows(Author author, Book targetBook, List<Edition> targetEditions, Book matchedBook, Edition matchedEdition)
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            var filePath = Path.Combine(tempDir, "Expected.m4b");
+            File.WriteAllBytes(filePath, new byte[] { 1, 2, 3, 4 });
+
+            try
+            {
+                var tagsService = new StubMetadataTagService();
+                var matchingService = new StubFileMatchingService
+                {
+                    InitialResult = new FileMatchResult
+                    {
+                        MatchedFiles = new[]
+                        {
+                            new FileMatch
+                            {
+                                File = new DiscoveredFileWithMetadata { Path = filePath, Size = 4, Modified = DateTime.UtcNow, AllTags = tagsService.Tags },
+                                AuthorId = author.Id,
+                                AuthorName = author.Name,
+                                BookId = matchedBook.Id,
+                                BookTitle = matchedBook.Title,
+                                EditionId = matchedEdition.Id
+                            }
+                        },
+                        UnmatchedFiles = Array.Empty<UnmatchedFile>()
+                    }
+                };
+
+                matchedEdition.Book = matchedBook;
+                matchedBook.Editions = new List<Edition> { matchedEdition };
+                foreach (var edition in targetEditions)
+                {
+                    edition.Book = targetBook;
+                }
+
+                targetBook.Editions = targetEditions;
+
+                var importApproved = new RecordingImportApprovedBooks();
+
+                var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+                var bookProxy = (BookServiceProxy)(object)bookService;
+                bookProxy.BooksById[matchedBook.Id] = matchedBook;
+                bookProxy.BooksById[targetBook.Id] = targetBook;
+
+                var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+                ((AuthorServiceProxy)(object)authorService).Author = author;
+
+                var editionService = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+                var editionProxy = (EditionServiceProxy)(object)editionService;
+                editionProxy.EditionsById[matchedEdition.Id] = matchedEdition;
+                editionProxy.EditionsByBookId[matchedBook.Id] = new List<Edition> { matchedEdition };
+                editionProxy.EditionsByBookId[targetBook.Id] = targetEditions;
+                foreach (var edition in targetEditions)
+                {
+                    editionProxy.EditionsById[edition.Id] = edition;
+                }
+
+                var service = new DownloadedBooksImportService(
+                    new StubDiskProvider(),
+                    new StubDiskScanService(),
+                    matchingService,
+                    tagsService,
+                    importApproved,
+                    bookService,
+                    authorService,
+                    editionService,
+                    DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>(),
+                    new StubAuthorLibraryService(),
+                    new StubRootFolderService(),
+                    ConfigServiceTestProxy.Create(),
+                    DispatchProxy.Create<IHistoryService, HistoryServiceProxy>(),
+                    DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
+                    DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
+                    DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                    LogManager.GetCurrentClassLogger());
+
+                var remoteBook = new RemoteBook
+                {
+                    Author = author,
+                    Books = new List<Book>
+                    {
+                        new Book { Id = targetBook.Id, AuthorId = author.Id, Title = targetBook.Title, AnyEditionOk = true, MediaType = targetBook.MediaType, HardcoverBookId = targetBook.HardcoverBookId, GoodreadsWorkId = targetBook.GoodreadsWorkId }
+                    }
+                };
+
+                var downloadClientItem = new DownloadClientItem
+                {
+                    DownloadId = "DOWNLOAD-TWIN-ROWS",
+                    CanMoveFiles = false,
+                    DownloadClientInfo = new DownloadClientItemClientInfo { Id = 1, Name = "SABnzbd", Type = "Sabnzbd" }
+                };
+
+                _ = service.ProcessPath(filePath, ImportMode.Auto, author, downloadClientItem, remoteBook);
+
+                return importApproved;
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        private static Author TwinRowsAuthor() => new Author { Id = 16, Name = "J.K. Rowling" };
+
+        private static Book TwinRowsGrabbedBook() => new Book
+        {
+            Id = 6698,
+            AuthorId = 16,
+            Title = "Harry Potter und die Kammer des Schreckens - Gesprochen von Rufus Beck",
+            AnyEditionOk = true,
+            MediaType = BookMediaType.Audiobook,
+            HardcoverBookId = "hc:429306",
+            GoodreadsWorkId = "gr:167643570"
+        };
+
+        private static Book TwinRowsMatchedBook() => new Book
+        {
+            Id = 6875,
+            AuthorId = 16,
+            Title = "Harry Potter and the Chamber of Secrets",
+            AnyEditionOk = true,
+            MediaType = BookMediaType.Audiobook,
+            GoodreadsWorkId = "gr:6231171"
+        };
+
+        private static Edition TwinRowsEdition(int id, int bookId, string title, string narrator, string asin, bool monitored = false) => new Edition
+        {
+            Id = id,
+            BookId = bookId,
+            Title = title,
+            Narrator = narrator,
+            Format = "audiobook",
+            AudibleASIN = asin,
+            ReadingFormatId = 2,
+            Monitored = monitored
+        };
+
+        [Test]
+        public void should_retarget_twin_row_match_by_edition_title_and_narrator_when_no_ids_are_shared()
+        {
+            var author = TwinRowsAuthor();
+            var grabbed = TwinRowsGrabbedBook();
+            var matched = TwinRowsMatchedBook();
+            var matchedEdition = TwinRowsEdition(28710, matched.Id, "Harry Potter and the Chamber of Secrets", "Stephen Fry", "B0000GR0001");
+            var grabbedEdition = TwinRowsEdition(28198, grabbed.Id, "Harry Potter and the Chamber of Secrets", "Stephen Fry", "B0000HC0001", monitored: true);
+
+            var result = RunTrackedImportForTwinRows(author, grabbed, new List<Edition> { grabbedEdition }, matched, matchedEdition);
+
+            Assert.That(result.Decisions, Has.Count.EqualTo(1));
+            Assert.That(result.Decisions[0].Approved, Is.True, string.Join(" | ", result.Decisions[0].Rejections.Select(r => r.Reason)));
+            Assert.That(result.Decisions[0].Item.Book.Id, Is.EqualTo(6698));
+            Assert.That(result.Decisions[0].Item.Edition.Id, Is.EqualTo(28198));
+        }
+
+        [Test]
+        public void should_not_retarget_twin_row_match_when_the_narrators_are_different()
+        {
+            var author = TwinRowsAuthor();
+            var grabbed = TwinRowsGrabbedBook();
+            var matched = TwinRowsMatchedBook();
+            var matchedEdition = TwinRowsEdition(28710, matched.Id, "Harry Potter and the Chamber of Secrets", "Stephen Fry", "B0000GR0001");
+            var grabbedEdition = TwinRowsEdition(28201, grabbed.Id, "Harry Potter and the Chamber of Secrets", "Jim Dale", "B0000HC0002", monitored: true);
+
+            var result = RunTrackedImportForTwinRows(author, grabbed, new List<Edition> { grabbedEdition }, matched, matchedEdition);
+
+            Assert.That(result.Decisions, Has.Count.EqualTo(1));
+            Assert.That(result.Decisions[0].Approved, Is.False);
+            Assert.That(result.Decisions[0].Rejections.Select(r => r.Reason), Has.Some.Contains("but import matched"));
+        }
+
+        [Test]
+        public void should_not_retarget_twin_row_match_when_the_edition_titles_are_different()
+        {
+            var author = TwinRowsAuthor();
+            var grabbed = TwinRowsGrabbedBook();
+            var matched = TwinRowsMatchedBook();
+            var matchedEdition = TwinRowsEdition(28710, matched.Id, "Harry Potter and the Chamber of Secrets", "Stephen Fry", "B0000GR0001");
+            var grabbedEdition = TwinRowsEdition(28300, grabbed.Id, "Harry Potter and the Prisoner of Azkaban", "Stephen Fry", "B0000HC0003", monitored: true);
+
+            var result = RunTrackedImportForTwinRows(author, grabbed, new List<Edition> { grabbedEdition }, matched, matchedEdition);
+
+            Assert.That(result.Decisions, Has.Count.EqualTo(1));
+            Assert.That(result.Decisions[0].Approved, Is.False);
+            Assert.That(result.Decisions[0].Rejections.Select(r => r.Reason), Has.Some.Contains("but import matched"));
+        }
+
+        [Test]
+        public void should_treat_typographic_and_plain_apostrophes_as_the_same_edition_title()
+        {
+            var author = TwinRowsAuthor();
+            var grabbed = TwinRowsGrabbedBook();
+            var matched = TwinRowsMatchedBook();
+            var matchedEdition = TwinRowsEdition(28710, matched.Id, "Harry Potter and the Philosopher's Stone", "Stephen Fry", "B0000GR0001");
+            var grabbedEdition = TwinRowsEdition(28198, grabbed.Id, "Harry Potter and the Philosopher’s Stone", "Stephen Fry", "B0000HC0001", monitored: true);
+
+            var result = RunTrackedImportForTwinRows(author, grabbed, new List<Edition> { grabbedEdition }, matched, matchedEdition);
+
+            Assert.That(result.Decisions, Has.Count.EqualTo(1));
+            Assert.That(result.Decisions[0].Approved, Is.True, string.Join(" | ", result.Decisions[0].Rejections.Select(r => r.Reason)));
+            Assert.That(result.Decisions[0].Item.Edition.Id, Is.EqualTo(28198));
+        }
+
+        [Test]
+        public void should_prefer_the_monitored_edition_when_the_matched_narrator_is_unknown()
+        {
+            var author = TwinRowsAuthor();
+            var grabbed = TwinRowsGrabbedBook();
+            var matched = TwinRowsMatchedBook();
+            var matchedEdition = TwinRowsEdition(28710, matched.Id, "Harry Potter and the Chamber of Secrets", string.Empty, "B0000GR0001");
+            var jimDale = TwinRowsEdition(28201, grabbed.Id, "Harry Potter and the Chamber of Secrets", "Jim Dale", "B0000HC0002");
+            var stephenFry = TwinRowsEdition(28198, grabbed.Id, "Harry Potter and the Chamber of Secrets", "Stephen Fry", "B0000HC0001", monitored: true);
+
+            var result = RunTrackedImportForTwinRows(author, grabbed, new List<Edition> { jimDale, stephenFry }, matched, matchedEdition);
+
+            Assert.That(result.Decisions, Has.Count.EqualTo(1));
+            Assert.That(result.Decisions[0].Approved, Is.True, string.Join(" | ", result.Decisions[0].Rejections.Select(r => r.Reason)));
+            Assert.That(result.Decisions[0].Item.Edition.Id, Is.EqualTo(28198));
+        }
+
+        [Test]
+        public void should_not_treat_two_untitled_editions_as_the_same_work()
+        {
+            var author = TwinRowsAuthor();
+            var grabbed = TwinRowsGrabbedBook();
+            var matched = TwinRowsMatchedBook();
+            var matchedEdition = TwinRowsEdition(28710, matched.Id, "Untitled", "Stephen Fry", "B0000GR0001");
+            var grabbedEdition = TwinRowsEdition(28198, grabbed.Id, "Untitled", "Stephen Fry", "B0000HC0001", monitored: true);
+
+            var result = RunTrackedImportForTwinRows(author, grabbed, new List<Edition> { grabbedEdition }, matched, matchedEdition);
+
+            Assert.That(result.Decisions, Has.Count.EqualTo(1));
+            Assert.That(result.Decisions[0].Approved, Is.False);
+            Assert.That(result.Decisions[0].Rejections.Select(r => r.Reason), Has.Some.Contains("but import matched"));
+        }
+
         [Test]
         public void should_reject_same_work_sibling_match_when_grabbed_book_has_no_equivalent_edition()
         {
@@ -1972,6 +2303,243 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Assert.That(importApproved.Decisions[0].Rejections.Select(r => r.Reason), Has.Some.Contains("no equivalent edition"));
                 Assert.That(importApproved.Decisions[0].Rejections.Select(r => r.Reason), Has.Some.Contains("BookId 2015"));
                 Assert.That(importApproved.Decisions[0].Rejections.Select(r => r.Reason), Has.Some.Contains("BookId 5079"));
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        // Issue #111: an author-bibliography re-discovery re-added the same real book under a different
+        // metadata provider, so the duplicate row's work ID (gr:...) never intersects the grabbed row's
+        // work ID (hc:...). Both rows still carry the same physical edition (same Audible ASIN), which is
+        // globally unique, so the download must be retargeted onto the row that actually owns the grab.
+        [Test]
+        public void should_retarget_cross_provider_duplicate_row_match_to_grabbed_book_when_edition_identity_matches()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            var filePath = Path.Combine(tempDir, "Fate Hollow Academy Term 1.m4b");
+            File.WriteAllBytes(filePath, new byte[] { 1, 2, 3, 4 });
+
+            try
+            {
+                var diskProvider = new StubDiskProvider();
+                var diskScanService = new StubDiskScanService();
+                var tagsService = new StubMetadataTagService();
+
+                var matchingService = new StubFileMatchingService
+                {
+                    InitialResult = new FileMatchResult
+                    {
+                        MatchedFiles = new[]
+                        {
+                            new FileMatch
+                            {
+                                File = new DiscoveredFileWithMetadata { Path = filePath, Size = 4, Modified = DateTime.UtcNow, AllTags = tagsService.Tags },
+                                AuthorId = 7,
+                                AuthorName = "Test Author",
+                                BookId = 29100,
+                                BookTitle = "Fate Hollow Academy",
+                                EditionId = 30
+                            }
+                        },
+                        UnmatchedFiles = Array.Empty<UnmatchedFile>()
+                    }
+                };
+
+                var author = new Author { Id = 7, Name = "Test Author" };
+
+                // Never-monitored duplicate row, re-discovered from Goodreads.
+                var matchedBook = new Book { Id = 29100, AuthorId = 7, Author = author, Title = "Fate Hollow Academy", AnyEditionOk = true, MediaType = BookMediaType.Audiobook, GoodreadsWorkId = "gr:200474660" };
+
+                // The row that was actually grabbed, sourced from Hardcover. No work-ID overlap with the duplicate.
+                var targetBook = new Book { Id = 29083, AuthorId = 7, Author = author, Title = "Fate Hollow Academy: Term 1", AnyEditionOk = true, MediaType = BookMediaType.Audiobook, HardcoverBookId = "hc:585413" };
+
+                var matchedEdition = new Edition { Id = 30, BookId = 29100, Title = "Fate Hollow Academy", AudibleASIN = "B0DXYZ1234", ReadingFormatId = 2, Monitored = false, Book = matchedBook };
+                var targetEdition = new Edition { Id = 40, BookId = 29083, Title = "Fate Hollow Academy: Term 1", AudibleASIN = "B0DXYZ1234", ReadingFormatId = 2, Monitored = false, Book = targetBook };
+                matchedBook.Editions = new List<Edition> { matchedEdition };
+                targetBook.Editions = new List<Edition> { targetEdition };
+
+                var importApproved = new RecordingImportApprovedBooks();
+
+                var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+                var bookProxy = (BookServiceProxy)(object)bookService;
+                bookProxy.BooksById[29100] = matchedBook;
+                bookProxy.BooksById[29083] = targetBook;
+
+                var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+                ((AuthorServiceProxy)(object)authorService).Author = author;
+
+                var editionService = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+                var editionProxy = (EditionServiceProxy)(object)editionService;
+                editionProxy.EditionsById[30] = matchedEdition;
+                editionProxy.EditionsById[40] = targetEdition;
+                editionProxy.EditionsByBookId[29100] = new List<Edition> { matchedEdition };
+                editionProxy.EditionsByBookId[29083] = new List<Edition> { targetEdition };
+
+                var importOrchestrator = DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>();
+                var configService = ConfigServiceTestProxy.Create();
+                var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
+                var eventAggregator = DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>();
+                var runtimeInfo = DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>();
+
+                var service = new DownloadedBooksImportService(
+                    diskProvider,
+                    diskScanService,
+                    matchingService,
+                    tagsService,
+                    importApproved,
+                    bookService,
+                    authorService,
+                    editionService,
+                    importOrchestrator,
+                    new StubAuthorLibraryService(),
+                    new StubRootFolderService(),
+                    configService,
+                    historyService,
+                    eventAggregator,
+                    runtimeInfo,
+                    DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                    LogManager.GetCurrentClassLogger());
+
+                var remoteBook = new RemoteBook
+                {
+                    Author = author,
+                    Books = new List<Book> { new Book { Id = 29083, AuthorId = 7, Title = "Fate Hollow Academy: Term 1", AnyEditionOk = true, MediaType = BookMediaType.Audiobook, HardcoverBookId = "hc:585413" } }
+                };
+
+                var downloadClientItem = new DownloadClientItem
+                {
+                    DownloadId = "DOWNLOAD-CROSS-PROVIDER-DUPLICATE",
+                    CanMoveFiles = false,
+                    DownloadClientInfo = new DownloadClientItemClientInfo { Id = 1, Name = "qBittorrent", Type = "qBittorrent" }
+                };
+
+                _ = service.ProcessPath(filePath, ImportMode.Auto, author, downloadClientItem, remoteBook);
+
+                Assert.That(importApproved.Decisions, Has.Count.EqualTo(1));
+                Assert.That(importApproved.Decisions[0].Approved, Is.True);
+                Assert.That(importApproved.Decisions[0].Item.Book.Id, Is.EqualTo(29083));
+                Assert.That(importApproved.Decisions[0].Item.Edition.Id, Is.EqualTo(40));
+                Assert.That(importApproved.Decisions[0].Item.Edition.Book, Is.SameAs(targetBook));
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        // Safety boundary for issue #111: same author and media type, but the two rows share no work-level
+        // ID and no edition-level ID. Nothing proves they are the same book, so the file must NOT be moved
+        // onto the grabbed row -- the download is rejected and the matched row is left untouched.
+        [Test]
+        public void should_not_retarget_cross_provider_row_match_when_no_shared_work_or_edition_identity()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            var filePath = Path.Combine(tempDir, "Some Other Book.m4b");
+            File.WriteAllBytes(filePath, new byte[] { 1, 2, 3, 4 });
+
+            try
+            {
+                var diskProvider = new StubDiskProvider();
+                var diskScanService = new StubDiskScanService();
+                var tagsService = new StubMetadataTagService();
+
+                var matchingService = new StubFileMatchingService
+                {
+                    InitialResult = new FileMatchResult
+                    {
+                        MatchedFiles = new[]
+                        {
+                            new FileMatch
+                            {
+                                File = new DiscoveredFileWithMetadata { Path = filePath, Size = 4, Modified = DateTime.UtcNow, AllTags = tagsService.Tags },
+                                AuthorId = 7,
+                                AuthorName = "Test Author",
+                                BookId = 29100,
+                                BookTitle = "A Different Book",
+                                EditionId = 30
+                            }
+                        },
+                        UnmatchedFiles = Array.Empty<UnmatchedFile>()
+                    }
+                };
+
+                var author = new Author { Id = 7, Name = "Test Author" };
+                var matchedBook = new Book { Id = 29100, AuthorId = 7, Author = author, Title = "A Different Book", AnyEditionOk = true, MediaType = BookMediaType.Audiobook, GoodreadsWorkId = "gr:200474660" };
+                var targetBook = new Book { Id = 29083, AuthorId = 7, Author = author, Title = "Fate Hollow Academy: Term 1", AnyEditionOk = true, MediaType = BookMediaType.Audiobook, HardcoverBookId = "hc:585413" };
+
+                var matchedEdition = new Edition { Id = 30, BookId = 29100, Title = "A Different Book", AudibleASIN = "B0DAAAAAAA", ReadingFormatId = 2, Monitored = false, Book = matchedBook };
+                var targetEdition = new Edition { Id = 40, BookId = 29083, Title = "Fate Hollow Academy: Term 1", AudibleASIN = "B0DZZZZZZZ", ReadingFormatId = 2, Monitored = false, Book = targetBook };
+                matchedBook.Editions = new List<Edition> { matchedEdition };
+                targetBook.Editions = new List<Edition> { targetEdition };
+
+                var importApproved = new RecordingImportApprovedBooks();
+
+                var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+                var bookProxy = (BookServiceProxy)(object)bookService;
+                bookProxy.BooksById[29100] = matchedBook;
+                bookProxy.BooksById[29083] = targetBook;
+
+                var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+                ((AuthorServiceProxy)(object)authorService).Author = author;
+
+                var editionService = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+                var editionProxy = (EditionServiceProxy)(object)editionService;
+                editionProxy.EditionsById[30] = matchedEdition;
+                editionProxy.EditionsById[40] = targetEdition;
+                editionProxy.EditionsByBookId[29100] = new List<Edition> { matchedEdition };
+                editionProxy.EditionsByBookId[29083] = new List<Edition> { targetEdition };
+
+                var importOrchestrator = DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>();
+                var configService = ConfigServiceTestProxy.Create();
+                var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
+                var eventAggregator = DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>();
+                var runtimeInfo = DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>();
+
+                var service = new DownloadedBooksImportService(
+                    diskProvider,
+                    diskScanService,
+                    matchingService,
+                    tagsService,
+                    importApproved,
+                    bookService,
+                    authorService,
+                    editionService,
+                    importOrchestrator,
+                    new StubAuthorLibraryService(),
+                    new StubRootFolderService(),
+                    configService,
+                    historyService,
+                    eventAggregator,
+                    runtimeInfo,
+                    DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                    LogManager.GetCurrentClassLogger());
+
+                var remoteBook = new RemoteBook
+                {
+                    Author = author,
+                    Books = new List<Book> { new Book { Id = 29083, AuthorId = 7, Title = "Fate Hollow Academy: Term 1", AnyEditionOk = true, MediaType = BookMediaType.Audiobook, HardcoverBookId = "hc:585413" } }
+                };
+
+                var downloadClientItem = new DownloadClientItem
+                {
+                    DownloadId = "DOWNLOAD-CROSS-PROVIDER-UNRELATED",
+                    CanMoveFiles = false,
+                    DownloadClientInfo = new DownloadClientItemClientInfo { Id = 1, Name = "qBittorrent", Type = "qBittorrent" }
+                };
+
+                _ = service.ProcessPath(filePath, ImportMode.Auto, author, downloadClientItem, remoteBook);
+
+                Assert.That(importApproved.Decisions, Has.Count.EqualTo(1));
+                Assert.That(importApproved.Decisions[0].Approved, Is.False);
+
+                // The file must stay attached to the row the matcher chose; retargeting it would misfile it.
+                Assert.That(importApproved.Decisions[0].Item.Book.Id, Is.EqualTo(29100));
+                Assert.That(importApproved.Decisions[0].Rejections.Select(r => r.Reason), Has.Some.Contains("but import matched"));
+                Assert.That(importApproved.Decisions[0].Rejections.Select(r => r.Reason), Has.None.Contains("no equivalent edition"));
             }
             finally
             {
@@ -2780,6 +3348,492 @@ namespace Chaptarr.Core.Test.MediaFiles
             };
         }
 
+        [Test]
+        public void should_retry_unmatched_download_folder_files_with_the_manual_preview_matching_context()
+        {
+            // Galileo-style live case: a single mp3 in a download folder whose name matches a local book,
+            // no usable embedded tags, no grabbed release to scope matching with. The strict pass finds
+            // nothing; the manual import preview resolves it locally on sight.
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"),
+                "Paul Strathern - Galileo_And_The_Solar_System (2013)");
+            Directory.CreateDirectory(tempDir);
+            var filePath = Path.Combine(tempDir, "Paul Strathern - Galileo_And_The_Solar_System (2013).mp3");
+            File.WriteAllBytes(filePath, new byte[] { 1, 2, 3, 4 });
+
+            try
+            {
+                var tagsService = new StubMetadataTagService();
+                var matchingService = new StubFileMatchingService
+                {
+                    InitialResult = new FileMatchResult
+                    {
+                        MatchedFiles = Array.Empty<FileMatch>(),
+                        UnmatchedFiles = new[] { CreateUnmatchedFile(filePath, tagsService.Tags, "No match") }
+                    },
+                    PathFallbackEnabledResult = new FileMatchResult
+                    {
+                        MatchedFiles = new[] { CreateMatchedFile(filePath, tagsService.Tags, 4242, "Paul Strathern", 5150, "Galileo and the Solar System", 9101) },
+                        UnmatchedFiles = Array.Empty<UnmatchedFile>()
+                    }
+                };
+
+                var importApproved = new RecordingImportApprovedBooks();
+                var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+                ((BookServiceProxy)(object)bookService).Book = new Book { Id = 5150, AuthorId = 4242, Title = "Galileo and the Solar System" };
+                var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+                ((AuthorServiceProxy)(object)authorService).Author = new Author { Id = 4242, Name = "Paul Strathern" };
+                var editionService = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+                ((EditionServiceProxy)(object)editionService).Edition = new Edition { Id = 9101, BookId = 5150, Monitored = true, ReadingFormatId = 2 };
+                ((EditionServiceProxy)(object)editionService).EditionsByBook = new List<Edition> { ((EditionServiceProxy)(object)editionService).Edition };
+
+                var service = new DownloadedBooksImportService(
+                    new StubDiskProvider(),
+                    new StubDiskScanService(),
+                    matchingService,
+                    tagsService,
+                    importApproved,
+                    bookService,
+                    authorService,
+                    editionService,
+                    DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>(),
+                    new StubAuthorLibraryService(),
+                    new StubRootFolderService(),
+                    ConfigServiceTestProxy.Create(),
+                    DispatchProxy.Create<IHistoryService, HistoryServiceProxy>(),
+                    DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
+                    DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
+                    DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                    LogManager.GetCurrentClassLogger());
+
+                _ = service.ProcessPath(
+                    tempDir,
+                    ImportMode.Auto,
+                    author: null,
+                    downloadClientItem: new DownloadClientItem
+                    {
+                        DownloadId = "download-galileo",
+                        Title = "Paul Strathern - Galileo_And_The_Solar_System (2013)",
+                        DownloadClientInfo = new DownloadClientItemClientInfo { Id = 1, Name = "qBittorrent", Type = "qBittorrent" }
+                    },
+                    remoteBook: null);
+
+                Assert.That(matchingService.Calls, Has.Count.EqualTo(2));
+                Assert.That(matchingService.Calls[0].Context.DisablePathFallback, Is.True, "the strict first pass is unchanged");
+                Assert.That(matchingService.Calls[1].Context.DisablePathFallback, Is.False, "the leftover pass uses the preview's evidence");
+                Assert.That(matchingService.Calls[1].Context.AllowV5Identification, Is.False, "the leftover pass stays local-only");
+                Assert.That(matchingService.Calls[1].Context.AllowAuthorImport, Is.False);
+                Assert.That(matchingService.Calls[1].Context.PerFileMatching, Is.True);
+                Assert.That(matchingService.Calls[1].FileCount, Is.EqualTo(1));
+
+                Assert.That(importApproved.Decisions, Has.Count.EqualTo(1));
+                Assert.That(importApproved.Decisions[0].Approved, Is.True);
+                Assert.That(importApproved.Decisions[0].Item.Book.Id, Is.EqualTo(5150));
+                Assert.That(importApproved.Decisions[0].Item.Edition.Id, Is.EqualTo(9101));
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Test]
+        public void should_discard_leftover_preview_matches_that_resolve_to_different_books()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            var fileOne = Path.Combine(tempDir, "Part One.mp3");
+            var fileTwo = Path.Combine(tempDir, "Part Two.mp3");
+            File.WriteAllBytes(fileOne, new byte[] { 1, 2, 3, 4 });
+            File.WriteAllBytes(fileTwo, new byte[] { 1, 2, 3, 4 });
+
+            try
+            {
+                var tagsService = new StubMetadataTagService();
+                var matchingService = new StubFileMatchingService
+                {
+                    InitialResult = new FileMatchResult
+                    {
+                        MatchedFiles = Array.Empty<FileMatch>(),
+                        UnmatchedFiles = new[]
+                        {
+                            CreateUnmatchedFile(fileOne, tagsService.Tags, "No match"),
+                            CreateUnmatchedFile(fileTwo, tagsService.Tags, "No match")
+                        }
+                    },
+                    PathFallbackEnabledResult = new FileMatchResult
+                    {
+                        MatchedFiles = new[]
+                        {
+                            CreateMatchedFile(fileOne, tagsService.Tags, 4242, "Paul Strathern", 5150, "Book A", 9101),
+                            CreateMatchedFile(fileTwo, tagsService.Tags, 4242, "Paul Strathern", 5151, "Book B", 9102)
+                        },
+                        UnmatchedFiles = Array.Empty<UnmatchedFile>()
+                    }
+                };
+
+                var importApproved = new RecordingImportApprovedBooks();
+                var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+                ((BookServiceProxy)(object)bookService).Book = new Book { Id = 5150, AuthorId = 4242, Title = "Book A" };
+                var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+                ((AuthorServiceProxy)(object)authorService).Author = new Author { Id = 4242, Name = "Paul Strathern" };
+                var editionService = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+                ((EditionServiceProxy)(object)editionService).Edition = new Edition { Id = 9101, BookId = 5150, Monitored = true, ReadingFormatId = 2 };
+                ((EditionServiceProxy)(object)editionService).EditionsByBook = new List<Edition> { ((EditionServiceProxy)(object)editionService).Edition };
+
+                var service = new DownloadedBooksImportService(
+                    new StubDiskProvider(),
+                    new StubDiskScanService(),
+                    matchingService,
+                    tagsService,
+                    importApproved,
+                    bookService,
+                    authorService,
+                    editionService,
+                    DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>(),
+                    new StubAuthorLibraryService(),
+                    new StubRootFolderService(),
+                    ConfigServiceTestProxy.Create(),
+                    DispatchProxy.Create<IHistoryService, HistoryServiceProxy>(),
+                    DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
+                    DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
+                    DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                    LogManager.GetCurrentClassLogger());
+
+                _ = service.ProcessPath(
+                    tempDir,
+                    ImportMode.Auto,
+                    author: null,
+                    downloadClientItem: new DownloadClientItem
+                    {
+                        DownloadId = "download-ambiguous",
+                        Title = "Some Bundle",
+                        DownloadClientInfo = new DownloadClientItemClientInfo { Id = 1, Name = "qBittorrent", Type = "qBittorrent" }
+                    },
+                    remoteBook: null);
+
+                Assert.That(matchingService.Calls, Has.Count.EqualTo(2));
+                Assert.That(importApproved.Decisions, Has.Count.EqualTo(2));
+                Assert.That(importApproved.Decisions.All(d => !d.Approved), Is.True);
+                Assert.That(importApproved.Decisions.SelectMany(d => d.Rejections).Select(r => r.Reason),
+                    Has.All.Contains("No match"));
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Test]
+        public void should_not_retry_leftovers_when_the_strict_pass_already_allowed_path_fallback()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            var filePath = Path.Combine(tempDir, "Expected.m4b");
+            File.WriteAllBytes(filePath, new byte[] { 1, 2, 3, 4 });
+
+            try
+            {
+                var tagsService = new StubMetadataTagService();
+                var matchingService = new StubFileMatchingService
+                {
+                    InitialResult = new FileMatchResult
+                    {
+                        MatchedFiles = Array.Empty<FileMatch>(),
+                        UnmatchedFiles = new[] { CreateUnmatchedFile(filePath, tagsService.Tags, "No match") }
+                    }
+                };
+
+                var importApproved = new RecordingImportApprovedBooks();
+                var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+                ((AuthorServiceProxy)(object)authorService).Author = new Author { Id = 7, Name = "Test Author" };
+
+                var service = new DownloadedBooksImportService(
+                    new StubDiskProvider(),
+                    new StubDiskScanService(),
+                    matchingService,
+                    tagsService,
+                    importApproved,
+                    DispatchProxy.Create<IBookService, BookServiceProxy>(),
+                    authorService,
+                    DispatchProxy.Create<IEditionService, EditionServiceProxy>(),
+                    DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>(),
+                    new StubAuthorLibraryService(),
+                    new StubRootFolderService(),
+                    ConfigServiceTestProxy.Create(),
+                    DispatchProxy.Create<IHistoryService, HistoryServiceProxy>(),
+                    DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
+                    DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
+                    DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                    LogManager.GetCurrentClassLogger());
+
+                var remoteBook = new RemoteBook
+                {
+                    Author = ((AuthorServiceProxy)(object)authorService).Author,
+                    Books = new List<Book> { new Book { Id = 10, AuthorId = 7, Title = "Expected Book" } }
+                };
+
+                _ = service.ProcessPath(
+                    tempDir,
+                    ImportMode.Auto,
+                    remoteBook.Author,
+                    new DownloadClientItem
+                    {
+                        DownloadId = "download-scoped",
+                        DownloadClientInfo = new DownloadClientItemClientInfo { Id = 1, Name = "qBittorrent", Type = "qBittorrent" }
+                    },
+                    remoteBook);
+
+                Assert.That(matchingService.Calls, Has.Count.EqualTo(1));
+                Assert.That(matchingService.Calls[0].Context.DisablePathFallback, Is.False);
+                Assert.That(importApproved.Decisions, Has.Count.EqualTo(1));
+                Assert.That(importApproved.Decisions[0].Approved, Is.False);
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        private static DownloadedBooksImportService CreateParityReviewService(
+            StubFileMatchingService matchingService,
+            StubMetadataTagService tagsService,
+            RecordingImportApprovedBooks importApproved,
+            StubAuthorLibraryService authorLibraryService = null,
+            StubRootFolderService rootFolderService = null,
+            bool bookshelfMatchCompatibility = false)
+        {
+            var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)(object)bookService).Book = new Book { Id = 5150, AuthorId = 4242, Title = "Galileo and the Solar System" };
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            ((AuthorServiceProxy)(object)authorService).Author = new Author { Id = 4242, Name = "Paul Strathern" };
+            var editionService = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+            ((EditionServiceProxy)(object)editionService).Edition = new Edition { Id = 9101, BookId = 5150, Monitored = true, ReadingFormatId = 2 };
+            ((EditionServiceProxy)(object)editionService).EditionsByBook = new List<Edition> { ((EditionServiceProxy)(object)editionService).Edition };
+
+            return new DownloadedBooksImportService(
+                new StubDiskProvider(),
+                new StubDiskScanService(),
+                matchingService,
+                tagsService,
+                importApproved,
+                bookService,
+                authorService,
+                editionService,
+                DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>(),
+                authorLibraryService ?? new StubAuthorLibraryService(),
+                rootFolderService ?? new StubRootFolderService(),
+                ConfigServiceTestProxy.Create(bookshelfMatchCompatibility: bookshelfMatchCompatibility),
+                DispatchProxy.Create<IHistoryService, HistoryServiceProxy>(),
+                DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
+                DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
+                DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                LogManager.GetCurrentClassLogger());
+        }
+
+        [Test]
+        public void should_materialize_the_selected_work_during_folder_download_import()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            var filePath = Path.Combine(tempDir, "Test.m4b");
+            File.WriteAllBytes(filePath, new byte[] { 1, 2, 3, 4 });
+
+            try
+            {
+                var tagsService = new StubMetadataTagService
+                {
+                    Tags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["artist"] = new List<string> { "Test Author" },
+                        ["album"] = new List<string> { "Test Book" }
+                    }
+                };
+                var matchingService = new StubFileMatchingService
+                {
+                    InitialResult = new FileMatchResult
+                    {
+                        MatchedFiles = Array.Empty<FileMatch>(),
+                        UnmatchedFiles = new[]
+                        {
+                            new UnmatchedFile
+                            {
+                                File = new DiscoveredFileWithMetadata
+                                {
+                                    Path = filePath,
+                                    Size = 4,
+                                    Modified = DateTime.UtcNow,
+                                    AllTags = tagsService.Tags
+                                },
+                                Reason = "No local match",
+                                PotentialAuthors = new[]
+                                {
+                                    new AuthorSuggestion
+                                    {
+                                        ProviderId = "hc:123",
+                                        AuthorName = "Test Author",
+                                        Confidence = 0.8,
+                                        BookProviderId = "hc:9001"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    UseRematchResultWhenAuthorRestricted = true,
+                    RematchResult = new FileMatchResult
+                    {
+                        MatchedFiles = new[]
+                        {
+                            CreateMatchedFile(filePath, tagsService.Tags, 4242, "Test Author", 5150, "Test Book", 9101)
+                        },
+                        UnmatchedFiles = Array.Empty<UnmatchedFile>()
+                    }
+                };
+                var authorLibraryService = new StubAuthorLibraryService
+                {
+                    MaterializedResult = new UserSelectedEditionMaterialization
+                    {
+                        Author = new Author { Id = 4242, Name = "Test Author" }
+                    }
+                };
+                var rootFolderService = new StubRootFolderService
+                {
+                    RootFolders = new List<RootFolder>
+                    {
+                        new RootFolder
+                        {
+                            Path = "/library/audiobooks",
+                            FolderType = FolderType.Audiobook,
+                            AudiobookSettings = "{\"QualityProfileId\":1,\"MetadataProfileId\":1,\"MonitorExisting\":1,\"MonitorFuture\":true}"
+                        }
+                    }
+                };
+                var importApproved = new RecordingImportApprovedBooks();
+                var service = CreateParityReviewService(
+                    matchingService,
+                    tagsService,
+                    importApproved,
+                    authorLibraryService,
+                    rootFolderService,
+                    bookshelfMatchCompatibility: true);
+
+                _ = service.ProcessPath(tempDir, ImportMode.Auto);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(authorLibraryService.MaterializeCalls, Has.Count.EqualTo(1));
+                    Assert.That(authorLibraryService.MaterializeCalls[0].selection.WorkProviderId, Is.EqualTo("hc:9001"));
+                    Assert.That(authorLibraryService.MaterializeCalls[0].selection.QueueIfUnavailable, Is.True);
+                    Assert.That(importApproved.Decisions.Any(decision => decision.Approved), Is.True);
+                });
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Test]
+        public void should_not_run_the_preview_parity_pass_for_a_folder_that_is_not_a_tracked_download()
+        {
+            // The parity pass is described as a retry for completed downloads. A drop folder has no download client
+            // item, no grabbed release and no author restriction, so path evidence alone must not import it unattended.
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"),
+                "Paul Strathern - Galileo_And_The_Solar_System (2013)");
+            Directory.CreateDirectory(tempDir);
+            var filePath = Path.Combine(tempDir, "Paul Strathern - Galileo_And_The_Solar_System (2013).mp3");
+            File.WriteAllBytes(filePath, new byte[] { 1, 2, 3, 4 });
+
+            try
+            {
+                var tagsService = new StubMetadataTagService();
+                var matchingService = new StubFileMatchingService
+                {
+                    InitialResult = new FileMatchResult
+                    {
+                        MatchedFiles = Array.Empty<FileMatch>(),
+                        UnmatchedFiles = new[] { CreateUnmatchedFile(filePath, tagsService.Tags, "No match") }
+                    },
+                    PathFallbackEnabledResult = new FileMatchResult
+                    {
+                        MatchedFiles = new[] { CreateMatchedFile(filePath, tagsService.Tags, 4242, "Paul Strathern", 5150, "Galileo and the Solar System", 9101) },
+                        UnmatchedFiles = Array.Empty<UnmatchedFile>()
+                    }
+                };
+
+                var importApproved = new RecordingImportApprovedBooks();
+                var service = CreateParityReviewService(matchingService, tagsService, importApproved);
+
+                _ = service.ProcessPath(tempDir, ImportMode.Auto, author: null, downloadClientItem: null, remoteBook: null);
+
+                Assert.That(matchingService.Calls, Has.Count.EqualTo(1), "only the strict pass runs for an untracked folder");
+                Assert.That(importApproved.Decisions.Any(d => d.Approved), Is.False);
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        [Test]
+        public void should_discard_a_partial_preview_parity_match_of_a_multi_file_download()
+        {
+            // Importing 2 of 3 files of one book leaves the edition partially filled: the remaining file is rejected and
+            // a later attempt to add it hits "Edition already has files". Path evidence is folder-level, so a genuine
+            // match should cover every leftover file; anything less is too weak to import unattended.
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"),
+                "Paul Strathern - Galileo_And_The_Solar_System (2013)");
+            Directory.CreateDirectory(tempDir);
+            var files = new[] { "Part 1.mp3", "Part 2.mp3", "Part 3.mp3" }.Select(n => Path.Combine(tempDir, n)).ToArray();
+            foreach (var f in files)
+            {
+                File.WriteAllBytes(f, new byte[] { 1, 2, 3, 4 });
+            }
+
+            try
+            {
+                var tagsService = new StubMetadataTagService();
+                var matchingService = new StubFileMatchingService
+                {
+                    InitialResult = new FileMatchResult
+                    {
+                        MatchedFiles = Array.Empty<FileMatch>(),
+                        UnmatchedFiles = files.Select(f => CreateUnmatchedFile(f, tagsService.Tags, "No match")).ToArray()
+                    },
+                    PathFallbackEnabledResult = new FileMatchResult
+                    {
+                        MatchedFiles = new[]
+                        {
+                            CreateMatchedFile(files[0], tagsService.Tags, 4242, "Paul Strathern", 5150, "Galileo and the Solar System", 9101),
+                            CreateMatchedFile(files[1], tagsService.Tags, 4242, "Paul Strathern", 5150, "Galileo and the Solar System", 9101)
+                        },
+                        UnmatchedFiles = new[] { CreateUnmatchedFile(files[2], tagsService.Tags, "No match") }
+                    }
+                };
+
+                var importApproved = new RecordingImportApprovedBooks();
+                var service = CreateParityReviewService(matchingService, tagsService, importApproved);
+
+                _ = service.ProcessPath(
+                    tempDir,
+                    ImportMode.Auto,
+                    author: null,
+                    downloadClientItem: new DownloadClientItem
+                    {
+                        DownloadId = "download-partial",
+                        Title = "Paul Strathern - Galileo_And_The_Solar_System (2013)",
+                        DownloadClientInfo = new DownloadClientItemClientInfo { Id = 1, Name = "qBittorrent", Type = "qBittorrent" }
+                    },
+                    remoteBook: null);
+
+                Assert.That(importApproved.Decisions.Any(d => d.Approved), Is.False, "a partial leftover match must not import any file");
+                Assert.That(importApproved.Decisions, Has.Count.EqualTo(3), "every file is reported as rejected");
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
         private static Dictionary<string, List<string>> CreateAudioTags(string album, string title, string author, string narrator)
         {
             return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
@@ -2791,5 +3845,295 @@ namespace Chaptarr.Core.Test.MediaFiles
                 ["TITLE"] = new List<string> { title }
             };
         }
+
+        [Test]
+        public void should_accept_same_work_audiobook_pocket_when_ebook_pocket_was_grabbed()
+        {
+            var decisions = RunSameWorkPocketScenario("hc:514913", "hc:514913", matchedAuthorId: 7);
+
+            Assert.That(decisions, Has.Count.EqualTo(1));
+            Assert.That(decisions[0].Approved, Is.True);
+            Assert.That(decisions[0].Item.Book.Id, Is.EqualTo(290880));
+        }
+
+        [Test]
+        public void should_reject_pocket_match_for_a_different_work()
+        {
+            var decisions = RunSameWorkPocketScenario("hc:514913", "hc:999999", matchedAuthorId: 7);
+
+            Assert.That(decisions[0].Approved, Is.False);
+            Assert.That(decisions[0].Rejections.Select(r => r.Reason).ToList(),
+                Has.Some.Contains("but import matched"));
+        }
+
+        [Test]
+        public void should_reject_pocket_match_for_a_different_author()
+        {
+            var decisions = RunSameWorkPocketScenario("hc:514913", "hc:514913", matchedAuthorId: 99);
+
+            Assert.That(decisions[0].Approved, Is.False);
+        }
+
+        [Test]
+        public void should_reject_pocket_match_when_work_id_is_present_on_only_one_side()
+        {
+            var decisions = RunSameWorkPocketScenario("hc:514913", null, matchedAuthorId: 7);
+
+            Assert.That(decisions[0].Approved, Is.False);
+        }
+
+        [Test]
+        public void should_reject_same_media_type_sibling_row_of_the_same_work_for_a_multi_book_grab()
+        {
+            // Both rows are audiobooks of the same work (for example two narrator rows). The pocket rule is only for
+            // a different media type; a same-format sibling must not be silently accepted just because
+            // the retarget step is skipped for a multi-book grab.
+            var decisions = RunSameWorkPocketScenario("hc:514913", "hc:514913", matchedAuthorId: 7,
+                grabbedMediaType: BookMediaType.Audiobook, alsoGrabUnrelatedBook: true);
+
+            Assert.That(decisions[0].Approved, Is.False);
+            Assert.That(decisions[0].Rejections.Select(r => r.Reason).ToList(), Has.Some.Contains("but import matched"));
+        }
+
+        [Test]
+        public void should_still_accept_different_media_type_pocket_for_a_multi_book_grab()
+        {
+            var decisions = RunSameWorkPocketScenario("hc:514913", "hc:514913", matchedAuthorId: 7,
+                grabbedMediaType: BookMediaType.Ebook, alsoGrabUnrelatedBook: true);
+
+            Assert.That(decisions[0].Approved, Is.True);
+        }
+
+        [Test]
+        public void should_reject_same_work_pocket_without_its_format_root_with_an_actionable_reason()
+        {
+            var decisions = RunSameWorkPocketScenario("hc:514913", "hc:514913", 7, hasMatchedRoot: false);
+            Assert.That(decisions, Has.Count.EqualTo(1));
+            Assert.That(decisions[0].Approved, Is.False);
+            Assert.That(decisions[0].Rejections.Single().Reason, Does.Contain("root folder"));
+        }
+
+        private static List<ImportDecision<LocalBook>> RunSameWorkPocketScenario(
+            string grabbedWorkId,
+            string matchedWorkId,
+            int matchedAuthorId,
+            BookMediaType grabbedMediaType = BookMediaType.Ebook,
+            bool alsoGrabUnrelatedBook = false,
+            bool hasMatchedRoot = true)
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            var filePath = Path.Combine(tempDir, "The Vines - Part 01.mp3");
+            File.WriteAllBytes(filePath, new byte[] { 1, 2, 3, 4 });
+
+            try
+            {
+                var tagsService = new StubMetadataTagService
+                {
+                    Tags = CreateAudioTags("The Vines (Unabridged)", "The Vines - Part 01", "Christopher Rice", "Corey Brill")
+                };
+
+                var grabbedAuthor = new Author { Id = 7, Name = "Christopher Rice" };
+                var matchedAuthor = matchedAuthorId == grabbedAuthor.Id
+                    ? new Author { Id = grabbedAuthor.Id, Name = grabbedAuthor.Name }
+                    : new Author { Id = matchedAuthorId, Name = "Someone Else" };
+
+                matchedAuthor.AudiobookRootFolderPath = hasMatchedRoot ? tempDir : null;
+
+                // Grabbed target: the ebook pocket of the work.
+                var grabbedBook = new Book
+                {
+                    Id = 166297,
+                    Author = grabbedAuthor,
+                    Title = "The Vines",
+                    AnyEditionOk = true,
+                    MediaType = grabbedMediaType,
+                    HardcoverBookId = grabbedWorkId
+                };
+
+                // Matched: the audiobook pocket of the same provider work.
+                var matchedBook = new Book
+                {
+                    Id = 290880,
+                    Author = matchedAuthor,
+                    Title = "The Vines",
+                    AnyEditionOk = true,
+                    MediaType = BookMediaType.Audiobook,
+                    HardcoverBookId = matchedWorkId
+                };
+
+                var matchedEdition = new Edition
+                {
+                    Id = 290881,
+                    BookId = matchedBook.Id,
+                    Book = matchedBook,
+                    Title = "The Vines",
+                    Monitored = true,
+                    ReadingFormatId = 2
+                };
+                matchedBook.Editions = new List<Edition> { matchedEdition };
+
+                var grabbedEdition = new Edition
+                {
+                    Id = 166298,
+                    BookId = grabbedBook.Id,
+                    Book = grabbedBook,
+                    Title = "The Vines",
+                    Monitored = true,
+                    ReadingFormatId = 3
+                };
+                grabbedBook.Editions = new List<Edition> { grabbedEdition };
+
+                var matchingService = new StubFileMatchingService
+                {
+                    InitialResult = new FileMatchResult
+                    {
+                        MatchedFiles = new[]
+                        {
+                            CreateMatchedFile(filePath, tagsService.Tags, matchedAuthor.Id, matchedAuthor.Name, matchedBook.Id, "The Vines", matchedEdition.Id)
+                        },
+                        UnmatchedFiles = Array.Empty<UnmatchedFile>()
+                    }
+                };
+
+                var importApproved = new RecordingImportApprovedBooks();
+
+                var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+                var bookProxy = (BookServiceProxy)(object)bookService;
+                bookProxy.Book = matchedBook;
+                bookProxy.BooksById[matchedBook.Id] = matchedBook;
+                bookProxy.BooksById[grabbedBook.Id] = grabbedBook;
+
+                var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+                ((AuthorServiceProxy)(object)authorService).Author = matchedAuthor;
+
+                var editionService = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+                var editionProxy = (EditionServiceProxy)(object)editionService;
+                editionProxy.Edition = matchedEdition;
+                editionProxy.EditionsById[matchedEdition.Id] = matchedEdition;
+                editionProxy.EditionsById[grabbedEdition.Id] = grabbedEdition;
+                editionProxy.EditionsByBook = new List<Edition> { matchedEdition };
+                editionProxy.EditionsByBookId[matchedBook.Id] = new List<Edition> { matchedEdition };
+                editionProxy.EditionsByBookId[grabbedBook.Id] = new List<Edition> { grabbedEdition };
+
+                var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
+                ((HistoryServiceProxy)(object)historyService).HistoryItems = new List<EntityHistory>();
+
+                var service = new DownloadedBooksImportService(
+                    new StubDiskProvider(),
+                    new StubDiskScanService(),
+                    matchingService,
+                    tagsService,
+                    importApproved,
+                    bookService,
+                    authorService,
+                    editionService,
+                    DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>(),
+                    new StubAuthorLibraryService(),
+                    new StubRootFolderService(),
+                    ConfigServiceTestProxy.Create(),
+                    historyService,
+                    DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
+                    DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
+                    DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                    LogManager.GetCurrentClassLogger());
+
+                var grabbedBooks = new List<Book> { grabbedBook };
+                if (alsoGrabUnrelatedBook)
+                {
+                    // A multi-book grab skips RetargetSameWorkMatchesToGrabbedBook, so only the pocket rule decides.
+                    var otherBook = new Book
+                    {
+                        Id = 166300,
+                        Author = grabbedAuthor,
+                        Title = "The Tiger",
+                        AnyEditionOk = true,
+                        MediaType = grabbedMediaType,
+                        HardcoverBookId = "hc:777777"
+                    };
+                    grabbedBooks.Add(otherBook);
+                    bookProxy.BooksById[otherBook.Id] = otherBook;
+                }
+
+                var remoteBook = new RemoteBook
+                {
+                    Author = grabbedAuthor,
+                    Books = grabbedBooks
+                };
+
+                var downloadClientItem = new DownloadClientItem
+                {
+                    Title = "Christopher Rice - The Vines (Unabridged)",
+                    DownloadId = "DOWNLOAD-POCKET",
+                    CanMoveFiles = false,
+                    DownloadClientInfo = new DownloadClientItemClientInfo { Id = 1, Name = "qBittorrent", Type = "qBittorrent" }
+                };
+
+                _ = service.ProcessPath(filePath, ImportMode.Auto, grabbedAuthor, downloadClientItem, remoteBook);
+
+                return importApproved.Decisions;
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        private sealed class RecordingArchiveService : IArchiveService
+        {
+            public List<(string CompressedFile, string Destination)> Extractions { get; } = new();
+
+            public void Extract(string compressedFile, string destination)
+            {
+                Extractions.Add((compressedFile, destination));
+            }
+
+            public void CreateZip(string path, IEnumerable<string> files) => throw new NotImplementedException();
+        }
+
+        [Test]
+        public void should_extract_archives_when_folder_has_no_direct_importable_files()
+        {
+            var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDir);
+            var zipPath = Path.Combine(tempDir, "Book.zip");
+            File.WriteAllBytes(zipPath, new byte[] { 1, 2, 3, 4 });
+
+            var archiveService = new RecordingArchiveService();
+
+            try
+            {
+                var service = new DownloadedBooksImportService(
+                    new StubDiskProvider(),
+                    new StubDiskScanService(),
+                    new StubFileMatchingService(),
+                    new StubMetadataTagService(),
+                    new RecordingImportApprovedBooks(),
+                    DispatchProxy.Create<IBookService, ThrowingProxy<IBookService>>(),
+                    DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
+                    DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(),
+                    DispatchProxy.Create<IImportOrchestrator, ThrowingProxy<IImportOrchestrator>>(),
+                    new StubAuthorLibraryService(),
+                    new StubRootFolderService(),
+                    ConfigServiceTestProxy.Create(),
+                    DispatchProxy.Create<IHistoryService, ThrowingProxy<IHistoryService>>(),
+                    DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
+                    DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
+                    DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
+                    LogManager.GetCurrentClassLogger(),
+                    archiveService);
+
+                service.ProcessPath(tempDir, ImportMode.Auto, author: null, downloadClientItem: null);
+
+                Assert.That(archiveService.Extractions, Has.Count.EqualTo(1));
+                Assert.That(archiveService.Extractions[0].CompressedFile, Is.EqualTo(zipPath));
+                Assert.That(archiveService.Extractions[0].Destination, Is.EqualTo(tempDir));
+            }
+            finally
+            {
+                Directory.Delete(tempDir, true);
+            }
+        }
+
     }
 }

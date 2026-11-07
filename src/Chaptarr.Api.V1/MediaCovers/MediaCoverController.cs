@@ -1,11 +1,15 @@
 using System.IO;
+using System.Linq;
+using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http;
+using Chaptarr.Http.Middleware;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.StaticFiles;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Books;
 using NzbDrone.Core.MediaCover;
 
 namespace Chaptarr.Api.V1.MediaCovers
@@ -16,11 +20,16 @@ namespace Chaptarr.Api.V1.MediaCovers
         private readonly IAppFolderInfo _appFolderInfo;
         private readonly IDiskProvider _diskProvider;
         private readonly IContentTypeProvider _mimeTypeProvider;
+        private readonly IBookshelfLegacyIdentityMapService _legacyIdentityMapService;
 
-        public MediaCoverController(IAppFolderInfo appFolderInfo, IDiskProvider diskProvider)
+        public MediaCoverController(
+            IAppFolderInfo appFolderInfo,
+            IDiskProvider diskProvider,
+            IBookshelfLegacyIdentityMapService legacyIdentityMapService = null)
         {
             _appFolderInfo = appFolderInfo;
             _diskProvider = diskProvider;
+            _legacyIdentityMapService = legacyIdentityMapService;
             _mimeTypeProvider = new FileExtensionContentTypeProvider();
         }
 
@@ -43,9 +52,16 @@ namespace Chaptarr.Api.V1.MediaCovers
 
             if (!_diskProvider.FileExists(filePath) || _diskProvider.GetFileSize(filePath) == 0)
             {
-                // Author original images are deleted after resize to save space
-                // No fallback available - return 404 if sized variant is missing
-                return NotFound();
+                // FreeBSD has no native resizer, and a failed resize on any platform
+                // retains the original. Serve that image rather than a broken cover.
+                var originalPath = MediaCoverRendition.GetOriginalPath(filePath);
+                if (originalPath == filePath || !_diskProvider.FileExists(originalPath) ||
+                    _diskProvider.GetFileSize(originalPath) == 0)
+                {
+                    return NotFound();
+                }
+
+                filePath = originalPath;
             }
 
             return PhysicalFile(filePath, GetContentType(filePath));
@@ -59,6 +75,15 @@ namespace Chaptarr.Api.V1.MediaCovers
             {
                 return NotFound();
             }
+
+            var mediaType = MediaTypeParameterParser.ParseOptional(HttpContext?.GetReadarrFacadeContext()?.MediaType);
+            var resolvedBookIds = HttpContext.ResolveBookshelfLegacyBookIds(_legacyIdentityMapService, new[] { bookId }, mediaType);
+            if (resolvedBookIds.Count == 0)
+            {
+                return NotFound();
+            }
+
+            bookId = resolvedBookIds[0];
 
             var baseDir = Path.Combine(_appFolderInfo.GetAppDataPath(), "MediaCover", "Books", bookId.ToString());
             var filePath = GetSafePath(baseDir, filename);

@@ -42,6 +42,16 @@ namespace Chaptarr.Http.REST
             return GetResourceById(id);
         }
 
+        protected virtual bool ShouldBroadcastSyncForResourceId(int id)
+        {
+            return false;
+        }
+
+        protected virtual bool ShouldBroadcastSyncForResource(TResource resource)
+        {
+            return resource != null && ShouldBroadcastSyncForResourceId(resource.Id);
+        }
+
         [NonAction]
         public void Handle(ModelEvent<TModel> message)
         {
@@ -113,6 +123,12 @@ namespace Chaptarr.Http.REST
                 return;
             }
 
+            if (ShouldBroadcastSyncForResourceId(id))
+            {
+                BroadcastResourceChange(ModelAction.Sync);
+                return;
+            }
+
             if (action == ModelAction.Deleted)
             {
                 BroadcastResourceChange(action, new TResource { Id = id });
@@ -161,6 +177,12 @@ namespace Chaptarr.Http.REST
 
             if (ShouldBroadcastResourceChanges())
             {
+                if (ShouldBroadcastSyncForResource(resource))
+                {
+                    BroadcastResourceChange(ModelAction.Sync);
+                    return;
+                }
+
                 var signalRMessage = new SignalRMessage
                 {
                     Name = Resource,

@@ -1,15 +1,17 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Card from 'Components/Card';
+import Button from 'Components/Link/Button';
 import Label from 'Components/Label';
 import MediaTypeScope from 'Components/MediaTypeScope';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
-import { kinds } from 'Helpers/Props';
+import { kinds, sizes } from 'Helpers/Props';
 import { getImportListMediaTypeScope } from 'Helpers/Props/mediaTypeScopes';
 import formatShortTimeSpan from 'Utilities/Date/formatShortTimeSpan';
 import translate from 'Utilities/String/translate';
 import EditImportListModalConnector from './EditImportListModalConnector';
 import styles from './ImportList.css';
+import ImportListSyncModal from './ImportListSyncModal';
 
 class ImportList extends Component {
 
@@ -21,7 +23,8 @@ class ImportList extends Component {
 
     this.state = {
       isEditImportListModalOpen: false,
-      isDeleteImportListModalOpen: false
+      isDeleteImportListModalOpen: false,
+      isSyncModalOpen: false
     };
   }
 
@@ -49,6 +52,15 @@ class ImportList extends Component {
 
   onConfirmDeleteImportList = () => {
     this.props.onConfirmDeleteImportList(this.props.id);
+  };
+
+  onSyncHistoryPress = (event) => {
+    event.stopPropagation();
+    this.setState({ isSyncModalOpen: true });
+  };
+
+  onSyncModalClose = () => {
+    this.setState({ isSyncModalOpen: false });
   };
 
   //
@@ -122,6 +134,22 @@ class ImportList extends Component {
             {`${translate('Refresh')}: ${formatShortTimeSpan(minRefreshInterval)}`}
           </Label>
         </div>
+
+        <div className={styles.actions}>
+          <Button
+            size={sizes.SMALL}
+            onPress={this.onSyncHistoryPress}
+          >
+            {translate('PreviewNextSync')}
+          </Button>
+        </div>
+
+        <ImportListSyncModal
+          id={id}
+          name={name}
+          isOpen={this.state.isSyncModalOpen}
+          onModalClose={this.onSyncModalClose}
+        />
 
         <EditImportListModalConnector
           id={id}

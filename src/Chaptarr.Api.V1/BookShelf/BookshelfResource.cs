@@ -8,19 +8,19 @@ namespace Chaptarr.Api.V1.Bookshelf
         public MonitorTypes? Monitor { get; set; }
         public BookMediaType? MediaType { get; set; }
         public List<string> BooksToMonitor { get; set; } = new();
+        public bool Monitored { get; set; }
 
         public MonitoringOptions ToModel()
         {
-            if (!Monitor.HasValue && (BooksToMonitor == null || BooksToMonitor.Count == 0))
-            {
-                return null;
-            }
+            var booksToMonitor = BooksToMonitor ?? new List<string>();
 
             return new MonitoringOptions
             {
-                Monitor = Monitor ?? MonitorTypes.SpecificBook,
+                // Keep BookshelfNG's All default, while honoring Chaptarr payloads that only provide the specific-book list.
+                Monitor = Monitor ?? (booksToMonitor.Count > 0 ? MonitorTypes.SpecificBook : MonitorTypes.All),
                 MediaType = MediaType,
-                BooksToMonitor = BooksToMonitor ?? new List<string>()
+                BooksToMonitor = booksToMonitor,
+                Monitored = Monitored
             };
         }
     }

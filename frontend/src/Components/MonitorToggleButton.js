@@ -3,17 +3,18 @@ import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import SpinnerIconButton from 'Components/Link/SpinnerIconButton';
 import { icons } from 'Helpers/Props';
+import translate from 'Utilities/String/translate';
 import styles from './MonitorToggleButton.css';
 
 function getTooltip(monitored, isDisabled, disabledTooltip) {
   if (isDisabled) {
-    return disabledTooltip || 'Cannot toggle monitored state';
+    return disabledTooltip || translate('MonitorStatusCannotToggleTooltip');
   }
 
   if (monitored) {
-    return 'Monitored - Click to stop monitoring';
+    return translate('MonitoredClickToStopMonitoringTooltip');
   }
-  return 'Not monitored - Click to monitor';
+  return translate('NotMonitoredClickToMonitorTooltip');
 }
 
 function getNextState(currentState) {

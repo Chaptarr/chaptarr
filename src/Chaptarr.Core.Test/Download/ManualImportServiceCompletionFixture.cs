@@ -105,6 +105,64 @@ namespace Chaptarr.Core.Test.Download
         }
 
         [Test]
+        public void should_not_complete_when_one_part_of_an_expected_book_failed_without_preview()
+        {
+            var trackedDownload = CreateTrackedDownload(
+                new QualityModel(Quality.MP3),
+                new Book { Id = 10, AuthorId = 7, Title = "Expected Audiobook", MediaType = BookMediaType.Audiobook });
+
+            var result = ManualImportService.AreAllTrackedDownloadItemsImported(
+                trackedDownload,
+                new List<ImportResult>
+                {
+                    CreateImportResultForPath(10, BookMediaType.Audiobook, "/downloads/Book 01.mp3"),
+                    CreateImportResultForPath(10, BookMediaType.Audiobook, "/downloads/Book 02.mp3", "Failed to process file: Could not find file")
+                });
+
+            Assert.That(result, Is.False);
+        }
+
+        [Test]
+        public void should_complete_when_every_part_of_an_expected_book_imported_without_preview()
+        {
+            var trackedDownload = CreateTrackedDownload(
+                new QualityModel(Quality.MP3),
+                new Book { Id = 10, AuthorId = 7, Title = "Expected Audiobook", MediaType = BookMediaType.Audiobook });
+
+            var result = ManualImportService.AreAllTrackedDownloadItemsImported(
+                trackedDownload,
+                new List<ImportResult>
+                {
+                    CreateImportResultForPath(10, BookMediaType.Audiobook, "/downloads/Book 01.mp3"),
+                    CreateImportResultForPath(10, BookMediaType.Audiobook, "/downloads/Book 02.mp3")
+                });
+
+            Assert.That(result, Is.True);
+        }
+
+        [Test]
+        public void should_complete_when_only_an_unrelated_file_failed()
+        {
+            var trackedDownload = CreateTrackedDownload(
+                new QualityModel(Quality.MP3),
+                new Book { Id = 10, AuthorId = 7, Title = "Expected Audiobook", MediaType = BookMediaType.Audiobook });
+
+            var junk = new ImportResult(
+                new ImportDecision<LocalBook>(new LocalBook { Path = "/downloads/cover.jpg" }),
+                "Unsupported file");
+
+            var result = ManualImportService.AreAllTrackedDownloadItemsImported(
+                trackedDownload,
+                new List<ImportResult>
+                {
+                    CreateImportResultForPath(10, BookMediaType.Audiobook, "/downloads/Book 01.mp3"),
+                    junk
+                });
+
+            Assert.That(result, Is.True);
+        }
+
+        [Test]
         public void should_complete_when_preview_extras_are_not_expected_books()
         {
             var trackedDownload = CreateTrackedDownload(

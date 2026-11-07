@@ -5,9 +5,13 @@ namespace NzbDrone.Core.MetadataSource
 {
     public interface ISearchForNewBook
     {
-        List<Book> SearchForNewBook(string title, string author, bool getAllEditions = true);
+        List<Book> SearchForNewBook(string title, string author, bool getAllEditions = true, BookMediaType? mediaType = null);
         List<Book> SearchByIsbn(string isbn);
+        List<Book> SearchByIsbn(string isbn, BookMediaType? mediaType) => SearchByIsbn(isbn);
         List<Book> SearchByAsin(string asin);
+        List<Book> SearchByAsin(string asin, BookMediaType? mediaType) => SearchByAsin(asin);
         List<Book> SearchByGoodreadsBookId(int goodreadsId, bool getAllEditions);
+        List<Book> SearchByGoodreadsBookId(int goodreadsId, bool getAllEditions, BookMediaType? mediaType) =>
+            SearchByGoodreadsBookId(goodreadsId, getAllEditions);
     }
 }

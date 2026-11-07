@@ -1,5 +1,4 @@
-import _ from 'lodash';
-import moment from 'moment';
+import last from 'lodash/last';
 import React from 'react';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
@@ -10,9 +9,12 @@ import { createThunk, handleThunks } from 'Store/thunks';
 import getBookAuthorPath from 'Utilities/Book/getBookAuthorPath';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import dateFilterPredicate from 'Utilities/Date/dateFilterPredicate';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import coerceMonitoredBoolean from 'Utilities/Monitoring/coerceMonitoredBoolean';
+import getSectionState from 'Utilities/State/getSectionState';
 import translate from 'Utilities/String/translate';
 import { removeItem, set, update, updateItem } from './baseActions';
+import createBookMonitoringFailureAction from './createBookMonitoringFailureAction';
 import createHandleActions from './Creators/createHandleActions';
 import createRemoveItemHandler from './Creators/createRemoveItemHandler';
 import createSaveProviderHandler from './Creators/createSaveProviderHandler';
@@ -98,7 +100,7 @@ export const filters = [
       },
       {
         key: 'releaseDate',
-        value: moment(),
+        value: dayjs(),
         type: filterTypes.LESS_THAN
       }
     ]
@@ -165,7 +167,10 @@ export const sortPredicates = {
   },
 
   monitored: function(item, _direction, selectedMediaType) {
-    const mediaType = (selectedMediaType || item.mediaType || '').toString().toLowerCase() === 'ebook' ? 'ebook' : 'audiobook';
+    const selectedType = (selectedMediaType || '').toString().toLowerCase();
+    const mediaType = selectedType === 'ebook' || selectedType === 'audiobook' ?
+      selectedType :
+      item.mediaType;
     const isMonitored = mediaType === 'ebook' ? item.ebookMonitored : item.audiobookMonitored;
 
     return isMonitored ? 1 : 0;
@@ -325,7 +330,7 @@ export const defaultState = {
   columns: [
     {
       name: 'select',
-      columnLabel: 'Select',
+      columnLabel: () => translate('Select'),
       isSortable: false,
       isVisible: true,
       isModifiable: false,
@@ -333,49 +338,49 @@ export const defaultState = {
     },
     {
       name: 'monitored',
-      columnLabel: 'Monitored',
+      columnLabel: () => translate('Monitored'),
       isVisible: true,
       isModifiable: false
     },
     {
       name: 'title',
-      label: 'Title',
+      label: () => translate('Title'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'narrator',
-      label: 'Narrator',
+      label: () => translate('Narrator'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'series',
-      label: 'Series',
+      label: () => translate('Series'),
       isSortable: true,
       isVisible: false
     },
     {
       name: 'releaseDate',
-      label: 'Release Date',
+      label: () => translate('ReleaseDate'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'pageCount',
-      label: 'Pages',
+      label: () => translate('Pages'),
       isSortable: true,
       isVisible: false
     },
     {
       name: 'duration',
-      label: 'Duration',
+      label: () => translate('Duration'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'rating',
-      label: 'Rating',
+      label: () => translate('Rating'),
       isSortable: true,
       isVisible: true
     },
@@ -390,13 +395,13 @@ export const defaultState = {
     },
     {
       name: 'status',
-      label: 'Status',
+      label: () => translate('Status'),
       isVisible: true,
       isSortable: true
     },
     {
       name: 'actions',
-      columnLabel: 'Actions',
+      columnLabel: () => translate('Actions'),
       isVisible: true,
       isModifiable: false
     }
@@ -406,7 +411,7 @@ export const defaultState = {
   audiobookColumns: [
     {
       name: 'select',
-      columnLabel: 'Select',
+      columnLabel: () => translate('Select'),
       isSortable: false,
       isVisible: true,
       isModifiable: false,
@@ -414,43 +419,43 @@ export const defaultState = {
     },
     {
       name: 'monitored',
-      columnLabel: 'Monitored',
+      columnLabel: () => translate('Monitored'),
       isVisible: true,
       isModifiable: false
     },
     {
       name: 'title',
-      label: 'Title',
+      label: () => translate('Title'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'narrator',
-      label: 'Narrator',
+      label: () => translate('Narrator'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'series',
-      label: 'Series',
+      label: () => translate('Series'),
       isSortable: true,
       isVisible: false
     },
     {
       name: 'releaseDate',
-      label: 'Release Date',
+      label: () => translate('ReleaseDate'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'duration',
-      label: 'Duration',
+      label: () => translate('Duration'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'rating',
-      label: 'Rating',
+      label: () => translate('Rating'),
       isSortable: true,
       isVisible: true
     },
@@ -465,13 +470,13 @@ export const defaultState = {
     },
     {
       name: 'status',
-      label: 'Status',
+      label: () => translate('Status'),
       isVisible: true,
       isSortable: true
     },
     {
       name: 'actions',
-      columnLabel: 'Actions',
+      columnLabel: () => translate('Actions'),
       isVisible: true,
       isModifiable: false
     }
@@ -480,7 +485,7 @@ export const defaultState = {
   ebookColumns: [
     {
       name: 'select',
-      columnLabel: 'Select',
+      columnLabel: () => translate('Select'),
       isSortable: false,
       isVisible: true,
       isModifiable: false,
@@ -488,37 +493,37 @@ export const defaultState = {
     },
     {
       name: 'monitored',
-      columnLabel: 'Monitored',
+      columnLabel: () => translate('Monitored'),
       isVisible: true,
       isModifiable: false
     },
     {
       name: 'title',
-      label: 'Title',
+      label: () => translate('Title'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'series',
-      label: 'Series',
+      label: () => translate('Series'),
       isSortable: true,
       isVisible: false
     },
     {
       name: 'releaseDate',
-      label: 'Release Date',
+      label: () => translate('ReleaseDate'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'pageCount',
-      label: 'Pages',
+      label: () => translate('Pages'),
       isSortable: true,
       isVisible: true
     },
     {
       name: 'rating',
-      label: 'Rating',
+      label: () => translate('Rating'),
       isSortable: true,
       isVisible: true
     },
@@ -533,13 +538,13 @@ export const defaultState = {
     },
     {
       name: 'status',
-      label: 'Status',
+      label: () => translate('Status'),
       isVisible: true,
       isSortable: true
     },
     {
       name: 'actions',
-      columnLabel: 'Actions',
+      columnLabel: () => translate('Actions'),
       isVisible: true,
       isModifiable: false
     }
@@ -629,7 +634,7 @@ export const actionHandlers = handleThunks({
 
     abortCurrentFetchRequest = abortRequest;
 
-    request.done((data) => {
+    request.then((data) => {
       if (requestId !== currentFetchRequestId) {
         return;
       }
@@ -655,7 +660,7 @@ export const actionHandlers = handleThunks({
       ]));
     });
 
-    request.fail((xhr) => {
+    request.catch((xhr) => {
       if (requestId !== currentFetchRequestId) {
         return;
       }
@@ -689,13 +694,17 @@ export const actionHandlers = handleThunks({
     const {
       bookId,
       bookEntity = bookEntities.BOOKS,
-      monitored
+      monitored,
+      mediaType
     } = payload;
 
     // Defensive: API expects a boolean, but UI can sometimes pass 0/1/2
     const monitoredBool = coerceMonitoredBoolean(monitored);
 
-    const bookSection = _.last(bookEntity.split('.'));
+    const bookSection = last(bookEntity.split('.'));
+    const bookState = getSectionState(getState(), bookEntity, true);
+    const selectedBook = bookState?.items?.find((book) => book.id === bookId);
+    const effectiveMediaType = mediaType || selectedBook?.mediaType;
 
     dispatch(updateItem({
       id: bookId,
@@ -704,14 +713,14 @@ export const actionHandlers = handleThunks({
     }));
 
     const promise = createAjaxRequest({
-      url: '/book/monitor',
+      url: effectiveMediaType ? `/book/monitor?mediaType=${encodeURIComponent(effectiveMediaType)}` : '/book/monitor',
       method: 'PUT',
       data: JSON.stringify({ bookIds: [bookId], monitored: monitoredBool }),
       dataType: 'json'
     }).request;
 
-    promise.done((data) => {
-      const books = Array.isArray(data) ? data : (data && data.books ? data.books : null);
+    promise.then((data) => {
+      const books = Array.isArray(data) ? data : ((data && data.books) || null);
 
       if (books && Array.isArray(books) && books.length) {
         const bookData = books[0];
@@ -744,7 +753,8 @@ export const actionHandlers = handleThunks({
       }));
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
+      dispatch(createBookMonitoringFailureAction(xhr));
       dispatch(updateItem({
         id: bookId,
         section: bookSection,
@@ -763,6 +773,15 @@ export const actionHandlers = handleThunks({
 
     // Defensive: API expects a boolean, but UI can sometimes pass 0/1/2
     const monitoredBool = coerceMonitoredBoolean(monitored);
+    const bookState = getSectionState(getState(), bookEntity, true);
+    const selectedIds = new Set(bookIds);
+    const selectedMediaTypes = new Set(
+      (bookState?.items || [])
+        .filter((book) => selectedIds.has(book.id))
+        .map((book) => book.mediaType)
+        .filter((value) => value === 'audiobook' || value === 'ebook')
+    );
+    const effectiveMediaType = mediaType || (selectedMediaTypes.size === 1 ? Array.from(selectedMediaTypes)[0] : null);
 
     dispatch(batchActions(
       bookIds.map((bookId) => {
@@ -775,16 +794,16 @@ export const actionHandlers = handleThunks({
     ));
 
     const promise = createAjaxRequest({
-      url: '/book/monitor',
+      url: effectiveMediaType ? `/book/monitor?mediaType=${encodeURIComponent(effectiveMediaType)}` : '/book/monitor',
       method: 'PUT',
       data: JSON.stringify({ bookIds, monitored: monitoredBool }),
       dataType: 'json'
     }).request;
 
-    promise.done((data) => {
+    promise.then((data) => {
       // Handle different response formats - data might be the array directly or wrapped in a response object
-      const books = Array.isArray(data) ? data : (data && data.books ? data.books : null);
-      
+      const books = Array.isArray(data) ? data : ((data && data.books) || null);
+
       if (books && Array.isArray(books)) {
         dispatch(batchActions(
           books.map((bookData) => {
@@ -834,7 +853,8 @@ export const actionHandlers = handleThunks({
       }
     });
 
-    promise.fail((xhr) => {
+    promise.catch((xhr) => {
+      dispatch(createBookMonitoringFailureAction(xhr));
       dispatch(batchActions(
         bookIds.map((bookId) => {
           return updateItem({
@@ -857,22 +877,22 @@ export const reducers = createHandleActions({
 
   [SET_BOOKS_TABLE_OPTION]: (state, { payload }) => {
     const { mediaType, ...tableOptions } = payload;
-    
+
     // If no mediaType specified, update the legacy columns for backward compatibility
     if (!mediaType) {
       return createSetTableOptionReducer(section)(state, { payload: tableOptions });
     }
-    
+
     // Update media-type specific columns
     const columnKey = mediaType === 'audiobook' ? 'audiobookColumns' : 'ebookColumns';
-    
+
     // Handle column updates
     if (tableOptions.columns) {
       return Object.assign({}, state, {
         [columnKey]: tableOptions.columns
       });
     }
-    
+
     // Handle other table options
     return Object.assign({}, state, tableOptions);
   },

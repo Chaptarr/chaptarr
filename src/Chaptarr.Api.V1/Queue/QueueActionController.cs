@@ -30,7 +30,14 @@ namespace Chaptarr.Api.V1.Queue
                 throw new NotFoundException();
             }
 
-            await _downloadService.DownloadReport(pendingRelease.RemoteBook, null);
+            try
+            {
+                await _downloadService.DownloadReport(pendingRelease.RemoteBook, null);
+            }
+            catch (ExistingTorrentFoundException ex)
+            {
+                return Conflict(new { code = "existingTorrent", message = ex.Message });
+            }
 
             return new { };
         }
@@ -48,7 +55,14 @@ namespace Chaptarr.Api.V1.Queue
                     throw new NotFoundException();
                 }
 
-                await _downloadService.DownloadReport(pendingRelease.RemoteBook, null);
+                try
+                {
+                    await _downloadService.DownloadReport(pendingRelease.RemoteBook, null);
+                }
+                catch (ExistingTorrentFoundException ex)
+                {
+                    return Conflict(new { code = "existingTorrent", message = ex.Message });
+                }
             }
 
             return new { };

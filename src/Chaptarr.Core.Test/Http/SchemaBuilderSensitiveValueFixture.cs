@@ -29,6 +29,8 @@ namespace Chaptarr.Core.Test.Http
                 return new Dictionary<string, string>();
             }
 
+            public string GetCurrentLocale() => "en";
+
             public string GetLocalizedString(string phrase)
             {
                 return phrase;
@@ -94,6 +96,18 @@ namespace Chaptarr.Core.Test.Http
 
             Assert.That(schema.Single(f => f.Name == "apiKey").Value, Is.EqualTo("********"));
             Assert.That(schema.Single(f => f.Name == "name").Value, Is.EqualTo("visible"));
+        }
+
+        [Test]
+        public void should_leave_empty_sensitive_values_unmasked()
+        {
+            var schema = SchemaBuilder.ToSchema(new SensitiveSettings
+            {
+                ApiKey = string.Empty,
+                Name = "visible"
+            });
+
+            Assert.That(schema.Single(f => f.Name == "apiKey").Value, Is.EqualTo(string.Empty));
         }
 
         [Test]

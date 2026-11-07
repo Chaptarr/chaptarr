@@ -1,46 +1,322 @@
-name: Build Chaptarr
+# ng-runner-policy: trusted-hosted-or-private-jit-v1
+# packer-windows-jit-v1
+name: Build ChaptarrNG
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number != '' &&
+      format('owner-pr:{0}:{1}:{2}:action:{3}:pool:{4}', inputs.pr_number, inputs.pr_sha,
+        inputs.target_run_id, inputs.action, inputs.runner_pool) ||
+      (github.event_name == 'workflow_dispatch' &&
+       format('action:{0}:pool:{1}', inputs.action, inputs.runner_pool)) || github.workflow }}
 
 on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main, develop ]
+  pull_request_target:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review, labeled]
   workflow_call:
+    inputs:
+      action:
+        required: true
+        type: string
+      runner_pool:
+        required: true
+        type: string
+      release_tag:
+        required: true
+        type: string
+      release_sha:
+        required: true
+        type: string
   workflow_dispatch:
+    inputs:
+      action:
+        description: Run trusted CI or a release validation
+        required: true
+        type: choice
+        options:
+          - ci
+      runner_pool:
+        description: Select compatible GitHub-hosted or private JIT runners
+        required: true
+        type: choice
+        default: public
+        options:
+          - public
+          - private
+      windows_chocolatey_only:
+        description: Run only the Windows Chocolatey BookshelfNG migration acceptance
+        required: false
+        type: boolean
+        default: false
+      docker_only:
+        description: Run only the standard multi-architecture image validation
+        required: false
+        type: boolean
+        default: false
+      rpm_bridge_only:
+        description: Run only the Fedora 44 RPM BookshelfNG migration acceptance
+        required: false
+        type: boolean
+        default: false
+      runner_policy_only:
+        description: Run only the private runner policy regression on Linux JIT
+        required: false
+        type: boolean
+        default: false
+      channel_contracts_only:
+        description: Run only the legacy distribution and runner contract suite
+        required: false
+        type: boolean
+        default: false
+      pr_number:
+        description: Trusted same-repository owner PR number
+        required: false
+        type: string
+      pr_sha:
+        description: Exact owner PR head SHA
+        required: false
+        type: string
+      target_run_id:
+        description: Metadata-only pull_request_target run ID
+        required: false
+        type: string
 
-# Tests only, never publishes. PRs and merges are both validated automatically, but
-# nothing reaches users until release.yml is run by hand; docker-publish.yml is
-# workflow_call-only, so no run started here can push an image.
-
-# One live run per PR and per branch: a newer push supersedes the older run, so a
-# batch of merges costs one build of the combined result rather than one each.
-# Release-called runs are never cancelled - that would silently drop the gate.
+# Build validation runs from an explicit main-branch hosted/private dispatch or
+# an exact release tag passed through the main-branch reusable workflow call.
+# Trusted owner PRs use a metadata-only private-JIT route.
 concurrency:
-  group: build-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref_name }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+  group: build-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}-${{ github.event.action == 'edited' && 'metadata' || 'code' }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
+  release-notes:
+    name: Release-note contract
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'ci' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        github.event_name == 'pull_request_target' &&
+        github.actor == 'snapetech' &&
+        github.event.pull_request.user.login == 'snapetech' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.head.repo.id == github.repository_id &&
+        github.event.pull_request.base.ref == 'main' &&
+        github.event.pull_request.user.type != 'Bot' &&
+        contains(github.event.pull_request.labels.*.name, 'action:ci') &&
+        contains(github.event.pull_request.labels.*.name, 'pool:private') &&
+        (github.event.action != 'edited' || github.event.changes.body != null)
+      )
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-release-notes"]}}', github.run_id)) }}
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 0
+
+    - name: Setup Node.js
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 26.12.1
+        package-manager-cache: false
+
+    - name: Validate release-note fragment or explicit opt-out
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_BODY: ${{ github.event.pull_request.body }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head:refs/remotes/pull/${PR_NUMBER}/head"
+        if ! git cat-file -e "${HEAD_SHA}^{commit}"; then
+          echo "::error::Pull request head ${HEAD_SHA} is unavailable after fetching refs/pull/${PR_NUMBER}/head"
+          exit 1
+        fi
+        body_file="$RUNNER_TEMP/pr-body.md"
+        printf '%s' "$PR_BODY" > "$body_file"
+        node --test scripts/release-notes.test.mjs
+        node scripts/check-release-notes.mjs \
+          --base "$BASE_SHA" \
+          --head "$HEAD_SHA" \
+          --pr-body "$body_file" \
+          --summary-file "$GITHUB_STEP_SUMMARY"
+        node scripts/preview-release-notes.mjs \
+          --base "$BASE_SHA" \
+          --head "$HEAD_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+
   build:
-    runs-on: ${{ matrix.os }}
+    if: >-
+      (
+        github.ref == 'refs/heads/main' &&
+        inputs.action == 'ci' &&
+        (inputs.runner_pool == 'private' || inputs.runner_pool == 'public') &&
+        inputs.pr_number == '' &&
+        inputs.runner_policy_only != true &&
+        inputs.rpm_bridge_only != true &&
+        inputs.channel_contracts_only != true &&
+        inputs.docker_only != true
+      ) || (
+        github.ref == 'refs/heads/main' &&
+        inputs.action == 'publish' &&
+        inputs.runner_pool == 'private' &&
+        inputs.release_tag != '' &&
+        inputs.release_sha != ''
+      )
+    # Public CI uses native x64 hosted runners. The explicit private route stays
+    # available for jobs that need the JIT environment or exact runner receipt.
+    runs-on: >-
+      ${{ inputs.runner_pool == 'public' &&
+          (matrix.platform == 'windows-x64' && 'windows-2025' ||
+           matrix.platform == 'macos-intel' && 'macos-15-intel' ||
+           'ubuntu-24.04') ||
+          (matrix.platform == 'windows-x64' && fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","ChaptarrNG","gha-{0}-{1}-build"]}}', github.run_id, strategy.job-index)) ||
+           matrix.platform == 'macos-intel' && fromJSON(format('{{"group":"private-apple-builds","labels":["self-hosted","macOS","X64","private-apple","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-{1}-build"]}}', github.run_id, strategy.job-index)) ||
+           fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}"]}}', github.run_id))) }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        include:
-          - os: ubuntu-latest
-            platform: linux
-          - os: windows-latest
-            platform: win
-          - os: macos-latest
-            platform: osx
+        platform: ${{ inputs.windows_chocolatey_only && fromJSON('["windows-x64"]') || fromJSON('["linux-x64","windows-x64","macos-intel"]') }}
 
     steps:
-    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
+        ref: ${{ inputs.action == 'publish' && inputs.runner_pool == 'private' && inputs.release_tag != '' && inputs.release_sha || github.sha }}
         fetch-depth: 0
+
+    - name: Verify exact release tag source
+      if: inputs.action == 'publish'
+      env:
+        RELEASE_TAG: ${{ inputs.release_tag }}
+        RELEASE_SHA: ${{ inputs.release_sha }}
+      run: |
+        set -euo pipefail
+        test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+        test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$RELEASE_SHA"
+
+    - name: Select Python executable for native runner
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
+          python_command=python
+        else
+          python_command=python3
+        fi
+        command -v "$python_command" >/dev/null
+        printf 'CHAPTARRNG_PYTHON=%s\n' "$python_command" >> "$GITHUB_ENV"
+
+    - name: Test stable GHCR image identity and legacy aliases
+      if: matrix.platform == 'linux-x64'
+      run: |
+        bash packaging/scripts/test-publish-image-aliases.sh
+        bash packaging/scripts/test-dispatch-ghcr-release-bridge.sh
+        bash packaging/scripts/test-release-readiness-gate.sh
+        bash packaging/scripts/test-bookshelfng-deb-publish-gate.sh
+        bash packaging/scripts/test-bookshelfng-ppa-publish-gate.sh
+
+    - name: Test release publisher configuration preflight
+      if: matrix.platform == 'linux-x64'
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: bash packaging/scripts/test-release-publisher-config.sh
+
+    - name: Test Chocolatey legacy package publish gate
+      if: matrix.platform == 'windows-x64'
+      shell: pwsh
+      run: ./packaging/scripts/test-chocolatey-publish-gate.ps1
+
+    - name: Test Chocolatey BookshelfNG migration choice
+      if: matrix.platform == 'windows-x64'
+      shell: pwsh
+      run: ./packaging/scripts/test-chocolatey-migration-choice.ps1
+
+    - name: Test BookshelfNG migration journal fingerprints and desktop PostgreSQL handoff
+      if: matrix.platform == 'linux-x64'
+      env:
+        TASK_SCRATCH_DIR: ${{ runner.temp }}
+      run: bash packaging/scripts/test-bookshelfng-journal-fingerprint.sh
+
+    - name: Test desktop supervisor process-group shutdown
+      if: matrix.platform == 'linux-x64'
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: python3 packaging/scripts/test-desktop-supervisor-signals.py
+
+    - name: Test workflow runner policy
+      if: matrix.platform == 'linux-x64'
+      run: python3 scripts/test_workflow_runner_policy.py
+
+    - name: Test native package recovery after main process death
+      if: matrix.platform == 'linux-x64'
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: python3 packaging/scripts/test-bookshelfng-healthcheck-process.py
+
+    - name: Test candidate BookshelfNG Debian bridge package
+      if: matrix.platform == 'linux-x64'
+      env:
+        TASK_SCRATCH_DIR: ${{ runner.temp }}/chaptarrng-deb-bridge-test
+      run: bash packaging/scripts/test-build-bookshelfng-deb-bridge.sh
+
+    - name: Test BookshelfNG AUR migration choice
+      if: matrix.platform == 'linux-x64'
+      env:
+        TASK_SCRATCH_DIR: ${{ runner.temp }}/chaptarrng-aur-choice-test
+      run: bash packaging/scripts/test-bookshelfng-aur-choice.sh
+
+    - name: Test candidate BookshelfNG RPM bridge package
+      if: matrix.platform == 'linux-x64'
+      env:
+        TASK_SCRATCH_DIR: ${{ runner.temp }}/chaptarrng-rpm-bridge-test
+      run: bash packaging/scripts/test-build-bookshelfng-rpm-bridge.sh
+
+    - name: Test candidate BookshelfNG Launchpad source package
+      if: matrix.platform == 'linux-x64'
+      env:
+        TASK_SCRATCH_DIR: ${{ runner.temp }}/chaptarrng-ppa-source-test
+      run: bash packaging/scripts/test-build-bookshelfng-ppa-source.sh
+
+    - name: Test BookshelfNG host migration helper
+      if: matrix.platform == 'linux-x64'
+      run: |
+        bash -n scripts/bookshelfng-to-chaptarrng.sh scripts/test-bookshelfng-to-chaptarrng.sh
+        bash scripts/test-bookshelfng-to-chaptarrng.sh
+        python3 -m unittest discover -s scripts -p test_capture_bookshelf_metadata_env.py
+
+    - name: Test Linux systemd standalone Yes/No handoff prompt
+      if: matrix.platform == 'linux-x64'
+      run: python3 scripts/test_bookshelfng_systemd_bootstrap_prompt.py
+
+    - name: Test BookshelfNG migration supervisor and single image
+      if: matrix.platform == 'linux-x64'
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: bash packaging/scripts/test-docker-bookshelf-compatibility-defaults.sh
+
+    - name: Test legacy environment compatibility for unmapped retry
+      if: matrix.platform == 'linux-x64'
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: bash scripts/test-chaptarr-retry-unmapped-env.sh
+
+    - name: Configure .NET install directory
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p -- "$RUNNER_TEMP/dotnet"
+        printf 'DOTNET_INSTALL_DIR=%s/dotnet\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
 
     - name: Guard (repo) - no merge-conflict markers
       shell: bash
@@ -53,56 +329,136 @@ jobs:
 
     - name: Guard (version) - package.json and Directory.Build.props in sync
       shell: bash
-      run: python3 build-tools/version_guard.py sync
+      run: >-
+        "$CHAPTARRNG_PYTHON" build-tools/version_guard.py sync
 
-    - name: Guard (version) - no decreases on develop
-      if: github.ref == 'refs/heads/develop' || github.base_ref == 'develop'
+    - name: Guard (.NET SDK) - workflow and container pins match global.json
+      shell: bash
+      run: >-
+        "$CHAPTARRNG_PYTHON" scripts/check_dotnet_sdk_pins.py
+
+    - name: Guard (version) - no decreases on main
+      if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
       shell: bash
       run: |
         set -euo pipefail
 
         if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-          git fetch --no-tags origin "refs/heads/develop:refs/remotes/origin/develop"
-          COMPARE_REF="origin/develop"
+          git fetch --no-tags origin "refs/heads/main:refs/remotes/origin/main"
+          COMPARE_REF="origin/main"
         else
           COMPARE_REF="$(git describe --tags --match 'v*' --abbrev=0 HEAD 2>/dev/null || true)"
 
           if [[ -z "$COMPARE_REF" ]]; then
-            echo "No reachable version tag is available for monotonic version comparison."
-            exit 1
+            if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+              COMPARE_REF="HEAD^"
+              echo "No ChaptarrNG release tag exists yet; comparing against the parent commit for the initial fork release."
+            else
+              echo "No reachable version tag or parent commit is available for monotonic version comparison."
+              exit 1
+            fi
           fi
         fi
 
-        python3 build-tools/version_guard.py monotonic \
+        "$CHAPTARRNG_PYTHON" build-tools/version_guard.py monotonic \
           --compare-ref "$COMPARE_REF" \
           --event-path "$GITHUB_EVENT_PATH"
 
     - name: Guard (version) - version-only commits stay pure
       shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_REF: ${{ github.base_ref }}
       run: |
         set -euo pipefail
 
-        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-          git fetch --no-tags origin "refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
-          COMPARE_REF="origin/${{ github.base_ref }}"
+        if [[ "$EVENT_NAME" == "pull_request" ]]; then
+          git fetch --no-tags origin "refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          COMPARE_REF="origin/${BASE_REF}"
         else
           COMPARE_REF="$(git describe --tags --match 'v*' --abbrev=0 HEAD 2>/dev/null || true)"
 
           if [[ -z "$COMPARE_REF" ]]; then
-            echo "No reachable version tag is available for version-only commit hygiene."
-            exit 1
+            if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+              COMPARE_REF="HEAD^"
+              echo "No ChaptarrNG release tag exists yet; checking version-only commit hygiene from the parent commit."
+            else
+              echo "No reachable version tag or parent commit is available for version-only commit hygiene."
+              exit 1
+            fi
           fi
         fi
 
-        python3 build-tools/version_guard.py commit-hygiene --compare-ref "$COMPARE_REF"
-    
-    - name: Setup .NET
-      uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        "$CHAPTARRNG_PYTHON" build-tools/version_guard.py commit-hygiene --compare-ref "$COMPARE_REF"
+
+    - name: Setup Node.js
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
-        dotnet-version: 10.0.x
+        node-version: 26.12.1
+
+    - name: Test Quickstart setup readiness
+      run: node --test frontend/src/System/Quickstart/quickstartReadiness.test.cjs
+
+    - name: Install Yarn
+      run: npm install --global yarn@1.22.22
+
+    - name: Install frontend dependencies
+      run: yarn install --frozen-lockfile --network-timeout 120000
+
+    - name: Check translation calls and locale catalogs
+      if: inputs.windows_chocolatey_only != true
+      run: yarn check-translations && yarn check-localization
+
+    - name: Test locale formatting and RTL CSS
+      if: inputs.windows_chocolatey_only != true
+      run: yarn test-localization
+
+    - name: Verify bundled asset URLs remain same-origin
+      run: node --test frontend/src/indexTemplateAssetUrls.test.cjs
+
+    - name: Test Books list both-format filtering
+      run: >-
+        node --test
+        frontend/src/Book/Index/getBookIndexQuery.test.cjs
+        frontend/src/Book/Index/BookIndex.test.cjs
+        frontend/src/Book/Index/BookIndexItemConnector.test.cjs
+
+    - name: Test book infinite-scroll id deduplication
+      run: node --test frontend/src/Store/Reducers/bookInfiniteScrollReducer.test.cjs
+
+    - name: Test BookshelfNG workflow request state and controls
+      run: >-
+        node --test
+        frontend/src/Book/Delete/DeleteBookModalContentConnector.test.cjs
+        frontend/src/Book/Details/BookDetailRequests.test.cjs
+        frontend/src/Book/Index/Overview/BookIndexOverview.test.cjs
+        frontend/src/Book/Index/BookIndexAuthorEditorFormat.test.cjs
+        frontend/src/Bookshelf/BookshelfFooter.test.cjs
+        frontend/src/Components/Form/ProfileSelectInputConnectors.test.cjs
+        frontend/src/Settings/MediaManagement/MediaManagement.test.cjs
+        frontend/src/Settings/MediaManagement/RootFolder/RootFolders.test.cjs
+        frontend/src/Store/Actions/createBookMonitoringFailureAction.test.cjs
+        frontend/src/System/Updates/UpdateChanges.test.cjs
+
+    - name: Test client-side collection equality
+      run: node --test frontend/src/Utilities/Object/clientSideCollectionEqual.test.cjs
+
+    - name: Check React Router context
+      run: yarn check-react-router-context
+
+    - name: Type-check frontend
+      run: yarn typecheck
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+      with:
+        dotnet-version: 10.0.403
 
     - name: Cache NuGet packages
-      if: runner.os == 'Windows'
+      # Manual release dispatch can select a branch; do not let those builds write shared cache entries.
+      if: runner.os == 'Windows' && github.event_name != 'workflow_dispatch'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.nuget/packages
@@ -121,25 +477,344 @@ jobs:
     
     - name: Build
       run: dotnet build src/Chaptarr.NoTests.sln --configuration Release --no-restore
-    
+
+    - name: Build test assembly
+      run: dotnet build src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release --no-restore -p:UseSharedCompilation=false
+
+    - name: Build tool-enabled M4B test image
+      if: matrix.platform == 'linux-x64'
+      run: docker build -f integration/Dockerfile.m4b-test -t chaptarrng-m4b-test:ci integration
+
+    - name: Test real M4B merge, fallback, and restart recovery
+      if: matrix.platform == 'linux-x64'
+      run: |
+        docker run --rm --network none \
+          --volume "$GITHUB_WORKSPACE:/workspace" \
+          --workdir /workspace/_tests/net10.0 \
+          chaptarrng-m4b-test:ci \
+          dotnet vstest Chaptarr.Core.Test.dll \
+            --TestCaseFilter:"FullyQualifiedName~real_m4b_tool_should_" \
+            --Logger:"console;verbosity=normal"
+
+    - name: Test native product hard-kill and M4B recovery
+      if: matrix.platform == 'linux-x64'
+      run: >-
+        python3 integration/test-m4b-whole-app-recovery.py
+        --candidate-directory _output/net10.0
+        --candidate-revision "$GITHUB_SHA"
+        --image chaptarrng-m4b-test:ci
+        --work-dir "${{ runner.temp }}/m4b-whole-app-recovery"
+
+    - name: Upload native M4B process recovery evidence
+      if: always() && matrix.platform == 'linux-x64'
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: m4b-whole-app-recovery-${{ github.run_id }}
+        path: ${{ runner.temp }}/m4b-whole-app-recovery/evidence/
+        if-no-files-found: warn
+        retention-days: 30
+
+    - name: Configure Chromium cache for direct-download browser tests
+      if: runner.os == 'Linux'
+      env:
+        PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
+      run: echo "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" >> "$GITHUB_ENV"
+
+    - name: Install Chromium and system dependencies on Linux
+      if: runner.os == 'Linux'
+      env:
+        PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
+      shell: bash
+      run: |
+        set -euo pipefail
+        driver=./_tests/net10.0/.playwright
+        test -x "$driver/node/linux-x64/node"
+        test -f "$driver/package/cli.js"
+        PW_LANG_NAME=csharp "$driver/node/linux-x64/node" "$driver/package/cli.js" install --with-deps chromium
+
+    - name: Verify Unraid package sync stays off feature branches
+      shell: bash
+      run: bash scripts/test-sync-unraid-package.sh
+
+    - name: Verify BookshelfNG legacy distribution contracts
+      run: node --test packaging/scripts/test-bookshelf-legacy-channels.mjs
+
+    - name: Verify Linux desktop-candidate staging
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        bash -n packaging/scripts/prepare-bookshelf-desktop-candidates.sh \
+          packaging/scripts/build-bookshelf-desktop-candidates.sh \
+          packaging/scripts/test-prepare-bookshelf-desktop-candidates.sh \
+          packaging/scripts/test-build-bookshelf-desktop-candidates.sh
+        bash packaging/scripts/test-prepare-bookshelf-desktop-candidates.sh
+        bash packaging/scripts/test-build-bookshelf-desktop-candidates.sh
+
+    - name: Verify digest-pinned BookshelfNG container-platform candidates
+      if: runner.os == 'Linux'
+      env:
+        TASK_SCRATCH_DIR: ${{ runner.temp }}/chaptarrng-container-candidates-test
+      run: |
+        bash -n packaging/scripts/build-bookshelf-container-platform-candidates.sh \
+          packaging/scripts/test-build-bookshelf-container-platform-candidates.sh
+        bash packaging/scripts/test-build-bookshelf-container-platform-candidates.sh
+
+    - name: Test BookshelfNG StartOS artifact handoff
+      if: runner.os == 'Linux'
+      env:
+        TASK_SCRATCH_DIR: ${{ runner.temp }}/chaptarrng-startos-artifact-test
+      run: |
+        for script in \
+          packaging/scripts/build-bookshelf-container-platform-candidates.sh \
+          packaging/scripts/build-bookshelf-startos-artifacts.sh \
+          packaging/legacy/startos/candidate/build-startos-package.sh \
+          packaging/scripts/test-build-bookshelf-startos-artifacts.sh; do
+          bash -n "$script"
+        done
+        bash packaging/scripts/test-build-bookshelf-startos-artifacts.sh
+
     - name: Test
-      run: dotnet test src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release --no-restore --verbosity normal
+      env:
+        DIRECT_DOWNLOAD_REQUIRE_PLAYWRIGHT: ${{ runner.os == 'Linux' && 'true' || 'false' }}
+        PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/playwright-browsers
+      run: dotnet test src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release --no-restore --no-build --verbosity normal
+
+    # CSS Modules generation rewrites tracked declaration files, so build the UI
+    # after the tests have finished.
+    - name: Build frontend
+      run: yarn build
     
     - name: Publish
       run: |
         dotnet publish src/NzbDrone.Console/Chaptarr.Console.csproj -c Release -f net10.0 -o ./publish/Chaptarr
         dotnet publish src/NzbDrone.Update/Chaptarr.Update.csproj -c Release -f net10.0 -o ./publish/Chaptarr/Chaptarr.Update
+
+    - name: Include and verify frontend in artifact
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -s ./_output/UI/index.html
+        mkdir -p ./publish/Chaptarr/UI
+        cp -a ./_output/UI/. ./publish/Chaptarr/UI/
+        test -s ./publish/Chaptarr/UI/index.html
+
+    - name: Verify optional diagnostics module in artifact
+      shell: bash
+      run: test -s ./publish/Chaptarr/Chaptarr.Diagnostics.dll
+
+    - name: Build Windows BookshelfNG migration installer
+      if: matrix.platform == 'windows-x64'
+      shell: pwsh
+      run: ./packaging/scripts/build-windows-bookshelf-migration-installer.ps1 -KeepPayload
+
+    - name: Test Windows migration installer SQLite fingerprint
+      if: matrix.platform == 'windows-x64'
+      shell: pwsh
+      run: dotnet run --configuration Release --project ./distribution/windows/installer-net-smoke/ChaptarrNG.Installer.Smoke.csproj
+
+    - name: Test Windows BookshelfNG installer upgrade and rollback services
+      if: matrix.platform == 'windows-x64'
+      env:
+        CHAPTARR_SERVICE_ROUNDTRIP_CLEANUP_MANIFEST: ${{ runner.temp }}/chaptarr-bookshelf-service-roundtrip-cleanup.json
+      shell: pwsh
+      run: dotnet run --configuration Release --project ./distribution/windows/installer-net-smoke/ChaptarrNG.Installer.Smoke.csproj -- --windows-service-round-trip
+
+    - name: Clean up Windows BookshelfNG installer round-trip services
+      if: always() && matrix.platform == 'windows-x64'
+      env:
+        CHAPTARR_SERVICE_ROUNDTRIP_CLEANUP_MANIFEST: ${{ runner.temp }}/chaptarr-bookshelf-service-roundtrip-cleanup.json
+      shell: pwsh
+      run: ./distribution/windows/installer-net-smoke/CleanupServiceRoundTrip.ps1 -ManifestPath $env:CHAPTARR_SERVICE_ROUNDTRIP_CLEANUP_MANIFEST
+
+    - name: Test Windows service preserves its selected data directory
+      if: matrix.platform == 'windows-x64'
+      shell: pwsh
+      run: ./packaging/scripts/test-windows-service-data-path.ps1 -AppDirectory ./publish/Chaptarr
+
+    - name: Test Chocolatey BookshelfNG .76 to exact candidate handoff
+      if: matrix.platform == 'windows-x64' && github.event_name == 'workflow_dispatch'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        [xml] $buildProperties = Get-Content -LiteralPath 'src/Directory.Build.props' -Raw
+        $assemblyVersion = $buildProperties.SelectSingleNode("//*[local-name()='AssemblyVersion']").InnerText
+        $versionMatch = [regex]::Match($assemblyVersion, '^(?<version>\d+\.\d+\.\d+)\.0$')
+        if (-not $versionMatch.Success) {
+          throw "Could not derive the three-part Chocolatey candidate version from AssemblyVersion $assemblyVersion."
+        }
+        $version = $versionMatch.Groups['version'].Value
+        $appDirectory = (Resolve-Path -LiteralPath './publish/Chaptarr').Path
+        $archiveDirectory = Join-Path $env:RUNNER_TEMP 'chocolatey-bookshelfng-candidate'
+        New-Item -ItemType Directory -Force -Path $archiveDirectory | Out-Null
+        $archive = Join-Path $archiveDirectory "ChaptarrNG-$version-win-x64.zip"
+        if (Test-Path -LiteralPath $archive) { throw "The candidate archive already exists: $archive" }
+        Compress-Archive -Path (Join-Path $appDirectory '*') -DestinationPath $archive -CompressionLevel Optimal
+        ./packaging/scripts/test-chocolatey-bookshelfng-handoff.ps1 -Version $version -ArchivePath $archive
+        Remove-Item -LiteralPath $archive -Force
+        if (-not (Get-ChildItem -LiteralPath $archiveDirectory -Force | Select-Object -First 1)) {
+          Remove-Item -LiteralPath $archiveDirectory -Force
+        }
+
+    - name: Stage failed Windows Chocolatey handoff diagnostics
+      if: >-
+        failure() && matrix.platform == 'windows-x64' &&
+        github.event_name == 'workflow_dispatch' &&
+        inputs.windows_chocolatey_only == true
+      shell: pwsh
+      run: |
+        $artifactDirectory = Join-Path $env:RUNNER_TEMP 'bookshelfng-windows-installed-handoff-${{ github.run_id }}'
+        New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
+        $handoffDirectory = Join-Path $env:RUNNER_TEMP 'chocolatey-bookshelfng-handoff-${{ github.run_id }}'
+        if (Test-Path -LiteralPath $handoffDirectory) {
+          Copy-Item -LiteralPath $handoffDirectory -Destination (Join-Path $artifactDirectory 'runner-temp') -Recurse -Force
+        }
+        $programDataDirectory = Join-Path $env:ProgramData 'BookshelfNG'
+        if (Test-Path -LiteralPath $programDataDirectory) {
+          Copy-Item -LiteralPath $programDataDirectory -Destination (Join-Path $artifactDirectory 'programdata') -Recurse -Force
+        }
+
+    - name: Upload failed Windows Chocolatey handoff diagnostics
+      if: >-
+        failure() && matrix.platform == 'windows-x64' &&
+        github.event_name == 'workflow_dispatch' &&
+        inputs.windows_chocolatey_only == true
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      with:
+        name: bookshelfng-windows-installed-handoff-${{ github.run_id }}
+        path: ${{ runner.temp }}/bookshelfng-windows-installed-handoff-${{ github.run_id }}
+        if-no-files-found: warn
+        retention-days: 30
+
+    - name: Remove temporary Windows installer payload
+      if: always() && matrix.platform == 'windows-x64'
+      shell: pwsh
+      run: |
+        $payload = Join-Path $PWD 'distribution/windows/installer-net/Payload/Chaptarr.payload.zip'
+        if (Test-Path -LiteralPath $payload) {
+          Remove-Item -LiteralPath $payload -Force
+        }
+        $payloadDirectory = Split-Path -Parent $payload
+        if ((Test-Path -LiteralPath $payloadDirectory) -and
+            -not (Get-ChildItem -LiteralPath $payloadDirectory -Force | Select-Object -First 1)) {
+          Remove-Item -LiteralPath $payloadDirectory -Force
+        }
     
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       with:
-        name: chaptarr-${{ matrix.platform }}
+        name: chaptarrng-${{ matrix.platform }}
         path: ./publish/
         retention-days: 7
         if-no-files-found: error
 
+  rpm-bridge-acceptance:
+    name: Fedora 44 BookshelfNG RPM No/Yes and rollback
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.action == 'ci' &&
+      (inputs.runner_pool == 'private' || inputs.runner_pool == 'public') &&
+      inputs.rpm_bridge_only == true &&
+      inputs.pr_number == '' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-rpm-bridge-acceptance"]}}', github.run_id)) }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 1
+        persist-credentials: false
+
+    - name: Verify exact dispatched source
+      run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+    - name: Run Fedora 44 RPM migration handoff
+      env:
+        TASK_SCRATCH_DIR: ${{ runner.temp }}/chaptarrng-rpm-bridge-${{ github.run_id }}-${{ github.run_attempt }}
+      run: bash packaging/scripts/test-build-bookshelfng-rpm-bridge.sh
+
+    - name: Upload Fedora 44 RPM migration evidence
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: chaptarrng-rpm-bridge-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/chaptarrng-rpm-bridge-${{ github.run_id }}-${{ github.run_attempt }}/evidence/
+        if-no-files-found: warn
+        retention-days: 7
+
+  channel-contracts:
+    name: Legacy distribution and runner contracts
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.action == 'ci' &&
+      (inputs.runner_pool == 'private' || inputs.runner_pool == 'public') &&
+      inputs.channel_contracts_only == true &&
+      inputs.pr_number == '' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-channel-contracts"]}}', github.run_id)) }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 1
+        persist-credentials: false
+
+    - name: Verify exact dispatched source
+      run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 26.12.1
+        package-manager-cache: false
+
+    - name: Test legacy distribution contracts
+      run: node --test packaging/scripts/test-bookshelf-legacy-channels.mjs
+
+    - name: Test stable release and Debian publication contracts
+      run: bash packaging/scripts/test-bookshelfng-deb-publish-gate.sh
+
+    - name: Test workflow runner policy
+      run: python3 scripts/test_workflow_runner_policy.py
+
+    - name: Test Docker BookshelfNG migration supervisor and single image
+      env:
+        TASK_SCRATCH_DIR: ${{ runner.temp }}/chaptarrng-docker-compatibility-${{ github.run_id }}-${{ github.run_attempt }}
+      run: bash packaging/scripts/test-docker-bookshelf-compatibility-defaults.sh
+
+    - name: Upload Docker compatibility failure evidence
+      if: failure()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: chaptarrng-docker-compatibility-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/chaptarrng-docker-compatibility-${{ github.run_id }}-${{ github.run_attempt }}
+        if-no-files-found: ignore
+        retention-days: 7
+
   postgres-migrations:
-    runs-on: ubuntu-latest
+    if: >-
+      (
+        github.ref == 'refs/heads/main' &&
+        inputs.action == 'ci' &&
+        (inputs.runner_pool == 'private' || inputs.runner_pool == 'public') &&
+        inputs.pr_number == '' &&
+        inputs.windows_chocolatey_only != true &&
+        inputs.rpm_bridge_only != true &&
+        inputs.channel_contracts_only != true &&
+        inputs.runner_policy_only != true &&
+        inputs.docker_only != true
+      ) || (
+        github.ref == 'refs/heads/main' &&
+        inputs.action == 'publish' &&
+        inputs.runner_pool == 'private' &&
+        inputs.release_tag != '' &&
+        inputs.release_sha != ''
+      )
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-postgres-migrations"]}}', github.run_id)) }}
     services:
       postgres:
         image: postgres:16
@@ -155,19 +830,63 @@ jobs:
           --health-retries 10
 
     steps:
-    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-
-    - name: Setup .NET
-      uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        dotnet-version: 10.0.x
+        ref: ${{ inputs.action == 'publish' && inputs.runner_pool == 'private' && inputs.release_tag != '' && inputs.release_sha || github.sha }}
 
-    - name: Install PostgreSQL client
+    - name: Configure user-writable .NET install directory
       shell: bash
       run: |
         set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install -y postgresql-client
+        dotnet_dir="$RUNNER_TEMP/dotnet"
+        mkdir -p -- "$dotnet_dir"
+        printf 'DOTNET_INSTALL_DIR=%s\n' "$dotnet_dir" >> "$GITHUB_ENV"
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+      with:
+        dotnet-version: 10.0.403
+
+    - name: Install PostgreSQL client
+      shell: bash
+      env:
+        RUNNER_POOL: ${{ inputs.runner_pool }}
+      run: |
+        set -euo pipefail
+        if [[ "$RUNNER_POOL" == "public" ]]; then
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-16
+        fi
+        if [[ ! -x /usr/lib/postgresql/16/bin/pg_dump || ! -x /usr/lib/postgresql/16/bin/pg_restore ]]; then
+          echo 'PostgreSQL 16 client binaries are required for the migration smoke.' >&2
+          exit 1
+        fi
+        # Match the service's major version. A newer pg_dump emits settings
+        # (such as transaction_timeout) that PostgreSQL 16 cannot restore.
+        /usr/lib/postgresql/16/bin/pg_dump --version
+        /usr/lib/postgresql/16/bin/pg_restore --version
+        echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+
+    - name: Pin dump tools to the PostgreSQL service version
+      shell: bash
+      run: |
+        set -euo pipefail
+        client_dir="$RUNNER_TEMP/postgres16-client-bin"
+        mkdir -p -- "$client_dir"
+        cat > "$client_dir/postgres16-tool" <<'WRAPPER'
+        #!/usr/bin/env bash
+        set -euo pipefail
+        tool="${0##*/}"
+        docker_args=(run --rm --network host --user "$(id -u):$(id -g)" --volume "${RUNNER_TEMP}:${RUNNER_TEMP}")
+        while IFS= read -r name; do
+          docker_args+=(--env "$name")
+        done < <(compgen -e | grep '^PG' || true)
+        docker "${docker_args[@]}" postgres:16 "$tool" "$@"
+        WRAPPER
+        chmod 0755 "$client_dir/postgres16-tool"
+        ln -s postgres16-tool "$client_dir/pg_dump"
+        ln -s postgres16-tool "$client_dir/pg_restore"
+        echo "$client_dir" >> "$GITHUB_PATH"
 
     - name: Create databases
       shell: bash
@@ -180,49 +899,396 @@ jobs:
         psql -h localhost -U chaptarr -d postgres -c 'CREATE DATABASE "chaptarr-cache";'
 
     - name: Restore dependencies
-      run: dotnet restore src/Chaptarr.NoTests.sln
+      run: |
+        dotnet restore src/Chaptarr.NoTests.sln
+        dotnet restore src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj
 
     - name: Build (migrations smoke)
-      run: dotnet build src/Chaptarr.NoTests.sln --configuration Release --no-restore
+      run: |
+        dotnet build src/Chaptarr.NoTests.sln --configuration Release --no-restore
+        dotnet build src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj --configuration Release --no-restore -p:UseSharedCompilation=false
 
     - name: Smoke - migrate up on fresh PostgreSQL
-      shell: bash
       env:
+        TMPDIR: ${{ runner.temp }}
+        CHAPTARRNG_POSTGRES_SMOKE_DIR: ${{ runner.temp }}/chaptarr-postgres-smoke-${{ github.run_id }}-${{ github.run_attempt }}
         Chaptarr__Postgres__Host: localhost
-        Chaptarr__Postgres__Port: 5432
+        Chaptarr__Postgres__Port: "5432"
         Chaptarr__Postgres__User: chaptarr
         Chaptarr__Postgres__Password: chaptarr
         Chaptarr__Postgres__MainDb: chaptarr-main
         Chaptarr__Postgres__LogDb: chaptarr-log
         Chaptarr__Postgres__CacheDb: chaptarr-cache
+        CHAPTARRNG_POSTGRES_TEST_CONNECTION: Host=localhost;Port=5432;Database=chaptarr-main;Username=chaptarr;Password=chaptarr;Pooling=false;Timeout=5;Command Timeout=300
         Chaptarr__Server__BindAddress: 127.0.0.1
-        Chaptarr__Server__Port: 8789
+        Chaptarr__Server__Port: "8789"
+      run: bash scripts/test-postgres-migrations-smoke.sh
+
+    - name: Upload PostgreSQL smoke logs
+      id: postgres-smoke-logs
+      if: failure()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: chaptarr-postgres-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/chaptarr-postgres-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+        retention-days: 3
+        if-no-files-found: ignore
+
+    - name: Remove local PostgreSQL smoke logs
+      if: always() && steps.postgres-smoke-logs.outcome != 'failure'
+      shell: bash
+      run: rm -rf -- "${{ runner.temp }}/chaptarr-postgres-smoke-${{ github.run_id }}-${{ github.run_attempt }}"
+
+  docker-image-build:
+    name: Docker (single standard image)
+    if: >-
+      (
+        github.ref == 'refs/heads/main' &&
+        inputs.action == 'ci' &&
+        (inputs.runner_pool == 'private' || inputs.runner_pool == 'public') &&
+        inputs.pr_number == '' &&
+        inputs.windows_chocolatey_only != true &&
+        inputs.rpm_bridge_only != true &&
+        inputs.channel_contracts_only != true &&
+        inputs.runner_policy_only != true
+      ) || (
+        github.ref == 'refs/heads/main' &&
+        inputs.action == 'publish' &&
+        inputs.runner_pool == 'private' &&
+        inputs.release_tag != '' &&
+        inputs.release_sha != ''
+      )
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-docker-image-build"]}}', github.run_id)) }}
+    env:
+      BUILDKIT_EGRESS_PROXY: ${{ inputs.runner_pool == 'private' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && 'http://10.0.2.100:3128' || '' }}
+    permissions:
+      contents: read
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.action == 'publish' && inputs.runner_pool == 'private' && inputs.release_tag != '' && inputs.release_sha || github.sha }}
+
+    - name: Set up QEMU for target-platform runtime steps
+      uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      with:
+        image: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+        platforms: arm,arm64
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      with:
+        # The isolated BuildKit daemon needs the runner's trust roots too.
+        buildkitd-config-inline: |
+          [worker.oci]
+            max-parallelism = 1
+            gc = true
+            reservedSpace = "512MB"
+            maxUsedSpace = "4GB"
+            minFreeSpace = "4GB"
+          [registry."docker.io"]
+            ca = ["/etc/ssl/certs/ca-certificates.crt"]
+        driver-opts: |
+          env.HTTP_PROXY=${{ env.BUILDKIT_EGRESS_PROXY }}
+          env.HTTPS_PROXY=${{ env.BUILDKIT_EGRESS_PROXY }}
+          env.http_proxy=${{ env.BUILDKIT_EGRESS_PROXY }}
+          env.https_proxy=${{ env.BUILDKIT_EGRESS_PROXY }}
+          env.SSL_CERT_FILE=/etc/buildkit/certs/docker.io/ca-certificates.crt
+
+    - name: Build image for all published architectures without pushing
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+      with:
+        context: .
+        file: ./Dockerfile.cross
+        target: chaptarrng-standard
+        platforms: linux/amd64,linux/arm64,linux/arm/v7
+        push: false
+        build-args: |
+          HTTP_PROXY=${{ env.BUILDKIT_EGRESS_PROXY }}
+          HTTPS_PROXY=${{ env.BUILDKIT_EGRESS_PROXY }}
+          http_proxy=${{ env.BUILDKIT_EGRESS_PROXY }}
+          https_proxy=${{ env.BUILDKIT_EGRESS_PROXY }}
+          NO_PROXY=localhost,127.0.0.1
+          no_proxy=localhost,127.0.0.1
+        cache-from: type=gha,scope=bookshelfng-standard
+        cache-to: type=gha,scope=bookshelfng-standard,mode=max
+
+  private-runner-policy:
+    name: Private runner policy
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.action == 'ci' &&
+      inputs.runner_pool == 'private' &&
+      inputs.runner_policy_only == true &&
+      inputs.pr_number == '' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-private-runner-policy"]}}', github.run_id)) }}
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: main
+        persist-credentials: false
+    - name: Test private runner policy
+      run: python3 scripts/test_workflow_runner_policy.py
+
+  dispatch-owner-pr:
+    name: Dispatch trusted owner PR validation
+    if: >-
+      (
+        github.event_name != 'workflow_dispatch' ||
+        (
+          github.ref == 'refs/heads/main' &&
+          inputs.action == 'ci' &&
+          inputs.runner_pool == 'private'
+        )
+      ) &&
+      (
+        github.event_name == 'pull_request_target' &&
+        github.actor == 'snapetech' &&
+        github.event.pull_request.user.login == 'snapetech' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.head.repo.id == github.repository_id &&
+        github.event.pull_request.base.ref == 'main' &&
+        contains(github.event.pull_request.labels.*.name, 'action:ci') &&
+        contains(github.event.pull_request.labels.*.name, 'pool:private')
+      )
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-owner-pr-dispatcher"]}}', github.run_id)) }}
+    permissions:
+      actions: write
+      contents: none
+    steps:
+    - name: Dispatch PR-head validation from main
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_SHA: ${{ github.event.pull_request.head.sha }}
+        TARGET_RUN_ID: ${{ github.run_id }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: |
+        python3 - <<'PY'
+        import json, os, re
+        from urllib.request import Request, urlopen
+
+        expected = "snapetech-org/chaptarrng"
+        repository = os.environ["GITHUB_REPOSITORY"]
+        number = os.environ["PR_NUMBER"]
+        sha = os.environ["PR_SHA"].lower()
+        target = os.environ["TARGET_RUN_ID"]
+        token = os.environ["GH_TOKEN"]
+        if (
+            repository.lower() != expected
+            or not re.fullmatch(r"[1-9][0-9]*", number)
+            or not re.fullmatch(r"[0-9a-f]{40}", sha)
+            or not re.fullmatch(r"[1-9][0-9]*", target)
+        ):
+            raise SystemExit("invalid PR claim")
+
+        payload = json.dumps({
+            "ref": "main",
+            "inputs": {
+                "action": "ci",
+                "runner_pool": "private",
+                "pr_number": number,
+                "pr_sha": sha,
+                "target_run_id": target,
+            },
+        }).encode()
+        request = Request(
+            "https://api.github.com/repos/snapetech-org/chaptarrng/actions/workflows/build.yml/dispatches",
+            data=payload,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            method="POST",
+        )
+        with urlopen(request, timeout=20) as response:
+            if response.status != 204:
+                raise SystemExit(f"dispatch HTTP {response.status}")
+        PY
+
+  owner-pr-validation:
+    name: owner-pr-validation
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
+      inputs.action == 'ci' &&
+      inputs.runner_pool == 'private' &&
+      inputs.pr_number != '' &&
+      inputs.pr_sha != '' &&
+      inputs.target_run_id != '' &&
+      inputs.runner_policy_only != true &&
+      github.ref == 'refs/heads/main'
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-owner-pr-validation"]}}', github.run_id)) }}
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ inputs.pr_sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Verify exact owner PR head
+      env:
+        EXPECTED_PR_SHA: ${{ inputs.pr_sha }}
+      run: test "$(git rev-parse HEAD)" = "$EXPECTED_PR_SHA"
+    - name: Resolve current trusted PR metadata
+      id: pr
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ inputs.pr_number }}
+        PR_SHA: ${{ inputs.pr_sha }}
+        TARGET_RUN_ID: ${{ inputs.target_run_id }}
+        REPOSITORY: ${{ github.repository }}
+      run: |
+        python3 - <<'PY'
+        import json, os, re
+        from pathlib import Path
+        from urllib.request import Request, urlopen
+
+        repo = os.environ["REPOSITORY"]
+        number = os.environ["PR_NUMBER"]
+        expected = os.environ["PR_SHA"].lower()
+        target_run_id = os.environ["TARGET_RUN_ID"]
+        if (
+            repo.lower() != "snapetech-org/chaptarrng"
+            or not re.fullmatch(r"[1-9][0-9]*", number)
+            or not re.fullmatch(r"[0-9a-f]{40}", expected)
+            or not re.fullmatch(r"[1-9][0-9]*", target_run_id)
+        ):
+            raise SystemExit("invalid trusted PR claim")
+
+        request = Request(
+            f"https://api.github.com/repos/{repo}/pulls/{number}",
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        with urlopen(request, timeout=20) as response:
+            pr = json.load(response)
+
+        base = pr.get("base") or {}
+        head = pr.get("head") or {}
+        base_repo = base.get("repo") or {}
+        head_repo = head.get("repo") or {}
+        sha = (head.get("sha") or "").lower()
+        if (
+            pr.get("state") != "open"
+            or (pr.get("user") or {}).get("login", "").lower() != "snapetech"
+            or base.get("ref") != "main"
+            or sha != expected
+            or (base_repo.get("full_name") or "").lower() != repo.lower()
+            or (head_repo.get("full_name") or "").lower() != repo.lower()
+            or base_repo.get("id") != head_repo.get("id")
+        ):
+            raise SystemExit("PR changed or is not trusted")
+        base_sha = (base.get("sha") or "").lower()
+        if not re.fullmatch(r"[0-9a-f]{40}", base_sha):
+            raise SystemExit("invalid PR base")
+
+        body_file = Path(os.environ["RUNNER_TEMP"]) / "owner-pr-body.md"
+        body_file.write_text(pr.get("body") or "", encoding="utf-8")
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            output.write(f"base_sha={base_sha}\n")
+            output.write(f"body_file={body_file}\n")
+        PY
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: 26.12.1
+        package-manager-cache: false
+    - name: Validate release-note contract
+      env:
+        BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+        HEAD_SHA: ${{ inputs.pr_sha }}
+        BODY_FILE: ${{ steps.pr.outputs.body_file }}
+        PR_NUMBER: ${{ inputs.pr_number }}
       run: |
         set -euo pipefail
+        git fetch --no-tags origin "refs/pull/$PR_NUMBER/head:refs/remotes/pull/$PR_NUMBER/head"
+        git cat-file -e "$HEAD_SHA^{commit}"
+        node --test scripts/release-notes.test.mjs
+        node scripts/check-release-notes.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --pr-body "$BODY_FILE" --summary-file "$GITHUB_STEP_SUMMARY"
+        node scripts/preview-release-notes.mjs --base "$BASE_SHA" --head "$HEAD_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+    - name: Test private runner workflow policy
+      run: python3 scripts/test_workflow_runner_policy.py
 
-        DATA_DIR="$(mktemp -d)"
-        echo "Using data dir: $DATA_DIR"
+  report-owner-pr-check:
+    name: Report trusted owner PR validation
+    needs: [owner-pr-validation]
+    if: >-
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      (github.actor == 'snapetech' || github.actor == 'github-actions[bot]') &&
+      inputs.action == 'ci' &&
+      inputs.runner_pool == 'private' &&
+      inputs.pr_number != '' &&
+      inputs.pr_sha != '' &&
+      inputs.target_run_id != '' &&
+      inputs.runner_policy_only != true &&
+      github.ref == 'refs/heads/main'
+    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-owner-pr-reporter"]}}', github.run_id)) }}
+    permissions:
+      checks: write
+      contents: none
+    steps:
+    - name: Attach validation result to the PR head
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ inputs.pr_number }}
+        PR_SHA: ${{ inputs.pr_sha }}
+        VALIDATION_RUN_ID: ${{ github.run_id }}
+        VALIDATION_RESULTS: '{"owner-pr-validation":"${{ needs.owner-pr-validation.result }}"}'
+      run: |
+        python3 - <<'PY'
+        import json, os, re
+        from urllib.request import Request, urlopen
 
-        dotnet run --project src/NzbDrone.Console/Chaptarr.Console.csproj -c Release --no-build --framework net10.0 -- \
-          /nobrowser "/data=$DATA_DIR" > app.log 2>&1 &
-        pid=$!
+        number = os.environ["PR_NUMBER"]
+        sha = os.environ["PR_SHA"].lower()
+        results = json.loads(os.environ["VALIDATION_RESULTS"])
+        if (
+            not re.fullmatch(r"[1-9][0-9]*", number)
+            or not re.fullmatch(r"[0-9a-f]{40}", sha)
+            or not results
+        ):
+            raise SystemExit("invalid PR check claim")
 
-        ready=""
-        for i in $(seq 1 90); do
-          if curl -fsS "http://127.0.0.1:8789/ping" >/dev/null 2>&1; then
-            ready="yes"
-            break
-          fi
-          sleep 1
-        done
+        conclusion = "success" if all(value == "success" for value in results.values()) else "failure"
+        summary = "Main-pinned, no-secret owner PR validation:\n"
+        summary += "\n".join(f"- {name}: {value}" for name, value in results.items())
+        run_id = os.environ["VALIDATION_RUN_ID"]
+        payload = json.dumps({
+            "name": "ChaptarrNG owner PR validation",
+            "head_sha": sha,
+            "external_id": run_id,
+            "status": "completed",
+            "conclusion": conclusion,
+            "details_url": f"https://github.com/snapetech-org/chaptarrng/actions/runs/{run_id}",
+            "output": {
+                "title": f"Owner PR validation {conclusion}",
+                "summary": summary,
+            },
+        }).encode()
+        request = Request(
+            "https://api.github.com/repos/snapetech-org/chaptarrng/check-runs",
+            data=payload,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                "Content-Type": "application/json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            method="POST",
+        )
+        with urlopen(request, timeout=20) as response:
+            if response.status not in {201, 202}:
+                raise SystemExit(f"check HTTP {response.status}")
+        PY
 
-        kill "$pid" >/dev/null 2>&1 || true
-        wait "$pid" >/dev/null 2>&1 || true
-
-        if [ "$ready" != "yes" ]; then
-          echo "Chaptarr failed to start or /ping did not become ready."
-          tail -n 400 app.log || true
-          exit 1
-        fi
-
-        echo "PostgreSQL migrations smoke test passed."

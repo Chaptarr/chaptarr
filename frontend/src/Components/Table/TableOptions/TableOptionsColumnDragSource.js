@@ -1,70 +1,12 @@
 import classNames from 'classnames';
 import PropTypes from 'prop-types';
-import React, { Component } from 'react';
-import { DragSource, DropTarget } from 'react-dnd';
-import { findDOMNode } from 'react-dom';
+import React, { Component, useCallback, useRef } from 'react';
+import { useDrag, useDrop } from 'react-dnd';
 import { TABLE_COLUMN } from 'Helpers/dragTypes';
 import TableOptionsColumn from './TableOptionsColumn';
 import styles from './TableOptionsColumnDragSource.css';
 
-const columnDragSource = {
-  beginDrag(column) {
-    return column;
-  },
-
-  endDrag(props, monitor, component) {
-    props.onColumnDragEnd(monitor.getItem(), monitor.didDrop());
-  }
-};
-
-const columnDropTarget = {
-  hover(props, monitor, component) {
-    const dragIndex = monitor.getItem().index;
-    const hoverIndex = props.index;
-
-    const hoverBoundingRect = findDOMNode(component).getBoundingClientRect();
-    const hoverMiddleY = (hoverBoundingRect.bottom - hoverBoundingRect.top) / 2;
-    const clientOffset = monitor.getClientOffset();
-    const hoverClientY = clientOffset.y - hoverBoundingRect.top;
-
-    if (dragIndex === hoverIndex) {
-      return;
-    }
-
-    // When moving up, only trigger if drag position is above 50% and
-    // when moving down, only trigger if drag position is below 50%.
-    // If we're moving down the hoverIndex needs to be increased
-    // by one so it's ordered properly. Otherwise the hoverIndex will work.
-
-    // Dragging downwards
-    if (dragIndex < hoverIndex && hoverClientY < hoverMiddleY) {
-      return;
-    }
-
-    // Dragging upwards
-    if (dragIndex > hoverIndex && hoverClientY > hoverMiddleY) {
-      return;
-    }
-
-    props.onColumnDragMove(dragIndex, hoverIndex);
-  }
-};
-
-function collectDragSource(connect, monitor) {
-  return {
-    connectDragSource: connect.dragSource(),
-    isDragging: monitor.isDragging()
-  };
-}
-
-function collectDropTarget(connect, monitor) {
-  return {
-    connectDropTarget: connect.dropTarget(),
-    isOver: monitor.isOver()
-  };
-}
-
-class TableOptionsColumnDragSource extends Component {
+class TableOptionsColumnDragSourceView extends Component {
 
   //
   // Render
@@ -136,7 +78,7 @@ class TableOptionsColumnDragSource extends Component {
   }
 }
 
-TableOptionsColumnDragSource.propTypes = {
+TableOptionsColumnDragSourceView.propTypes = {
   name: PropTypes.string.isRequired,
   label: PropTypes.oneOfType([PropTypes.string, PropTypes.func]).isRequired,
   isVisible: PropTypes.bool.isRequired,
@@ -153,12 +95,79 @@ TableOptionsColumnDragSource.propTypes = {
   onColumnDragEnd: PropTypes.func.isRequired
 };
 
-export default DropTarget(
-  TABLE_COLUMN,
-  columnDropTarget,
-  collectDropTarget
-)(DragSource(
-  TABLE_COLUMN,
-  columnDragSource,
-  collectDragSource
-)(TableOptionsColumnDragSource));
+function TableOptionsColumnDragSource(props) {
+  const wrapperRef = useRef(null);
+  const [{ isDragging }, dragSource] = useDrag(() => ({
+    type: TABLE_COLUMN,
+    item: () => props,
+    end(item, monitor) {
+      props.onColumnDragEnd(item, monitor.didDrop());
+    },
+    collect: (monitor) => ({
+      isDragging: monitor.isDragging()
+    })
+  }), [props]);
+
+  const [{ isOver }, dropTarget] = useDrop(() => ({
+    accept: TABLE_COLUMN,
+    hover(item, monitor) {
+      if (!wrapperRef.current) {
+        return;
+      }
+
+      const dragIndex = item.index;
+      const hoverIndex = props.index;
+      const hoverBoundingRect = wrapperRef.current.getBoundingClientRect();
+      const hoverMiddleY = (hoverBoundingRect.bottom - hoverBoundingRect.top) / 2;
+      const clientOffset = monitor.getClientOffset();
+      const hoverClientY = clientOffset.y - hoverBoundingRect.top;
+
+      if (dragIndex === hoverIndex) {
+        return;
+      }
+
+      // When moving up, only trigger if drag position is above 50% and
+      // when moving down, only trigger if drag position is below 50%.
+      // If we're moving down the hoverIndex needs to be increased
+      // by one so it's ordered properly. Otherwise the hoverIndex will work.
+
+      if (dragIndex < hoverIndex && hoverClientY < hoverMiddleY) {
+        return;
+      }
+
+      if (dragIndex > hoverIndex && hoverClientY > hoverMiddleY) {
+        return;
+      }
+
+      props.onColumnDragMove(dragIndex, hoverIndex);
+    },
+    collect: (monitor) => ({
+      isOver: monitor.isOver()
+    })
+  }), [props]);
+
+  const dropTargetRef = useCallback((node) => {
+    wrapperRef.current = node;
+    dropTarget(node);
+  }, [dropTarget]);
+  const connectDropTarget = useCallback((node) => (
+    React.cloneElement(node, { ref: dropTargetRef })
+  ), [dropTargetRef]);
+  const connectDragSource = useCallback((node) => (
+    React.cloneElement(node, { ref: dragSource })
+  ), [dragSource]);
+
+  return (
+    <TableOptionsColumnDragSourceView
+      {...props}
+      isDragging={isDragging}
+      isOver={isOver}
+      connectDragSource={connectDragSource}
+      connectDropTarget={connectDropTarget}
+    />
+  );
+}
+
+TableOptionsColumnDragSource.propTypes = TableOptionsColumnDragSourceView.propTypes;
+
+export default TableOptionsColumnDragSource;

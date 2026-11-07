@@ -1,0 +1,54 @@
+services:
+  chaptarrng:
+    image: chaptarrng-populated-library-smoke:local
+    build:
+      context: ..
+      dockerfile: Dockerfile.build
+    environment:
+      CHAPTARR__AUTH__APIKEY: ${CHAPTARR_GLOBAL_API_KEY:?Set CHAPTARR_GLOBAL_API_KEY}
+      CHAPTARR__AUTH__SEERRAPIKEY: ${CHAPTARR_SEERR_API_KEY:?Set CHAPTARR_SEERR_API_KEY}
+      HARDCOVER: ${CHAPTARR_HARDCOVER_MODE:?Set CHAPTARR_HARDCOVER_MODE to true or false}
+      PUID: "99"
+      PGID: "100"
+    volumes:
+      - type: bind
+        source: ${CHAPTARR_POPULATED_CONFIG:?Set CHAPTARR_POPULATED_CONFIG to a private copy of the BookshelfNG config directory}
+        target: /config
+    networks:
+      - isolated
+
+  smoke:
+    image: node:24.22.1-bookworm-slim
+    working_dir: /seerrng
+    depends_on:
+      chaptarrng:
+        condition: service_healthy
+    environment:
+      CHAPTARR_API_URL: http://chaptarrng:8789/api/v1
+      CHAPTARR_GLOBAL_API_KEY: ${CHAPTARR_GLOBAL_API_KEY:?Set CHAPTARR_GLOBAL_API_KEY}
+      CHAPTARR_SEERR_API_KEY: ${CHAPTARR_SEERR_API_KEY:?Set CHAPTARR_SEERR_API_KEY}
+      CONFIG_DIRECTORY: /tmp/seerrng-populated-library-smoke-config
+      SEERR_EXTERNAL_CONFIG: '{"clientId":"populated-library-smoke","main":{},"plex":{},"jellyfin":{},"oidc":{},"tautulli":{},"notifications":{"agents":{}},"network":{},"radarr":[],"sonarr":[],"lidarr":[],"readarr":[]}'
+      SEERRNG_RUNTIME_PATH: /seerrng
+    volumes:
+      - type: bind
+        source: ${SEERRNG_SOURCE:?Set SEERRNG_SOURCE to the built SeerrNG checkout}
+        target: /seerrng
+        read_only: true
+      - type: bind
+        source: ${SEERRNG_NODE_MODULES:?Set SEERRNG_NODE_MODULES to SeerrNG node_modules}
+        target: /seerrng/node_modules
+        read_only: true
+      - type: bind
+        source: .
+        target: /chaptarrng-integration
+        read_only: true
+    command:
+      - node
+      - /chaptarrng-integration/seerrng-populated-library-smoke.mjs
+    networks:
+      - isolated
+
+networks:
+  isolated:
+    internal: true

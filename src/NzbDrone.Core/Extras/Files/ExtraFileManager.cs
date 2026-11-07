@@ -18,7 +18,7 @@ namespace NzbDrone.Core.Extras.Files
         IEnumerable<ExtraFile> CreateAfterAuthorScan(Author author, List<BookFile> bookFiles);
         IEnumerable<ExtraFile> CreateAfterBookImport(Author author, BookFile bookFile);
         IEnumerable<ExtraFile> CreateAfterBookImport(Author author, Book book, string authorFolder, string bookFolder);
-        IEnumerable<ExtraFile> MoveFilesAfterRename(Author author, List<BookFile> bookFiles);
+        IEnumerable<ExtraFile> MoveFilesAfterRename(Author author, List<BookFile> bookFiles, List<RenamedBookFile> renamedFiles);
         ExtraFile Import(Author author, BookFile bookFile, string path, string extension, bool readOnly);
     }
 
@@ -45,7 +45,7 @@ namespace NzbDrone.Core.Extras.Files
         public abstract IEnumerable<ExtraFile> CreateAfterAuthorScan(Author author, List<BookFile> bookFiles);
         public abstract IEnumerable<ExtraFile> CreateAfterBookImport(Author author, BookFile bookFile);
         public abstract IEnumerable<ExtraFile> CreateAfterBookImport(Author author, Book book, string authorFolder, string bookFolder);
-        public abstract IEnumerable<ExtraFile> MoveFilesAfterRename(Author author, List<BookFile> bookFiles);
+        public abstract IEnumerable<ExtraFile> MoveFilesAfterRename(Author author, List<BookFile> bookFiles, List<RenamedBookFile> renamedFiles);
         public abstract ExtraFile Import(Author author, BookFile bookFile, string path, string extension, bool readOnly);
 
         protected TExtraFile ImportFile(Author author, BookFile bookFile, string path, bool readOnly, string extension, string fileNameSuffix = null)
@@ -111,7 +111,7 @@ namespace NzbDrone.Core.Extras.Files
                 {
                     _logger.Trace("Renaming extra file: {0} to {1}", extraFile, newFileName);
 
-                    _diskProvider.MoveFile(existingFileName, newFileName);
+                    MoveFileAfterRename(existingFileName, newFileName);
 
                     if (!ExtraFilePathHelper.TryGetRelativePath(author, newFileName, out var relativePath, out _, preferredBase))
                     {
@@ -131,7 +131,7 @@ namespace NzbDrone.Core.Extras.Files
                         var availableName = GetAvailableFilename(newFileName);
                         _logger.Debug("Destination file exists, moving extra file to alternate name: {0}", availableName);
 
-                        _diskProvider.MoveFile(existingFileName, availableName);
+                        _diskProvider.MoveFile(ResolveCarriedFile(existingFileName, newFileName), availableName);
 
                         if (!ExtraFilePathHelper.TryGetRelativePath(author, availableName, out var relativePath, out _, preferredBase))
                         {
@@ -156,6 +156,30 @@ namespace NzbDrone.Core.Extras.Files
             }
 
             return null;
+        }
+
+        // When the whole audiobook folder was moved during the rename, the file already sits in the new folder
+        // under its old name: only rename it there if its name changes.
+        private void MoveFileAfterRename(string existingFileName, string newFileName)
+        {
+            var source = ResolveCarriedFile(existingFileName, newFileName);
+
+            if (source.PathNotEquals(newFileName))
+            {
+                _diskProvider.MoveFile(source, newFileName);
+            }
+        }
+
+        private string ResolveCarriedFile(string existingFileName, string newFileName)
+        {
+            if (_diskProvider.FileExists(existingFileName))
+            {
+                return existingFileName;
+            }
+
+            var carried = Path.Combine(Path.GetDirectoryName(newFileName), Path.GetFileName(existingFileName));
+
+            return _diskProvider.FileExists(carried) ? carried : existingFileName;
         }
 
         private string GetAvailableFilename(string destinationPath)

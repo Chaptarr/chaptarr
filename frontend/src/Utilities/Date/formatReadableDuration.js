@@ -1,28 +1,29 @@
-import moment from 'moment';
+import dayjs from 'Utilities/Date/dayjsSetup';
+import intlFormatters from 'Utilities/Localization/formatters.cjs';
+import { getLocale } from 'Utilities/Localization/locale';
+
+const { formatUnit } = intlFormatters;
 
 function formatReadableDuration(timeSpan) {
-  if (!timeSpan) {
+  if (timeSpan === null || timeSpan === undefined || timeSpan === '') {
     return '';
   }
 
-  const duration = moment.duration(timeSpan);
-
+  const duration = dayjs.duration(timeSpan);
   const totalHours = Math.floor(duration.asHours());
-  const minutes = duration.minutes(); // Only the minute portion, not total minutes
-
+  const minutes = duration.get('minutes');
   const parts = [];
 
   if (totalHours > 0) {
-    parts.push(`${totalHours} hr`);
+    parts.push(formatUnit(totalHours, 'hour', { unitDisplay: 'short' }, getLocale()));
   }
 
   if (minutes > 0) {
-    parts.push(`${minutes} min`);
+    parts.push(formatUnit(minutes, 'minute', { unitDisplay: 'short' }, getLocale()));
   }
 
-  // If no hours or minutes, show "0 min"
   if (parts.length === 0) {
-    return '0 min';
+    return formatUnit(0, 'minute', { unitDisplay: 'short' }, getLocale());
   }
 
   return parts.join(' ');

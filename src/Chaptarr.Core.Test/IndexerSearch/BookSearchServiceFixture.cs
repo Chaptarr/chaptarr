@@ -296,6 +296,11 @@ namespace Chaptarr.Core.Test.IndexerSearch
             {
                 return Task.FromResult(new List<DownloadDecision>());
             }
+
+            public Task<List<DownloadDecision>> SeriesSearch(int seriesId, int authorId, bool userInvokedSearch, bool interactiveSearch)
+            {
+                return Task.FromResult(new List<DownloadDecision>());
+            }
         }
 
         private sealed class RecordingCutoffService : IBookCutoffService

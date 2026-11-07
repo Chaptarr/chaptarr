@@ -45,6 +45,18 @@
   margin-top: 15px;
 }
 
+.ambiguousCandidates {
+  display: grid;
+  gap: 4px;
+
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.ambiguousCandidateLink {
+  text-decoration: underline;
+}
+
 .header {
   position: relative;
   display: flex;
@@ -116,9 +128,10 @@
 
 .modalFooter {
   composes: modalFooter from '~Components/Modal/ModalFooter.css';
+
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
 }
 
 .buttons {
@@ -129,24 +142,26 @@
 .addButton {
   @add-mixin truncate;
   composes: button from '~Components/Link/SpinnerButton.css';
+
   min-width: 120px;
 }
 
 .closeButton {
   @add-mixin truncate;
   composes: button from '~Components/Link/SpinnerButton.css';
+
   min-width: 80px;
 }
 
 @media only screen and (max-width: $breakpointSmall) {
   .modalFooter {
-    flex-direction: column;
     align-items: stretch;
+    flex-direction: column;
   }
 
   .searchForNewBookLabelContainer {
-    margin-bottom: 15px;
     justify-content: center;
+    margin-bottom: 15px;
   }
 
   .buttons {

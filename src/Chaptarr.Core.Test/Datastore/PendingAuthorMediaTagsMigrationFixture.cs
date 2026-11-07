@@ -90,6 +90,12 @@ namespace Chaptarr.Core.Test.Datastore
                     INSERT INTO ""VersionInfo"" (""Version"", ""AppliedOn"", ""Description"")
                     SELECT version, CURRENT_TIMESTAMP, 'test baseline' FROM versions;
 
+                    CREATE TABLE ""Authors"" (
+                        ""Id"" INTEGER PRIMARY KEY,
+                        ""AudiobookRootFolderPath"" TEXT NULL,
+                        ""EbookRootFolderPath"" TEXT NULL
+                    );
+
                     CREATE TABLE ""PendingAuthorImport"" (
                         ""Id"" INTEGER PRIMARY KEY,
                         ""AudiobookStatus"" INTEGER NOT NULL,

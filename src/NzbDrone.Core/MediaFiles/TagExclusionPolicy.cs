@@ -3,12 +3,41 @@ using System.Collections.Generic;
 
 namespace NzbDrone.Core.MediaFiles
 {
+    public static class BookshelfAudioTagFields
+    {
+        public const string Book = "BOOKSHELF_AUDIO_BOOK";
+        public const string Title = "BOOKSHELF_AUDIO_TITLE";
+
+        public static bool IsPrivate(string key)
+        {
+            return string.Equals(key, Book, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(key, Title, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static bool HasProjection(IDictionary<string, List<string>> tags)
+        {
+            if (tags == null)
+            {
+                return false;
+            }
+
+            var hasBook = false;
+            var hasTitle = false;
+            foreach (var key in tags.Keys)
+            {
+                hasBook |= string.Equals(key, Book, StringComparison.OrdinalIgnoreCase);
+                hasTitle |= string.Equals(key, Title, StringComparison.OrdinalIgnoreCase);
+            }
+
+            return hasBook && hasTitle;
+        }
+    }
+
     /// <summary>
     /// Canonical tag exclusion policy.
     ///
-    /// This class intentionally separates:
-    /// - extraction cleanup noise: synthetic keys that should never be persisted from raw extraction
-    /// - matching exclusion: tags that may be stored/displayed but should never participate in matching
+    /// This class intentionally separates extraction cleanup noise, matching exclusions,
+    /// and private compatibility metadata retained only for migration-specific scoring.
     ///
     /// Keep this as the single shared policy surface so matching, V5 payloads, and extraction
     /// can converge on the same rules over time.
@@ -65,6 +94,11 @@ namespace NzbDrone.Core.MediaFiles
                 return true;
             }
 
+            if (BookshelfAudioTagFields.IsPrivate(key))
+            {
+                return true;
+            }
+
             if (MatchingExclusionTagKeys.Contains(key))
             {
                 return true;
@@ -105,10 +139,36 @@ namespace NzbDrone.Core.MediaFiles
                 return true;
             }
 
+            // This projection is persisted with the file-tag cache so the legacy scorer
+            // can distinguish null from empty TagLib values. It is stripped at API edges.
+            if (BookshelfAudioTagFields.IsPrivate(key))
+            {
+                return false;
+            }
+
             // Keep extraction cleanup conservative: match the current intended raw-tag cleanup only.
             // Synthetic keys emitted by some extractors are not user metadata and should never be persisted.
             return key.IndexOf("encode", StringComparison.OrdinalIgnoreCase) >= 0 ||
                    key.StartsWith("__", StringComparison.Ordinal);
+        }
+
+        public static Dictionary<string, List<string>> ToPublicTags(IDictionary<string, List<string>> tags)
+        {
+            var publicTags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            if (tags == null)
+            {
+                return publicTags;
+            }
+
+            foreach (var pair in tags)
+            {
+                if (!BookshelfAudioTagFields.IsPrivate(pair.Key))
+                {
+                    publicTags[pair.Key] = pair.Value == null ? null : new List<string>(pair.Value);
+                }
+            }
+
+            return publicTags;
         }
     }
 }

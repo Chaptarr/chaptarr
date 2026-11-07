@@ -1,4 +1,6 @@
-import _ from 'lodash';
+import find from 'lodash/find';
+import map from 'lodash/map';
+import orderBy from 'lodash/orderBy';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
@@ -10,7 +12,7 @@ function createMapStateToProps() {
   return createSelector(
     (state, { bookEditions }) => bookEditions,
     (bookEditions) => {
-      const values = _.map(bookEditions.value, (bookEdition) => {
+      const values = map(bookEditions.value, (bookEdition) => {
 
         let value = `${bookEdition.title}`;
 
@@ -45,9 +47,9 @@ function createMapStateToProps() {
         };
       });
 
-      const sortedValues = _.orderBy(values, ['value']);
+      const sortedValues = orderBy(values, ['value']);
 
-      const selectedEdition = _.find(bookEditions.value, { monitored: true }) ?? bookEditions.value?.[0];
+      const selectedEdition = find(bookEditions.value, { monitored: true }) ?? bookEditions.value?.[0];
       const value = selectedEdition?.foreignEditionId;
 
       return {
@@ -68,8 +70,8 @@ class BookEditionSelectInputConnector extends Component {
       bookEditions
     } = this.props;
 
-    const updatedEditions = _.map(bookEditions.value, (e) => ({ ...e, monitored: false }));
-    const selectedEdition = _.find(updatedEditions, { foreignEditionId: value });
+    const updatedEditions = map(bookEditions.value, (e) => ({ ...e, monitored: false }));
+    const selectedEdition = find(updatedEditions, { foreignEditionId: value });
     if (selectedEdition) {
       selectedEdition.monitored = true;
     }

@@ -195,6 +195,14 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
         private static IEnumerable<TestCaseData> TitleEvidenceRegressionCases()
         {
+            yield return new TestCaseData("numbered-title-with-subtitle", "The Primal Hunter 6", "The Primal Hunter 6: A LitRPG Adventure", false, true, false);
+            yield return new TestCaseData("numbered-title-without-subtitle", "The Primal Hunter 6", "The Primal Hunter 6", false, true, false);
+            yield return new TestCaseData("numbered-title-without-number", "The Primal Hunter 6", "The Primal Hunter", false, false, false);
+            yield return new TestCaseData("numbered-title-with-wrong-number", "The Primal Hunter 6", "The Primal Hunter 5: A LitRPG Adventure", false, false, false);
+            yield return new TestCaseData("number-after-subtitle", "The Primal Hunter 6", "The Primal Hunter: A LitRPG Adventure 6", false, false, false);
+            yield return new TestCaseData("number-before-title", "The Primal Hunter 6", "6 The Primal Hunter", false, false, false);
+            yield return new TestCaseData("conflicting-number-before-title-number", "The Primal Hunter 6", "The Primal Hunter 5 6", false, false, false);
+            yield return new TestCaseData("numeric-title-prefix", "1984 Volume 2", "1984 Volume 2: A Novel", false, true, false);
             yield return new TestCaseData("exact-title", "Fantastic Beasts and Where to Find Them", "Fantastic Beasts and Where to Find Them", false, true, false);
             yield return new TestCaseData("single-trailing-char", "Fantastic Beasts and Where to Find Them", "Fantastic Beast and Where to Find Them", false, true, false);
             yield return new TestCaseData("short-title-no-token-count-magic", "It Takes Two", "It Take Two", false, true, false);
@@ -230,6 +238,22 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             {
                 Assert.That(evidence.Single().RequiresAudiobookDurationCorroboration, Is.EqualTo(shouldRequireDuration), name);
             }
+        }
+
+        [TestCase("Harry Potter 5 - The Order of the Phoenix", false)]
+        [TestCase("Harry Potter 5 - The Order of the Phoeni", true)]
+        public void should_preserve_numeric_metadata_in_title_evidence(string tagTitle, bool isNearExact)
+        {
+            var evidence = CreateValidator().GetEditionTitleEvidence(
+                "Harry Potter and the Order of the Phoenix",
+                new Dictionary<string, List<string>>
+                {
+                    { "ALBUM", new List<string> { tagTitle } }
+                });
+
+            Assert.That(evidence, Has.Count.EqualTo(1));
+            Assert.That(evidence.Single().IsNearExact, Is.EqualTo(isNearExact));
+            Assert.That(evidence.Single().FieldValue, Is.EqualTo(tagTitle));
         }
     }
 }

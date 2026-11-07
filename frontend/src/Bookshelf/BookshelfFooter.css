@@ -1,3 +1,13 @@
+.pageContentFooter {
+  composes: contentFooter from '~Components/Page/PageContentFooter.css';
+
+  flex-wrap: wrap;
+}
+
+.saveErrorContainer {
+  flex: 0 0 100%;
+}
+
 .inputContainer {
   margin-right: 20px;
 }

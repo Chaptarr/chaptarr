@@ -2,6 +2,7 @@ import PropTypes from 'prop-types';
 import React from 'react';
 import Alert from 'Components/Alert';
 import { kinds } from 'Helpers/Props';
+import translateServerMessage from 'Utilities/String/translateServerMessage';
 import styles from './Form.css';
 
 function Form(props) {
@@ -26,7 +27,7 @@ function Form(props) {
                     key={`success-${index}`}
                     kind={kinds.SUCCESS}
                   >
-                    {msg}
+                    {translateServerMessage(msg)}
                   </Alert>
                 );
               })
@@ -39,7 +40,7 @@ function Form(props) {
                     key={`error-${index}`}
                     kind={kinds.DANGER}
                   >
-                    {error.errorMessage}
+                    {translateServerMessage(error.errorMessage)}
                   </Alert>
                 );
               })
@@ -52,7 +53,7 @@ function Form(props) {
                     key={`warning-${index}`}
                     kind={kinds.WARNING}
                   >
-                    {warning.errorMessage}
+                    {translateServerMessage(warning.errorMessage)}
                   </Alert>
                 );
               })

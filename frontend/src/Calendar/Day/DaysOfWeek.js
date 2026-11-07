@@ -1,7 +1,7 @@
-import moment from 'moment';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import * as calendarViews from 'Calendar/calendarViews';
+import dayjs from 'Utilities/Date/dayjsSetup';
 import DayOfWeek from './DayOfWeek';
 import styles from './DaysOfWeek.css';
 
@@ -14,7 +14,7 @@ class DaysOfWeek extends Component {
     super(props, context);
 
     this.state = {
-      todaysDate: moment().startOf('day').toISOString()
+      todaysDate: dayjs().startOf('day').toISOString()
     };
 
     this.updateTimeoutId = null;
@@ -39,8 +39,8 @@ class DaysOfWeek extends Component {
 
   scheduleUpdate = () => {
     this.clearUpdateTimeout();
-    const todaysDate = moment().startOf('day');
-    const diff = todaysDate.clone().add(1, 'day').diff(moment());
+    const todaysDate = dayjs().startOf('day');
+    const diff = todaysDate.add(1, 'day').diff(dayjs());
 
     this.setState({
       todaysDate: todaysDate.toISOString()

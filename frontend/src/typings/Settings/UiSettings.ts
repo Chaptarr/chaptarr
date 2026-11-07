@@ -1,4 +1,5 @@
 export default interface UiSettings {
+  experienceMode: 'simple' | 'advanced';
   theme: 'auto' | 'dark' | 'light';
   showRelativeDates: boolean;
   shortDateFormat: string;

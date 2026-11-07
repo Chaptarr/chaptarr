@@ -22,6 +22,7 @@ namespace NzbDrone.Core.MediaCover
         private readonly IDeferredCoverService _deferredCoverService;
         private readonly IBookService _bookService;
         private readonly IMapCoversToLocal _mediaCoverService;
+        private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
         private readonly object _importStateLock = new object();
         private readonly HashSet<int> _activeImportCommands = new HashSet<int>();
@@ -32,11 +33,13 @@ namespace NzbDrone.Core.MediaCover
             IDeferredCoverService deferredCoverService,
             IBookService bookService,
             IMapCoversToLocal mediaCoverService,
+            IEventAggregator eventAggregator,
             Logger logger)
         {
             _deferredCoverService = deferredCoverService;
             _bookService = bookService;
             _mediaCoverService = mediaCoverService;
+            _eventAggregator = eventAggregator;
             _logger = logger;
         }
 
@@ -172,6 +175,7 @@ namespace NzbDrone.Core.MediaCover
                 {
                     _mediaCoverService.EnsureBookCovers(book);
                     _logger.Debug("Downloaded covers for book {0}: {1}", book.Id, book.Title);
+                    _eventAggregator.PublishEvent(new MediaCoversUpdatedEvent(book));
                 }
                 catch (Exception ex)
                 {

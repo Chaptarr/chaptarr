@@ -1,0 +1,14 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--borderColor);
+  border-radius: 999px;
+  background-color: var(--cardBackgroundColor);
+  color: var(--textColor);
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 1.4;
+}

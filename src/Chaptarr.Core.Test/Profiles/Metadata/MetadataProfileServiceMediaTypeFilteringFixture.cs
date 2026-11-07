@@ -155,7 +155,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public Book AddWantedEdition(int bookId, int editionId, bool asNewVariant = false) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -182,7 +182,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
             public Edition GetEditionByOpenLibraryEditionId(string openLibraryEditionId) => throw new NotImplementedException();
             public Edition GetEditionByProviderAndId(string providerPrefix, string providerId) => throw new NotImplementedException();
             public System.Collections.Generic.List<Edition> GetEditionsByProviderAndId(string providerPrefix, string providerId) => new System.Collections.Generic.List<Edition>();
-            public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
+            public List<Edition> GetMonitoredEditionsForBookList(BookMediaType? mediaType) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
@@ -1087,6 +1087,66 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
                 logger: LogManager.GetCurrentClassLogger());
 
             var result = service.FilterBooks(remoteAuthor, profile.Id);
+
+            Assert.That(result, Has.Count.EqualTo(1));
+        }
+
+        private static Book CreateBookWithGenres(string title, string workId, params string[] genres)
+        {
+            return new Book
+            {
+                Title = title,
+                GoodreadsWorkId = workId,
+                MediaType = BookMediaType.Ebook,
+                Genres = genres?.ToList(),
+                Editions = new List<Edition>
+                {
+                    new Edition { ForeignEditionId = $"{workId}-edition", Title = title }
+                }
+            };
+        }
+
+        [Test]
+        public void should_filter_books_matching_an_ignored_genre()
+        {
+            var profile = CreateProfile(id: 1);
+            profile.IgnoredGenres = new List<string> { "Comics", "Graphic novels" };
+
+            var comic = CreateBookWithGenres("Action Comics", "gr:1", "Comics", "Superman");
+            var novel = CreateBookWithGenres("Foundation", "gr:2", "Science Fiction", "Classics");
+            var untagged = CreateBookWithGenres("Untitled", "gr:3");
+
+            var remoteAuthor = new Author { Books = new List<Book> { comic, novel, untagged } };
+
+            var result = CreateService(profile).FilterBooks(remoteAuthor, profile.Id);
+
+            Assert.That(result.Select(x => x.Title), Is.EquivalentTo(new[] { novel.Title, untagged.Title }));
+        }
+
+        [Test]
+        public void ignored_genre_match_is_case_insensitive()
+        {
+            var profile = CreateProfile(id: 1);
+            profile.IgnoredGenres = new List<string> { "comics" };
+
+            var comic = CreateBookWithGenres("Action Comics", "gr:1", "COMICS");
+            var remoteAuthor = new Author { Books = new List<Book> { comic } };
+
+            var result = CreateService(profile).FilterBooks(remoteAuthor, profile.Id);
+
+            Assert.That(result, Is.Empty);
+        }
+
+        [Test]
+        public void empty_ignored_genres_filters_nothing()
+        {
+            var profile = CreateProfile(id: 1);
+            profile.IgnoredGenres = new List<string>();
+
+            var comic = CreateBookWithGenres("Action Comics", "gr:1", "Comics");
+            var remoteAuthor = new Author { Books = new List<Book> { comic } };
+
+            var result = CreateService(profile).FilterBooks(remoteAuthor, profile.Id);
 
             Assert.That(result, Has.Count.EqualTo(1));
         }

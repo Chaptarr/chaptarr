@@ -1,7 +1,8 @@
 import { createAction } from 'redux-actions';
-import bookInfiniteScrollReducer, { initialState } from 'Store/Reducers/bookInfiniteScrollReducer';
+import bookInfiniteScrollReducer, { initialState, MARK_BOOKS_QUERY_STALE } from 'Store/Reducers/bookInfiniteScrollReducer';
 import { createThunk, handleThunks } from 'Store/thunks';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
+import translate from 'Utilities/String/translate';
 
 //
 // Variables
@@ -78,6 +79,7 @@ export const CLEAR_BOOKS_QUERIES = 'books/clearQueries';
 export const FETCH_BOOKS_INDEX_RANGE = 'books/fetchIndexRange';
 export const JUMP_TO_LETTER = 'books/jumpToLetter';
 export const ABORT_ALL_BOOK_REQUESTS = 'books/abortAllRequests';
+export const REFRESH_BOOKS_QUERY = 'books/refreshQuery';
 
 //
 // Action Creators
@@ -98,6 +100,8 @@ export const fetchBooksForIndexRange = createThunk(FETCH_BOOKS_INDEX_RANGE);
 export const jumpToLetter = createThunk(JUMP_TO_LETTER);
 
 export const abortAllRequests = createThunk(ABORT_ALL_BOOK_REQUESTS);
+
+export const refreshBooksQuery = createThunk(REFRESH_BOOKS_QUERY);
 
 //
 // Action Handlers
@@ -160,7 +164,7 @@ export const actionHandlers = handleThunks({
           payload: {
             queryKey,
             requestId: requestKey,
-            error: xhr.responseText || 'Failed to fetch buckets'
+            error: xhr.responseText || translate('FailedToFetchBuckets')
           }
         });
       }
@@ -254,7 +258,7 @@ export const actionHandlers = handleThunks({
             queryKey,
             pageIndex,
             requestId: requestKey,
-            error: xhr.responseText || 'Failed to fetch page'
+            error: xhr.responseText || translate('FailedToFetchBooksPage')
           }
         });
       }
@@ -326,6 +330,26 @@ export const actionHandlers = handleThunks({
     // Prefetch the target page if not already loaded
     return dispatch(fetchBooksPage({ queryKey, pageIndex: targetPage }))
       .then(() => ({ targetIndex }));
+  },
+
+  // Re-fetch the visible range and the bucket counts after books changed elsewhere.
+  [REFRESH_BOOKS_QUERY]: function(getState, payload, dispatch) {
+    const { queryKey, startIndex, stopIndex } = payload;
+    const pageSize = getState().bookInfiniteScroll.pageSize || 200;
+    const keepPageIndexes = [];
+
+    for (let pageIndex = Math.floor(startIndex / pageSize); pageIndex <= Math.floor(stopIndex / pageSize); pageIndex++) {
+      keepPageIndexes.push(pageIndex);
+    }
+
+    dispatch({
+      type: MARK_BOOKS_QUERY_STALE,
+      payload: { queryKey, keepPageIndexes }
+    });
+
+    dispatch(fetchBookBuckets({ queryKey }));
+
+    return dispatch(fetchBooksForIndexRange({ queryKey, startIndex, stopIndex }));
   },
 
   [ABORT_ALL_BOOK_REQUESTS]: function(getState, payload, dispatch) {

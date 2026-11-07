@@ -10,13 +10,17 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
             {
                 ["TITLE"] = new[] { "ID3v2:TIT2", "MP4:©nam", "XIPH:TITLE", "APE:Title" },
+                ["TITLESORT"] = new[] { "ID3v2:TSOT", "MP4:sonm", "XIPH:TITLESORT", "ASF:WM/TitleSort", "APE:TitleSort" },
                 ["ALBUM"] = new[] { "ID3v2:TALB", "MP4:©alb", "XIPH:ALBUM", "ASF:WM/AlbumTitle", "APE:Album" },
+                ["ALBUMSORT"] = new[] { "ID3v2:TSOA", "MP4:soal", "XIPH:ALBUMSORT", "ASF:WM/AlbumTitleSort", "APE:AlbumSort" },
                 ["ARTIST"] = new[] { "ID3v2:TPE1", "MP4:©ART", "XIPH:ARTIST", "APE:Artist" },
+                ["ARTISTSORT"] = new[] { "ID3v2:TSOP", "MP4:soar", "XIPH:ARTISTSORT", "ASF:WM/ArtistSort", "APE:ArtistSort" },
                 ["ALBUMARTIST"] = new[] { "ID3v2:TPE2", "MP4:aART", "XIPH:ALBUMARTIST", "ASF:WM/AlbumArtist", "APE:AlbumArtist" },
+                ["ALBUMARTISTSORT"] = new[] { "ID3v2:TSO2", "MP4:soaa", "XIPH:ALBUMARTISTSORT", "ASF:WM/AlbumArtistSort", "APE:AlbumArtistSort" },
                 ["COMPOSER"] = new[] { "ID3v2:TCOM", "MP4:©wrt", "XIPH:COMPOSER", "ASF:WM/Composer", "APE:Composer" },
-                ["PUBLISHER"] = new[] { "ID3v2:TPUB", "MP4:©pub", "XIPH:PUBLISHER", "ASF:WM/Publisher", "APE:Publisher" },
+                ["PUBLISHER"] = new[] { "ID3v2:TPUB", "MP4:©pub", "XIPH:PUBLISHER", "XIPH:LABEL", "ASF:WM/Publisher", "APE:Publisher", "APE:Label" },
                 ["GENRE"] = new[] { "ID3v2:TCON", "MP4:©gen", "XIPH:GENRE", "APE:Genre" },
-                ["DATE"] = new[] { "ID3v2:TDRC", "ID3v2:TYER", "ID3v2:TDAT", "MP4:©day", "XIPH:DATE", "APE:Year" },
+                ["DATE"] = new[] { "ID3v2:TDRC", "ID3v2:TYER", "ID3v2:TDAT", "MP4:©day", "XIPH:DATE", "ASF:WM/Year", "APE:Year" },
                 ["ORIGINALDATE"] = new[] { "ID3v2:TDOR", "XIPH:ORIGINALDATE", "ASF:WM/OriginalReleaseTime" },
                 ["ORIGINALYEAR"] = new[] { "ASF:WM/OriginalReleaseYear" },
                 ["COMMENT"] = new[] { "ID3v2:COMM:*", "MP4:©cmt", "XIPH:COMMENT" },
@@ -24,7 +28,11 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 ["TOTALTRACKS"] = new[] { "ID3v2:TRCK", "XIPH:TOTALTRACKS" },
                 ["DISCNUMBER"] = new[] { "ID3v2:TPOS", "XIPH:DISCNUMBER" },
                 ["TOTALDISCS"] = new[] { "ID3v2:TPOS", "XIPH:TOTALDISCS" },
-                ["NARRATOR"] = new[] { "ID3v2:TXXX:NARRATOR", "XIPH:NARRATOR", "ASF:WM/Narrator", "APE:Narrator" },
+                ["NARRATOR"] = new[]
+                {
+                    "ID3v2:TXXX:NARRATOR", "XIPH:NARRATOR", "ASF:WM/Narrator", "APE:Narrator",
+                    "AUDIBLE:NARRATOR", "MP4:----:com.apple.iTunes:NARRATOR", "----:com.apple.iTunes:NARRATOR"
+                },
                 ["SERIES"] = new[] { "ID3v2:TXXX:SERIES", "XIPH:SERIES" },
                 ["LANGUAGE"] = new[] { "XIPH:LANGUAGE", "ASF:WM/Language", "APE:Language" },
                 ["ISBN"] = new[] { "ID3v2:TXXX:ISBN", "XIPH:ISBN", "ASF:WM/ISBN", "APE:ISBN" },
@@ -118,9 +126,13 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
 
             // ID3v2 mappings (prefix ID3v2:)
             Add("TITLE", Get("ID3v2:TIT2"));
+            Add("TITLESORT", Get("ID3v2:TSOT"));
             Add("ALBUM", Get("ID3v2:TALB"));
+            Add("ALBUMSORT", Get("ID3v2:TSOA"));
             Add("ARTIST", Get("ID3v2:TPE1"));
+            Add("ARTISTSORT", Get("ID3v2:TSOP"));
             Add("ALBUMARTIST", Get("ID3v2:TPE2"));
+            Add("ALBUMARTISTSORT", Get("ID3v2:TSO2"));
             Add("COMPOSER", Get("ID3v2:TCOM"));
             Add("PUBLISHER", Get("ID3v2:TPUB"));
             Add("GENRE", Get("ID3v2:TCON"));
@@ -155,9 +167,13 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
 
             // MP4 (prefix MP4:)
             Add("TITLE", Get("MP4:©nam"));
+            Add("TITLESORT", Get("MP4:sonm"));
             Add("ALBUM", Get("MP4:©alb"));
+            Add("ALBUMSORT", Get("MP4:soal"));
             Add("ARTIST", Get("MP4:©ART"));
+            Add("ARTISTSORT", Get("MP4:soar"));
             Add("ALBUMARTIST", Get("MP4:aART"));
+            Add("ALBUMARTISTSORT", Get("MP4:soaa"));
             Add("COMPOSER", Get("MP4:©wrt"));
             Add("PUBLISHER", Get("MP4:©pub"));
             Add("GENRE", Get("MP4:©gen"));
@@ -171,11 +187,16 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
 
             // XIPH (prefix XIPH:)
             Add("TITLE", Get("XIPH:TITLE"));
+            Add("TITLESORT", Get("XIPH:TITLESORT"));
             Add("ALBUM", Get("XIPH:ALBUM"));
+            Add("ALBUMSORT", Get("XIPH:ALBUMSORT"));
             Add("ARTIST", Get("XIPH:ARTIST"));
+            Add("ARTISTSORT", Get("XIPH:ARTISTSORT"));
             Add("ALBUMARTIST", Get("XIPH:ALBUMARTIST"));
+            Add("ALBUMARTISTSORT", Get("XIPH:ALBUMARTISTSORT"));
             Add("COMPOSER", Get("XIPH:COMPOSER"));
             Add("PUBLISHER", Get("XIPH:PUBLISHER"));
+            Add("PUBLISHER", Get("XIPH:LABEL"));
             Add("GENRE", Get("XIPH:GENRE"));
             Add("DATE", Get("XIPH:DATE"));
             Add("ORIGINALDATE", Get("XIPH:ORIGINALDATE"));
@@ -192,9 +213,14 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
 
             // ASF (prefix ASF:)
             Add("ALBUM", Get("ASF:WM/AlbumTitle"));
+            Add("ALBUMSORT", Get("ASF:WM/AlbumTitleSort"));
             Add("ALBUMARTIST", Get("ASF:WM/AlbumArtist"));
+            Add("ALBUMARTISTSORT", Get("ASF:WM/AlbumArtistSort"));
+            Add("ARTISTSORT", Get("ASF:WM/ArtistSort"));
+            Add("TITLESORT", Get("ASF:WM/TitleSort"));
             Add("COMPOSER", Get("ASF:WM/Composer"));
             Add("PUBLISHER", Get("ASF:WM/Publisher"));
+            Add("DATE", Get("ASF:WM/Year"));
             Add("NARRATOR", Get("ASF:WM/Narrator"));
             Add("LANGUAGE", Get("ASF:WM/Language"));
             Add("ISBN", Get("ASF:WM/ISBN"));
@@ -205,17 +231,28 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
 
             // APE (prefix APE:)
             Add("TITLE", Get("APE:Title"));
+            Add("TITLESORT", Get("APE:TitleSort"));
             Add("ALBUM", Get("APE:Album"));
+            Add("ALBUMSORT", Get("APE:AlbumSort"));
             Add("ARTIST", Get("APE:Artist"));
+            Add("ARTISTSORT", Get("APE:ArtistSort"));
             Add("ALBUMARTIST", Get("APE:AlbumArtist"));
+            Add("ALBUMARTISTSORT", Get("APE:AlbumArtistSort"));
             Add("COMPOSER", Get("APE:Composer"));
             Add("PUBLISHER", Get("APE:Publisher"));
+            Add("PUBLISHER", Get("APE:Label"));
             Add("GENRE", Get("APE:Genre"));
             Add("DATE", Get("APE:Year"));
             Add("NARRATOR", Get("APE:Narrator"));
             Add("LANGUAGE", Get("APE:Language"));
             Add("ISBN", Get("APE:ISBN"));
             Add("ASIN", Get("APE:ASIN"));
+
+            // BookshelfNG also reads narrator credit from Apple freeform and Audible
+            // metadata tags; retain those aliases for the compatibility scorer.
+            Add("NARRATOR", Get("AUDIBLE:NARRATOR"));
+            Add("NARRATOR", Get("MP4:----:com.apple.iTunes:NARRATOR"));
+            Add("NARRATOR", Get("----:com.apple.iTunes:NARRATOR"));
             Add("TRACKNUMBER", Get("APE:Track"));
             
             // Additional ID3v2 vendor/custom AUDIBLE_ASIN mapping

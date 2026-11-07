@@ -24,8 +24,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         public string Narrator { get; set; }
         public Dictionary<string, List<string>> AllTags { get; set; }
         public IReadOnlyList<Dictionary<string, List<string>>> GroupMemberTags { get; set; }
+        internal IReadOnlyList<string> GroupMemberPaths { get; set; }
+        // This compatibility-only tag view may include data from a configured Calibre library.
+        // Keep it transient so the enrichment is never persisted as media-file tags.
+        internal IReadOnlyList<Dictionary<string, List<string>>> BookshelfMatchCompatibilityTrackTags { get; set; }
         public QualityModel Quality { get; set; }
         public int? DurationSeconds { get; set; }
+        public DateTime? LastRemoteSearchTime { get; set; }
         
         // Multi-author support for FTS matching
         public List<Author> ExtractedAuthors { get; set; }

@@ -1,5 +1,27 @@
 // Utility functions for the visual builder
 
+import translate from 'Utilities/String/translate';
+
+const tokenTranslationKeys = {
+  AuthorName: 'NamingTokenAuthorName',
+  AuthorSortName: 'NamingTokenAuthorSortName',
+  AuthorCleanName: 'NamingTokenAuthorCleanName',
+  AuthorNameFirstCharacter: 'NamingTokenAuthorNameFirstCharacter',
+  BookTitle: 'NamingTokenBookTitle',
+  BookSubtitle: 'NamingTokenBookSubtitle',
+  ReleaseYear: 'NamingTokenReleaseYear',
+  PartNumber: 'NamingTokenPartNumber',
+  BookSeriesTitle: 'NamingTokenBookSeriesTitle',
+  BookSeries: 'NamingTokenBookSeries',
+  BookSeriesPosition: 'NamingTokenBookSeriesPosition',
+  NarratorName: 'NamingTokenNarratorName',
+  NarratorCleanName: 'NamingTokenNarratorCleanName',
+  NarratorFirst: 'NamingTokenNarratorFirst',
+  NarratorLast: 'NamingTokenNarratorLast',
+  NarratorInitials: 'NamingTokenNarratorInitials',
+  Narrators: 'NamingTokenNarrators'
+};
+
 export function createId() {
   return Math.random().toString(36).substr(2, 9);
 }
@@ -8,7 +30,7 @@ export function getTokenColor(tokenKey) {
   const authorTokens = ['AuthorName', 'AuthorSortName', 'AuthorCleanName', 'AuthorNameFirstCharacter', 'AuthorNameThe', 'AuthorDisambiguation'];
   const bookTokens = ['BookTitle', 'BookTitleNoSub', 'BookSubtitle', 'BookCleanTitle', 'ReleaseYear', 'PartNumber', 'BookCleanTitleNoSub', 'BookTitleThe', 'BookTitleTheNoSub', 'BookSubtitleThe', 'BookCleanSubtitle', 'BookDisambiguation', 'EditionYear', 'ReleaseYearFirst'];
   const seriesTokens = ['BookSeries', 'BookSeriesPosition', 'BookSeriesTitle'];
-  const narratorTokens = ['NarratorName', 'NarratorNameMultiple'];
+  const narratorTokens = ['NarratorName', 'NarratorNameMultiple', 'NarratorCleanName', 'NarratorFirst', 'NarratorLast', 'NarratorInitials', 'Narrators'];
 
   if (authorTokens.includes(tokenKey)) return 'blue';
   if (bookTokens.includes(tokenKey)) return 'purple';
@@ -24,40 +46,23 @@ export function getNodeDisplayLabel(node) {
   } else if (node.kind === 'separator') {
     return getSeparatorDisplayLabel(node.value);
   } else if (node.kind === 'group') {
-    return `(${node.children.length} items)`;
+    const count = node.children.length;
+    const key = count === 1 ? 'NamingBuilderGroupItem' : 'NamingBuilderGroupItems';
+    return `(${translate(key, { count })})`;
   }
   return node.id;
 }
 
 export function getTokenDisplayLabel(tokenKey) {
-  const labels = {
-    AuthorName: 'First Last',
-    AuthorSortName: 'Last First',
-    AuthorCleanName: 'firstlast',
-    AuthorNameFirstCharacter: 'F Last',
-    AuthorNameThe: 'First Last, The',
-    AuthorDisambiguation: 'Disambiguation',
-    BookTitle: 'Title: Subtitle',
-    BookTitleNoSub: 'Title',
-    BookSubtitle: 'Subtitle',
-    BookCleanTitle: 'Clean Title',
-    ReleaseYear: 'Published Year',
-    PartNumber: 'Part Number',
-    BookSeries: 'Series',
-    BookSeriesPosition: 'Series Position',
-    BookSeriesTitle: 'Series Title #1',
-    NarratorName: 'First Last',
-    NarratorNameMultiple: 'Single/Full Cast'
-  };
-
-  return labels[tokenKey] || tokenKey;
+  const translationKey = tokenTranslationKeys[tokenKey];
+  return translationKey ? translate(translationKey) : tokenKey;
 }
 
 export function getSeparatorDisplayLabel(value) {
   const labels = {
-    '/': '/ Folder',
+    '/': '(/)',
     '-': '-',
-    ' ': 'Space',
+    ' ': translate('NamingTokenSpace'),
     '.': '.',
     '_': '_',
     '()': '( )'
@@ -78,7 +83,6 @@ export function validateAst(ast) {
       if (consecutiveFolders > 1) {
         errors.push({
           code: 'CONSECUTIVE_FOLDERS',
-          message: 'Cannot have consecutive folder separators',
           path: rootId
         });
       }
@@ -92,7 +96,6 @@ export function validateAst(ast) {
     if (node.kind === 'group' && (!node.children || node.children.length === 0)) {
       errors.push({
         code: 'EMPTY_GROUP',
-        message: 'Group cannot be empty',
         path: nodeId
       });
     }
@@ -103,7 +106,6 @@ export function validateAst(ast) {
     if (node.kind === 'token' && !node.tokenKey) {
       errors.push({
         code: 'INVALID_TOKEN',
-        message: 'Token key cannot be empty',
         path: nodeId
       });
     }

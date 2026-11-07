@@ -34,28 +34,28 @@ namespace NzbDrone.Core.Notifications.Ntfy
             Priority = 3;
         }
 
-        [FieldDefinition(0, Label = "Server Url", Type = FieldType.Url, HelpLink = "https://ntfy.sh/docs/install/", HelpText = "Leave blank to use public server (https://ntfy.sh)")]
+        [FieldDefinition(0, Label = "provider.field.f506f4a07818c", Type = FieldType.Url, HelpLink = "https://ntfy.sh/docs/install/", HelpText = "provider.field.f665ae949e760")]
         public string ServerUrl { get; set; }
 
-        [FieldDefinition(1, Label = "Access Token", Type = FieldType.Password, Privacy = PrivacyLevel.ApiKey, HelpText = "Optional token-based authorization. Takes priority over username/password", HelpLink = "https://docs.ntfy.sh/config/#access-tokens")]
+        [FieldDefinition(1, Label = "provider.field.ff9db72ced1ee", Type = FieldType.Password, Privacy = PrivacyLevel.ApiKey, HelpText = "provider.field.f2b866dadafe2", HelpLink = "https://docs.ntfy.sh/config/#access-tokens")]
         public string AccessToken { get; set; }
 
-        [FieldDefinition(2, Label = "User Name", HelpText = "Optional Authorization", Privacy = PrivacyLevel.UserName)]
+        [FieldDefinition(2, Label = "provider.field.fa969d04ec2d0", HelpText = "provider.field.fd72246ae30a8", Privacy = PrivacyLevel.UserName)]
         public string UserName { get; set; }
 
-        [FieldDefinition(3, Label = "Password", Type = FieldType.Password, HelpText = "Optional Password", Privacy = PrivacyLevel.Password)]
+        [FieldDefinition(3, Label = "Password", Type = FieldType.Password, HelpText = "provider.field.f1f6f106670e5", Privacy = PrivacyLevel.Password)]
         public string Password { get; set; }
 
         [FieldDefinition(4, Label = "Priority", Type = FieldType.Select, SelectOptions = typeof(NtfyPriority))]
         public int Priority { get; set; }
 
-        [FieldDefinition(5, Label = "Topics", HelpText = "List of Topics to send notifications to", Type = FieldType.Tag)]
+        [FieldDefinition(5, Label = "provider.field.fe22820fcf5cd", HelpText = "provider.field.f297611157926", Type = FieldType.Tag)]
         public IEnumerable<string> Topics { get; set; }
 
-        [FieldDefinition(6, Label = "Ntfy Tags and Emojis", Type = FieldType.Tag, HelpText = "Optional list of tags or emojis to use", HelpLink = "https://ntfy.sh/docs/emojis/")]
+        [FieldDefinition(6, Label = "provider.field.fcef89c458255", Type = FieldType.Tag, HelpText = "provider.field.fc6f4dcbf5fd7", HelpLink = "https://ntfy.sh/docs/emojis/")]
         public IEnumerable<string> Tags { get; set; }
 
-        [FieldDefinition(7, Label = "Click URL", Type = FieldType.Url, HelpText = "Optional link when user clicks notification")]
+        [FieldDefinition(7, Label = "provider.field.fd2d899a2ab80", Type = FieldType.Url, HelpText = "provider.field.fa26497a29734")]
         public string ClickUrl { get; set; }
 
         public NzbDroneValidationResult Validate()

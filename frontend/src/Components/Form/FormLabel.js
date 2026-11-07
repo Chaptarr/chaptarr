@@ -18,6 +18,7 @@ function FormLabel(props) {
 
   return (
     <label
+      id={name ? `${name}-label` : undefined}
       {...otherProps}
       className={classNames(
         className,

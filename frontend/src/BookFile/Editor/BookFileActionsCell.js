@@ -73,6 +73,16 @@ class BookFileActionsCell extends Component {
         {
           path &&
             <IconButton
+              name={icons.DOWNLOAD}
+              title={translate('Download')}
+              to={`${window.Chaptarr.apiRoot}/bookfile/${id}/download`}
+              noRouter={true}
+              target="_blank"
+            />
+        }
+        {
+          path &&
+            <IconButton
               name={icons.DELETE}
               onPress={this.onDeleteFilePress}
             />
