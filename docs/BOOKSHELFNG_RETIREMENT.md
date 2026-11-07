@@ -1,5 +1,31 @@
 # BookshelfNG retirement status
 
+## Current status — 2026-11-07 UTC
+
+Application and data-migration qualification is complete at exact head
+`b5c25742`. Public Build run
+[42308704533](https://github.com/snapetech-org/chaptarrng/actions/runs/42308704533)
+passed Linux, Windows, macOS, PostgreSQL and Docker. Public standalone run
+[42308701409](https://github.com/snapetech-org/chaptarrng/actions/runs/42308701409)
+passed all ten archives and every enabled native installed-handoff job. Its
+Linux x86 archive has SHA-256
+`822962e3e412186e687f44aa91e63da542a01fee4bfe512cfa7761cc27c1207d`;
+native 32-bit acceptance passed No, headless Manual, interactive Yes, migrated
+health and retained-source-backup checks, forced-failure rollback, and restored
+BookshelfNG health. The recovery utility now builds its complete service
+collection before resolving a command, eliminating the incomplete-container
+startup race found by repeated x86 rollback.
+
+No known application or data-migration parity defect remains open. This is
+sufficient technical evidence for a ChaptarrNG `0.9.978` release candidate; it
+does not itself publish one. The stable tag does not yet exist and repository
+variables `CHAPTARRNG_RELEASE_READY` and `BOOKSHELFNG_RELEASE_READY` remain
+unset, so the release workflow is intentionally fail-closed. Publishing the
+ChaptarrNG release, publishing old-identity bridges or third-party feed/catalog
+updates, migrating production installations, and retiring BookshelfNG remain
+separate owner/operator decisions. The latter actions are not implied by a
+ChaptarrNG application release.
+
 ## Current status — 2026-11-06 UTC
 
 The source and migration candidate is now internally qualified as the

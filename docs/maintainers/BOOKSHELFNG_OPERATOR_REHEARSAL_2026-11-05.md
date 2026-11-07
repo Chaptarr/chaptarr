@@ -1135,3 +1135,33 @@ bounds the Docker build, optional package installation and each smoke command at
 ten minutes so runner or mirror stalls fail explicitly instead of consuming the
 six-hour default. A new workflow revision must supply the final hosted receipt;
 rerunning the old revision would not validate that bound.
+
+### Final exact-head installed qualification, November 7
+
+The remaining x86 installed-handoff failure was an application utility-startup
+race rather than another migration-data defect. Utility commands were resolved
+inside `ConfigureContainer`, before the host had finished populating framework
+services. Repeated rollback therefore exposed incomplete service graphs. The
+utility path at `b5c25742` now populates a direct service collection and DryIoc
+container before resolving the utility router. The failed health probe also
+waits for HTTP readiness before opening the first-start migrated database.
+
+The corrected local native archive passed the complete No, headless Manual,
+interactive Yes, health, source-backup, forced-rollback and predecessor-restart
+sequence, followed by ten consecutive rollback repetitions. Public exact-head
+Build run
+[42308704533](https://github.com/snapetech-org/chaptarrng/actions/runs/42308704533)
+and standalone run
+[42308701409](https://github.com/snapetech-org/chaptarrng/actions/runs/42308701409)
+both passed with no failed jobs. The hosted x86 archive SHA-256 is
+`822962e3e412186e687f44aa91e63da542a01fee4bfe512cfa7761cc27c1207d`.
+Its structured result records revision
+`b5c257429dad31bc16d5324dd7af95fe0d12be2e`, 32-bit ELF execution, all four
+installed cases and success. That result is retained at
+`/var/tmp/chaptarrng-native-standalone-20261106/container-evidence/x86-installed-b5c25742-ci/result.json`;
+raw diagnostic copies were not retained.
+
+Application and migration qualification is complete. Publication remains an
+explicit decision: `v0.9.978` is not tagged and both repository readiness
+variables are unset. ChaptarrNG publication does not by itself authorize legacy
+bridge/feed publication, production migration or BookshelfNG retirement.
