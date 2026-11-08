@@ -31,9 +31,10 @@ MOCK_DOCKER
 cat > "$work/bin/skopeo" <<'MOCK_SKOPEO'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$1" == --authfile ]]
-case "$3" in
+[[ "$2" == --authfile ]]
+case "$1" in
   copy)
+    [[ "$4" == --all && "$5" == --preserve-digests ]]
     source="${@: -2:1}"; target="${@: -1}"
     [[ "$source" == "docker://$SOURCE_IMAGE" ]]
     printf 'copy\t%s\t%s\n' "$source" "$target" >> "$SKOPEO_LOG"

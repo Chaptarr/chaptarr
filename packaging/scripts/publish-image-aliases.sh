@@ -69,12 +69,12 @@ publish_dockerhub_alias() {
   local source="docker://$SOURCE_IMAGE"
   local destination="docker://$target"
   local actual_digest
-  if ! skopeo --authfile "$HOME/.docker/config.json" copy --all --preserve-digests "$source" "$destination"; then
+  if ! skopeo copy --authfile "$HOME/.docker/config.json" --all --preserve-digests "$source" "$destination"; then
     echo "- $target: standard image copy failed." >> "$summary"
     failed=1
     return 1
   fi
-  if ! actual_digest="$(skopeo --authfile "$HOME/.docker/config.json" inspect --raw "$destination" | sha256sum | cut -d ' ' -f1)"; then
+  if ! actual_digest="$(skopeo inspect --authfile "$HOME/.docker/config.json" --raw "$destination" | sha256sum | cut -d ' ' -f1)"; then
     echo "- $target: copied manifest could not be inspected." >> "$summary"
     failed=1
     return 1
