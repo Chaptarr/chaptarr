@@ -1,3 +1,4 @@
+import $ from 'jquery';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
 import { coerceFolderType, FolderType } from 'Helpers/Props/folderTypes';
@@ -7,6 +8,7 @@ import createSetSettingValueReducer from 'Store/Actions/Creators/Reducers/create
 import { createThunk } from 'Store/thunks';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import getProviderState from 'Utilities/State/getProviderState';
+import translate from 'Utilities/String/translate';
 import { set, update, updateItem } from '../baseActions';
 
 function normalizeRootFolder(rootFolder) {
@@ -91,14 +93,13 @@ export default {
       outputProfile: 'default',
       useSsl: false,
       // REMOVED: defaultQualityProfileId, defaultMetadataProfileId, defaultAudiobookMetadataProfileId, defaultEbookMetadataProfileId - no longer used
-      // Per-media-type monitoring defaults. The gate is independent from the
-      // one-time current-book seed and the ongoing catalog-relative policy.
+      // Enable author monitoring, but make selecting current and new books opt-in.
       audiobookMonitored: true,
-      audiobookMonitorExistingMode: 'all',
-      audiobookMonitorNewItems: 'all',
+      audiobookMonitorExistingMode: 'none',
+      audiobookMonitorNewItems: 'none',
       ebookMonitored: true,
-      ebookMonitorExistingMode: 'all',
-      ebookMonitorNewItems: 'all',
+      ebookMonitorExistingMode: 'none',
+      ebookMonitorNewItems: 'none',
       // Per-media-type profile settings (null means unconfigured; UI auto-selects defaults)
       audiobookQualityProfileId: null,
       audiobookMetadataProfileId: null,
@@ -273,12 +274,13 @@ export default {
       } else {
         // Invalid folderType - log error and abort
         console.error('[ROOT FOLDER SAVE] Invalid folderType:', rawData.folderType);
+        const saveError = { message: translate('InvalidRootFolderType') };
         dispatch(set({
           section,
           isSaving: false,
-          saveError: { message: 'Invalid folder type. Please refresh and try again.' }
+          saveError
         }));
-        return;
+        return $.Deferred().reject(saveError).promise();
       }
 
       // Never send deprecated generic or legacy fields
@@ -316,6 +318,7 @@ export default {
           saveError: xhr
         }));
       });
+      return request;
     },
     [CANCEL_SAVE_ROOT_FOLDER]: createCancelSaveProviderHandler(section),
     [DELETE_ROOT_FOLDER]: createRemoveItemHandler(section, '/rootFolder')

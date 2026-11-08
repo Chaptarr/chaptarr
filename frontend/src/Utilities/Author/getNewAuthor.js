@@ -34,33 +34,27 @@ function getNewAuthor(author, payload, mediaType) {
     author.foreignAuthorId = foreignAuthorId;
   }
 
-  // Use media-type-specific metadata profile if available, otherwise fall back to generic
-  // Values are already extracted in the connector, so use them directly
-  if (mediaType === 'audiobook' && audiobookMetadataProfileId) {
-    author.metadataProfileId = audiobookMetadataProfileId;
-  } else if (mediaType === 'ebook' && ebookMetadataProfileId) {
-    author.metadataProfileId = ebookMetadataProfileId;
-  } else {
-    author.metadataProfileId = metadataProfileId;
-  }
-
   // Filter settings based on mediaType. Existing/current book selection is an
   // add-time operation; only the author gate and ongoing policy are persisted.
   if (mediaType === 'audiobook') {
     author.audiobookQualityProfileId = audiobookQualityProfileId;
+    author.audiobookMetadataProfileId = audiobookMetadataProfileId || metadataProfileId;
     author.audiobookRootFolderPath = audiobookRootFolderPath;
     author.audiobookMonitored = audiobookMonitored !== false;
     author.audiobookMonitorNewItems = normalizeMonitorNewItemsOption(audiobookMonitorNewItems || monitorNewItems);
     author.audiobookTags = audiobookTags ?? tags;
   } else if (mediaType === 'ebook') {
     author.ebookQualityProfileId = ebookQualityProfileId;
+    author.ebookMetadataProfileId = ebookMetadataProfileId || metadataProfileId;
     author.ebookRootFolderPath = ebookRootFolderPath;
     author.ebookMonitored = ebookMonitored !== false;
     author.ebookMonitorNewItems = normalizeMonitorNewItemsOption(ebookMonitorNewItems || monitorNewItems);
     author.ebookTags = ebookTags ?? tags;
   } else {
     author.audiobookQualityProfileId = audiobookQualityProfileId;
+    author.audiobookMetadataProfileId = audiobookMetadataProfileId || metadataProfileId;
     author.ebookQualityProfileId = ebookQualityProfileId;
+    author.ebookMetadataProfileId = ebookMetadataProfileId || metadataProfileId;
     author.audiobookRootFolderPath = audiobookRootFolderPath;
     author.ebookRootFolderPath = ebookRootFolderPath;
     author.audiobookMonitored = audiobookMonitored !== false;

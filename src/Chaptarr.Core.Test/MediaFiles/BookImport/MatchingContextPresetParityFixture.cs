@@ -16,6 +16,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(source, Does.Contain("\"scan-scoped-rematch\" => MatchingContextPresets.ForScanScopedRematch()"));
             Assert.That(source, Does.Contain("\"downloaded\" => MatchingContextPresets.ForDownloaded(false, targetBookIds, pathFallback)"));
             Assert.That(source, Does.Contain("\"manual-download\" => MatchingContextPresets.ForDownloaded(true, targetBookIds, pathFallback)"));
+            Assert.That(source, Does.Contain("\"manual-preview\" => MatchingContextPresets.ForManualPreview(pathFallback, targetBookIds)"));
             Assert.That(source, Does.Contain("\"author-ready\" => MatchingContextPresets.ForAuthorReady()"));
             Assert.That(source, Does.Contain("\"direct-default\" => MatchingContextPresets.ForDirectDefault(pathFallback)"));
             Assert.That(source, Does.Contain("_ => MatchingContextPresets.ForScanLocal(pathFallback)"));
@@ -37,7 +38,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(downloaded, Does.Contain("return MatchingContextPresets.ForDownloaded(allowV5Identification, targetBookIds, allowPathFallback);"));
 
             var manual = ReadSource("src/NzbDrone.Core/MediaFiles/BookImport/SimpleImportDecisionMaker.cs");
-            Assert.That(manual, Does.Contain("MatchingContextPresets.ForManualPreview()"));
+            Assert.That(manual, Does.Contain("MatchingContextPresets.ForManualPreview("));
         }
 
         private static string ReadSource(string relativePath)

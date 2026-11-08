@@ -10,12 +10,13 @@ namespace NzbDrone.Core.ImportLists.Chaptarr
     {
         public ChaptarrSettingsValidator()
         {
+            this.AddDualMediaRules();
             RuleFor(c => c.BaseUrl).ValidRootUrl();
             RuleFor(c => c.ApiKey).NotEmpty();
         }
     }
 
-    public class ChaptarrSettings : IImportListSettings
+    public class ChaptarrSettings : DualMediaImportListSettings
     {
         private static readonly ChaptarrSettingsValidator Validator = new ChaptarrSettingsValidator();
 
@@ -29,7 +30,7 @@ namespace NzbDrone.Core.ImportLists.Chaptarr
         }
 
         [FieldDefinition(0, Label = "Full URL", HelpText = "URL, including port, of the Chaptarr instance to import from")]
-        public string BaseUrl { get; set; }
+        public override string BaseUrl { get; set; }
 
         [FieldDefinition(1, Label = "API Key", Privacy = PrivacyLevel.ApiKey, HelpText = "Apikey of the Chaptarr instance to import from")]
         public string ApiKey { get; set; }
@@ -43,7 +44,7 @@ namespace NzbDrone.Core.ImportLists.Chaptarr
         [FieldDefinition(4, Type = FieldType.Select, SelectOptionsProviderAction = "getRootFolders", Label = "Root Folders", HelpText = "Root Folders from the source instance to import from")]
         public IEnumerable<string> RootFolderPaths { get; set; }
 
-        public NzbDroneValidationResult Validate()
+        public override NzbDroneValidationResult Validate()
         {
             return new NzbDroneValidationResult(Validator.Validate(this));
         }

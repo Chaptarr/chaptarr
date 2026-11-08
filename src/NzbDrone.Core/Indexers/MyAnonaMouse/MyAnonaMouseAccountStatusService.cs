@@ -112,7 +112,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 }
                 catch (Exception ex)
                 {
-                    _logger.Debug(ex, "Failed to refresh MAM account status for indexer '{0}'", definition.Name);
+                    _logger.Warn("Failed to refresh MAM account status for indexer '{0}' ({1})", definition.Name, ex.GetType().Name);
                 }
             }
 

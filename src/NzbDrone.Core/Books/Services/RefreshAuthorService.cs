@@ -33,16 +33,21 @@ namespace NzbDrone.Core.Books
 {
     public interface IRefreshAuthorService
     {
-        bool ReconcileAuthorBlob(Author localAuthor, Author authoritativeRemoteAuthor) => false;
+        Author ReconcilePublishedAuthorIdentity(Author local, Author remote);
+        bool ReconcileAuthorBlob(Author localAuthor, Author authoritativeRemoteAuthor, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds = null, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds = null, CancellationToken cancellationToken = default);
     }
 
-    public class RefreshAuthorService : RefreshEntityServiceBase<Author, Book>,
+    public partial class RefreshAuthorService : RefreshEntityServiceBase<Author, Book>,
         IRefreshAuthorService,
         IExecute<RefreshAuthorCommand>,
-        IExecute<BulkRefreshAuthorCommand>
+        IExecute<BulkRefreshAuthorCommand>,
+        IExecute<RetryAuthorRefreshCommand>
     {
         private readonly IProvideAuthorInfo _authorInfo;
         private readonly IAuthorService _authorService;
+        private readonly IAuthorRepository _authorRepository;
+        private readonly IBookRepository _bookRepository;
+        private readonly IHistoryRepository _historyRepository;
         private readonly IBookService _bookService;
         private readonly IEditionService _editionService;
         private readonly IMetadataProfileService _metadataProfileService;
@@ -51,7 +56,6 @@ namespace NzbDrone.Core.Books
         private readonly IEventAggregator _eventAggregator;
         private readonly IManageCommandQueue _commandQueueManager;
         private readonly IMediaFileService _mediaFileService;
-        private readonly IHistoryService _historyService;
         private readonly IRootFolderService _rootFolderService;
         private readonly ICheckIfAuthorShouldBeRefreshed _checkIfAuthorShouldBeRefreshed;
         private readonly IMonitorNewBookService _monitorNewBookService;
@@ -62,26 +66,35 @@ namespace NzbDrone.Core.Books
         private readonly IRootFolderSettingsResolver _rootFolderSettingsResolver;
         private readonly IEditionSelector _editionSelector;
         private readonly IMainDatabase _mainDatabase;
+        private readonly IMetadataServerHealthGate _metadataServerHealthGate;
         private readonly Logger _logger;
-        private BookRefreshMatchingIndex _bookRefreshMatchingIndex;
-        private List<Book> _authorRefreshRehomeBlueprint;
+        private int _setupRetryQueueFailures;
+        private sealed class AuthorRefreshContext : RefreshContext
+        {
+            public BookRefreshMatchingIndex MatchingIndex { get; set; }
+            public List<Exception> IdentityFailures { get; } = new();
+            public List<Book> RehomeBlueprint { get; set; }
+            public IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> RequestedNarrationIds { get; init; }
+            public IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> RequestedNarrationWorkIds { get; init; }
+        }
 
-        private static readonly SemaphoreSlim AuthorMetadataRefreshGate = new SemaphoreSlim(1, 1);
+        protected override RefreshContext CreateContext() => new AuthorRefreshContext();
         // SMS /authors/diff hard-rejects requests above 10,000 items and caps the body at 1MB;
         // 9,000 leaves headroom for one oversize author id-set appended to a nearly-full chunk.
         internal const int BulkAuthorDiffMaxItemsPerRequest = 9000;
 
-            public RefreshAuthorService(IProvideAuthorInfo authorInfo,
-                                        IAuthorService authorService,
-                                        IBookService bookService,
-                                        IEditionService editionService,
-                                        IMetadataProfileService metadataProfileService,
+        public RefreshAuthorService(IMetadataServerHealthGate metadataServerHealthGate,
+                                    IProvideAuthorInfo authorInfo,
+                                    IAuthorService authorService,
+                                    IBookService bookService,
+                                    IEditionService editionService,
+                                    IMetadataProfileService metadataProfileService,
                                     IRefreshBookService refreshBookService,
                                     IRefreshSeriesService refreshSeriesService,
                                     IEventAggregator eventAggregator,
                                     IManageCommandQueue commandQueueManager,
                                     IMediaFileService mediaFileService,
-                                    IHistoryService historyService,
+                                    IHistoryRepository historyRepository,
                                     IRootFolderService rootFolderService,
                                     ICheckIfAuthorShouldBeRefreshed checkIfAuthorShouldBeRefreshed,
                                     IMonitorNewBookService monitorNewBookService,
@@ -91,12 +104,17 @@ namespace NzbDrone.Core.Books
                                     IAuthorSyncQueueService syncQueueService,
                                     IRootFolderSettingsResolver rootFolderSettingsResolver,
                                     Logger logger,
+                                    IAuthorRepository authorRepository,
+                                    IBookRepository bookRepository,
                                     IEditionSelector editionSelector = null,
                                     IMainDatabase mainDatabase = null)
         : base(logger)
         {
             _authorInfo = authorInfo;
             _authorService = authorService;
+            _authorRepository = authorRepository ?? throw new ArgumentNullException(nameof(authorRepository));
+            _bookRepository = bookRepository ?? throw new ArgumentNullException(nameof(bookRepository));
+            _historyRepository = historyRepository ?? throw new ArgumentNullException(nameof(historyRepository));
             _bookService = bookService;
             _editionService = editionService;
             _metadataProfileService = metadataProfileService;
@@ -105,7 +123,6 @@ namespace NzbDrone.Core.Books
             _eventAggregator = eventAggregator;
             _commandQueueManager = commandQueueManager;
             _mediaFileService = mediaFileService;
-            _historyService = historyService;
             _rootFolderService = rootFolderService;
             _checkIfAuthorShouldBeRefreshed = checkIfAuthorShouldBeRefreshed;
             _monitorNewBookService = monitorNewBookService;
@@ -117,47 +134,10 @@ namespace NzbDrone.Core.Books
             _logger = logger;
             _editionSelector = editionSelector ?? new EditionSelector(logger);
             _mainDatabase = mainDatabase;
+            _metadataServerHealthGate = metadataServerHealthGate ?? throw new ArgumentNullException(nameof(metadataServerHealthGate));
         }
 
-        private IDisposable EnterAuthorMetadataRefreshGate(string context, CancellationToken cancellationToken)
-        {
-            var stopwatch = Stopwatch.StartNew();
-            if (AuthorMetadataRefreshGate.CurrentCount == 0)
-            {
-                _logger.Debug("[AUTHOR-REFRESH-GATE] Waiting for active author metadata refresh to finish before starting {0}", context);
-            }
-
-            AuthorMetadataRefreshGate.Wait(cancellationToken);
-            stopwatch.Stop();
-
-            if (stopwatch.ElapsedMilliseconds > 0)
-            {
-                _logger.Debug("[AUTHOR-REFRESH-GATE] Acquired author metadata refresh gate for {0} after {1}ms", context, stopwatch.ElapsedMilliseconds);
-            }
-
-            return new GateReleaser(() =>
-            {
-                AuthorMetadataRefreshGate.Release();
-                _logger.Debug("[AUTHOR-REFRESH-GATE] Released author metadata refresh gate for {0}", context);
-            });
-        }
-
-        private sealed class GateReleaser : IDisposable
-        {
-            private Action _release;
-
-            public GateReleaser(Action release)
-            {
-                _release = release;
-            }
-
-            public void Dispose()
-            {
-                Interlocked.Exchange(ref _release, null)?.Invoke();
-            }
-        }
-
-        private Author GetSkyhookData(Author author, bool forceRefresh = false, string expectedPublishedETag = null, bool bypassEtag = false, string authorIdentifierOverride = null)
+        private RefreshResult GetSkyhookData(ref Author author, bool forceRefresh = false, string expectedPublishedETag = null, bool bypassEtag = false, string authorIdentifierOverride = null)
         {
             var stopwatch = Stopwatch.StartNew();
             try
@@ -172,39 +152,38 @@ namespace NzbDrone.Core.Books
                     return null;
                 }
 
+                RefreshResult refreshResult = null;
                 try
                 {
                     // Get the current ETag from AuthorSyncMetadata if available
                     var syncMetadata = _syncMetadataService.GetSyncMetadata(author.Id);
                     var currentETag = syncMetadata?.ETag;
 
-                    if (!string.IsNullOrEmpty(authorIdentifier) &&
-                        (syncMetadata == null || !string.Equals(syncMetadata.ExternalAuthorId, authorIdentifier, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        _logger.Debug("[SYNC-METADATA] Ensuring sync metadata maps author {0} to {1}", author.Name, authorIdentifier);
-                        syncMetadata = _syncMetadataService.CreateOrUpdateSyncMetadata(author.Id, authorIdentifier, currentETag);
-                        currentETag = syncMetadata?.ETag;
-                    }
+                    var competingMapping = _syncMetadataService.GetSyncMetadataByExternalId(authorIdentifier);
+                    var identityNeedsRefresh = competingMapping != null && competingMapping.AuthorId != author.Id;
+                    // Persist the mapping only after the fresh payload has reconciled ownership.
+                    // A preceding author in this batch may already have absorbed this local row.
 
-                    var refreshResult = _authorInfo.RefreshAuthorInfo(authorIdentifier, currentETag, forceRefresh, expectedPublishedETag, bypassEtag);
+                    refreshResult = _authorInfo.RefreshAuthorInfo(authorIdentifier, currentETag, forceRefresh, expectedPublishedETag,
+                        bypassEtag || identityNeedsRefresh || author.AddOptions?.AwaitingMetadata == true);
+
+                    if (refreshResult.Terminal != null)
+                    {
+                        if (author.AddOptions?.AwaitingMetadata == true)
+                        {
+                            _eventAggregator.PublishEvent(new AuthorSetupMetadataRefusedEvent(author, authorIdentifier, refreshResult.Terminal));
+                        }
+
+                        _syncMetadataService.UpdateSyncResult(author.Id, success: false,
+                            error: refreshResult.Terminal.Message, httpStatus: (int?)refreshResult.HttpStatus ?? 0, retryAllowed: false);
+                        return null;
+                    }
 
                     if (refreshResult.HasChanges && refreshResult.Author != null)
                     {
-                        var refreshedAuthorIdentifier = GetPreferredAuthorIdentifier(refreshResult.Author) ?? authorIdentifier;
-                        var updatedETag = refreshResult.ETag ?? expectedPublishedETag;
-                        _syncMetadataService.CreateOrUpdateSyncMetadata(author.Id, refreshedAuthorIdentifier, updatedETag);
-
-                        _logger.Info($"Author {author.Name} was updated from API (ETag: {updatedETag ?? "none"})");
-
-                        // Store the new ETag after successful refresh
-                        _syncMetadataService.UpdateSyncResult(
-                            author.Id,
-                            success: true,
-                            etag: updatedETag,
-                            httpStatus: refreshResult.HttpStatus.HasValue ? (int)refreshResult.HttpStatus.Value : 200
-                        );
-
-                        return refreshResult.Author;
+                        author = ReconcilePublishedAuthorIdentity(author, refreshResult.Author);
+                        refreshResult.ETag ??= expectedPublishedETag;
+                        return refreshResult;
                     }
                     else if (refreshResult.Reason == RefreshReason.NotModified)
                     {
@@ -257,29 +236,23 @@ namespace NzbDrone.Core.Books
                         return null; // Author was deleted from metadata source
                     }
                 }
+                catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
                     _logger.Error(ex, "Failed to refresh author info for {0}", author.Name);
-                    // Fallback to existing GetAuthorInfo method on error
-                    try
-                    {
-                        var remoteAuthor = _authorInfo.GetAuthorInfo(authorIdentifier);
-                        if (remoteAuthor != null)
-                        {
-                            _logger.Info($"Author {author.Name} was updated from API using fallback method");
-                            return remoteAuthor;
-                        }
-                    }
-                    catch (Exception fallbackEx)
-                    {
-                        _logger.Error(fallbackEx, "Fallback author refresh also failed for {0}", author.Name);
-                    }
+                    _syncMetadataService.UpdateSyncResult(author.Id, success: false, error: ex.Message,
+                        httpStatus: (int?)refreshResult?.HttpStatus ?? 0,
+                        localFailure: ex is AuthorIdentityUnverifiedException { IsTransient: false });
+                    // Repeating the same endpoint through GetAuthorInfo cannot turn unavailable
+                    // ownership evidence into a valid snapshot. Retry on the next refresh.
+
                 }
 
                 // Return null to skip refresh — returning the local author (Books == null)
                 // would cause mass book deletion via SortChildren.
                 return null;
             }
+            catch (OperationCanceledException) { throw; }
             catch (Exceptions.AuthorNotFoundException)
             {
                 _logger.Error($"Could not find author {author.Name} with any provider ID");
@@ -302,7 +275,7 @@ namespace NzbDrone.Core.Books
             return AuthorIdentity.GetPreferredProviderId(author);
         }
 
-        private bool RefreshEntityInfoIfRemoteDataAvailable(Author author, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
+        private bool RefreshEntityInfoIfRemoteDataAvailable(Author author, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, CancellationToken cancellationToken = default, RefreshContext context = null)
         {
             if (remoteData == null)
             {
@@ -313,7 +286,10 @@ namespace NzbDrone.Core.Books
             var stopwatch = Stopwatch.StartNew();
             try
             {
-                return RefreshEntityInfo(author, null, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate);
+                using var writer = BookService.EnterWantedEditionLock(author, _logger, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                author = _authorService.GetAuthor(author.Id);
+                return author != null && RefreshEntityInfo(author, null, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate, context: context);
             }
             finally
             {
@@ -322,22 +298,45 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        public bool ReconcileAuthorBlob(Author localAuthor, Author authoritativeRemoteAuthor)
+        private bool ApplyFetchedAuthor(Author author, RefreshResult fetched, CancellationToken cancellationToken)
         {
-            if (localAuthor?.Id <= 0 || authoritativeRemoteAuthor == null)
+            if (fetched == null) return false;
+            try
+            {
+                var updated = RefreshEntityInfoIfRemoteDataAvailable(author, fetched.Author, true, false, null, cancellationToken);
+                _syncMetadataService.CreateOrUpdateSyncMetadata(author.Id, GetPreferredAuthorIdentifier(fetched.Author), fetched.ETag);
+                _syncMetadataService.UpdateSyncResult(author.Id, success: true, etag: fetched.ETag, httpStatus: (int?)fetched.HttpStatus ?? 200);
+                return updated;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (AuthorIdentityUnverifiedException) { throw; }
+            catch (Exception ex)
+            {
+                _syncMetadataService.UpdateSyncResult(author.Id, success: false, error: ex.Message, httpStatus: (int?)fetched.HttpStatus ?? 0, localFailure: true);
+                throw;
+            }
+        }
+
+        public bool ReconcileAuthorBlob(Author localAuthor, Author authoritativeRemoteAuthor,
+            IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds = null,
+            IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (localAuthor == null || localAuthor.Id <= 0 || authoritativeRemoteAuthor == null)
             {
                 return false;
             }
 
-            return RefreshEntityInfoIfRemoteDataAvailable(
-                localAuthor,
-                authoritativeRemoteAuthor,
-                forceChildRefresh: true,
-                forceUpdateFileTags: false,
-                lastUpdate: null);
+            localAuthor = ReconcilePublishedAuthorIdentity(localAuthor, authoritativeRemoteAuthor);
+            return RefreshEntityInfoIfRemoteDataAvailable(localAuthor, authoritativeRemoteAuthor, true, false, null,
+                cancellationToken, new AuthorRefreshContext
+                {
+                    RequestedNarrationIds = requestedNarrationIds,
+                    RequestedNarrationWorkIds = requestedNarrationWorkIds
+                });
         }
 
-        protected override RemoteData GetRemoteData(Author local, List<Author> remote, Author data)
+        protected override RemoteData GetRemoteData(Author local, List<Author> remote, Author data, RefreshContext context)
         {
             var result = new RemoteData();
 
@@ -372,7 +371,7 @@ namespace NzbDrone.Core.Books
         protected override bool IsMerge(Author local, Author remote)
         {
             _logger.Trace($"local: {local.Id} remote: {remote.Id}");
-            // Authors are now unique entities, no merging needed
+            // Published identity reconciliation owns author merges before this generic refresh.
             return false;
         }
 
@@ -410,30 +409,7 @@ namespace NzbDrone.Core.Books
             // Update local author with remote metadata
             local.UseMetadataFrom(remote);
 
-            // Update list exclusions for all provider IDs
-            var localProviderIds = new List<string>();
-            if (!string.IsNullOrEmpty(local.HardcoverAuthorId)) localProviderIds.Add(local.HardcoverAuthorId);
-            if (!string.IsNullOrEmpty(local.GoodreadsAuthorId)) localProviderIds.Add(local.GoodreadsAuthorId);
-            if (!string.IsNullOrEmpty(local.OpenLibraryAuthorId)) localProviderIds.Add(local.OpenLibraryAuthorId);
-            if (!string.IsNullOrEmpty(local.GoogleBooksAuthorId)) localProviderIds.Add(local.GoogleBooksAuthorId);
-
-            foreach (var providerId in localProviderIds)
-            {
-                var importExclusion = _importListExclusionService.FindByForeignId(providerId);
-                if (importExclusion != null)
-                {
-                    // Update to the new primary provider ID
-                    var newProviderId = remote.HardcoverAuthorId ??
-                                       remote.GoodreadsAuthorId?.ToString() ??
-                                       remote.OpenLibraryAuthorId ??
-                                       remote.GoogleBooksAuthorId;
-                    if (!string.IsNullOrEmpty(newProviderId))
-                    {
-                        importExclusion.ForeignId = newProviderId;
-                        _importListExclusionService.Update(importExclusion);
-                    }
-                }
-            }
+            MoveAuthorImportExclusions(local, remote);
 
             // Do the standard update
             UpdateEntity(local, remote);
@@ -444,64 +420,8 @@ namespace NzbDrone.Core.Books
 
         protected override UpdateResult MergeEntity(Author local, Author target, Author remote)
         {
-            _logger.Warn($"Author {local} was replaced with {remote} because the original was a duplicate.");
-
-            // Update list exclusions when merging authors
-            var localProviderIds = new List<string>();
-            if (!string.IsNullOrEmpty(local.HardcoverAuthorId)) localProviderIds.Add(local.HardcoverAuthorId);
-            if (!string.IsNullOrEmpty(local.GoodreadsAuthorId)) localProviderIds.Add(local.GoodreadsAuthorId);
-            if (!string.IsNullOrEmpty(local.OpenLibraryAuthorId)) localProviderIds.Add(local.OpenLibraryAuthorId);
-            if (!string.IsNullOrEmpty(local.GoogleBooksAuthorId)) localProviderIds.Add(local.GoogleBooksAuthorId);
-
-            foreach (var providerId in localProviderIds)
-            {
-                var importExclusionLocal = _importListExclusionService.FindByForeignId(providerId);
-                if (importExclusionLocal != null)
-                {
-                    // Check if target already has an exclusion
-                    var targetProviderIds = new List<string>();
-                    if (!string.IsNullOrEmpty(target.HardcoverAuthorId)) targetProviderIds.Add(target.HardcoverAuthorId);
-                    if (!string.IsNullOrEmpty(target.GoodreadsAuthorId)) targetProviderIds.Add(target.GoodreadsAuthorId);
-                    if (!string.IsNullOrEmpty(target.OpenLibraryAuthorId)) targetProviderIds.Add(target.OpenLibraryAuthorId);
-                    if (!string.IsNullOrEmpty(target.GoogleBooksAuthorId)) targetProviderIds.Add(target.GoogleBooksAuthorId);
-
-                    var hasTargetExclusion = false;
-                    foreach (var targetId in targetProviderIds)
-                    {
-                        if (_importListExclusionService.FindByForeignId(targetId) != null)
-                        {
-                            hasTargetExclusion = true;
-                            break;
-                        }
-                    }
-
-                    if (!hasTargetExclusion)
-                    {
-                        // Update to the remote's primary provider ID
-                        var newProviderId = remote.HardcoverAuthorId ??
-                                           remote.GoodreadsAuthorId?.ToString() ??
-                                           remote.OpenLibraryAuthorId ??
-                                           remote.GoogleBooksAuthorId;
-                        if (!string.IsNullOrEmpty(newProviderId))
-                        {
-                            importExclusionLocal.ForeignId = newProviderId;
-                            _importListExclusionService.Update(importExclusionLocal);
-                        }
-                    }
-                }
-            }
-
-            // move any books over to the new author and remove the local author
-            var books = _bookService.GetBooksByAuthor(local.Id);
-            _bookService.ReassignAuthor(books, target);
-            _authorService.DeleteAuthor(local.Id, false);
-
-            // Update history entries to new id
-            var items = _historyService.GetByAuthor(local.Id, null);
-            items.ForEach(x => x.AuthorId = target.Id);
-            _historyService.UpdateMany(items);
-
-            // We know we need to update tags as author id has changed
+            if (!TryMergeAuthorsWithoutDataLoss(local, target, GetPreferredAuthorIdentifier(remote), out var reason, remote))
+                throw new InvalidOperationException(reason);
             return UpdateResult.UpdateTags;
         }
 
@@ -544,9 +464,10 @@ namespace NzbDrone.Core.Books
             _authorService.DeleteAuthor(local.Id, deleteFiles);
         }
 
-                protected override List<Book> GetRemoteChildren(Author local, Author remote)
+                protected override List<Book> GetRemoteChildren(Author local, Author remote, RefreshContext context)
                 {
-                    _authorRefreshRehomeBlueprint = remote?.Books?
+                    var run = (AuthorRefreshContext)context;
+                    run.RehomeBlueprint = remote?.Books?
                         .Where(book => book != null)
                         .Select(book => RefreshEntityCopy.CloneBook(book, includeEditions: true))
                         .ToList() ?? new List<Book>();
@@ -562,7 +483,9 @@ namespace NzbDrone.Core.Books
                         ebookMetadataProfileIdOverride: null,
                         editionSelector: null,
                         retainEditions: true,
-                        logContext: "GetRemoteChildren");
+                        logContext: "GetRemoteChildren",
+                        requestedNarrationIds: run.RequestedNarrationIds,
+                        requestedNarrationWorkIds: run.RequestedNarrationWorkIds);
                 }
 
                 internal static List<Book> NormalizeRemoteBooks(
@@ -576,7 +499,9 @@ namespace NzbDrone.Core.Books
                     int? ebookMetadataProfileIdOverride,
                     IEditionSelector editionSelector,
                     bool retainEditions,
-                    string logContext)
+                    string logContext,
+                    IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds = null,
+                    IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds = null)
                 {
                     var allBooks = (remoteBooks ?? Enumerable.Empty<Book>())
                         .Where(book => book != null)
@@ -598,7 +523,7 @@ namespace NzbDrone.Core.Books
                         metadataProfileService,
                         logger,
                         audiobookMetadataProfileIdOverride,
-                        ebookMetadataProfileIdOverride);
+                        ebookMetadataProfileIdOverride, requestedNarrationIds, requestedNarrationWorkIds);
 
                     var afterExclusions = ApplyImportListExclusions(profileFiltered, importListExclusionService);
 
@@ -636,7 +561,7 @@ namespace NzbDrone.Core.Books
                         }
 
                         skipped++;
-                        logger?.Error("[REMOTE-BOOK-DATA] {0}: skipping remote book '{1}' for author '{2}' because it has no editions. MediaType={3}, ProviderIds=[{4}]",
+                        logger?.Debug("[REMOTE-BOOK-DATA] {0}: skipping remote book '{1}' for author '{2}' because it has no editions. MediaType={3}, ProviderIds=[{4}]",
                             logContext,
                             book?.Title ?? "Unknown",
                             local?.Name ?? "Unknown",
@@ -679,7 +604,9 @@ namespace NzbDrone.Core.Books
                     IMetadataProfileService metadataProfileService,
                     Logger logger,
                     int? audiobookMetadataProfileIdOverride,
-                    int? ebookMetadataProfileIdOverride)
+                    int? ebookMetadataProfileIdOverride,
+                    IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds,
+                    IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds)
                 {
                     var profileFiltered = new List<Book>();
                     var audiobookProfileId = audiobookMetadataProfileIdOverride ?? local?.AudiobookMetadataProfileId;
@@ -721,7 +648,9 @@ namespace NzbDrone.Core.Books
                             Series = seriesList.Where(series => series.MediaType == mediaType).ToList()
                         };
 
-                        profileFiltered.AddRange(metadataProfileService.FilterBooks(authorForFilter, profileId.Value));
+                        profileFiltered.AddRange((requestedNarrationIds?.Count > 0 || requestedNarrationWorkIds?.Count > 0)
+                            ? metadataProfileService.FilterBooks(authorForFilter, profileId.Value, requestedNarrationIds, requestedNarrationWorkIds)
+                            : metadataProfileService.FilterBooks(authorForFilter, profileId.Value));
                     }
 
                     FilterMediaType(BookMediaType.Audiobook, audiobookProfileId);
@@ -788,7 +717,7 @@ namespace NzbDrone.Core.Books
                             continue;
                         }
 
-                        var fingerprint = BuildIdenticalPocketFingerprint(book);
+                        var fingerprint = BookIdentity.BuildIdenticalPocketFingerprint(book);
 
                         // null fingerprint = not provably identical to anything (no clean identity, or an edition
                         // without a foreign id) -> always keep. "When in doubt, keep both."
@@ -812,40 +741,12 @@ namespace NzbDrone.Core.Books
                     return result;
                 }
 
-                // Fingerprint = media type + the full set of stable work tokens + the full set of edition
-                // identities (ForeignEditionId). Two pockets collapse ONLY when both are equal — i.e. the server
-                // literally returned the same work with the same editions twice. Returns null (-> keep) for any
-                // pocket we cannot fully fingerprint, so non-identical pockets are never merged or dropped.
-                private static string BuildIdenticalPocketFingerprint(Book book)
+                internal List<int> RepairOverMergedBookEditions(int authorId, List<Book> remoteBlueprint) =>
+                    RepairOverMergedBookEditions(authorId, remoteBlueprint, out _);
+
+                private List<int> RepairOverMergedBookEditions(int authorId, List<Book> remoteBlueprint, out bool changed)
                 {
-                    if (book?.Editions == null || book.Editions.Count == 0)
-                    {
-                        return null;
-                    }
-
-                    var editionIds = new List<string>(book.Editions.Count);
-                    foreach (var edition in book.Editions)
-                    {
-                        if (edition == null || string.IsNullOrWhiteSpace(edition.ForeignEditionId))
-                        {
-                            return null;
-                        }
-
-                        editionIds.Add(edition.ForeignEditionId.Trim().ToLowerInvariant());
-                    }
-
-                    editionIds.Sort(StringComparer.Ordinal);
-
-                    var workTokens = BookIdentity.GetStableWorkProviderIdentityTokens(book)
-                        .Where(token => !string.IsNullOrWhiteSpace(token))
-                        .Select(token => token.Trim().ToLowerInvariant())
-                        .OrderBy(token => token, StringComparer.Ordinal);
-
-                    return $"{book.MediaType}::W[{string.Join(",", workTokens)}]::E[{string.Join(",", editionIds)}]";
-                }
-
-                internal List<int> RepairOverMergedBookEditions(int authorId, List<Book> remoteBlueprint)
-                {
+                    changed = false;
                     var deletedSourceBookIds = new List<int>();
 
                     if (authorId <= 0 || remoteBlueprint == null || remoteBlueprint.Count == 0)
@@ -934,15 +835,13 @@ namespace NzbDrone.Core.Books
                         .GroupBy(e => e.BookId)
                         .ToDictionary(g => g.Key, g => g.Where(x => x != null).ToList());
 
+                    foreach (var book in localBooks.Where(book => book != null))
+                        book.Editions = editionsByBookId.GetValueOrDefault(book.Id) ?? new List<Edition>();
+
                     var editionById = localEditions
                         .Where(e => e != null && e.Id > 0)
                         .GroupBy(e => e.Id)
                         .ToDictionary(g => g.Key, g => g.First());
-
-                    var originalBookIdsWithManualEditions = localEditions
-                        .Where(e => e != null && e.BookId > 0 && e.ManualAdd)
-                        .Select(e => e.BookId)
-                        .ToHashSet();
 
                     var localBookById = localBooks
                         .Where(b => b != null && b.Id > 0)
@@ -1089,18 +988,12 @@ namespace NzbDrone.Core.Books
                         }
                     }
 
-                    bool HasFilesForKey(Book book, string remoteKey)
-                    {
-                        return book != null &&
-                               book.Id > 0 &&
-                               fileCountsByBookIdAndRemoteKey.TryGetValue(book.Id, out var counts) &&
-                               counts.TryGetValue(remoteKey, out var count) &&
-                               count > 0;
-                    }
-
-                    var editionsToMove = new List<Edition>();
-                    var editionsToDelete = new List<Edition>();
-                    var filesToUpdate = new List<BookFile>();
+                    var pocketIndex = BookRefreshMatchingIndex.Build(localBooks, _logger, remoteBlueprint);
+                    var populatedBookIds = files.Where(file => file != null && editionById.ContainsKey(file.EditionId))
+                        .Select(file => editionById[file.EditionId].BookId).ToHashSet();
+                    var identityUpdates = new List<Book>();
+                    var ownershipMoves = new List<LibraryIdentityWriter.EditionMove>();
+                    var filelessMerges = new Dictionary<int, int>();
                     var repairedSourceBookIds = new HashSet<int>();
 
                     Book FindTargetBook(string remoteKey, Book sourceBook)
@@ -1109,14 +1002,10 @@ namespace NzbDrone.Core.Books
 
                         if (localBooksByRemoteKey.TryGetValue(remoteKey, out var candidates))
                         {
-                            var filtered = candidates.Where(b => b.Id != sourceBook.Id).ToList();
+                            var filtered = candidates.Where(b => b.Id != sourceBook.Id && !populatedBookIds.Contains(b.Id)).ToList();
                             if (filtered.Any())
                             {
-                                targetBook = filtered
-                                    .OrderByDescending(b => HasFilesForKey(b, remoteKey))
-                                    .ThenByDescending(b => b.AddOptions?.AddType == BookAddType.Manual)
-                                    .ThenBy(b => b.Id)
-                                    .First();
+                                targetBook = filtered.OrderBy(b => b.Id).First();
                             }
                         }
 
@@ -1126,15 +1015,12 @@ namespace NzbDrone.Core.Books
                                 localBooks
                                     .Where(b => b != null && b.Id > 0 && b.Id != sourceBook.Id)
                                     .Where(b => b.AddOptions?.AddType != BookAddType.Manual)
-                                    .Where(b => b.MediaType == remoteBook.MediaType),
+                                    .Where(b => b.MediaType == remoteBook.MediaType && !populatedBookIds.Contains(b.Id)),
                                 remoteBook);
 
                             if (fallback.Any())
                             {
-                                targetBook = fallback
-                                    .OrderByDescending(b => HasFilesForKey(b, remoteKey))
-                                    .ThenBy(b => b.Id)
-                                    .First();
+                                targetBook = fallback.OrderBy(b => b.Id).First();
                             }
                         }
 
@@ -1235,6 +1121,29 @@ namespace NzbDrone.Core.Books
                             .Select(kv => kv.Key)
                             .ToList();
 
+                        if (orderedKeys.Count == 1 && remoteBookByKey.TryGetValue(orderedKeys[0], out var servedPocket))
+                        {
+                            // A published merge changes provider identity, not the number of local recordings.
+                            if ((pocketIndex.MatchesMultipleRemotePockets(sourceBook) || !SourceAlreadyMatchesRemoteKey(sourceBook, orderedKeys[0])) &&
+                                ((sourceBook.BaseBookId, sourceBook.HardcoverBookId, sourceBook.GoodreadsWorkId, sourceBook.OpenLibraryWorkId) !=
+                                 (servedPocket.BaseBookId, servedPocket.HardcoverBookId, servedPocket.GoodreadsWorkId, servedPocket.OpenLibraryWorkId) ||
+                                 !BookIdentity.GetStableWorkProviderIdentityTokens(sourceBook).SetEquals(BookIdentity.GetStableWorkProviderIdentityTokens(servedPocket))))
+                            {
+                                var metadata = RefreshEntityCopy.CloneBook(servedPocket, false);
+                                metadata.UseDbFieldsFrom(sourceBook);
+                                sourceBook.UseMetadataFrom(metadata);
+                                identityUpdates.Add(sourceBook);
+                            }
+                            if (localBooksByRemoteKey.TryGetValue(orderedKeys[0], out var duplicates))
+                            {
+                                foreach (var duplicate in duplicates.Where(book => book.Id != sourceBook.Id &&
+                                    BookIdentity.CanAbsorbDuplicate(book, populatedBookIds.Contains(book.Id)) &&
+                                    !pocketIndex.MatchesMultipleRemotePockets(book)))
+                                    filelessMerges.TryAdd(duplicate.Id, sourceBook.Id);
+                            }
+                            continue;
+                        }
+
                         var primaryKey = orderedKeys.Count > 1 ? orderedKeys.First() : null;
 
                         var remoteKeysToMove = orderedKeys.Count > 1
@@ -1282,8 +1191,7 @@ namespace NzbDrone.Core.Books
                                         file.Edition = equivalentTargetEdition;
                                     }
 
-                                    filesToUpdate.AddRange(filesForEdition);
-                                    editionsToDelete.Add(edition);
+                                    ownershipMoves.Add(new LibraryIdentityWriter.EditionMove(edition.Id, targetBook.Id, equivalentTargetEdition.Id));
                                     _logger.Info("[UNMERGE] Repointing {0} file(s) from duplicate edition '{1}' (ID={2}) to existing edition '{3}' (ID={4}).",
                                         filesForEdition.Count,
                                         edition.Title ?? edition.ForeignEditionId ?? "Unknown",
@@ -1293,108 +1201,46 @@ namespace NzbDrone.Core.Books
                                     continue;
                                 }
 
+                                ownershipMoves.Add(new LibraryIdentityWriter.EditionMove(edition.Id, targetBook.Id));
                                 edition.BookId = targetBook.Id;
                                 edition.Book = targetBook;
-                                editionsToMove.Add(edition);
                             }
                         }
                     }
 
-                    var dedupedFiles = filesToUpdate
-                        .Where(f => f != null && f.Id > 0)
-                        .GroupBy(f => f.Id)
-                        .Select(g => g.First())
-                        .ToList();
-                    if (dedupedFiles.Any())
-                    {
-                        _mediaFileService.Update(dedupedFiles);
-                    }
+                    // A move destination may be fileless at load time, but receives files
+                    // in this transaction. Never also absorb a participant in that move.
+                    var moveBookIds = repairedSourceBookIds.Concat(ownershipMoves.Select(move => move.TargetBookId)).ToHashSet();
+                    foreach (var sourceId in filelessMerges.Where(pair => moveBookIds.Contains(pair.Key) || moveBookIds.Contains(pair.Value))
+                        .Select(pair => pair.Key).ToList())
+                        filelessMerges.Remove(sourceId);
 
-                    var dedupedDeletes = editionsToDelete
-                        .Where(e => e != null && e.Id > 0)
-                        .GroupBy(e => e.Id)
-                        .Select(g => g.First())
-                        .ToList();
-                    if (dedupedDeletes.Any())
-                    {
-                        _editionService.DeleteMany(dedupedDeletes);
-                    }
-
-                    var dedupedMoves = editionsToMove
-                        .Where(e => e != null && e.Id > 0)
-                        .GroupBy(e => e.Id)
-                        .Select(g => g.First())
-                        .ToList();
-                    if (dedupedMoves.Any())
-                    {
-                        _editionService.UpdateMany(dedupedMoves);
-                    }
-
-                    var deletedEditionIds = dedupedDeletes
-                        .Select(e => e.Id)
-                        .ToHashSet();
-
-                    int GetCurrentFileBookId(BookFile file)
-                    {
-                        if (file == null || file.EditionId <= 0)
-                        {
-                            return 0;
-                        }
-
-                        if (file.Edition != null && file.Edition.Id == file.EditionId)
-                        {
-                            return file.Edition.BookId;
-                        }
-
-                        if (editionById.TryGetValue(file.EditionId, out var edition))
-                        {
-                            return edition.BookId;
-                        }
-
-                        return 0;
-                    }
-
-                    var remainingEditionCountsByBookId = localEditions
-                        .Where(e => e != null && e.Id > 0 && !deletedEditionIds.Contains(e.Id))
-                        .GroupBy(e => e.BookId)
-                        .ToDictionary(g => g.Key, g => g.Count());
-
-                    var remainingFileCountsByBookId = files
-                        .Where(f => f != null && f.Id > 0)
-                        .Select(GetCurrentFileBookId)
-                        .Where(bookId => bookId > 0)
-                        .GroupBy(bookId => bookId)
-                        .ToDictionary(g => g.Key, g => g.Count());
-
-                    foreach (var sourceBookId in repairedSourceBookIds.OrderBy(id => id))
-                    {
-                        if (!localBookById.TryGetValue(sourceBookId, out var sourceBook))
-                        {
-                            continue;
-                        }
-
-                        if (HasLocalBookInstancePreservationMarker(sourceBook) || originalBookIdsWithManualEditions.Contains(sourceBookId))
-                        {
-                            continue;
-                        }
-
-                        remainingEditionCountsByBookId.TryGetValue(sourceBookId, out var remainingEditionCount);
-                        remainingFileCountsByBookId.TryGetValue(sourceBookId, out var remainingFileCount);
-
-                        if (remainingEditionCount > 0 || remainingFileCount > 0)
-                        {
-                            continue;
-                        }
-
-                        _logger.Info("[UNMERGE] Deleting empty source book '{0}' (ID={1}) after re-home repair; no editions or files remain.",
-                            sourceBook.Title,
-                            sourceBook.Id);
-                        _bookService.DeleteBook(sourceBook.Id, false);
-                        deletedSourceBookIds.Add(sourceBook.Id);
-                    }
+                    changed = identityUpdates.Count > 0 || ownershipMoves.Count > 0 || filelessMerges.Count > 0;
+                    if (changed)
+                        deletedSourceBookIds.AddRange(ApplyEditionOwnershipMoves(authorId, ownershipMoves, repairedSourceBookIds, identityUpdates, filelessMerges));
 
                     return deletedSourceBookIds;
                 }
+
+        internal virtual List<int> ApplyEditionOwnershipMoves(int authorId, IReadOnlyCollection<LibraryIdentityWriter.EditionMove> moves,
+            IReadOnlyCollection<int> sourceBookIds, IReadOnlyCollection<Book> identityUpdates, IReadOnlyDictionary<int, int> filelessMerges)
+        {
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            var deleted = new List<int>();
+            _bookRepository.UpdateManyAtomic(identityUpdates.ToList(), (connection, transaction) =>
+            {
+                var writer = new LibraryIdentityWriter(connection, transaction, _mainDatabase.DatabaseType, _editionSelector);
+                deleted.AddRange(writer.MoveEditions(moves));
+                foreach (var pair in filelessMerges)
+                    if (writer.MergeBook(pair.Key, pair.Value)) deleted.Add(pair.Key);
+            });
+            PublishIdentityChange(new LibraryIdentityChangedEvent(new[] { authorId },
+                sourceBookIds.Concat(moves.Select(move => move.TargetBookId)).Concat(identityUpdates.Select(book => book.Id))
+                    .Concat(filelessMerges.Keys).Concat(filelessMerges.Values), deleted));
+            _logger.Debug("[EDITION-MOVE] Author {0}: {1} moves, {2} identity updates, {3} merge candidates, {4} removed rows in {5} ms",
+                authorId, moves.Count, identityUpdates.Count, filelessMerges.Count, deleted.Count, timer.ElapsedMilliseconds);
+            return deleted;
+        }
 
             private static string GetUnmergeWorkKey(Book book)
             {
@@ -1413,11 +1259,17 @@ namespace NzbDrone.Core.Books
                     .ToList();
             }
 
-            protected override List<Book> GetLocalChildren(Author entity, List<Book> remoteChildren)
+            protected override List<Book> GetLocalChildren(Author entity, List<Book> remoteChildren, RefreshContext context)
             {
                 var books = _bookService.GetBooksForRefresh(entity.Id, foreignIds: null);
                 HydrateLocalChildrenForRefresh(entity, books);
+                InitializeBookRefreshMatchingIndex(books, remoteChildren, context);
                 return books;
+            }
+
+            protected void InitializeBookRefreshMatchingIndex(List<Book> localChildren, List<Book> remoteChildren, RefreshContext context)
+            {
+                ((AuthorRefreshContext)context).MatchingIndex = BookRefreshMatchingIndex.Build(localChildren, _logger, remoteChildren);
             }
 
             private void HydrateLocalChildrenForRefresh(Author entity, List<Book> books)
@@ -1530,47 +1382,20 @@ namespace NzbDrone.Core.Books
             return book.Id > 0 && _mediaFileService.GetFilesByBook(book.Id).Any();
         }
 
-        private bool HasLocalBookInstancePreservationMarker(Book book)
-        {
-            if (book == null)
-            {
-                return true;
-            }
-
-            if (book.AddOptions?.AddType == BookAddType.Manual)
-            {
-                return true;
-            }
-
-            if (!string.IsNullOrWhiteSpace(book.UnitKeyHash))
-            {
-                // UnitKeyHash is the durable identity of an intentional multi-copy row. Refresh
-                // may update it from the server pocket, but must never merge it away as a duplicate.
-                return true;
-            }
-
-            if (!book.AnyEditionOk)
-            {
-                return true;
-            }
-
-            return book.Editions?.Any(edition => edition?.ManualAdd == true) == true;
-        }
-
         private bool ShouldPreserveLocalBookInstance(Book book)
         {
-            return HasLocalBookInstancePreservationMarker(book) || HasKnownFiles(book);
+            return !BookIdentity.CanAbsorbDuplicate(book, HasKnownFiles(book));
         }
 
-        private BookRefreshMatchingIndex GetBookRefreshMatchingIndex(List<Book> existingChildren)
+        private static BookRefreshMatchingIndex GetBookRefreshMatchingIndex(List<Book> existingChildren, RefreshContext context)
         {
-            if (_bookRefreshMatchingIndex?.Source == existingChildren)
+            var index = ((AuthorRefreshContext)context).MatchingIndex;
+            if (index?.Source == existingChildren)
             {
-                return _bookRefreshMatchingIndex;
+                return index;
             }
 
-            _bookRefreshMatchingIndex = BookRefreshMatchingIndex.Build(existingChildren, _logger);
-            return _bookRefreshMatchingIndex;
+            throw new InvalidOperationException("Book refresh matching requires the complete local and remote snapshots from GetLocalChildren.");
         }
 
         private sealed class BookRefreshMatchingIndex
@@ -1578,6 +1403,8 @@ namespace NzbDrone.Core.Books
             private readonly Dictionary<string, List<Book>> _booksByProviderToken;
             private readonly Dictionary<int, int> _sourceOrderByBookId;
             private readonly HashSet<int> _activeBookIds;
+            private readonly Dictionary<int, (int Count, int BestRank)> _remotePocketMatches = new();
+            private readonly Dictionary<int, Book> _matchedRemotePockets = new Dictionary<int, Book>();
 
             private BookRefreshMatchingIndex(
                 List<Book> source,
@@ -1593,8 +1420,11 @@ namespace NzbDrone.Core.Books
 
             public List<Book> Source { get; }
 
-            public static BookRefreshMatchingIndex Build(List<Book> existingChildren, Logger logger)
+            public static BookRefreshMatchingIndex Build(List<Book> existingChildren, Logger logger, List<Book> remoteChildren)
             {
+                ArgumentNullException.ThrowIfNull(remoteChildren);
+                var stopwatch = Stopwatch.StartNew();
+                long matchedPairs = 0;
                 var source = existingChildren ?? new List<Book>();
                 var booksByProviderToken = new Dictionary<string, List<Book>>(StringComparer.OrdinalIgnoreCase);
                 var sourceOrderByBookId = new Dictionary<int, int>();
@@ -1623,12 +1453,37 @@ namespace NzbDrone.Core.Books
                     }
                 }
 
-                logger?.Debug("[AUTHOR-REFRESH-TIMING] Built book provider lookup for {0} local books with {1} provider tokens",
-                    source.Count,
-                    booksByProviderToken.Count);
+                var index = new BookRefreshMatchingIndex(source, booksByProviderToken, sourceOrderByBookId, activeBookIds);
+                // Count against the complete filtered snapshot before the sorter consumes any rows.
+                // Keep ambiguous edition matches in this conservative superset: consumption can
+                // make them unique for a later pocket. Overlap alone does not prove a duplicate.
+                foreach (var remote in remoteChildren)
+                {
+                    var matches = index.GetMatches(remote);
+                    foreach (var book in matches.Matches)
+                    {
+                        var previous = index._remotePocketMatches.GetValueOrDefault(book.Id);
+                        index._remotePocketMatches[book.Id] = (previous.Count + 1,
+                            Math.Max(previous.BestRank, BookIdentity.GetPocketMatchRank(book, remote)));
+                        matchedPairs++;
+                    }
+                }
 
-                return new BookRefreshMatchingIndex(source, booksByProviderToken, sourceOrderByBookId, activeBookIds);
+                logger?.Debug("[AUTHOR-REFRESH-TIMING] Built book provider lookup for {0} local books, {1} remote pockets, {2} provider tokens and {3} matched pairs in {4}ms",
+                    source.Count, remoteChildren.Count, booksByProviderToken.Count, matchedPairs, stopwatch.ElapsedMilliseconds);
+                return index;
             }
+
+            public bool MatchesMultipleRemotePockets(Book book) => _remotePocketMatches.GetValueOrDefault(book.Id).Count > 1;
+
+            public int GetRelativePocketMatchRank(Book book, Book remote) => MatchesMultipleRemotePockets(book)
+                ? BookIdentity.GetPocketMatchRank(book, remote) - _remotePocketMatches[book.Id].BestRank
+                : 0;
+
+            public Book GetMatchedRemotePocket(Book book) => _matchedRemotePockets.GetValueOrDefault(book.Id);
+
+            public WorkFirstMatchResult GetMatches(Book remote) => BookIdentity.FindWorkFirstMatchResult(
+                GetCandidates(remote).Where(book => book.MediaType == remote.MediaType), remote);
 
             public List<Book> GetCandidates(Book remote)
             {
@@ -1662,11 +1517,12 @@ namespace NzbDrone.Core.Books
                     .ToList();
             }
 
-            public void Consume(Book existingChild, IEnumerable<Book> mergedChildren)
+            public void Consume(Book existingChild, IEnumerable<Book> mergedChildren, Book remote)
             {
                 if (existingChild?.Id > 0)
                 {
                     _activeBookIds.Remove(existingChild.Id);
+                    _matchedRemotePockets[existingChild.Id] = remote;
                 }
 
                 foreach (var child in mergedChildren ?? Enumerable.Empty<Book>())
@@ -1679,17 +1535,12 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        protected override Tuple<Book, List<Book>> GetMatchingExistingChildren(List<Book> existingChildren, Book remote)
+        protected override Tuple<Book, List<Book>> GetMatchingExistingChildren(List<Book> existingChildren, Book remote, RefreshContext context)
         {
             // Match work-first. Shared edition aliases (ASIN, GB, providerIdsAll, etc.) are not enough to merge
             // distinct remote works; edition fallback is only used when there is no stable work identity.
-            var matchingIndex = GetBookRefreshMatchingIndex(existingChildren);
-            var candidates = matchingIndex
-                .GetCandidates(remote)
-                .Where(x => x.MediaType == remote.MediaType)
-                .ToList();
-
-            var matchResult = BookIdentity.FindWorkFirstMatchResult(candidates, remote);
+            var matchingIndex = GetBookRefreshMatchingIndex(existingChildren, context);
+            var matchResult = matchingIndex.GetMatches(remote);
             var matchingBooks = matchResult.Matches.ToList();
             if (matchResult.Disposition == WorkFirstMatchDisposition.EditionAmbiguous &&
                 !IsSameRemotePocketCopySet(matchingBooks, remote))
@@ -1713,13 +1564,18 @@ namespace NzbDrone.Core.Books
             var mergeChildren = new List<Book>();
             Book existingChild = null;
 
-            // Multiple local matches for a single remote book can happen due to legacy imports and/or upstream ID changes.
-            // Prefer the canonical (non-wanted-narrator) copy and the pinned copy (has files / manual) so that the
-            // remote refresh updates the intended in-library book, and mark only truly-unwanted duplicates for deletion.
+            // Use uncontested rows first; only competing pockets need affinity ordering.
+            // For a consolidated pocket, files outrank a fileless duplicate's old pocket key.
+            // Reserve stronger evidence for the other pocket; without pocket evidence, a contested
+            // fileless row must be used before taking an owned row solely because it has files.
             if (matchingBooks.Any())
             {
                 existingChild = matchingBooks
-                    .OrderByDescending(HasKnownFiles)
+                    .OrderBy(matchingIndex.MatchesMultipleRemotePockets)
+                    .ThenByDescending(book => matchingIndex.GetRelativePocketMatchRank(book, remote))
+                    .ThenBy(book => matchingIndex.MatchesMultipleRemotePockets(book) &&
+                        BookIdentity.GetPocketMatchRank(book, remote) == 0 && HasKnownFiles(book))
+                    .ThenByDescending(HasKnownFiles)
                     .ThenBy(b => b.AddOptions?.AddType == BookAddType.Manual)
                     .ThenByDescending(ProviderScore)
                     .ThenBy(b => b.Id)
@@ -1727,7 +1583,7 @@ namespace NzbDrone.Core.Books
 
                 foreach (var dup in matchingBooks.Where(b => b.Id != existingChild.Id))
                 {
-                    if (ShouldPreserveLocalBookInstance(dup))
+                    if (matchingIndex.MatchesMultipleRemotePockets(dup) || ShouldPreserveLocalBookInstance(dup))
                     {
                         continue;
                     }
@@ -1735,7 +1591,7 @@ namespace NzbDrone.Core.Books
                     mergeChildren.Add(dup);
                 }
 
-                matchingIndex.Consume(existingChild, mergeChildren);
+                matchingIndex.Consume(existingChild, mergeChildren, remote);
                 return Tuple.Create(existingChild, mergeChildren);
             }
 
@@ -1912,6 +1768,14 @@ namespace NzbDrone.Core.Books
                         return;
                     }
 
+                    // Normalize before insertion so the canonical edition writer sees
+                    // one selection and independent retention pins need no second write.
+                    foreach (var book in newBooks)
+                    {
+                        _editionSelector.EnsureSingleMonitoredEdition(book.Editions, mediaType: book.MediaType, anyEditionOk: book.AnyEditionOk);
+                        book.ForeignEditionId = book.Editions.FirstOrDefault(edition => edition.Monitored)?.ForeignEditionId;
+                    }
+
                     _logger.Debug("AddChildren: Inserting {0} new books", newBooks.Count);
                     _bookService.InsertMany(newBooks);
 
@@ -1930,52 +1794,44 @@ namespace NzbDrone.Core.Books
 
                     _logger.Debug("AddChildren: Inserting {0} editions for {1} new books", allEditions.Count, newBooks.Count);
                     _editionService.InsertMany(allEditions);
-
-                    // Set monitored editions for the newly inserted books in one batch.
-                    // This mirrors SetMonitored(..., false): exactly one monitored edition per book,
-                    // non-selected editions lose ManualAdd, and the selected edition is not marked manual.
-                    var editionsToUpdate = new List<Edition>();
-                    foreach (var book in newBooks)
-                    {
-                        var bookEditions = book.Editions?
-                            .Where(e => e != null)
-                            .ToList() ?? new List<Edition>();
-                        var monitoredEdition = bookEditions
-                            .Where(e => e.Monitored)
-                            .OrderBy(e => e.Id)
-                            .FirstOrDefault()
-                            ?? _editionSelector.SelectBestEdition(bookEditions, book.MediaType);
-                        if (monitoredEdition == null)
-                        {
-                            continue;
-                        }
-
-                        book.ForeignEditionId = monitoredEdition.ForeignEditionId;
-                        foreach (var edition in bookEditions)
-                        {
-                            if (ReferenceEquals(edition, monitoredEdition) || (edition.Id > 0 && edition.Id == monitoredEdition.Id))
-                            {
-                                edition.Monitored = true;
-                            }
-                            else
-                            {
-                                edition.Monitored = false;
-                                edition.ManualAdd = false;
-                            }
-                        }
-
-                        editionsToUpdate.AddRange(bookEditions);
-                    }
-
-                    if (editionsToUpdate.Any())
-                    {
-                        _editionService.UpdateMany(editionsToUpdate);
-                    }
                 }
 
-            protected override bool RefreshChildren(SortedChildren localChildren, List<Book> remoteChildren, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
+        protected override void PrepareChildrenForRefresh(Author entity, SortedChildren children, List<Book> remote, RefreshContext context)
+        {
+            var run = (AuthorRefreshContext)context;
+            var blueprint = run.RehomeBlueprint?.Any() == true ? run.RehomeBlueprint : remote;
+            bool changed;
+            try
             {
+                RepairOverMergedBookEditions(entity.Id, blueprint, out changed);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Error(ex, "[UNMERGE] Could not repair edition ownership for author {0}; continuing other books, refresh remains incomplete", entity.Id);
+                run.IdentityFailures.Add(ex);
+                return;
+            }
+            if (!changed) return;
+
+            // Repair can adopt identities or remove fileless duplicates. Sort the freshly
+            // loaded rows with the same sorter, never feed stale pocket choices to book refresh.
+            var addedIds = children.Added.Select(book => book.Id).ToHashSet();
+            var current = ClassifyChildren(entity, remote, context);
+            ProcessChildren(entity, current);
+            AddChildren(current.Added);
+            children.Added = current.Future.Where(book => addedIds.Contains(book.Id)).Concat(current.Added).DistinctBy(book => book.Id).ToList();
+            children.UpToDate = current.UpToDate.Where(book => !addedIds.Contains(book.Id)).ToList();
+            children.Updated = current.Updated.Where(book => !addedIds.Contains(book.Id)).ToList();
+            children.Matched = current.Matched;
+            children.Merged = current.Merged;
+            children.Deleted = current.Deleted;
+        }
+
+            protected override bool RefreshChildren(SortedChildren localChildren, List<Book> remoteChildren, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, RefreshContext context)
+            {
+                var run = (AuthorRefreshContext)context;
                 var deletedSourceIds = new HashSet<int>();
+                var identityFailures = run.IdentityFailures;
 
                 if (localChildren.Merged.Any())
                 {
@@ -2001,12 +1857,28 @@ namespace NzbDrone.Core.Books
                             continue;
                         }
 
-                        _logger.Info("Deleting duplicate book {0} (ID: {1}) merged into {2} (ID: {3})",
-                            source.Title, source.Id, target.Title, target.Id);
-
-                        // DeleteBook is idempotent (double-delete safe).
-                        _bookService.DeleteBook(source.Id, false);
-                        deletedSourceIds.Add(source.Id);
+                        try
+                        {
+                            using (var connection = _mainDatabase.OpenConnection())
+                            using (var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted))
+                            {
+                                if (!new LibraryIdentityWriter(connection, transaction, _mainDatabase.DatabaseType, _editionSelector).MergeBook(source.Id, target.Id))
+                                    continue;
+                                transaction.Commit();
+                            }
+                            target.AudiobookMonitored |= source.AudiobookMonitored;
+                            target.EbookMonitored |= source.EbookMonitored;
+                            target.Editions = _editionService.GetEditionsByBook(target.Id);
+                            target.ForeignEditionId = target.Editions.SingleOrDefault(edition => edition.Monitored)?.ForeignEditionId;
+                            deletedSourceIds.Add(source.Id);
+                            PublishIdentityChange(new LibraryIdentityChangedEvent(new[] { source.AuthorId, target.AuthorId }, new[] { source.Id, target.Id }, new[] { source.Id }));
+                            _logger.Info("[BOOK-MERGE] Absorbed fileless book {0} into {1}", source.Id, target.Id);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.Error(ex, "[BOOK-MERGE] Could not merge book {0} into {1} for author {2}; continuing other books, refresh remains incomplete", source.Id, target.Id, source.AuthorId);
+                            identityFailures.Add(ex);
+                        }
                     }
                 }
 
@@ -2017,29 +1889,6 @@ namespace NzbDrone.Core.Books
                     .Concat(localChildren.Updated)
                     .Concat(localChildren.Deleted)
                     .ToList();
-
-                // Repair upstream un-merges safely: if a local, file-attached book currently owns editions that now
-                // belong to multiple remote works, re-parent editions (and therefore files) to the correct local book
-                // rows using the remote metadata snapshot. This preserves local state and avoids unlink+delete+rescan churn.
-                try
-                {
-                    var authorId = booksToRefresh.FirstOrDefault(b => b?.AuthorId > 0)?.AuthorId ?? 0;
-                    var rehomeBlueprint = _authorRefreshRehomeBlueprint?.Any() == true
-                        ? _authorRefreshRehomeBlueprint
-                        : remoteChildren;
-                    foreach (var deletedBookId in RepairOverMergedBookEditions(authorId, rehomeBlueprint))
-                    {
-                        deletedSourceIds.Add(deletedBookId);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Error(ex, "[UNMERGE] Failed to repair over-merged editions during author refresh");
-                }
-                finally
-                {
-                    _authorRefreshRehomeBlueprint = null;
-                }
 
                 if (deletedSourceIds.Count > 0)
                 {
@@ -2055,16 +1904,55 @@ namespace NzbDrone.Core.Books
                     .Select(g => g.First())
                     .ToList();
 
-                return _refreshBookService.RefreshBookInfo(booksToRefresh, remoteChildren, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate);
+                // Reuse the complete local snapshot, including rows inserted above, for all slug checks.
+                var authorIdForSlugs = booksToRefresh.FirstOrDefault()?.AuthorId ?? 0;
+                var titleSlugs = authorIdForSlugs > 0
+                    ? new BookTitleSlugIndex(authorIdForSlugs, localChildren.All.Where(book => book != null && !deletedSourceIds.Contains(book.Id)), remoteChildren)
+                    : null;
+
+                // Reuse the reconciliation decision: a damaged row can still carry identities
+                // from another pocket, so independently matching it again can undo that decision.
+                var updated = false;
+                foreach (var group in booksToRefresh.GroupBy(book => run.MatchingIndex?.GetMatchedRemotePocket(book), BookReferenceComparer.Instance))
+                {
+                    var snapshot = group.Key == null ? remoteChildren : new List<Book> { group.Key };
+                    updated |= run.RequestedNarrationIds?.Count > 0
+                        ? _refreshBookService.RefreshBookInfo(group.ToList(), snapshot, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate, titleSlugs, run.RequestedNarrationIds)
+                        : _refreshBookService.RefreshBookInfo(group.ToList(), snapshot, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate, titleSlugs);
+                }
+
+                return updated;
             }
+
+        protected override void ValidateChildrenRefresh(Author author, RefreshContext context)
+        {
+            var identityFailures = ((AuthorRefreshContext)context).IdentityFailures;
+            if (identityFailures.Count > 0)
+            {
+                // Fetch success is not local reconciliation success. Do not let the
+                // next bulk diff skip a payload whose ownership changes rolled back.
+                const string error = "Author identity reconciliation is incomplete; successful pairs were retained, failed pairs will retry on refresh.";
+                _syncMetadataService?.UpdateSyncResult(author.Id, success: false, error: error, localFailure: true);
+                throw new AuthorIdentityUnverifiedException(error, new AggregateException(identityFailures));
+            }
+        }
 
         protected override void PublishEntityUpdatedEvent(Author entity)
         {
             _eventAggregator.PublishEvent(new AuthorUpdatedEvent(entity));
         }
 
-        protected override void PublishRefreshCompleteEvent(Author entity)
+        protected override void PublishRefreshCompleteEvent(Author entity, Author remoteData)
         {
+            if (entity.AddOptions?.AwaitingMetadata == true)
+            {
+                entity.AddOptions.AwaitingMetadata = false;
+                entity.AddOptions.AudiobookAwaitingMetadata = false;
+                entity.AddOptions.EbookAwaitingMetadata = false;
+                entity.AddOptions.MetadataUnavailable = false;
+                _authorService.SetAddOptions(entity);
+            }
+
             _logger.Debug("[SERIES-DEBUG] PublishRefreshCompleteEvent called for author '{0}' (ID: {1})",
                 entity.Name, entity.Id);
             _logger.Debug("[SERIES-DEBUG] Author has {0} series to refresh", entity.Series?.Count ?? 0);
@@ -2072,7 +1960,7 @@ namespace NzbDrone.Core.Books
                 // IMPORTANT: We don't process series here anymore because books might not be committed to DB yet
                 // Series processing is now handled in a separate event handler after books are guaranteed to be in the database
 
-            _eventAggregator.PublishEvent(new AuthorRefreshCompleteEvent(entity));
+            _eventAggregator.PublishEvent(new AuthorRefreshCompleteEvent(entity, remoteData));
         }
 
         protected override void PublishChildrenUpdatedEvent(Author entity, List<Book> newChildren, List<Book> updateChildren, List<Book> deleteChildren)
@@ -2080,7 +1968,8 @@ namespace NzbDrone.Core.Books
             _eventAggregator.PublishEvent(new BookInfoRefreshedEvent(entity, newChildren, updateChildren, deleteChildren));
         }
 
-        private void Rescan(List<int> authorIds, bool isNew, CommandTrigger trigger, bool infoUpdated, bool isFromImport = false, string mediaType = "all", bool rescanWhenMetadataUnchanged = false, bool scopeToSingleAuthor = false)
+        private void Rescan(List<int> authorIds, bool isNew, CommandTrigger trigger, bool infoUpdated, bool isFromImport = false, string mediaType = "all", bool rescanWhenMetadataUnchanged = false, bool scopeToSingleAuthor = false,
+            Author initialSetupAuthor = null, List<RootFolder> loadedRootFolders = null, bool initialSetupOnly = false)
         {
 
             // The import process will handle a single comprehensive scan at the end
@@ -2088,6 +1977,27 @@ namespace NzbDrone.Core.Books
             {
                 _logger.Debug("[IMPORT-RESCAN-SKIP] Skipping per-author rescan during import for {0} authors. A comprehensive scan will occur after all imports complete.", authorIds.Count);
                 return;
+            }
+
+            if (!isNew || initialSetupOnly)
+            {
+                // A recovered (including valid empty) catalog still owes its initial
+                // scan. Ordinary refresh preferences cannot consume or postpone it.
+                var existingAuthors = _authorService.GetExistingAuthors(authorIds);
+                var initialSetups = existingAuthors
+                    .Where(author => author.AddOptions is { AwaitingMetadata: false, MetadataUnavailable: false })
+                    .ToList();
+                var initialSetupIds = initialSetups.Select(author => author.Id).ToHashSet();
+                var setupRootFolders = initialSetups.Count > 0 ? _rootFolderService.All() : null;
+                foreach (var author in initialSetups)
+                {
+                    Rescan(new List<int> { author.Id }, true, trigger, infoUpdated, false, mediaType,
+                        rescanWhenMetadataUnchanged: true, scopeToSingleAuthor: true,
+                        initialSetupAuthor: author, loadedRootFolders: setupRootFolders);
+                }
+
+                authorIds = existingAuthors.Where(author => !initialSetupIds.Contains(author.Id)).Select(author => author.Id).ToList();
+                if (initialSetupOnly || authorIds.Count == 0) return;
             }
 
             var rescanAfterRefresh = _configService.RescanAfterRefresh;
@@ -2128,7 +2038,19 @@ namespace NzbDrone.Core.Books
                 // (but don't add new authors to reduce repeated searches against api)
                 var requestedMediaType = (mediaType ?? "all").Trim().ToLowerInvariant();
 
-                var rootFolders = _rootFolderService.All();
+                Author scopedAuthor = null;
+                if (scopeToSingleAuthor)
+                {
+                    if (authorIds.Count != 1)
+                    {
+                        throw new InvalidOperationException("A single-author rescan scope requires exactly one author id.");
+                    }
+
+                    scopedAuthor = initialSetupAuthor ?? _authorService.GetAuthor(authorIds[0]);
+                    requestedMediaType = scopedAuthor.AddOptions?.GetInitialScanMediaType() ?? requestedMediaType;
+                }
+
+                var rootFolders = loadedRootFolders ?? _rootFolderService.All();
                 if (requestedMediaType == "audiobook")
                 {
                     rootFolders = rootFolders.Where(r => r.FolderType == FolderType.Audiobook || r.FolderType == FolderType.Mixed).ToList();
@@ -2142,12 +2064,7 @@ namespace NzbDrone.Core.Books
                 var scopeLabel = "root";
                 if (scopeToSingleAuthor)
                 {
-                    if (authorIds.Count != 1)
-                    {
-                        throw new InvalidOperationException("A single-author rescan scope requires exactly one author id.");
-                    }
-
-                    var author = _authorService.GetAuthor(authorIds[0]);
+                    var author = scopedAuthor;
                     folders = GetAuthorScopedRescanFolders(author, requestedMediaType, rootFolders);
                     scopeLabel = "author-evidenced";
 
@@ -2175,26 +2092,7 @@ namespace NzbDrone.Core.Books
 
         private List<string> GetAuthorScopedRescanFolders(Author author, string requestedMediaType, List<RootFolder> rootFolders)
         {
-            var candidates = new List<string>();
-            var includeAudiobooks = requestedMediaType != "ebook";
-            var includeEbooks = requestedMediaType != "audiobook";
-
-            if (includeAudiobooks && author.AudiobookPath.IsNotNullOrWhiteSpace())
-            {
-                candidates.Add(author.AudiobookPath);
-            }
-
-            if (includeEbooks && author.EbookPath.IsNotNullOrWhiteSpace())
-            {
-                candidates.Add(author.EbookPath);
-            }
-
-            if (author.AudiobookPath.IsNullOrWhiteSpace() &&
-                author.EbookPath.IsNullOrWhiteSpace() &&
-                author.Path.IsNotNullOrWhiteSpace())
-            {
-                candidates.Add(author.Path);
-            }
+            var candidates = author.GetScanPaths(requestedMediaType);
 
             foreach (var file in _mediaFileService.GetMappedFilePathEvidenceByAuthor(author.Id, requestedMediaType))
             {
@@ -2244,7 +2142,7 @@ namespace NzbDrone.Core.Books
             return collapsed;
         }
 
-        private bool ProcessBulkSync(List<int> authorIds, bool forceRefresh, CancellationToken cancellationToken)
+        private bool ProcessBulkSync(List<int> authorIds, bool forceRefresh, CancellationToken cancellationToken, CommandTrigger trigger)
         {
             var bulkStopwatch = Stopwatch.StartNew();
             try
@@ -2265,6 +2163,11 @@ namespace NzbDrone.Core.Books
 
                 foreach (var author in authors)
                 {
+                    if (author.AddOptions?.MetadataUnavailable == true)
+                    {
+                        LogDeferredSetupRefresh(author, trigger);
+                        continue;
+                    }
                     var providerIds = GetAuthorDiffProviderIds(author);
                     if (providerIds.Count == 0)
                     {
@@ -2272,7 +2175,7 @@ namespace NzbDrone.Core.Books
                         continue;
                     }
 
-                    var etag = syncMetadataByAuthorId.TryGetValue(author.Id, out var syncMetadata)
+                    var etag = author.AddOptions?.AwaitingMetadata != true && syncMetadataByAuthorId.TryGetValue(author.Id, out var syncMetadata)
                         ? syncMetadata?.ETag ?? ""
                         : "";
 
@@ -2468,7 +2371,13 @@ namespace NzbDrone.Core.Books
                     {
                         _logger.Debug("[BULK-SYNC] Refreshing author {0} ({1} -> {2})", localAuthor.Name, change.RequestedId, change.CanonicalId);
                         using var progressScope = BulkAuthorRefreshProgressContext.Begin(i + 1, actionableChanges.Count);
-                        var data = GetSkyhookData(localAuthor, forceRefresh: forceRefresh, expectedPublishedETag: change.ETag, bypassEtag: actionableChanges[i].BypassEtag, authorIdentifierOverride: refreshAuthorId);
+                        var originalAuthorId = localAuthor.Id;
+                        var data = GetSkyhookData(ref localAuthor, forceRefresh: forceRefresh, expectedPublishedETag: change.ETag, bypassEtag: actionableChanges[i].BypassEtag, authorIdentifierOverride: refreshAuthorId);
+                        if (localAuthor.Id != originalAuthorId)
+                        {
+                            var selectedIndex = authorIds.IndexOf(originalAuthorId);
+                            if (selectedIndex >= 0) authorIds[selectedIndex] = localAuthor.Id;
+                        }
                         if (data == null)
                         {
                             unchangedAuthors++;
@@ -2477,7 +2386,7 @@ namespace NzbDrone.Core.Books
                         }
 
                         fetchedAuthors++;
-                        var authorUpdated = RefreshEntityInfoIfRemoteDataAvailable(localAuthor, data, true, false, null);
+                        var authorUpdated = ApplyFetchedAuthor(localAuthor, data, cancellationToken);
                         if (authorUpdated)
                         {
                             locallyUpdatedAuthors++;
@@ -2956,6 +2865,11 @@ namespace NzbDrone.Core.Books
                     blockedIds.Add(merge.From);
                     blockedIds.Add(merge.To);
                     _logger.Warn("[BULK-SYNC] Failed auto-merge {0} -> {1}: {2}", merge.From, merge.To, reason);
+                    try { _syncMetadataService.UpdateSyncResult(source.Id, false, error: reason); }
+                    catch (Exception retryError)
+                    {
+                        _logger.Error(retryError, "Could not persist the automatic refresh retry for author {0}; the merge remains unchanged", source.Id);
+                    }
                     continue;
                 }
 
@@ -2981,6 +2895,47 @@ namespace NzbDrone.Core.Books
             return blockedIds;
         }
 
+        public Author ReconcilePublishedAuthorIdentity(Author local, Author remote)
+        {
+            var publishedIds = AuthorIdentity.GetProviderIdentityTokens(remote);
+            local = ReconcilePublishedAuthorSplit(local, remote);
+            var canonicalId = GetPreferredAuthorIdentifier(remote);
+            if (canonicalId == null) return local;
+            var authors = _authorService.GetAllAuthors() ?? new List<Author>();
+            var candidates = authors.Where(author => AuthorIdentity.GetProviderIdentityTokens(author).Overlaps(publishedIds)).ToList();
+            if (candidates.All(author => author.Id != local.Id) && (authors.Count == 0 || authors.Any(author => author.Id == local.Id))) candidates.Add(local);
+            // A previous item in the same bulk refresh may already have absorbed this row.
+            if (candidates.Count < 2) return candidates.SingleOrDefault() ?? local;
+
+            var primaries = candidates.Where(author => string.Equals(GetPreferredAuthorIdentifier(author), canonicalId, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (primaries.Count != 1)
+            {
+                primaries = candidates.Where(author => AuthorIdentity.GetProviderIdentityTokens(author).Contains(canonicalId)).ToList();
+            }
+            if (primaries.Count != 1)
+                throw new InvalidOperationException($"Cannot identify a unique primary author for published identity {canonicalId}.");
+
+            var target = primaries[0];
+            var writers = new Stack<IDisposable>();
+            try
+            {
+                foreach (var author in candidates.OrderBy(author => author.Id))
+                    writers.Push(BookService.EnterWantedEditionLock(author, _logger, default));
+                foreach (var source in candidates.Where(author => author.Id != target.Id))
+                {
+                    if (!CanAutoMergeAuthors(source, target, out var reason) ||
+                        !TryMergeAuthorsWithoutDataLoss(source, target, canonicalId, out reason, remote))
+                        throw new InvalidOperationException($"Cannot merge author {source.Id} into {target.Id}: {reason}");
+                    target = _authorService.GetAuthor(target.Id);
+                }
+            }
+            finally
+            {
+                while (writers.Count > 0) writers.Pop().Dispose();
+            }
+            return target;
+        }
+
         private bool CanAutoMergeAuthors(Author source, Author target, out string reason)
         {
             if (_mainDatabase == null)
@@ -2989,94 +2944,64 @@ namespace NzbDrone.Core.Books
                 return false;
             }
 
-            if (HasConflictingPath(source.Path, target.Path))
-            {
-                reason = "different library paths";
-                return false;
-            }
-
-            if (HasConflictingPath(source.AudiobookRootFolderPath, target.AudiobookRootFolderPath))
-            {
-                reason = "different audiobook root folders";
-                return false;
-            }
-
-            if (HasConflictingPath(source.EbookRootFolderPath, target.EbookRootFolderPath))
-            {
-                reason = "different ebook root folders";
-                return false;
-            }
-
-            if (HasConflictingPath(source.AudiobookPath, target.AudiobookPath))
-            {
-                reason = "different discovered audiobook paths";
-                return false;
-            }
-
-            if (HasConflictingPath(source.EbookPath, target.EbookPath))
-            {
-                reason = "different discovered ebook paths";
-                return false;
-            }
-
-            if (HasConflict(source.AudiobookQualityProfileId, target.AudiobookQualityProfileId) ||
-                HasConflict(source.EbookQualityProfileId, target.EbookQualityProfileId))
-            {
-                reason = "different quality profiles";
-                return false;
-            }
-
-            if (HasConflict(source.AudiobookMetadataProfileId, target.AudiobookMetadataProfileId) ||
-                HasConflict(source.EbookMetadataProfileId, target.EbookMetadataProfileId))
-            {
-                reason = "different metadata profiles";
-                return false;
-            }
-
-            if (HasConflict(source.AudiobookMonitored, target.AudiobookMonitored) ||
-                HasConflict(source.EbookMonitored, target.EbookMonitored) ||
-                HasConflict(source.AudiobookMonitorNewItems, target.AudiobookMonitorNewItems) ||
-                HasConflict(source.EbookMonitorNewItems, target.EbookMonitorNewItems) ||
-                HasConflict(source.SyncMonitoredAcrossFormats, target.SyncMonitoredAcrossFormats))
-            {
-                reason = "different monitoring settings";
-                return false;
-            }
-
             reason = null;
             return true;
         }
 
-        private bool TryMergeAuthorsWithoutDataLoss(Author source, Author target, string canonicalId, out string reason)
+        private bool TryMergeAuthorsWithoutDataLoss(Author source, Author target, string canonicalId, out string reason, Author published = null)
         {
+            // Cached catalog objects must not expose an uncommitted identity/settings change.
             try
             {
-                MergeIntoSurvivor(target, source, canonicalId);
-                _authorService.UpdateAuthor(target);
+                if (published == null)
+                {
+                    var response = _authorInfo.RefreshAuthorInfo(canonicalId, bypassEtag: true);
+                    published = response?.HasChanges == true ? response.Author : null;
+                }
+                if (published == null || !AuthorIdentity.GetProviderIdentityTokens(published).Contains(canonicalId))
+                    throw new InvalidOperationException($"Cannot verify current identity for {canonicalId}; the merge will retry without changing local data.");
 
-                using var connection = _mainDatabase.OpenConnection();
-                using var transaction = connection.BeginTransaction();
+                using var firstWriter = BookService.EnterWantedEditionLock(source.Id < target.Id ? source : target, _logger, default);
+                using var secondWriter = BookService.EnterWantedEditionLock(source.Id < target.Id ? target : source, _logger, default);
+                source = _authorRepository.Find(source.Id);
+                target = _authorRepository.Get(target.Id);
+                if (source == null)
+                {
+                    // Another refresh completed this same published merge while we waited.
+                    reason = null;
+                    return true;
+                }
+                var settings = DescribeMergeSettings(target, source);
+                MergeIntoSurvivor(target, source);
+                ApplyPublishedProviderIds(target, published);
+                _authorService.UpdateAuthor(target, (connection, transaction) =>
+                {
+                    MoveAuthorImportExclusions(source, target, connection, transaction);
 
-                ReassignAuthorId(connection, transaction, "Books", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "AuthorSeries", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "MetadataFiles", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "OtherFiles", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "DownloadHistory", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "ExtraFiles", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "Blacklist", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "History", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "PendingReleases", source.Id, target.Id);
-                ReassignAuthorId(connection, transaction, "author_trigrams", source.Id, target.Id);
+                    var movedBooks = ReassignAuthorId(connection, transaction, "Books", source.Id, target.Id);
+                    settings = $"{movedBooks} books transferred; files stayed in place. " + settings;
+                    ReassignAuthorId(connection, transaction, "AuthorSeries", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "MetadataFiles", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "OtherFiles", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "DownloadHistory", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "ExtraFiles", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "Blacklist", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "History", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "PendingReleases", source.Id, target.Id);
+                    ReassignAuthorId(connection, transaction, "PendingImport", source.Id, target.Id);
 
-                MergeSyncMetadata(connection, transaction, source.Id, target.Id, canonicalId);
+                    MergeSyncMetadata(connection, transaction, source.Id, target.Id, canonicalId);
+                    WriteIdentityHistory(connection, transaction, source, target, false, settings);
 
-                connection.Execute(
-                    @"DELETE FROM ""Authors"" WHERE ""Id"" = @Id;",
-                    new { source.Id },
-                    transaction);
-
-                transaction.Commit();
+                    connection.Execute(
+                        @"DELETE FROM ""Authors"" WHERE ""Id"" = @Id;",
+                        new { source.Id },
+                        transaction);
+                });
                 _authorService.ClearAuthorCache();
+                _logger.Info("[AUTHOR-MERGE] {0} (author {1}) into {2} (author {3}), canonical {4}. {5}", source.Name, source.Id, target.Name, target.Id, canonicalId, settings);
+                PublishIdentityChange(new LibraryIdentityChangedEvent(new[] { source.Id, target.Id }, Array.Empty<int>())
+                    { SourceAuthor = source, TargetAuthor = target, SettingsResolution = settings });
 
                 reason = null;
                 return true;
@@ -3089,78 +3014,111 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        private void MergeIntoSurvivor(Author survivor, Author source, string canonicalId)
+        private void PublishIdentityChange(LibraryIdentityChangedEvent message)
         {
-            survivor.HardcoverAuthorId = PreferCanonicalProviderId(survivor.HardcoverAuthorId, source.HardcoverAuthorId, canonicalId, "hc");
-            survivor.GoodreadsAuthorId ??= source.GoodreadsAuthorId;
-            survivor.AudnexusAuthorId ??= source.AudnexusAuthorId;
-            survivor.OpenLibraryAuthorId ??= source.OpenLibraryAuthorId;
-            survivor.GoogleBooksAuthorId ??= source.GoogleBooksAuthorId;
-            survivor.RemoteProviderIds = AuthorIdentity.MergeProviderIdentityTokens(survivor, source);
+            try { _eventAggregator.PublishEvent(message); }
+            catch (Exception ex) { _logger.Warn(ex, "Library identity committed, but a reader could not refresh; the next poll/read will retry"); }
+        }
 
-            survivor.AudiobookRootFolderPath ??= source.AudiobookRootFolderPath;
-            survivor.EbookRootFolderPath ??= source.EbookRootFolderPath;
-            survivor.AudiobookPath ??= source.AudiobookPath;
-            survivor.EbookPath ??= source.EbookPath;
+        private static string DescribeMergeSettings(Author primary, Author absorbed)
+        {
+            var names = new[] { nameof(Author.AudiobookRootFolderPath), nameof(Author.EbookRootFolderPath),
+                nameof(Author.AudiobookPath), nameof(Author.EbookPath), nameof(Author.AudiobookQualityProfileId), nameof(Author.EbookQualityProfileId),
+                nameof(Author.AudiobookMetadataProfileId), nameof(Author.EbookMetadataProfileId), nameof(Author.AudiobookMonitorNewItems),
+                nameof(Author.EbookMonitorNewItems), nameof(Author.AudiobookTags), nameof(Author.EbookTags), nameof(Author.Tags), nameof(Author.SyncMonitoredAcrossFormats) };
+            var changes = new List<string>();
+            foreach (var name in names)
+            {
+                var property = typeof(Author).GetProperty(name);
+                var left = System.Text.Json.JsonSerializer.Serialize(property.GetValue(primary));
+                var right = System.Text.Json.JsonSerializer.Serialize(property.GetValue(absorbed));
+                if (left != right) changes.Add($"{name}: primary={left}, absorbed={right}");
+            }
+            return "Primary settings retained; only unconfigured format setup inherited. Tags and author monitoring combined; book selections unchanged. " + string.Join("; ", changes);
+        }
 
-            survivor.AudiobookQualityProfileId ??= source.AudiobookQualityProfileId;
-            survivor.EbookQualityProfileId ??= source.EbookQualityProfileId;
-            survivor.AudiobookMetadataProfileId ??= source.AudiobookMetadataProfileId;
-            survivor.EbookMetadataProfileId ??= source.EbookMetadataProfileId;
+        private void WriteIdentityHistory(IDbConnection connection, IDbTransaction transaction, Author source, Author target, bool split, string details)
+        {
+            var history = new EntityHistory
+            {
+                AuthorId = target.Id, Date = DateTime.UtcNow,
+                EventType = split ? EntityHistoryEventType.AuthorSplit : EntityHistoryEventType.AuthorsMerged,
+                SourceTitle = $"{source.Name} → {target.Name}", Quality = new NzbDrone.Core.Qualities.QualityModel(),
+                Data = new Dictionary<string, string>
+                {
+                    ["sourceAuthorId"] = source.Id.ToString(), ["targetAuthorId"] = target.Id.ToString(),
+                    ["sourceAuthorName"] = source.Name, ["targetAuthorName"] = target.Name,
+                    ["details"] = details
+                }
+            };
+            _historyRepository.InsertMany(new[] { history }, connection, transaction);
+        }
 
-            survivor.AudiobookMonitored ??= source.AudiobookMonitored;
-            survivor.AudiobookMonitorNewItems ??= source.AudiobookMonitorNewItems;
-            survivor.EbookMonitored ??= source.EbookMonitored;
-            survivor.EbookMonitorNewItems ??= source.EbookMonitorNewItems;
-            survivor.SyncMonitoredAcrossFormats ??= source.SyncMonitoredAcrossFormats;
+        private void MergeIntoSurvivor(Author survivor, Author source)
+        {
+            // The primary author's configured sides win, including inherited defaults and explicit None.
+            // Only an entirely unconfigured side inherits the absorbed author's setup.
+            if (string.IsNullOrWhiteSpace(survivor.AudiobookRootFolderPath))
+            {
+                survivor.AudiobookRootFolderPath = source.AudiobookRootFolderPath;
+                survivor.AudiobookPath = source.AudiobookPath;
+                survivor.AudiobookQualityProfileId = source.AudiobookQualityProfileId;
+                survivor.AudiobookMetadataProfileId = source.AudiobookMetadataProfileId;
+                survivor.AudiobookMonitorNewItems = source.AudiobookMonitorNewItems;
+                survivor.AudiobookTags = source.AudiobookTags == null ? null : new HashSet<int>(source.AudiobookTags);
+                survivor.AudiobookSettingsManuallyOverridden = source.AudiobookSettingsManuallyOverridden;
+            }
 
-            survivor.AudiobookSettingsManuallyOverridden |= source.AudiobookSettingsManuallyOverridden;
-            survivor.EbookSettingsManuallyOverridden |= source.EbookSettingsManuallyOverridden;
+            if (string.IsNullOrWhiteSpace(survivor.EbookRootFolderPath))
+            {
+                survivor.EbookRootFolderPath = source.EbookRootFolderPath;
+                survivor.EbookPath = source.EbookPath;
+                survivor.EbookQualityProfileId = source.EbookQualityProfileId;
+                survivor.EbookMetadataProfileId = source.EbookMetadataProfileId;
+                survivor.EbookMonitorNewItems = source.EbookMonitorNewItems;
+                survivor.EbookTags = source.EbookTags == null ? null : new HashSet<int>(source.EbookTags);
+                survivor.EbookSettingsManuallyOverridden = source.EbookSettingsManuallyOverridden;
+            }
+
+            survivor.AudiobookMonitored = MergeMonitoring(survivor.AudiobookMonitored, source.AudiobookMonitored);
+            survivor.EbookMonitored = MergeMonitoring(survivor.EbookMonitored, source.EbookMonitored);
             survivor.Monitored = survivor.IsMonitoredFromMediaSettings();
 
             survivor.Tags = MergeTagSet(survivor.Tags, source.Tags);
             survivor.AudiobookTags = MergeTagSet(survivor.AudiobookTags, source.AudiobookTags);
             survivor.EbookTags = MergeTagSet(survivor.EbookTags, source.EbookTags);
-
             survivor.LastSelectedMediaType ??= source.LastSelectedMediaType;
 
-            MoveAuthorImportExclusions(source, target: survivor, canonicalId);
         }
 
-        private void MoveAuthorImportExclusions(Author source, Author target, string canonicalId)
+        private static HashSet<int> MergeTagSet(HashSet<int> primary, HashSet<int> absorbed) =>
+            primary == null && absorbed == null ? null : (primary ?? new HashSet<int>()).Union(absorbed ?? new HashSet<int>()).ToHashSet();
+
+        private static bool? MergeMonitoring(bool? primary, bool? absorbed)
         {
-            var sourceProviderIds = EnumerateAuthorProviderIds(source).ToList();
-            var targetProviderIds = new HashSet<string>(EnumerateAuthorProviderIds(target), StringComparer.OrdinalIgnoreCase);
-            var destinationId = canonicalId ?? GetPreferredAuthorIdentifier(target);
+            return primary == true || absorbed == true ? true : primary ?? absorbed;
+        }
 
-            if (destinationId.IsNullOrWhiteSpace())
+        private void MoveAuthorImportExclusions(Author source, Author target, IDbConnection connection = null, IDbTransaction transaction = null)
+        {
+            var providerIds = AuthorIdentity.GetProviderIdentityTokenList(source);
+            var exclusions = connection == null
+                ? _importListExclusionService.FindByForeignId(providerIds)
+                : _importListExclusionService.FindByForeignId(providerIds, connection, transaction);
+            foreach (var scope in exclusions.Select(exclusion => exclusion.MediaType).Distinct())
             {
-                return;
-            }
-
-            foreach (var providerId in sourceProviderIds)
-            {
-                var exclusion = _importListExclusionService.FindByForeignId(providerId);
-                if (exclusion == null)
-                {
-                    continue;
-                }
-
-                if (targetProviderIds.Any(targetId => _importListExclusionService.FindByForeignId(targetId) != null))
-                {
-                    _importListExclusionService.Delete(exclusion.Id);
-                    continue;
-                }
-
-                exclusion.ForeignId = destinationId;
-                _importListExclusionService.Update(exclusion);
+                if (connection == null) _importListExclusionService.AddAuthorExclusions(new[] { target }, scope);
+                else _importListExclusionService.AddAuthorExclusions(new[] { target }, scope, connection, transaction);
             }
         }
 
         private void MergeSyncMetadata(IDbConnection connection, IDbTransaction transaction, int sourceAuthorId, int targetAuthorId, string canonicalId)
         {
-            var sourceMetadata = _syncMetadataService.GetSyncMetadata(sourceAuthorId);
-            var targetMetadata = _syncMetadataService.GetSyncMetadata(targetAuthorId);
+            var metadata = connection.Query<AuthorSyncMetadata>(
+                @"SELECT * FROM ""AuthorSyncMetadata"" WHERE ""AuthorId"" = @SourceId OR ""AuthorId"" = @TargetId",
+                new { SourceId = sourceAuthorId, TargetId = targetAuthorId }, transaction);
+            var sourceMetadata = metadata.SingleOrDefault(row => row.AuthorId == sourceAuthorId);
+            var targetMetadata = metadata.SingleOrDefault(row => row.AuthorId == targetAuthorId);
 
             if (sourceMetadata == null && targetMetadata == null)
             {
@@ -3219,6 +3177,10 @@ namespace NzbDrone.Core.Books
             targetMetadata.SyncFailureCount = Math.Max(targetMetadata.SyncFailureCount, sourceMetadata.SyncFailureCount);
 
             connection.Execute(
+                @"DELETE FROM ""AuthorSyncMetadata"" WHERE ""Id"" = @Id;",
+                new { sourceMetadata.Id },
+                transaction);
+            connection.Execute(
                 @"UPDATE ""AuthorSyncMetadata""
                   SET ""ExternalAuthorId"" = @ExternalAuthorId,
                       ""ETag"" = @ETag,
@@ -3235,20 +3197,17 @@ namespace NzbDrone.Core.Books
                 targetMetadata,
                 transaction);
 
-            connection.Execute(
-                @"DELETE FROM ""AuthorSyncMetadata"" WHERE ""Id"" = @Id;",
-                new { sourceMetadata.Id },
-                transaction);
+
         }
 
-        private static void ReassignAuthorId(IDbConnection connection, IDbTransaction transaction, string table, int sourceAuthorId, int targetAuthorId)
+        private static int ReassignAuthorId(IDbConnection connection, IDbTransaction transaction, string table, int sourceAuthorId, int targetAuthorId)
         {
             if (sourceAuthorId <= 0 || targetAuthorId <= 0 || sourceAuthorId == targetAuthorId)
             {
-                return;
+                return 0;
             }
 
-            connection.Execute(
+            return connection.Execute(
                 $@"UPDATE ""{table}""
                    SET ""AuthorId"" = @TargetAuthorId
                    WHERE ""AuthorId"" = @SourceAuthorId;",
@@ -3256,59 +3215,13 @@ namespace NzbDrone.Core.Books
                 transaction);
         }
 
-        private static HashSet<int> MergeTagSet(HashSet<int> left, HashSet<int> right)
-        {
-            var merged = new HashSet<int>(left ?? new HashSet<int>());
-            if (right != null)
-            {
-                merged.UnionWith(right);
-            }
-
-            return merged;
-        }
-
         private static IEnumerable<string> EnumerateAuthorProviderIds(Author author)
         {
             return AuthorIdentity.GetProviderIdentityTokenList(author);
         }
 
-        private static string PreferCanonicalProviderId(string survivorId, string sourceId, string canonicalId, string prefix)
-        {
-            var normalizedCanonical = ProviderIdHelper.Normalize(canonicalId, prefix);
-            if (!string.IsNullOrWhiteSpace(normalizedCanonical))
-            {
-                return normalizedCanonical;
-            }
 
-            return survivorId ?? sourceId;
-        }
-
-        private static bool HasConflictingPath(string left, string right)
-        {
-            if (left.IsNullOrWhiteSpace() || right.IsNullOrWhiteSpace())
-            {
-                return false;
-            }
-
-            return !left.PathEquals(right);
-        }
-
-        private static bool HasConflict(int? left, int? right)
-        {
-            return left.HasValue && right.HasValue && left.Value != right.Value;
-        }
-
-        private static bool HasConflict(bool? left, bool? right)
-        {
-            return left.HasValue && right.HasValue && left.Value != right.Value;
-        }
-
-        private static bool HasConflict(NewItemMonitorTypes? left, NewItemMonitorTypes? right)
-        {
-            return left.HasValue && right.HasValue && left.Value != right.Value;
-        }
-
-        private void RefreshSelectedAuthors(List<int> authorIds, bool isNew, CommandTrigger trigger, bool isFromImport = false, bool refreshMetadata = true, bool rescanFolders = true, string mediaType = "all", CancellationToken cancellationToken = default, bool rescanWhenMetadataUnchanged = false, bool forceRefresh = false, bool useBulkSyncWhenNotForced = false, bool scopeRescanToSingleAuthor = false)
+        private void RefreshSelectedAuthors(List<int> authorIds, bool isNew, CommandTrigger trigger, bool isFromImport = false, bool refreshMetadata = true, bool rescanFolders = true, string mediaType = "all", CancellationToken cancellationToken = default, bool rescanWhenMetadataUnchanged = false, bool forceRefresh = false, bool useBulkSyncWhenNotForced = false, bool scopeRescanToSingleAuthor = false, IReadOnlyDictionary<int, AuthorSyncMetadata> retries = null)
         {
             _logger.Debug("[FLOW-DEBUG] ========== RefreshSelectedAuthors START ==========");
             _logger.Debug("[FLOW-DEBUG] AuthorIds: [{0}]", string.Join(", ", authorIds));
@@ -3335,24 +3248,34 @@ namespace NzbDrone.Core.Books
             if (refreshMetadata)
             {
                 _logger.Debug("[FLOW-DEBUG] DECISION: Will refresh metadata (refreshMetadata=true)");
-                using var refreshGate = EnterAuthorMetadataRefreshGate($"selected author refresh ({authorIds.Count} author(s))", cancellationToken);
 
                 // Bulk-selected/scheduled refreshes use the ETag diff path unless explicitly forced.
                 if (useBulkSyncWhenNotForced && !forceRefresh)
                 {
                     _logger.Debug("[BULK-SYNC] Using bulk sync endpoint for {0} authors", authorIds.Count);
-                    updated = ProcessBulkSync(authorIds, forceRefresh: false, cancellationToken);
+                    updated = ProcessBulkSync(authorIds, forceRefresh: false, cancellationToken, trigger);
                 }
                 else
                 {
                     // Local reconciliation path: fetch each published payload and compare it to local DB.
                     var authors = _authorService.GetAuthors(authorIds);
-                    foreach (var author in authors)
+                    foreach (var selectedAuthor in authors)
                     {
+                        var author = selectedAuthor;
                         cancellationToken.ThrowIfCancellationRequested();
+
+                        if (retries != null && !CanRetryAuthorRefresh()) break;
+
+                        if (author.AddOptions?.MetadataUnavailable == true)
+                        {
+                            LogDeferredSetupRefresh(author, trigger);
+                            _logger.Debug("Author {0} initial setup is unavailable; its retained Wanted Authors request owns Retry/Delete.", author.Id);
+                            continue;
+                        }
 
                         try
                         {
+                            if (retries != null) _syncMetadataService.DeferRetry(retries[author.Id]);
                             _logger.Debug("[FLOW-DEBUG] ACTION: Refreshing metadata for author: {0}", author.Name);
 
                             // Start timing for this author
@@ -3375,13 +3298,14 @@ namespace NzbDrone.Core.Books
                             var bypassEtagForIdentityRepair = false;
                             var diffChecked = false;
 
-                            if (!forceRefresh)
+                            if (!forceRefresh && author.AddOptions?.AwaitingMetadata != true)
                             {
                                 diffChecked = TryGetSingleAuthorDiffHint(author, out expectedPublishedETag, out deletedOnServer, out refreshAuthorId, out bypassEtagForIdentityRepair);
                             }
                             else
                             {
-                                _logger.Debug("[FLOW-DEBUG] ForceRefresh=true - bypassing local diff/ETag shortcut for author '{0}'", author.Name);
+                                _logger.Debug("[FLOW-DEBUG] Bypassing local diff/ETag shortcut for author '{0}': forced={1}, awaiting metadata={2}",
+                                    author.Name, forceRefresh, author.AddOptions?.AwaitingMetadata == true);
                             }
 
                             if (deletedOnServer)
@@ -3398,10 +3322,13 @@ namespace NzbDrone.Core.Books
                                 continue;
                             }
 
-                            var data = GetSkyhookData(author, forceRefresh: forceRefresh, expectedPublishedETag: expectedPublishedETag, bypassEtag: forceRefresh || bypassEtagForIdentityRepair, authorIdentifierOverride: refreshAuthorId);
+                            var originalAuthorId = author.Id;
+                            var data = GetSkyhookData(ref author, forceRefresh: forceRefresh, expectedPublishedETag: expectedPublishedETag, bypassEtag: forceRefresh || bypassEtagForIdentityRepair, authorIdentifierOverride: refreshAuthorId);
 
+                            if (author.Id != originalAuthorId)
+                                authorIds = authorIds.Select(id => id == originalAuthorId ? author.Id : id).Distinct().ToList();
                             var refreshStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                            updated |= RefreshEntityInfoIfRemoteDataAvailable(author, data, true, false, null);
+                            updated |= ApplyFetchedAuthor(author, data, cancellationToken);
                             refreshStopwatch.Stop();
 
                             // Count books/editions after refresh
@@ -3437,6 +3364,10 @@ namespace NzbDrone.Core.Books
                                     (double)authorStopwatch.ElapsedMilliseconds / Math.Max(1, newEditionCount));
                             }
                         }
+                        catch (OperationCanceledException)
+                        {
+                            throw;
+                        }
                         catch (Exception e)
                         {
                             _logger.Error(e, "[FLOW-DEBUG] ERROR: Couldn't refresh info for {0}", author);
@@ -3451,13 +3382,12 @@ namespace NzbDrone.Core.Books
                 _logger.Debug("[FLOW-DEBUG] DECISION: Skipping metadata refresh (refreshMetadata=false)");
             }
 
-            // Only rescan folders if requested
-            if (rescanFolders)
+            // Initial setup still owes its scan when metadata recovery succeeds.
+            if (rescanFolders || refreshMetadata)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                _logger.Debug("[FLOW-DEBUG] DECISION: Folder rescan requested; evaluating rescan rules.");
-                _logger.Debug("[FLOW-DEBUG] ACTION: Calling Rescan() with metadataUpdated={0}", updated);
-                Rescan(authorIds, isNew, trigger, updated, isFromImport, mediaType, rescanWhenMetadataUnchanged, scopeRescanToSingleAuthor);
+                _logger.Debug("[FLOW-DEBUG] Evaluating post-refresh scans: requested={0}, initialSetupOnly={1}, metadataUpdated={2}", rescanFolders, !rescanFolders, updated);
+                Rescan(authorIds, isNew, trigger, updated, isFromImport, mediaType, rescanWhenMetadataUnchanged, scopeRescanToSingleAuthor, initialSetupOnly: !rescanFolders);
             }
             else
             {
@@ -3465,6 +3395,72 @@ namespace NzbDrone.Core.Books
             }
 
             _logger.Debug("[FLOW-DEBUG] ========== RefreshSelectedAuthors END ==========");
+        }
+
+        private void LogDeferredSetupRefresh(Author author, CommandTrigger trigger)
+        {
+            if (trigger == CommandTrigger.Manual)
+            {
+                _logger.Info("Author {0} ({1}) has a refused initial setup request. Metadata refresh is deferred; use Wanted > Authors > Retry to reactivate it.", author.Name, author.Id);
+            }
+        }
+
+        public void Execute(RetryAuthorRefreshCommand message) => Execute(message, CancellationToken.None);
+
+        public void Execute(RetryAuthorRefreshCommand message, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var setupRetries = _authorRepository.GetDueInitialFormatSync(DateTime.UtcNow);
+                if (setupRetries.Count > 0)
+                    _commandQueueManager.Push(new BulkSyncFormatMonitoringCommand(setupRetries)
+                    {
+                        InitialSetupAttempt = 1
+                    }, trigger: CommandTrigger.Scheduled);
+                var failures = Interlocked.Exchange(ref _setupRetryQueueFailures, 0);
+                if (failures > 0)
+                    _logger.Info("Initial format-sync retry queue recovered after {0} failed attempts.", failures);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var failures = Interlocked.Increment(ref _setupRetryQueueFailures);
+                var level = AuthorRetrySchedule.ShouldWarn(failures) ? LogLevel.Warn : LogLevel.Debug;
+                _logger.Log(level, ex, "Initial format-sync retry could not be queued (attempt {0}); it will be checked again next minute. Continuing metadata retries.", failures);
+            }
+            if (!CanRetryAuthorRefresh()) return;
+            var timer = Stopwatch.StartNew();
+            var due = _syncMetadataService.GetDueForSync();
+            if (due.Count == 0) return;
+            var authors = _authorService.GetAuthors(due.Select(item => item.AuthorId).Distinct().ToList())
+                .ToDictionary(author => author.Id);
+            // Pending/refused initial setup is owned by Wanted Authors, including its
+            // Retry/Delete controls. This task must not resurrect a dismissed request.
+            var held = due.Where(item => !authors.TryGetValue(item.AuthorId, out var author) ||
+                author.AddOptions?.AwaitingMetadata == true || author.AddOptions?.MetadataUnavailable == true).ToList();
+            foreach (var item in held) item.NextSyncNotBefore = null;
+            _syncMetadataService.BulkUpdateSyncMetadata(held);
+            var ids = due.Except(held).Select(item => item.AuthorId).Distinct().ToList();
+            try
+            {
+                if (ids.Count > 0)
+                    RefreshSelectedAuthors(ids, false, CommandTrigger.Scheduled, rescanFolders: false,
+                        cancellationToken: cancellationToken, forceRefresh: true,
+                        retries: due.Except(held).ToDictionary(item => item.AuthorId));
+            }
+            finally
+            {
+                _logger.Debug("Author refresh retry: {0} due, {1} eligible, {2} held for Wanted Authors; elapsed {3} ms",
+                    due.Count, ids.Count, held.Count, timer.ElapsedMilliseconds);
+            }
+        }
+
+        private bool CanRetryAuthorRefresh()
+        {
+            if (_metadataServerHealthGate.CanBeginRequest(out var retryAfter)) return true;
+            _logger.Debug("Author refresh retry waiting for metadata server {0}; retry after {1}",
+                _metadataServerHealthGate.SourceName, MetadataServerHealthGate.FormatRetryAfter(retryAfter));
+            return false;
         }
 
         public void Execute(BulkRefreshAuthorCommand message)

@@ -6,8 +6,10 @@ import Icon from 'Components/Icon';
 import { icons, sortDirections } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import serverSideCollectionHandlers from 'Utilities/serverSideCollectionHandlers';
 import translate from 'Utilities/String/translate';
+import { showMessage } from './appActions';
 import { set, updateItem } from './baseActions';
 import createFetchHandler from './Creators/createFetchHandler';
 import createHandleActions from './Creators/createHandleActions';
@@ -425,6 +427,7 @@ export const actionHandlers = handleThunks({
     });
 
     promise.fail((xhr) => {
+      dispatch(showMessage({ id: 'queue-remove-error', message: getErrorMessage(xhr, translate('Error')), type: 'error' }));
       dispatch(updateItem({ section: paged, id, isRemoving: false }));
     });
   },
@@ -465,6 +468,8 @@ export const actionHandlers = handleThunks({
     });
 
     promise.fail((xhr) => {
+      dispatch(showMessage({ id: 'queue-remove-error', message: getErrorMessage(xhr, translate('Error')), type: 'error' }));
+      dispatch(fetchQueue());
       dispatch(batchActions([
         ...ids.map((id) => {
           return updateItem({

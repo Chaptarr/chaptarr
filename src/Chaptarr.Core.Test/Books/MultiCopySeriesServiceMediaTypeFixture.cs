@@ -41,6 +41,7 @@ namespace Chaptarr.Core.Test.Books
                 return series;
             }
 
+            public bool DeleteIfUnlinked(int seriesId) => throw new System.NotImplementedException();
             public void Delete(int seriesId) => Series.RemoveAll(s => s.Id == seriesId);
 
             public void InsertMany(IList<Series> series)

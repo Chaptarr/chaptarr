@@ -1,3 +1,4 @@
+using System;
 using Microsoft.Data.Sqlite;
 using System.Linq;
 using System.Net;
@@ -7,6 +8,7 @@ using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using NLog;
+using Npgsql;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Exceptions;
@@ -54,7 +56,8 @@ namespace Chaptarr.Http.ErrorManagement
                     .Select(e => new
                     {
                         propertyName = e.PropertyName,
-                        errorMessage = e.ErrorMessage
+                        errorMessage = e.ErrorMessage,
+                        errorCode = e.ErrorCode
                     })
                     .ToList();
 
@@ -74,6 +77,17 @@ namespace Chaptarr.Http.ErrorManagement
             else if (exception is ModelConflictException)
             {
                 _logger.Warn(exception, "Model conflict during request {0} {1}", context.Request.Method, context.Request.Path);
+                statusCode = HttpStatusCode.Conflict;
+            }
+            else if ((exception is PostgresException postgresException &&
+                      (postgresException.SqlState == PostgresErrorCodes.ForeignKeyViolation || postgresException.SqlState == PostgresErrorCodes.RestrictViolation) &&
+                      postgresException.ConstraintName == "FK_Editions_Books") ||
+                     (exception is SqliteException parentReferenceException &&
+                      parentReferenceException.SqliteExtendedErrorCode == 1811 &&
+                      parentReferenceException.Message.Contains("FK_Editions_Books:", StringComparison.Ordinal)))
+            {
+                _logger.Warn(exception, "Edition parent conflict during request {0} {1}", context.Request.Method, context.Request.Path);
+                errorModel.Message = "The book or edition changed before the operation could complete. Reload and try again.";
                 statusCode = HttpStatusCode.Conflict;
             }
             else if (exception is SqliteException sqLiteException)

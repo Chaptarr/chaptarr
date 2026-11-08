@@ -11,6 +11,7 @@ namespace NzbDrone.Core.AuthorStats
     {
         List<BookStatistics> AuthorStatistics();
         List<BookStatistics> AuthorStatistics(int authorId);
+        List<BookStatistics> AuthorStatistics(IEnumerable<int> authorIds);
         List<BookStatistics> AuthorStatistics(string mediaType);
         List<BookStatistics> AuthorStatistics(int authorId, string mediaType);
     }
@@ -36,7 +37,12 @@ namespace NzbDrone.Core.AuthorStats
 
         public List<BookStatistics> AuthorStatistics(int authorId)
         {
-            return Query(Builder(_database.DatabaseType).Where<Author>(author => author.Id == authorId));
+            return AuthorStatistics(new[] { authorId });
+        }
+
+        public List<BookStatistics> AuthorStatistics(IEnumerable<int> authorIds)
+        {
+            return AuthorStatistics(authorIds, null);
         }
 
         public List<BookStatistics> AuthorStatistics(string mediaType)
@@ -48,9 +54,30 @@ namespace NzbDrone.Core.AuthorStats
 
         public List<BookStatistics> AuthorStatistics(int authorId, string mediaType)
         {
-            var builder = Builder(_database.DatabaseType).Where<Author>(author => author.Id == authorId);
-            ApplyMediaTypeFilter(builder, mediaType);
-            return Query(builder);
+            return AuthorStatistics(new[] { authorId }, mediaType);
+        }
+
+        private List<BookStatistics> AuthorStatistics(IEnumerable<int> authorIds, string mediaType)
+        {
+            var ids = authorIds?.Distinct().ToArray() ?? Array.Empty<int>();
+            if (ids.Length == 0)
+            {
+                return new List<BookStatistics>();
+            }
+
+            var databaseType = _database.DatabaseType;
+            var predicate = databaseType == DatabaseType.PostgreSQL ? "= ANY(@authorIds)" : "IN @authorIds";
+            var statistics = new List<BookStatistics>();
+            foreach (var batch in ids.Chunk(databaseType == DatabaseType.SQLite ? SqliteVariableLimit.MaxParameters : ids.Length))
+            {
+                var builder = Builder(databaseType, predicate)
+                    .Where($@"""Authors"".""Id"" {predicate}")
+                    .AddParameters(new { authorIds = batch });
+                ApplyMediaTypeFilter(builder, mediaType);
+                statistics.AddRange(Query(builder));
+            }
+
+            return statistics;
         }
 
         internal static string BuildBaseSql(DatabaseType databaseType)
@@ -80,12 +107,18 @@ namespace NzbDrone.Core.AuthorStats
             }
         }
 
-        private static SqlBuilder Builder(DatabaseType databaseType)
+        private static SqlBuilder Builder(DatabaseType databaseType, string authorIdPredicate = null)
         {
+            var fileStatisticsJoin = authorIdPredicate == null
+                ? _fileStatisticsJoin
+                : "(" + BookFileStatisticsSql.GroupedByBookForAuthors(authorIdPredicate) +
+                  @") AS ""FileStatistics"" ON ""FileStatistics"".""BookId"" = ""Books"".""Id""";
+
             return new SqlBuilder(databaseType)
                 .Select(BuildStatisticsSelect(databaseType, includeAuthorId: true))
                 .Join<Book, Author>((book, author) => book.AuthorId == author.Id)
-                .LeftJoin(_fileStatisticsJoin)
+                .LeftJoin(fileStatisticsJoin)
+                .LeftJoin(BuildMonitoredEditionJoin(databaseType))
                 .AddParameters(new { currentDate = DateTime.UtcNow });
         }
 
@@ -93,7 +126,7 @@ namespace NzbDrone.Core.AuthorStats
         {
             var trueIndicator = databaseType == DatabaseType.PostgreSQL ? "true" : "1";
             var monitoredPredicate = BuildMonitoredPredicate(trueIndicator);
-            var effectiveReleaseDate = BuildEffectiveReleaseDate(trueIndicator);
+            var effectiveReleaseDate = @"COALESCE(""MonitoredEdition"".""ReleaseDate"", ""Books"".""ReleaseDate"")";
             var authorColumn = includeAuthorId ? @"""Authors"".""Id"" AS ""AuthorId""," : string.Empty;
 
             return $@"{authorColumn}
@@ -113,16 +146,13 @@ namespace NzbDrone.Core.AuthorStats
                     (""Books"".""MediaType"" = 1 AND ""Books"".""EbookMonitored"" = {trueIndicator})";
         }
 
-        private static string BuildEffectiveReleaseDate(string trueIndicator)
+        private static string BuildMonitoredEditionJoin(DatabaseType databaseType)
         {
-            return $@"COALESCE(
-                        (SELECT ""Editions"".""ReleaseDate""
-                         FROM ""Editions""
-                         WHERE ""Editions"".""BookId"" = ""Books"".""Id""
-                           AND ""Editions"".""Monitored"" = {trueIndicator}
-                         ORDER BY ""Editions"".""Id""
-                         LIMIT 1),
-                        ""Books"".""ReleaseDate"")";
+            var trueIndicator = databaseType == DatabaseType.PostgreSQL ? "true" : "1";
+
+            return $@"""Editions"" AS ""MonitoredEdition""
+                      ON ""MonitoredEdition"".""BookId"" = ""Books"".""Id""
+                         AND ""MonitoredEdition"".""Monitored"" = {trueIndicator}";
         }
     }
 }

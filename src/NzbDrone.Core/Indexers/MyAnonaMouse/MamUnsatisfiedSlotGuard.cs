@@ -230,7 +230,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 .ToList();
         }
 
-        private static bool HasFreshStatus(MyAnonaMouseSettings settings, DateTime now)
+        internal static bool HasFreshStatus(MyAnonaMouseSettings settings, DateTime now)
         {
             if (!settings.UnsatisfiedCount.HasValue ||
                 !settings.UnsatisfiedLimit.HasValue ||

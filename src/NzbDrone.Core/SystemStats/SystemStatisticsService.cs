@@ -10,6 +10,7 @@ namespace NzbDrone.Core.SystemStats
     public class SystemStatisticsService : ISystemStatisticsService,
                                           IHandle<BookImportedEvent>,
                                           IHandle<BookDeletedEvent>,
+        IHandle<LibraryIdentityChangedEvent>,
                                           IHandle<BookUpdatedEvent>,
                                           IHandle<BookFileDeletedEvent>,
                                           IHandle<BookAddedEvent>,
@@ -48,6 +49,11 @@ namespace NzbDrone.Core.SystemStats
         }
 
         public void Handle(BookImportedEvent message)
+        {
+            InvalidateCache();
+        }
+
+        public void Handle(LibraryIdentityChangedEvent message)
         {
             InvalidateCache();
         }

@@ -57,6 +57,7 @@ namespace NzbDrone.Core.Books
                 },
 
                 // Provider IDs
+                RemoteProviderIds = CloneProviderIds(source.RemoteProviderIds),
                 GoodreadsEditionId = source.GoodreadsEditionId,
                 HardcoverEditionId = source.HardcoverEditionId,
                 OpenLibraryEditionId = source.OpenLibraryEditionId,
@@ -109,7 +110,7 @@ namespace NzbDrone.Core.Books
             };
         }
 
-        public static Book CloneBook(Book source, bool includeEditions)
+        public static Book CloneBook(Book source, bool includeEditions, bool includeSeriesLinks = true)
         {
             if (source == null)
             {
@@ -145,7 +146,7 @@ namespace NzbDrone.Core.Books
                 GoogleBooksId = source.GoogleBooksId,
                 ASIN = source.ASIN,
                 AudibleASIN = source.AudibleASIN,
-                RemoteProviderIds = CloneProviderIds(source.RemoteProviderIds),
+                RemoteProviderIds = Book.CloneProviderIds(source.RemoteProviderIds),
 
                 // Grouping
                 BaseBookId = source.BaseBookId,
@@ -207,7 +208,7 @@ namespace NzbDrone.Core.Books
                     AudnexusAuthorId = source.Author.AudnexusAuthorId,
                     RemoteProviderIds = CloneProviderIds(source.Author.RemoteProviderIds)
                 },
-                SeriesLinks = source.SeriesLinks
+                SeriesLinks = includeSeriesLinks ? source.SeriesLinks : null
             };
 
             if (includeEditions)
@@ -220,14 +221,7 @@ namespace NzbDrone.Core.Books
             return clone;
         }
 
-        private static HashSet<string> CloneProviderIds(IEnumerable<string> source)
-        {
-            var values = source?
-                .Where(id => !string.IsNullOrWhiteSpace(id))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            return values?.Count > 0 ? values : null;
-        }
+        public static HashSet<string> CloneProviderIds(HashSet<string> source) => Book.CloneProviderIds(source);
 
         public static SeriesBookLink CloneSeriesBookLink(SeriesBookLink source)
         {
@@ -279,6 +273,7 @@ namespace NzbDrone.Core.Books
                 PrimaryBooks = source.PrimaryBooks,
 
                 // Narrator variant fields
+                MediaType = source.MediaType,
                 Narrator = source.Narrator,
                 BaseSeriesId = source.BaseSeriesId,
                 InstanceNumber = source.InstanceNumber,

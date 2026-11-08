@@ -1,10 +1,12 @@
 import { createAction } from 'redux-actions';
-import * as commandNames from 'Commands/commandNames';
+import { EditionReadingFormat } from 'Helpers/Props/editionReadingFormats';
 import { createThunk, handleThunks } from 'Store/thunks';
+import getNarratorDisplay from 'Utilities/Book/getNarratorDisplay';
+import getNarratorNamesForDisplay from 'Utilities/Book/getNarratorNamesForDisplay';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import translate from 'Utilities/String/translate';
+import { showMessage } from './appActions';
 import { set } from './baseActions';
-import { executeCommand } from './commandActions';
 import createHandleActions from './Creators/createHandleActions';
 
 //
@@ -18,7 +20,7 @@ export const section = 'narrator';
 export const defaultState = {
   discovery: {},
   isSearching: false,
-  isSettingPreferred: false,
+  additions: {},
   error: null
 };
 
@@ -36,47 +38,39 @@ export const fetchNarratorDiscovery = createThunk(FETCH_NARRATOR_DISCOVERY);
 export const clearNarratorDiscovery = createAction(CLEAR_NARRATOR_DISCOVERY);
 export const addNarratorVariant = createThunk(ADD_NARRATOR_VARIANT);
 
-// Optimistic state update helper: move narrator from available → existing
-function optimisticallyMoveNarrator(state, bookId, narrator) {
-  const name = (typeof narrator === 'string') ? narrator : narrator.name;
-  const editionId = (narrator && typeof narrator === 'object') ? narrator.editionId : null;
+function moveEditionToLibrary(state, bookId, narrator, book) {
+  const editionId = narrator.editionId;
   const discovery = { ...(state.narrator.discovery || {}) };
-  const prev = discovery[bookId] || {};
-  const filtered = prev.filteredNarrators || [];
-  const nameLower = (name || '').toLowerCase();
-  const selected = editionId ?
-    filtered.find((n) => n.editionId === editionId) :
-    filtered.find((n) => ((n.name || '').toLowerCase() === nameLower));
+  const prev = discovery[bookId];
+
+  if (!prev) {
+    return discovery;
+  }
+
+  const available = prev.filteredNarrators || [];
   const existingCopies = prev.existingCopyNarrators || [];
-  const selectedHasFiles = (selected?.bookFileCount || 0) > 0;
-  const selectedForStatus = selected || { name, editionId };
+  const selected = available.find((edition) => edition.editionId === editionId) ||
+    existingCopies.find((edition) => edition.editionId === editionId) || narrator;
+  const filteredNarrators = available.filter((edition) => edition.editionId !== editionId);
+  const existingCopyNarrators = [
+    ...existingCopies.filter((edition) => edition.editionId !== editionId),
+    {
+      ...selected,
+      existingCopyId: book.id,
+      existingCopyMonitored: book.monitored,
+      status: 'existing'
+    }
+  ];
 
   return {
     ...discovery,
     [bookId]: {
       ...prev,
-      filteredNarrators: editionId ?
-        filtered.filter((n) => n.editionId !== editionId) :
-        filtered.filter((n) => ((n.name || '').toLowerCase() !== nameLower)),
-      existingCopyNarrators: selectedHasFiles ?
-        [
-          ...existingCopies,
-          {
-            ...selectedForStatus,
-            status: 'existing'
-          }
-        ] :
-        [
-          ...existingCopies,
-          {
-            ...selectedForStatus,
-            monitored: true,
-            status: 'monitored'
-          }
-        ],
-      totalExisting: selectedHasFiles ? (prev.totalExisting || 0) + 1 : (prev.totalExisting || 0),
-      totalFiltered: Math.max((prev.totalFiltered || 0) - 1, 0),
-      totalAvailable: Math.max((prev.totalAvailable || 0) - 1, 0)
+      filteredNarrators,
+      existingCopyNarrators,
+      totalExisting: existingCopyNarrators.length,
+      totalFiltered: filteredNarrators.length,
+      totalAvailable: filteredNarrators.length
     }
   };
 }
@@ -104,34 +98,13 @@ export const actionHandlers = handleThunks({
     }).request;
 
     promise.done((editions) => {
-      const normalizeNarratorNames = (names) => {
-        if (!Array.isArray(names)) {
-          return [];
-        }
-
-        return names
-          .map((name) => (typeof name === 'string' ? name.trim() : ''))
-          .filter((name) => name);
-      };
-
-      const getEditionNarratorNames = (edition) => {
-        const names = normalizeNarratorNames(edition?.narratorNames);
-        if (!names.length) {
-          const narrator = (edition?.narrator || '').trim();
-          return narrator ? [narrator] : [];
-        }
-
-        // Prefer real narrator names over the "Full Cast" label if both are present.
-        const withoutFullCast = names.filter((name) => name.toLowerCase() !== 'full cast');
-        return withoutFullCast.length ? withoutFullCast : names;
-      };
-
       const currentState = getState();
       const book = currentState.books.items.find((b) => b.id === bookId) || {};
 
       const narratorEditions = (editions || [])
+        .filter((edition) => edition.readingFormatId === EditionReadingFormat.Audiobook)
         .map((edition) => {
-          const narratorNamesForDisplay = getEditionNarratorNames(edition);
+          const narratorNamesForDisplay = getNarratorNamesForDisplay(edition.narrators, edition.narratorNames?.length ? edition.narratorNames : [edition.narrator]);
 
           return {
             ...edition,
@@ -142,15 +115,11 @@ export const actionHandlers = handleThunks({
         .filter((edition) => edition.narratorNamesForDisplay.length > 0);
 
       const existingEditions = narratorEditions.filter((e) =>
-        e.bookFileCount > 0
-      );
-
-      const monitoredEditions = narratorEditions.filter((e) =>
-        e.bookFileCount <= 0 && e.monitored
+        e.existingCopyId > 0
       );
 
       const availableEditions = narratorEditions.filter((e) =>
-        e.bookFileCount <= 0 && !e.monitored && !e.monitoredByAnotherAudiobookBook
+        !e.existingCopyId
       );
 
       const mapEdition = (edition, status) => {
@@ -178,8 +147,8 @@ export const actionHandlers = handleThunks({
           format: edition.format,
           language: edition.language,
           monitored: edition.monitored,
-          monitoredByAnotherAudiobookBook: edition.monitoredByAnotherAudiobookBook,
-          bookFileCount: edition.bookFileCount,
+          existingCopyId: edition.existingCopyId,
+          existingCopyMonitored: edition.existingCopyMonitored,
           status
         };
       };
@@ -190,15 +159,11 @@ export const actionHandlers = handleThunks({
         bookTitle: book.title || '',
         authorName: book.authorName || '',
         currentNarrator: book.narrator || '',
-        totalPhysicalCopies: existingEditions.length,
         totalAvailable: availableEditions.length,
         totalFiltered: availableEditions.length,
-        totalExisting: existingEditions.length + monitoredEditions.length,
+        totalExisting: existingEditions.length,
         filteredNarrators: availableEditions.map((edition) => mapEdition(edition, 'available')),
-        existingCopyNarrators: [
-          ...existingEditions.map((edition) => mapEdition(edition, 'existing')),
-          ...monitoredEditions.map((edition) => mapEdition(edition, 'monitored'))
-        ],
+        existingCopyNarrators: existingEditions.map((edition) => mapEdition(edition, 'existing')),
         errorMessage: null,
         recommendedAction: null
       };
@@ -228,189 +193,60 @@ export const actionHandlers = handleThunks({
   [ADD_NARRATOR_VARIANT]: function(getState, payload, dispatch) {
     const { bookId, narrator } = payload;
 
-    dispatch(set({
+    const selectedEditionId = narrator?.editionId ?? null;
+    const key = `${bookId}:${selectedEditionId}`;
+    const setAddition = (isSaving, error = null) => dispatch(set({
       section,
-      isSettingPreferred: true,
-      error: null
+      additions: { ...getState().narrator.additions, [key]: { isSaving, error } }
     }));
+    setAddition(true);
 
-    // Get the current book data to duplicate
-    const state = getState();
-    const currentBook = state.books.items.find((b) => b.id === bookId);
-
+    const currentBook = getState().books.items.find((b) => b.id === bookId);
     if (!currentBook) {
-      dispatch(set({
-        section,
-        isSettingPreferred: false,
-        error: { message: translate('BookNotFound') }
-      }));
+      setAddition(false, { message: translate('BookNotFound') });
       return;
     }
 
-    const selectedEditionId = (narrator && typeof narrator === 'object') ?
-      (narrator.editionId || narrator.EditionId) :
-      null;
+    if (!Number.isInteger(selectedEditionId) || selectedEditionId <= 0) {
+      setAddition(false, { message: translate('SelectEdition') });
+      return;
+    }
 
-    // Check if the current book has any physical files
-    const hasFiles = currentBook.statistics?.bookFileCount > 0;
+    // Add a separate wanted copy, or return the row already targeting this edition.
+    const promise = createAjaxRequest({
+      url: `/book/${bookId}/editions/wanted`,
+      method: 'POST',
+      data: JSON.stringify({ editionId: selectedEditionId, searchForNewBook: payload.searchForNewBook === true }),
+      contentType: 'application/json'
+    }).request;
 
-    if (selectedEditionId) {
-      if (hasFiles) {
-        // Book already has audio files: do NOT modify it. Create a separate wanted instance pinned to the selected edition.
-        const promise = createAjaxRequest({
-          url: `/book/${bookId}/editions/wanted`,
-          method: 'POST',
-          data: JSON.stringify({ editionId: selectedEditionId, searchForNewBook: payload.searchForNewBook === true }),
-          contentType: 'application/json'
-        }).request;
-
-        promise.done((data) => {
-          dispatch(set({
-            section,
-            isSettingPreferred: false,
-            discovery: optimisticallyMoveNarrator(getState(), bookId, narrator)
-          }));
-          if (payload.onSuccess) {
-            payload.onSuccess(data);
-          }
-        });
-
-        promise.fail((xhr) => {
-          dispatch(set({
-            section,
-            isSettingPreferred: false,
-            error: xhr
-          }));
-        });
-
-        return;
+    promise.done((data) => {
+      if (data.existingCopy) {
+        dispatch(showMessage({
+          id: `wanted-edition-existing-${data.id}`,
+          name: 'WantedEditionExistingCopy',
+          message: translate(data.monitored === false ? 'WantedEditionExistingCopyUnmonitored' : 'WantedEditionExistingCopy', {
+            title: data.title,
+            narrators: getNarratorDisplay(narrator) || narrator.name || translate('Unknown')
+          }),
+          type: 'info',
+          hideAfter: 10
+        }));
       }
 
-      // Missing instance (no files): pin the selected edition as the monitored/manual one.
-      // This uses the existing ManualAdd mechanism so imports won't override the user's choice.
-      const editionsPromise = createAjaxRequest({
-        url: `/edition?bookId=${bookId}`,
-        method: 'GET'
-      }).request;
+      dispatch(set({
+        section,
+        discovery: moveEditionToLibrary(getState(), bookId, narrator, data)
+      }));
+      setAddition(false);
+      if (payload.onSuccess) {
+        payload.onSuccess(data);
+      }
+    });
 
-      editionsPromise.done((editions) => {
-        const updatedEditions = (editions || []).map((e) => {
-          const isSelected = e.id === selectedEditionId;
-          return {
-            ...e,
-            monitored: isSelected,
-            manualAdd: isSelected
-          };
-        });
-
-        const promise = createAjaxRequest({
-          url: `/book/${bookId}`,
-          method: 'PUT',
-          data: JSON.stringify({
-            ...currentBook,
-            monitored: true,
-            anyEditionOk: false,
-            editions: updatedEditions
-          }),
-          contentType: 'application/json'
-        }).request;
-
-        promise.done((data) => {
-          dispatch(set({
-            section,
-            isSettingPreferred: false,
-            discovery: optimisticallyMoveNarrator(getState(), bookId, narrator)
-          }));
-          if (payload.searchForNewBook === true) {
-            dispatch(executeCommand({
-              name: commandNames.BOOK_SEARCH,
-              bookIds: [bookId]
-            }));
-          }
-          if (payload.onSuccess) {
-            payload.onSuccess(data);
-          }
-        });
-
-        promise.fail((xhr) => {
-          dispatch(set({
-            section,
-            isSettingPreferred: false,
-            error: xhr
-          }));
-        });
-      });
-
-      editionsPromise.fail((xhr) => {
-        dispatch(set({
-          section,
-          isSettingPreferred: false,
-          error: xhr
-        }));
-      });
-    } else {
-      // Fallback: Create a new book copy with this narrator (no edition selected)
-      const newBookData = {
-        ...currentBook,
-        id: 0, // Reset ID for new book
-        authorId: currentBook.authorId, // Preserve authorId for narrator variant
-        narrator: narrator.name || narrator,
-        monitored: true, // User clicked add - they want this book monitored
-        statistics: {
-          bookFileCount: 0,
-          bookCount: 0,
-          totalBookCount: 0,
-          sizeOnDisk: 0,
-          percentOfBooks: 0
-        },
-        added: new Date().toISOString(),
-        addOptions: {
-          monitor: 'all',
-          searchForNewBook: payload.searchForNewBook === true,
-          addType: 'manual' // Mark as manual addition since user selected it
-        },
-        // Include a single monitored edition for this narrator variant
-        editions: [{
-          title: currentBook.title,
-          monitored: true, // User clicked add - they want THIS narrator monitored
-          manualAdd: true, // User manually selected this narrator variant
-          narrator: narrator.name || narrator,
-          id: 0,
-          bookId: 0 // Will be set by backend
-        }]
-      };
-
-      // Remove fields that shouldn't be in POST request
-      delete newBookData.author;
-      delete newBookData.series;
-      delete newBookData.bookFiles;
-
-      const promise = createAjaxRequest({
-        url: '/book',
-        method: 'POST',
-        data: JSON.stringify(newBookData),
-        contentType: 'application/json'
-      }).request;
-
-      promise.done((data) => {
-        dispatch(set({
-          section,
-          isSettingPreferred: false,
-          discovery: optimisticallyMoveNarrator(getState(), bookId, narrator)
-        }));
-        if (payload.onSuccess) {
-          payload.onSuccess(data);
-        }
-      });
-
-      promise.fail((xhr) => {
-        dispatch(set({
-          section,
-          isSettingPreferred: false,
-          error: xhr
-        }));
-      });
-    }
+    promise.fail((xhr) => {
+      setAddition(false, xhr);
+    });
   }
 });
 
@@ -425,6 +261,7 @@ export const reducers = createHandleActions({
 
     return {
       ...state,
+      additions: Object.fromEntries(Object.entries(state.additions).filter(([key]) => !key.startsWith(`${bookId}:`))),
       discovery
     };
   }

@@ -1,6 +1,7 @@
 using Chaptarr.Http.REST;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.Qualities;
 
 namespace Chaptarr.Api.V1.Config
@@ -8,6 +9,7 @@ namespace Chaptarr.Api.V1.Config
     public class MediaManagementConfigResource : RestResource
     {
         public bool AutoUnmonitorPreviouslyDownloadedBooks { get; set; }
+        public CoverDownloadScope CoverDownloadScope { get; set; }
         public string RecycleBin { get; set; }
         public int RecycleBinCleanupDays { get; set; }
         public ProperDownloadTypes DownloadPropersAndRepacks { get; set; }
@@ -43,6 +45,7 @@ namespace Chaptarr.Api.V1.Config
             return new MediaManagementConfigResource
             {
                 AutoUnmonitorPreviouslyDownloadedBooks = model.AutoUnmonitorPreviouslyDownloadedBooks,
+                CoverDownloadScope = model.CoverDownloadScope,
                 RecycleBin = model.RecycleBin,
                 RecycleBinCleanupDays = model.RecycleBinCleanupDays,
                 DownloadPropersAndRepacks = model.DownloadPropersAndRepacks,

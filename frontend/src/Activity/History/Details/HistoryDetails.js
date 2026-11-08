@@ -74,6 +74,15 @@ function HistoryDetails(props) {
     timeFormat
   } = props;
 
+  if (eventType === 'authorsMerged' || eventType === 'authorSplit') {
+    return (
+      <DescriptionList>
+        <DescriptionListItem title={translate('Name')} data={sourceTitle} />
+        <DescriptionListItem title={translate('Details')} data={data.details} />
+      </DescriptionList>
+    );
+  }
+
   if (eventType === 'grabbed') {
     const {
       indexer,
@@ -214,7 +223,8 @@ function HistoryDetails(props) {
     const {
       customFormatScore,
       droppedPath,
-      importedPath
+      importedPath,
+      message
     } = data;
 
     return (
@@ -251,6 +261,11 @@ function HistoryDetails(props) {
               data={formatCustomFormatScore(customFormatScore)}
             /> :
             null
+        }
+
+        {
+          !!message &&
+            <DescriptionListItem title={translate('Message')} data={message} />
         }
       </DescriptionList>
     );

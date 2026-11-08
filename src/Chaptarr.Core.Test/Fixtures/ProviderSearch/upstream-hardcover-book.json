@@ -1,0 +1,2091 @@
+{
+  "data": {
+    "search": {
+      "results": {
+        "facet_counts": [],
+        "found": 12,
+        "hits": [
+          {
+            "document": {
+              "activities_count": 1285,
+              "alternative_titles": [
+                "A Wizard of Earthsea",
+                "A wizard of earthsea.",
+                "A Wizard Of Earthsea",
+                "The  wizard of Earthsea",
+                "Un mago de Terramar",
+                "Czarnoksiężnik z Archipelagu",
+                "A wizard of Earthsea.",
+                "Der Magier der Erdsee",
+                "O Feiticeiro de Terramar",
+                "Ο μάγος του αρχιπελάγους",
+                "Волшебник Земноморья",
+                "Čaroděj Zeměmoří",
+                "Ein Magier von Erdsee",
+                "Trollkarlen från Övärlden",
+                "Maameren velho",
+                "O feiticeiro de Terramar",
+                "A wizard of Earthsea",
+                "A  WIZARD OF EARTHSEA",
+                "地海巫师",
+                "Terremer",
+                "Un mag de Terramar",
+                "Le sorcier de Terremer",
+                "Trollkarlen från övärlden",
+                "Um Feiticeiro de Terramar",
+                "Il mago",
+                "Earthsea: The First Four Books",
+                "Troldmanden fra jordhavet. Atuans grave. Den yderste kyst",
+                "Un mago di Terramare",
+                "Yerdeniz Büyücüsü",
+                "Business coaching",
+                "Velká kniha Zeměmoří: Svazek první",
+                "Business Coaching: Achieving Practical Results Through Effective Engagement",
+                "A Szigetvilág varázslója",
+                "Il mago di Earthsea",
+                "Ο μάγος της γαιοθάλασσας",
+                "Troldmanden fra Jordhavet",
+                "O Feiticeiro e a Sombra",
+                "A  wizard of Earthsea",
+                "Un Mag De Terramar. Els llibres de Terramar, 1",
+                "Wizard of Earthsea",
+                "地海巫師",
+                "Un Mago de Terramar",
+                "Czarnoksieznik z archipelagu",
+                "A  wizard of earthsea.",
+                "A  wizard of earthsea"
+              ],
+              "author_names": [
+                "Ursula K. Le Guin"
+              ],
+              "book_category_id": 1,
+              "compilation": false,
+              "content_warnings": [
+                "animal death",
+                "Death",
+                "Violence",
+                "child death",
+                "Child abuse",
+                "Death of parent",
+                "bullying",
+                "sexism"
+              ],
+              "contribution_specializations": [],
+              "contribution_types": [
+                "Author"
+              ],
+              "contributions": [
+                {
+                  "author": {
+                    "id": 213830,
+                    "image": {
+                      "color": "#464646",
+                      "color_name": "Gray",
+                      "height": 340,
+                      "id": 35187,
+                      "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+                      "width": 280
+                    },
+                    "name": "Ursula K. Le Guin",
+                    "slug": "ursula-k-le-guin"
+                  },
+                  "contribution": "Author",
+                  "contributor_role_blurb": "The author of a written work.",
+                  "contributor_role_id": 1,
+                  "contributor_role_name": "Author",
+                  "primary": true
+                }
+              ],
+              "cover_color": "Black",
+              "description": "A boy grows to manhood while attempting to subdue the evil he unleashed on the world as an apprentice to the Master Wizard.",
+              "featured_series": {
+                "collection": false,
+                "details": "1",
+                "featured": true,
+                "id": 1448,
+                "position": 1.0,
+                "series": {
+                  "books_count": 40,
+                  "id": 1170,
+                  "name": "Earthsea Cycle",
+                  "primary_books_count": 6,
+                  "slug": "earthsea-cycle"
+                },
+                "unreleased": false
+              },
+              "featured_series_position": 1.0,
+              "genres": [
+                "Fantasy",
+                "Young Adult"
+              ],
+              "has_audiobook": true,
+              "has_ebook": true,
+              "id": "427401",
+              "image": {
+                "color": "#462711",
+                "color_name": "Black",
+                "height": 500,
+                "id": 3612219,
+                "url": "https://assets.hardcover.app/edition/30492202/e9af25c4b09bf983578e1eabdca87c593f1d5452.jpeg",
+                "width": 333
+              },
+              "isbns": [
+                "0881037559",
+                "9780881037555",
+                "0553101358",
+                "9780553101355",
+                "0575007176",
+                "9780575007178",
+                "0141354917",
+                "9780141354910",
+                "9684460651",
+                "9789684460652",
+                "838686821X",
+                "9788374692274",
+                "0544084373",
+                "9780544084377",
+                "3492291430",
+                "9783492291439",
+                "9723812479",
+                "9789723812473",
+                "0329626248",
+                "9780329626242",
+                "1473208459",
+                "9781473208452",
+                "0553116096",
+                "9780553116090",
+                "1436143837",
+                "9781436143837",
+                "1565440080",
+                "9781565440081",
+                "055314863X",
+                "9780553148633",
+                "0553137670",
+                "9780553137675",
+                "1473226813",
+                "9781473226814",
+                "9607479009",
+                "9789607479006",
+                "5389148770",
+                "9785389148772",
+                "8072542729",
+                "9788072542727",
+                "3104910634",
+                "9783104910635",
+                "384492616X",
+                "9783844926163",
+                "8376484575",
+                "9788376484570",
+                "9174487345",
+                "9789174487343",
+                "6073908466",
+                "9786073908467",
+                "9510077437",
+                "9789510077436",
+                "8580415225",
+                "9788580415223",
+                "0547773749",
+                "9780547773742",
+                "0553262505",
+                "9780553262506",
+                "5552898168",
+                "9785552898169",
+                "0547851391",
+                "9780547851396",
+                "9993183709",
+                "9789993183709",
+                "0553234617",
+                "9780553234619",
+                "1607470462",
+                "9781607470465",
+                "7539964804",
+                "9787539964805",
+                "8580415217",
+                "9788580415216",
+                "8378398528",
+                "9788378398523",
+                "2253119725",
+                "9782253119722",
+                "0241367638",
+                "9780241367636",
+                "3551580901",
+                "9783551580900",
+                "6586015421",
+                "9786586015423",
+                "8417925201",
+                "9788417925208",
+                "2266023462",
+                "9782266023467",
+                "9180941133",
+                "9789180941136",
+                "9897834346",
+                "9789897834349",
+                "0689317204",
+                "9780689317200",
+                "9129658144",
+                "9789129658149",
+                "5389099486",
+                "9785389099487",
+                "0140364609",
+                "9780140364606",
+                "880450739X",
+                "9788804507390",
+                "8445001949",
+                "9788445001943",
+                "0241995698",
+                "9780241995693",
+                "8721018758",
+                "9788721018757",
+                "0547722028",
+                "9780547722023",
+                "8804789115",
+                "9788804789116",
+                "9753420579",
+                "9789753420570",
+                "0563389168",
+                "9780563389163",
+                "8445075292",
+                "9788445075296",
+                "1473223563",
+                "9781473223561",
+                "8445012096",
+                "9788445012093",
+                "8076841305",
+                "9788076841307",
+                "190729385X",
+                "9781907293856",
+                "0745103375",
+                "9780745103372",
+                "1449881947",
+                "9781449881948",
+                "8379611993",
+                "9788379611997",
+                "9631164209",
+                "9789631164206",
+                "8842904694",
+                "9788842904694",
+                "6586015413",
+                "9786586015416",
+                "1874703531",
+                "9781874703532",
+                "0395276535",
+                "9780395276532",
+                "9605212714",
+                "9789605212711",
+                "883573391X",
+                "9788835733911",
+                "0812421450",
+                "9780812421453",
+                "3898975282",
+                "9783898975285",
+                "8308000320",
+                "9788308000328",
+                "8793895380",
+                "9788793895386",
+                "1841127914",
+                "9781841127910",
+                "9722328174",
+                "9789722328173",
+                "0140304770",
+                "9780140304770",
+                "0553383043",
+                "9780553383041",
+                "8484371115",
+                "9788484371113",
+                "1299902626",
+                "9781299902626",
+                "986801090X",
+                "9789868010901",
+                "950547072X",
+                "9789505470723",
+                "8385276009",
+                "9788385276005",
+                "0553540068",
+                "9780553540062",
+                "2000000185",
+                "9785699296453",
+                "3492962254",
+                "9783492962254"
+              ],
+              "lists_count": 1329,
+              "moods": [
+                "Adventurous",
+                "mysterious",
+                "reflective",
+                "hopeful",
+                "dark",
+                "inspiring",
+                "lighthearted",
+                "tense",
+                "emotional",
+                "challenging"
+              ],
+              "pages": 251,
+              "prompts_count": 9,
+              "rating": 3.937926753569212,
+              "ratings_count": 1611,
+              "release_date": "1968-01-01",
+              "release_year": 1968,
+              "reviews_count": 157,
+              "series_ids": [
+                1170
+              ],
+              "series_names": [
+                "Earthsea Cycle"
+              ],
+              "slug": "a-wizard-of-earthsea",
+              "subtitle": "Achieving Practical Results Through Effective Engagement",
+              "tags": [
+                "Strong Character Development",
+                "Loveable Characters",
+                "Not Diverse Characters",
+                "Diverse Characters",
+                "A mix driven",
+                "Unloveable Characters",
+                "Character driven",
+                "Weak Character Development",
+                "Plot driven",
+                "fantasy"
+              ],
+              "title": "A Wizard of Earthsea",
+              "users_count": 4259,
+              "users_read_count": 2198
+            },
+            "highlight": {
+              "alternative_titles": [
+                {
+                  "matched_tokens": [
+                    "A",
+                    "Wizard",
+                    "of",
+                    "Earthsea"
+                  ],
+                  "snippet": "<mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "A",
+                    "wizard",
+                    "of",
+                    "earthsea"
+                  ],
+                  "snippet": "<mark>A</mark> <mark>wizard</mark> <mark>of</mark> <mark>earthsea</mark>."
+                },
+                {
+                  "matched_tokens": [
+                    "A",
+                    "Wizard",
+                    "Of",
+                    "Earthsea"
+                  ],
+                  "snippet": "<mark>A</mark> <mark>Wizard</mark> <mark>Of</mark> <mark>Earthsea</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "wizard",
+                    "of",
+                    "Earthsea"
+                  ],
+                  "snippet": "The  <mark>wizard</mark> <mark>of</mark> <mark>Earthsea</mark>"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Un mago de Terramar"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Czarnoksiężnik z Archipelagu"
+                },
+                {
+                  "matched_tokens": [
+                    "A",
+                    "wizard",
+                    "of",
+                    "Earthsea"
+                  ],
+                  "snippet": "<mark>A</mark> <mark>wizard</mark> <mark>of</mark> <mark>Earthsea</mark>."
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Der Magier der Erdsee"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "O Feiticeiro de Terramar"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Ο μάγος του αρχιπελάγους"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Волшебник Земноморья"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Čaroděj Zeměmoří"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Ein Magier von Erdsee"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Trollkarlen från Övärlden"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Maameren velho"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "O feiticeiro de Terramar"
+                },
+                {
+                  "matched_tokens": [
+                    "A",
+                    "wizard",
+                    "of",
+                    "Earthsea"
+                  ],
+                  "snippet": "<mark>A</mark> <mark>wizard</mark> <mark>of</mark> <mark>Earthsea</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "A",
+                    "WIZARD",
+                    "OF",
+                    "EARTHSEA"
+                  ],
+                  "snippet": "<mark>A</mark>  <mark>WIZARD</mark> <mark>OF</mark> <mark>EARTHSEA</mark>"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "地海巫师"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Terremer"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Un mag de Terramar"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Le sorcier de Terremer"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Trollkarlen från övärlden"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Um Feiticeiro de Terramar"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Il mago"
+                },
+                {
+                  "matched_tokens": [
+                    "Earthsea"
+                  ],
+                  "snippet": "<mark>Earthsea</mark>: The First Four Books"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Troldmanden fra jordhavet. Atuans grave. Den yderste kyst"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Un mago di Terramare"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Yerdeniz Büyücüsü"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Business coaching"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Velká kniha Zeměmoří: Svazek první"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Business Coaching: Achieving Practical Results Through Effective Engagement"
+                },
+                {
+                  "matched_tokens": [
+                    "A"
+                  ],
+                  "snippet": "<mark>A</mark> Szigetvilág varázslója"
+                },
+                {
+                  "matched_tokens": [
+                    "Earthsea"
+                  ],
+                  "snippet": "Il mago di <mark>Earthsea</mark>"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Ο μάγος της γαιοθάλασσας"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Troldmanden fra Jordhavet"
+                },
+                {
+                  "matched_tokens": [
+                    "a"
+                  ],
+                  "snippet": "O Feiticeiro e <mark>a</mark> Sombra"
+                },
+                {
+                  "matched_tokens": [
+                    "A",
+                    "wizard",
+                    "of",
+                    "Earthsea"
+                  ],
+                  "snippet": "<mark>A</mark>  <mark>wizard</mark> <mark>of</mark> <mark>Earthsea</mark>"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Un Mag De Terramar. Els llibres de Terramar, 1"
+                },
+                {
+                  "matched_tokens": [
+                    "Wizard",
+                    "of",
+                    "Earthsea"
+                  ],
+                  "snippet": "<mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "地海巫師"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Un Mago de Terramar"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Czarnoksieznik z archipelagu"
+                },
+                {
+                  "matched_tokens": [
+                    "A",
+                    "wizard",
+                    "of",
+                    "earthsea"
+                  ],
+                  "snippet": "<mark>A</mark>  <mark>wizard</mark> <mark>of</mark> <mark>earthsea</mark>."
+                },
+                {
+                  "matched_tokens": [
+                    "A",
+                    "wizard",
+                    "of",
+                    "earthsea"
+                  ],
+                  "snippet": "<mark>A</mark>  <mark>wizard</mark> <mark>of</mark> <mark>earthsea</mark>"
+                }
+              ],
+              "series_names": [
+                {
+                  "matched_tokens": [
+                    "Earthsea"
+                  ],
+                  "snippet": "<mark>Earthsea</mark> Cycle"
+                }
+              ],
+              "title": {
+                "matched_tokens": [
+                  "A",
+                  "Wizard",
+                  "of",
+                  "Earthsea"
+                ],
+                "snippet": "<mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>"
+              }
+            },
+            "highlights": [
+              {
+                "field": "title",
+                "matched_tokens": [
+                  "A",
+                  "Wizard",
+                  "of",
+                  "Earthsea"
+                ],
+                "snippet": "<mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>"
+              },
+              {
+                "field": "alternative_titles",
+                "indices": [
+                  0,
+                  1,
+                  2,
+                  6,
+                  16
+                ],
+                "matched_tokens": [
+                  [
+                    "A",
+                    "Wizard",
+                    "of",
+                    "Earthsea"
+                  ],
+                  [
+                    "A",
+                    "wizard",
+                    "of",
+                    "earthsea"
+                  ],
+                  [
+                    "A",
+                    "Wizard",
+                    "Of",
+                    "Earthsea"
+                  ],
+                  [
+                    "A",
+                    "wizard",
+                    "of",
+                    "Earthsea"
+                  ],
+                  [
+                    "A",
+                    "wizard",
+                    "of",
+                    "Earthsea"
+                  ]
+                ],
+                "snippets": [
+                  "<mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>",
+                  "<mark>A</mark> <mark>wizard</mark> <mark>of</mark> <mark>earthsea</mark>.",
+                  "<mark>A</mark> <mark>Wizard</mark> <mark>Of</mark> <mark>Earthsea</mark>",
+                  "<mark>A</mark> <mark>wizard</mark> <mark>of</mark> <mark>Earthsea</mark>.",
+                  "<mark>A</mark> <mark>wizard</mark> <mark>of</mark> <mark>Earthsea</mark>"
+                ]
+              },
+              {
+                "field": "series_names",
+                "indices": [
+                  0
+                ],
+                "matched_tokens": [
+                  [
+                    "Earthsea"
+                  ]
+                ],
+                "snippets": [
+                  "<mark>Earthsea</mark> Cycle"
+                ]
+              }
+            ],
+            "text_match": 2314894167593451563,
+            "text_match_info": {
+              "best_field_score": "4419510927616",
+              "best_field_weight": 5,
+              "fields_matched": 3,
+              "num_tokens_dropped": 0,
+              "score": "2314894167593451563",
+              "tokens_matched": 4,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "activities_count": 0,
+              "alternative_titles": [
+                "A Wizard of Earthsea"
+              ],
+              "author_names": [],
+              "book_category_id": 1,
+              "compilation": false,
+              "content_warnings": [],
+              "contribution_specializations": [],
+              "contribution_types": [],
+              "contributions": [],
+              "featured_series": {},
+              "genres": [],
+              "has_audiobook": false,
+              "has_ebook": false,
+              "id": "3032362",
+              "image": {},
+              "isbns": [],
+              "lists_count": 0,
+              "moods": [],
+              "pages": 183,
+              "prompts_count": 0,
+              "rating": 0.0,
+              "ratings_count": 0,
+              "reviews_count": 0,
+              "series_ids": [],
+              "series_names": [],
+              "slug": "a-wizard-of-earthsea-0ec826bc-5733-4196-b9eb-56f095fb10c2",
+              "tags": [],
+              "title": "A Wizard of Earthsea",
+              "users_count": 0,
+              "users_read_count": 0
+            },
+            "highlight": {
+              "alternative_titles": [
+                {
+                  "matched_tokens": [
+                    "A",
+                    "Wizard",
+                    "of",
+                    "Earthsea"
+                  ],
+                  "snippet": "<mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>"
+                }
+              ],
+              "title": {
+                "matched_tokens": [
+                  "A",
+                  "Wizard",
+                  "of",
+                  "Earthsea"
+                ],
+                "snippet": "<mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>"
+              }
+            },
+            "highlights": [
+              {
+                "field": "title",
+                "matched_tokens": [
+                  "A",
+                  "Wizard",
+                  "of",
+                  "Earthsea"
+                ],
+                "snippet": "<mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>"
+              },
+              {
+                "field": "alternative_titles",
+                "indices": [
+                  0
+                ],
+                "matched_tokens": [
+                  [
+                    "A",
+                    "Wizard",
+                    "of",
+                    "Earthsea"
+                  ]
+                ],
+                "snippets": [
+                  "<mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>"
+                ]
+              }
+            ],
+            "text_match": 2314894167593451562,
+            "text_match_info": {
+              "best_field_score": "4419510927616",
+              "best_field_weight": 5,
+              "fields_matched": 2,
+              "num_tokens_dropped": 0,
+              "score": "2314894167593451562",
+              "tokens_matched": 4,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "activities_count": 25,
+              "alternative_titles": [
+                "The Earthsea Trilogy",
+                "Terremer",
+                "La saga di Terramare",
+                "La saga di Earthsea",
+                "The Earthsea Trilogy: A Wizard of Earthsea; The Tombs of Atuan; The Farthest Shore by Ursula LeGuin",
+                "Earthsea",
+                "Maameren tarinat 1-3"
+              ],
+              "author_names": [
+                "Ursula K. Le Guin"
+              ],
+              "book_category_id": 1,
+              "compilation": true,
+              "content_warnings": [],
+              "contribution_specializations": [],
+              "contribution_types": [
+                "Author"
+              ],
+              "contributions": [
+                {
+                  "author": {
+                    "id": 213830,
+                    "image": {
+                      "color": "#464646",
+                      "color_name": "Gray",
+                      "height": 340,
+                      "id": 35187,
+                      "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+                      "width": 280
+                    },
+                    "name": "Ursula K. Le Guin",
+                    "slug": "ursula-k-le-guin"
+                  },
+                  "contribution": "Author",
+                  "contributor_role_blurb": "The author of a written work.",
+                  "contributor_role_id": 1,
+                  "contributor_role_name": "Author",
+                  "primary": true
+                }
+              ],
+              "cover_color": "Brown",
+              "description": "The windswept isles of Earthsea were famous for wizards, and the greatest was Ged. Hungry for power and knowledge he tampered with long-held secrets and loosed a terrible shadow upon the world.",
+              "featured_series": {
+                "collection": false,
+                "details": "1-3",
+                "featured": true,
+                "id": 546842,
+                "position": 1.0,
+                "series": {
+                  "books_count": 40,
+                  "id": 1170,
+                  "name": "Earthsea Cycle",
+                  "primary_books_count": 6,
+                  "slug": "earthsea-cycle"
+                },
+                "unreleased": false
+              },
+              "featured_series_position": 1.0,
+              "genres": [
+                "Boys",
+                "Fantasy",
+                "Young Adult",
+                "Classics",
+                "Adventure",
+                "Science Fiction",
+                "Magic",
+                "Fantasy fiction"
+              ],
+              "has_audiobook": false,
+              "has_ebook": true,
+              "id": "439824",
+              "image": {
+                "color": "#6b491d",
+                "color_name": "Brown",
+                "height": 500,
+                "id": 5196864,
+                "url": "https://assets.hardcover.app/edition/4485216/011b1fec6cae59501602efd53e5d6f37e0437b45.jpeg",
+                "width": 281
+              },
+              "isbns": [
+                "0739452711",
+                "9780739452714",
+                "8804626410",
+                "9788804626411",
+                "8852034048",
+                "9788852034046",
+                "0140050930",
+                "9780140050936",
+                "8842902705",
+                "9788842902706",
+                "0553323318",
+                "9780553323313",
+                "2724266986",
+                "9782724266986",
+                "8804734299",
+                "9788804734291",
+                "0575022744",
+                "9780575022744",
+                "9510271861",
+                "9789510271865"
+              ],
+              "lists_count": 44,
+              "moods": [],
+              "pages": 422,
+              "prompts_count": 0,
+              "rating": 4.051282051282051,
+              "ratings_count": 78,
+              "release_date": "1968-01-01",
+              "release_year": 1968,
+              "reviews_count": 2,
+              "series_ids": [
+                1170
+              ],
+              "series_names": [
+                "Earthsea Cycle"
+              ],
+              "slug": "the-earthsea-trilogy",
+              "tags": [
+                "mediabox-old-format"
+              ],
+              "title": "The Earthsea Trilogy",
+              "users_count": 218,
+              "users_read_count": 116
+            },
+            "highlight": {
+              "alternative_titles": [
+                {
+                  "matched_tokens": [
+                    "Earthsea"
+                  ],
+                  "snippet": "The <mark>Earthsea</mark> Trilogy"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Terremer"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "La saga di Terramare"
+                },
+                {
+                  "matched_tokens": [
+                    "Earthsea"
+                  ],
+                  "snippet": "La saga di <mark>Earthsea</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "Earthsea",
+                    "A",
+                    "Wizard",
+                    "of",
+                    "Earthsea",
+                    "of"
+                  ],
+                  "snippet": "The <mark>Earthsea</mark> Trilogy: <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>; The Tombs <mark>of</mark> Atuan; The Farthest Shore by Ursula LeGuin"
+                },
+                {
+                  "matched_tokens": [
+                    "Earthsea"
+                  ],
+                  "snippet": "<mark>Earthsea</mark>"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Maameren tarinat 1-3"
+                }
+              ],
+              "series_names": [
+                {
+                  "matched_tokens": [
+                    "Earthsea"
+                  ],
+                  "snippet": "<mark>Earthsea</mark> Cycle"
+                }
+              ],
+              "title": {
+                "matched_tokens": [
+                  "Earthsea"
+                ],
+                "snippet": "The <mark>Earthsea</mark> Trilogy"
+              }
+            },
+            "highlights": [
+              {
+                "field": "alternative_titles",
+                "indices": [
+                  4,
+                  5,
+                  0,
+                  3
+                ],
+                "matched_tokens": [
+                  [
+                    "Earthsea",
+                    "A",
+                    "Wizard",
+                    "of",
+                    "Earthsea",
+                    "of"
+                  ],
+                  [
+                    "Earthsea"
+                  ],
+                  [
+                    "Earthsea"
+                  ],
+                  [
+                    "Earthsea"
+                  ]
+                ],
+                "snippets": [
+                  "The <mark>Earthsea</mark> Trilogy: <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>; The Tombs <mark>of</mark> Atuan; The Farthest Shore by Ursula LeGuin",
+                  "<mark>Earthsea</mark>",
+                  "The <mark>Earthsea</mark> Trilogy",
+                  "La saga di <mark>Earthsea</mark>"
+                ]
+              },
+              {
+                "field": "title",
+                "matched_tokens": [
+                  "Earthsea"
+                ],
+                "snippet": "The <mark>Earthsea</mark> Trilogy"
+              },
+              {
+                "field": "series_names",
+                "indices": [
+                  0
+                ],
+                "matched_tokens": [
+                  [
+                    "Earthsea"
+                  ]
+                ],
+                "snippets": [
+                  "<mark>Earthsea</mark> Cycle"
+                ]
+              }
+            ],
+            "text_match": 2314894167593451531,
+            "text_match_info": {
+              "best_field_score": "4419510927616",
+              "best_field_weight": 1,
+              "fields_matched": 3,
+              "num_tokens_dropped": 0,
+              "score": "2314894167593451531",
+              "tokens_matched": 4,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "activities_count": 15,
+              "alternative_titles": [
+                "A Wizard of Earthsea: A stunning graphic novel edition of the classic fantasy adventure",
+                "A Wizard of Earthsea: A Graphic Novel"
+              ],
+              "author_names": [
+                "Ursula K. Le Guin",
+                "Fred Fordham"
+              ],
+              "book_category_id": 4,
+              "compilation": false,
+              "content_warnings": [],
+              "contribution_specializations": [],
+              "contribution_types": [
+                "Author",
+                "illustrator"
+              ],
+              "contributions": [
+                {
+                  "author": {
+                    "id": 213830,
+                    "image": {
+                      "color": "#464646",
+                      "color_name": "Gray",
+                      "height": 340,
+                      "id": 35187,
+                      "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+                      "width": 280
+                    },
+                    "name": "Ursula K. Le Guin",
+                    "slug": "ursula-k-le-guin"
+                  },
+                  "contribution": "Author",
+                  "contributor_role_blurb": "",
+                  "contributor_role_id": 1,
+                  "contributor_role_name": "Author",
+                  "primary": true
+                },
+                {
+                  "author": {
+                    "id": 244877,
+                    "image": {},
+                    "name": "Fred Fordham",
+                    "slug": "fred-fordham"
+                  },
+                  "contribution": "illustrator",
+                  "primary": false
+                }
+              ],
+              "cover_color": "Gray",
+              "description": "Ursula K. Le Guin's timeless and revered A Wizard of Earthsea is reimagined in a richly expansive graphic novel by acclaimed artist Fred Fordham, creator of stunning adaptations To Kill a Mockingbird and Brave New World. \"The magic of Earthsea is primal; the lessons of Earthsea remain as potent, as wise, and as necessary as anyone could dream.\" --Neil Gaiman Ged was the greatest sorcerer in Earthsea, but in his youth he was the reckless Sparrowhawk. In his hunger for power and knowledge, he tampered with long-held secrets and unleashed a terrible shadow upon the world. This is the tumultuous tale of his testing, how he mastered the mighty words of power, tamed an ancient dragon, and crossed death's threshold to restore the balance. Experience the bestselling first adventure of Ursula K. Le Guin's Earthsea Cycle as a masterly crafted graphic novel. Fred Fordham brings new life to Le Guin's iconic fantasy classic with his breathtaking illustrations and thoughtful text adaptation.",
+              "featured_series": {},
+              "genres": [
+                "Fantasy",
+                "Young Adult",
+                "Comics"
+              ],
+              "has_audiobook": false,
+              "has_ebook": true,
+              "id": "1766017",
+              "image": {
+                "color": "#9b7151",
+                "color_name": "Gray",
+                "height": 500,
+                "id": 4591926,
+                "url": "https://assets.hardcover.app/edition/31874536/db79274228eeae0f2933bbd7fe58ca6869a727c6.jpeg",
+                "width": 342
+              },
+              "isbns": [
+                "1529529794",
+                "9781529529791",
+                "0063285762",
+                "9780063285767"
+              ],
+              "lists_count": 21,
+              "moods": [],
+              "pages": 288,
+              "prompts_count": 0,
+              "rating": 3.611111111111111,
+              "ratings_count": 9,
+              "release_date": "2025-03-03",
+              "release_year": 2025,
+              "reviews_count": 3,
+              "series_ids": [],
+              "series_names": [],
+              "slug": "a-wizard-of-earthsea-a-graphic-novel",
+              "subtitle": "A Graphic Novel",
+              "tags": [],
+              "title": "A Wizard of Earthsea: A Graphic Novel",
+              "users_count": 46,
+              "users_read_count": 15
+            },
+            "highlight": {
+              "alternative_titles": [
+                {
+                  "matched_tokens": [
+                    "A",
+                    "Wizard",
+                    "of",
+                    "Earthsea",
+                    "A",
+                    "of"
+                  ],
+                  "snippet": "<mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>: <mark>A</mark> stunning graphic novel edition <mark>of</mark> the classic fantasy adventure"
+                },
+                {
+                  "matched_tokens": [
+                    "A",
+                    "Wizard",
+                    "of",
+                    "Earthsea",
+                    "A"
+                  ],
+                  "snippet": "<mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>: <mark>A</mark> Graphic Novel"
+                }
+              ],
+              "title": {
+                "matched_tokens": [
+                  "A",
+                  "Wizard",
+                  "of",
+                  "Earthsea",
+                  "A"
+                ],
+                "snippet": "<mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>: <mark>A</mark> Graphic Novel"
+              }
+            },
+            "highlights": [
+              {
+                "field": "title",
+                "matched_tokens": [
+                  "A",
+                  "Wizard",
+                  "of",
+                  "Earthsea",
+                  "A"
+                ],
+                "snippet": "<mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>: <mark>A</mark> Graphic Novel"
+              },
+              {
+                "field": "alternative_titles",
+                "indices": [
+                  0,
+                  1
+                ],
+                "matched_tokens": [
+                  [
+                    "A",
+                    "Wizard",
+                    "of",
+                    "Earthsea",
+                    "A",
+                    "of"
+                  ],
+                  [
+                    "A",
+                    "Wizard",
+                    "of",
+                    "Earthsea",
+                    "A"
+                  ]
+                ],
+                "snippets": [
+                  "<mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>: <mark>A</mark> stunning graphic novel edition <mark>of</mark> the classic fantasy adventure",
+                  "<mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>: <mark>A</mark> Graphic Novel"
+                ]
+              }
+            ],
+            "text_match": 2314894167592927274,
+            "text_match_info": {
+              "best_field_score": "4419510927360",
+              "best_field_weight": 5,
+              "fields_matched": 2,
+              "num_tokens_dropped": 0,
+              "score": "2314894167592927274",
+              "tokens_matched": 4,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "activities_count": 4,
+              "alternative_titles": [
+                "Historias de Terramar I: Un mago en Terramar / Las Tumbas de Atuan",
+                "Un mago de Terramar / Las Tumbas de Atuan"
+              ],
+              "author_names": [
+                "Ursula K. Le Guin"
+              ],
+              "book_category_id": 1,
+              "compilation": true,
+              "content_warnings": [],
+              "contribution_specializations": [],
+              "contribution_types": [
+                "Author"
+              ],
+              "contributions": [
+                {
+                  "author": {
+                    "id": 213830,
+                    "image": {
+                      "color": "#464646",
+                      "color_name": "Gray",
+                      "height": 340,
+                      "id": 35187,
+                      "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+                      "width": 280
+                    },
+                    "name": "Ursula K. Le Guin",
+                    "slug": "ursula-k-le-guin"
+                  },
+                  "contribution": "Author",
+                  "contributor_role_blurb": "The principal author of a written work.",
+                  "contributor_role_id": 1,
+                  "contributor_role_name": "Author",
+                  "primary": true
+                }
+              ],
+              "cover_color": "Brown",
+              "description": "En el archipiélago de Terramar hay dragones, magos y espectros, talismanes y poderes. Es un mundo gobernado por la magia y, ante todo, por las palabras, pues cada cosa posee su nombre verdadero, el designado durante la Creación, que otorga a los hechiceros el dominio sobre los elementos y los animales. Sus gentes, sencillas y tranquilas, tienen como único objetivo conseguir paz y sabiduría. Este volumen recoge las dos primeras novelas de la saga. Sus respectivos protagonistas, el joven mago Ged y la sacerdotisa Tenar, experimentarán una serie de aventuras que los transformarán profundamente, les harán crecer y liberarse de sus miedos y represiones para convertirse en auténticos héroes que colaboren en el restablecimiento del equilibrio cósmico. Crítica y lectores coinciden en que el de Terramar es un universo literario tan sólido e inolvidable como el de J.R.R. Tolkien: todo amante de la Tierra Media debe adentrarse en estas páginas repletas de belleza, fantasía, emociones y alegorías que trascienden el género y ofrecen enseñanzas y entretenimiento con la maestría de una de las mayores escritoras de todos los tiempos.",
+              "featured_series": {
+                "collection": false,
+                "details": "1-2",
+                "featured": true,
+                "id": 226822,
+                "position": 1.0,
+                "series": {
+                  "books_count": 40,
+                  "id": 1170,
+                  "name": "Earthsea Cycle",
+                  "primary_books_count": 6,
+                  "slug": "earthsea-cycle"
+                },
+                "unreleased": false
+              },
+              "featured_series_position": 1.0,
+              "genres": [
+                "Fantasy",
+                "Classics",
+                "Adventure",
+                "Science fiction",
+                "General"
+              ],
+              "has_audiobook": false,
+              "has_ebook": false,
+              "id": "1217955",
+              "image": {
+                "color": "#a76221",
+                "color_name": "Brown",
+                "height": 500,
+                "id": 5267425,
+                "url": "https://assets.hardcover.app/edition/31243026/57628e59932ce54723011e8f822955e89c6833af.jpeg",
+                "width": 303
+              },
+              "isbns": [
+                "8445074776",
+                "9788445074770",
+                "844507668X",
+                "9788445076682"
+              ],
+              "lists_count": 5,
+              "moods": [],
+              "pages": 384,
+              "prompts_count": 0,
+              "rating": 4.7,
+              "ratings_count": 5,
+              "release_date": "1968-01-01",
+              "release_year": 1968,
+              "reviews_count": 1,
+              "series_ids": [
+                1170
+              ],
+              "series_names": [
+                "Earthsea Cycle"
+              ],
+              "slug": "a-wizard-of-earthsea-the-tombs-of-atuan",
+              "subtitle": "Un mago en Terramar / Las Tumbas de Atuan",
+              "tags": [],
+              "title": "A Wizard of Earthsea / The Tombs of Atuan",
+              "users_count": 12,
+              "users_read_count": 7
+            },
+            "highlight": {
+              "series_names": [
+                {
+                  "matched_tokens": [
+                    "Earthsea"
+                  ],
+                  "snippet": "<mark>Earthsea</mark> Cycle"
+                }
+              ],
+              "title": {
+                "matched_tokens": [
+                  "A",
+                  "Wizard",
+                  "of",
+                  "Earthsea",
+                  "of"
+                ],
+                "snippet": "<mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark> / The Tombs <mark>of</mark> Atuan"
+              }
+            },
+            "highlights": [
+              {
+                "field": "title",
+                "matched_tokens": [
+                  "A",
+                  "Wizard",
+                  "of",
+                  "Earthsea",
+                  "of"
+                ],
+                "snippet": "<mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark> / The Tombs <mark>of</mark> Atuan"
+              },
+              {
+                "field": "series_names",
+                "indices": [
+                  0
+                ],
+                "matched_tokens": [
+                  [
+                    "Earthsea"
+                  ]
+                ],
+                "snippets": [
+                  "<mark>Earthsea</mark> Cycle"
+                ]
+              }
+            ],
+            "text_match": 2314894167592927274,
+            "text_match_info": {
+              "best_field_score": "4419510927360",
+              "best_field_weight": 5,
+              "fields_matched": 2,
+              "num_tokens_dropped": 0,
+              "score": "2314894167592927274",
+              "tokens_matched": 4,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "activities_count": 2,
+              "alternative_titles": [
+                "Study Guide: A Wizard of Earthsea by Ursula K. Le Guin"
+              ],
+              "author_names": [
+                "SuperSummary"
+              ],
+              "book_category_id": 1,
+              "compilation": false,
+              "content_warnings": [],
+              "contribution_specializations": [],
+              "contribution_types": [
+                "Author"
+              ],
+              "contributions": [
+                {
+                  "author": {
+                    "id": 340352,
+                    "image": {},
+                    "name": "SuperSummary",
+                    "slug": "supersummary"
+                  },
+                  "contribution": "Author",
+                  "contributor_role_blurb": "The principal author of a written work.",
+                  "contributor_role_id": 1,
+                  "contributor_role_name": "Author",
+                  "primary": true
+                }
+              ],
+              "featured_series": {},
+              "genres": [],
+              "has_audiobook": false,
+              "has_ebook": false,
+              "id": "2601545",
+              "image": {},
+              "isbns": [
+                "9798820934841"
+              ],
+              "lists_count": 1,
+              "moods": [],
+              "pages": 41,
+              "prompts_count": 0,
+              "rating": 0.0,
+              "ratings_count": 0,
+              "reviews_count": 0,
+              "series_ids": [],
+              "series_names": [],
+              "slug": "study-guide-a-wizard-of-earthsea-by-ursula-k-le-guin",
+              "subtitle": "A Wizard of Earthsea by Ursula K. Le Guin",
+              "tags": [],
+              "title": "Study Guide: A Wizard of Earthsea by Ursula K. Le Guin",
+              "users_count": 4,
+              "users_read_count": 4
+            },
+            "highlight": {
+              "alternative_titles": [
+                {
+                  "matched_tokens": [
+                    "A",
+                    "Wizard",
+                    "of",
+                    "Earthsea"
+                  ],
+                  "snippet": "Study Guide: <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark> by Ursula K. Le Guin"
+                }
+              ],
+              "title": {
+                "matched_tokens": [
+                  "A",
+                  "Wizard",
+                  "of",
+                  "Earthsea"
+                ],
+                "snippet": "Study Guide: <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark> by Ursula K. Le Guin"
+              }
+            },
+            "highlights": [
+              {
+                "field": "title",
+                "matched_tokens": [
+                  "A",
+                  "Wizard",
+                  "of",
+                  "Earthsea"
+                ],
+                "snippet": "Study Guide: <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark> by Ursula K. Le Guin"
+              },
+              {
+                "field": "alternative_titles",
+                "indices": [
+                  0
+                ],
+                "matched_tokens": [
+                  [
+                    "A",
+                    "Wizard",
+                    "of",
+                    "Earthsea"
+                  ]
+                ],
+                "snippets": [
+                  "Study Guide: <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark> by Ursula K. Le Guin"
+                ]
+              }
+            ],
+            "text_match": 2314894167592927274,
+            "text_match_info": {
+              "best_field_score": "4419510927360",
+              "best_field_weight": 5,
+              "fields_matched": 2,
+              "num_tokens_dropped": 0,
+              "score": "2314894167592927274",
+              "tokens_matched": 4,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "activities_count": 0,
+              "alternative_titles": [
+                "Wizard of Earthsea: A Graphic Novel"
+              ],
+              "author_names": [
+                "Ursula K. Le Guin",
+                "Fred Fordham"
+              ],
+              "book_category_id": 1,
+              "compilation": false,
+              "content_warnings": [],
+              "contribution_specializations": [],
+              "contribution_types": [
+                "Author",
+                "Illustrator"
+              ],
+              "contributions": [
+                {
+                  "author": {
+                    "id": 213830,
+                    "image": {
+                      "color": "#464646",
+                      "color_name": "Gray",
+                      "height": 340,
+                      "id": 35187,
+                      "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+                      "width": 280
+                    },
+                    "name": "Ursula K. Le Guin",
+                    "slug": "ursula-k-le-guin"
+                  },
+                  "contribution": "Author",
+                  "contributor_role_blurb": "",
+                  "contributor_role_id": 1,
+                  "contributor_role_name": "Author",
+                  "primary": true
+                },
+                {
+                  "author": {
+                    "id": 244877,
+                    "image": {},
+                    "name": "Fred Fordham",
+                    "slug": "fred-fordham"
+                  },
+                  "contribution": "Illustrator",
+                  "primary": false
+                }
+              ],
+              "featured_series": {},
+              "genres": [],
+              "has_audiobook": false,
+              "has_ebook": false,
+              "id": "2698787",
+              "image": {},
+              "isbns": [
+                "0063285770",
+                "9780063285774"
+              ],
+              "lists_count": 9,
+              "moods": [],
+              "prompts_count": 0,
+              "rating": 0.0,
+              "ratings_count": 0,
+              "reviews_count": 0,
+              "series_ids": [],
+              "series_names": [],
+              "slug": "wizard-of-earthsea-a-graphic-novel",
+              "subtitle": "A Graphic Novel",
+              "tags": [],
+              "title": "Wizard of Earthsea: A Graphic Novel",
+              "users_count": 3,
+              "users_read_count": 1
+            },
+            "highlight": {
+              "alternative_titles": [
+                {
+                  "matched_tokens": [
+                    "Wizard",
+                    "of",
+                    "Earthsea",
+                    "A"
+                  ],
+                  "snippet": "<mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>: <mark>A</mark> Graphic Novel"
+                }
+              ],
+              "title": {
+                "matched_tokens": [
+                  "Wizard",
+                  "of",
+                  "Earthsea",
+                  "A"
+                ],
+                "snippet": "<mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>: <mark>A</mark> Graphic Novel"
+              }
+            },
+            "highlights": [
+              {
+                "field": "title",
+                "matched_tokens": [
+                  "Wizard",
+                  "of",
+                  "Earthsea",
+                  "A"
+                ],
+                "snippet": "<mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>: <mark>A</mark> Graphic Novel"
+              },
+              {
+                "field": "alternative_titles",
+                "indices": [
+                  0
+                ],
+                "matched_tokens": [
+                  [
+                    "Wizard",
+                    "of",
+                    "Earthsea",
+                    "A"
+                  ]
+                ],
+                "snippets": [
+                  "<mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>: <mark>A</mark> Graphic Novel"
+                ]
+              }
+            ],
+            "text_match": 2314894167592927274,
+            "text_match_info": {
+              "best_field_score": "4419510927360",
+              "best_field_weight": 5,
+              "fields_matched": 2,
+              "num_tokens_dropped": 0,
+              "score": "2314894167592927274",
+              "tokens_matched": 4,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "activities_count": 1,
+              "alternative_titles": [
+                "The Earthsea Trilogy - A Wizard of Earth Sea, the Tombs of Atuan, the Farthest Shore"
+              ],
+              "author_names": [
+                "Ursula K. Le Guin"
+              ],
+              "book_category_id": 1,
+              "compilation": false,
+              "content_warnings": [],
+              "contribution_specializations": [],
+              "contribution_types": [
+                "Author"
+              ],
+              "contributions": [
+                {
+                  "author": {
+                    "id": 213830,
+                    "image": {
+                      "color": "#464646",
+                      "color_name": "Gray",
+                      "height": 340,
+                      "id": 35187,
+                      "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+                      "width": 280
+                    },
+                    "name": "Ursula K. Le Guin",
+                    "slug": "ursula-k-le-guin"
+                  },
+                  "contribution": "Author",
+                  "contributor_role_blurb": "The author of a written work.",
+                  "contributor_role_id": 1,
+                  "contributor_role_name": "Author",
+                  "primary": true
+                }
+              ],
+              "featured_series": {},
+              "genres": [],
+              "has_audiobook": false,
+              "has_ebook": false,
+              "id": "2903980",
+              "image": {},
+              "isbns": [],
+              "lists_count": 0,
+              "moods": [],
+              "prompts_count": 0,
+              "rating": 0.0,
+              "ratings_count": 0,
+              "release_date": "1968-01-01",
+              "release_year": 1968,
+              "reviews_count": 0,
+              "series_ids": [],
+              "series_names": [],
+              "slug": "the-earthsea-trilogy-a-wizard-of-earth-sea-the-tombs-of-atuan-the-farthest-shore",
+              "tags": [],
+              "title": "The Earthsea Trilogy - A Wizard of Earth Sea, the Tombs of Atuan, the Farthest Shore",
+              "users_count": 2,
+              "users_read_count": 0
+            },
+            "highlight": {
+              "alternative_titles": [
+                {
+                  "matched_tokens": [
+                    "Earthsea",
+                    "A",
+                    "Wizard",
+                    "of",
+                    "of"
+                  ],
+                  "snippet": "The <mark>Earthsea</mark> Trilogy - <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> Earth Sea, the Tombs <mark>of</mark> Atuan, the Farthest Shore"
+                }
+              ],
+              "title": {
+                "matched_tokens": [
+                  "Earthsea",
+                  "A",
+                  "Wizard",
+                  "of",
+                  "of"
+                ],
+                "snippet": "The <mark>Earthsea</mark> Trilogy - <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> Earth Sea, the Tombs <mark>of</mark> Atuan, the Farthest Shore"
+              }
+            },
+            "highlights": [
+              {
+                "field": "title",
+                "matched_tokens": [
+                  "Earthsea",
+                  "A",
+                  "Wizard",
+                  "of",
+                  "of"
+                ],
+                "snippet": "The <mark>Earthsea</mark> Trilogy - <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> Earth Sea, the Tombs <mark>of</mark> Atuan, the Farthest Shore"
+              },
+              {
+                "field": "alternative_titles",
+                "indices": [
+                  0
+                ],
+                "matched_tokens": [
+                  [
+                    "Earthsea",
+                    "A",
+                    "Wizard",
+                    "of",
+                    "of"
+                  ]
+                ],
+                "snippets": [
+                  "The <mark>Earthsea</mark> Trilogy - <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> Earth Sea, the Tombs <mark>of</mark> Atuan, the Farthest Shore"
+                ]
+              }
+            ],
+            "text_match": 2314894167592927274,
+            "text_match_info": {
+              "best_field_score": "4419510927360",
+              "best_field_weight": 5,
+              "fields_matched": 2,
+              "num_tokens_dropped": 0,
+              "score": "2314894167592927274",
+              "tokens_matched": 4,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "activities_count": 0,
+              "alternative_titles": [
+                "Ursula K. Le Guin: The Complete Earthsea, Volume One: A Wizard of Earthsea / The Tombs of Atuan / The Farthest Shore / Stories"
+              ],
+              "author_names": [
+                "Ursula K. Le Guin",
+                "Brian Attebery"
+              ],
+              "book_category_id": 8,
+              "compilation": true,
+              "content_warnings": [],
+              "contribution_specializations": [],
+              "contribution_types": [
+                "Author",
+                "Editor"
+              ],
+              "contributions": [
+                {
+                  "author": {
+                    "id": 213830,
+                    "image": {
+                      "color": "#464646",
+                      "color_name": "Gray",
+                      "height": 340,
+                      "id": 35187,
+                      "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+                      "width": 280
+                    },
+                    "name": "Ursula K. Le Guin",
+                    "slug": "ursula-k-le-guin"
+                  },
+                  "contribution": "Author",
+                  "contributor_role_blurb": "The principal author of a written work.",
+                  "contributor_role_id": 1,
+                  "contributor_role_name": "Author",
+                  "contributor_specialization_blurb": null,
+                  "contributor_specialization_id": null,
+                  "contributor_specialization_name": null,
+                  "primary": true
+                },
+                {
+                  "author": {
+                    "id": 253401,
+                    "image": {},
+                    "name": "Brian Attebery",
+                    "slug": "brian-attebery"
+                  },
+                  "contribution": "Editor",
+                  "contributor_role_blurb": null,
+                  "contributor_role_id": null,
+                  "contributor_role_name": null,
+                  "contributor_specialization_blurb": null,
+                  "contributor_specialization_id": null,
+                  "contributor_specialization_name": null,
+                  "primary": false
+                }
+              ],
+              "cover_color": "Beige",
+              "description": "This first volume gathers the beloved classic A Wizard of Earthsea and its two sequels. plus two related stories\n\nUrsula K. Le Guin’s Earthsea novels and stories are set in the far-flung archipelago of Earthsea, a place of magic where names have power, a wood called the Immanent Grove lies at the center of the world, and dragons fly on the winds of the western isles. The original three novels in the 1960s and 70s were the first and most successful of the descendants of J.R.R. Tolkien’s The Lord of the Rings and were the progenitors, in their turn, of all the wizard school and dragonlord fantasy series that have come since.\n\nHere in one volume\nA Wizard of Earthsea (1968), the original wizard school fantasy, follows a young man called Sparrowhawk, whose true name—a source of power not to be shared with others—is Ged, as he both learns to wield the magic in him and discovers its shadow side.The Tombs of Atuan (1971), in which Le Guin’s focus shifts to a young woman whose true name was taken from her when she became priestess of the Nameless Ones, the dark old powers of Earthsea. When Ged arrives to steal her temple’s greatest treasure, Tenar recovers her name and learns the gifts of interdependence and weakness. And The Farthest Shore (1972), which follows Ged, now Archmage of all Earthsea, as he embarks on a long journey with the teenage Prince Arren to find out why magic seems to be draining out of the Archipelago, an odyssey that will lead them to the end of the world and the dry land of death beyond.",
+              "featured_series": {},
+              "genres": [],
+              "has_audiobook": false,
+              "has_ebook": false,
+              "id": "3046622",
+              "image": {
+                "color": "#dededc",
+                "color_name": "Beige",
+                "height": 500,
+                "id": 8084328,
+                "url": "https://assets.hardcover.app/external_data/4409047/5ee1ed33669e854ee368053b57c673ab0bb8825a.jpeg",
+                "width": 295
+              },
+              "isbns": [
+                "1598538500",
+                "9781598538502"
+              ],
+              "lists_count": 0,
+              "moods": [],
+              "pages": 550,
+              "prompts_count": 0,
+              "rating": 0.0,
+              "ratings_count": 0,
+              "release_date": "2026-10-20",
+              "release_year": 2026,
+              "reviews_count": 0,
+              "series_ids": [],
+              "series_names": [],
+              "slug": "ursula-k-le-guin-the-complete-earthsea-volume-one-a-wizard-of-earthsea-the-tombs-of-atuan-the-farthest-shore-stories",
+              "subtitle": "The Complete Earthsea, Volume One (LOA #400): A Wizard of Earthsea / The Tombs of Atuan / The Farthest Shore / Stories",
+              "tags": [],
+              "title": "Ursula K. Le Guin: The Complete Earthsea, Volume One: A Wizard of Earthsea / The Tombs of Atuan / The Farthest Shore / Stories",
+              "users_count": 0,
+              "users_read_count": 0
+            },
+            "highlight": {
+              "alternative_titles": [
+                {
+                  "matched_tokens": [
+                    "Earthsea",
+                    "A",
+                    "Wizard",
+                    "of",
+                    "Earthsea",
+                    "of"
+                  ],
+                  "snippet": "Ursula K. Le Guin: The Complete <mark>Earthsea</mark>, Volume One: <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark> / The Tombs <mark>of</mark> Atuan / The Farthest Shore / Stories"
+                }
+              ],
+              "title": {
+                "matched_tokens": [
+                  "Earthsea",
+                  "A",
+                  "Wizard",
+                  "of",
+                  "Earthsea",
+                  "of"
+                ],
+                "snippet": "Ursula K. Le Guin: The Complete <mark>Earthsea</mark>, Volume One: <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark> / The Tombs <mark>of</mark> Atuan / The Farthest Shore / Stories"
+              }
+            },
+            "highlights": [
+              {
+                "field": "title",
+                "matched_tokens": [
+                  "Earthsea",
+                  "A",
+                  "Wizard",
+                  "of",
+                  "Earthsea",
+                  "of"
+                ],
+                "snippet": "Ursula K. Le Guin: The Complete <mark>Earthsea</mark>, Volume One: <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark> / The Tombs <mark>of</mark> Atuan / The Farthest Shore / Stories"
+              },
+              {
+                "field": "alternative_titles",
+                "indices": [
+                  0
+                ],
+                "matched_tokens": [
+                  [
+                    "Earthsea",
+                    "A",
+                    "Wizard",
+                    "of",
+                    "Earthsea",
+                    "of"
+                  ]
+                ],
+                "snippets": [
+                  "Ursula K. Le Guin: The Complete <mark>Earthsea</mark>, Volume One: <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark> / The Tombs <mark>of</mark> Atuan / The Farthest Shore / Stories"
+                ]
+              }
+            ],
+            "text_match": 2314894167592927274,
+            "text_match_info": {
+              "best_field_score": "4419510927360",
+              "best_field_weight": 5,
+              "fields_matched": 2,
+              "num_tokens_dropped": 0,
+              "score": "2314894167592927274",
+              "tokens_matched": 4,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "activities_count": 0,
+              "alternative_titles": [
+                "Earthsea Series Books 1-4 - A Wizard of Earthsea, The Tombs of Atuan, The Farthest Shore, and Tehanu"
+              ],
+              "author_names": [
+                "Ursula K. Le Guin"
+              ],
+              "book_category_id": 1,
+              "compilation": false,
+              "content_warnings": [],
+              "contribution_specializations": [],
+              "contribution_types": [
+                "Author"
+              ],
+              "contributions": [
+                {
+                  "author": {
+                    "id": 213830,
+                    "image": {
+                      "color": "#464646",
+                      "color_name": "Gray",
+                      "height": 340,
+                      "id": 35187,
+                      "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+                      "width": 280
+                    },
+                    "name": "Ursula K. Le Guin",
+                    "slug": "ursula-k-le-guin"
+                  },
+                  "contribution": "Author",
+                  "contributor_role_blurb": "The principal author of a written work.",
+                  "contributor_role_id": 1,
+                  "contributor_role_name": "Author",
+                  "primary": true
+                }
+              ],
+              "featured_series": {},
+              "genres": [],
+              "has_audiobook": false,
+              "has_ebook": false,
+              "id": "2870476",
+              "image": {},
+              "isbns": [],
+              "lists_count": 0,
+              "moods": [],
+              "prompts_count": 0,
+              "rating": 0.0,
+              "ratings_count": 0,
+              "reviews_count": 0,
+              "series_ids": [],
+              "series_names": [],
+              "slug": "earthsea-series-books-1-4-a-wizard-of-earthsea-the-tombs-of-atuan-the-farthest-shore-and-tehanu",
+              "tags": [],
+              "title": "Earthsea Series Books 1-4 - A Wizard of Earthsea, The Tombs of Atuan, The Farthest Shore, and Tehanu",
+              "users_count": 0,
+              "users_read_count": 0
+            },
+            "highlight": {
+              "alternative_titles": [
+                {
+                  "matched_tokens": [
+                    "Earthsea",
+                    "A",
+                    "Wizard",
+                    "of",
+                    "Earthsea",
+                    "of",
+                    "and"
+                  ],
+                  "snippet": "<mark>Earthsea</mark> Series Books 1-4 - <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>, The Tombs <mark>of</mark> Atuan, The Farthest Shore, <mark>and</mark> Tehanu"
+                }
+              ],
+              "title": {
+                "matched_tokens": [
+                  "Earthsea",
+                  "A",
+                  "Wizard",
+                  "of",
+                  "Earthsea",
+                  "of",
+                  "and"
+                ],
+                "snippet": "<mark>Earthsea</mark> Series Books 1-4 - <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>, The Tombs <mark>of</mark> Atuan, The Farthest Shore, <mark>and</mark> Tehanu"
+              }
+            },
+            "highlights": [
+              {
+                "field": "title",
+                "matched_tokens": [
+                  "Earthsea",
+                  "A",
+                  "Wizard",
+                  "of",
+                  "Earthsea",
+                  "of",
+                  "and"
+                ],
+                "snippet": "<mark>Earthsea</mark> Series Books 1-4 - <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>, The Tombs <mark>of</mark> Atuan, The Farthest Shore, <mark>and</mark> Tehanu"
+              },
+              {
+                "field": "alternative_titles",
+                "indices": [
+                  0
+                ],
+                "matched_tokens": [
+                  [
+                    "Earthsea",
+                    "A",
+                    "Wizard",
+                    "of",
+                    "Earthsea",
+                    "of",
+                    "and"
+                  ]
+                ],
+                "snippets": [
+                  "<mark>Earthsea</mark> Series Books 1-4 - <mark>A</mark> <mark>Wizard</mark> <mark>of</mark> <mark>Earthsea</mark>, The Tombs <mark>of</mark> Atuan, The Farthest Shore, <mark>and</mark> Tehanu"
+                ]
+              }
+            ],
+            "text_match": 2314894167592927274,
+            "text_match_info": {
+              "best_field_score": "4419510927360",
+              "best_field_weight": 5,
+              "fields_matched": 2,
+              "num_tokens_dropped": 0,
+              "score": "2314894167592927274",
+              "tokens_matched": 4,
+              "typo_prefix_score": 0
+            }
+          }
+        ],
+        "out_of": 2645175,
+        "page": 1,
+        "request_params": {
+          "collection_name": "Book_production_1760914612",
+          "first_q": "A Wizard of Earthsea",
+          "per_page": 10,
+          "q": "A Wizard of Earthsea"
+        },
+        "search_cutoff": false,
+        "search_time_ms": 15
+      }
+    }
+  }
+}

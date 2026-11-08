@@ -93,10 +93,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 _unitDestCache.TryRemove(cacheKey, out _);
             }
 
+            var identityGroup = GetIdentityGroupBooks(canonicalBook);
+
             // Fast-path: if this unit has already been cloned and stamped with UnitKeyHash, re-use it deterministically.
             if (!string.IsNullOrWhiteSpace(unitKeyHash))
             {
-                var existingByHash = FindExistingBookByUnitKeyHash(canonicalBook, unitKeyHash);
+                var existingByHash = identityGroup.FirstOrDefault(book =>
+                    string.Equals(book.UnitKeyHash, unitKeyHash, StringComparison.OrdinalIgnoreCase));
                 if (existingByHash != null)
                 {
                     if (existingByHash.Id != canonicalBook.Id || canReuseCanonicalBook)
@@ -108,19 +111,23 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 }
             }
 
+            var filesByBook = (_mediaFileService.GetFilesByBooks(identityGroup.Select(book => book.Id)
+                .Append(canonicalBook.Id).Distinct().ToList()) ?? new List<BookFile>())
+                .ToLookup(file => file.Edition.BookId);
+
             // Legacy/backfill: an existing clone may not have UnitKeyHash populated. Scan other copies in the identity group.
-            var existingByFiles = FindExistingDestinationByScanningFiles(canonicalBook, canonicalEdition, unitKey, unitKeyHash);
+            var existingByFiles = FindExistingDestinationByScanningFiles(identityGroup, filesByBook, canonicalBook, canonicalEdition, unitKey, unitKeyHash);
             if (existingByFiles.HasValue)
             {
                 if (!string.IsNullOrWhiteSpace(cacheKey)) _unitDestCache[cacheKey] = existingByFiles.Value;
                 return existingByFiles.Value;
             }
 
-            var emptyTargetedDestination = FindExistingEmptyTargetedDestination(canonicalBook, canonicalEdition, unitKeyHash);
-            if (emptyTargetedDestination.HasValue)
+            var emptyDestination = FindExistingEmptyDestination(identityGroup, filesByBook, canonicalBook, canonicalEdition, unitKeyHash);
+            if (emptyDestination.HasValue)
             {
-                if (!string.IsNullOrWhiteSpace(cacheKey)) _unitDestCache[cacheKey] = emptyTargetedDestination.Value;
-                return emptyTargetedDestination.Value;
+                if (!string.IsNullOrWhiteSpace(cacheKey)) _unitDestCache[cacheKey] = emptyDestination.Value;
+                return emptyDestination.Value;
             }
 
             if (!canReuseCanonicalBook)
@@ -141,8 +148,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
             // Check files on BOOK level, not edition - prevents different folders from collapsing onto same book
             // when they match different editions of the same work
-            var existingFiles = _mediaFileService.GetFilesByBook(canonicalBook.Id) ?? new List<BookFile>();
-            if (existingFiles.Count == 0)
+            var existingFiles = filesByBook[canonicalBook.Id];
+            if (!existingFiles.Any())
             {
                 // No existing files on canonical book → reuse canonical
                 var dest0 = (canonicalBook.Id, canonicalEdition.Id);
@@ -157,6 +164,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             foreach (var f in existingFiles)
             {
                 existingKeys.Add(BuildRootUnitKeyWithExtension(f.Path, canonicalEdition.Title, canonicalBook.MediaType));
+                existingKeys.Add(BookCoalescingHelper.BuildPerFileUnitKey(f.Path, canonicalEdition.Title, canonicalBook.MediaType));
             }
 
             if (existingKeys.Contains(unitKey))
@@ -196,40 +204,15 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             return Convert.ToHexString(hash).ToLowerInvariant();
         }
 
-        private Book FindExistingBookByUnitKeyHash(Book canonicalBook, string unitKeyHash)
+        private (int BookId, int EditionId)? FindExistingDestinationByScanningFiles(IReadOnlyList<Book> identityGroup, ILookup<int, BookFile> filesByBook, Book canonicalBook, Edition canonicalEdition, string unitKey, string unitKeyHash)
         {
-            if (canonicalBook == null || canonicalBook.Id <= 0 || string.IsNullOrWhiteSpace(unitKeyHash))
+            foreach (var candidate in identityGroup.Where(book => book.Id != canonicalBook.Id))
             {
-                return null;
-            }
-
-            var identityGroup = GetIdentityGroupBooks(canonicalBook);
-
-            return identityGroup.FirstOrDefault(b =>
-                b != null &&
-                b.Id > 0 &&
-                !string.IsNullOrWhiteSpace(b.UnitKeyHash) &&
-                b.UnitKeyHash.Equals(unitKeyHash, StringComparison.OrdinalIgnoreCase));
-        }
-
-        private (int BookId, int EditionId)? FindExistingDestinationByScanningFiles(Book canonicalBook, Edition canonicalEdition, string unitKey, string unitKeyHash)
-        {
-            var identityGroup = GetIdentityGroupBooks(canonicalBook)
-                .Where(b => b != null && b.Id > 0 && b.Id != canonicalBook.Id)
-                .ToList();
-
-            foreach (var candidate in identityGroup)
-            {
-                var files = _mediaFileService.GetFilesByBook(candidate.Id) ?? new List<BookFile>();
-                if (files.Count == 0)
-                {
-                    continue;
-                }
-
-                foreach (var f in files)
+                foreach (var f in filesByBook[candidate.Id])
                 {
                     var key = BuildRootUnitKeyWithExtension(f.Path, canonicalEdition.Title, canonicalBook.MediaType);
-                    if (!string.Equals(key, unitKey, StringComparison.OrdinalIgnoreCase))
+                    if (!string.Equals(key, unitKey, StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(BookCoalescingHelper.BuildPerFileUnitKey(f.Path, canonicalEdition.Title, canonicalBook.MediaType), unitKey, StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
                     }
@@ -247,19 +230,19 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             return null;
         }
 
-        private (int BookId, int EditionId)? FindExistingEmptyTargetedDestination(Book canonicalBook, Edition canonicalEdition, string unitKeyHash)
+        private (int BookId, int EditionId)? FindExistingEmptyDestination(IReadOnlyList<Book> identityGroup, ILookup<int, BookFile> filesByBook, Book canonicalBook, Edition canonicalEdition, string unitKeyHash)
         {
-            var identityGroup = GetIdentityGroupBooks(canonicalBook)
-                .Where(book => book != null && book.Id > 0 && book.Id != canonicalBook.Id)
-                .Where(IsTargetedDestinationCandidate)
+            var candidates = identityGroup
+                .Where(book => book.Id != canonicalBook.Id)
+                .Where(book => string.IsNullOrWhiteSpace(book.UnitKeyHash) ||
+                    string.Equals(book.UnitKeyHash, unitKeyHash, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(book => book.AnyEditionOk ? 1 : 0)
                 .ThenBy(book => book.Id)
                 .ToList();
 
-            foreach (var candidate in identityGroup)
+            foreach (var candidate in candidates)
             {
-                var files = _mediaFileService.GetFilesByBook(candidate.Id) ?? new List<BookFile>();
-                if (files.Count > 0)
+                if (filesByBook[candidate.Id].Any())
                 {
                     continue;
                 }
@@ -366,18 +349,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 editions = _editionService.GetEditionsByBook(destinationBook.Id) ?? new List<Edition>();
             }
 
-            return editions.FirstOrDefault(e => BookEditionIdentity.EditionsMatch(e, canonicalEdition))?.Id;
-        }
-
-        private static bool IsTargetedDestinationCandidate(Book book)
-        {
-            if (book == null)
-            {
-                return false;
-            }
-
-            return !book.AnyEditionOk ||
-                   book.AddOptions?.AddType == BookAddType.Manual;
+            var matching = editions.FirstOrDefault(e => BookEditionIdentity.EditionsMatch(e, canonicalEdition));
+            return matching != null && EditionPinPolicy.FindConflictingProtectedEdition(destinationBook, editions, matching.Id) == null
+                ? matching.Id : null;
         }
 
         private (int BookId, int EditionId) CloneBookAndEdition(

@@ -1,6 +1,6 @@
 using System;
 using NLog;
-using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Messaging.Events;
 
@@ -10,17 +10,17 @@ namespace NzbDrone.Core.Download
                                     IHandle<DownloadCompletedEvent>,
                                     IHandle<DownloadCanBeRemovedEvent>
     {
-        private readonly IConfigService _configService;
+        private readonly ICompletedDownloadService _completedDownloadService;
         private readonly IProvideDownloadClient _downloadClientProvider;
         private readonly IDownloadImportModeResolver _downloadImportModeResolver;
         private readonly Logger _logger;
 
-        public DownloadEventHub(IConfigService configService,
+        public DownloadEventHub(ICompletedDownloadService completedDownloadService,
             IProvideDownloadClient downloadClientProvider,
             IDownloadImportModeResolver downloadImportModeResolver,
             Logger logger)
         {
-            _configService = configService;
+            _completedDownloadService = completedDownloadService;
             _downloadClientProvider = downloadClientProvider;
             _downloadImportModeResolver = downloadImportModeResolver;
             _logger = logger;
@@ -30,7 +30,8 @@ namespace NzbDrone.Core.Download
         {
             var trackedDownload = message.TrackedDownload;
 
-            if (trackedDownload == null ||
+            if (message.SkipDownloadClientRemoval ||
+                trackedDownload == null ||
                 message.TrackedDownload.DownloadItem.Removed ||
                 !trackedDownload.DownloadItem.CanBeRemoved)
             {
@@ -57,29 +58,10 @@ namespace NzbDrone.Core.Download
         {
             var trackedDownload = message.TrackedDownload;
             var downloadClient = _downloadClientProvider.Get(trackedDownload.DownloadClient);
-            var definition = downloadClient.Definition as DownloadClientDefinition;
             var importItem = BuildImportItem(trackedDownload);
 
+            // Cleanup runs after completion handlers finish, so its warning remains the latest durable state.
             MarkItemAsImported(trackedDownload, downloadClient, importItem);
-
-            if (trackedDownload.DownloadItem.Removed ||
-                !trackedDownload.DownloadItem.CanBeRemoved ||
-                trackedDownload.DownloadItem.Status == DownloadItemStatus.Downloading)
-            {
-                return;
-            }
-
-            if (!definition.RemoveCompletedDownloads)
-            {
-                return;
-            }
-
-            if (ShouldPreserveDownloadClientItem(trackedDownload, downloadClient, importItem))
-            {
-                return;
-            }
-
-            RemoveFromDownloadClient(message.TrackedDownload, downloadClient);
         }
 
         public void Handle(DownloadCanBeRemovedEvent message)
@@ -91,6 +73,7 @@ namespace NzbDrone.Core.Download
 
             if (trackedDownload.DownloadItem.Removed ||
                 !trackedDownload.DownloadItem.CanBeRemoved ||
+                trackedDownload.DownloadItem.Status == DownloadItemStatus.Downloading ||
                 !definition.RemoveCompletedDownloads)
             {
                 return;
@@ -101,14 +84,18 @@ namespace NzbDrone.Core.Download
                 return;
             }
 
-            RemoveFromDownloadClient(message.TrackedDownload, downloadClient);
+            if (_completedDownloadService.CanRemoveDownload(trackedDownload, message.Cleanup))
+            {
+                RemoveFromDownloadClient(trackedDownload, downloadClient);
+            }
         }
 
         private bool ShouldPreserveDownloadClientItem(TrackedDownload trackedDownload, IDownloadClient downloadClient = null, DownloadClientItem importItem = null)
         {
-            if (_downloadImportModeResolver.ShouldPreserveDownloadClientItem(trackedDownload.DownloadItem))
+            if (_downloadImportModeResolver.ShouldPreserveDownloadClientItem(trackedDownload.DownloadItem,
+                trackedDownload.RemoteBook?.Release?.IndexerId ?? 0))
             {
-                _logger.Info("[{0}] Preserving download-client item and data due to permanent seeding/download preservation policy",
+                _logger.Info("[{0}] Preserving download-client item and data due to download preservation policy",
                     trackedDownload.DownloadItem.Title);
                 return true;
             }
@@ -132,6 +119,21 @@ namespace NzbDrone.Core.Download
                 _logger.Debug("[{0}] Removing download from {1} history", trackedDownload.DownloadItem.Title, trackedDownload.DownloadItem.DownloadClientInfo.Name);
                 downloadClient.RemoveItem(trackedDownload.DownloadItem, true);
                 trackedDownload.DownloadItem.Removed = true;
+                if (trackedDownload.CleanupDeletionRefused)
+                {
+                    trackedDownload.CleanupDeletionRefused = false;
+                    trackedDownload.ClearStatus();
+                }
+            }
+            catch (DownloadDataDeletionRefusedException ex)
+            {
+                if (!trackedDownload.CleanupDeletionRefused)
+                {
+                    _logger.Warn(ex.Message);
+                }
+                trackedDownload.CleanupDeletionRefused = true;
+                trackedDownload.IsTrackable = true;
+                trackedDownload.Warn("{0} Correct the download path or remove the item without deleting data.", ex.Message);
             }
             catch (NotSupportedException)
             {

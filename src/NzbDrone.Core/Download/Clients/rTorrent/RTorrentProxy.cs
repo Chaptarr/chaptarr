@@ -16,8 +16,8 @@ namespace NzbDrone.Core.Download.Clients.RTorrent
         List<RTorrentTorrent> GetTorrents(RTorrentSettings settings);
         List<RTorrentFile> GetTorrentFiles(string hash, RTorrentSettings settings);
 
-        void AddTorrentFromUrl(string torrentUrl, string label, RTorrentPriority priority, string directory, RTorrentSettings settings);
-        void AddTorrentFromFile(string fileName, byte[] fileContent, string label, RTorrentPriority priority, string directory, RTorrentSettings settings);
+        void AddTorrentFromUrl(string torrentUrl, string label, RTorrentPriority priority, string directory, bool keepSeeding, RTorrentSettings settings);
+        void AddTorrentFromFile(string fileName, byte[] fileContent, string label, RTorrentPriority priority, string directory, bool keepSeeding, RTorrentSettings settings);
         void RemoveTorrent(string hash, RTorrentSettings settings);
         void SetTorrentLabel(string hash, string label, RTorrentSettings settings);
         bool HasHashTorrent(string hash, RTorrentSettings settings);
@@ -85,10 +85,10 @@ namespace NzbDrone.Core.Download.Clients.RTorrent
                    ?? new List<RTorrentFile>();
         }
 
-        public void AddTorrentFromUrl(string torrentUrl, string label, RTorrentPriority priority, string directory, RTorrentSettings settings)
+        public void AddTorrentFromUrl(string torrentUrl, string label, RTorrentPriority priority, string directory, bool keepSeeding, RTorrentSettings settings)
         {
             var args = new List<object> { "", torrentUrl };
-            args.AddRange(GetCommands(label, priority, directory));
+            args.AddRange(GetCommands(label, priority, directory, keepSeeding));
 
             XDocument response;
 
@@ -107,10 +107,10 @@ namespace NzbDrone.Core.Download.Clients.RTorrent
             }
         }
 
-        public void AddTorrentFromFile(string fileName, byte[] fileContent, string label, RTorrentPriority priority, string directory, RTorrentSettings settings)
+        public void AddTorrentFromFile(string fileName, byte[] fileContent, string label, RTorrentPriority priority, string directory, bool keepSeeding, RTorrentSettings settings)
         {
             var args = new List<object> { "", fileContent };
-            args.AddRange(GetCommands(label, priority, directory));
+            args.AddRange(GetCommands(label, priority, directory, keepSeeding));
 
             XDocument response;
 
@@ -181,9 +181,14 @@ namespace NzbDrone.Core.Download.Clients.RTorrent
             }
         }
 
-        private string[] GetCommands(string label, RTorrentPriority priority, string directory)
+        private string[] GetCommands(string label, RTorrentPriority priority, string directory, bool keepSeeding)
         {
             var result = new List<string>();
+
+            if (keepSeeding)
+            {
+                result.Add("d.ignore_commands.set=1");
+            }
 
             if (label.IsNotNullOrWhiteSpace())
             {

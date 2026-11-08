@@ -1,13 +1,16 @@
+import $ from 'jquery';
 import { createAction } from 'redux-actions';
 import { filterTypes, sortDirections } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
+import createAjaxRequest from 'Utilities/createAjaxRequest';
 import serverSideCollectionHandlers from 'Utilities/serverSideCollectionHandlers';
+import translate from 'Utilities/String/translate';
+import { set } from './baseActions';
 import createBatchToggleBookMonitoredHandler from './Creators/createBatchToggleBookMonitoredHandler';
 import createHandleActions from './Creators/createHandleActions';
 import createServerSideCollectionHandlers from './Creators/createServerSideCollectionHandlers';
 import createClearReducer from './Creators/Reducers/createClearReducer';
 import createSetTableOptionReducer from './Creators/Reducers/createSetTableOptionReducer';
-import { set } from './baseActions';
 
 //
 // Variables
@@ -18,6 +21,25 @@ export const section = 'wanted';
 // State
 
 export const defaultState = {
+  authors: {
+    isFetching: false,
+    isPopulated: false,
+    pageSize: 20,
+    sortKey: 'id',
+    sortDirection: sortDirections.DESCENDING,
+    error: null,
+    saveError: null,
+    pendingAction: null,
+    items: [],
+    columns: [
+      { name: 'authorName', label: () => translate('AuthorName'), isSortable: true, isVisible: true },
+      { name: 'providerId', label: () => translate('ProviderId'), isSortable: true, isVisible: true },
+      { name: 'createdAt', label: () => translate('RequestedAt'), isSortable: true, isVisible: true },
+      { name: 'overallStatus', label: () => translate('Status'), isVisible: true },
+      { name: 'actions', columnLabel: () => translate('Actions'), isVisible: true, isModifiable: false }
+    ]
+  },
+
   missing: {
     isFetching: false,
     isPopulated: false,
@@ -185,6 +207,10 @@ export const defaultState = {
 };
 
 export const persistState = [
+  'wanted.authors.pageSize',
+  'wanted.authors.sortKey',
+  'wanted.authors.sortDirection',
+  'wanted.authors.columns',
   'wanted.missing.pageSize',
   'wanted.missing.sortKey',
   'wanted.missing.sortDirection',
@@ -201,6 +227,19 @@ export const persistState = [
 
 //
 // Actions Types
+
+export const FETCH_WANTED_AUTHORS = 'wanted/authors/fetch';
+export const FIRST_WANTED_AUTHORS_PAGE = 'wanted/authors/firstPage';
+export const PREVIOUS_WANTED_AUTHORS_PAGE = 'wanted/authors/previousPage';
+export const NEXT_WANTED_AUTHORS_PAGE = 'wanted/authors/nextPage';
+export const LAST_WANTED_AUTHORS_PAGE = 'wanted/authors/lastPage';
+export const GOTO_WANTED_AUTHORS_PAGE = 'wanted/authors/page';
+export const SET_WANTED_AUTHORS_SORT = 'wanted/authors/sort';
+export const SET_WANTED_AUTHORS_TABLE_OPTION = 'wanted/authors/tableOption';
+export const CLEAR_WANTED_AUTHORS = 'wanted/authors/clear';
+export const RETRY_WANTED_AUTHOR = 'wanted/authors/retry';
+export const CANCEL_WANTED_AUTHOR = 'wanted/authors/cancel';
+export const DELETE_WANTED_AUTHOR = 'wanted/authors/delete';
 
 export const FETCH_MISSING = 'wanted/missing/fetchMissing';
 export const GOTO_FIRST_MISSING_PAGE = 'wanted/missing/gotoMissingFirstPage';
@@ -233,6 +272,19 @@ export const BATCH_TOGGLE_CUTOFF_UNMET_BOOKS = 'wanted/cutoffUnmet/batchToggleCu
 //
 // Action Creators
 
+export const fetchWantedAuthors = createThunk(FETCH_WANTED_AUTHORS);
+export const gotoWantedAuthorsFirstPage = createThunk(FIRST_WANTED_AUTHORS_PAGE);
+export const gotoWantedAuthorsPreviousPage = createThunk(PREVIOUS_WANTED_AUTHORS_PAGE);
+export const gotoWantedAuthorsNextPage = createThunk(NEXT_WANTED_AUTHORS_PAGE);
+export const gotoWantedAuthorsLastPage = createThunk(LAST_WANTED_AUTHORS_PAGE);
+export const gotoWantedAuthorsPage = createThunk(GOTO_WANTED_AUTHORS_PAGE);
+export const setWantedAuthorsSort = createThunk(SET_WANTED_AUTHORS_SORT);
+export const setWantedAuthorsTableOption = createAction(SET_WANTED_AUTHORS_TABLE_OPTION);
+export const clearWantedAuthors = createAction(CLEAR_WANTED_AUTHORS);
+export const retryWantedAuthor = createThunk(RETRY_WANTED_AUTHOR);
+export const cancelWantedAuthor = createThunk(CANCEL_WANTED_AUTHOR);
+export const deleteWantedAuthor = createThunk(DELETE_WANTED_AUTHOR);
+
 export const fetchMissing = createThunk(FETCH_MISSING);
 export const gotoMissingFirstPage = createThunk(GOTO_FIRST_MISSING_PAGE);
 export const gotoMissingPreviousPage = createThunk(GOTO_PREVIOUS_MISSING_PAGE);
@@ -264,7 +316,55 @@ export const batchToggleCutoffUnmetBooks = createThunk(BATCH_TOGGLE_CUTOFF_UNMET
 //
 // Action Handlers
 
+function createPendingAuthorAction(name, method, suffix = '') {
+  return (getState, { id }, dispatch) => {
+    const actionSection = 'wanted.authors';
+    if (getState().wanted.authors.pendingAction) {
+      return undefined;
+    }
+    dispatch(set({ section: actionSection, pendingAction: { id, name }, saveError: null }));
+    const finish = () => dispatch(set({ section: actionSection, pendingAction: null }));
+    try {
+      const request = createAjaxRequest({
+        url: `/pendingauthorimport/${id}${suffix}`,
+        method
+      }).request;
+      request.always(finish);
+      request.done(() => {
+        if (getState().wanted.authors.isPopulated) {
+          dispatch(fetchWantedAuthors());
+        }
+      });
+      request.fail((saveError) => dispatch(set({ section: actionSection, saveError })));
+      return request;
+    } catch (saveError) {
+      finish();
+      dispatch(set({ section: actionSection, saveError }));
+      return $.Deferred().reject(saveError).promise();
+    }
+  };
+}
+
 export const actionHandlers = handleThunks({
+
+  ...createServerSideCollectionHandlers(
+    'wanted.authors',
+    '/pendingauthorimport/paged',
+    fetchWantedAuthors,
+    {
+      [serverSideCollectionHandlers.FETCH]: FETCH_WANTED_AUTHORS,
+      [serverSideCollectionHandlers.FIRST_PAGE]: FIRST_WANTED_AUTHORS_PAGE,
+      [serverSideCollectionHandlers.PREVIOUS_PAGE]: PREVIOUS_WANTED_AUTHORS_PAGE,
+      [serverSideCollectionHandlers.NEXT_PAGE]: NEXT_WANTED_AUTHORS_PAGE,
+      [serverSideCollectionHandlers.LAST_PAGE]: LAST_WANTED_AUTHORS_PAGE,
+      [serverSideCollectionHandlers.EXACT_PAGE]: GOTO_WANTED_AUTHORS_PAGE,
+      [serverSideCollectionHandlers.SORT]: SET_WANTED_AUTHORS_SORT
+    }
+  ),
+
+  [RETRY_WANTED_AUTHOR]: createPendingAuthorAction('retry', 'POST', '/retry'),
+  [CANCEL_WANTED_AUTHOR]: createPendingAuthorAction('cancel', 'DELETE'),
+  [DELETE_WANTED_AUTHOR]: createPendingAuthorAction('delete', 'DELETE', '?delete=true'),
 
   ...createServerSideCollectionHandlers(
     'wanted.missing',
@@ -340,6 +440,17 @@ export const actionHandlers = handleThunks({
 // Reducers
 
 export const reducers = createHandleActions({
+
+  [SET_WANTED_AUTHORS_TABLE_OPTION]: createSetTableOptionReducer('wanted.authors'),
+  [CLEAR_WANTED_AUTHORS]: createClearReducer('wanted.authors', {
+    isFetching: false,
+    isPopulated: false,
+    error: null,
+    saveError: null,
+    items: [],
+    totalPages: 0,
+    totalRecords: 0
+  }),
 
   [SET_MISSING_TABLE_OPTION]: createSetTableOptionReducer('wanted.missing'),
   [SET_CUTOFF_UNMET_TABLE_OPTION]: createSetTableOptionReducer('wanted.cutoffUnmet'),

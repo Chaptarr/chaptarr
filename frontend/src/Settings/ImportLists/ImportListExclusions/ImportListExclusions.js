@@ -34,6 +34,12 @@ const columns = [
     isSortable: false
   },
   {
+    name: 'mediaType',
+    label: () => translate('AuthorDeleteFormat'),
+    isVisible: true,
+    isSortable: false
+  },
+  {
     className: styles.actions,
     name: 'actions',
     label: '',

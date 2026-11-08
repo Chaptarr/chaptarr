@@ -42,7 +42,7 @@ namespace Chaptarr.Core.Test.PendingImport
             public void Update(QualityProfile profile) => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
             public QualityProfile Get(int id) => throw new NotImplementedException();
-            public bool Exists(int id) => _profiles.Any(p => p.Id == id);
+            public bool Exists(int id, ProfileType? profileType = null) => _profiles.Any(p => p.Id == id);
             public QualityProfile GetDefaultProfile(string name, Quality cutoff = null, params Quality[] allowed) => throw new NotImplementedException();
         }
 
@@ -60,8 +60,14 @@ namespace Chaptarr.Core.Test.PendingImport
             public void Update(MetadataProfile profile) => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
             public MetadataProfile Get(int id) => throw new NotImplementedException();
-            public bool Exists(int id) => _profiles.Any(p => p.Id == id);
+            public bool Exists(int id, MetadataProfileType? profileType = null) => _profiles.Any(p => p.Id == id);
             public List<Book> FilterBooks(Author input, int profileId) => throw new NotImplementedException();
+
+            public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds) =>
+                FilterBooks(input, profileId, requestedNarrationIds, null);
+
+            public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds) =>
+                FilterBooks(input, profileId);
         }
 
         private sealed class StubRootFolderService : IRootFolderService
@@ -95,12 +101,17 @@ namespace Chaptarr.Core.Test.PendingImport
                 EnqueuedConfig = config;
                 return Task.FromResult(42);
             }
+            public PendingAuthorImport Get(int id) => GetAll().Find(item => item.Id == id);
+            public NzbDrone.Core.Datastore.PagingSpec<PendingAuthorImport> GetPaged(NzbDrone.Core.Datastore.PagingSpec<PendingAuthorImport> pagingSpec) => throw new NotImplementedException();
             public List<PendingAuthorImport> GetAll() => new();
             public List<PendingAuthorImport> GetDueForProcessing(int limit = 10) => throw new NotImplementedException();
             public PendingAuthorImport GetByProviderId(string providerId) => throw new NotImplementedException();
-            public void UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error) => throw new NotImplementedException();
+            public bool UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error, long? expectedVersion = null) => throw new NotImplementedException();
+            public bool SaveProgress(PendingAuthorImport item, PendingAuthorImport previous) => throw new NotImplementedException();
             public void ScheduleRetry(PendingAuthorImport item, string error) => throw new NotImplementedException();
+            public bool IsActiveRequest(int id, long version) => true;
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void RetryNow(int id) => throw new NotImplementedException();
             public void CleanupOldCompleted() => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
@@ -134,6 +145,28 @@ namespace Chaptarr.Core.Test.PendingImport
             AssertIds(options.Ebook.MetadataProfiles, 10, 12);
             AssertPaths(options.Audiobook.RootFolders, "/media/audiobooks", "/mixed");
             AssertPaths(options.Ebook.RootFolders, "/text", "/mixed");
+        }
+
+        [TestCase(null, null)]
+        [TestCase("", null)]
+        [TestCase("   ", null)]
+        [TestCase("Pending Import", null)]
+        [TestCase("Howard Buten", "Howard Buten")]
+        [TestCase("Ωμέγα 李", "Ωμέγα 李")]
+        public void pending_name_should_hide_only_missing_or_legacy_placeholder_without_changing_storage(string storedName, string displayedName)
+        {
+            var model = new PendingAuthorImport
+            {
+                Id = 42,
+                ProviderId = "gr:196350",
+                AuthorName = storedName
+            };
+
+            var resource = model.ToResource();
+
+            Assert.That(resource.AuthorName, Is.EqualTo(displayedName));
+            Assert.That(resource.ProviderId, Is.EqualTo(model.ProviderId));
+            Assert.That(model.AuthorName, Is.EqualTo(storedName));
         }
 
         [Test]

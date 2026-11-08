@@ -189,6 +189,9 @@ class EditQualityProfileModalContentConnector extends Component {
 
   onInputChange = ({ name, value }) => {
     this.props.setQualityProfileValue({ name, value });
+    if (name === 'upgradeAllowed' && !value) {
+      this.props.setQualityProfileValue({ name: 'confirmAutomaticUpgrades', value: false });
+    }
   };
 
   onCutoffChange = ({ name, value }) => {

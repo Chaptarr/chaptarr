@@ -1,17 +1,24 @@
 using System;
 using System.Collections.Generic;
+using System.Data.Common;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using NLog;
+using NzbDrone.Common;
+using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.History;
+using NzbDrone.Core.Download.TrackedDownloads;
+using NzbDrone.Core.History;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.RootFolders;
 
 namespace NzbDrone.Core.MediaFiles
 {
@@ -19,18 +26,32 @@ namespace NzbDrone.Core.MediaFiles
     {
         int WorkerConcurrency { get; }
         ConversionJob Get(string downloadId);
+        ConversionJobRequest GetCompletedConversion(string downloadId);
+        List<ConversionJobRequest> GetCompletedConversions(IEnumerable<string> downloadIds);
+        List<ConversionJob> Get(IEnumerable<string> downloadIds);
         ConversionJob Enqueue(ConversionJobRequest request);
         bool IsActive(string downloadId);
-        bool Cancel(string downloadId);
+        bool IsRunning(string downloadId);
+        bool Cancel(string downloadId, ConversionRemovalOrigin origin);
         void Complete(string downloadId);
+        ConversionRetentionResult RetainCompletedOutput(string downloadId, IReadOnlyCollection<string> sourcePaths, string reason, bool discardOutput = false);
         void Fail(string downloadId, string error);
-        void Reset(string downloadId);
+        string Reset(string downloadId, ConversionJob expectedJob = null);
+        Action PrepareArtifactRemoval(string downloadId, ConversionRemovalOrigin origin);
     }
 
-    public class ConversionJobService :
+    public enum ConversionRemovalOrigin { Automatic, Inferred, UserAction, DownloadFailure }
+
+    public partial class ConversionJobService :
         IConversionJobService,
         IHandle<ApplicationStartedEvent>,
-        IHandle<ApplicationShutdownRequested>
+        IHandle<ApplicationShutdownRequested>,
+        IHandle<BookGrabbedEvent>,
+        IHandle<DownloadCompletedEvent>,
+        IHandle<DownloadFailedEvent>,
+        IHandle<DownloadIgnoredEvent>,
+        IHandle<TrackedDownloadsRemovedEvent>,
+        IHandle<TrackedDownloadRefreshedEvent>
     {
         private const string ArtifactManifestFileName = "conversion-artifact.json";
         private static readonly TimeSpan LeaseTimeout = TimeSpan.FromMinutes(2);
@@ -46,23 +67,38 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IManageCommandQueue _commandQueue;
         private readonly Logger _logger;
         private readonly IConfigService _configService;
+        private readonly IHistoryService _historyService;
+        private readonly IMediaFileService _mediaFileService;
+        private readonly IRootFolderService _rootFolderService;
+        private readonly IDiskProvider _diskProvider;
+        private readonly TimeSpan _outcomeRetryDelay;
         private CancellationTokenSource _shutdown;
         private Task _scheduler;
 
         public ConversionJobService(
+            IDiskProvider diskProvider,
+            IRootFolderService rootFolderService,
+            IMediaFileService mediaFileService,
             IConversionJobRepository repository,
             IM4bConversionService conversionService,
             IConversionTrackingService trackingService,
             IManageCommandQueue commandQueue,
             IConfigService configService,
-            Logger logger)
+            Logger logger,
+            IHistoryService historyService = null,
+            TimeSpan? outcomeRetryDelay = null)
         {
+            _diskProvider = diskProvider ?? throw new ArgumentNullException(nameof(diskProvider));
+            _rootFolderService = rootFolderService ?? throw new ArgumentNullException(nameof(rootFolderService));
             _repository = repository;
             _conversionService = conversionService;
             _trackingService = trackingService;
             _commandQueue = commandQueue;
             _configService = configService;
             _logger = logger;
+            _historyService = historyService;
+            _mediaFileService = mediaFileService ?? throw new ArgumentNullException(nameof(mediaFileService));
+            _outcomeRetryDelay = outcomeRetryDelay ?? SchedulerPollInterval;
         }
 
         public int WorkerConcurrency => Clamp(_configService?.AudiobookConversionConcurrentConversions ?? 1, 1, 16);
@@ -70,6 +106,48 @@ namespace NzbDrone.Core.MediaFiles
         public ConversionJob Get(string downloadId)
         {
             return _repository.FindByDownloadId(downloadId);
+        }
+
+        public ConversionJobRequest GetCompletedConversion(string downloadId)
+        {
+            return GetCompletedConversion(Get(downloadId));
+        }
+
+        public List<ConversionJobRequest> GetCompletedConversions(IEnumerable<string> downloadIds)
+        {
+            return Get(downloadIds).Select(GetCompletedConversion).Where(request => request != null).ToList();
+        }
+
+        private ConversionJobRequest GetCompletedConversion(ConversionJob job) => GetCompletedConversion(job, DeserializeRequest(job));
+
+        private ConversionJobRequest GetCompletedConversion(ConversionJob job, ConversionJobRequest request)
+        {
+            if (job == null || IsWaitingForOutput(job, this)) return null;
+            return request?.DiscardRequested == false && request.DownloadId == job.DownloadId && HasSuccessfulArtifact(request)
+                ? request : null;
+        }
+
+        public List<ConversionJob> Get(IEnumerable<string> downloadIds)
+        {
+            return _repository.ByDownloadIds(downloadIds);
+        }
+
+        public void Handle(BookGrabbedEvent message)
+        {
+            ConversionJob previous;
+            lock (_sync)
+            {
+                previous = Get(message.DownloadId);
+                // A real new grab starts a lifecycle; an owned encoder is never retired underneath its worker.
+                if (previous == null || IsInFlight(previous.Status) || _activeConversions.ContainsKey(message.DownloadId)) return;
+            }
+            if (DeserializeRequest(previous)?.DiscardRequested == true)
+            {
+                try { PrepareArtifactRemoval(message.DownloadId, DeserializeRequest(previous)?.DiscardCurrentAttemptOnly == true, "regrab", ConversionRemovalOrigin.Automatic, expected: ExpectedAttempt(previous))(); }
+                catch (Exception ex) { RecordCleanupFailure(message.DownloadId, ex); }
+                return;
+            }
+            CleanupTerminalDownload(message.DownloadId, "regrab", ConversionRemovalOrigin.Automatic, expected: ExpectedAttempt(previous));
         }
 
         public ConversionJob Enqueue(ConversionJobRequest request)
@@ -85,6 +163,11 @@ namespace NzbDrone.Core.MediaFiles
             lock (_sync)
             {
                 job = _repository.FindByDownloadId(request.DownloadId);
+                if (DeserializeRequest(job)?.DiscardRequested == true)
+                {
+                    throw new InvalidOperationException("Conversion is waiting for cleanup of the previous discarded attempt. It will resume automatically after cleanup succeeds; check the cleanup error in the logs.");
+                }
+
                 if (job != null && IsInFlight(job.Status))
                 {
                     return job;
@@ -100,6 +183,7 @@ namespace NzbDrone.Core.MediaFiles
                     };
                 }
 
+                job.DownloadClientId = request.DownloadClientId;
                 job.Status = ConversionJobStatus.Queued;
                 job.RequestJson = requestJson;
                 job.WorkRoot = request.WorkRoot;
@@ -137,7 +221,29 @@ namespace NzbDrone.Core.MediaFiles
             return job != null && IsInFlight(job.Status);
         }
 
-        public bool Cancel(string downloadId)
+        private static bool IsWaitingForOutput(ConversionJobStatus status) =>
+            status is ConversionJobStatus.Queued or ConversionJobStatus.Converting or ConversionJobStatus.Cancelling;
+
+        public static bool IsWaitingForOutput(ConversionJob job, IConversionJobService service) =>
+            job != null && (IsWaitingForOutput(job.Status) || service.IsRunning(job.DownloadId));
+
+        public bool IsRunning(string downloadId)
+        {
+            lock (_sync)
+            {
+                return _activeConversions.ContainsKey(downloadId);
+            }
+        }
+
+        private bool MayStopForRemoval(ConversionJob job, ConversionRemovalOrigin origin) =>
+            origin switch
+            {
+                ConversionRemovalOrigin.Inferred => IsProvablyRemoved(job),
+                ConversionRemovalOrigin.Automatic => !IsWaitingForOutput(job, this),
+                _ => true
+            };
+
+        public bool Cancel(string downloadId, ConversionRemovalOrigin origin)
         {
             if (downloadId.IsNullOrWhiteSpace())
             {
@@ -155,14 +261,18 @@ namespace NzbDrone.Core.MediaFiles
                     return false;
                 }
 
-                if (job.Status == ConversionJobStatus.Converting || job.Status == ConversionJobStatus.Cancelling)
+                if (!MayStopForRemoval(job, origin)) return false;
+
+                _activeConversions.TryGetValue(downloadId, out active);
+                if (active != null || job.Status == ConversionJobStatus.Converting || job.Status == ConversionJobStatus.Cancelling)
                 {
                     job.Status = ConversionJobStatus.Cancelling;
                     job.Message = "Cancelling conversion";
                     job.UpdatedAt = DateTime.UtcNow;
-                    _repository.Update(job);
+                    SaveState(job);
 
-                    _activeConversions.TryGetValue(downloadId, out active);
+                    // The owner removes active work under this gate before disposal.
+                    active?.Cancellation.Cancel();
                 }
                 else
                 {
@@ -171,14 +281,13 @@ namespace NzbDrone.Core.MediaFiles
                     job.Progress = null;
                     job.UpdatedAt = DateTime.UtcNow;
                     job.CompletedAt = job.UpdatedAt;
-                    _repository.Update(job);
+                    SaveState(job);
                 }
             }
 
             if (active != null)
             {
-                _trackingService?.Cancel(downloadId);
-                active.Cancellation.Cancel();
+                _trackingService?.Cancel(downloadId, active.Cancellation);
                 _signal.Set();
             }
             else
@@ -192,7 +301,8 @@ namespace NzbDrone.Core.MediaFiles
                     _trackingService?.Cancelled(downloadId, job.Message);
                 }
 
-                CleanupWorkRoot(job.WorkRoot);
+                if (DeserializeRequest(job)?.DiscardRequested != true)
+                    CleanupWorkRoot(job.WorkFolder, downloadId: job.DownloadId, reason: "cancelled");
                 QueueImportSweep();
             }
 
@@ -201,41 +311,458 @@ namespace NzbDrone.Core.MediaFiles
 
         public void Complete(string downloadId)
         {
-            UpdateTerminal(downloadId, ConversionJobStatus.Completed, null, "Converted M4B imported");
+            lock (_sync)
+            {
+                if (!TryUpdateTerminal(downloadId, ConversionJobStatus.Completed, null, "Converted M4B imported", out var job)) return;
+                var request = DeserializeRequest(job);
+                if (request?.Sources.Count > 0)
+                {
+                    foreach (var manifest in ReadOwnedAttempts(downloadId, request.WorkRoot)
+                        .Where(attempt => ConversionWorkPath.SourcesMatch(attempt.Sources, request.Sources)))
+                    {
+                        CleanupWorkRoot(Path.GetDirectoryName(manifest.OutputPath), downloadId: downloadId, reason: "imported");
+                    }
+                }
+                if (job != null && IsAbsentConversionPath(job.WorkFolder) && IsAbsentConversionPath(job.OutputPath)) ClearCleanupAttention(downloadId);
+            }
             _trackingService?.Complete(downloadId);
+        }
+
+        public ConversionRetentionResult RetainCompletedOutput(string downloadId, IReadOnlyCollection<string> sourcePaths, string reason, bool discardOutput = false)
+        {
+            ConversionJob discardJob;
+            lock (_sync)
+            {
+                var job = Get(downloadId);
+                if (job == null)
+                {
+                    if (discardOutput) _logger.Debug("No optional conversion workspace to discard for download {0}: no job", downloadId);
+                    return new(ConversionRetentionStatus.None, reason);
+                }
+                var request = DeserializeRequest(job);
+                var paths = (sourcePaths ?? Array.Empty<string>()).ToHashSet(PathEqualityComparer.Instance);
+                if (request?.DownloadId != job.DownloadId || request.Sources == null || request.Sources.Count == 0 ||
+                    request.Sources.Any(source => source == null || !paths.Contains(source.Path)))
+                {
+                    if (discardOutput) _logger.Debug("No optional conversion workspace to discard for download {0}: source ownership differs", downloadId);
+                    return new(ConversionRetentionStatus.None, reason);
+                }
+
+                if (IsWaitingForOutput(job, this))
+                    return new(ConversionRetentionStatus.Pending, "Waiting for conversion to finish before resolving the import conflict.");
+
+                if (!discardOutput)
+                {
+                    if (request.DiscardRequested)
+                        return new(ConversionRetentionStatus.Pending, "Conversion discard cleanup is pending; original files are kept until it finishes.");
+                    if (job.Status == ConversionJobStatus.Cancelled && job.StartedAt == null && job.AttemptCount == 0)
+                    {
+                        _trackingService?.Complete(downloadId);
+                        return new(ConversionRetentionStatus.None, reason);
+                    }
+                    if (job.Status == ConversionJobStatus.Failed || job.Status == ConversionJobStatus.Cancelled)
+                    {
+                        var error = !string.IsNullOrWhiteSpace(job.Error) ? job.Error : job.Message;
+                        return new(ConversionRetentionStatus.Blocked, string.IsNullOrWhiteSpace(error) ? "The conversion did not complete successfully." : error);
+                    }
+                    if (job.Status != ConversionJobStatus.ReadyToImport && job.Status != ConversionJobStatus.Completed)
+                        return new(ConversionRetentionStatus.None, reason);
+
+                    if (GetCompletedConversion(job, request) == null)
+                    {
+                        if (job.Status == ConversionJobStatus.Completed) return new(ConversionRetentionStatus.None, reason);
+                        if (!FailUnverifiedRetainedArtifact(job, request))
+                        {
+                            MarkFailed(job, "Completed conversion output cannot be verified. Original files are kept; retry conversion or use Manual Import.");
+                            QueueImportSweep();
+                        }
+                        return new(ConversionRetentionStatus.Blocked, job.Error ?? job.Message);
+                    }
+
+                    var result = new ConversionRetentionResult(ConversionRetentionStatus.Retained, reason, request.OutputPath);
+                    // Finishing optional work must not delete its verified output or report an import.
+                    if (job.Status != ConversionJobStatus.Completed || job.Error != null || job.Message != result.Message)
+                        TryUpdateTerminal(downloadId, ConversionJobStatus.Completed, null, result.Message, out _);
+                    _trackingService?.Complete(downloadId);
+                    _logger.Info("Download {0}: {1}", downloadId, result.Message);
+                    return result;
+                }
+                discardJob = job;
+            }
+            var workspace = discardJob.WorkFolder;
+            var hadWorkspace = Directory.Exists(workspace);
+            try
+            {
+                PrepareArtifactRemoval(downloadId, true, "refused", ConversionRemovalOrigin.Automatic, expected: ExpectedAttempt(discardJob))();
+            }
+            catch (Exception error)
+            {
+                RecordCleanupFailure(downloadId, error);
+                throw;
+            }
+            if (Get(downloadId) != null)
+                return new(ConversionRetentionStatus.Pending, "Waiting for conversion cleanup before resolving the import conflict.");
+            var message = hadWorkspace && !Directory.Exists(workspace) ? $"{reason} Conversion workspace discarded: {workspace}" : reason;
+            _logger.Info("Download {0}: {1}", downloadId, message);
+            return new(ConversionRetentionStatus.None, message);
         }
 
         public void Fail(string downloadId, string error)
         {
-            UpdateTerminal(downloadId, ConversionJobStatus.Failed, error, error);
-            _trackingService?.Fail(downloadId, error);
+            if (TryUpdateTerminal(downloadId, ConversionJobStatus.Failed, error, error, out _))
+                _trackingService?.Fail(downloadId, error);
         }
 
-        public void Reset(string downloadId)
+        public string Reset(string downloadId, ConversionJob expectedJob = null)
         {
-            if (downloadId.IsNullOrWhiteSpace())
+            if (downloadId.IsNullOrWhiteSpace()) return null;
+
+            ConversionJob job;
+            lock (_sync)
             {
-                return;
+                job = Get(downloadId);
+                if (expectedJob != null && (job == null || job.Id != expectedJob.Id ||
+                    !job.WorkFolder.PathEquals(expectedJob.WorkFolder) || !job.OutputPath.PathEquals(expectedJob.OutputPath)))
+                {
+                    _logger.Debug("Leaving a newer conversion attempt unchanged after original-file import for download {0}", downloadId);
+                    return null;
+                }
+
+                if (DeserializeRequest(job)?.DiscardRequested == true)
+                {
+                    if (expectedJob != null) return null;
+                    throw new InvalidOperationException("This download was discarded and conversion cleanup is still pending. Check the cleanup error in the logs.");
+                }
+                if (IsRunning(downloadId) || (job != null && IsInFlight(job.Status) && job.Status != ConversionJobStatus.ReadyToImport))
+                    throw new InvalidOperationException("An active conversion job must be cancelled before it can be reset.");
+            }
+
+            if (job != null && RecoverCommittedImport(job, DeserializeRequest(job))) return null;
+            // Retry keeps verified output until its replacement succeeds. A captured
+            // attempt can instead be retired after import or a source-signature change.
+            if (expectedJob == null && job?.Status == ConversionJobStatus.ReadyToImport)
+            {
+                if (!HasReusableArtifact(DeserializeRequest(job)))
+                    throw new InvalidOperationException("Unable to verify the completed conversion output. Check that its source files and retained M4B are available before retrying import.");
+                return null;
             }
 
             lock (_sync)
             {
-                var job = _repository.FindByDownloadId(downloadId);
-                if (job != null && IsInFlight(job.Status))
+                var current = Get(downloadId);
+                if (current?.Id != job?.Id || (job != null && (current.Status != job.Status || current.UpdatedAt != job.UpdatedAt ||
+                    !current.WorkFolder.PathEquals(job.WorkFolder) || !current.OutputPath.PathEquals(job.OutputPath)))) return null;
+                if (IsRunning(downloadId)) throw new InvalidOperationException("An active conversion job must be cancelled before it can be reset.");
+                if (expectedJob == null)
                 {
-                    throw new InvalidOperationException("An active conversion job must be cancelled before it can be reset.");
+                    _repository.DeleteByDownloadId(downloadId);
+                    _trackingService?.Clear(downloadId);
+                    return null;
                 }
 
-                _repository.DeleteByDownloadId(downloadId);
+                // Reserve this inactive attempt before disk work. The same persisted
+                // discard operation retries cleanup after an I/O failure or restart.
+                var request = DeserializeRequest(current);
+                if (request == null)
+                {
+                    RecordCleanupFailure(downloadId, new InvalidOperationException("The conversion request is unreadable; its workspace cannot be reset safely."));
+                    return null;
+                }
+                request.DiscardRequested = true;
+                request.DiscardCurrentAttemptOnly = true;
+                request.DiscardReason = "reset";
+                current.RequestJson = JsonSerializer.Serialize(request);
+                current.Status = ConversionJobStatus.Cancelled;
+                current.Message = "Waiting for conversion cleanup before retry";
+                current.CompletedAt = current.UpdatedAt = DateTime.UtcNow;
+                _repository.Update(current);
+                job = _repository.Get(current.Id);
             }
 
-            _trackingService?.Clear(downloadId);
+            try
+            {
+                var hadWorkspace = Directory.Exists(job.WorkFolder);
+                PrepareArtifactRemoval(downloadId, currentAttemptOnly: true, reason: "reset",
+                    origin: ConversionRemovalOrigin.Automatic, expected: ExpectedAttempt(job))();
+                if (hadWorkspace && !Directory.Exists(job.WorkFolder))
+                {
+                    _logger.Info("Reset conversion for download {0}; discarded conversion workspace {1}", downloadId, job.WorkFolder);
+                    return job.WorkFolder;
+                }
+            }
+            catch (Exception ex)
+            {
+                RecordCleanupFailure(downloadId, ex);
+            }
+            return null;
+        }
+
+        public Action PrepareArtifactRemoval(string downloadId, ConversionRemovalOrigin origin)
+        {
+            var cleanup = PrepareArtifactRemoval(downloadId, false, "removed", origin);
+            return () =>
+            {
+                try { cleanup(); }
+                catch (Exception ex)
+                {
+                    RecordCleanupFailure(downloadId, ex);
+                    throw;
+                }
+            };
+        }
+
+        private Action PrepareArtifactRemoval(string downloadId, bool currentAttemptOnly, string reason, ConversionRemovalOrigin origin, CleanupInventory inventory = null,
+            ConversionLifecycleCandidate expected = null)
+        {
+            if (downloadId.IsNullOrWhiteSpace()) return () => { };
+
+            // Capture and validate the exact owned attempts before a client/category/ignore mutation.
+            var job = Get(downloadId);
+            if (expected != null && (job == null || job.Id != expected.Id || job.Status != expected.Status || job.UpdatedAt != expected.UpdatedAt)) return () => { };
+            if (!MayStopForRemoval(job, origin)) return () => { };
+            if (origin != ConversionRemovalOrigin.UserAction && !CleanupMayRetry(job) &&
+                !(IsAbsentConversionPath(job?.WorkFolder) && IsAbsentConversionPath(job?.OutputPath))) return () => { };
+            downloadId = job?.DownloadId ?? downloadId;
+            if (currentAttemptOnly && job == null) return () => { };
+            var history = currentAttemptOnly ? new List<EntityHistory>()
+                : _historyService?.FindByDownloadId(downloadId) ?? new List<EntityHistory>();
+            var outputPaths = history
+                .Where(row => row.EventType == EntityHistoryEventType.BookFileConverted || row.EventType == EntityHistoryEventType.BookFileConversionFailed)
+                .Select(row => row.GetDataValue("ConvertedPath"))
+                .Append(job?.OutputPath)
+                .Where(path => path.IsNotNullOrWhiteSpace())
+                .Distinct(PathEqualityComparer.Instance).ToList();
+            var folders = new List<string>();
+            foreach (var path in outputPaths.ToList())
+            {
+                var folder = ConversionWorkPath.RetainedFolder(downloadId, path);
+                if (HasConflictingArtifactOwner(folder, downloadId))
+                {
+                    if (job?.OutputPath.PathEquals(path) == true) throw new ConversionCleanupRefusedException($"Conversion attempt records another download owner: {folder}");
+                    // History normalizes download IDs. Exact receipt ownership must win over a
+                    // whitespace/case collision in that historical lookup.
+                    _logger.Warn("Retaining conversion attempt with different manifest ownership than download history for {0}: {1}", downloadId, folder);
+                    outputPaths.Remove(path);
+                    continue;
+                }
+                folders.Add(folder);
+            }
+            folders = folders.Distinct(PathEqualityComparer.Instance).ToList();
+            if (job != null && job.WorkRoot.IsNotNullOrWhiteSpace() &&
+                !Path.GetDirectoryName(ConversionWorkPath.RetainedFolder(downloadId, job.OutputPath)).PathEquals(job.WorkRoot))
+            {
+                throw new ConversionCleanupRefusedException($"Conversion workspace does not match its recorded output for download {downloadId}");
+            }
+
+            // Sanitized root names are not owner identities: a/b and a_b can share one root.
+            // Existing job/history references prove their exact attempts. Discover an additional
+            // attempt only through the exact DownloadId in its existing artifact receipt.
+            var knownFolders = folders.ToHashSet(PathEqualityComparer.Instance);
+            foreach (var root in currentAttemptOnly ? Enumerable.Empty<string>() : folders.Select(Path.GetDirectoryName).Distinct(PathEqualityComparer.Instance).ToList())
+            {
+                foreach (var manifest in ReadOwnedAttempts(downloadId, root))
+                {
+                    var folder = Path.GetDirectoryName(manifest.OutputPath);
+                    if (!knownFolders.Add(folder)) continue;
+                    folders.Add(folder);
+                    outputPaths.Add(manifest.OutputPath);
+                }
+            }
+
+            var cleanupPaths = folders.Distinct(PathEqualityComparer.Instance).ToList();
+            foreach (var path in cleanupPaths) ConversionWorkPath.ValidateCleanup(path);
+            var sources = DeserializeRequest(job)?.Sources ?? new List<ConversionArtifactSource>();
+            if (sources.Any(source => source?.Path != null && cleanupPaths.Any(path => path.PathEquals(source.Path) || path.IsParentPath(source.Path))))
+                throw new ConversionCleanupRefusedException("A conversion workspace contains a source file; it was retained.");
+
+            VerifyCleanupOwnership(cleanupPaths, inventory);
+            return () =>
+            {
+                ConversionJob current;
+                lock (_sync)
+                {
+                    current = Get(downloadId);
+                    if (expected != null && (current == null || current.Id != expected.Id || current.Status != expected.Status || current.UpdatedAt != expected.UpdatedAt)) return;
+                    if (!MayStopForRemoval(current, origin)) return;
+                    if (current != null && (job == null || current.Id != job.Id ||
+                        !current.WorkFolder.PathEquals(job.WorkFolder) || !current.OutputPath.PathEquals(job.OutputPath)))
+                    {
+                        throw new InvalidOperationException("Conversion attempt changed while removing the download; its workspace was retained.");
+                    }
+
+                    if (current == null && cleanupPaths.All(path => !Directory.Exists(path))) return;
+
+                    if (current == null && folders.Count > 0)
+                    {
+                        // Completed rows may already have expired. Keep cleanup failure recoverable in
+                        // the existing job table even when conversion history is the only prior owner.
+                        var firstFolder = folders[0];
+                        var cleanup = new ConversionJobRequest
+                        {
+                            DownloadId = downloadId,
+                            DiscardRequested = true,
+                            DiscardReason = reason,
+                            WorkRoot = Path.GetDirectoryName(firstFolder),
+                            WorkFolder = firstFolder,
+                            OutputPath = outputPaths.First(path => ConversionWorkPath.RetainedFolder(downloadId, path).PathEquals(firstFolder))
+                        };
+                        current = _repository.Insert(new ConversionJob
+                        {
+                            DownloadId = downloadId,
+                            Status = ConversionJobStatus.Cancelled,
+                            RequestJson = JsonSerializer.Serialize(cleanup),
+                            WorkRoot = cleanup.WorkRoot,
+                            WorkFolder = cleanup.WorkFolder,
+                            OutputPath = cleanup.OutputPath,
+                            Message = "Download discarded; removing conversion files",
+                            CreatedAt = DateTime.UtcNow,
+                            UpdatedAt = DateTime.UtcNow
+                        });
+                    }
+
+                    if (current != null)
+                    {
+                        var request = DeserializeRequest(current);
+                        if (request != null)
+                        {
+                            request.DiscardRequested = true;
+                            request.DiscardReason = reason;
+                            request.DiscardCurrentAttemptOnly = currentAttemptOnly;
+                            current.RequestJson = JsonSerializer.Serialize(request);
+                            _repository.Update(current);
+                        }
+                    }
+
+                }
+
+                // DiscardRequested is durable before releasing admission: Enqueue cannot
+                // replace this attempt while its validated files are being removed.
+                if (!Cancel(downloadId, origin))
+                {
+                    lock (_sync)
+                    {
+                        if (current != null) MarkCancelled(current, "Download discarded; removing conversion files");
+                        else _trackingService?.Cancel(downloadId);
+                    }
+                }
+                string activeFolder;
+                lock (_sync) activeFolder = _activeConversions.ContainsKey(downloadId) ? current?.WorkFolder : null;
+                List<RootFolder> roots = null;
+                var availableRoots = new Dictionary<string, bool>(PathEqualityComparer.Instance);
+                foreach (var path in cleanupPaths)
+                {
+                    // The encoder owns its exact attempt until it has stopped.
+                    if (activeFolder != null && path.PathEquals(activeFolder)) continue;
+                    if (!_diskProvider.FolderExists(path))
+                    {
+                        if (!IsAbsentConversionPath(path))
+                            throw new IOException($"Unable to verify conversion workspace availability: {path}");
+                        EnsureCleanupRootAvailable(path, ref roots, availableRoots);
+                    }
+                    CleanupWorkRoot(path, throwOnError: true, downloadId: downloadId, reason: reason, ownershipVerified: true);
+                }
+
+                lock (_sync)
+                {
+                    var settled = Get(downloadId);
+                    if (activeFolder == null && settled?.Id == current?.Id && !_activeConversions.ContainsKey(downloadId))
+                    {
+                        _repository.DeleteByDownloadId(downloadId);
+                        _trackingService?.Clear(downloadId);
+                        QueueImportSweep();
+                    }
+                }
+            };
+        }
+
+        private List<ConversionArtifactManifest> ReadOwnedAttempts(string downloadId, string root)
+        {
+            var attempts = new List<ConversionArtifactManifest>();
+            if (root.IsNullOrWhiteSpace() || !Directory.Exists(root)) return attempts;
+            foreach (var folder in Directory.EnumerateDirectories(root, "*", SearchOption.TopDirectoryOnly))
+            {
+                try
+                {
+                    var manifestPath = Path.Combine(folder, ArtifactManifestFileName);
+                    if ((File.GetAttributes(folder) & FileAttributes.ReparsePoint) != 0 ||
+                        !File.Exists(manifestPath) || (File.GetAttributes(manifestPath) & FileAttributes.ReparsePoint) != 0)
+                    {
+                        _logger.Warn("Retaining conversion attempt without ownership proof for download {0}: {1}", downloadId, folder);
+                        continue;
+                    }
+
+                    var manifest = JsonSerializer.Deserialize<ConversionArtifactManifest>(File.ReadAllText(manifestPath));
+                    if (!string.Equals(manifest?.DownloadId, downloadId, StringComparison.Ordinal) ||
+                        manifest.OutputPath.IsNullOrWhiteSpace() ||
+                        !ConversionWorkPath.RetainedFolder(downloadId, manifest.OutputPath).PathEquals(folder))
+                    {
+                        _logger.Warn("Retaining conversion attempt without matching download ownership for {0}: {1}", downloadId, folder);
+                        continue;
+                    }
+
+                    attempts.Add(manifest);
+                }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is JsonException || ex is ArgumentException)
+                {
+                    _logger.Warn(ex, "Retaining conversion attempt with unverifiable ownership for download {0}: {1}", downloadId, folder);
+                }
+            }
+            return attempts;
+        }
+
+        private static bool HasConflictingArtifactOwner(string folder, string downloadId)
+        {
+            var path = Path.Combine(folder, ArtifactManifestFileName);
+            if (!File.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) return false;
+            try
+            {
+                var manifest = JsonSerializer.Deserialize<ConversionArtifactManifest>(File.ReadAllText(path));
+                return manifest?.DownloadId.IsNotNullOrWhiteSpace() == true &&
+                    !string.Equals(manifest.DownloadId, downloadId, StringComparison.Ordinal);
+            }
+            catch (JsonException)
+            {
+                return false; // Captured request/history still proves its exact legacy attempt.
+            }
+        }
+
+        private void RetryDiscardCleanup()
+        {
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            var jobs = _repository.PendingCleanup();
+            var roots = jobs.Where(CleanupMayRetry).Select(job => job.WorkRoot).TopmostFolders();
+            var inventory = roots.Count == 0 ? null : ReadCleanupInventory(roots);
+            var attempted = 0;
+            var succeeded = 0;
+            var failed = 0;
+            foreach (var job in jobs)
+            {
+                if (!CleanupMayRetry(job)) continue;
+                var request = DeserializeRequest(job);
+                if (request?.DiscardRequested == true)
+                {
+                    attempted++;
+                    try
+                    {
+                        PrepareArtifactRemoval(job.DownloadId, request.DiscardCurrentAttemptOnly, request.DiscardReason ?? "removed", ConversionRemovalOrigin.Automatic, inventory,
+                            ExpectedAttempt(job))();
+                        succeeded++;
+                    }
+                    catch (Exception ex)
+                    {
+                        failed++;
+                        RecordCleanupFailure(job.DownloadId, ex);
+                    }
+                }
+            }
+            if (attempted > 0)
+                _logger.Info("Conversion cleanup retry: attempted={0}, succeeded={1}, failed={2}, elapsedMs={3}",
+                    attempted, succeeded, failed, System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         }
 
         public void Handle(ApplicationStartedEvent message)
         {
             _shutdown = new CancellationTokenSource();
-            Reconcile();
             _scheduler = Task.Factory.StartNew(
                 SchedulerLoop,
                 _shutdown.Token,
@@ -273,56 +800,99 @@ namespace NzbDrone.Core.MediaFiles
 
         private void Reconcile()
         {
-            _repository.DeleteCompletedBefore(DateTime.UtcNow - CompletedRetention);
+            var cutoff = DateTime.UtcNow - CompletedRetention;
+            RunSchedulerStep("startup cleanup attention", ReviewCleanupAttention);
+            RunSchedulerStep("startup orphan cleanup", ReviewOrphanArtifacts);
+            RunSchedulerStep("startup download reconciliation", () => ReconcileDownloadLifecycles());
+            var expiredCancelled = new List<int>();
+            List<RootFolder> cleanupRoots = null;
+            var availableRoots = new Dictionary<string, bool>(PathEqualityComparer.Instance);
 
             foreach (var job in _repository.NonCompleted())
             {
-                var request = DeserializeRequest(job);
-                switch (job.Status)
+                try
                 {
-                    case ConversionJobStatus.Converting:
-                    case ConversionJobStatus.ReadyToImport:
-                        if (request != null && HasReusableArtifact(request))
-                        {
-                            MarkReady(job, "Recovered converted M4B; waiting to import");
+                    if (!CleanupMayRetry(job)) continue;
+                    var request = DeserializeRequest(job);
+                    if (request?.DiscardRequested == true)
+                    {
+                        if (CleanupMayRetry(job) && job.Status != ConversionJobStatus.Cancelled)
+                            MarkCancelled(job, "Download discarded; removing conversion files");
+                        continue;
+                    }
+
+                    if (job.Status == ConversionJobStatus.Cancelled && job.CompletedAt < cutoff && request != null &&
+                        request.WorkFolder == job.WorkFolder && request.OutputPath == job.OutputPath &&
+                        IsAbsentConversionPath(job.WorkFolder) && IsAbsentConversionPath(job.OutputPath) && IsAbsentConversionPath(request.WorkRoot))
+                    {
+                        EnsureCleanupRootAvailable(job.WorkFolder, ref cleanupRoots, availableRoots);
+                        expiredCancelled.Add(job.Id);
+                        continue;
+                    }
+                    if (RecoverCommittedImport(job, request)) continue;
+                    switch (job.Status)
+                    {
+                        case ConversionJobStatus.Converting:
+                        case ConversionJobStatus.ReadyToImport:
+                            if (request != null && HasReusableArtifact(request))
+                            {
+                                MarkReady(job, "Recovered converted M4B; waiting to import");
+                                QueueImportSweep();
+                            }
+                            else if (!FailUnverifiedRetainedArtifact(job, request))
+                            {
+                                Requeue(job, "Recovering interrupted M4B conversion");
+                            }
+
+                            break;
+
+                        case ConversionJobStatus.Cancelling:
+                            MarkCancelled(job, "Conversion cancelled");
+                            CleanupWorkRoot(job.WorkFolder, downloadId: job.DownloadId, reason: DeserializeRequest(job)?.DiscardReason ?? "cancelled");
                             QueueImportSweep();
-                        }
-                        else
-                        {
-                            Requeue(job, "Recovering interrupted M4B conversion");
-                        }
+                            break;
 
-                        break;
+                        case ConversionJobStatus.Queued:
+                            _trackingService?.Start(job.DownloadId, job.TargetQualityId, job.TargetQualityName, job.Message);
+                            _trackingService?.Progress(job.DownloadId, job.Progress, job.Message);
+                            break;
 
-                    case ConversionJobStatus.Cancelling:
-                        MarkCancelled(job, "Conversion cancelled");
-                        CleanupWorkRoot(job.WorkRoot);
-                        QueueImportSweep();
-                        break;
+                        case ConversionJobStatus.Failed:
+                            _trackingService?.Fail(job.DownloadId, job.Error ?? job.Message);
+                            break;
 
-                    case ConversionJobStatus.Queued:
-                        _trackingService?.Start(job.DownloadId, job.TargetQualityId, job.TargetQualityName, job.Message);
-                        _trackingService?.Progress(job.DownloadId, job.Progress, job.Message);
-                        break;
-
-                    case ConversionJobStatus.Failed:
-                        _trackingService?.Fail(job.DownloadId, job.Error ?? job.Message);
-                        break;
-
-                    case ConversionJobStatus.Cancelled:
-                        _trackingService?.Cancelled(job.DownloadId, job.Message);
-                        break;
+                        case ConversionJobStatus.Cancelled:
+                            _trackingService?.Cancelled(job.DownloadId, job.Message);
+                            break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "Unable to recover conversion job {0}, downloadId={1}; other jobs will continue", job.Id, job.DownloadId);
                 }
             }
+            _repository.DeleteExpiredCancelled(expiredCancelled, cutoff);
+        }
+
+        private static bool IsAbsentConversionPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return false;
+            try { File.GetAttributes(path); return false; }
+            catch (FileNotFoundException) { return true; }
+            catch (DirectoryNotFoundException) { return true; }
+            catch (IOException) { return false; }
+            catch (UnauthorizedAccessException) { return false; }
         }
 
         private void SchedulerLoop()
         {
             var waitHandles = new[] { _signal, _shutdown.Token.WaitHandle };
+            var reconciled = false;
+            DateTime? failureStarted = null;
 
-            try
+            while (!_shutdown.IsCancellationRequested)
             {
-                while (!_shutdown.IsCancellationRequested)
+                try
                 {
                     var signalled = WaitHandle.WaitAny(waitHandles, SchedulerPollInterval);
                     if (signalled == 1 || _shutdown.IsCancellationRequested)
@@ -335,18 +905,42 @@ namespace NzbDrone.Core.MediaFiles
                         _shutdown.Token.WaitHandle.WaitOne(QueueCoalesceDelay);
                     }
 
-                    RecoverExpiredLeases();
-                    DispatchQueuedJobs();
+                    _shutdown.Token.ThrowIfCancellationRequested();
+                    if (!reconciled)
+                    {
+                        reconciled = RunSchedulerStep("startup recovery", Reconcile);
+                    }
+
+                    var passSucceeded = reconciled;
+                    passSucceeded &= RunSchedulerStep("cleanup attention", ReviewCleanupAttention);
+                    passSucceeded &= RunSchedulerStep("orphan cleanup", ReviewOrphanArtifacts);
+                    passSucceeded &= RunSchedulerStep("lease recovery", RecoverExpiredLeases);
+                    passSucceeded &= RunSchedulerStep("discard cleanup", RetryDiscardCleanup);
+                    passSucceeded &= RunSchedulerStep("dispatch", DispatchQueuedJobs);
+
+                    if (!passSucceeded)
+                    {
+                        failureStarted ??= DateTime.UtcNow;
+                    }
+                    else if (failureStarted.HasValue)
+                    {
+                        _logger.Info("Detached audiobook conversion scheduler pass completed after {0:0.0}s of failures; {1} jobs running",
+                            (DateTime.UtcNow - failureStarted.Value).TotalSeconds, GetActiveCount());
+                        failureStarted = null;
+                    }
+                }
+                catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    failureStarted ??= DateTime.UtcNow;
+                    _logger.Error(ex, "Detached audiobook conversion scheduler pass failed; durable jobs will be retried");
                 }
             }
-            catch (OperationCanceledException)
-            {
-                _logger.Debug("Detached audiobook conversion scheduler stopped");
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "Detached audiobook conversion scheduler failed");
-            }
+
+            _logger.Debug("Detached audiobook conversion scheduler stopped");
         }
 
         private int GetActiveCount()
@@ -357,41 +951,64 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
+        private bool RunSchedulerStep(string step, Action action)
+        {
+            try
+            {
+                action();
+                return true;
+            }
+            catch (OperationCanceledException) when (_shutdown?.IsCancellationRequested == true)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Conversion scheduler step {0} failed; independent steps will continue and this step will retry", step);
+                return false;
+            }
+        }
+
         internal void RecoverExpiredLeases()
         {
             var cutoff = DateTime.UtcNow - LeaseTimeout;
-            var staleJobs = _repository.NonCompleted()
-                .Where(job => job.Status == ConversionJobStatus.Converting &&
+            var staleJobs = _repository.ByStatus(ConversionJobStatus.Converting)
+                .Where(job =>
                               (!job.HeartbeatAt.HasValue || job.HeartbeatAt.Value < cutoff))
                 .ToList();
 
             foreach (var job in staleJobs)
             {
-                lock (_sync)
+                try
                 {
-                    if (_activeConversions.ContainsKey(job.DownloadId))
+                    lock (_sync)
                     {
-                        continue;
+                        if (_activeConversions.ContainsKey(job.DownloadId))
+                        {
+                            continue;
+                        }
+                    }
+
+                    var request = DeserializeRequest(job);
+                    if (request != null && HasReusableArtifact(request))
+                    {
+                        MarkReady(job, "Recovered converted M4B; waiting to import");
+                        QueueImportSweep();
+                    }
+                    else if (!FailUnverifiedRetainedArtifact(job, request))
+                    {
+                        Requeue(job, "Recovering expired M4B conversion lease");
                     }
                 }
-
-                var request = DeserializeRequest(job);
-                if (request != null && HasReusableArtifact(request))
+                catch (Exception ex)
                 {
-                    MarkReady(job, "Recovered converted M4B; waiting to import");
-                    QueueImportSweep();
-                }
-                else
-                {
-                    Requeue(job, "Recovering expired M4B conversion lease");
+                    _logger.Warn(ex, "Unable to recover expired conversion job {0}, downloadId={1}; other jobs will continue", job.Id, job.DownloadId);
                 }
             }
         }
 
         private void DispatchQueuedJobs()
         {
-            List<(ConversionJob Job, ActiveConversion Active)> dispatches;
-
             lock (_sync)
             {
                 var processLimit = WorkerConcurrency;
@@ -403,9 +1020,8 @@ namespace NzbDrone.Core.MediaFiles
                     return;
                 }
 
-                var queued = _repository.NonCompleted()
-                    .Where(candidate => candidate.Status == ConversionJobStatus.Queued &&
-                                        !_activeConversions.ContainsKey(candidate.DownloadId))
+                var queued = _repository.ByStatus(ConversionJobStatus.Queued)
+                    .Where(candidate => !_activeConversions.ContainsKey(candidate.DownloadId))
                     .OrderBy(candidate => candidate.CreatedAt)
                     .ThenBy(candidate => candidate.Id)
                     .Take(Math.Min(availableProcesses, availableTokens))
@@ -417,72 +1033,86 @@ namespace NzbDrone.Core.MediaFiles
 
                 var baseTokens = availableTokens / queued.Count;
                 var extraTokens = availableTokens % queued.Count;
-                dispatches = new List<(ConversionJob, ActiveConversion)>(queued.Count);
-
                 for (var index = 0; index < queued.Count; index++)
                 {
                     var job = queued[index];
                     var tokenBudget = baseTokens + (index < extraTokens ? 1 : 0);
-                    var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
-                    var active = new ActiveConversion(cancellation, tokenBudget);
-
-                    job.Status = ConversionJobStatus.Converting;
-                    job.Progress = 1m;
-                    job.Message = $"Converting to M4B ({tokenBudget} CPU thread{(tokenBudget == 1 ? string.Empty : "s")})";
-                    job.Error = null;
-                    job.StartedAt = DateTime.UtcNow;
-                    job.HeartbeatAt = job.StartedAt;
-                    job.UpdatedAt = job.StartedAt.Value;
-                    job.AttemptCount++;
-                    _repository.Update(job);
-                    _activeConversions.Add(job.DownloadId, active);
-                    dispatches.Add((job, active));
+                    var active = StartJob(job, tokenBudget);
+                    _ = Task.Run(() => ExecuteJob(job, active));
                 }
             }
+        }
 
-            foreach (var dispatch in dispatches)
-            {
-                var job = dispatch.Job;
-                var active = dispatch.Active;
-                _trackingService?.Start(job.DownloadId, job.TargetQualityId, job.TargetQualityName, job.Message);
-                _trackingService?.RegisterCancellation(job.DownloadId, active.Cancellation);
-                _trackingService?.Progress(job.DownloadId, job.Progress, job.Message);
-                _ = Task.Run(() => ExecuteJob(job, active));
-            }
+        // Caller holds _sync through admission and ownership registration.
+        private ActiveConversion StartJob(ConversionJob job, int tokenBudget)
+        {
+            job.Status = ConversionJobStatus.Converting;
+            job.Progress = 1m;
+            job.Message = $"Converting to M4B ({tokenBudget} CPU thread{(tokenBudget == 1 ? string.Empty : "s")})";
+            job.Error = null;
+            job.StartedAt = DateTime.UtcNow;
+            job.HeartbeatAt = job.StartedAt;
+            job.UpdatedAt = job.StartedAt.Value;
+            job.AttemptCount++;
+            SaveState(job);
+            var active = new ActiveConversion(CancellationTokenSource.CreateLinkedTokenSource(_shutdown?.Token ?? CancellationToken.None), tokenBudget);
+            _activeConversions.Add(job.DownloadId, active);
+            return active;
         }
 
         private void ExecuteJob(ConversionJob job, ActiveConversion active)
         {
             var cancellation = active.Cancellation;
+            var committedImport = false;
             try
             {
+                _trackingService?.Start(job.DownloadId, job.TargetQualityId, job.TargetQualityName, job.Message);
+                _trackingService?.RegisterCancellation(job.DownloadId, cancellation);
+                _trackingService?.Progress(job.DownloadId, job.Progress, job.Message);
                 var request = DeserializeRequest(job);
                 if (request == null)
                 {
-                    MarkFailed(job, "Conversion job request is missing or unreadable.");
+                    PersistWorkerOutcome(job, () => MarkFailed(job, "Conversion job request is missing or unreadable."));
                     return;
                 }
 
                 if (cancellation.IsCancellationRequested)
                 {
-                    HandleInterruptedConversion(job, request);
+                    PersistWorkerOutcome(job, () => HandleInterruptedConversion(job, request));
                     return;
                 }
+
+                if (RecoverCommittedImport(job, request))
+                {
+                    committedImport = true;
+                    return;
+                }
+
+                if (!request.MatchesSources(request.BookId, request.Sources.Select(source => source.Path).ToArray()))
+                    throw new IOException("Conversion sources changed or are missing since this job was queued. Nothing was encoded; import must evaluate the current files again.");
 
                 if (HasReusableArtifact(request))
                 {
-                    MarkReady(job, "Using retained M4B");
+                    PersistWorkerOutcome(job, () =>
+                    {
+                        if (!MarkReady(job, "Using retained M4B", cancellation.Token))
+                        {
+                            HandleInterruptedConversion(job, request);
+                        }
+                    });
                     return;
                 }
 
-                var threadPlan = GetThreadPlan(request.ConversionInputFiles.Count, active.TokenBudget);
+                var threadPlan = GetThreadPlan(request.Sources.Count, active.TokenBudget);
                 using var heartbeat = new Timer(_ => TouchHeartbeat(job), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
 
+                var encoderSucceeded = false;
                 try
                 {
                     Directory.CreateDirectory(request.WorkFolder);
+                    WriteArtifactManifest(request, encoderSucceeded: false);
                     var result = _conversionService.ConvertToM4b(
-                        request.ConversionInputFiles.ToArray(),
+                        request.Sources.Select(source => source.Path).ToArray(),
                         request.OutputPath,
                         new ConversionOptions
                         {
@@ -499,38 +1129,48 @@ namespace NzbDrone.Core.MediaFiles
 
                     if (result.Success)
                     {
-                        WriteArtifactManifest(request);
-                        MarkReady(job, "Converted M4B ready to import");
+                        encoderSucceeded = true;
+                        WriteArtifactManifest(request, encoderSucceeded: true);
+                        PersistWorkerOutcome(job, () =>
+                        {
+                            if (!MarkReady(job, "Converted M4B ready to import", cancellation.Token))
+                            {
+                                HandleInterruptedConversion(job, request);
+                            }
+                        });
                     }
                     else if (result.FailureCategory == ConversionFailureCategory.Cancelled || cancellation.IsCancellationRequested)
                     {
-                        HandleInterruptedConversion(job, request);
+                        PersistWorkerOutcome(job, () => HandleInterruptedConversion(job, request));
                     }
                     else
                     {
                         var error = result.ErrorMessage.IsNullOrWhiteSpace() ? "M4B conversion failed" : result.ErrorMessage;
-                        if (result.RetainOutputOnFailure && File.Exists(request.OutputPath))
+                        var retain = result.RetainOutputOnFailure && File.Exists(request.OutputPath);
+                        if (retain)
                         {
-                            WriteArtifactManifest(request);
-                            error = $"{error} Converted file retained at: {request.OutputPath}";
-                        }
-                        else
-                        {
-                            CleanupWorkRoot(request.WorkRoot);
+                            error = ConversionRetentionResult.AppendRetainedConversionPath(error, request.OutputPath);
                         }
 
-                        MarkFailed(job, error);
+                        PersistWorkerOutcome(job, () =>
+                        {
+                            MarkFailed(job, error);
+                            if (!retain) CleanupWorkRoot(request.WorkFolder, downloadId: job.DownloadId, reason: "failed");
+                        });
                     }
                 }
                 catch (OperationCanceledException)
                 {
-                    HandleInterruptedConversion(job, request);
+                    PersistWorkerOutcome(job, () => HandleInterruptedConversion(job, request));
                 }
                 catch (Exception ex)
                 {
                     _logger.Error(ex, "Detached M4B conversion failed for download {0}", job.DownloadId);
-                    MarkFailed(job, "M4B conversion failed: " + ex.Message);
-                    CleanupWorkRoot(request.WorkRoot);
+                    PersistWorkerOutcome(job, () =>
+                    {
+                        MarkFailed(job, "M4B conversion failed: " + ex.Message);
+                        if (!encoderSucceeded) CleanupWorkRoot(request.WorkFolder, downloadId: job.DownloadId, reason: "failed");
+                    });
                 }
             }
             catch (Exception ex)
@@ -538,7 +1178,7 @@ namespace NzbDrone.Core.MediaFiles
                 _logger.Error(ex, "Detached M4B job orchestration failed for download {0}", job.DownloadId);
                 try
                 {
-                    MarkFailed(job, "M4B conversion job failed: " + ex.Message);
+                    PersistWorkerOutcome(job, () => MarkFailed(job, "M4B conversion job failed: " + ex.Message));
                 }
                 catch (Exception persistException)
                 {
@@ -547,18 +1187,71 @@ namespace NzbDrone.Core.MediaFiles
             }
             finally
             {
-                lock (_sync)
+                try
                 {
-                    _activeConversions.Remove(job.DownloadId);
+                    PersistWorkerOutcome(job, () =>
+                    {
+                        lock (_sync)
+                        {
+                            if (cancellation.IsCancellationRequested &&
+                                _repository.FindByDownloadId(job.DownloadId)?.Status == ConversionJobStatus.Cancelling)
+                            {
+                                HandleInterruptedConversion(job, DeserializeRequest(job));
+                            }
+                            // Import may start as soon as this job is no longer active.
+                            // Detach its stop callback before publishing that boundary.
+                            _trackingService?.UnregisterCancellation(job.DownloadId, cancellation);
+                            _activeConversions.Remove(job.DownloadId);
+                        }
+                        if (committedImport || job.Status == ConversionJobStatus.ReadyToImport)
+                            RecoverCommittedImport(job, DeserializeRequest(job));
+                    });
                 }
+                finally
+                {
+                    lock (_sync)
+                    {
+                        if (_activeConversions.TryGetValue(job.DownloadId, out var owner) && ReferenceEquals(owner, active))
+                            _activeConversions.Remove(job.DownloadId);
+                    }
+                    _trackingService?.UnregisterCancellation(job.DownloadId, cancellation);
+                    cancellation.Dispose();
+                    _signal.Set();
+                    if (_shutdown?.IsCancellationRequested != true)
+                    {
+                        QueueImportSweep();
+                    }
+                    active.Completion.TrySetResult();
+                }
+            }
+        }
 
-                cancellation.Dispose();
-                _signal.Set();
-                if (_shutdown?.IsCancellationRequested != true)
+        private void PersistWorkerOutcome(ConversionJob job, Action persist)
+        {
+            DateTime? failureStarted = null;
+            while (true)
+            {
+                try
                 {
-                    QueueImportSweep();
+                    persist();
+                    if (failureStarted.HasValue)
+                    {
+                        _logger.Info("Saved conversion outcome {0} for download {1} after {2:0.0}s of database failures",
+                            job.Status, job.DownloadId, (DateTime.UtcNow - failureStarted.Value).TotalSeconds);
+                    }
+
+                    return;
                 }
-                active.Completion.TrySetResult();
+                catch (DbException ex)
+                {
+                    failureStarted ??= DateTime.UtcNow;
+                    _logger.Error(ex, "Unable to save conversion outcome {0} for download {1}; retaining worker ownership and retrying. Outcome: {2}",
+                        job.Status, job.DownloadId, job.Error ?? job.Message);
+                    if ((_shutdown?.Token ?? CancellationToken.None).WaitHandle.WaitOne(_outcomeRetryDelay))
+                    {
+                        return;
+                    }
+                }
             }
         }
 
@@ -572,8 +1265,10 @@ namespace NzbDrone.Core.MediaFiles
                 return;
             }
 
-            MarkCancelled(job, $"{request.TargetQualityName ?? "M4B"} conversion was cancelled.");
-            CleanupWorkRoot(request.WorkRoot);
+            // Preserve discard intent saved by the remover while this worker was stopping.
+            if (persisted != null) job.RequestJson = persisted.RequestJson;
+            MarkCancelled(job, $"{request?.TargetQualityName ?? "M4B"} conversion was cancelled.");
+            CleanupWorkRoot(request?.WorkFolder ?? job.WorkFolder, downloadId: job.DownloadId, reason: DeserializeRequest(job)?.DiscardReason ?? "cancelled");
         }
 
         private void UpdateProgress(ConversionJob job, ConversionProgressUpdate update)
@@ -612,21 +1307,37 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        private void MarkReady(ConversionJob job, string message)
+        private void SaveState(ConversionJob job)
+        {
+            // Ownership can change during a long conversion. State transitions must not
+            // overwrite its durable request (or discard intent) with the worker's old copy.
+            _repository.SetFields(job, j => j.Status, j => j.Progress, j => j.Message, j => j.Error,
+                j => j.UpdatedAt, j => j.StartedAt, j => j.HeartbeatAt, j => j.CompletedAt, j => j.AttemptCount);
+        }
+
+        private bool MarkReady(ConversionJob job, string message, CancellationToken cancellationToken = default)
         {
             lock (_sync)
             {
+                // Stop and the ready transition share this gate, so accepted cancellation
+                // cannot be overwritten by a converter finishing successfully.
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    return false;
+                }
+
                 job.Status = ConversionJobStatus.ReadyToImport;
                 job.Progress = 98m;
                 job.Message = message;
                 job.Error = null;
                 job.HeartbeatAt = DateTime.UtcNow;
                 job.UpdatedAt = job.HeartbeatAt.Value;
-                _repository.Update(job);
+                SaveState(job);
             }
 
             _trackingService?.Start(job.DownloadId, job.TargetQualityId, job.TargetQualityName, message);
             _trackingService?.Progress(job.DownloadId, 98m, message);
+            return true;
         }
 
         private void Requeue(ConversionJob job, string message)
@@ -641,7 +1352,7 @@ namespace NzbDrone.Core.MediaFiles
                 job.StartedAt = null;
                 job.HeartbeatAt = null;
                 job.CompletedAt = null;
-                _repository.Update(job);
+                SaveState(job);
             }
 
             _trackingService?.Start(job.DownloadId, job.TargetQualityId, job.TargetQualityName, message);
@@ -653,13 +1364,19 @@ namespace NzbDrone.Core.MediaFiles
         {
             lock (_sync)
             {
+                if (_activeConversions.TryGetValue(job.DownloadId, out var active) && active.Cancellation.IsCancellationRequested)
+                {
+                    HandleInterruptedConversion(job, DeserializeRequest(job));
+                    return;
+                }
+
                 job.Status = ConversionJobStatus.Failed;
                 job.Progress = null;
                 job.Message = error;
                 job.Error = error;
                 job.UpdatedAt = DateTime.UtcNow;
                 job.CompletedAt = job.UpdatedAt;
-                _repository.Update(job);
+                SaveState(job);
             }
 
             _trackingService?.Fail(job.DownloadId, error);
@@ -675,39 +1392,143 @@ namespace NzbDrone.Core.MediaFiles
                 job.Error = null;
                 job.UpdatedAt = DateTime.UtcNow;
                 job.CompletedAt = job.UpdatedAt;
-                _repository.Update(job);
+                SaveState(job);
             }
 
             _trackingService?.Cancelled(job.DownloadId, message);
         }
 
-        private void UpdateTerminal(string downloadId, ConversionJobStatus status, string error, string message)
+        private bool TryUpdateTerminal(string downloadId, ConversionJobStatus status, string error, string message, out ConversionJob job)
         {
-            if (downloadId.IsNullOrWhiteSpace())
-            {
-                return;
-            }
-
+            job = null;
+            if (downloadId.IsNullOrWhiteSpace()) return false;
             lock (_sync)
             {
-                var job = _repository.FindByDownloadId(downloadId);
-                if (job == null)
-                {
-                    return;
-                }
-
+                job = _repository.FindByDownloadId(downloadId);
+                if (IsRunning(downloadId) || !MayStopForRemoval(job, ConversionRemovalOrigin.Automatic)) return false;
+                // A verified legacy artifact may have no detached job after Reset. Its import
+                // still updates the live progress tracker, without creating a new durable job.
+                if (job == null) return true;
                 job.Status = status;
                 job.Progress = status == ConversionJobStatus.Completed ? 100m : null;
                 job.Message = message;
                 job.Error = error;
                 job.UpdatedAt = DateTime.UtcNow;
                 job.CompletedAt = job.UpdatedAt;
-                _repository.Update(job);
+                SaveState(job);
+                return true;
+            }
+        }
+
+        private const string UnverifiedRetainedOutputMessage = "Retained conversion completion cannot be verified. Manual Import imports the original files; Retry starts a new conversion. The retained output has been kept.";
+
+        private bool FailUnverifiedRetainedArtifact(ConversionJob job, ConversionJobRequest request)
+        {
+            if (request?.OutputPath.IsNotNullOrWhiteSpace() != true || !File.Exists(request.OutputPath) ||
+                !File.Exists(Path.Combine(request.WorkFolder, ArtifactManifestFileName))) return false;
+
+            try
+            {
+                var receipt = JsonSerializer.Deserialize<ConversionArtifactManifest>(File.ReadAllText(Path.Combine(request.WorkFolder, ArtifactManifestFileName)));
+                // A new ownership-only receipt is not a legacy completion claim. Its interrupted
+                // encoder can resume through normal recovery; it can never be reused as success.
+                if (string.Equals(receipt?.DownloadId, request.DownloadId, StringComparison.Ordinal) && receipt?.EncoderSucceeded == false) return false;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is JsonException)
+            {
+                _logger.Warn(ex, "Unable to verify retained conversion receipt for download {0}", job.DownloadId);
+            }
+
+            // Old manifests were also written for failed-but-readable output. Without the explicit
+            // success contract, neither reuse nor automatic overwrite is justified.
+            MarkFailed(job, UnverifiedRetainedOutputMessage);
+            QueueImportSweep();
+            return true;
+        }
+
+        private bool RecoverCommittedImport(ConversionJob job, ConversionJobRequest request)
+        {
+            if (request == null) return false;
+
+            // Import source coverage is committed with BookFiles, before history or the job completion write.
+            // Reuse that authority instead of treating a moved workspace output as an interrupted encoder.
+            if (request.BookId > 0)
+            {
+                var sources = request.Sources.Select(source => source.Path).ToHashSet(PathEqualityComparer.Instance);
+                var imported = _mediaFileService.GetFilesByBook(request.BookId).Any(file =>
+                    file.Quality?.Quality == Qualities.Quality.M4B && File.Exists(file.Path) &&
+                    string.Equals(file.MatchProvenance?.ImportDownloadId, job.DownloadId, StringComparison.OrdinalIgnoreCase) &&
+                    file.MatchProvenance?.ImportSourcePaths?.Count > 0 &&
+                    sources.SetEquals(file.MatchProvenance.ImportSourcePaths));
+                if (imported)
+                {
+                    SettleCommittedImport(job);
+                    return true;
+                }
+            }
+
+            // Legacy requests lack BookId, and an approved additional-copy import may create a new
+            // book row. Its committed conversion history identifies the actual managed destination.
+            foreach (var history in _historyService?.FindByDownloadId(job.DownloadId) ?? new List<EntityHistory>())
+            {
+                if (history.EventType != EntityHistoryEventType.BookFileConverted ||
+                    !string.Equals(history.GetDataValue("ConvertedPath"), job.OutputPath, StringComparison.OrdinalIgnoreCase)) continue;
+                var path = history.GetDataValue("ImportedPath");
+                if (path.IsNullOrWhiteSpace() || !File.Exists(path)) continue;
+                var file = _mediaFileService.GetFileWithPath(path);
+                if (file == null || file.EditionId != history.EditionId || file.Quality?.Quality != Qualities.Quality.M4B) continue;
+                SettleCommittedImport(job);
+                return true;
+            }
+
+            return false;
+        }
+
+        private void SettleCommittedImport(ConversionJob job)
+        {
+            ConversionLifecycleCandidate expected;
+            lock (_sync)
+            {
+                var current = Get(job.DownloadId);
+                if (current?.Id != job.Id || !current.WorkFolder.PathEquals(job.WorkFolder) || !current.OutputPath.PathEquals(job.OutputPath)) return;
+                if (IsRunning(job.DownloadId))
+                {
+                    _logger.Info("Import is committed for conversion job {0}, download {1}; workspace cleanup waits for the active worker to finish", job.Id, job.DownloadId);
+                    return;
+                }
+                current.Status = ConversionJobStatus.Completed;
+                current.Progress = 100m;
+                current.Message = "Converted M4B import recovered";
+                current.Error = null;
+                current.CompletedAt = current.UpdatedAt = DateTime.UtcNow;
+                var request = DeserializeRequest(current);
+                request.DiscardRequested = true;
+                request.DiscardCurrentAttemptOnly = true;
+                request.DiscardReason = "imported";
+                current.RequestJson = JsonSerializer.Serialize(request);
+                _repository.Update(current);
+                // PostgreSQL stores timestamps at microsecond precision. Capture the
+                // persisted version, just as lifecycle-page readers do.
+                expected = ExpectedAttempt(_repository.Get(current.Id));
+            }
+            // The committed BookFile/source proof above, not a policy refusal, prevents
+            // another encode. A cleanup refusal cannot put this job back in the queue.
+            _trackingService?.Complete(job.DownloadId);
+            _logger.Info("Recovered committed M4B import for conversion job {0}, download {1}; the job is completed and will not encode again", job.Id, job.DownloadId);
+            try
+            {
+                PrepareArtifactRemoval(job.DownloadId, currentAttemptOnly: true, reason: "imported",
+                    origin: ConversionRemovalOrigin.Automatic, expected: expected)();
+            }
+            catch (Exception ex)
+            {
+                RecordCleanupFailure(job.DownloadId, ex);
             }
         }
 
         private ConversionJobRequest DeserializeRequest(ConversionJob job)
         {
+            if (job == null) return null;
             try
             {
                 var request = JsonSerializer.Deserialize<ConversionJobRequest>(job?.RequestJson ?? string.Empty);
@@ -722,18 +1543,30 @@ namespace NzbDrone.Core.MediaFiles
 
         private static bool IsValidRequest(ConversionJobRequest request)
         {
+            if (request?.DiscardRequested == true)
+            {
+                try
+                {
+                    return request.DownloadId.IsNotNullOrWhiteSpace() &&
+                        ConversionWorkPath.RetainedFolder(request.DownloadId, request.OutputPath).PathEquals(request.WorkFolder) &&
+                        Path.GetDirectoryName(request.WorkFolder).PathEquals(request.WorkRoot);
+                }
+                catch (Exception ex) when (ex is IOException || ex is ArgumentException || ex is UnauthorizedAccessException)
+                {
+                    return false;
+                }
+            }
+
             if (request == null ||
                 request.DownloadId.IsNullOrWhiteSpace() ||
                 request.WorkRoot.IsNullOrWhiteSpace() ||
                 request.WorkFolder.IsNullOrWhiteSpace() ||
                 request.OutputPath.IsNullOrWhiteSpace() ||
-                request.ConversionInputFiles == null ||
-                request.ConversionInputFiles.Count == 0 ||
                 request.Sources == null ||
                 request.Sources.Count == 0 ||
                 request.Sources.Any(source => source?.Path.IsNullOrWhiteSpace() != false) ||
                 !Path.GetExtension(request.OutputPath).Equals(".m4b", StringComparison.OrdinalIgnoreCase) ||
-                !IsConversionWorkPath(request.WorkRoot))
+                !ConversionWorkPath.IsWorkPath(request.WorkRoot))
             {
                 return false;
             }
@@ -751,14 +1584,6 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        private static bool IsConversionWorkPath(string path)
-        {
-            return path
-                .Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries)
-                .Any(part => part.Equals(".chaptarr-conversions", StringComparison.OrdinalIgnoreCase) ||
-                             part.Equals("chaptarr-conversions", StringComparison.OrdinalIgnoreCase));
-        }
-
         private static bool IsPathWithin(string candidate, string parent)
         {
             return candidate.StartsWith(parent + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
@@ -766,26 +1591,19 @@ namespace NzbDrone.Core.MediaFiles
 
         private static bool HasReusableArtifact(ConversionJobRequest request)
         {
+            if (!HasSuccessfulArtifact(request)) return false;
+
+            return request.MatchesSources(request.BookId, request.Sources.Select(source => source.Path).ToArray());
+        }
+
+        private static bool HasSuccessfulArtifact(ConversionJobRequest request)
+        {
             if (request == null ||
                 request.OutputPath.IsNullOrWhiteSpace() ||
                 !File.Exists(request.OutputPath) ||
                 request.WorkFolder.IsNullOrWhiteSpace())
             {
                 return false;
-            }
-
-            foreach (var source in request.Sources ?? new List<ConversionArtifactSource>())
-            {
-                if (source?.Path.IsNullOrWhiteSpace() != false || !File.Exists(source.Path))
-                {
-                    return false;
-                }
-
-                var info = new FileInfo(source.Path);
-                if (info.Length != source.Size || info.LastWriteTimeUtc.Ticks != source.ModifiedUtcTicks)
-                {
-                    return false;
-                }
             }
 
             try
@@ -797,13 +1615,13 @@ namespace NzbDrone.Core.MediaFiles
                 }
 
                 var manifest = JsonSerializer.Deserialize<ConversionArtifactManifest>(File.ReadAllText(manifestPath));
-                return manifest != null &&
+                return ConversionWorkPath.IsSuccessfulArtifact(manifest, request.OutputPath) &&
+                       (manifest.DownloadId.IsNullOrWhiteSpace() || string.Equals(manifest.DownloadId, request.DownloadId, StringComparison.Ordinal)) &&
                        manifest.TargetQualityId == request.TargetQualityId &&
                        manifest.AudioBitrate == request.AudioBitrate &&
                        manifest.AudioChannels == request.AudioChannels &&
                        string.Equals(manifest.TagSignature, request.TagSignature, StringComparison.Ordinal) &&
-                       manifest.Sources.Count == request.Sources.Count &&
-                       manifest.Sources.Zip(request.Sources, SourcesMatch).All(matches => matches);
+                       ConversionWorkPath.SourcesMatch(manifest.Sources, request.Sources);
             }
             catch
             {
@@ -811,19 +1629,13 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        private static bool SourcesMatch(ConversionArtifactSource left, ConversionArtifactSource right)
-        {
-            return left != null &&
-                   right != null &&
-                   left.Path.PathEquals(right.Path) &&
-                   left.Size == right.Size &&
-                   left.ModifiedUtcTicks == right.ModifiedUtcTicks;
-        }
-
-        private static void WriteArtifactManifest(ConversionJobRequest request)
+        private static void WriteArtifactManifest(ConversionJobRequest request, bool encoderSucceeded)
         {
             var manifest = new ConversionArtifactManifest
             {
+                DownloadId = request.DownloadId,
+                EncoderSucceeded = encoderSucceeded,
+                OutputSize = encoderSucceeded ? new FileInfo(request.OutputPath).Length : 0,
                 CreatedUtc = DateTime.UtcNow,
                 OutputPath = request.OutputPath,
                 TargetQualityId = request.TargetQualityId,
@@ -854,20 +1666,76 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        private void CleanupWorkRoot(string workRoot)
-        {
-            if (workRoot.IsNullOrWhiteSpace() || !IsConversionWorkPath(workRoot) || !Directory.Exists(workRoot))
-            {
-                return;
-            }
+        private bool CleanupMayRetry(ConversionJob job) => !(DeserializeRequest(job)?.CleanupNotBefore > DateTime.UtcNow);
 
+        private void RecordCleanupFailure(string downloadId, Exception error)
+        {
             try
             {
-                Directory.Delete(workRoot, true);
+                var job = Get(downloadId);
+                if (job == null) { _logger.Warn(error, "Conversion cleanup failed for download {0}; no cleanup record exists", downloadId); return; }
+                var request = DeserializeRequest(job);
+                if (request == null)
+                {
+                    _logger.Warn(error, "Conversion cleanup failed for job {0}, downloadId={1}; its request is unreadable, so its workspace was retained", job.Id, downloadId);
+                    return;
+                }
+                var changed = request.CleanupError != error.Message;
+                request.CleanupFailureCount = Math.Min(request.CleanupFailureCount + 1, 1000);
+                var minutes = error is ConversionCleanupRefusedException ? 60 : Math.Min(60, Math.Pow(2, Math.Min(request.CleanupFailureCount - 1, 6)));
+                request.CleanupNotBefore = DateTime.UtcNow.AddMinutes(minutes);
+                request.CleanupError = error.Message;
+                job.RequestJson = JsonSerializer.Serialize(request);
+                job.UpdatedAt = DateTime.UtcNow;
+                // Cleanup diagnostics must never erase the encoder/import failure.
+                _repository.SetFields(job, value => value.RequestJson, value => value.UpdatedAt);
+                if (changed || (request.CleanupFailureCount == 5 && error is not ConversionCleanupRefusedException))
+                    _logger.Warn(error, "Conversion cleanup retained: downloadId={0}, attempt={1}, nextAttempt={2}", downloadId, request.CleanupFailureCount, request.CleanupNotBefore);
+                else
+                    _logger.Debug("Conversion cleanup remains pending: downloadId={0}, attempt={1}, nextAttempt={2}", downloadId, request.CleanupFailureCount, request.CleanupNotBefore);
+            }
+            catch (Exception persistenceError)
+            {
+                _logger.Warn(error, "Conversion cleanup failed for download {0}", downloadId);
+                _logger.Error(persistenceError, "Unable to record conversion cleanup failure for download {0}; other jobs will continue", downloadId);
+            }
+        }
+
+        private sealed record CleanupInventory(IReadOnlyCollection<string> Folders, List<BookFile> Files);
+
+        private CleanupInventory ReadCleanupInventory(IReadOnlyCollection<string> paths)
+        {
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            var files = _mediaFileService.GetFilePathOwnership(Array.Empty<int>(), paths);
+            var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            _logger.Log(elapsed >= 1000 ? LogLevel.Info : LogLevel.Debug,
+                "Conversion cleanup ownership: folders={0}, trackedFiles={1}, elapsedMs={2}", paths.Count, files.Count, elapsed);
+            return new CleanupInventory(paths, files);
+        }
+
+        private void VerifyCleanupOwnership(IReadOnlyCollection<string> paths, CleanupInventory inventory = null)
+        {
+            if (paths.Count == 0) return;
+            var uncovered = paths.Where(path => inventory == null || !inventory.Folders.Any(folder => folder.PathEquals(path) || folder.IsParentPath(path))).ToArray();
+            var files = (inventory?.Files ?? new List<BookFile>()).Concat(uncovered.Length == 0 ? Enumerable.Empty<BookFile>() : ReadCleanupInventory(uncovered).Files);
+            if (files.Any(file => (file.ReplicaPaths ?? new List<string>()).Append(file.Path)
+                .Where(path => !string.IsNullOrWhiteSpace(path)).Any(path => paths.Any(folder => folder.PathEquals(path) || folder.IsParentPath(path)))))
+                throw new ConversionCleanupRefusedException("A conversion workspace contains a tracked library file; it was retained.");
+        }
+
+        private void CleanupWorkRoot(string workRoot, bool throwOnError = false, string downloadId = null, string reason = "conversion", bool ownershipVerified = false)
+        {
+            if (string.IsNullOrWhiteSpace(workRoot)) return;
+            try
+            {
+                if (!throwOnError && !CleanupMayRetry(Get(downloadId))) return;
+                if (!ownershipVerified) VerifyCleanupOwnership(new[] { workRoot });
+                ConversionWorkPath.Cleanup(workRoot, _logger, true, downloadId, reason);
             }
             catch (Exception ex)
             {
-                _logger.Debug(ex, "Unable to clean conversion work folder {0}", workRoot);
+                if (throwOnError) throw;
+                RecordCleanupFailure(downloadId, ex);
             }
         }
 
@@ -892,10 +1760,7 @@ namespace NzbDrone.Core.MediaFiles
 
         private static bool IsInFlight(ConversionJobStatus status)
         {
-            return status == ConversionJobStatus.Queued ||
-                   status == ConversionJobStatus.Converting ||
-                   status == ConversionJobStatus.ReadyToImport ||
-                   status == ConversionJobStatus.Cancelling;
+            return IsWaitingForOutput(status) || status == ConversionJobStatus.ReadyToImport;
         }
 
         private sealed class ActiveConversion

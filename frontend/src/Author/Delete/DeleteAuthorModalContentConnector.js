@@ -9,9 +9,8 @@ import DeleteAuthorModalContent from './DeleteAuthorModalContent';
 function createMapStateToProps() {
   return createSelector(
     createAuthorSelector(),
-    (author) => {
-      return author;
-    }
+    (state) => state.authors,
+    (author, { isDeleting, deleteError }) => ({ authors: author ? [author] : [], isDeleting, deleteError })
   );
 }
 
@@ -24,15 +23,9 @@ class DeleteAuthorModalContentConnector extends Component {
   //
   // Listeners
 
-  onDeletePress = (deleteFiles, addImportListExclusion, readdAuthor) => {
-    this.props.deleteAuthor({
-      id: this.props.authorId,
-      deleteFiles,
-      addImportListExclusion,
-      readdAuthor
-    });
-
-    this.props.onModalClose(true);
+  onDeletePress = (options) => {
+    this.props.deleteAuthor({ id: this.props.authorId, ...options })
+      .done(() => this.props.onModalClose(true));
   };
 
   //
@@ -42,6 +35,7 @@ class DeleteAuthorModalContentConnector extends Component {
     return (
       <DeleteAuthorModalContent
         {...this.props}
+        allowReadd={true}
         onDeletePress={this.onDeletePress}
       />
     );

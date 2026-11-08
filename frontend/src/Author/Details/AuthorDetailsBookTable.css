@@ -1,7 +1,9 @@
 .table {
   composes: table from '~Components/Table/Table.css';
 
-  table-layout: fixed;
+  /* Fixed columns can consume all available title space beside the sidebar.
+     Intrinsic widths preserve readable cells in the existing table scroller. */
+  table-layout: auto;
 }
 
 .select,
@@ -10,13 +12,16 @@
 }
 
 .narrator {
-  width: 150px;
+  width: 20%;
 }
 
 .position,
-.rating,
-.status {
+.rating {
   width: 100px;
+}
+
+.status {
+  width: 108px;
 }
 
 .releaseDate {
@@ -37,44 +42,4 @@
 
 .actions {
   width: 70px;
-}
-
-@media only screen and (max-width: 768px) {
-  .narrator {
-    display: none;
-  }
-
-  .position,
-  .rating,
-  .status {
-    width: 80px;
-  }
-
-  .releaseDate {
-    width: 100px;
-  }
-
-  .pageCount {
-    width: 60px;
-  }
-
-  .duration {
-    width: 70px;
-  }
-}
-
-@media only screen and (max-width: 480px) {
-  .position,
-  .rating {
-    display: none;
-  }
-
-  .status {
-    width: 60px;
-  }
-
-  .pageCount,
-  .duration {
-    width: 55px;
-  }
 }

@@ -79,7 +79,7 @@ namespace NzbDrone.Core.Update
             _logger = logger;
         }
 
-        private bool InstallUpdate(UpdatePackage updatePackage)
+        private bool InstallUpdate(UpdatePackage updatePackage, bool skipBackup = false)
         {
             EnsureAppDataSafety();
 
@@ -142,7 +142,14 @@ namespace NzbDrone.Core.Update
 
             EnsureValidBranch(updatePackage);
 
-            _backupService.Backup(BackupType.Update);
+            if (skipBackup)
+            {
+                _logger.Warn("Installing this manually requested update without a database backup, as explicitly requested");
+            }
+            else
+            {
+                _backupService.Backup(BackupType.Update);
+            }
 
             if (_configFileProvider.UpdateMechanism == UpdateMechanism.Script)
             {
@@ -327,7 +334,7 @@ namespace NzbDrone.Core.Update
             {
                 try
                 {
-                    InstallUpdate(latestAvailable);
+                    InstallUpdate(latestAvailable, message.SkipBackup && message.Trigger == CommandTrigger.Manual);
                     _logger.ProgressDebug("Restarting Chaptarr to apply updates");
                 }
                 catch (UpdateFolderNotWritableException ex)
@@ -353,7 +360,7 @@ namespace NzbDrone.Core.Update
             // Check if we have to do an application update on startup
             try
             {
-                var updateMarker = Path.Combine(_appFolderInfo.AppDataFolder, "update_required");
+                var updateMarker = _appFolderInfo.GetUpdateRequiredFile();
                 if (!_diskProvider.FileExists(updateMarker))
                 {
                     return;

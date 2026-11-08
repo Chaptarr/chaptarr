@@ -100,6 +100,9 @@ namespace Chaptarr.Api.V1.RootFolders
                 return null;
             }
 
+            var audiobook = ToMediaTypeSettingsResource(model.GetAudiobookSettings());
+            var ebook = ToMediaTypeSettingsResource(model.GetEbookSettings());
+
             return new RootFolderResource
             {
                 Id = model.Id,
@@ -123,21 +126,21 @@ namespace Chaptarr.Api.V1.RootFolders
                 DefaultSyncMonitoredAcrossFormats = model.DefaultSyncMonitoredAcrossFormats,
 
                 // PER-MEDIA-TYPE SETTINGS
-                Audiobook = ToMediaTypeSettingsResource(model.GetAudiobookSettings()),
-                Ebook = ToMediaTypeSettingsResource(model.GetEbookSettings()),
+                Audiobook = audiobook,
+                Ebook = ebook,
 
                 // INDIVIDUAL MONITORING FIELDS (for root-folder defaults form)
                 AudiobookMonitored = model.GetAudiobookSettings()?.Monitored,
                 AudiobookMonitorExistingMode = model.GetAudiobookSettings()?.MonitorExistingMode,
                 AudiobookMonitorExistingBooks = model.GetAudiobookSettings()?.MonitorExistingBooks,
-                AudiobookMonitorExisting = model.GetAudiobookSettings()?.MonitorExisting,
-                AudiobookMonitorFuture = ToLegacyMonitorFuture(model.GetAudiobookSettings()),
+                AudiobookMonitorExisting = audiobook?.MonitorExisting,
+                AudiobookMonitorFuture = audiobook?.MonitorFuture,
                 AudiobookMonitorNewItems = model.GetAudiobookSettings()?.MonitorNewItems,
                 EbookMonitored = model.GetEbookSettings()?.Monitored,
                 EbookMonitorExistingMode = model.GetEbookSettings()?.MonitorExistingMode,
                 EbookMonitorExistingBooks = model.GetEbookSettings()?.MonitorExistingBooks,
-                EbookMonitorExisting = model.GetEbookSettings()?.MonitorExisting,
-                EbookMonitorFuture = ToLegacyMonitorFuture(model.GetEbookSettings()),
+                EbookMonitorExisting = ebook?.MonitorExisting,
+                EbookMonitorFuture = ebook?.MonitorFuture,
                 EbookMonitorNewItems = model.GetEbookSettings()?.MonitorNewItems,
 
                 // INDIVIDUAL PROFILE FIELDS (for frontend form)
@@ -297,8 +300,6 @@ namespace Chaptarr.Api.V1.RootFolders
                         existingAudiobook.MonitorExistingMode = resource.AudiobookMonitorExistingMode;
                     else if (resource.AudiobookMonitorExistingBooks.HasValue)
                         existingAudiobook.MonitorExistingBooks = resource.AudiobookMonitorExistingBooks;
-                    else if (resource.AudiobookMonitorExisting.HasValue)
-                        existingAudiobook.MonitorExisting = resource.AudiobookMonitorExisting;
                     if (resource.AudiobookMonitorFuture.HasValue)
                         existingAudiobook.MonitorFuture = resource.AudiobookMonitorFuture;
                     if (resource.AudiobookMonitorNewItems.HasValue)
@@ -353,8 +354,6 @@ namespace Chaptarr.Api.V1.RootFolders
                         existingEbook.MonitorExistingMode = resource.EbookMonitorExistingMode;
                     else if (resource.EbookMonitorExistingBooks.HasValue)
                         existingEbook.MonitorExistingBooks = resource.EbookMonitorExistingBooks;
-                    else if (resource.EbookMonitorExisting.HasValue)
-                        existingEbook.MonitorExisting = resource.EbookMonitorExisting;
                     if (resource.EbookMonitorFuture.HasValue)
                         existingEbook.MonitorFuture = resource.EbookMonitorFuture;
                     if (resource.EbookMonitorNewItems.HasValue)
@@ -392,8 +391,6 @@ namespace Chaptarr.Api.V1.RootFolders
                         existingAudiobook.MonitorExistingMode = resource.AudiobookMonitorExistingMode;
                     else if (resource.AudiobookMonitorExistingBooks.HasValue)
                         existingAudiobook.MonitorExistingBooks = resource.AudiobookMonitorExistingBooks;
-                    else if (resource.AudiobookMonitorExisting.HasValue)
-                        existingAudiobook.MonitorExisting = resource.AudiobookMonitorExisting;
                     if (resource.AudiobookMonitorFuture.HasValue)
                         existingAudiobook.MonitorFuture = resource.AudiobookMonitorFuture;
                     if (resource.AudiobookMonitorNewItems.HasValue)
@@ -425,8 +422,6 @@ namespace Chaptarr.Api.V1.RootFolders
                         existingEbook.MonitorExistingMode = resource.EbookMonitorExistingMode;
                     else if (resource.EbookMonitorExistingBooks.HasValue)
                         existingEbook.MonitorExistingBooks = resource.EbookMonitorExistingBooks;
-                    else if (resource.EbookMonitorExisting.HasValue)
-                        existingEbook.MonitorExisting = resource.EbookMonitorExisting;
                     if (resource.EbookMonitorFuture.HasValue)
                         existingEbook.MonitorFuture = resource.EbookMonitorFuture;
                     if (resource.EbookMonitorNewItems.HasValue)
@@ -588,6 +583,12 @@ namespace Chaptarr.Api.V1.RootFolders
             if (settings == null)
                 return null;
 
+            var monitorExisting = settings.Monitored.HasValue &&
+                                  settings.MonitorExistingMode.HasValue &&
+                                  settings.MonitorNewItems.HasValue
+                ? settings.MonitorExisting
+                : null;
+
             return new MediaTypeSettingsResource
             {
                 QualityProfileId = settings.QualityProfileId,
@@ -595,8 +596,8 @@ namespace Chaptarr.Api.V1.RootFolders
                 Monitored = settings.Monitored,
                 MonitorExistingMode = settings.MonitorExistingMode,
                 MonitorExistingBooks = settings.MonitorExistingBooks,
-                MonitorExisting = settings.MonitorExisting,
-                MonitorFuture = ToLegacyMonitorFuture(settings),
+                MonitorExisting = monitorExisting,
+                MonitorFuture = monitorExisting.HasValue ? ToLegacyMonitorFuture(settings) : null,
                 MonitorNewItems = settings.MonitorNewItems,
                 WriteAudioBookShelfMetadataJson = settings.WriteAudioBookShelfMetadataJson,
                 WriteAudioBookShelfCover = settings.WriteAudioBookShelfCover,

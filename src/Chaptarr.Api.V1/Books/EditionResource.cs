@@ -41,7 +41,14 @@ namespace Chaptarr.Api.V1.Books
         public List<Links> Links { get; set; }
         public Ratings Ratings { get; set; }
         public bool Monitored { get; set; }
-        public bool ManualAdd { get; set; }
+        private bool? _manualAdd;
+        public bool ManualAdd
+        {
+            get => _manualAdd.GetValueOrDefault();
+            set => _manualAdd = value;
+        }
+
+        internal bool ManualAddSpecified => _manualAdd.HasValue;
         public long? GoodreadsEditionId { get; set; }
         public string HardcoverEditionId { get; set; }
         public string OpenLibraryEditionId { get; set; }
@@ -51,10 +58,15 @@ namespace Chaptarr.Api.V1.Books
         public string AudibleASIN { get; set; }
         public string GoogleBooksEditionId { get; set; }
         public int BookFileCount { get; set; }
-        public bool MonitoredByAnotherAudiobookBook { get; set; }
+        [SwaggerSchema(ReadOnly = true)]
+        public int? ExistingCopyId { get; set; }
+        [SwaggerSchema(ReadOnly = true)]
+        public bool? ExistingCopyMonitored { get; set; }
         public string RemoteCover { get; set; }
         public string Narrator { get; set; }
         public List<string> NarratorNames { get; set; }
+        [SwaggerSchema(ReadOnly = true)]
+        public List<NarratorResource> Narrators => NarratorResource.FromNames(NarratorNames, Narrator);
         public int? DurationSeconds { get; set; }
         public int? ChapterCount { get; set; }
         public bool HasChapters { get; set; }

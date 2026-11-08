@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using NzbDrone.Core.Books;
-using NzbDrone.Core.Books.Services;
+using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.CustomFormats
 {
@@ -22,9 +22,7 @@ namespace NzbDrone.Core.CustomFormats
                 .Where(target => string.IsNullOrWhiteSpace(authorName) || !IsNarratorNameMatch(target, authorName))
                 .ToList();
 
-            var releaseEvidence = ReleaseNarratorEvidenceExtractor.Extract(
-                input,
-                candidate => targetNames.Any(target => IsNarratorNameMatch(candidate, target)));
+            var releaseEvidence = ReleaseNarratorEvidenceExtractor.Extract(input);
 
             var matchedTargets = MatchTargets(targetNames, DistinctNarratorNames(releaseEvidence.Names));
             var overlapCount = matchedTargets.Count;
@@ -61,11 +59,6 @@ namespace NzbDrone.Core.CustomFormats
             return input?.PreferredNarratorNames?.Any(name => !string.IsNullOrWhiteSpace(name)) == true;
         }
 
-        public static bool HasPreferredNarratorTarget(Book book)
-        {
-            return BuildTarget(book) != null;
-        }
-
         public static void ApplyTarget(CustomFormatInput input, Book book, Edition explicitEdition = null)
         {
             ApplyTarget(input, BuildTarget(book, explicitEdition));
@@ -85,7 +78,7 @@ namespace NzbDrone.Core.CustomFormats
         public static PreferredNarratorTarget BuildTarget(Book book, Edition explicitEdition = null)
         {
             var edition = GetPreferredNarratorEdition(book, explicitEdition);
-            if (!IsAudiobookEdition(edition))
+            if (!EditionReadingFormat.IsAudiobook(edition?.ReadingFormatId))
             {
                 return null;
             }
@@ -103,58 +96,20 @@ namespace NzbDrone.Core.CustomFormats
             };
         }
 
-        public static bool IsAudiobookEdition(Edition edition)
-        {
-            return edition != null && (!edition.IsEbook || edition.ReadingFormatId == 2);
-        }
-
-        public static string ExtractNarratorFromFields(IEnumerable<string> fields)
-        {
-            return ReleaseNarratorEvidenceExtractor.ExtractExplicitNarratorFromFields(fields);
-        }
-
         internal static bool IsNarratorNameMatch(string releaseName, string targetName)
         {
-            if (string.IsNullOrWhiteSpace(releaseName) || string.IsNullOrWhiteSpace(targetName))
-            {
-                return false;
-            }
-
-            if (NarratorNameMatcher.IsMatch(releaseName, targetName))
-            {
-                return true;
-            }
-
-            var targetTokens = TextNormalizer.NormalizeAndTokenize(targetName);
-            var releaseTokens = TextNormalizer.NormalizeAndTokenize(releaseName);
-            if (!targetTokens.Any() || !releaseTokens.Any())
-            {
-                return false;
-            }
-
-            var releaseTokenSet = new HashSet<string>(releaseTokens);
-            var matched = targetTokens.Count(releaseTokenSet.Contains);
-
-            if (matched == targetTokens.Count)
-            {
-                return true;
-            }
-
-            return targetTokens.Count >= 3 &&
-                   matched >= targetTokens.Count - 1 &&
-                   releaseTokenSet.Contains(targetTokens.First()) &&
-                   releaseTokenSet.Contains(targetTokens.Last());
+            return NarratorNameMatcher.IsMatch(releaseName, targetName);
         }
 
         private static Edition GetPreferredNarratorEdition(Book book, Edition explicitEdition = null)
         {
-            if (explicitEdition?.ManualAdd == true && IsAudiobookEdition(explicitEdition))
+            if (explicitEdition?.ManualAdd == true && EditionReadingFormat.IsAudiobook(explicitEdition?.ReadingFormatId))
             {
                 return explicitEdition;
             }
 
             var editions = book?.Editions?
-                .Where(IsAudiobookEdition)
+                .Where(edition => EditionReadingFormat.IsAudiobook(edition?.ReadingFormatId))
                 .ToList() ?? new List<Edition>();
 
             var manualEdition = editions
@@ -175,7 +130,7 @@ namespace NzbDrone.Core.CustomFormats
                     .OrderBy(edition => edition.Id)
                     .FirstOrDefault();
 
-                return monitoredEdition ?? (IsAudiobookEdition(explicitEdition) ? explicitEdition : null);
+                return monitoredEdition ?? (EditionReadingFormat.IsAudiobook(explicitEdition?.ReadingFormatId) ? explicitEdition : null);
             }
 
             return null;
@@ -191,7 +146,7 @@ namespace NzbDrone.Core.CustomFormats
             var availableReleases = releaseNames.ToList();
             var matchedTargets = new List<string>();
 
-            foreach (var target in targetNames.OrderByDescending(name => TextNormalizer.NormalizeAndTokenize(name).Count))
+            foreach (var target in targetNames.OrderByDescending(name => UnicodeComparisonNormalizer.WordSpans(UnicodeComparisonNormalizer.NormalizeWords(name)).Count()))
             {
                 var release = availableReleases.FirstOrDefault(candidate => IsNarratorNameMatch(candidate, target));
                 if (release == null)
@@ -211,7 +166,7 @@ namespace NzbDrone.Core.CustomFormats
             return (names ?? Enumerable.Empty<string>())
                 .Where(name => !string.IsNullOrWhiteSpace(name))
                 .GroupBy(
-                    name => string.Join("|", TextNormalizer.NormalizeAndTokenize(name).OrderBy(token => token, StringComparer.Ordinal)),
+                    UnicodeComparisonNormalizer.NormalizeWords,
                     StringComparer.OrdinalIgnoreCase)
                 .Select(group => group.First())
                 .ToList();

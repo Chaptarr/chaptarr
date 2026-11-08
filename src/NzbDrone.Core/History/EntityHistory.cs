@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Qualities;
@@ -13,6 +14,9 @@ namespace NzbDrone.Core.History
         public const string RELEASE_GROUP = "releaseGroup";
         public const string SIZE = "size";
         public const string INDEXER = "indexer";
+        public const string ALTERNATIVE_COPIES = "AlternativeCopies";
+        public const string INDEXER_ID = "IndexerId";
+        public const string ALTERNATIVE_COPY_INCOMPATIBLE = "alternativeCopyIncompatible";
 
         public EntityHistory()
         {
@@ -31,6 +35,30 @@ namespace NzbDrone.Core.History
         public Dictionary<string, string> Data { get; set; }
 
         public string DownloadId { get; set; }
+
+        public string GetDataValue(string key)
+        {
+            TryGetDataValue(Data, key, out var value);
+            return value;
+        }
+
+        internal static bool TryGetDataValue(IDictionary<string, string> data, string key, out string value)
+        {
+            value = null;
+            if (data == null)
+            {
+                return false;
+            }
+
+            if (data.TryGetValue(key, out value))
+            {
+                return true;
+            }
+
+            var matched = data.FirstOrDefault(pair => string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase));
+            value = matched.Value;
+            return matched.Key != null;
+        }
     }
 
     public enum EntityHistoryEventType
@@ -46,6 +74,8 @@ namespace NzbDrone.Core.History
         BookFileRetagged = 9,
         DownloadIgnored = 10,
         BookFileConverted = 11,
-        BookFileConversionFailed = 12
+        BookFileConversionFailed = 12,
+        AuthorsMerged = 13,
+        AuthorSplit = 14
     }
 }

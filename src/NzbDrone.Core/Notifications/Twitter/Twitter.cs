@@ -69,7 +69,7 @@ namespace NzbDrone.Core.Notifications.Twitter
 
         public override void OnImportFailure(BookDownloadMessage message)
         {
-            _twitterService.SendNotification($"Import Failed: {message.Message}", Settings);
+            _twitterService.SendNotification($"{message.ImportStatusTitle}: {message.Message}", Settings);
         }
 
         public override void OnApplicationUpdate(ApplicationUpdateMessage updateMessage)

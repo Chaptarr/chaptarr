@@ -21,7 +21,16 @@ function formatBookFiles(items, book) {
           _.sortBy(items, 'path').map((item) => {
             return (
               <li key={item.id}>
-                {item.path}
+                <div>
+                  {[item.editionTitle, item.narrator, item.quality, item.mediaType === 'audiobook' && translate(item.isGraphicAudio ? 'RecordingTypeDramatized' : 'RecordingTypeStandard')].filter(Boolean).join(' — ')}
+                </div>
+                <div>{item.path}</div>
+                {
+                  item.associatedPaths?.length > 0 &&
+                    <ul>
+                      {_.uniq(item.associatedPaths).map((path) => <li key={path}>{path}</li>)}
+                    </ul>
+                }
               </li>
             );
           })
@@ -46,9 +55,13 @@ class ConfirmImportModalContent extends Component {
 
     if (!isFetching && isPopulated && !items.length) {
       this.props.onModalClose();
-      this.props.onConfirmImportPress();
+      this.props.onConfirmImportPress([]);
     }
   }
+
+  onConfirmImportPress = () => {
+    this.props.onConfirmImportPress(this.props.items.map(({ id, bookId, path, associatedPaths }) => ({ id, bookId, path, associatedPaths })));
+  };
 
   //
   // Render
@@ -57,10 +70,10 @@ class ConfirmImportModalContent extends Component {
     const {
       books,
       items,
-      onConfirmImportPress,
       onModalClose,
       isFetching,
-      isPopulated
+      isPopulated,
+      error
     } = this.props;
 
     // don't render if nothing to do
@@ -80,6 +93,12 @@ class ConfirmImportModalContent extends Component {
 
         <ModalBody>
           {
+            error &&
+              <Alert kind={kinds.DANGER}>
+                {translate('UnableToLoadReplacementFiles')}
+              </Alert>
+          }
+          {
             isFetching &&
               <LoadingIndicator />
           }
@@ -89,6 +108,10 @@ class ConfirmImportModalContent extends Component {
               <div>
                 <Alert>
                   {translate('ConfirmImportExistingPrefix')} <b>{translate('ConfirmImportWillBeDeleted')}</b> {translate('ConfirmImportExistingSuffix')}
+                </Alert>
+
+                <Alert kind={items.some((item) => item.isPermanentDelete) ? kinds.WARNING : kinds.INFO}>
+                  {translate(items.some((item) => item.isPermanentDelete) ? 'ConfirmImportPermanentDeletion' : 'ConfirmImportRecyclingBin')}
                 </Alert>
 
                 { _.chain(items)
@@ -109,7 +132,7 @@ class ConfirmImportModalContent extends Component {
 
               <Button
                 kind={kinds.DANGER}
-                onPress={onConfirmImportPress}
+                onPress={this.onConfirmImportPress}
               >
                 {translate('Proceed')}
               </Button>
@@ -127,6 +150,7 @@ ConfirmImportModalContent.propTypes = {
   items: PropTypes.arrayOf(PropTypes.object).isRequired,
   isFetching: PropTypes.bool.isRequired,
   isPopulated: PropTypes.bool.isRequired,
+  error: PropTypes.object,
   onConfirmImportPress: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired
 };

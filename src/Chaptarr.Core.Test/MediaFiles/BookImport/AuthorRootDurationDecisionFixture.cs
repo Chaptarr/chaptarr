@@ -12,7 +12,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         [TestCase(1000, "SplitDuplicates", 2000, null, TestName = "should_split_duplicates_when_each_file_matches_edition_duration")]
         public void should_decide_merge_or_split_when_duration_is_decisive(int editionDuration, string expectedDecision, int expectedSum, string expectedReason)
         {
-            var method = typeof(IngestQueueOnAuthorReadyHandler).GetMethod("DecideAuthorRootDurationAction", BindingFlags.NonPublic | BindingFlags.Static);
+            var method = typeof(BookCoalescingHelper).GetMethod("DecideRecordingDurationAction", BindingFlags.NonPublic | BindingFlags.Static);
             Assert.That(method, Is.Not.Null);
 
             var perFile = expectedDecision == "MergeMultipart"
@@ -27,10 +27,21 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That((string)args[4], Is.EqualTo(expectedReason));
         }
 
+        [TestCase(36780, new[] { 36846, 36846 }, "SplitDuplicates")]
+        [TestCase(36780, new[] { 36720, 60 }, "MergeMultipart")]
+        [TestCase(480, new[] { 240, 240 }, "MergeMultipart")]
+        [TestCase(480, new[] { 240, 240, 240, 240 }, "Unmapped")]
+        [TestCase(36000, new[] { 36500, 36500 }, "Unmapped")]
+        public void should_keep_existing_strict_complete_copy_tolerance(int expected, int[] durations, string decision)
+        {
+            Assert.That(BookCoalescingHelper.DecideRecordingDurationAction(expected,
+                System.Array.ConvertAll(durations, value => (int?)value), out _, out _, out _).ToString(), Is.EqualTo(decision));
+        }
+
         [Test]
         public void should_fail_closed_when_duration_is_missing_or_mismatched()
         {
-            var method = typeof(IngestQueueOnAuthorReadyHandler).GetMethod("DecideAuthorRootDurationAction", BindingFlags.NonPublic | BindingFlags.Static);
+            var method = typeof(BookCoalescingHelper).GetMethod("DecideRecordingDurationAction", BindingFlags.NonPublic | BindingFlags.Static);
             Assert.That(method, Is.Not.Null);
 
             // No edition duration

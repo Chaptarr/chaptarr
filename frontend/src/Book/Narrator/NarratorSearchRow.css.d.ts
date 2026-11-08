@@ -2,11 +2,11 @@
 // Please do not change this file!
 interface CssExports {
   'action': string;
+  'addButton': string;
   'bookCover': string;
   'duration': string;
   'editionTitle': string;
   'inLibraryStatus': string;
-  'monitoredStatus': string;
   'narrator': string;
   'narratorContainer': string;
   'narratorDetails': string;

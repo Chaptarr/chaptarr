@@ -398,22 +398,66 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(firstEbook, Is.Not.EqualTo(secondEbook));
         }
 
-        [TestCase(false, true)]
-        [TestCase(true, false)]
-        public async Task local_discovery_should_require_the_same_exact_identity_field_and_value_across_the_unit(
+        [Test]
+        public async Task discovery_should_send_shared_text_instead_of_one_chapters_decoration()
+        {
+            var worker = (DiscoveryWorker)FormatterServices.GetUninitializedObject(typeof(DiscoveryWorker));
+            var v5 = new RecordingV5MatchingService();
+            SetField(worker, "_fileMatchingService", new RecordingFileMatchingService());
+            SetField(worker, "_v5MatchingService", v5);
+            SetField(worker, "_logger", LogManager.GetCurrentClassLogger());
+            var files = Enumerable.Range(1, 8).Select(index => new DiscoveredFileWithMetadata
+            {
+                Path = $"/incoming/Dune Messiah/{index:00}.mp3",
+                AllTags = new() { ["FIELD1"] = new() { index % 2 == 0 ? $"Arrival {index} — Dune Messiah" : $"Dune Messiah — Departure {index}" },
+                    ["CREATOR"] = new() { "Frank Herbert" } }
+            }).ToArray();
+            var method = typeof(DiscoveryWorker).GetMethod("TryResolveAuthorUnitCandidateAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+            await (Task<bool>)method.Invoke(worker, new object[]
+            {
+                QueueItem(1, files[0].Path, "{}"), files[0].AllTags, files, BookMediaType.Audiobook,
+                null, "/incoming", null, "/incoming", false, true, false
+            });
+            Assert.That(v5.Calls, Has.Count.EqualTo(1));
+            Assert.That(v5.Calls.Single()["FIELD1"], Is.EqualTo(new[] { "Dune Messiah" }));
+            Assert.That(files[0].AllTags["FIELD1"], Is.EqualTo(new[] { "Dune Messiah — Departure 1" }));
+        }
+
+        [TestCase(false, false, true)]
+        [TestCase(true, false, false)]
+        [TestCase(false, true, false)]
+        public void discovery_should_prove_full_title_in_the_same_field_despite_decoration(bool differentField, bool partialTitle, bool expected)
+        {
+            var worker = (DiscoveryWorker)FormatterServices.GetUninitializedObject(typeof(DiscoveryWorker));
+            SetField(worker, "_containmentValidator", new ContainmentValidator(new TagNormalizer(), LogManager.GetCurrentClassLogger()));
+            var files = new[]
+            {
+                new DiscoveredFileWithMetadata { AllTags = new() { ["FIELD1"] = new() { "Arrival — Dune Messiah" }, ["CREATOR"] = new() { "Frank Herbert" } } },
+                new DiscoveredFileWithMetadata { AllTags = new() { [differentField ? "OTHER" : "FIELD1"] = new() { partialTitle ? "Dune — Departure" : "Dune Messiah — Departure" }, ["CREATOR"] = new() { "Frank Herbert" } } }
+            };
+            var method = typeof(DiscoveryWorker).GetMethod("HasHomogeneousDiscoveryIdentity", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.That(method.Invoke(worker, new object[] { new V5MatchedAuthor { name = "Frank Herbert", edition_title = "Dune Messiah" }, files, null, false }), Is.EqualTo(expected));
+        }
+
+        [TestCase(false, true, false)]
+        [TestCase(true, false, false)]
+        [TestCase(false, true, true)]
+        [TestCase(true, false, true)]
+        public async Task local_discovery_should_require_the_same_proven_identity_fields_across_the_unit(
             bool changeSecondField,
-            bool expected)
+            bool expected,
+            bool decoration)
         {
             var worker = (DiscoveryWorker)FormatterServices.GetUninitializedObject(typeof(DiscoveryWorker));
             var method = typeof(DiscoveryWorker).GetMethod("MatchesExistingLibraryAsync", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.That(method, Is.Not.Null);
 
-            MatchIdentityProof Proof(string field)
+            MatchIdentityProof Proof(string field, string observed)
             {
                 return new MatchIdentityProof(new[]
                 {
-                    new MatchIdentityProofValue(MatchIdentityRole.Author, "embedded_tag", field, "Test Author - Alpha", "Test Author", "book", "author"),
-                    new MatchIdentityProofValue(MatchIdentityRole.Title, "embedded_tag", field, "Test Author - Alpha", "Alpha", "book", "title")
+                    new MatchIdentityProofValue(MatchIdentityRole.Author, "embedded_tag", field, observed, "Test Author", "book", "author"),
+                    new MatchIdentityProofValue(MatchIdentityRole.Title, "embedded_tag", field, observed, "Alpha", "book", "title")
                 });
             }
 
@@ -425,8 +469,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 {
                     MatchedFiles = new[]
                     {
-                        new FileMatch { File = new DiscoveredFileWithMetadata { Path = firstPath }, AuthorId = 1, BookId = 2, EditionId = 3, IdentityProof = Proof("BOOKIDENTITY") },
-                        new FileMatch { File = new DiscoveredFileWithMetadata { Path = secondPath }, AuthorId = 1, BookId = 2, EditionId = 3, IdentityProof = Proof(changeSecondField ? "OTHERIDENTITY" : "BOOKIDENTITY") }
+                        new FileMatch { File = new DiscoveredFileWithMetadata { Path = firstPath }, AuthorId = 1, BookId = 2, EditionId = 3, IdentityProof = Proof("BOOKIDENTITY", "Test Author - Alpha") },
+                        new FileMatch { File = new DiscoveredFileWithMetadata { Path = secondPath }, AuthorId = 1, BookId = 2, EditionId = 3, IdentityProof = Proof(changeSecondField ? "OTHERIDENTITY" : "BOOKIDENTITY", decoration ? "Arrival - Test Author - Alpha - Departure" : "Test Author - Alpha") }
                     }
                 }
             };
@@ -436,7 +480,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var files = new List<DiscoveredFileWithMetadata>
             {
                 new DiscoveredFileWithMetadata { Path = firstPath, AllTags = new Dictionary<string, List<string>> { ["BOOKIDENTITY"] = new() { "Test Author - Alpha" } } },
-                new DiscoveredFileWithMetadata { Path = secondPath, AllTags = new Dictionary<string, List<string>> { [changeSecondField ? "OTHERIDENTITY" : "BOOKIDENTITY"] = new() { "Test Author - Alpha" } } }
+                new DiscoveredFileWithMetadata { Path = secondPath, AllTags = new Dictionary<string, List<string>> { [changeSecondField ? "OTHERIDENTITY" : "BOOKIDENTITY"] = new() { decoration ? "Arrival - Test Author - Alpha - Departure" : "Test Author - Alpha" } } }
             };
             var task = (Task<bool>)method.Invoke(worker, new object[]
             {

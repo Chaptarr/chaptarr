@@ -11,6 +11,8 @@ namespace NzbDrone.Core.Books
     {
         PendingAuthorImport GetByProviderId(string providerId);
         PendingAuthorImport GetActiveByProviderId(string providerId);
+        List<PendingAuthorImport> GetFailedByProviderId(string providerId);
+        List<PendingAuthorImport> GetActiveByProviderIds(IEnumerable<string> providerIds);
         List<PendingAuthorImport> GetDueForProcessing(DateTime cutoff, int limit);
         List<PendingAuthorImport> GetByStatus(PendingImportStatus status);
         List<PendingAuthorImport> GetAll();
@@ -28,9 +30,12 @@ namespace NzbDrone.Core.Books
 
         public PendingAuthorImport GetByProviderId(string providerId)
         {
-            return Query(x => x.ProviderId == providerId)
-                .OrderByDescending(x => x.CreatedAt)
-                .FirstOrDefault();
+            using var connection = _database.OpenConnection();
+            return connection.QueryFirstOrDefault<PendingAuthorImport>(@"
+                SELECT * FROM ""PendingAuthorImport""
+                 WHERE ""ProviderId"" = @providerId
+                 ORDER BY COALESCE(""UpdatedAt"", ""CreatedAt"") DESC, ""Id"" DESC
+                 LIMIT 1", new { providerId });
         }
 
         public PendingAuthorImport GetActiveByProviderId(string providerId)
@@ -42,14 +47,45 @@ namespace NzbDrone.Core.Books
                 .FirstOrDefault();
         }
 
+        public List<PendingAuthorImport> GetFailedByProviderId(string providerId)
+        {
+            using var connection = _database.OpenConnection();
+            return connection.Query<PendingAuthorImport>(@"
+                SELECT * FROM ""PendingAuthorImport""
+                 WHERE ""ProviderId"" = @providerId AND ""OverallStatus"" = @failed
+                 ORDER BY COALESCE(""UpdatedAt"", ""CreatedAt"") DESC, ""Id"" DESC",
+                new { providerId, failed = (int)PendingImportStatus.Failed }).ToList();
+        }
+
         public List<PendingAuthorImport> GetDueForProcessing(DateTime cutoff, int limit)
         {
-            return Query(x => x.NextAttemptAt <= cutoff &&
-                            (x.OverallStatus == PendingImportStatus.Pending ||
-                             x.OverallStatus == PendingImportStatus.Retrying))
-                .OrderBy(x => x.NextAttemptAt)
-                .Take(limit)
-                .ToList();
+            if (limit <= 0) return new List<PendingAuthorImport>();
+            using var connection = _database.OpenConnection();
+            return connection.Query<PendingAuthorImport>(@"
+                SELECT * FROM ""PendingAuthorImport""
+                 WHERE ""NextAttemptAt"" <= @cutoff
+                   AND ""OverallStatus"" IN (@pending, @retrying)
+                 ORDER BY ""NextAttemptAt"", ""Id""
+                 LIMIT @limit", new { cutoff, limit, pending = (int)PendingImportStatus.Pending, retrying = (int)PendingImportStatus.Retrying }).ToList();
+        }
+
+        public List<PendingAuthorImport> GetActiveByProviderIds(IEnumerable<string> providerIds)
+        {
+            var result = new List<PendingAuthorImport>();
+            using var connection = _database.OpenConnection();
+            foreach (var ids in providerIds.Distinct(StringComparer.OrdinalIgnoreCase).Chunk(_database.DatabaseType == DatabaseType.SQLite ? SqliteVariableLimit.MaxParameters - 3 : ushort.MaxValue - 3))
+            {
+                var clause = _database.DatabaseType == DatabaseType.PostgreSQL ? "= ANY(@ids)" : "IN @ids";
+                result.AddRange(connection.Query<PendingAuthorImport>($@"
+                    SELECT * FROM ""PendingAuthorImport""
+                     WHERE ""ProviderId"" {clause}
+                       AND ""OverallStatus"" IN (@pending, @retrying, @processing)", new
+                {
+                    ids, pending = (int)PendingImportStatus.Pending, retrying = (int)PendingImportStatus.Retrying,
+                    processing = (int)PendingImportStatus.InProgress
+                }));
+            }
+            return result;
         }
 
         public List<PendingAuthorImport> GetByStatus(PendingImportStatus status)
@@ -68,7 +104,8 @@ namespace NzbDrone.Core.Books
 
             const string sql = @"
                 UPDATE ""PendingAuthorImport""
-                   SET ""DiscoveredAuthorFolderPath"" = @DiscoveredAuthorFolderPath,
+                   SET ""AuthorName"" = @AuthorName,
+                       ""DiscoveredAuthorFolderPath"" = @DiscoveredAuthorFolderPath,
                        ""AudiobookStatus"" = @AudiobookStatus,
                        ""EbookStatus"" = @EbookStatus,
                        ""OverallStatus"" = @OverallStatus,
@@ -78,8 +115,10 @@ namespace NzbDrone.Core.Books
                        ""AudiobookQualityProfileId"" = @AudiobookQualityProfileId,
                        ""AudiobookMetadataProfileId"" = @AudiobookMetadataProfileId,
                        ""AudiobookRootFolderPath"" = @AudiobookRootFolderPath,
+                       ""AudiobookBooksToAdd"" = @AudiobookBooksToAdd,
                        ""AudiobookBooksToMonitor"" = @AudiobookBooksToMonitor,
                        ""AudiobookBooksToSearch"" = @AudiobookBooksToSearch,
+                       ""AudiobookNarrations"" = @AudiobookNarrations,
                        ""AudiobookTags"" = @AudiobookTags,
                        ""EbookMonitored"" = @EbookMonitored,
                        ""EbookMonitorNewItems"" = @EbookMonitorNewItems,
@@ -87,12 +126,19 @@ namespace NzbDrone.Core.Books
                        ""EbookQualityProfileId"" = @EbookQualityProfileId,
                        ""EbookMetadataProfileId"" = @EbookMetadataProfileId,
                        ""EbookRootFolderPath"" = @EbookRootFolderPath,
+                       ""EbookBooksToAdd"" = @EbookBooksToAdd,
                        ""EbookBooksToMonitor"" = @EbookBooksToMonitor,
                        ""EbookBooksToSearch"" = @EbookBooksToSearch,
                        ""EbookTags"" = @EbookTags,
                        ""Tags"" = @Tags,
                        ""SearchForMissingBooks"" = @SearchForMissingBooks,
+                       ""SyncMonitoredAcrossFormats"" = @SyncMonitoredAcrossFormats,
+                       ""IsAuthorSettingsRequest"" = @IsAuthorSettingsRequest,
                        ""LastSelectedMediaType"" = @LastSelectedMediaType,
+                       ""ExplicitBookSearches"" = @ExplicitBookSearches,
+                       ""RequestedBy"" = @RequestedBy,
+                       ""AudiobookRequestedBy"" = @AudiobookRequestedBy,
+                       ""EbookRequestedBy"" = @EbookRequestedBy,
                        ""AttemptCount"" = @AttemptCount,
                        ""MaxAttempts"" = @MaxAttempts,
                        ""LastAttemptAt"" = @LastAttemptAt,
@@ -106,6 +152,7 @@ namespace NzbDrone.Core.Books
             using var connection = _database.OpenConnection();
             return connection.Execute(sql, new
             {
+                item.AuthorName,
                 item.DiscoveredAuthorFolderPath,
                 item.AudiobookStatus,
                 item.EbookStatus,
@@ -116,8 +163,10 @@ namespace NzbDrone.Core.Books
                 item.AudiobookQualityProfileId,
                 item.AudiobookMetadataProfileId,
                 item.AudiobookRootFolderPath,
+                item.AudiobookBooksToAdd,
                 item.AudiobookBooksToMonitor,
                 item.AudiobookBooksToSearch,
+                item.AudiobookNarrations,
                 item.AudiobookTags,
                 item.EbookMonitored,
                 item.EbookMonitorNewItems,
@@ -125,12 +174,19 @@ namespace NzbDrone.Core.Books
                 item.EbookQualityProfileId,
                 item.EbookMetadataProfileId,
                 item.EbookRootFolderPath,
+                item.EbookBooksToAdd,
                 item.EbookBooksToMonitor,
                 item.EbookBooksToSearch,
                 item.EbookTags,
                 item.Tags,
                 item.SearchForMissingBooks,
+                item.SyncMonitoredAcrossFormats,
+                item.IsAuthorSettingsRequest,
                 item.LastSelectedMediaType,
+                item.ExplicitBookSearches,
+                item.RequestedBy,
+                item.AudiobookRequestedBy,
+                item.EbookRequestedBy,
                 item.AttemptCount,
                 item.MaxAttempts,
                 item.LastAttemptAt,
@@ -156,9 +212,7 @@ namespace NzbDrone.Core.Books
 
         public void DeleteOldCompleted(DateTime cutoff)
         {
-            Delete(x => x.UpdatedAt < cutoff &&
-                       (x.OverallStatus == PendingImportStatus.Succeeded ||
-                        x.OverallStatus == PendingImportStatus.Failed));
+            Delete(x => x.UpdatedAt < cutoff && x.OverallStatus == PendingImportStatus.Succeeded);
         }
     }
 }

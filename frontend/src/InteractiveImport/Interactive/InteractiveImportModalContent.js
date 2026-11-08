@@ -1,6 +1,8 @@
 import _ from 'lodash';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import Alert from 'Components/Alert';
+import AudioProductionSelectInput from 'Components/Form/AudioProductionSelectInput';
 import FormInputGroup from 'Components/Form/FormInputGroup';
 import SelectInput from 'Components/Form/SelectInput';
 import Icon from 'Components/Icon';
@@ -26,9 +28,12 @@ import importModeOptions from 'InteractiveImport/importModeOptions';
 import SelectIndexerFlagsModal from 'InteractiveImport/IndexerFlags/SelectIndexerFlagsModal';
 import SelectQualityModal from 'InteractiveImport/Quality/SelectQualityModal';
 import SelectReleaseGroupModal from 'InteractiveImport/ReleaseGroup/SelectReleaseGroupModal';
+import { getMediaTypeFromExtension } from 'Utilities/MediaFile/getMediaTypeFromExtension';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
+import getRemovedItems from 'Utilities/Object/getRemovedItems';
 import translate from 'Utilities/String/translate';
 import getSelectedIds from 'Utilities/Table/getSelectedIds';
+import removeOldSelectedState from 'Utilities/Table/removeOldSelectedState';
 import selectAll from 'Utilities/Table/selectAll';
 import toggleSelected from 'Utilities/Table/toggleSelected';
 import InteractiveImportRow from './InteractiveImportRow';
@@ -145,6 +150,10 @@ class InteractiveImportModalContent extends Component {
   }
 
   componentDidUpdate(prevProps) {
+    if (!this.props.isFetching && prevProps.items !== this.props.items) {
+      this.setState((state) => removeOldSelectedState(state, getRemovedItems(prevProps.items, this.props.items)));
+    }
+
     const selectedIds = this.getSelectedIds();
     const selectedItems = _.filter(this.props.items, (x) => _.includes(selectedIds, x.id));
 
@@ -176,6 +185,10 @@ class InteractiveImportModalContent extends Component {
   };
 
   onSelectedChange = ({ id, value, shiftKey = false }) => {
+    if (value == null && this.props.isFetching) {
+      return;
+    }
+
     this.setState((state) => {
       return toggleSelected(state, this.props.items, id, value, shiftKey);
     });
@@ -208,11 +221,13 @@ class InteractiveImportModalContent extends Component {
 
     this.setState({
       booksImported,
+      filesImported: this.props.items.filter((item) => selectedIds.includes(item.id))
+        .map((item) => ({ path: item.path, bookId: item.book?.id || 0 })),
       isConfirmImportModalOpen: true
     });
   };
 
-  onConfirmImportPress = () => {
+  onConfirmImportPress = (confirmedReplacementFiles) => {
     const {
       downloadId,
       showImportMode,
@@ -223,7 +238,7 @@ class InteractiveImportModalContent extends Component {
     const selected = this.getSelectedIds();
     const finalImportMode = downloadId || !showImportMode ? 'auto' : importMode;
 
-    onImportSelectedPress(selected, finalImportMode);
+    onImportSelectedPress(selected, finalImportMode, confirmedReplacementFiles);
   };
 
   onFilterExistingFilesChange = (value) => {
@@ -289,8 +304,10 @@ class InteractiveImportModalContent extends Component {
       importMode,
       mediaManagementSettings,
       interactiveImportErrorMessage,
+      pathFallbackSaveError,
       onSortPress,
       onPathFallbackChange,
+      onRetrySettings,
       onModalClose
     } = this.props;
 
@@ -334,7 +351,7 @@ class InteractiveImportModalContent extends Component {
     const bookMatchingStrictness = matchingSettings.bookMatchingStrictness || { value: 'balanced' };
     const usePathAsTagsFallback = matchingSettings.usePathAsTagsFallback || { value: true };
     const isStrictMatching = bookMatchingStrictness.value === 'strict';
-    const isPathFallbackBusy = mediaManagementSettings.isFetching || mediaManagementSettings.isSaving;
+    const isPathFallbackBusy = !mediaManagementSettings.isPopulated || !!mediaManagementSettings.error || mediaManagementSettings.isFetching || mediaManagementSettings.isSaving;
 
     const bulkSelectOptions = [
       { key: SELECT, value: translate('SelectDropdown'), disabled: true },
@@ -359,6 +376,18 @@ class InteractiveImportModalContent extends Component {
         </ModalHeader>
 
         <ModalBody scrollDirection={scrollDirections.BOTH}>
+          {
+            pathFallbackSaveError &&
+              <Alert kind={kinds.DANGER} role="alert">
+                {getErrorMessage(pathFallbackSaveError, translate('UnableToSaveMediaManagementSettings'))}
+              </Alert>
+          }
+          {mediaManagementSettings.error && (
+            <Alert kind={kinds.WARNING}>
+              {translate('UnableToLoadMediaManagementSettings')}
+              <Button onPress={onRetrySettings}>{translate('Retry')}</Button>
+            </Alert>
+          )}
           <div className={styles.filterContainer}>
             <div className={styles.filterMenus}>
               {
@@ -485,6 +514,7 @@ class InteractiveImportModalContent extends Component {
                           columns={columns}
                           onSelectedChange={this.onSelectedChange}
                           onValidRowChange={this.onValidRowChange}
+                          onAudioProductionChange={(value) => this.props.updateInteractiveImportItem({ id: item.id, audioProductionOverride: value, audioProductionOverrideChanged: true })}
                         />
                       );
                     })
@@ -524,6 +554,14 @@ class InteractiveImportModalContent extends Component {
               />
             </div>
 
+            {items.some((item) => getMediaTypeFromExtension(item.path) === 'audiobook') &&
+              <AudioProductionSelectInput
+                bulk={true}
+                isDisabled={!selectedIds.length}
+                onChange={({ value }) => items.filter((item) => selectedIds.includes(item.id) && getMediaTypeFromExtension(item.path) === 'audiobook')
+                  .forEach((item) => this.props.updateInteractiveImportItem({ id: item.id, audioProductionOverride: value, audioProductionOverrideChanged: true }))}
+              />
+            }
             <SelectInput
               className={styles.bulkSelect}
               name="select"
@@ -600,6 +638,7 @@ class InteractiveImportModalContent extends Component {
         <ConfirmImportModal
           isOpen={isConfirmImportModalOpen}
           books={booksImported}
+          files={this.state.filesImported || []}
           onModalClose={this.onConfirmImportModalClose}
           onConfirmImportPress={this.onConfirmImportPress}
         />
@@ -628,12 +667,14 @@ InteractiveImportModalContent.propTypes = {
   sortKey: PropTypes.string,
   sortDirection: PropTypes.string,
   mediaManagementSettings: PropTypes.object.isRequired,
+  pathFallbackSaveError: PropTypes.object,
   interactiveImportErrorMessage: PropTypes.string,
   onSortPress: PropTypes.func.isRequired,
   onFilterExistingFilesChange: PropTypes.func.isRequired,
   onReplaceExistingFilesChange: PropTypes.func.isRequired,
   onImportModeChange: PropTypes.func.isRequired,
   onPathFallbackChange: PropTypes.func.isRequired,
+  onRetrySettings: PropTypes.func.isRequired,
   onImportSelectedPress: PropTypes.func.isRequired,
   saveInteractiveImportItem: PropTypes.func.isRequired,
   updateInteractiveImportItem: PropTypes.func.isRequired,

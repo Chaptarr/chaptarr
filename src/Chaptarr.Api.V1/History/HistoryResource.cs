@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Chaptarr.Api.V1.Author;
 using Chaptarr.Api.V1.Books;
 using Chaptarr.Api.V1.CustomFormats;
@@ -8,6 +9,7 @@ using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.History;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Qualities;
+using NzbDrone.Core.Parser.Model;
 
 namespace Chaptarr.Api.V1.History
 {
@@ -64,7 +66,8 @@ namespace Chaptarr.Api.V1.History
 
                 EventType = model.EventType,
 
-                Data = model.Data
+                Data = model.Data?.Where(item => !string.Equals(item.Key, nameof(ReleaseInfo.NarratorEvidenceFields), StringComparison.OrdinalIgnoreCase))
+                    .ToDictionary(item => item.Key, item => item.Value)
 
                 //Episode
                 //Series

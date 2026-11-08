@@ -58,12 +58,12 @@ namespace NzbDrone.Core.CustomFormats
                 return true;
             }
 
-            return ReleaseNarratorEvidenceExtractor.Extract(input).Names.Any();
+            return ReleaseNarratorEvidenceExtractor.Extract(input, Names).Names.Any();
         }
 
         protected override bool IsSatisfiedByWithoutNegate(CustomFormatInput input)
         {
-            var observedNames = ReleaseNarratorEvidenceExtractor.Extract(input).Names;
+            var observedNames = ReleaseNarratorEvidenceExtractor.Extract(input, Names).Names;
             return Names.Any(configuredName => observedNames.Any(observedName => NarratorNameMatcher.IsMatch(observedName, configuredName)));
         }
 

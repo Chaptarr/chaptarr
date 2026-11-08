@@ -1,16 +1,23 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Tasks;
+using Chaptarr.Core.Test.Common;
 using Dapper;
+using DryIoc;
 using Microsoft.Data.Sqlite;
 using NLog;
+using NLog.Config;
+using NLog.Targets;
 using NUnit.Framework;
 using NzbDrone.Common.Messaging;
+using NzbDrone.Common.Composition.Extensions;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Lifecycle;
@@ -18,12 +25,40 @@ using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.RootFolders;
 
 namespace Chaptarr.Core.Test.MediaFiles
 {
     [TestFixture]
-    public class ConversionJobServiceFixture
+    public partial class ConversionJobServiceFixture
     {
+        [Test]
+        public void dependency_injection_keeps_the_production_outcome_retry_delay()
+        {
+            using var container = new Container(rules => rules.WithNzbDroneRules());
+            container.RegisterInstance(InterfaceProxy.Proxy<IConversionJobRepository>((_, _) => null));
+            container.RegisterInstance(ImportLifecycleStubs.NoLibraryMediaFiles());
+            container.RegisterInstance<IM4bConversionService>(new UnusedConversionService());
+            container.RegisterInstance<IConversionTrackingService>(new ConversionTrackingService(new StubEventAggregator()));
+            container.RegisterInstance(DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>());
+            container.RegisterInstance(CreateConfig());
+            container.RegisterInstance(TestRootFolders());
+            container.RegisterInstance(TestCleanupDisk());
+            container.RegisterInstance(LogManager.GetCurrentClassLogger());
+
+            var service = container.Resolve<ConversionJobService>();
+
+            Assert.That(typeof(ConversionJobService).GetField("_outcomeRetryDelay", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(service),
+                Is.EqualTo(TimeSpan.FromSeconds(30)));
+        }
+
+        private static void RunWorker(ConversionJobService service, ConversionJobRequest request)
+        {
+            service.Enqueue(request);
+            typeof(ConversionJobService).GetMethod("DispatchQueuedJobs", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(service, null);
+            Assert.That(SpinWait.SpinUntil(() => !service.IsRunning(request.DownloadId), TimeSpan.FromSeconds(45)), Is.True);
+        }
+
         private sealed class StubEventAggregator : IEventAggregator
         {
             public void PublishEvent<TEvent>(TEvent @event)
@@ -64,12 +99,16 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class TokenRecordingConversionService : IM4bConversionService
         {
             public ConcurrentDictionary<string, ConversionOptions> OptionsByDownloadId { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public ConcurrentDictionary<string, string[]> InputsByDownloadId { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public ConcurrentDictionary<string, int> CallsByDownloadId { get; } = new(StringComparer.OrdinalIgnoreCase);
             public ManualResetEventSlim Release { get; } = new(false);
 
             public ConversionResult ConvertToM4b(string[] inputFiles, string outputFile, ConversionOptions options = null)
             {
                 var workFolder = Directory.GetParent(Path.GetDirectoryName(outputFile));
                 var downloadId = workFolder?.Name ?? outputFile;
+                CallsByDownloadId.AddOrUpdate(downloadId, 1, (_, count) => count + 1);
+                InputsByDownloadId[downloadId] = inputFiles;
                 OptionsByDownloadId[downloadId] = options;
 
                 WaitHandle.WaitAny(new[] { options.CancellationToken.WaitHandle, Release.WaitHandle });
@@ -90,6 +129,56 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             public bool CanConvert(string[] inputFiles) => true;
             public ConversionEstimate EstimateConversion(string[] inputFiles) => new() { CanConvert = true };
+        }
+
+        private class FailingRepositoryProxy : DispatchProxy
+        {
+            public IConversionJobRepository Repository { get; set; }
+            public string Method { get; set; }
+            public int FailOnCall { get; set; }
+            public bool AfterWrite { get; set; }
+            public Func<object[], bool> ArgumentsMatch { get; set; }
+            public ManualResetEventSlim Failed { get; } = new(false);
+            private int _calls;
+
+            protected override object Invoke(MethodInfo method, object[] args)
+            {
+                var fail = method.Name == Method && (ArgumentsMatch?.Invoke(args) ?? true) &&
+                    Interlocked.Increment(ref _calls) == FailOnCall;
+                try
+                {
+                    if (fail && !AfterWrite)
+                    {
+                        throw new DataException("Injected conversion database outage");
+                    }
+
+                    var result = method.Invoke(Repository, args);
+                    if (fail)
+                    {
+                        throw new DataException("Injected conversion database outage");
+                    }
+
+                    return result;
+                }
+                catch (TargetInvocationException ex) when (ex.InnerException != null)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+                    throw;
+                }
+                finally
+                {
+                    if (fail)
+                    {
+                        Failed.Set();
+                    }
+                }
+            }
+        }
+
+        private class DecimalProjection
+        {
+            public decimal Required { get; set; }
+            public decimal? Optional { get; set; }
         }
 
         private class RecordingCommandQueueProxy : DispatchProxy
@@ -116,6 +205,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         private class ConfigServiceProxy : DispatchProxy
         {
+            private string _orphanReviewProgress = string.Empty;
             public int ConcurrentConversions { get; set; } = 1;
             public int MaxCpuThreads { get; set; } = 8;
 
@@ -123,12 +213,20 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 return targetMethod?.Name switch
                 {
+                    "GetConversionOrphanReviewProgress" => _orphanReviewProgress,
+                    "SetConversionOrphanReviewProgress" => SetOrphanReviewProgress((string)args[0]),
                     "get_AudiobookConversionConcurrentConversions" => ConcurrentConversions,
                     "get_AudiobookConversionMaxCpuThreads" => MaxCpuThreads,
                     "set_AudiobookConversionConcurrentConversions" => SetConcurrentConversions((int)args[0]),
                     "set_AudiobookConversionMaxCpuThreads" => SetMaxCpuThreads((int)args[0]),
                     _ => throw new NotImplementedException($"Unexpected config call: {targetMethod?.Name}")
                 };
+            }
+
+            private object SetOrphanReviewProgress(string value)
+            {
+                _orphanReviewProgress = value;
+                return null;
             }
 
             private object SetConcurrentConversions(int value)
@@ -151,6 +249,116 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 TableMapping.Map();
             }
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void progress_should_read_mixed_numeric_storage_and_updates(bool postgres, bool fractionalFirst)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var repository = new ConversionJobRepository(database, new StubEventAggregator());
+                decimal?[] values = fractionalFirst ? new decimal?[] { 12.5m, 0m, 100m, null } : new decimal?[] { 0m, 12.5m, 100m, null };
+                var jobs = values.Select((value, index) => repository.Insert(new ConversionJob
+                {
+                    DownloadId = "mixed-progress-" + index,
+                    Status = ConversionJobStatus.Queued,
+                    RequestJson = "{}",
+                    TargetQualityId = 12,
+                    Progress = value,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                })).ToList();
+
+                Assert.That(repository.NonCompleted().OrderBy(job => job.Id).Select(job => job.Progress), Is.EqualTo(values));
+                using var connection = database.OpenConnection();
+                var projections = connection.Query<DecimalProjection>(
+                    "SELECT \"Progress\" AS \"Required\", \"Progress\" AS \"Optional\" FROM \"ConversionJobs\" WHERE \"Progress\" IS NOT NULL ORDER BY \"Id\"").ToList();
+                Assert.That(projections.Select(value => value.Required), Is.EqualTo(values.Where(value => value.HasValue).Select(value => value.Value)));
+                Assert.That(projections.Select(value => value.Optional), Is.EqualTo(values.Where(value => value.HasValue)));
+
+                jobs[0].Progress = fractionalFirst ? 0m : 25.75m;
+                jobs[1].Progress = fractionalFirst ? 25.75m : 0m;
+                repository.UpdateMany(jobs.Take(2).ToList());
+                Assert.That(repository.NonCompleted().OrderBy(job => job.Id).Select(job => job.Progress), Is.EqualTo(jobs.Select(job => job.Progress)));
+            });
+        }
+
+        [TestCase(false, 1)]
+        [TestCase(false, 2)]
+        [TestCase(true, 1)]
+        [TestCase(true, 2)]
+        public void scheduler_should_resume_after_startup_or_runtime_read_failure(bool postgres, int failOnCall)
+        {
+            // Startup scans NonCompleted once; runtime recovery uses the narrowed status query.
+            VerifySchedulerRecovery(postgres, failOnCall == 1 ? nameof(IConversionJobRepository.NonCompleted) : nameof(IConversionJobRepository.ByStatus), 1, false);
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void dispatch_failure_should_not_strand_an_earlier_reservation(bool postgres, bool afterWrite)
+        {
+            VerifySchedulerRecovery(postgres, nameof(IConversionJobRepository.SetFields), 2, afterWrite);
+        }
+
+        private static void VerifySchedulerRecovery(bool postgres, string method, int failOnCall, bool afterWrite)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var root = Path.Combine(TestContext.CurrentContext.WorkDirectory, "conversion-recovery-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(root);
+                var repository = new ConversionJobRepository(database, new StubEventAggregator());
+                var proxy = DispatchProxy.Create<IConversionJobRepository, FailingRepositoryProxy>();
+                var failure = (FailingRepositoryProxy)(object)proxy;
+                failure.Repository = repository;
+                failure.Method = method;
+                failure.FailOnCall = failOnCall;
+                failure.AfterWrite = afterWrite;
+                failure.ArgumentsMatch = args => method != nameof(IConversionJobRepository.SetFields) ||
+                    (args.Length > 0 && args[0] is ConversionJob { Status: ConversionJobStatus.Converting, Progress: 1m });
+                var converter = new TokenRecordingConversionService();
+                var log = new MemoryTarget { Layout = "${level}|${message}|${exception:format=Message}" };
+                using var logFactory = new LogFactory();
+                var configuration = new LoggingConfiguration(logFactory);
+                configuration.AddRuleForAllLevels(log);
+                logFactory.Configuration = configuration;
+                var service = CreateService(proxy, converter, 2, 8, logFactory.GetLogger("conversion-recovery"));
+                try
+                {
+                    service.Enqueue(CreateRequest(root, "first"));
+                    service.Enqueue(CreateRequest(root, "second"));
+                    Assert.DoesNotThrow(() => service.Handle(new ApplicationStartedEvent()));
+                    Assert.That(failure.Failed.Wait(TimeSpan.FromSeconds(5)), Is.True, "The failure must occur in the running scheduler");
+
+                    if (method == nameof(IConversionJobRepository.SetFields))
+                    {
+                        Assert.That(SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey("first"), TimeSpan.FromSeconds(5)), Is.True,
+                            "An earlier persisted reservation must start even when a later write fails");
+                        var interrupted = repository.FindByDownloadId("second");
+                        interrupted.HeartbeatAt = DateTime.UtcNow.AddMinutes(-5);
+                        repository.SetFields(interrupted, job => job.HeartbeatAt);
+                    }
+
+                    service.Enqueue(CreateRequest(root, "after-outage"));
+                    converter.Release.Set();
+                    Assert.That(SpinWait.SpinUntil(() => repository.NonCompleted().Count(job => job.Status == ConversionJobStatus.ReadyToImport) == 3,
+                        TimeSpan.FromSeconds(5)), Is.True, "All durable work must resume without restarting the service");
+                    Assert.That(converter.CallsByDownloadId.Values, Is.All.EqualTo(1));
+                    Assert.That(converter.CallsByDownloadId.Count, Is.EqualTo(3));
+                    Assert.That(log.Logs.Any(line => line.StartsWith("Error|") && line.Contains("Injected conversion database outage")), Is.True);
+                    Assert.That(log.Logs.Any(line => line.StartsWith("Info|") && line.Contains("scheduler pass completed")), Is.True);
+                }
+                finally
+                {
+                    converter.Release.Set();
+                    service.Handle(new ApplicationShutdownRequested());
+                    Directory.Delete(root, true);
+                }
+            });
         }
 
         [Test]
@@ -182,7 +390,6 @@ namespace Chaptarr.Core.Test.MediaFiles
                     WorkRoot = workRoot,
                     WorkFolder = workFolder,
                     OutputPath = outputPath,
-                    ConversionInputFiles = new List<string> { sourcePath },
                     Sources = new List<ConversionArtifactSource> { source },
                     TargetQualityId = 12,
                     TargetQualityName = "M4B",
@@ -193,6 +400,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 };
                 var manifest = new ConversionArtifactManifest
                 {
+                    EncoderSucceeded = true, OutputSize = new FileInfo(outputPath).Length,
                     CreatedUtc = DateTime.UtcNow,
                     OutputPath = outputPath,
                     TargetQualityId = request.TargetQualityId,
@@ -230,7 +438,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var tracking = new ConversionTrackingService(eventAggregator);
                 var commandQueue = DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>();
                 var commandRecorder = (RecordingCommandQueueProxy)(object)commandQueue;
-                var service = new ConversionJobService(
+                var service = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(),
                     repository,
                     new UnusedConversionService(),
                     tracking,
@@ -241,6 +449,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 service.Handle(new ApplicationStartedEvent());
                 try
                 {
+                    Assert.That(SpinWait.SpinUntil(() => repository.FindByDownloadId(request.DownloadId)?.Status == ConversionJobStatus.ReadyToImport &&
+                        commandRecorder.Commands.Any(), TimeSpan.FromSeconds(5)), Is.True);
                     var recovered = repository.FindByDownloadId(request.DownloadId);
                     Assert.That(recovered.Status, Is.EqualTo(ConversionJobStatus.ReadyToImport));
                     Assert.That(recovered.Progress, Is.EqualTo(98m));
@@ -273,7 +483,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var eventAggregator = new StubEventAggregator();
             var tracking = new ConversionTrackingService(eventAggregator);
             var commandQueue = DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>();
-            var service = new ConversionJobService(repository, converter, tracking, commandQueue, CreateConfig(), LogManager.GetCurrentClassLogger());
+            var service = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(), repository, converter, tracking, commandQueue, CreateConfig(), LogManager.GetCurrentClassLogger());
 
             try
             {
@@ -281,7 +491,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 service.Enqueue(request);
                 Assert.That(converter.Started.Wait(TimeSpan.FromSeconds(2)), Is.True);
 
-                Assert.That(service.Cancel(request.DownloadId), Is.True);
+                Assert.That(service.Cancel(request.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
                 Assert.That(
                     SpinWait.SpinUntil(
                         () => repository.FindByDownloadId(request.DownloadId)?.Status == ConversionJobStatus.Cancelled,
@@ -300,6 +510,140 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
+        public void durable_cancel_should_not_use_disposed_owner_source_or_cancel_replacement_attempt()
+        {
+            var directory = Path.Combine(TestContext.CurrentContext.WorkDirectory, "conversion-stop-owner-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            var repository = CreateRepository(Path.Combine(directory, "jobs.db"));
+            var request = CreateRequest(directory, "cancel-owner-" + Guid.NewGuid().ToString("N"));
+            var converter = new TokenRecordingConversionService();
+            var actualTracking = new ConversionTrackingService(new StubEventAggregator());
+            using var trackerCancelEntered = new ManualResetEventSlim();
+            using var releaseTrackerCancel = new ManualResetEventSlim();
+            using var ownerFinished = new ManualResetEventSlim();
+            using var replacement = new CancellationTokenSource();
+            CancellationTokenSource registered = null;
+            var tracking = InterfaceProxy.Proxy<IConversionTrackingService>((method, args) =>
+            {
+                if (method.Name == nameof(IConversionTrackingService.RegisterCancellation)) registered = (CancellationTokenSource)args[1];
+                if (method.Name == nameof(IConversionTrackingService.Cancel))
+                {
+                    trackerCancelEntered.Set();
+                    if (!releaseTrackerCancel.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Tracker cancellation was not released.");
+                }
+                return method.Invoke(actualTracking, args);
+            });
+            var queue = InterfaceProxy.Proxy<IManageCommandQueue>((method, args) =>
+            {
+                if (method.Name != nameof(IManageCommandQueue.Push)) throw new NotSupportedException(method.Name);
+                ownerFinished.Set();
+                return new CommandModel { Body = (Command)args[0] };
+            });
+            var service = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(), repository, converter, tracking, queue, CreateConfig(), LogManager.GetCurrentClassLogger());
+            Task<bool> cancel = null;
+            try
+            {
+                service.Handle(new ApplicationStartedEvent());
+                service.Enqueue(request);
+                Assert.That(SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey(request.DownloadId), TimeSpan.FromSeconds(5)), Is.True);
+                ownerFinished.Reset();
+                cancel = Task.Run(() => service.Cancel(request.DownloadId, ConversionRemovalOrigin.UserAction));
+                Assert.That(trackerCancelEntered.Wait(TimeSpan.FromSeconds(5)), Is.True);
+                converter.Release.Set();
+                Assert.That(ownerFinished.Wait(TimeSpan.FromSeconds(5)), Is.True);
+                Assert.That(registered, Is.Not.Null);
+                Assert.Throws<ObjectDisposedException>(() => _ = registered.Token);
+                actualTracking.Start(request.DownloadId, 12, "M4B", "Retrying conversion");
+                actualTracking.RegisterCancellation(request.DownloadId, replacement);
+                releaseTrackerCancel.Set();
+                Assert.That(cancel.Wait(TimeSpan.FromSeconds(5)), Is.True);
+                Assert.That(cancel.Result, Is.True);
+                Assert.That(repository.FindByDownloadId(request.DownloadId).Status, Is.EqualTo(ConversionJobStatus.Cancelled));
+                Assert.That(replacement.IsCancellationRequested, Is.False);
+                Assert.That(actualTracking.Get(request.DownloadId).CanCancel, Is.True);
+                Assert.That(actualTracking.Cancel(request.DownloadId), Is.True);
+                Assert.That(replacement.IsCancellationRequested, Is.True);
+            }
+            finally
+            {
+                converter.Release.Set();
+                releaseTrackerCancel.Set();
+                if (cancel != null) cancel.Wait(TimeSpan.FromSeconds(5));
+                service.Handle(new ApplicationShutdownRequested());
+                actualTracking.Complete(request.DownloadId);
+                SqliteConnection.ClearAllPools();
+                Directory.Delete(directory, true);
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void durable_success_after_accepted_stop_should_be_cancelled(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var directory = Path.Combine(TestContext.CurrentContext.WorkDirectory, "conversion-stop-success-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(directory);
+                var repository = new ConversionJobRepository(database, new StubEventAggregator());
+                var request = CreateRequest(directory, "stop-success-" + Guid.NewGuid().ToString("N"));
+                using var started = new ManualResetEventSlim();
+                using var finished = new ManualResetEventSlim();
+                var converter = InterfaceProxy.Proxy<IM4bConversionService>((method, args) =>
+                {
+                    if (method.Name != nameof(IM4bConversionService.ConvertToM4b))
+                    {
+                        throw new NotSupportedException(method.Name);
+                    }
+
+                    var options = (ConversionOptions)args[2];
+                    started.Set();
+                    if (!options.CancellationToken.WaitHandle.WaitOne(TimeSpan.FromSeconds(5)))
+                    {
+                        throw new TimeoutException("Stop was not requested.");
+                    }
+
+                    var output = (string)args[1];
+                    Directory.CreateDirectory(Path.GetDirectoryName(output));
+                    File.WriteAllText(output, "constructed successful conversion after accepted Stop");
+                    return new ConversionResult { Success = true, OutputFile = output };
+                });
+                var queue = InterfaceProxy.Proxy<IManageCommandQueue>((method, args) =>
+                {
+                    if (method.Name != nameof(IManageCommandQueue.Push))
+                    {
+                        throw new NotSupportedException(method.Name);
+                    }
+
+                    finished.Set();
+                    return new CommandModel { Body = (Command)args[0] };
+                });
+                var tracking = new ConversionTrackingService(new StubEventAggregator());
+                var service = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(), repository, converter, tracking, queue, CreateConfig(), LogManager.GetCurrentClassLogger());
+                try
+                {
+                    service.Handle(new ApplicationStartedEvent());
+                    service.Enqueue(request);
+                    Assert.That(started.Wait(TimeSpan.FromSeconds(5)), Is.True);
+                    Assert.That(service.Cancel(request.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
+                    Assert.That(finished.Wait(TimeSpan.FromSeconds(5)), Is.True);
+                    Assert.Multiple(() =>
+                    {
+                        Assert.That(repository.FindByDownloadId(request.DownloadId).Status, Is.EqualTo(ConversionJobStatus.Cancelled));
+                        Assert.That(tracking.Get(request.DownloadId).Status, Is.EqualTo("cancelled"));
+                        Assert.That(tracking.Cancel(request.DownloadId), Is.False);
+                        Assert.That(Directory.Exists(request.WorkRoot), Is.False);
+                    });
+                }
+                finally
+                {
+                    service.Handle(new ApplicationShutdownRequested());
+                    tracking.Clear(request.DownloadId);
+                    Directory.Delete(directory, true);
+                }
+            });
+        }
+
+        [Test]
         public void application_shutdown_should_requeue_active_job_instead_of_persisting_user_cancellation()
         {
             var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-job-shutdown-{Guid.NewGuid():N}");
@@ -311,7 +655,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var eventAggregator = new StubEventAggregator();
             var tracking = new ConversionTrackingService(eventAggregator);
             var commandQueue = DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>();
-            var service = new ConversionJobService(repository, converter, tracking, commandQueue, CreateConfig(), LogManager.GetCurrentClassLogger());
+            var service = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(), repository, converter, tracking, commandQueue, CreateConfig(), LogManager.GetCurrentClassLogger());
 
             try
             {
@@ -356,7 +700,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     repository.Update(job);
                 }
 
-                Assert.That(service.Cancel(request.DownloadId), Is.True);
+                Assert.That(service.Cancel(request.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
 
                 var cancelled = repository.FindByDownloadId(request.DownloadId);
                 Assert.That(cancelled.Status, Is.EqualTo(ConversionJobStatus.Cancelled));
@@ -539,7 +883,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 service.Handle(new ApplicationStartedEvent());
                 service.Enqueue(first);
                 Assert.That(
-                    SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey(first.DownloadId), TimeSpan.FromSeconds(2)),
+                    SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey(first.DownloadId), TimeSpan.FromSeconds(10)),
                     Is.True);
                 Assert.That(converter.OptionsByDownloadId[first.DownloadId].FfmpegThreads, Is.EqualTo(8));
 
@@ -549,12 +893,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Is.False,
                     "A late conversion must wait while the running job owns every CPU token.");
 
-                Assert.That(service.Cancel(first.DownloadId), Is.True);
+                Assert.That(service.Cancel(first.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
                 Assert.That(
-                    SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey(second.DownloadId), TimeSpan.FromSeconds(2)),
+                    SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey(second.DownloadId), TimeSpan.FromSeconds(10)),
                     Is.True);
                 Assert.That(converter.OptionsByDownloadId[second.DownloadId].FfmpegThreads, Is.EqualTo(8));
-                Assert.That(service.Cancel(second.DownloadId), Is.True);
+                Assert.That(service.Cancel(second.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
             }
             finally
             {
@@ -564,6 +908,36 @@ namespace Chaptarr.Core.Test.MediaFiles
                 {
                     Directory.Delete(tempDir, recursive: true);
                 }
+            }
+        }
+
+        [Test]
+        public void recovered_job_should_rebuild_staging_from_original_sources_instead_of_legacy_temporary_paths()
+        {
+            var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-job-legacy-staging-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempDir);
+            var request = CreateRequest(tempDir, "legacy-staging");
+            var repository = CreateRepository(Path.Combine(tempDir, "jobs.db"));
+            var job = CreatePersistedJob(request, ConversionJobStatus.Converting, DateTime.UtcNow.AddMinutes(-5));
+            var json = System.Text.Json.Nodes.JsonNode.Parse(job.RequestJson);
+            json["ConversionInputFiles"] = new System.Text.Json.Nodes.JsonArray(Path.Combine(request.WorkFolder, "provider-chapters", "missing.mp3"));
+            job.RequestJson = json.ToJsonString();
+            repository.Insert(job);
+            var converter = new TokenRecordingConversionService();
+            var service = CreateService(repository, converter);
+            try
+            {
+                service.Handle(new ApplicationStartedEvent());
+                Assert.That(SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey(request.DownloadId), TimeSpan.FromSeconds(10)), Is.True);
+                Assert.That(converter.InputsByDownloadId[request.DownloadId], Is.EqualTo(request.Sources.Select(source => source.Path)));
+                converter.Release.Set();
+                Assert.That(SpinWait.SpinUntil(() => repository.FindByDownloadId(request.DownloadId).Status == ConversionJobStatus.ReadyToImport, TimeSpan.FromSeconds(10)), Is.True);
+            }
+            finally
+            {
+                service.Handle(new ApplicationShutdownRequested());
+                SqliteConnection.ClearAllPools();
+                Directory.Delete(tempDir, true);
             }
         }
 
@@ -579,11 +953,11 @@ namespace Chaptarr.Core.Test.MediaFiles
             return new ConversionJobRequest
             {
                 DownloadId = downloadId,
+                DownloadClientId = 0,
                 BookTitle = "Test Book",
                 WorkRoot = workRoot,
                 WorkFolder = workFolder,
                 OutputPath = Path.Combine(workFolder, "book.m4b"),
-                ConversionInputFiles = new List<string> { sourcePath },
                 Sources = new List<ConversionArtifactSource>
                 {
                     new()
@@ -605,6 +979,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             return new ConversionJob
             {
                 DownloadId = request.DownloadId,
+                DownloadClientId = request.DownloadClientId,
                 Status = status,
                 RequestJson = JsonSerializer.Serialize(request),
                 WorkRoot = request.WorkRoot,
@@ -622,22 +997,46 @@ namespace Chaptarr.Core.Test.MediaFiles
             };
         }
 
-        private static ConversionJobService CreateService(
+        internal static ConversionJobService CreateService(
             IConversionJobRepository repository,
             IM4bConversionService converter,
             int concurrentConversions = 1,
-            int maxCpuThreads = 8)
+            int maxCpuThreads = 8,
+            Logger logger = null,
+            IConfigService config = null,
+            IRootFolderService roots = null,
+            NzbDrone.Common.Disk.IDiskProvider disk = null)
         {
             var eventAggregator = new StubEventAggregator();
             var tracking = new ConversionTrackingService(eventAggregator);
             var commandQueue = DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>();
-            return new ConversionJobService(
+            return new ConversionJobService(disk ?? TestCleanupDisk(), roots ?? TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(),
                 repository,
                 converter,
                 tracking,
                 commandQueue,
-                CreateConfig(concurrentConversions, maxCpuThreads),
-                LogManager.GetCurrentClassLogger());
+                config ?? CreateConfig(concurrentConversions, maxCpuThreads),
+                logger ?? LogManager.GetCurrentClassLogger(),
+                outcomeRetryDelay: TimeSpan.FromSeconds(2));
+        }
+
+        internal static NzbDrone.Common.Disk.IDiskProvider TestCleanupDisk(Action beforeProbe = null) => InterfaceProxy.Proxy<NzbDrone.Common.Disk.IDiskProvider>((method, args) =>
+        {
+            beforeProbe?.Invoke();
+            return method.Name switch
+            {
+                nameof(NzbDrone.Common.Disk.IDiskProvider.FolderExists) => Directory.Exists((string)args[0]),
+                nameof(NzbDrone.Common.Disk.IDiskProvider.FolderEmpty) => !Directory.EnumerateFileSystemEntries((string)args[0]).Any(),
+                _ => throw new NotImplementedException(method.Name)
+            };
+        });
+
+        internal static IRootFolderService TestRootFolders(params string[] paths)
+        {
+            var folders = (paths.Length == 0 ? new[] { Path.GetTempPath() } : paths).Select(path => new RootFolder { Path = path }).ToList();
+            return new RootFolderService(InterfaceProxy.Proxy<IRootFolderRepository>((method, _) =>
+                method.Name == nameof(IRootFolderRepository.All) ? folders : throw new NotImplementedException(method.Name)),
+                null, null, null, LogManager.GetCurrentClassLogger());
         }
 
         private static IConfigService CreateConfig(int concurrentConversions = 1, int maxCpuThreads = 8)
@@ -650,7 +1049,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
 
-        private static ConversionJobRepository CreateRepository(string databasePath)
+        internal static ConversionJobRepository CreateRepository(string databasePath)
         {
             var connectionString = new SqliteConnectionStringBuilder
             {
@@ -662,11 +1061,18 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 connection.Open();
                 connection.Execute(@"
+CREATE TABLE ""DownloadClients"" (""Id"" INTEGER PRIMARY KEY);
+CREATE TABLE ""History"" (""Id"" INTEGER PRIMARY KEY, ""DownloadId"" TEXT, ""EventType"" INTEGER);
+CREATE TABLE ""DownloadHistory"" (""Id"" INTEGER PRIMARY KEY, ""DownloadId"" TEXT, ""DownloadClientId"" INTEGER, ""EventType"" INTEGER, ""Date"" TEXT);
 CREATE TABLE ""ConversionJobs"" (
     ""Id"" INTEGER PRIMARY KEY AUTOINCREMENT,
     ""DownloadId"" TEXT NOT NULL UNIQUE,
+    ""DownloadIdKey"" TEXT,
+    ""DownloadClientId"" INTEGER NOT NULL DEFAULT 0,
     ""Status"" INTEGER NOT NULL,
     ""RequestJson"" TEXT NOT NULL,
+    ""CleanupPending"" INTEGER NOT NULL DEFAULT 0,
+    ""CleanupAttention"" INTEGER NOT NULL DEFAULT 0,
     ""WorkRoot"" TEXT,
     ""WorkFolder"" TEXT,
     ""OutputPath"" TEXT,

@@ -8,8 +8,10 @@ import Icon from 'Components/Icon';
 import { filterTypePredicates, filterTypes, icons, sortDirections } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
 import getBookAuthorPath from 'Utilities/Book/getBookAuthorPath';
+import isLibraryBook from 'Utilities/Book/isLibraryBook';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import dateFilterPredicate from 'Utilities/Date/dateFilterPredicate';
+import isBefore from 'Utilities/Date/isBefore';
 import coerceMonitoredBoolean from 'Utilities/Monitoring/coerceMonitoredBoolean';
 import translate from 'Utilities/String/translate';
 import { removeItem, set, update, updateItem } from './baseActions';
@@ -32,6 +34,18 @@ export const filters = [
     key: 'all',
     label: () => translate('All'),
     filters: []
+  },
+  {
+    key: 'library',
+    label: () => translate('InLibrary'),
+    title: () => translate('LibraryFilterHelpText'),
+    filters: [
+      {
+        key: 'library',
+        value: true,
+        type: filterTypes.EQUAL
+      }
+    ]
   },
   {
     key: 'monitored',
@@ -106,6 +120,11 @@ export const filters = [
 ];
 
 export const filterPredicates = {
+  library: function(item, filterValue, type) {
+    const predicate = filterTypePredicates[type];
+    return predicate(isLibraryBook(item), filterValue);
+  },
+
   missing: function(item) {
     const { statistics = {} } = item;
 
@@ -273,9 +292,8 @@ export const sortPredicates = {
     const isMonitored = effectiveMediaType === 'ebook' ?
       item.ebookMonitored :
       item.audiobookMonitored;
-    const hasFiles = (item.statistics?.bookFileCount || 0) > 0 ||
-      (item.editionInfo?.bookFileCount || 0) > 0;
-    const isAvailable = !item.releaseDate || Date.parse(item.releaseDate) < new Date();
+    const hasFiles = (item.statistics?.bookFileCount || 0) > 0;
+    const isAvailable = isBefore(item.releaseDate);
     let result = 0;
 
     if (isAvailable) {
@@ -612,6 +630,7 @@ export const setBookValue = createAction(SET_BOOK_VALUE, (payload) => {
 
 export const actionHandlers = handleThunks({
   [FETCH_BOOKS]: function(getState, payload, dispatch) {
+    const { onComplete, ...query } = payload;
     const requestId = ++currentFetchRequestId;
 
     if (abortCurrentFetchRequest) {
@@ -623,7 +642,7 @@ export const actionHandlers = handleThunks({
 
     const { request, abortRequest } = createAjaxRequest({
       url: '/book',
-      data: payload,
+      data: query,
       traditional: true
     });
 
@@ -669,6 +688,9 @@ export const actionHandlers = handleThunks({
         error: xhr.aborted ? null : xhr
       }));
     });
+
+    request.done((data) => onComplete?.(requestId === currentFetchRequestId ? null : { aborted: true }, data));
+    request.fail((xhr) => onComplete?.(xhr));
 
     return abortRequest;
   },

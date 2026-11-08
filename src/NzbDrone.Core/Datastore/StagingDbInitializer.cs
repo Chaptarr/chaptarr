@@ -6,24 +6,27 @@ namespace NzbDrone.Core.Datastore
 {
     public class StagingDbInitializer : IHandle<ApplicationStartedEvent>
     {
-        private readonly IStagingDbContext _stagingDbContext;
         private readonly StagingResidualQueueSweeper _stagingResidualQueueSweeper;
+        private readonly IFileTagCacheRepository _fileTagCache;
+        private readonly IStagingDbContext _staging;
         private readonly Logger _logger;
 
         public StagingDbInitializer(
-            IStagingDbContext stagingDbContext,
             StagingResidualQueueSweeper stagingResidualQueueSweeper,
+            IFileTagCacheRepository fileTagCache,
+            IStagingDbContext staging,
             Logger logger)
         {
-            _stagingDbContext = stagingDbContext;
             _stagingResidualQueueSweeper = stagingResidualQueueSweeper;
+            _fileTagCache = fileTagCache;
+            _staging = staging;
             _logger = logger;
         }
 
         public void Handle(ApplicationStartedEvent message)
         {
-            _logger.Info("Initializing staging database on application start");
-            _stagingDbContext.InitializeDatabase();
+            _fileTagCache.MoveFromStaging(_staging);
+            _logger.Info("Checking staging queue residual items on application start");
             _stagingResidualQueueSweeper.SweepAllResidualItems();
         }
     }

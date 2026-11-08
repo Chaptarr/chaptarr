@@ -1,17 +1,22 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Data;
 using System.IO;
 using System.IO.Abstractions;
 using System.Linq;
 using NLog;
 using NzbDrone.Common;
+using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Datastore.Events;
 using NzbDrone.Core.MediaFiles.Events;
+using NzbDrone.Core.MediaFiles.BookImport.Manual;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.RootFolders;
 
 namespace NzbDrone.Core.MediaFiles
@@ -20,7 +25,7 @@ namespace NzbDrone.Core.MediaFiles
     {
         BookFile Add(BookFile bookFile);
         void AddMany(List<BookFile> bookFiles);
-        void ReplaceMany(List<BookFile> bookFiles, List<BookFile> replacedFiles, DeleteMediaFileReason reason)
+        void ReplaceMany(List<BookFile> bookFiles, List<BookFile> replacedFiles, DeleteMediaFileReason reason, IReadOnlyCollection<ManualImportReplacementFile> confirmedFiles = null)
         {
             if (replacedFiles?.Count > 0)
             {
@@ -29,12 +34,18 @@ namespace NzbDrone.Core.MediaFiles
 
             AddMany(bookFiles ?? new List<BookFile>());
         }
+        void ReplaceMany(List<BookFile> bookFiles, List<BookFile> replacedFiles, DeleteMediaFileReason reason,
+            IReadOnlyCollection<ManualImportReplacementFile> confirmedFiles, Action<Action<IDbConnection, IDbTransaction>> persist);
+        void ValidateReplacementFiles(List<BookFile> replacedFiles, IReadOnlyCollection<ManualImportReplacementFile> confirmedFiles);
         void Update(BookFile bookFile);
         void Update(List<BookFile> bookFiles);
+        (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, AudioProductionCorrection correction, IDbConnection connection, IDbTransaction transaction);
         void Delete(BookFile bookFile, DeleteMediaFileReason reason);
         void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason);
         List<IFileInfo> FilterUnchangedFiles(List<IFileInfo> files, FilterFilesType filter);
         List<BookFile> GetFilesByAuthor(int authorId);
+        List<BookFile> GetFilePathOwnership(IReadOnlyCollection<int> authorIds, IReadOnlyCollection<string> folders) => throw new NotSupportedException();
+        void DeleteRecordsForAuthorDeletion(List<BookFile> files) => throw new NotSupportedException();
         List<BookFile> GetMappedFilePathEvidenceByAuthor(int authorId, string mediaType)
         {
             var requestedMediaType = (mediaType ?? "all").Trim().ToLowerInvariant();
@@ -99,14 +110,18 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IMediaFileRepository _mediaFileRepository;
         private readonly IIngestQueueRepository _ingestQueueRepository;
         private readonly IRootFolderService _rootFolderService;
+        private readonly IDiskProvider _diskProvider;
+        private readonly IManualImportReplacementFiles _replacementFiles;
         private readonly Logger _logger;
 
-        public MediaFileService(IMediaFileRepository mediaFileRepository, IEventAggregator eventAggregator, IIngestQueueRepository ingestQueueRepository, Logger logger, IRootFolderService rootFolderService = null)
+        public MediaFileService(IMediaFileRepository mediaFileRepository, IEventAggregator eventAggregator, IIngestQueueRepository ingestQueueRepository, IDiskProvider diskProvider, Logger logger, IRootFolderService rootFolderService = null, IManualImportReplacementFiles replacementFiles = null)
         {
             _mediaFileRepository = mediaFileRepository;
             _eventAggregator = eventAggregator;
             _ingestQueueRepository = ingestQueueRepository;
             _rootFolderService = rootFolderService;
+            _diskProvider = diskProvider;
+            _replacementFiles = replacementFiles;
             _logger = logger;
         }
 
@@ -131,21 +146,60 @@ namespace NzbDrone.Core.MediaFiles
             _logger.Debug("[IMPORT-TIMING] StepE2 Publish BookFilesAddedEvent x{0} elapsed={1}ms", bookFiles.Count, __evtSw.ElapsedMilliseconds);
         }
 
-        public void ReplaceMany(List<BookFile> bookFiles, List<BookFile> replacedFiles, DeleteMediaFileReason reason)
+        public void ReplaceMany(List<BookFile> bookFiles, List<BookFile> replacedFiles, DeleteMediaFileReason reason, IReadOnlyCollection<ManualImportReplacementFile> confirmedFiles = null)
+        {
+            ReplaceMany(bookFiles, replacedFiles, reason, confirmedFiles, null);
+        }
+
+        public void ReplaceMany(List<BookFile> bookFiles, List<BookFile> replacedFiles, DeleteMediaFileReason reason,
+            IReadOnlyCollection<ManualImportReplacementFile> confirmedFiles, Action<Action<IDbConnection, IDbTransaction>> persist)
         {
             bookFiles ??= new List<BookFile>();
             replacedFiles ??= new List<BookFile>();
+            var newFiles = bookFiles.Where(file => file.Id == 0).ToList();
 
             var eventBookFiles = HydrateForDeleteEvents(replacedFiles);
+            var associatedById = ValidateReplacementAssociations(eventBookFiles, confirmedFiles);
 
-            _mediaFileRepository.ReplaceMany(bookFiles, replacedFiles);
+            try
+            {
+                if (persist == null)
+                {
+                    _mediaFileRepository.ReplaceMany(bookFiles, replacedFiles);
+                }
+                else
+                {
+                    persist((connection, transaction) => _mediaFileRepository.ReplaceMany(bookFiles, replacedFiles, connection, transaction));
+                }
+            }
+            catch
+            {
+                // An outer lifecycle transaction may roll back after InsertMany assigned IDs.
+                foreach (var file in newFiles) file.Id = 0;
+                throw;
+            }
+
             PurgeIngestQueueEntries(replacedFiles);
 
+            var deletionContext = new BookFileDeletionContext(eventBookFiles.Select(file => file.Id), bookFiles);
+            var successorPathsByBook = bookFiles.Where(file => file.Edition?.BookId > 0)
+                .GroupBy(file => file.Edition.BookId)
+                .ToDictionary(group => group.Key, group => group
+                    .SelectMany(file => (file.ReplicaPaths ?? new List<string>()).Append(file.Path))
+                    .ToHashSet(PathEqualityComparer.Instance));
+            // A committed successor now owns these ebook copies. Its postcommit reconciliation
+            // decides which to retain or replace; the old row's deletion must not recycle them.
             foreach (var replacedFile in eventBookFiles)
             {
+                if (successorPathsByBook.TryGetValue(replacedFile.Edition?.BookId ?? 0, out var successorPaths))
+                {
+                    replacedFile.ReplicaPaths = (replacedFile.ReplicaPaths ?? new List<string>())
+                        .Where(path => !successorPaths.Contains(path)).ToList();
+                }
                 try
                 {
-                    _eventAggregator.PublishEvent(new BookFileDeletedEvent(replacedFile, reason));
+                    _eventAggregator.PublishEvent(new BookFileDeletedEvent(replacedFile, reason,
+                        associatedById.GetValueOrDefault(replacedFile.Id), bookFiles, deletionContext));
                 }
                 catch (Exception ex)
                 {
@@ -155,11 +209,11 @@ namespace NzbDrone.Core.MediaFiles
                 }
             }
 
-            if (bookFiles.Count > 0)
+            if (newFiles.Count > 0)
             {
                 try
                 {
-                    _eventAggregator.PublishEvent(new BookFilesAddedEvent(bookFiles));
+                    _eventAggregator.PublishEvent(new BookFilesAddedEvent(newFiles));
                 }
                 catch (Exception ex)
                 {
@@ -167,6 +221,41 @@ namespace NzbDrone.Core.MediaFiles
                 }
             }
         }
+
+        public void ValidateReplacementFiles(List<BookFile> replacedFiles, IReadOnlyCollection<ManualImportReplacementFile> confirmedFiles)
+        {
+            ValidateReplacementAssociations(HydrateForDeleteEvents(replacedFiles ?? new List<BookFile>()), confirmedFiles);
+        }
+
+        private Dictionary<int, IReadOnlyCollection<string>> ValidateReplacementAssociations(
+            List<BookFile> files, IReadOnlyCollection<ManualImportReplacementFile> confirmedFiles)
+        {
+            var associatedById = new Dictionary<int, IReadOnlyCollection<string>>();
+            if (confirmedFiles == null || files.Count == 0)
+            {
+                return associatedById;
+            }
+
+            var current = (_replacementFiles ?? throw new InvalidOperationException("Replacement preview service is unavailable"))
+                .Describe(files).ToDictionary(file => file.Id);
+            var confirmedById = confirmedFiles.ToLookup(file => file.Id);
+            foreach (var file in files)
+            {
+                var confirmed = confirmedById[file.Id].ToList();
+                var allowed = ManualImportReplacementFiles.ConfirmedAssociatedPaths(file, confirmed);
+                associatedById[file.Id] = allowed;
+                if (!ManualImportReplacementFiles.IsConfirmed(file, confirmed) ||
+                    current[file.Id].AssociatedPaths.Any(path => !allowed.Contains(path, PathEqualityComparer.Instance)))
+                {
+                    throw new CommandFailedException("Associated files changed since confirmation. Review the replacement files again.");
+                }
+            }
+
+            return associatedById;
+        }
+
+        public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, AudioProductionCorrection correction, IDbConnection connection, IDbTransaction transaction) =>
+            _mediaFileRepository.RelinkAndClassifyFilesByBook(bookId, editionId, mediaType, correction, connection, transaction);
 
         public void Update(BookFile bookFile)
         {
@@ -180,9 +269,12 @@ namespace NzbDrone.Core.MediaFiles
 
         public void Delete(BookFile bookFile, DeleteMediaFileReason reason)
         {
-            PurgeIngestQueueEntry(bookFile?.Path);
+            PurgeIngestQueueEntries(new[] { bookFile });
             var eventBookFile = HydrateForDeleteEvent(bookFile);
-            _mediaFileRepository.Delete(bookFile);
+            if (reason != DeleteMediaFileReason.MissingFromDisk || !PreserveManagedReplicas(new List<BookFile> { bookFile }, new[] { eventBookFile }))
+            {
+                _mediaFileRepository.Delete(bookFile);
+            }
 
             if (eventBookFile?.EditionId > 0)
             {
@@ -194,39 +286,67 @@ namespace NzbDrone.Core.MediaFiles
         {
             PurgeIngestQueueEntries(bookFiles);
             var eventBookFiles = HydrateForDeleteEvents(bookFiles);
-            _mediaFileRepository.DeleteMany(bookFiles);
+            if (reason != DeleteMediaFileReason.MissingFromDisk || !PreserveManagedReplicas(bookFiles, eventBookFiles))
+            {
+                _mediaFileRepository.DeleteMany(bookFiles);
+            }
 
+            var context = reason == DeleteMediaFileReason.MissingFromDisk || reason == DeleteMediaFileReason.Manual || reason == DeleteMediaFileReason.ManualOverride
+                ? new BookFileDeletionContext(eventBookFiles.Select(file => file.Id), deletedFiles: eventBookFiles) : null;
             foreach (var bookFile in eventBookFiles)
             {
-                _eventAggregator.PublishEvent(new BookFileDeletedEvent(bookFile, reason));
+                _eventAggregator.PublishEvent(new BookFileDeletedEvent(bookFile, reason, context: context));
             }
+        }
+
+        private bool PreserveManagedReplicas(List<BookFile> deleted, IEnumerable<BookFile> hydrated)
+        {
+            var replicas = hydrated.Where(file => file != null)
+                .SelectMany(file => (file.ReplicaPaths ?? new List<string>())
+                    .Where(path => path.IsNotNullOrWhiteSpace() && path.PathNotEquals(file.Path))
+                    .Select(path => (Path: path, File: file)))
+                .DistinctBy(replica => replica.Path, PathEqualityComparer.Instance).ToList();
+            if (replicas.Count == 0) return false;
+
+            var existing = _mediaFileRepository.GetFileWithPath(replicas.Select(replica => replica.Path).ToList())
+                .Select(file => file.Path).ToHashSet(PathEqualityComparer.Instance);
+            var kept = new List<BookFile>();
+            foreach (var replica in replicas.Where(replica => !existing.Contains(replica.Path)))
+            {
+                // Probe before the transaction: a read failure leaves the original inventory intact.
+                if (!_diskProvider.FileExistsCanonical(replica.Path)) continue;
+                var file = replica.File.CloneForImport();
+                file.Id = 0;
+                file.Path = replica.Path;
+                file.EditionId = 0;
+                file.Edition = null;
+                file.Author = null;
+                file.ReplicaPaths = new List<string>();
+                file.MatchProvenance = null;
+                file.MatchDetails = "The primary file is missing. This managed copy was preserved for manual import.";
+                kept.Add(file);
+            }
+
+            // The missing primary and its surviving copies change inventory atomically.
+            _mediaFileRepository.ReplaceMany(kept, deleted);
+            if (kept.Count > 0)
+            {
+                _eventAggregator.PublishEvent(new BookFilesAddedEvent(kept));
+                _logger.Warn("Preserved {0} managed copies as unmapped files after {1} primary files went missing", kept.Count, deleted.Count);
+            }
+
+            return true;
         }
 
         private void PurgeIngestQueueEntries(IEnumerable<BookFile> bookFiles)
         {
-            foreach (var path in bookFiles?
-                         .Where(f => !string.IsNullOrWhiteSpace(f?.Path))
-                         .Select(f => f.Path)
-                         .Distinct(StringComparer.OrdinalIgnoreCase) ?? Enumerable.Empty<string>())
-            {
-                PurgeIngestQueueEntry(path);
-            }
-        }
-
-        private void PurgeIngestQueueEntry(string path)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return;
-            }
-
             try
             {
-                _ingestQueueRepository.PurgeUnderPath(path);
+                _ingestQueueRepository.PurgePaths(bookFiles?.Select(file => file?.Path));
             }
             catch (Exception ex)
             {
-                _logger.Debug(ex, "Failed to purge ingest queue entry for deleted file {0}", path);
+                _logger.Debug(ex, "Failed to purge ingest queue entries for {0} deleted files", bookFiles?.Count() ?? 0);
             }
         }
 
@@ -425,6 +545,20 @@ namespace NzbDrone.Core.MediaFiles
             return _mediaFileRepository.GetFilesByAuthor(authorId);
         }
 
+        public List<BookFile> GetFilePathOwnership(IReadOnlyCollection<int> authorIds, IReadOnlyCollection<string> folders) =>
+            _mediaFileRepository.GetFilePathOwnership(authorIds, folders);
+
+        public void DeleteRecordsForAuthorDeletion(List<BookFile> files)
+        {
+            // The author deletion executor has already handled physical files and extras.
+            // Do not publish per-file delete events that would attempt those operations again.
+            PurgeIngestQueueEntries(files);
+            if (!PreserveManagedReplicas(files, files))
+            {
+                _mediaFileRepository.DeleteMany(files);
+            }
+        }
+
         public List<BookFile> GetMappedFilePathEvidenceByAuthor(int authorId, string mediaType)
         {
             return _mediaFileRepository.GetMappedFilePathEvidenceByAuthor(authorId, mediaType);
@@ -473,42 +607,57 @@ namespace NzbDrone.Core.MediaFiles
 
         public void Handle(AuthorMovedEvent message)
         {
+            var stopwatch = Stopwatch.StartNew();
             var files = _mediaFileRepository.GetFilesWithBasePath(message.SourcePath);
+            var movedFiles = new List<BookFile>();
+            // A removed source folder needs one check, not path recovery through its root per file.
+            var sourceFolderExists = _diskProvider.FolderExists(message.SourcePath);
 
             foreach (var file in files)
             {
                 var newPath = message.DestinationPath + file.Path.Substring(message.SourcePath.Length);
+                // Keep paths for physically retained files. Missing rows must follow the completed
+                // move too, so the destination's normal rescan can reclaim their stale inventory.
+                var transferConfirmed = false;
+                for (var path = file.Path; path != null && message.MovedPaths != null; path = Path.GetDirectoryName(path))
+                {
+                    if (message.MovedPaths.Contains(path))
+                    {
+                        transferConfirmed = true;
+                        break;
+                    }
+                }
+
+                if (!transferConfirmed && sourceFolderExists && _diskProvider.FileExistsCanonical(file.Path))
+                {
+                    _logger.Debug("Author folder moved, but book file '{0}' was not moved to '{1}'; keeping its recorded path", file.Path, newPath);
+                    continue;
+                }
+
                 file.Path = newPath;
+                movedFiles.Add(file);
             }
 
-            Update(files);
+            var retainedCount = files.Count - movedFiles.Count;
+            if (retainedCount > 0)
+            {
+                // Keep partial moves visible without one warning per file; debug retains every path.
+                _logger.Warn("Author folder moved from '{0}' to '{1}', but {2} of {3} tracked book files were not moved; keeping their recorded paths. See debug log for individual paths.",
+                    message.SourcePath, message.DestinationPath, retainedCount, files.Count);
+            }
+
+            if (movedFiles.Count > 0)
+            {
+                Update(movedFiles);
+            }
+
+            _logger.Debug("[AUTHOR-MOVE-TIMING] Checked {0} tracked book files from '{1}' to '{2}': updated {3}, retained {4} in {5}ms",
+                files.Count, message.SourcePath, message.DestinationPath, movedFiles.Count, retainedCount, stopwatch.ElapsedMilliseconds);
         }
 
         public void HandleAsync(BookDeletedEvent message)
         {
-            var bookFiles = message.Book?.BookFiles;
-            if ((bookFiles == null || bookFiles.Count == 0) && message.Book?.Id > 0)
-            {
-                try
-                {
-                    bookFiles = _mediaFileRepository.GetFilesByBook(message.Book.Id);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Debug(ex, "Failed to load book files for deleted book ingest queue purge: {0}", message.Book.Id);
-                }
-            }
-
-            PurgeIngestQueueEntries(bookFiles);
-
-            if (message.DeleteFiles)
-            {
-                _mediaFileRepository.DeleteFilesByBook(message.Book.Id);
-            }
-            else
-            {
-                _mediaFileRepository.UnlinkFilesByBook(message.Book.Id);
-            }
+            PurgeIngestQueueEntries(message.Book?.BookFiles);
         }
 
         public void Handle(AuthorDeletedEvent message)
@@ -526,7 +675,11 @@ namespace NzbDrone.Core.MediaFiles
             if (message.Action == ModelAction.Deleted)
             {
                 var files = GetFilesWithBasePath(message.Model.Path);
-                DeleteMany(files, DeleteMediaFileReason.Manual);
+                var remainingRoots = (_rootFolderService?.All() ?? new List<RootFolder>())
+                    .Where(root => root.Id != message.Model.Id).ToList();
+                files = files.Where(file => !remainingRoots.Any(root => root.Path.IsParentPath(file.Path))).ToList();
+                // Removing a configured root withdraws tracking, never permission to delete bytes.
+                if (files.Count > 0) DeleteMany(files, DeleteMediaFileReason.NoLinkedEpisodes);
             }
         }
 

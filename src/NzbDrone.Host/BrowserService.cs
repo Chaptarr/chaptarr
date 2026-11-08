@@ -28,22 +28,27 @@ namespace NzbDrone.Host
 
         public void LaunchWebUI()
         {
-            var url = string.Format("http://localhost:{0}", _configFileProvider.Port);
+            LaunchWebUI(_processProvider, _configFileProvider.Port, _runtimeInfo.IsUserInteractive, _logger);
+        }
+
+        public static void LaunchWebUI(IProcessProvider processProvider, int port, bool isUserInteractive, Logger logger)
+        {
+            var url = string.Format("http://localhost:{0}", port);
             try
             {
-                if (_runtimeInfo.IsUserInteractive)
+                if (isUserInteractive)
                 {
-                    _logger.Info("Starting default browser. {0}", url);
-                    _processProvider.OpenDefaultBrowser(url);
+                    logger.Info("Starting default browser. {0}", url);
+                    processProvider.OpenDefaultBrowser(url);
                 }
                 else
                 {
-                    _logger.Debug("non-interactive runtime. Won't attempt to open browser.");
+                    logger.Debug("non-interactive runtime. Won't attempt to open browser.");
                 }
             }
             catch (Exception e)
             {
-                _logger.Error(e, "Couldn't open default browser to {0}", url);
+                logger.Error(e, "Couldn't open default browser to {0}", url);
             }
         }
     }

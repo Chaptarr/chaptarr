@@ -1,0 +1,240 @@
+[
+  {
+    "Name": "Five People",
+    "Author": "Mitch Albom",
+    "Editions": [
+      {
+        "Id": 144692,
+        "Title": "The Five People You Meet In Heaven",
+        "Subtitle": "The global bestseller that has touched millions of hearts",
+        "Narrator": "Blair Singer",
+        "NarratorNames": [
+          "Blair Singer",
+          "Erik Singer",
+          "Mitch Albom"
+        ],
+        "DurationSeconds": 16620,
+        "Monitored": 0,
+        "ForeignEditionId": "hc:edition:33242120-audiobook",
+        "Asin": "B0032N2R4Y"
+      },
+      {
+        "Id": 54404,
+        "Title": "The Five People You Meet in Heaven",
+        "Subtitle": null,
+        "Narrator": "Mitch Albom",
+        "NarratorNames": [
+          "Mitch Albom"
+        ],
+        "DurationSeconds": 16620,
+        "Monitored": 1,
+        "ForeignEditionId": "gr:19317446-audiobook",
+        "Asin": "1478927798"
+      }
+    ],
+    "Tags": {
+      "mP4:©nam": [
+        "The Five People You Meet in Heaven (Unabridged)"
+      ],
+      "mP4:©ART": [
+        "Mitch Albom"
+      ],
+      "mP4:©alb": [
+        "The Five People You Meet in Heaven (Unabridged)"
+      ],
+      "mP4:©day": [
+        "2004"
+      ],
+      "mP4:©cmt": [
+        "On his 83rd birthday, Eddie, a lonely war veteran, dies in a tragic accident trying to save a little girl from a falling cart...."
+      ],
+      "mP4:©gen": [
+        "Audiobook"
+      ],
+      "mP4:aART": [
+        "Mitch Albom"
+      ],
+      "title": [
+        "The Five People You Meet in Heaven (Unabridged)"
+      ],
+      "album": [
+        "The Five People You Meet in Heaven (Unabridged)"
+      ],
+      "artist": [
+        "Mitch Albom"
+      ],
+      "albumartist": [
+        "Mitch Albom"
+      ],
+      "composer": [],
+      "publisher": [],
+      "genre": [
+        "Audiobook"
+      ],
+      "date": [
+        "2004"
+      ],
+      "originaldate": [],
+      "narrator": [],
+      "series": [],
+      "isbn": [],
+      "asin": [],
+      "comment": [
+        "On his 83rd birthday, Eddie, a lonely war veteran, dies in a tragic accident trying to save a little girl from a falling cart...."
+      ],
+      "audiblE_ASIN": [],
+      "language": [],
+      "tracknumber": [],
+      "discnumber": [],
+      "totaldiscs": [],
+      "totaltracks": [],
+      "originalyear": []
+    },
+    "Duration": 16687,
+    "ConstructedTags": false
+  },
+  {
+    "Name": "Listen In",
+    "Author": "Matt Dinniman",
+    "Editions": [
+      {
+        "Id": 157416,
+        "Title": "Listen In: A Conversation with Matt Dinniman",
+        "Subtitle": "An Exclusive Interview",
+        "Narrator": "Matt Dinniman",
+        "NarratorNames": [
+          "Matt Dinniman",
+          "The Audible Editors"
+        ],
+        "DurationSeconds": 1260,
+        "Monitored": 1,
+        "ForeignEditionId": "az:B0FS297J89-audiobook",
+        "Asin": "B0FS28CMTV"
+      },
+      {
+        "Id": 106198,
+        "Title": "Listen In: A Conversation with Matt Dinniman: An Exclusive Interview",
+        "Subtitle": null,
+        "Narrator": "Matt Dinniman",
+        "NarratorNames": [
+          "Matt Dinniman"
+        ],
+        "DurationSeconds": 1260,
+        "Monitored": 0,
+        "ForeignEditionId": "gr:242054762-audiobook",
+        "Asin": "B0FS2CNZMS"
+      }
+    ],
+    "Tags": {
+      "TITLE": [
+        "Listen In: A Conversation with Matt Dinniman"
+      ],
+      "ARTIST": [
+        "Matt Dinniman"
+      ],
+      "ALBUMARTIST": [
+        "Matt Dinniman"
+      ]
+    },
+    "Duration": 1260,
+    "ConstructedTags": true
+  },
+  {
+    "Name": "Good to Great",
+    "Author": "Jim Collins",
+    "Editions": [
+      {
+        "Id": 53570,
+        "Title": "Good to Great: Why Some Companies Make the Leap...And Others Don't",
+        "Subtitle": "Why Some Companies Make the Leap...And Others Don't",
+        "Narrator": "Jim Collins",
+        "NarratorNames": [
+          "Jim Collins"
+        ],
+        "DurationSeconds": 0,
+        "Monitored": 1,
+        "ForeignEditionId": "gr:57139731-audiobook",
+        "Asin": "B003VXI5MS"
+      },
+      {
+        "Id": 53573,
+        "Title": "Good to Great",
+        "Subtitle": "Why Some Companies Make the Leap...And Others Don't",
+        "Narrator": "",
+        "NarratorNames": [
+          "Jim Collins"
+        ],
+        "DurationSeconds": 36060,
+        "Monitored": 0,
+        "ForeignEditionId": "gr:13621241-audiobook",
+        "Asin": "0062045873"
+      }
+    ],
+    "Tags": {
+      "mP4:©nam": [
+        "Good to Great: Why Some Companies Make the Leap...And Others Don't (Unabridged)"
+      ],
+      "mP4:©ART": [
+        "Jim Collins"
+      ],
+      "mP4:©alb": [
+        "Good to Great (Unabridged)"
+      ],
+      "mP4:©day": [
+        "2010"
+      ],
+      "mP4:©cmt": [
+        "Over five years, Jim Collins and his research team have analyzed the histories of 28 companies, discovering why some companies make the leap and others don't...."
+      ],
+      "mP4:©gen": [
+        "Audiobook"
+      ],
+      "mP4:©too": [
+        "Lavf57.73.100"
+      ],
+      "mP4:©cpy": [
+        "&#169;2001 Jim Collins;(P)2005 HarperCollins Publishers"
+      ],
+      "mP4:aART": [
+        "Jim Collins"
+      ],
+      "title": [
+        "Good to Great: Why Some Companies Make the Leap...And Others Don't (Unabridged)"
+      ],
+      "album": [
+        "Good to Great (Unabridged)"
+      ],
+      "artist": [
+        "Jim Collins"
+      ],
+      "albumartist": [
+        "Jim Collins"
+      ],
+      "composer": [],
+      "publisher": [],
+      "genre": [
+        "Audiobook"
+      ],
+      "date": [
+        "2010"
+      ],
+      "originaldate": [],
+      "narrator": [],
+      "series": [],
+      "isbn": [],
+      "asin": [],
+      "comment": [
+        "Over five years, Jim Collins and his research team have analyzed the histories of 28 companies, discovering why some companies make the leap and others don't...."
+      ],
+      "audiblE_ASIN": [],
+      "language": [],
+      "tracknumber": [],
+      "discnumber": [],
+      "totaldiscs": [],
+      "totaltracks": [],
+      "originalyear": []
+    },
+    "Duration": 36091,
+    "ConstructedTags": false
+  }
+]

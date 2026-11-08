@@ -5,12 +5,89 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using NLog;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Utilities;
 using NzbDrone.Core.Datastore;
 
 namespace NzbDrone.Core.MediaFiles.BookImport.Services
 {
     public static class BookCoalescingHelper
     {
+        private static int GetDurationMergeToleranceSeconds(int editionDurationSeconds)
+        {
+            // Strict: only merge when duration is a strong signal, but allow minor container rounding.
+            // 0.2% with a floor/ceiling keeps it stable across short/long audiobooks.
+            var tol = (int)Math.Round(editionDurationSeconds * 0.002);
+            if (tol < 60) tol = 60;
+            if (tol > 300) tol = 300;
+            return tol;
+        }
+
+        internal enum RecordingDurationDecision
+        {
+            MergeMultipart,
+            SplitDuplicates,
+            Unmapped
+        }
+
+        internal static RecordingDurationDecision DecideRecordingDurationAction(
+            int? editionDurationSeconds,
+            IReadOnlyList<int?> perFileDurationSeconds,
+            out int toleranceSeconds,
+            out int sumSeconds,
+            out string reason)
+        {
+            toleranceSeconds = 0;
+            sumSeconds = 0;
+            reason = null;
+
+            if (!editionDurationSeconds.HasValue || editionDurationSeconds.Value <= 0)
+            {
+                reason = "NO_EDITION_DURATION";
+                return RecordingDurationDecision.Unmapped;
+            }
+
+            if (perFileDurationSeconds == null ||
+                perFileDurationSeconds.Count == 0 ||
+                perFileDurationSeconds.Any(d => !d.HasValue || d.Value <= 0))
+            {
+                reason = "NO_FILE_DURATION";
+                return RecordingDurationDecision.Unmapped;
+            }
+
+            var edition = editionDurationSeconds.Value;
+            toleranceSeconds = GetDurationMergeToleranceSeconds(edition);
+            var tol = toleranceSeconds;
+            sumSeconds = perFileDurationSeconds.Sum(d => d.Value);
+
+            if (Math.Abs(sumSeconds - edition) <= toleranceSeconds)
+            {
+                return RecordingDurationDecision.MergeMultipart;
+            }
+
+            if (perFileDurationSeconds.All(d => Math.Abs(d.Value - edition) <= tol))
+            {
+                return RecordingDurationDecision.SplitDuplicates;
+            }
+
+            reason = "DURATION_MISMATCH";
+            return RecordingDurationDecision.Unmapped;
+        }
+
+        internal static string BuildPerFileUnitKey(string filePath, string editionTitle, BookMediaType mediaType)
+        {
+            try
+            {
+                // Base on the book-root key, but include the full path to keep copies distinct even
+                // when they live in the same folder (author-root duplicates).
+                var baseKey = BookCoalescingHelper.BuildRootUnitKey(filePath, editionTitle, mediaType);
+                return $"{baseKey}|{BookImportSerializationHelper.NormalizeDirectory(filePath)}".ToLowerInvariant();
+            }
+            catch
+            {
+                return filePath ?? string.Empty;
+            }
+        }
+
         public static (bool Coalesced, List<(string Path, Dictionary<string, List<string>> Tags)> ExtraFiles, string DestUnitKey)
             Coalesce(Author author,
                      string authorPrefix,
@@ -268,9 +345,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 // This is safe because it's exact containment, not reverse
                 if (!string.IsNullOrWhiteSpace(editionTitle))
                 {
-                    var normTitle = NormalizeTokensForCompare(editionTitle);
-                    var unitName = NormalizeTokensForCompare(unitNameRaw);
-                    var parentName = NormalizeTokensForCompare(UnitName(parent));
+                    var normTitle = UnicodeComparisonNormalizer.NormalizeWords(editionTitle);
+                    var unitName = UnicodeComparisonNormalizer.NormalizeWords(unitNameRaw);
+                    var parentName = UnicodeComparisonNormalizer.NormalizeWords(UnitName(parent));
 
                     if (!string.IsNullOrWhiteSpace(unitName) && !string.IsNullOrWhiteSpace(normTitle)
                         && unitName.Contains(normTitle, StringComparison.Ordinal))
@@ -355,23 +432,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             return Regex.IsMatch(v, "^(M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3}))$");
         }
 
-        private static string NormalizeTokensForCompare(string s)
-        {
-            if (string.IsNullOrWhiteSpace(s)) return string.Empty;
-            s = s.ToLowerInvariant();
-            var arr = s.ToCharArray();
-            for (int i = 0; i < arr.Length; i++)
-            {
-                var ch = arr[i];
-                if (!(char.IsLetterOrDigit(ch) || char.IsWhiteSpace(ch))) arr[i] = ' ';
-            }
-            var norm = Regex.Replace(new string(arr), "\\s+", " ").Trim();
-            return norm;
-        }
-
         private static List<string> TokenizeName(string s)
         {
-            var norm = NormalizeTokensForCompare(s);
+            var norm = UnicodeComparisonNormalizer.NormalizeWords(s);
             norm = Regex.Replace(norm, "([a-z]+)([0-9]+)", "$1 $2");
             norm = Regex.Replace(norm, "([0-9]+)([a-z]+)", "$1 $2");
             return norm.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();

@@ -11,11 +11,24 @@ namespace NzbDrone.Common.Extensions
 {
     public static class PathExtensions
     {
+        public static List<string> TopmostFolders(this IEnumerable<string> folders)
+        {
+            var result = new List<string>();
+            foreach (var folder in folders.Where(folder => !string.IsNullOrWhiteSpace(folder))
+                .Select(folder => Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)))
+                .Distinct(PathEqualityComparer.Instance).OrderBy(folder => folder.Length))
+            {
+                if (!result.Any(parent => parent.PathEquals(folder) || parent.IsParentPath(folder))) result.Add(folder);
+            }
+            return result;
+        }
+
         private const string APP_CONFIG_FILE = "config.xml";
         private const string DB = "chaptarr.db";
         private const string DB_RESTORE = "chaptarr.restore";
         private const string LOG_DB = "logs.db";
         private const string CACHE_DB = "cache.db";
+        private const string STAGING_DB = "staging.db";
         private const string NLOG_CONFIG_FILE = "nlog.config";
         private const string UPDATE_CLIENT_EXE_NAME = "Chaptarr.Update";
 
@@ -416,6 +429,25 @@ namespace NzbDrone.Common.Extensions
         public static string GetCacheDatabase(this IAppFolderInfo appFolderInfo)
         {
             return Path.Combine(GetAppDataPath(appFolderInfo), CACHE_DB);
+        }
+
+        public static string GetStagingDatabase(this IAppFolderInfo appFolderInfo)
+        {
+            return Path.Combine(GetAppDataPath(appFolderInfo), STAGING_DB);
+        }
+
+        public static string GetScheduledBackupFailure(this IAppFolderInfo appFolderInfo) => Path.Combine(appFolderInfo.AppDataFolder, "backup-scheduled-failure.json");
+
+        public static string GetBackupWorkingFolder(this IAppFolderInfo appFolderInfo) => Path.Combine(appFolderInfo.AppDataFolder, "backup-temp");
+        public static string GetAppDataLockFile(this IAppFolderInfo appFolderInfo) => Path.Combine(appFolderInfo.AppDataFolder, "chaptarr.lock");
+        public static string GetPidFile(this IAppFolderInfo appFolderInfo) => Path.Combine(appFolderInfo.AppDataFolder, "chaptarr.pid");
+        public static string GetUpdateRequiredFile(this IAppFolderInfo appFolderInfo) => Path.Combine(appFolderInfo.AppDataFolder, "update_required");
+        public static string GetXdgConfigFolder(this IAppFolderInfo appFolderInfo) => Path.Combine(appFolderInfo.AppDataFolder, ".config");
+        public static string GetXdgDataFolder(this IAppFolderInfo appFolderInfo) => Path.Combine(appFolderInfo.GetXdgConfigFolder(), "share");
+
+        public static string GetDatabaseRestoreBundle(this IAppFolderInfo appFolderInfo)
+        {
+            return appFolderInfo.GetDatabaseRestore() + ".bundle";
         }
 
         public static string GetNlogConfigPath(this IAppFolderInfo appFolderInfo)

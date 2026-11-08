@@ -4,6 +4,8 @@ namespace NzbDrone.Core.Backup
 {
     public class BackupCommand : Command
     {
+        public override bool SupportsCancellation => true;
+
         public BackupType Type
         {
             get

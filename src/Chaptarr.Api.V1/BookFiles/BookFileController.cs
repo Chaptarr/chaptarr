@@ -14,6 +14,7 @@ using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport.Services;
+using NzbDrone.Core.MediaFiles.BookImport.Manual;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.RootFolders;
@@ -35,6 +36,7 @@ namespace Chaptarr.Api.V1.BookFiles
                                  IHandle<BookFileDeletedEvent>
     {
         private readonly IMediaFileService _mediaFileService;
+        private readonly IManualImportReplacementFiles _deletionPreview;
         private readonly IDeleteMediaFiles _mediaFileDeletionService;
         private readonly IMetadataTagService _metadataTagService;
         private readonly IAuthorService _authorService;
@@ -55,10 +57,12 @@ namespace Chaptarr.Api.V1.BookFiles
                                IBookService bookService,
                                IUpgradableSpecification upgradableSpecification,
                                IRootFolderService rootFolderService,
-                               Logger logger)
+                               Logger logger,
+                               IManualImportReplacementFiles deletionPreview)
             : base(signalRBroadcaster)
         {
             _mediaFileService = mediaFileService;
+            _deletionPreview = deletionPreview;
             _mediaFileDeletionService = mediaFileDeletionService;
             _metadataTagService = metadataTagService;
             _authorService = authorService;
@@ -271,7 +275,14 @@ namespace Chaptarr.Api.V1.BookFiles
         public ActionResult<BookFileResource> SetQuality([FromBody] BookFileResource bookFileResource)
         {
             var bookFile = _mediaFileService.Get(bookFileResource.Id);
-            bookFile.Quality = bookFileResource.Quality;
+            if (bookFileResource.Quality != null)
+            {
+                bookFile.Quality = bookFileResource.Quality;
+            }
+            if (bookFileResource.AudioProductionOverrideSpecified)
+            {
+                bookFile.AudioProductionOverride = bookFileResource.AudioProductionOverride;
+            }
             _mediaFileService.Update(bookFile);
             return Accepted(bookFile.Id);
         }
@@ -287,11 +298,41 @@ namespace Chaptarr.Api.V1.BookFiles
                 {
                     bookFile.Quality = resource.Quality;
                 }
+                if (resource.AudioProductionOverrideSpecified)
+                {
+                    bookFile.AudioProductionOverride = resource.AudioProductionOverride;
+                }
             }
 
             _mediaFileService.Update(bookFiles);
 
             return Accepted(bookFiles.ConvertAll(f => f.ToResource(bookFiles.First().Author, _upgradableSpecification)));
+        }
+
+        [HttpPost("deletepreview")]
+        public BookFileDeletePreviewResource PreviewDeleteBookFiles([FromBody] BookFileDeletePreviewRequest resource)
+        {
+            var ids = resource?.BookFileIds?.Distinct().ToList() ?? new List<int>();
+            var bookIds = resource?.BookIds?.Distinct().ToList() ?? new List<int>();
+            if ((ids.Count == 0) == (bookIds.Count == 0) || ids.Concat(bookIds).Any(id => id <= 0))
+            {
+                throw new BadRequestException("Select book files or books to preview their deletion.");
+            }
+
+            var files = bookIds.Count > 0 ? _mediaFileService.GetFilesByBooks(bookIds) : _mediaFileService.Get(ids);
+            if (bookIds.Count == 0 && files.Count != ids.Count)
+            {
+                throw new NzbDroneClientException(HttpStatusCode.NotFound, "A selected book file no longer exists. Reload the file list.");
+            }
+
+            // Reuse replacement's ownership checks: managed replicas and linked, unshared
+            // sidecars only. This request never changes files or library records.
+            var roots = _rootFolderService.All();
+            return new BookFileDeletePreviewResource
+            {
+                Files = _deletionPreview.DescribeForDeletion(files),
+                HasCalibreFiles = files.Any(file => _rootFolderService.GetBestRootFolder(file.Path, roots)?.IsCalibreLibrary == true)
+            };
         }
 
         [RestDeleteById]

@@ -1,6 +1,5 @@
 .toolbar {
   display: flex;
-  justify-content: space-between;
   flex: 0 0 auto;
   padding: 0 20px;
   height: $toolbarHeight;
@@ -9,8 +8,47 @@
   line-height: 60px;
 }
 
-@media only screen and (max-width: $breakpointSmall) {
+.controls {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-right: 15px;
+
+  /* stylelint-disable-next-line selector-max-universal -- Size the supplied control root. */
+  > * {
+    margin: 0;
+  }
+}
+
+.actions {
+  display: flex;
+  justify-content: space-between;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media only screen and (max-width: $toolbarCompactWidth) {
   .toolbar {
+    flex-direction: column;
     padding: 0 10px;
+    height: auto;
+  }
+
+  .controls {
+    margin-right: 0;
+    padding: 8px 0;
+    min-width: 0;
+    border-bottom: 1px solid var(--borderColor);
+    line-height: normal;
+
+    /* stylelint-disable-next-line selector-max-universal -- Fill the mobile control row. */
+    > * {
+      width: 100%;
+    }
+  }
+
+  .actions {
+    flex: 0 0 auto;
+    min-height: $toolbarHeight;
   }
 }

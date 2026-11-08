@@ -110,6 +110,8 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             private readonly Dictionary<string, CacheEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
 
+            public void MoveFromStaging(IStagingDbContext staging) { }
+
             public int UpsertCalls { get; private set; }
             public string LastExtractionStatus { get; private set; }
 

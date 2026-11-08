@@ -349,6 +349,7 @@ export const actionHandlers = handleThunks({
 
     const commandPayload = {
       name: commandNames.BOOK_SEARCH,
+      monitoredOnly: true,
       bookIds
     };
 

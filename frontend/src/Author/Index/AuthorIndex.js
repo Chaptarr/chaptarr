@@ -384,15 +384,15 @@ class AuthorIndex extends Component {
 
     return (
       <PageContent>
-        <PageToolbar>
-          <PageToolbarSection>
+        <PageToolbar
+          controls={
             <MediaTypeTripleToggle
               selectedMediaType={selectedMediaType}
               onMediaTypeChange={this.onMediaTypeChange}
             />
-
-            <PageToolbarSeparator />
-
+          }
+        >
+          <PageToolbarSection>
             <PageToolbarButton
               label={refreshLabel}
               iconName={icons.REFRESH}

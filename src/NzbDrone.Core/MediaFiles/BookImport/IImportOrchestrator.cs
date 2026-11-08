@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using NzbDrone.Core.Authors;
@@ -11,7 +12,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
     /// </summary>
     public interface IImportOrchestrator
     {
-        Task<OrchestratorImportResult> ProcessFilesAsync(string path, RootFolder rootFolder = null, int? commandId = null, IReadOnlyCollection<string> forceStagePaths = null, FilterFilesType filter = FilterFilesType.Known);
+        Task<OrchestratorImportResult> ProcessFilesAsync(string path, RootFolder rootFolder = null, int? commandId = null, IReadOnlyCollection<string> forceStagePaths = null, FilterFilesType filter = FilterFilesType.Known, Action<List<string>, bool> onFilesEnumerated = null);
     }
 
     /// <summary>
@@ -26,6 +27,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         public List<string> Errors { get; set; } = new List<string>();
         public List<string> ScannedFilePaths { get; set; } = new List<string>();
         public bool CleanupSafe { get; set; }
+        public List<Datastore.ImportResult> StagingResults { get; set; } = new List<Datastore.ImportResult>();
     }
 
     /// <summary>

@@ -1,43 +1,28 @@
 import _ from 'lodash';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
+import DeleteAuthorModalContent from 'Author/Delete/DeleteAuthorModalContent';
 import { bulkDeleteAuthor } from 'Store/Actions/authorIndexActions';
 import createAllAuthorSelector from 'Store/Selectors/createAllAuthorsSelector';
-import DeleteAuthorModalContent from './DeleteAuthorModalContent';
 
 function createMapStateToProps() {
   return createSelector(
     (state, { authorIds }) => authorIds,
     createAllAuthorSelector(),
-    (authorIds, allAuthors) => {
-      const selectedAuthor = _.intersectionWith(allAuthors, authorIds, (s, id) => {
-        return s.id === id;
-      });
-
-      const sortedAuthor = _.orderBy(selectedAuthor, 'sortName');
-      const author = _.map(sortedAuthor, (s) => {
-        return {
-          authorName: s.authorName,
-          path: s.path
-        };
-      });
-
-      return {
-        author
-      };
-    }
+    (state) => state.authorIndex,
+    (authorIds, allAuthors, { isDeleting, deleteError }) => ({
+      authors: _.orderBy(allAuthors.filter((author) => authorIds.includes(author.id)), 'sortName'),
+      isDeleting,
+      deleteError
+    })
   );
 }
 
 function createMapDispatchToProps(dispatch, props) {
   return {
-    onDeleteSelectedPress(deleteFiles) {
-      dispatch(bulkDeleteAuthor({
-        authorIds: props.authorIds,
-        deleteFiles
-      }));
-
-      props.onModalClose();
+    onDeletePress({ readdAuthor, ...options }) {
+      dispatch(bulkDeleteAuthor({ authorIds: props.authorIds, ...options }))
+        .done(() => props.onModalClose());
     }
   };
 }

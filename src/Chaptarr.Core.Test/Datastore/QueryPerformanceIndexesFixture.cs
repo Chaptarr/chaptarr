@@ -16,7 +16,7 @@ using NzbDrone.Core.Messaging.Events;
 namespace Chaptarr.Core.Test.Datastore
 {
     // Runs the real migrations into a fresh database, then checks the plans SQLite picks for
-    // the queries migration 108 was written for. With no ANALYZE statistics, SQLite plans from
+    // the queries migration 129 was written for. With no ANALYZE statistics, SQLite plans from
     // the schema alone, so an empty database plans these queries the same way a full one does.
     [TestFixture]
     public class QueryPerformanceIndexesFixture

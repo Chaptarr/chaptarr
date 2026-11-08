@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using NLog;
 using NzbDrone.Common.Cache;
@@ -36,30 +37,71 @@ namespace NzbDrone.Core.Books
 
         public void SearchForRecentlyAdded(int authorId)
         {
+            var timer = Stopwatch.StartNew();
             var allBooks = _bookService.GetBooksByAuthor(authorId);
-            var searchRequested = allBooks.Where(x => x.AddOptions.SearchForNewBook).ToList();
+            var searchRequested = allBooks
+                .Where(book => book != null && book.Id > 0 && book.AddOptions?.SearchForNewBook == true)
+                .ToList();
 
             if (searchRequested.Any())
             {
-                searchRequested.ForEach(x => x.AddOptions.SearchForNewBook = false);
+                var queued = new List<Book>();
+                var failed = 0;
+                foreach (var book in searchRequested)
+                {
+                    try
+                    {
+                        _commandQueueManager.Push(new BookSearchCommand(new List<int> { book.Id }));
+                        queued.Add(book);
+                    }
+                    catch (Exception e)
+                    {
+                        failed++;
+                        _logger.Warn(e, "Could not queue requested search for book {0}; retaining its search intent", book.Id);
+                    }
+                }
 
-                _bookService.SetAddOptions(searchRequested);
+                // Only accepted searches clear intent; unrelated targets still complete the same batch.
+                if (queued.Any())
+                {
+                    queued.ForEach(book => book.AddOptions.SearchForNewBook = false);
+                    _bookService.SetAddOptions(queued);
+                }
+
+                if (failed > 0)
+                {
+                    _logger.Warn("Could not queue {0} of {1} requested book searches for author {2} after {3} ms",
+                        failed, searchRequested.Count, authorId, timer.ElapsedMilliseconds);
+                }
             }
 
-            var toSearch = searchRequested.Where(x => x.IsMonitoredWithAuthor()).ToList();
+            var requestedBookIds = searchRequested.Select(book => book.Id).ToHashSet();
+            var recentlyAddedIds = _addedBooksCache.Find(authorId.ToString())?.ToHashSet();
+            var automaticallyEligible = recentlyAddedIds == null
+                ? new List<Book>()
+                : allBooks.Where(book => book != null && book.Id > 0 &&
+                                         recentlyAddedIds.Contains(book.Id) &&
+                                         !requestedBookIds.Contains(book.Id) &&
+                                         book.IsMonitoredWithAuthor()).ToList();
 
-            var recentlyAddedIds = _addedBooksCache.Find(authorId.ToString());
-            if (recentlyAddedIds != null)
+            if (automaticallyEligible.Any())
             {
-                toSearch.AddRange(allBooks.Where(x => recentlyAddedIds.Contains(x.Id) && x.IsMonitoredWithAuthor()));
-            }
-
-            if (toSearch.Any())
-            {
-                _commandQueueManager.Push(new BookSearchCommand(toSearch.Select(e => e.Id).ToList()));
+                try
+                {
+                    _commandQueueManager.Push(new BookSearchCommand(automaticallyEligible.Select(book => book.Id).ToList()));
+                }
+                catch (Exception e)
+                {
+                    _addedBooksCache.Set(authorId.ToString(), automaticallyEligible.Select(book => book.Id).ToList());
+                    _logger.Warn(e, "Could not queue the {0}-book automatic search batch for author {1} after {2} ms; retaining cached search intent",
+                        automaticallyEligible.Count, authorId, timer.ElapsedMilliseconds);
+                    return;
+                }
             }
 
             _addedBooksCache.Remove(authorId.ToString());
+            _logger.Debug("Checked {0} requested searches and {1} automatic targets for author {2} in {3} ms",
+                searchRequested.Count, automaticallyEligible.Count, authorId, timer.ElapsedMilliseconds);
         }
 
         public void Handle(BookInfoRefreshedEvent message)

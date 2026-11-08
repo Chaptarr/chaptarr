@@ -9,6 +9,9 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
         private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> CanonicalAliasSources =
             new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
             {
+                ["AUTHOR"] = new[] { "creator_aut", "creator_creator" },
+                ["AUTHORS"] = new[] { "AUTHOR" },
+                ["ALL_AUTHORS"] = new[] { "AUTHOR" },
                 ["TITLE"] = new[] { "ID3v2:TIT2", "MP4:©nam", "XIPH:TITLE", "APE:Title" },
                 ["ALBUM"] = new[] { "ID3v2:TALB", "MP4:©alb", "XIPH:ALBUM", "ASF:WM/AlbumTitle", "APE:Album" },
                 ["ARTIST"] = new[] { "ID3v2:TPE1", "MP4:©ART", "XIPH:ARTIST", "APE:Artist" },
@@ -76,8 +79,8 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 if (pair.Value.Any(candidate =>
                         !string.IsNullOrWhiteSpace(candidate) &&
                         string.Equals(candidate.Trim(), value.Trim(), StringComparison.Ordinal)))
-                    return true;
                 {
+                    return true;
                 }
             }
 

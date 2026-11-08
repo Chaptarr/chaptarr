@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Download;
@@ -18,6 +19,7 @@ namespace NzbDrone.Core.Notifications
 {
     public class NotificationService
         : IHandle<BookGrabbedEvent>,
+          IHandleAsync<ApplicationStartedEvent>,
           IHandle<BookImportedEvent>,
           IHandle<AuthorRenamedEvent>,
           IHandle<AuthorAddedEvent>,
@@ -181,7 +183,7 @@ namespace NzbDrone.Core.Notifications
                     }
 
                     notification.OnGrab(grabMessage);
-                    _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                    RecordSuccessIfComplete(notification);
                 }
                 catch (Exception ex)
                 {
@@ -195,7 +197,7 @@ namespace NzbDrone.Core.Notifications
         {
             if (!message.NewDownload)
             {
-                _logger.Info("Skipping OnReleaseImport for '{0}' (BookId={1}): import was not from a tracked download",
+                _logger.Info("Skipping OnReleaseImport for '{0}' (BookId={1}): import only relinked existing library files",
                     message.Book?.Title ?? "<unknown>",
                     message.Book?.Id ?? 0);
                 return;
@@ -223,17 +225,18 @@ namespace NzbDrone.Core.Notifications
                 OldFiles = message.OldFiles,
             };
 
-            foreach (var notification in _notificationFactory.OnReleaseImportEnabled())
+            var notifications = downloadMessage.OldFiles.Empty()
+                ? _notificationFactory.OnReleaseImportEnabled()
+                : _notificationFactory.OnUpgradeEnabled();
+
+            foreach (var notification in notifications)
             {
                 try
                 {
                     if (ShouldHandleAuthor(notification.Definition, author))
                     {
-                        if (downloadMessage.OldFiles.Empty() || ((NotificationDefinition)notification.Definition).OnUpgrade)
-                        {
-                            notification.OnReleaseImport(downloadMessage);
-                            _notificationStatusService.RecordSuccess(notification.Definition.Id);
-                        }
+                        notification.OnReleaseImport(downloadMessage);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -243,7 +246,7 @@ namespace NzbDrone.Core.Notifications
                 }
             }
 
-            // Some integrations (e.g. Plex, AudioBookShelf) batch work in ProcessQueue
+            // Some integrations (e.g. Plex, Subsonic) batch work in ProcessQueue
             // rather than doing it synchronously in the event handler.
             ProcessQueue();
         }
@@ -257,7 +260,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, message.Author))
                     {
                         notification.OnRename(message.Author, message.RenamedFiles);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -279,7 +282,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, message.Author))
                     {
                         notification.OnAuthorAdded(message.Author);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -304,7 +307,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, message.Book.Author))
                     {
                         notification.OnBookAdded(message.Book);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -326,7 +329,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, deleteMessage.Author))
                     {
                         notification.OnAuthorDelete(deleteMessage);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -339,7 +342,14 @@ namespace NzbDrone.Core.Notifications
 
         public void Handle(BookDeletedEvent message)
         {
-            var deleteMessage = new BookDeleteMessage(message.Book, message.DeleteFiles);
+            // Orphan housekeeping uses the normal book deletion lifecycle, but no
+            // longer has an Author to address notification filters or payloads.
+            if (message.Book?.Author == null)
+            {
+                return;
+            }
+
+            var deleteMessage = new BookDeleteMessage(message.Book, message.DeleteFiles || message.FilesAlreadyDeleted);
 
             foreach (var notification in _notificationFactory.OnBookDeleteEnabled())
             {
@@ -348,7 +358,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, deleteMessage.Book.Author))
                     {
                         notification.OnBookDelete(deleteMessage);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -361,6 +371,11 @@ namespace NzbDrone.Core.Notifications
 
         public void Handle(BookFileDeletedEvent message)
         {
+            if (message.Reason == DeleteMediaFileReason.NoLinkedEpisodes)
+            {
+                return;
+            }
+
             var deleteMessage = new BookFileDeleteMessage();
 
             var book = new List<Book> { message.BookFile.Edition.Book };
@@ -379,7 +394,7 @@ namespace NzbDrone.Core.Notifications
                         if (ShouldHandleAuthor(notification.Definition, message.BookFile.Author))
                         {
                             notification.OnBookFileDelete(deleteMessage);
-                            _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                            RecordSuccessIfComplete(notification);
                         }
                     }
                 }
@@ -409,7 +424,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleHealthFailure(message.HealthCheck, ((NotificationDefinition)notification.Definition).IncludeHealthWarnings))
                     {
                         notification.OnHealthIssue(message.HealthCheck);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -438,7 +453,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, message.TrackedDownload.RemoteBook.Author))
                     {
                         notification.OnDownloadFailure(downloadFailedMessage);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -451,10 +466,20 @@ namespace NzbDrone.Core.Notifications
 
         public void Handle(BookImportIncompleteEvent message)
         {
+            if (message.PersistedHistory != null)
+            {
+                return;
+            }
+
             // TODO: Build out this message so that we can pass on what failed and what was successful
             var downloadMessage = new BookDownloadMessage
             {
-                Message = GetBookIncompleteImportMessage(message.TrackedDownload.DownloadItem.Title)
+                AwaitingImportConfirmation = message.TrackedDownload.AwaitingImportConfirmation,
+                Author = message.TrackedDownload.RemoteBook?.Author,
+                DownloadId = message.TrackedDownload.DownloadItem.DownloadId,
+                Message = message.TrackedDownload.AwaitingImportConfirmation
+                    ? $"{message.TrackedDownload.DownloadItem.Title}: waiting for you to confirm replacement in Manual Import."
+                    : GetBookIncompleteImportMessage(message.TrackedDownload.DownloadItem.Title)
             };
 
             foreach (var notification in _notificationFactory.OnImportFailureEnabled())
@@ -464,7 +489,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, message.TrackedDownload.RemoteBook.Author))
                     {
                         notification.OnImportFailure(downloadMessage);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -494,7 +519,7 @@ namespace NzbDrone.Core.Notifications
                     if (ShouldHandleAuthor(notification.Definition, message.Author))
                     {
                         notification.OnBookRetag(retagMessage);
-                        _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                        RecordSuccessIfComplete(notification);
                     }
                 }
                 catch (Exception ex)
@@ -519,7 +544,7 @@ namespace NzbDrone.Core.Notifications
                 try
                 {
                     notification.OnApplicationUpdate(updateMessage);
-                    _notificationStatusService.RecordSuccess(notification.Definition.Id);
+                    RecordSuccessIfComplete(notification);
                 }
                 catch (Exception ex)
                 {
@@ -549,6 +574,16 @@ namespace NzbDrone.Core.Notifications
             _logger.Debug("Processing notification queues for bulk import completion");
             ProcessQueue();
         }
+
+        private void RecordSuccessIfComplete(INotification notification)
+        {
+            if (!notification.HasPendingQueue)
+            {
+                _notificationStatusService.RecordSuccess(notification.Definition.Id);
+            }
+        }
+
+        public void HandleAsync(ApplicationStartedEvent message) => ProcessQueue();
 
         private void ProcessQueue()
         {

@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Reflection;
+using FluentValidation;
 using Chaptarr.Http.REST;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Core.Configuration;
@@ -15,6 +16,13 @@ namespace Chaptarr.Api.V1.Config
         protected ConfigController(IConfigService configService)
         {
             _configService = configService;
+            SharedValidator.RuleFor(resource => resource).Custom((resource, context) =>
+            {
+                foreach (var error in ConfigValueValidation.Validate(resource, ToResource(_configService)))
+                {
+                    context.AddFailure(error);
+                }
+            });
         }
 
         protected override TResource GetResourceById(int id)

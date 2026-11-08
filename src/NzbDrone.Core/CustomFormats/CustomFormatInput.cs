@@ -13,6 +13,7 @@ namespace NzbDrone.Core.CustomFormats
         public string Filename { get; set; }
         public BookMediaType? MediaType { get; set; }
         public bool IsGraphicAudio { get; set; }
+        public bool? EffectiveAudioProduction { get; set; }
         public string AudioProductionType { get; set; }
         public string Narrator { get; set; }
         public List<string> AudioProductionFields { get; set; } = new List<string>();

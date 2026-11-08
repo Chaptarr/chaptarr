@@ -56,7 +56,7 @@ namespace Chaptarr.Core.Test.Parser
         {
             var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
             var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
-            var subject = new ParsingService(authorService, bookService, null, null, null, LogManager.GetCurrentClassLogger());
+            var subject = new ParsingService(authorService, bookService, null, null, LogManager.GetCurrentClassLogger());
 
             var remoteBook = subject.Map(new ParsedBookInfo { BookTitle = "Still Existing" }, 5, new[] { 10, 20 });
 

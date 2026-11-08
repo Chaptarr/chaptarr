@@ -8,142 +8,86 @@ namespace Chaptarr.Api.V1.Books
 {
     internal static class BookLocalInstanceLookup
     {
-        public static List<Book> FindExistingBooks(IBookService bookService, IProviderAliasService providerAliasService, Book searchBook, BookMediaType mediaType)
+        public static Dictionary<Book, List<Book>> FindExistingBooks(IBookService bookService, IProviderAliasService providerAliasService,
+            IEnumerable<Book> searchBooks, IEnumerable<Book> loadedLocalBooks = null)
         {
-            if (bookService == null || searchBook == null)
+            IEqualityComparer<Book> comparer = ReferenceEqualityComparer.Instance;
+            var books = searchBooks.Distinct(comparer).ToList();
+            var result = books.ToDictionary(book => book, _ => new List<Book>(), comparer);
+            if (bookService == null || books.Count == 0)
             {
-                return new List<Book>();
+                return result;
             }
 
-            var lookups = new (string Provider, string Id)[]
+            var lookups = books.ToDictionary(book => book, book => new (string Scope, string Provider, string Id)[]
             {
-                ("hc", searchBook.HardcoverBookId),
-                ("gr", searchBook.GoodreadsWorkId),
-                ("gr", BookEditionIdentity.GetGoodreadsEditionProviderId(searchBook)),
-                ("ol", searchBook.OpenLibraryWorkId),
-                ("gb", BookEditionIdentity.GetGoogleBooksEditionId(searchBook)),
-                ("az", BookEditionIdentity.GetAsin(searchBook)),
-                ("az", BookEditionIdentity.GetAudibleAsin(searchBook))
-            };
+                ("work", "hc", book.HardcoverBookId),
+                ("work", "gr", book.GoodreadsWorkId),
+                ("edition", "gr", BookEditionIdentity.GetGoodreadsEditionProviderId(book)),
+                ("work", "ol", book.OpenLibraryWorkId),
+                ("edition", "gb", BookEditionIdentity.GetGoogleBooksEditionId(book)),
+                ("edition", "az", BookEditionIdentity.GetAsin(book)),
+                ("edition", "az", BookEditionIdentity.GetAudibleAsin(book))
+            }.Where(key => !string.IsNullOrWhiteSpace(key.Id))
+                .Select(key => (key.Scope, key.Provider, Id: NormalizeLookupId(key.Provider, key.Id)))
+                .Where(key => key.Id != null)
+                .Concat(GetBookProviderAliasLookups(book, providerAliasService)).Distinct().ToList(), comparer);
+            var matches = bookService.FindBookIdsByProviderIds(lookups.Values.SelectMany(keys => keys));
+            var idsByBook = books.ToDictionary(book => book,
+                book => lookups[book].SelectMany(key => matches[key]).ToHashSet(), comparer);
 
-            var results = new List<Book>();
-            var seen = new HashSet<int>();
-
-            if (providerAliasService != null)
+            var ids = idsByBook.Values.SelectMany(values => values).Distinct().ToArray();
+            if (ids.Length == 0)
             {
-                try
-                {
-                    var aliasLookups = GetBookProviderAliasLookups(searchBook);
-                    var aliasBookIds = providerAliasService.FindBookIds("work", aliasLookups)
-                        .Concat(providerAliasService.FindBookIds("edition", aliasLookups))
-                        .Distinct()
-                        .ToList();
-
-                    if (aliasBookIds.Count > 0)
-                    {
-                        foreach (var match in bookService.GetBooks(aliasBookIds).Where(b => b?.MediaType == mediaType))
-                        {
-                            if (match != null && seen.Add(match.Id))
-                            {
-                                results.Add(match);
-                            }
-                        }
-                    }
-                }
-                catch
-                {
-                    // Alias index is an optimization over the legacy provider lookup path; never make search fail because it is unavailable.
-                }
+                return result;
             }
 
-            foreach (var (provider, id) in lookups)
+            var localBooks = (loadedLocalBooks ?? Enumerable.Empty<Book>()).DistinctBy(book => book.Id).ToDictionary(book => book.Id);
+            var missingIds = ids.Where(id => !localBooks.ContainsKey(id)).ToArray();
+            foreach (var book in missingIds.Length > 0 ? bookService.GetBooksForLookup(missingIds) : new List<Book>())
             {
-                if (string.IsNullOrWhiteSpace(id))
-                {
-                    continue;
-                }
-
-                try
-                {
-                    var existing = bookService.FindAllByProviderId(provider, id, mediaType) ?? new List<Book>();
-                    foreach (var match in existing)
-                    {
-                        if (match != null && seen.Add(match.Id))
-                        {
-                            results.Add(match);
-                        }
-                    }
-                }
-                catch
-                {
-                    // Ignore lookup failures; other provider aliases can still identify the local instance.
-                }
+                localBooks[book.Id] = book;
             }
 
-            if (BookEditionIdentity.GetAsin(searchBook) is string asin && !string.IsNullOrEmpty(asin))
+            foreach (var book in books)
             {
-                try
-                {
-                    var existing = bookService.FindAllByProviderId("az", asin, mediaType) ?? new List<Book>();
-                    foreach (var match in existing)
-                    {
-                        if (match != null && seen.Add(match.Id))
-                        {
-                            results.Add(match);
-                        }
-                    }
-                }
-                catch
-                {
-                    // Ignore lookup failures.
-                }
+                result[book] = idsByBook[book].Where(localBooks.ContainsKey).OrderBy(id => id).Select(id => localBooks[id]).ToList();
             }
 
-            return results
-                .OrderBy(b => b.Id)
-                .ToList();
+            return result;
         }
 
-        private static List<string> GetBookProviderAliasLookups(Book searchBook)
+        private static string NormalizeLookupId(string provider, string id)
         {
-            var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            void Add(string id)
+            try
             {
-                if (!string.IsNullOrWhiteSpace(id))
-                {
-                    ids.Add(id.Trim());
-                }
+                return ProviderIdHelper.Canonicalize(id, provider);
+            }
+            catch (InvalidOperationException)
+            {
+                return null;
+            }
+        }
+
+        private static IEnumerable<(string Scope, string Provider, string Id)> GetBookProviderAliasLookups(Book book,
+            IProviderAliasService providerAliasService)
+        {
+            if (providerAliasService == null)
+            {
+                return Enumerable.Empty<(string Scope, string Provider, string Id)>();
             }
 
-            Add(searchBook?.ForeignEditionId);
-            Add(searchBook?.BaseBookId);
-            Add(searchBook?.HardcoverBookId);
-            Add(searchBook?.GoodreadsWorkId);
-            Add(searchBook?.OpenLibraryWorkId);
-            Add(searchBook?.GoogleBooksId);
-            Add(searchBook?.ASIN);
-            Add(searchBook?.AudibleASIN);
-
-            foreach (var id in BookEditionIdentity.GetCanonicalWorkProviderIds(searchBook))
-            {
-                Add(id);
-            }
-
-            foreach (var id in BookEditionIdentity.GetCanonicalEditionProviderIds(searchBook))
-            {
-                Add(id);
-            }
-
-            if (searchBook?.RemoteProviderIds != null)
-            {
-                foreach (var id in searchBook.RemoteProviderIds)
-                {
-                    Add(id);
-                }
-            }
-
-            return ids.ToList();
+            // Work and edition numbers can collide. Preserve the source field's
+            // scope through the shared batch instead of testing each ID in both namespaces.
+            var works = BookEditionIdentity.GetCanonicalWorkProviderIds(book)
+                .Concat(new[] { book.BaseBookId })
+                .Concat(book.RemoteProviderIds ?? Enumerable.Empty<string>());
+            var editions = BookEditionIdentity.GetCanonicalEditionProviderIds(book)
+                .Concat((book.Editions ?? new List<Edition>()).SelectMany(BookEditionIdentity.GetEditionProviderIds));
+            return providerAliasService.NormalizeProviderIds(works)
+                .Select(key => (Scope: "work", key.Provider, Id: $"{key.Provider}:{key.NormalizedProviderId}"))
+                .Concat(providerAliasService.NormalizeProviderIds(editions)
+                    .Select(key => (Scope: "edition", key.Provider, Id: $"{key.Provider}:{key.NormalizedProviderId}")));
         }
     }
 }

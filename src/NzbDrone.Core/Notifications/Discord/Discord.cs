@@ -218,7 +218,7 @@ namespace NzbDrone.Core.Notifications.Discord
                     Color = (int)DiscordColors.Warning
                 }
             };
-            var payload = CreatePayload($"Import Failed: {message.Message}", attachments);
+            var payload = CreatePayload($"{message.ImportStatusTitle}: {message.Message}", attachments);
 
             _proxy.SendPayload(payload, Settings);
         }
@@ -290,7 +290,6 @@ namespace NzbDrone.Core.Notifications.Discord
 
             var payload = new DiscordPayload
             {
-                Username = Settings.Username,
                 Content = message,
                 Embeds = embeds
             };

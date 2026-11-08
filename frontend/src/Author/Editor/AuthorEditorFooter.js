@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
+import { createSelector } from 'reselect';
 import AuthorMonitoringGatePopoverContent from 'AddAuthor/AuthorMonitoringGatePopoverContent';
 import AuthorMonitorNewItemsOptionsPopoverContent from 'AddAuthor/AuthorMonitorNewItemsOptionsPopoverContent';
 import MoveAuthorModal from 'Author/MoveAuthor/MoveAuthorModal';
@@ -23,6 +24,16 @@ import TagsModal from './Tags/TagsModal';
 import styles from './AuthorEditorFooter.css';
 
 const NO_CHANGE = 'noChange';
+
+const makeMapStateToProps = () => createSelector(
+  (state) => state.authors.items,
+  (state, props) => props.authorIds,
+  (authors, authorIds) => {
+    const selected = new Set(authorIds);
+    return { sharedFolder: authors.some((author) => selected.has(author.id) &&
+      author.audiobookFolder && author.audiobookFolder === author.ebookFolder) };
+  }
+);
 
 const mapDispatchToProps = {
   dispatchFetchRootFolders: fetchRootFolders
@@ -147,7 +158,8 @@ class AuthorEditorFooter extends Component {
 
     this.props.onSaveSelected({
       tags,
-      applyTags
+      applyTags,
+      mediaType: this.props.selectedMediaType === 'all' ? null : this.props.selectedMediaType
     });
   };
 
@@ -557,7 +569,7 @@ class AuthorEditorFooter extends Component {
                   isDisabled={!selectedCount || isOrganizingAuthor || isRetaggingAuthor}
                   onPress={this.onTagsPress}
                 >
-                  {translate('SetChaptarrTags')}
+                  {translate('SetChaptarrTagsForFormat', { format: translate(({ audiobook: 'Audiobooks', ebook: 'Ebooks' })[this.props.selectedMediaType] || 'AudiobooksAndEbooks') })}
                 </SpinnerButton>
 
                 <SpinnerButton
@@ -576,6 +588,7 @@ class AuthorEditorFooter extends Component {
         </div>
 
         <TagsModal
+          selectedMediaType={this.props.selectedMediaType}
           isOpen={isTagsModalOpen}
           authorIds={authorIds}
           onApplyTagsPress={this.onApplyTagsPress}
@@ -583,12 +596,14 @@ class AuthorEditorFooter extends Component {
         />
 
         <DeleteAuthorModal
+          selectedMediaType={this.props.selectedMediaType}
           isOpen={isDeleteAuthorModalOpen}
           authorIds={authorIds}
           onModalClose={this.onDeleteAuthorModalClose}
         />
 
         <MoveAuthorModal
+          sharedFolder={this.props.sharedFolder}
           destinationRootFolder={destinationRootFolder}
           isOpen={isConfirmMoveModalOpen}
           onSavePress={this.onSaveRootFolderPress}
@@ -616,6 +631,7 @@ class AuthorEditorFooter extends Component {
 }
 
 AuthorEditorFooter.propTypes = {
+  sharedFolder: PropTypes.bool.isRequired,
   authorIds: PropTypes.arrayOf(PropTypes.number).isRequired,
   selectedCount: PropTypes.number.isRequired,
   isSaving: PropTypes.bool.isRequired,
@@ -632,4 +648,4 @@ AuthorEditorFooter.propTypes = {
   dispatchFetchRootFolders: PropTypes.func.isRequired
 };
 
-export default connect(undefined, mapDispatchToProps)(AuthorEditorFooter);
+export default connect(makeMapStateToProps, mapDispatchToProps)(AuthorEditorFooter);

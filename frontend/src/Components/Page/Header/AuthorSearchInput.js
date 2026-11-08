@@ -39,6 +39,12 @@ class AuthorSearchInput extends Component {
   }
 
   componentWillUnmount() {
+    this.cancelSuggestions();
+  }
+
+  cancelSuggestions() {
+    this.requestSuggestions.cancel();
+    this._requestSeq++;
     if (this._abortRequest) {
       this._abortRequest();
       this._abortRequest = null;
@@ -169,6 +175,7 @@ class AuthorSearchInput extends Component {
   }
 
   reset() {
+    this.cancelSuggestions();
     this.setState({
       value: '',
       suggestions: [],
@@ -184,7 +191,11 @@ class AuthorSearchInput extends Component {
       return;
     }
 
-    this.setState({ value: newValue });
+    this.setState({
+      value: newValue,
+      suggestions: [],
+      loading: newValue.trim().length >= 2
+    });
   };
 
   onKeyDown = (event) => {
@@ -222,6 +233,13 @@ class AuthorSearchInput extends Component {
     const hasExistingItemsSection = suggestions.length || this.state.loading;
     const addNewSectionIndex = hasExistingItemsSection ? 1 : 0;
 
+    if (this.state.loading && highlightedSectionIndex !== addNewSectionIndex) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+      }
+      return;
+    }
+
     if (!suggestions.length || highlightedSectionIndex === addNewSectionIndex) {
       let provider = defaultAddNewProvider;
 
@@ -244,9 +262,6 @@ class AuthorSearchInput extends Component {
       return;
     }
 
-    // If an suggestion is not selected go to the first author,
-    // otherwise go to the selected author.
-
     if (highlightedSuggestionIndex == null) {
       this.goToItem(suggestions[0]);
     } else {
@@ -262,44 +277,16 @@ class AuthorSearchInput extends Component {
   };
 
   onSuggestionsFetchRequested = ({ value }) => {
-    if (!this.state.loading) {
-      this.setState({
-        loading: true
-      });
+    this.cancelSuggestions();
+    const trimmedValue = (value || '').trim();
+    const loading = trimmedValue.length >= 2;
+    this.setState({ suggestions: [], loading });
+    if (loading) {
+      this.requestSuggestions(trimmedValue, this._requestSeq);
     }
-
-    this.requestSuggestions(value);
   };
 
-  requestSuggestions = _.debounce((value) => {
-    if (!this.state.loading) {
-      return;
-    }
-
-    const trimmedValue = (value || '').trim();
-
-    // Avoid expensive searches for empty/very short terms.
-    if (trimmedValue.length < 2) {
-      if (this._abortRequest) {
-        this._abortRequest();
-        this._abortRequest = null;
-      }
-
-      this.setState({
-        suggestions: [],
-        loading: false
-      });
-
-      return;
-    }
-
-    const seq = ++this._requestSeq;
-
-    if (this._abortRequest) {
-      this._abortRequest();
-      this._abortRequest = null;
-    }
-
+  requestSuggestions = _.debounce((trimmedValue, seq) => {
     const { request, abortRequest } = createAjaxRequest({
       url: '/library/search',
       dataType: 'json',
@@ -324,6 +311,7 @@ class AuthorSearchInput extends Component {
           item: {
             type: 'author',
             id: a.id,
+            exactMatch: a.exactMatch === true,
             name: a.name,
             images: a.images || [],
             tags: []
@@ -335,7 +323,9 @@ class AuthorSearchInput extends Component {
           item: {
             type: 'book',
             id: b.id,
+            exactMatch: b.exactMatch === true,
             title: b.title,
+            matchedEditionTitle: b.matchedEditionTitle,
             name: b.title,
             authorId: b.authorId,
             authorName: b.authorName,
@@ -363,7 +353,7 @@ class AuthorSearchInput extends Component {
           matches: [{ key: 'name', value: b.title }],
           arrayIndex: 0
         }))
-      ];
+      ].sort((a, b) => Number(b.item.exactMatch) - Number(a.item.exactMatch));
 
       this.setState({
         suggestions,
@@ -388,6 +378,7 @@ class AuthorSearchInput extends Component {
   }, 250);
 
   onSuggestionsClearRequested = () => {
+    this.cancelSuggestions();
     this.setState({
       suggestions: [],
       loading: false
@@ -405,6 +396,9 @@ class AuthorSearchInput extends Component {
 
       this.props.onGoToAddNewAuthor(this.state.value.trim(), suggestion.provider);
     } else {
+      if (this.state.loading || !this.state.suggestions.includes(suggestion)) {
+        return;
+      }
       this.goToItem(suggestion);
     }
   };

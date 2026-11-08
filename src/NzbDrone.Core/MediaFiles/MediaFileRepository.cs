@@ -1,9 +1,13 @@
+using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 using Dapper;
 using NzbDrone.Common;
+using NzbDrone.Common.EnvironmentInfo;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
@@ -13,6 +17,7 @@ namespace NzbDrone.Core.MediaFiles
     public interface IMediaFileRepository : IBasicRepository<BookFile>
     {
         List<BookFile> GetFilesByAuthor(int authorId);
+        List<BookFile> GetFilePathOwnership(IReadOnlyCollection<int> authorIds, IReadOnlyCollection<string> folders);
         List<BookFile> GetMappedFilePathEvidenceByAuthor(int authorId, string mediaType);
         List<BookFile> GetFilesByBook(int bookId);
         List<BookFile> GetFilesByBooks(List<int> bookIds);
@@ -27,9 +32,8 @@ namespace NzbDrone.Core.MediaFiles
         BookFile GetFileWithPath(string path);
         int InsertManyIgnoreDuplicatePaths(List<BookFile> files);
         void ReplaceMany(List<BookFile> filesToAdd, List<BookFile> filesToDelete);
-        void DeleteFilesByBook(int bookId);
-        void UnlinkFilesByBook(int bookId);
-        void UnlinkFilesByEdition(int editionId);
+        void ReplaceMany(List<BookFile> filesToAdd, List<BookFile> filesToDelete, IDbConnection connection, IDbTransaction transaction);
+        (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, AudioProductionCorrection correction, IDbConnection connection, IDbTransaction transaction);
     }
 
     public class MediaFileRepository : BasicRepository<BookFile>, IMediaFileRepository
@@ -87,6 +91,61 @@ namespace NzbDrone.Core.MediaFiles
             return Query(MappedFilesBuilder().Where<Book>(b => b.AuthorId == authorId));
         }
 
+        public List<BookFile> GetFilePathOwnership(IReadOnlyCollection<int> authorIds, IReadOnlyCollection<string> folders)
+        {
+            // Include replicas even when their primary is elsewhere. SQL scopes the inventory;
+            // callers still use platform path equality before authorizing any physical deletion.
+            if (authorIds.Count == 0 && folders.Count == 0) return new List<BookFile>();
+            if (authorIds.Count == 0 && folders.All(ConversionWorkPath.IsWorkPath))
+            {
+                using var ownershipConnection = _database.OpenConnection();
+                // The ASCII marker is case-insensitive on every supported platform. The partial
+                // index excludes the ordinary library; platform path checks still authorize removal.
+                return ownershipConnection.Query<BookFile>(@"SELECT ""Id"", ""Path"", ""ReplicaPaths"" FROM ""BookFiles""
+                    WHERE LOWER(""Path"") LIKE '%chaptarr-conversions%' OR LOWER(""ReplicaPaths"") LIKE '%chaptarr-conversions%'").ToList();
+            }
+            var postgres = _database.DatabaseType == DatabaseType.PostgreSQL;
+            var authorRows = postgres ? "jsonb_array_elements_text(CAST(@authorIds AS jsonb))" : "json_each(@authorIds)";
+            var folderRows = postgres ? "jsonb_array_elements_text(CAST(@folders AS jsonb))" : "json_each(@folders)";
+            var authorValue = postgres ? "CAST(a.value AS integer)" : "a.value";
+            var scopedFolders = folders.TopmostFolders();
+            var collation = postgres ? "\"C\"" : "BINARY";
+            // Bound primary paths by binary prefix ranges; replicas require their own thin
+            // inventory because their primary may live outside the selected directories.
+            var primary = OsInfo.IsWindows ? @"SELECT ""Id"" FROM ""BookFiles""" : $@"
+                SELECT bf.""Id"" FROM {folderRows} p JOIN ""BookFiles"" bf ON
+                    bf.""Path"" COLLATE {collation} >= (p.value || '/') COLLATE {collation}
+                    AND bf.""Path"" COLLATE {collation} < (p.value || '0') COLLATE {collation}
+                UNION SELECT bf.""Id"" FROM {folderRows} p JOIN ""BookFiles"" bf ON bf.""Path"" = p.value";
+            using var connection = _database.OpenConnection();
+            var files = connection.Query<BookFile, Author, BookFile>(
+                $@"SELECT bf.""Id"", bf.""Path"", bf.""ReplicaPaths"", bf.""CalibreId"", bf.""EditionId"", bf.""Size"",
+                         COALESCE(NULLIF(bf.""MediaType"", ''), CASE b.""MediaType"" WHEN @audio THEN 'audiobook' WHEN @ebook THEN 'ebook' END) AS ""MediaType"",
+                         b.""AuthorId"" AS ""Id"", owner.""Name""
+                  FROM ""BookFiles"" bf
+                  LEFT JOIN ""Editions"" e ON e.""Id"" = bf.""EditionId""
+                  LEFT JOIN ""Books"" b ON b.""Id"" = e.""BookId""
+                  LEFT JOIN ""Authors"" owner ON owner.""Id"" = b.""AuthorId""
+                  WHERE bf.""Id"" IN ({primary}
+                     UNION SELECT bf.""Id"" FROM ""BookFiles"" bf
+                         WHERE bf.""ReplicaPaths"" IS NOT NULL AND bf.""ReplicaPaths"" <> '' AND bf.""ReplicaPaths"" <> '[]'
+                     UNION SELECT bf.""Id"" FROM ""BookFiles"" bf
+                         JOIN ""Editions"" e ON e.""Id"" = bf.""EditionId""
+                         JOIN ""Books"" b ON b.""Id"" = e.""BookId""
+                         WHERE b.""AuthorId"" IN (SELECT {authorValue} FROM {authorRows} a))",
+                (file, author) => { file.Author = author; return file; },
+                new { authorIds = JsonSerializer.Serialize(authorIds), folders = JsonSerializer.Serialize(scopedFolders.Select(folder => folder.TrimEnd(Path.DirectorySeparatorChar))), audio = (int)BookMediaType.Audiobook, ebook = (int)BookMediaType.Ebook },
+                splitOn: "Id").ToList();
+
+            // SQLite lower() cannot reproduce Windows Unicode path equality. Read only
+            // the ownership projection there and let the same platform path rule decide.
+            var selectedAuthors = authorIds.ToHashSet();
+            return files.Where(file => selectedAuthors.Contains(file.Author?.Id ?? 0) ||
+                (file.ReplicaPaths ?? new List<string>()).Append(file.Path)
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Any(path => scopedFolders.Any(folder => folder.PathEquals(path) || folder.IsParentPath(path)))).ToList();
+        }
+
         public List<BookFile> GetMappedFilePathEvidenceByAuthor(int authorId, string mediaType)
         {
             var requestedMediaType = (mediaType ?? "all").Trim().ToLowerInvariant();
@@ -107,7 +166,10 @@ namespace NzbDrone.Core.MediaFiles
 
         public List<BookFile> GetFilesByBook(int bookId)
         {
-            return Query(MappedFilesBuilder().Where<Book>(b => b.Id == bookId));
+            // Keep the joined-book predicate for ownership semantics and add the edition predicate for selectivity.
+            return Query(MappedFilesBuilder()
+                .Where<Edition>(e => e.BookId == bookId)
+                .Where<Book>(b => b.Id == bookId));
         }
 
         public List<BookFile> GetFilesByBooks(List<int> bookIds)
@@ -210,24 +272,62 @@ namespace NzbDrone.Core.MediaFiles
             return builder;
         }
 
-        public void DeleteFilesByBook(int bookId)
+        public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, AudioProductionCorrection correction, IDbConnection connection, IDbTransaction transaction)
         {
-            var fileIds = GetFilesByBook(bookId).Select(x => x.Id).ToList();
-            Delete(x => fileIds.Contains(x.Id));
+            bool? productionOverride = correction switch
+            {
+                AudioProductionCorrection.Standard => false,
+                AudioProductionCorrection.NonStandard => true,
+                AudioProductionCorrection.Unchanged or AudioProductionCorrection.Automatic => null,
+                _ => throw new ArgumentOutOfRangeException(nameof(correction))
+            };
+            var parameters = new { bookId, editionId, productionOverride, mediaType = mediaType.ToString().ToLowerInvariant(),
+                audio = (int)BookMediaType.Audiobook, ebook = (int)BookMediaType.Ebook };
+            const string mediaScope = @"COALESCE(NULLIF(""MediaType"", ''),
+                (SELECT CASE ""MediaType"" WHEN @audio THEN 'audiobook' WHEN @ebook THEN 'ebook' END
+                 FROM ""Books"" WHERE ""Id"" = @bookId)) = @mediaType";
+            // Separate changed-column writes give exact counts, within the caller's transaction.
+            var reclassified = mediaType == BookMediaType.Audiobook && correction != AudioProductionCorrection.Unchanged
+                ? connection.Execute($@"UPDATE ""BookFiles"" SET ""AudioProductionOverride"" = @productionOverride
+                    WHERE ""EditionId"" IN (SELECT ""Id"" FROM ""Editions"" WHERE ""BookId"" = @bookId)
+                        AND {mediaScope}
+                        AND ((@productionOverride IS NULL AND ""AudioProductionOverride"" IS NOT NULL) OR
+                            (@productionOverride IS NOT NULL AND (""AudioProductionOverride"" IS NULL OR ""AudioProductionOverride"" <> @productionOverride)))",
+                    parameters, transaction) : 0;
+            var relinked = editionId.HasValue ? connection.Execute($@"UPDATE ""BookFiles"" SET ""EditionId"" = @editionId
+                WHERE ""EditionId"" IN (SELECT ""Id"" FROM ""Editions"" WHERE ""BookId"" = @bookId)
+                    AND {mediaScope} AND ""EditionId"" <> @editionId", parameters, transaction) : 0;
+            return (relinked, reclassified);
         }
 
-        public void UnlinkFilesByBook(int bookId)
-        {
-            var files = GetFilesByBook(bookId);
-            files.ForEach(x => x.EditionId = 0);
-            SetFields(files, f => f.EditionId);
-        }
+        private static string DescendantPathPredicate(string path, string folder) =>
+            $"substr({path}, 1, length({folder}) + 1) = {folder} || @separator";
 
-        public void UnlinkFilesByEdition(int editionId)
+        private (string Predicate, DynamicParameters Parameters) GetBasePathScope(string path)
         {
-            var files = GetFilesByEdition(editionId);
-            files.ForEach(x => x.EditionId = 0);
-            SetFields(files, f => f.EditionId);
+            if (!OsInfo.IsWindows)
+            {
+                // Keep the indexable filter, then enforce literal platform case: SQLite
+                // LIKE folds ASCII case, unlike Linux paths and PostgreSQL.
+                var prefix = path.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                return (@"""Path"" LIKE @basePattern ESCAPE '!' AND " + DescendantPathPredicate("\"Path\"", "@basePath"), new DynamicParameters(new
+                {
+                    basePath = path.TrimEnd(Path.DirectorySeparatorChar),
+                    separator = Path.DirectorySeparatorChar.ToString(),
+                    basePattern = prefix.Replace("!", "!!").Replace("%", "!%").Replace("_", "!_") + "%"
+                }));
+            }
+
+            // Neither engine reproduces Windows ordinal Unicode path comparison. Filter
+            // a thin identity projection, then fetch only matching rows, without tag JSON.
+            using var connection = _database.OpenConnection();
+            var ids = connection.Query<BookFile>(@"SELECT ""Id"", ""Path"" FROM ""BookFiles""")
+                .Where(file => file.Path.IsNotNullOrWhiteSpace() && path.IsParentPath(file.Path))
+                .Select(file => file.Id).ToArray();
+            var rows = _database.DatabaseType == DatabaseType.PostgreSQL
+                ? "SELECT CAST(value AS integer) FROM jsonb_array_elements_text(CAST(@pathIds AS jsonb))"
+                : "SELECT value FROM json_each(@pathIds)";
+            return ($"\"Id\" IN ({rows})", new DynamicParameters(new { pathIds = JsonSerializer.Serialize(ids) }));
         }
 
         public List<BookFile> GetFilesWithBasePath(string path)
@@ -237,9 +337,10 @@ namespace NzbDrone.Core.MediaFiles
 
         public List<BookFile> GetFilesWithBasePath(string path, string mediaType)
         {
-            // ensure path ends with a single trailing path separator to avoid matching partial paths
-            var safePath = path.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            var builder = new SqlBuilder(_database.DatabaseType).Where<BookFile>(x => x.Path.StartsWith(safePath));
+            if (string.IsNullOrWhiteSpace(path)) return new List<BookFile>();
+            var scope = GetBasePathScope(path);
+            var builder = new SqlBuilder(_database.DatabaseType)
+                .Where(scope.Predicate, scope.Parameters);
             
             // Add MediaType filtering to prevent cross-contamination between audiobooks and ebooks
             if (!string.IsNullOrEmpty(mediaType))
@@ -259,25 +360,15 @@ namespace NzbDrone.Core.MediaFiles
 
             // Stage filtering only needs identity, path, size, and mtime. Avoid loading tag/media-info JSON for
             // every tracked file in a root folder during rescans.
-            var safePath = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            var likePath = safePath + "%";
-
-            using var conn = _database.OpenConnection();
-            if (string.IsNullOrWhiteSpace(mediaType))
-            {
-                return conn.Query<BookFile>(
-                    @"SELECT ""Id"", ""Path"", ""Size"", ""Modified"", ""EditionId"", ""MediaType""
-                      FROM ""BookFiles""
-                      WHERE ""Path"" LIKE @likePath;",
-                    new { likePath }).ToList();
-            }
-
-            return conn.Query<BookFile>(
-                @"SELECT ""Id"", ""Path"", ""Size"", ""Modified"", ""EditionId"", ""MediaType""
+            var scope = GetBasePathScope(path);
+            scope.Parameters.Add("mediaType", mediaType);
+            var mediaClause = string.IsNullOrWhiteSpace(mediaType) ? string.Empty : @" AND ""MediaType"" = @mediaType";
+            using var connection = _database.OpenConnection();
+            return connection.Query<BookFile>(
+                @"SELECT ""Id"", ""Path"", ""Size"", ""Modified"", ""EditionId"", ""MediaType"",
+                         CASE WHEN substr(""MatchDetails"", 1, 13) = 'APPLY_FAILED:' THEN 'APPLY_FAILED:' ELSE NULL END AS ""MatchDetails""
                   FROM ""BookFiles""
-                  WHERE ""Path"" LIKE @likePath
-                    AND ""MediaType"" = @mediaType;",
-                new { likePath, mediaType }).ToList();
+                  WHERE " + scope.Predicate + mediaClause, scope.Parameters).ToList();
         }
 
         public HashSet<string> GetReplicaPathsWithBasePath(string path)
@@ -290,20 +381,18 @@ namespace NzbDrone.Core.MediaFiles
             }
 
             // Only consider replicas for ebook files; replicas are stored as JSON arrays in a text column.
-            var safePath = path.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            var likePath = safePath + "%";
-
             try
             {
+                var scope = GetBasePathScope(path);
                 using var conn = _database.OpenConnection();
                 var rows = conn.Query<string>(
                     @"SELECT ""ReplicaPaths""
                       FROM ""BookFiles""
-                      WHERE ""Path"" LIKE @likePath
+                      WHERE " + scope.Predicate + @"
                         AND ""MediaType"" = 'ebook'
                         AND ""ReplicaPaths"" IS NOT NULL
                         AND ""ReplicaPaths"" != '[]';",
-                    new { likePath }).ToList();
+                    scope.Parameters).ToList();
 
                 foreach (var json in rows)
                 {
@@ -450,24 +539,14 @@ namespace NzbDrone.Core.MediaFiles
             filesToAdd ??= new List<BookFile>();
             filesToDelete ??= new List<BookFile>();
 
-            if (filesToAdd.Any(file => file == null || file.Id != 0))
-            {
-                throw new System.InvalidOperationException("Replacement inserts require new BookFile rows with Id 0");
-            }
-
-            var deletedIds = filesToDelete
-                .Where(file => file?.Id > 0)
-                .Select(file => file.Id)
-                .Distinct()
-                .ToList();
+            var newFiles = filesToAdd.Where(file => file?.Id == 0).ToList();
 
             using var conn = _database.OpenConnection();
             using var transaction = conn.BeginTransaction();
 
             try
             {
-                DeleteMany(deletedIds, conn, transaction);
-                InsertMany(filesToAdd, conn, transaction);
+                ReplaceMany(filesToAdd, filesToDelete, conn, transaction);
                 transaction.Commit();
             }
             catch
@@ -483,13 +562,42 @@ namespace NzbDrone.Core.MediaFiles
 
                 // InsertMany assigns generated IDs before the caller commits. A rolled-back
                 // replacement must remain retryable as a set of new rows.
-                foreach (var file in filesToAdd)
+                foreach (var file in newFiles)
                 {
                     file.Id = 0;
                 }
 
                 throw;
             }
+        }
+
+        public void ReplaceMany(List<BookFile> filesToAdd, List<BookFile> filesToDelete, IDbConnection connection, IDbTransaction transaction)
+        {
+            filesToAdd ??= new List<BookFile>();
+            filesToDelete ??= new List<BookFile>();
+
+            if (filesToAdd.Any(file => file == null || file.Id < 0))
+            {
+                throw new System.InvalidOperationException("Replacement requires valid BookFile rows");
+            }
+
+            var newFiles = filesToAdd.Where(file => file.Id == 0).ToList();
+            var updatedFiles = filesToAdd.Where(file => file.Id > 0).ToList();
+
+            var deletedIds = filesToDelete
+                .Where(file => file?.Id > 0)
+                .Select(file => file.Id)
+                .Distinct()
+                .ToList();
+
+            if (updatedFiles.Any(file => deletedIds.Contains(file.Id)))
+            {
+                throw new System.InvalidOperationException("A replacement cannot delete and update the same BookFile row");
+            }
+
+            DeleteMany(deletedIds, connection, transaction);
+            UpdateMany(updatedFiles, connection, transaction);
+            InsertMany(newFiles, connection, transaction);
         }
 
         private BookFile MapTrack(BookFile file, Edition book)

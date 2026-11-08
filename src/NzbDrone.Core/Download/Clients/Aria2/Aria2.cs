@@ -13,11 +13,13 @@ using NzbDrone.Core.MediaFiles.TorrentInfo;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
 using NzbDrone.Core.Validation;
+using NzbDrone.Core.RootFolders;
 
 namespace NzbDrone.Core.Download.Clients.Aria2
 {
     public class Aria2 : TorrentClientBase<Aria2Settings>
     {
+        private readonly IRootFolderService _rootFolders;
         private readonly IAria2Proxy _proxy;
 
         public override string Name => "Aria2";
@@ -29,9 +31,11 @@ namespace NzbDrone.Core.Download.Clients.Aria2
                         IDiskProvider diskProvider,
                         IRemotePathMappingService remotePathMappingService,
                         IBlocklistService blocklistService,
-                        Logger logger)
+                        Logger logger,
+                        IRootFolderService rootFolders)
             : base(torrentFileInfoReader, httpClient, configService, diskProvider, remotePathMappingService, blocklistService, logger)
         {
+            _rootFolders = rootFolders;
             _proxy = proxy;
         }
 
@@ -153,6 +157,8 @@ namespace NzbDrone.Core.Download.Clients.Aria2
 
         public override void RemoveItem(DownloadClientItem item, bool deleteData)
         {
+            if (deleteData) EnsureCanDeleteItemData(item, _rootFolders);
+
             // Aria2 doesn't support file deletion: https://github.com/aria2/aria2/issues/728
             var hash = item.DownloadId.ToLower();
             var aria2Item = _proxy.GetTorrents(Settings).FirstOrDefault(t => t.InfoHash?.ToLower() == hash);

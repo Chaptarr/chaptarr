@@ -1,158 +1,72 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using NUnit.Framework;
-using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.History;
 using NzbDrone.Core.Messaging.Events;
-using NzbDrone.Core.Parser.Model;
-using NzbDrone.Core.Qualities;
+using static Chaptarr.Core.Test.Common.InterfaceProxy;
 
 namespace Chaptarr.Core.Test.Download
 {
-    /// <summary>
-    /// The overload completed-download handling uses to fail a download for a reason Chaptarr
-    /// determined itself. What matters is that it emits the same <see cref="DownloadFailedEvent"/>
-    /// every other failure path emits — that event is what drives blocklisting (BlocklistService),
-    /// the replacement search (RedownloadFailedDownloadService) and client cleanup (DownloadEventHub).
-    /// </summary>
     [TestFixture]
     public class FailedDownloadServiceMarkAsFailedFixture
     {
-        private RecordingEventAggregator _eventAggregator;
-        private HistoryServiceProxy _historyProxy;
-        private FailedDownloadService _subject;
-
-        [SetUp]
-        public void SetUp()
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void manual_failure_keeps_client_data_and_honours_search_choice(bool fromHistory, bool skipSearch)
         {
-            _eventAggregator = new RecordingEventAggregator();
-
-            var historyService = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
-            _historyProxy = (HistoryServiceProxy)(object)historyService;
-
-            _subject = new FailedDownloadService(
-                historyService,
-                DispatchProxy.Create<ITrackedDownloadService, ThrowingTrackedDownloadService>(),
-                _eventAggregator);
-        }
-
-        [Test]
-        public void should_publish_download_failed_event_with_the_grabbed_books_and_reason()
-        {
-            _historyProxy.GrabbedItems = new List<EntityHistory>
-            {
-                BuildGrab(bookId: 901),
-                BuildGrab(bookId: 902)
-            };
-
-            var trackedDownload = BuildTrackedDownload();
-
-            _subject.MarkAsFailed(trackedDownload, "No file in this download is in a format allowed by the quality profile (MOBI)");
-
-            var failed = _eventAggregator.Events.OfType<DownloadFailedEvent>().SingleOrDefault();
-
-            Assert.That(failed, Is.Not.Null, "blocklisting and the replacement search both hang off this event");
-            Assert.That(failed.DownloadId, Is.EqualTo("learn-my-lesson"));
-            Assert.That(failed.BookIds, Is.EquivalentTo(new[] { 901, 902 }));
+            var grabbed = new List<EntityHistory> { Grab(901), Grab(902) };
+            var events = new List<DownloadFailedEvent>();
+            var tracked = new TrackedDownload();
+            var subject = Subject(grabbed, events, tracked);
+            if (fromHistory) subject.MarkAsFailed(1, skipSearch);
+            else subject.MarkAsFailed("download-id", skipSearch);
+            var failed = events.Single();
+            Assert.That(failed.DownloadId, Is.EqualTo("download-id"));
             Assert.That(failed.AuthorId, Is.EqualTo(7));
-            Assert.That(failed.SourceTitle, Is.EqualTo("Learn My Lesson [mobi]"));
-            Assert.That(failed.Message, Does.Contain("MOBI"));
-            Assert.That(failed.SkipRedownload, Is.False, "a replacement search should be allowed to run");
-            Assert.That(trackedDownload.State, Is.EqualTo(TrackedDownloadState.DownloadFailed));
+            Assert.That(failed.BookIds, Is.EquivalentTo(new[] { 901, 902 }));
+            Assert.That(failed.SourceTitle, Is.EqualTo("Dune"));
+            Assert.That(failed.SkipRedownload, Is.EqualTo(skipSearch));
+            Assert.That(failed.SkipDownloadClientRemoval, Is.True);
+            Assert.That(failed.TrackedDownload, Is.SameAs(fromHistory ? null : tracked));
         }
 
         [Test]
-        public void should_honour_skip_redownload()
+        public void history_without_download_id_still_keeps_data()
         {
-            _historyProxy.GrabbedItems = new List<EntityHistory> { BuildGrab(bookId: 901) };
-
-            _subject.MarkAsFailed(BuildTrackedDownload(), "reason", skipRedownload: true);
-
-            var failed = _eventAggregator.Events.OfType<DownloadFailedEvent>().Single();
-
-            Assert.That(failed.SkipRedownload, Is.True);
+            var grabbed = new List<EntityHistory> { Grab(901) };
+            grabbed[0].DownloadId = null;
+            var events = new List<DownloadFailedEvent>();
+            Subject(grabbed, events, null).MarkAsFailed(1);
+            Assert.That(events.Single().SkipDownloadClientRemoval, Is.True);
+            Assert.That(events.Single().BookIds, Is.EqualTo(new[] { 901 }));
         }
 
         [Test]
-        public void should_not_fail_a_download_chaptarr_never_grabbed()
+        public void unknown_download_does_not_publish_a_failure()
         {
-            // No grab record means no release to blocklist and no target to search again.
-            _historyProxy.GrabbedItems = new List<EntityHistory>();
-
-            var trackedDownload = BuildTrackedDownload();
-
-            _subject.MarkAsFailed(trackedDownload, "reason");
-
-            Assert.That(_eventAggregator.Events.OfType<DownloadFailedEvent>(), Is.Empty);
-            Assert.That(trackedDownload.State, Is.Not.EqualTo(TrackedDownloadState.DownloadFailed));
-            Assert.That(trackedDownload.StatusMessages, Is.Not.Empty);
+            var events = new List<DownloadFailedEvent>();
+            Subject(new(), events, null).MarkAsFailed("not-grabbed");
+            Assert.That(events, Is.Empty);
         }
 
-        private static EntityHistory BuildGrab(int bookId)
-        {
-            return new EntityHistory
-            {
-                EventType = EntityHistoryEventType.Grabbed,
-                DownloadId = "learn-my-lesson",
-                AuthorId = 7,
-                BookId = bookId,
-                SourceTitle = "Learn My Lesson [mobi]",
-                Date = DateTime.UtcNow.AddMinutes(-10),
-                Quality = new QualityModel(Quality.MOBI),
-                Data = new Dictionary<string, string>()
-            };
-        }
+        private static EntityHistory Grab(int book) => new() {
+            AuthorId = 7, BookId = book, DownloadId = "download-id", SourceTitle = "Dune",
+            EventType = EntityHistoryEventType.Grabbed, Data = new Dictionary<string, string>()
+        };
 
-        private static TrackedDownload BuildTrackedDownload()
-        {
-            return new TrackedDownload
-            {
-                DownloadClient = 1,
-                State = TrackedDownloadState.ImportPending,
-                DownloadItem = new DownloadClientItem
-                {
-                    DownloadId = "learn-my-lesson",
-                    Title = "Learn My Lesson [mobi]"
-                }
-            };
-        }
-
-        private sealed class RecordingEventAggregator : IEventAggregator
-        {
-            public List<IEvent> Events { get; } = new();
-
-            public void PublishEvent<TEvent>(TEvent @event)
-                where TEvent : class, IEvent
-            {
-                Events.Add(@event);
-            }
-        }
-
-        private class HistoryServiceProxy : DispatchProxy
-        {
-            public List<EntityHistory> GrabbedItems { get; set; } = new();
-
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
-            {
-                if (targetMethod?.Name == nameof(IHistoryService.Find))
-                {
-                    return GrabbedItems;
-                }
-
-                throw new NotImplementedException($"Test proxy does not implement IHistoryService.{targetMethod?.Name}");
-            }
-        }
-
-        private class ThrowingTrackedDownloadService : DispatchProxy
-        {
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
-            {
-                throw new NotImplementedException($"MarkAsFailed(TrackedDownload, ...) must not need ITrackedDownloadService.{targetMethod?.Name}");
-            }
-        }
+        private static FailedDownloadService Subject(List<EntityHistory> grabs, List<DownloadFailedEvent> events, TrackedDownload tracked) => new(
+            Proxy<IHistoryService>((method, _) => method.Name switch {
+                nameof(IHistoryService.Get) => grabs[0],
+                nameof(IHistoryService.Find) => grabs,
+                _ => throw new NotSupportedException(method.Name)
+            }),
+            Proxy<ITrackedDownloadService>((method, _) => method.Name == nameof(ITrackedDownloadService.Find)
+                ? tracked : throw new NotSupportedException(method.Name)),
+            Proxy<IEventAggregator>((_, args) => { events.Add((DownloadFailedEvent)args[0]); return null; }));
     }
 }

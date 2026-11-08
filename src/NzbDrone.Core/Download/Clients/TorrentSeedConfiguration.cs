@@ -8,5 +8,6 @@ namespace NzbDrone.Core.Download.Clients
 
         public double? Ratio { get; set; }
         public TimeSpan? SeedTime { get; set; }
+        public bool KeepSeeding { get; set; }
     }
 }

@@ -1,11 +1,16 @@
 using System;
 using System.IO;
+using System.Data;
+using Chaptarr.Core.Test.Common;
+using Npgsql;
 using System.Linq;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using NUnit.Framework;
 using NzbDrone.Core.AuthorStats;
 using NzbDrone.Core.Datastore;
+
+using static Chaptarr.Core.Test.Common.InterfaceProxy;
 
 namespace Chaptarr.Core.Test.AuthorStats
 {
@@ -143,8 +148,83 @@ INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Size"") VALUES
             });
         }
 
+        [TestCase(DatabaseType.SQLite)]
+        [TestCase(DatabaseType.PostgreSQL)]
+        public void statistics_should_use_selected_edition_and_null_fallback_in_one_query(DatabaseType databaseType)
+        {
+            var postgres = databaseType == DatabaseType.PostgreSQL;
+            var pgConnection = Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING");
+            if (postgres && string.IsNullOrWhiteSpace(pgConnection))
+            {
+                Assert.Ignore("Set CHAPTARR_TEST_POSTGRES_CONNECTION_STRING to exercise PostgreSQL statistics");
+            }
+
+            using IDbConnection connection = postgres
+                ? new NpgsqlConnection(pgConnection)
+                : new SqliteConnection("Data Source=:memory:;Pooling=False");
+            connection.Open();
+            var booleanType = postgres ? "BOOLEAN" : "INTEGER";
+            var dateType = postgres ? "TIMESTAMP" : "TEXT";
+            connection.Execute($@"
+                CREATE TEMP TABLE ""Authors"" (""Id"" INTEGER PRIMARY KEY);
+                CREATE TEMP TABLE ""Books"" (
+                    ""Id"" INTEGER PRIMARY KEY, ""AuthorId"" INTEGER, ""MediaType"" INTEGER,
+                    ""AudiobookMonitored"" {booleanType}, ""EbookMonitored"" {booleanType}, ""ReleaseDate"" {dateType});
+                CREATE TEMP TABLE ""Editions"" (
+                    ""Id"" INTEGER PRIMARY KEY, ""BookId"" INTEGER, ""Monitored"" {booleanType}, ""ReleaseDate"" {dateType});
+                CREATE UNIQUE INDEX ""IX_Editions_OneMonitoredPerBook"" ON ""Editions"" (""BookId"") WHERE ""Monitored"" = TRUE;
+                CREATE TEMP TABLE ""BookFiles"" (""Id"" INTEGER PRIMARY KEY, ""EditionId"" INTEGER, ""Size"" BIGINT);
+                INSERT INTO ""Authors"" VALUES (1), (2);
+                INSERT INTO ""Books"" VALUES
+                    (1, 1, 0, TRUE, FALSE, '2099-01-01'),
+                    (2, 1, 1, FALSE, TRUE, '2000-01-01'),
+                    (3, 1, 0, TRUE, FALSE, '2099-01-01'),
+                    (4, 1, 1, FALSE, TRUE, NULL),
+                    (5, 1, 0, TRUE, FALSE, '2000-01-01'),
+                    (6, 1, 0, TRUE, FALSE, '2099-01-01'),
+                    (7, 2, 0, FALSE, FALSE, NULL);
+                INSERT INTO ""Editions"" VALUES
+                    (10, 1, TRUE, '2000-01-01'), (11, 1, FALSE, '2099-01-01'),
+                    (20, 2, TRUE, NULL), (21, 2, FALSE, '2099-01-01'),
+                    (30, 3, FALSE, '2000-01-01'),
+                    (50, 5, TRUE, '2099-01-01'), (51, 5, FALSE, '2000-01-01'),
+                    (60, 6, TRUE, '2099-01-01'), (61, 6, FALSE, NULL);
+                INSERT INTO ""BookFiles"" VALUES (1, 60, 10), (2, 61, 20);");
+
+            // Keep session-local tables alive across repository calls on both engines.
+            var lease = Proxy<IDbConnection>((method, args) =>
+                method.Name == nameof(IDisposable.Dispose) ? null : method.Invoke(connection, args));
+            var commandCount = 0;
+            var observed = CommandObserver.Wrap(lease, _ => commandCount++);
+            var database = Proxy<IMainDatabase>((method, args) => method.Name switch
+            {
+                nameof(IMainDatabase.OpenConnection) => observed,
+                "get_DatabaseType" => databaseType,
+                _ => throw new NotImplementedException(method.Name)
+            });
+            var repository = new AuthorStatisticsRepository(database);
+            var all = repository.AuthorStatistics().OrderBy(stat => stat.BookId).ToList();
+            var author = repository.AuthorStatistics(1);
+            var audio = repository.AuthorStatistics("audiobook");
+            var authorEbook = repository.AuthorStatistics(1, "ebook");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(commandCount, Is.EqualTo(4), "Each repository call must remain one query");
+                Assert.That(all.Select(stat => stat.BookId), Is.EqualTo(new[] { 1, 2, 3, 4, 5, 6, 7 }));
+                Assert.That(all.Select(stat => stat.BookCount), Is.EqualTo(new[] { 1, 1, 0, 1, 0, 1, 0 }));
+                Assert.That(all.Select(stat => stat.TotalBookCount), Is.EqualTo(new[] { 1, 1, 1, 1, 1, 1, 0 }));
+                Assert.That(all.Select(stat => stat.BookFileCount), Is.EqualTo(new[] { 0, 0, 0, 0, 0, 2, 0 }));
+                Assert.That(all[5].SizeOnDisk, Is.EqualTo(30));
+                Assert.That(all[5].AvailableBookCount, Is.EqualTo(1));
+                Assert.That(author.Select(stat => stat.BookId), Is.EquivalentTo(new[] { 1, 2, 3, 4, 5, 6 }));
+                Assert.That(audio.Select(stat => stat.BookId), Is.EquivalentTo(new[] { 1, 3, 5, 6, 7 }));
+                Assert.That(authorEbook.Select(stat => stat.BookId), Is.EquivalentTo(new[] { 2, 4 }));
+            });
+        }
+
         [Test]
-        public void should_use_the_composite_index_for_each_monitored_edition_release_date_lookup()
+        public void should_use_one_indexed_lookup_for_the_monitored_edition_join()
         {
             WithRepository((repository, connectionString) =>
             {
@@ -157,9 +237,9 @@ INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Size"") VALUES
                     new { currentDate = DateTime.UtcNow }).ToList();
 
                 Assert.That(
-                    plan.Count(row => row.Detail.Contains("IX_Editions_BookId_Monitored_Id")),
-                    Is.EqualTo(2),
-                    "The release-date expression appears twice and both lookups must use the BookId-first composite index");
+                    plan.Count(row => row.Detail.Contains("IX_Editions_BookId_Monitored_Id") || row.Detail.Contains("IX_Editions_OneMonitoredPerBook")),
+                    Is.EqualTo(1),
+                    "The selected-edition join needs one indexed lookup and no duplicate-selection check");
             });
         }
 
@@ -169,7 +249,8 @@ INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Size"") VALUES
             var connectionString = new SqliteConnectionStringBuilder
             {
                 DataSource = databasePath,
-                Mode = SqliteOpenMode.ReadWriteCreate
+                Mode = SqliteOpenMode.ReadWriteCreate,
+                Pooling = false
             }.ToString();
 
             try
@@ -197,6 +278,7 @@ CREATE TABLE ""Editions"" (
     ""Monitored"" INTEGER NOT NULL,
     ""ReleaseDate"" TEXT NULL
 );
+CREATE UNIQUE INDEX ""IX_Editions_OneMonitoredPerBook"" ON ""Editions"" (""BookId"") WHERE ""Monitored"" = TRUE;
 CREATE TABLE ""BookFiles"" (
     ""Id"" INTEGER PRIMARY KEY,
     ""EditionId"" INTEGER NOT NULL,

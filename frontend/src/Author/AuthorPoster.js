@@ -4,10 +4,11 @@ import { createPortal } from 'react-dom';
 import Icon from 'Components/Icon';
 import { icons } from 'Helpers/Props';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
-import AuthorImage from './AuthorImage';
+import getPathWithUrlBase from 'Utilities/getPathWithUrlBase';
+import AuthorImage, { findImage } from './AuthorImage';
 import styles from './AuthorPoster.css';
 
-const defaultPosterPlaceholder = '/Content/Images/chaptarr-logo.svg';
+const defaultPosterPlaceholder = '/Content/Images/author-placeholder-muted.png';
 const sandersonEasterEggImage = `${window.Chaptarr?.urlBase ?? ''}/Content/Images/sanderson-easter-egg.jpg`;
 const brandonSandersonProviderIds = new Set(['hc:204214', 'gr:38550']);
 
@@ -30,6 +31,14 @@ function getImageKey(img) {
   return normalized || url;
 }
 
+function getSavedPhotoKey(authorId) {
+  try {
+    return authorId ? normalizePosterKey(localStorage.getItem(`authorPhotoChoice:${authorId}`)) || null : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function preloadImage(url) {
   return new Promise((resolve, reject) => {
     const image = new Image();
@@ -40,7 +49,7 @@ function preloadImage(url) {
   });
 }
 
-// Helper function to deduplicate poster size variants and pick highest quality
+// Keep one rendition per photo without discarding the backend's local choice.
 function deduplicatePosterImages(images) {
   const posters = images.filter(img => img.coverType === 'poster');
   const byKey = new Map();
@@ -55,7 +64,8 @@ function deduplicatePosterImages(images) {
     const size = match ? parseInt(match[1], 10) : 0; // 0 for original or unknown
     
     const current = byKey.get(key);
-    if (!current || size > current._size) {
+    // Prefer local availability; retain the size preference when availability is equal.
+    if (!current || findImage(size > current._size ? [img, current] : [current, img], 'poster') === img) {
       byKey.set(key, { ...img, _size: size });
     }
   });
@@ -68,97 +78,33 @@ class AuthorPoster extends Component {
   constructor(props) {
     super(props);
     
-    // Initialize from localStorage if available
-    const { authorId, images, selectedPosterHash } = props;
-    const posterImages = deduplicatePosterImages(images);
-    let initialIndex = 0;
-    let hasLocalSelection = false;
-    
-    if (authorId && posterImages.length > 0) {
-      try {
-        const storageKey = `authorPhotoChoice:${authorId}`;
-        const savedToken = localStorage.getItem(storageKey);
-        if (savedToken) {
-          // Backward compatibility: if saved value is a full URL, normalize it to a key
-          const savedKey = (/^https?:|^\//.test(savedToken))
-            ? normalizePosterKey(savedToken)
-            : savedToken;
-          
-          const savedIndex = posterImages.findIndex(img => getImageKey(img) === savedKey);
-          if (savedIndex !== -1) {
-            initialIndex = savedIndex;
-            hasLocalSelection = true;
-          }
-        }
-      } catch (e) {
-        // Ignore localStorage errors
-        console.warn('[AuthorPoster] Failed to load saved photo selection:', e);
-      }
-    }
-
-    if (!hasLocalSelection && selectedPosterHash && posterImages.length > 0) {
-      const hashIndex = posterImages.findIndex(img => img.hash === selectedPosterHash);
-      if (hashIndex !== -1) {
-        initialIndex = hashIndex;
-      }
-    }
-    
     this.state = {
-      currentPhotoIndex: initialIndex,
-      pendingPhotoIndex: null,     // Photo being loaded
+      selectedPhotoKey: getSavedPhotoKey(props.authorId),
       isHovering: false,
       isLoading: false,
-      failedIndices: new Set(),    // Track failed photos this session
+      failedPhotoKeys: new Set(),
       loadedPhotoUrls: {},         // Unique local URLs returned by on-demand loads
       showSandersonOverlay: false
     };
     
     this.requestSeq = 0;  // Guard against race conditions
-    this.hasLocalSelection = hasLocalSelection;
     this.sandersonOverlayTimer = null;
   }
 
   componentDidUpdate(prevProps) {
-    const { authorId, images, selectedPosterHash } = this.props;
-    if (!authorId) {
-      return;
-    }
-
-    const imagesBecameAvailable = prevProps.images.length === 0 && images.length > 0;
-    const hashChanged = prevProps.selectedPosterHash !== selectedPosterHash;
-
-    if (imagesBecameAvailable && !this.hasLocalSelection) {
-      try {
-        const storageKey = `authorPhotoChoice:${authorId}`;
-        const savedToken = localStorage.getItem(storageKey);
-        if (savedToken) {
-          const savedKey = (/^https?:|^\//.test(savedToken))
-            ? normalizePosterKey(savedToken)
-            : savedToken;
-
-          const posterImages = deduplicatePosterImages(images);
-          const savedIndex = posterImages.findIndex(img => getImageKey(img) === savedKey);
-          if (savedIndex !== -1) {
-            this.hasLocalSelection = true;
-            this.setState({ currentPhotoIndex: savedIndex });
-            return;
-          }
-        }
-      } catch (e) {
-        // Ignore localStorage errors
-      }
-    }
-
-    if ((imagesBecameAvailable || hashChanged) && selectedPosterHash && !this.hasLocalSelection) {
-      const posterImages = deduplicatePosterImages(images);
-      const hashIndex = posterImages.findIndex(img => img.hash === selectedPosterHash);
-      if (hashIndex !== -1 && hashIndex !== this.state.currentPhotoIndex) {
-        this.setState({ currentPhotoIndex: hashIndex });
-      }
+    if (prevProps.authorId !== this.props.authorId) {
+      this.requestSeq++;
+      this.setState({
+        selectedPhotoKey: getSavedPhotoKey(this.props.authorId),
+        failedPhotoKeys: new Set(),
+        loadedPhotoUrls: {},
+        isLoading: false
+      });
     }
   }
 
   componentWillUnmount() {
+    this.requestSeq++;
     if (this.sandersonOverlayTimer) {
       clearTimeout(this.sandersonOverlayTimer);
       this.sandersonOverlayTimer = null;
@@ -168,10 +114,22 @@ class AuthorPoster extends Component {
   //
   // Listeners
 
+  getCurrentPhotoIndex = (posterImages = deduplicatePosterImages(this.props.images)) => {
+    // A saved choice follows the photo, never its position in a refreshed list.
+    // Without an explicit choice, follow the backend's current default.
+    const keyIndex = posterImages.findIndex((img) => getImageKey(img) === this.state.selectedPhotoKey);
+    if (keyIndex !== -1) {
+      return keyIndex;
+    }
+    const hashIndex = posterImages.findIndex((img) => img.hash && img.hash === this.props.selectedPosterHash);
+    return hashIndex === -1 ? Math.max(0, posterImages.indexOf(findImage(posterImages, 'poster'))) : hashIndex;
+  };
+
   getNextValidIndex = (direction) => {
     const { images } = this.props;
     const posterImages = deduplicatePosterImages(images);
-    const { currentPhotoIndex, failedIndices } = this.state;
+    const currentPhotoIndex = this.getCurrentPhotoIndex(posterImages);
+    const { failedPhotoKeys } = this.state;
     
     if (posterImages.length <= 1) return currentPhotoIndex;
     
@@ -179,9 +137,9 @@ class AuthorPoster extends Component {
     const n = posterImages.length;
     let targetIndex = (currentPhotoIndex + step + n) % n;
     
-    // Skip known failed indices
+    // Skip known failed photos even when the API changes their order.
     const seen = new Set();
-    while (failedIndices.has(targetIndex) && !seen.has(targetIndex)) {
+    while (failedPhotoKeys.has(getImageKey(posterImages[targetIndex])) && !seen.has(targetIndex)) {
       seen.add(targetIndex);
       targetIndex = (targetIndex + step + n) % n;
       
@@ -196,7 +154,7 @@ class AuthorPoster extends Component {
 
   onPreviousPhoto = () => {
     const targetIndex = this.getNextValidIndex('previous');
-    if (targetIndex !== this.state.currentPhotoIndex) {
+    if (targetIndex !== this.getCurrentPhotoIndex()) {
       this.onPhotoChange(targetIndex);
     }
   };
@@ -210,9 +168,8 @@ class AuthorPoster extends Component {
   onNextPhoto = () => {
     if (this.isBrandonSandersonTarget()) {
       const { images } = this.props;
-      const { currentPhotoIndex } = this.state;
       const posterImages = deduplicatePosterImages(images);
-      const safePhotoIndex = Math.min(currentPhotoIndex, Math.max(0, posterImages.length - 1));
+      const safePhotoIndex = this.getCurrentPhotoIndex(posterImages);
 
       if (posterImages.length > 0 && safePhotoIndex === posterImages.length - 1) {
         this.showSandersonOverlay();
@@ -221,7 +178,7 @@ class AuthorPoster extends Component {
     }
 
     const targetIndex = this.getNextValidIndex('next');
-    if (targetIndex !== this.state.currentPhotoIndex) {
+    if (targetIndex !== this.getCurrentPhotoIndex()) {
       this.onPhotoChange(targetIndex);
     }
   };
@@ -249,24 +206,45 @@ class AuthorPoster extends Component {
     }, 5000);
   };
 
-  onPhotoChange = async (targetIndex) => {
+  onImageError = (failedUrl) => {
+    const { onError } = this.props;
+    const posterImages = deduplicatePosterImages(this.props.images);
+    const selectedIndex = this.getCurrentPhotoIndex(posterImages);
+    const selectedImage = posterImages[selectedIndex];
+    const imageKey = getImageKey(selectedImage);
+    const displayedUrl = selectedImage && (this.state.loadedPhotoUrls[imageKey] || selectedImage.url);
+
+    if (displayedUrl?.includes('/MediaCover/') && failedUrl?.includes('/MediaCover/')) {
+      this.onPhotoChange(selectedIndex, false);
+    }
+
+    if (onError) {
+      onError();
+    }
+  };
+
+  onPhotoChange = async(targetIndex, persistSelection = true) => {
     const { images, authorId } = this.props;
     const posterImages = deduplicatePosterImages(images);
     const selectedImage = posterImages[targetIndex];
-    
+
     if (!selectedImage || !authorId) return;
-    
+    const imageKey = getImageKey(selectedImage);
+
+    if (!persistSelection && (this.state.isLoading || this.state.failedPhotoKeys.has(imageKey) || !selectedImage.remoteUrl)) {
+      return;
+    }
+
     // Increment request sequence to guard against race conditions
     const seq = ++this.requestSeq;
     
     // Set pending state and show loading spinner
     this.setState({ 
-      pendingPhotoIndex: targetIndex,
       isLoading: true 
     });
     
     try {
-      // Load image on-demand when user selects it
+      // Ensure the photo is local before displaying or selecting it
       const loadResult = await createAjaxRequest({
         url: `/author/${authorId}/loadImage`,
         method: 'POST',
@@ -287,62 +265,68 @@ class AuthorPoster extends Component {
       
       if (loadResult.status === 'success' && loadResult.localPath) {
         // Keep the current photo visible until the replacement is both present
-        // locally and loaded by the browser. Committing the index before this
+        // locally and loaded by the browser. Committing the choice before this
         // point creates a blank frame while the new source is still loading.
-        await preloadImage(loadResult.localPath);
+        const localPathUrl = new URL(getPathWithUrlBase(loadResult.localPath), window.location.origin);
+        if (!persistSelection) {
+          localPathUrl.searchParams.set('v', Date.now().toString());
+        }
+        const localPath = `${localPathUrl.pathname}${localPathUrl.search}${localPathUrl.hash}`;
+        await preloadImage(localPath);
 
-        if (seq !== this.requestSeq) {
+        const currentPosterImages = deduplicatePosterImages(this.props.images);
+        const currentImage = currentPosterImages[this.getCurrentPhotoIndex(currentPosterImages)];
+        if (seq !== this.requestSeq ||
+            !this.props.images.some((img) => getImageKey(img) === imageKey) ||
+            (!persistSelection && getImageKey(currentImage) !== imageKey)) {
           return;
         }
 
-        const imageKey = getImageKey(selectedImage);
-
         this.setState(prevState => {
-          const nextFailedIndices = new Set(prevState.failedIndices);
-          nextFailedIndices.delete(targetIndex);
-          const loadedPhotoUrls = loadResult.localPath ?
-            {
-              ...prevState.loadedPhotoUrls,
-              [imageKey]: loadResult.localPath
-            } :
-            prevState.loadedPhotoUrls;
+          const nextFailedKeys = new Set(prevState.failedPhotoKeys);
+          nextFailedKeys.delete(imageKey);
+          const loadedPhotoUrls = {
+            ...prevState.loadedPhotoUrls,
+            [imageKey]: localPath
+          };
 
           return {
-            currentPhotoIndex: targetIndex,
-            failedIndices: nextFailedIndices,
+            selectedPhotoKey: persistSelection ? imageKey : prevState.selectedPhotoKey,
+            failedPhotoKeys: nextFailedKeys,
             loadedPhotoUrls
           };
         });
-        
-        // Save to localStorage for immediate fallback
-        const storageKey = `authorPhotoChoice:${authorId}`;
-        try {
-          localStorage.setItem(storageKey, imageKey);
-          this.hasLocalSelection = true;
-        } catch (e) {
-          console.warn('[AuthorPoster] Failed to save photo selection to localStorage:', e);
+
+        if (persistSelection) {
+          // Save to localStorage for immediate fallback
+          const storageKey = `authorPhotoChoice:${authorId}`;
+          try {
+            localStorage.setItem(storageKey, imageKey);
+          } catch (e) {
+            console.warn('[AuthorPoster] Failed to save photo selection to localStorage:', e);
+          }
+
+          // Persist the selection to the server
+          try {
+            await createAjaxRequest({
+              url: `/author/${authorId}/primaryPhoto`,
+              method: 'PUT',
+              contentType: 'application/json',
+              data: JSON.stringify({
+                PhotoUrl: selectedImage.remoteUrl || selectedImage.url
+              })
+            }).request;
+            console.log(`[AuthorPoster] Persisted photo selection for author ${authorId}`);
+          } catch (e) {
+            console.warn('[AuthorPoster] Failed to persist photo selection:', e);
+          }
         }
-        
-        // Persist the selection to the server
-        try {
-          await createAjaxRequest({
-            url: `/author/${authorId}/primaryPhoto`,
-            method: 'PUT',
-            contentType: 'application/json',
-            data: JSON.stringify({
-              PhotoUrl: selectedImage.remoteUrl || selectedImage.url
-            })
-          }).request;
-          console.log(`[AuthorPoster] Persisted photo selection for author ${authorId}`);
-        } catch (e) {
-          console.warn('[AuthorPoster] Failed to persist photo selection:', e);
-        }
-      } else if (loadResult.status !== 'pending') {
+      } else if (loadResult.status !== 'pending' || !persistSelection) {
         // Failed to load - mark as failed but stay on current image
         console.warn(`[AuthorPoster] Failed to load image for author ${authorId}:`, loadResult.errorCode);
         
         this.setState(prevState => ({
-          failedIndices: new Set(prevState.failedIndices).add(targetIndex)
+          failedPhotoKeys: new Set(prevState.failedPhotoKeys).add(imageKey)
         }));
         
         // Could show a toast/notification here
@@ -355,14 +339,13 @@ class AuthorPoster extends Component {
       // Check if this is still the latest request
       if (seq === this.requestSeq) {
         this.setState(prevState => ({
-          failedIndices: new Set(prevState.failedIndices).add(targetIndex)
+          failedPhotoKeys: new Set(prevState.failedPhotoKeys).add(imageKey)
         }));
       }
     } finally {
       // Clear loading state if this is still the latest request
       if (seq === this.requestSeq) {
         this.setState({ 
-          pendingPhotoIndex: null,
           isLoading: false 
         });
       }
@@ -392,18 +375,16 @@ class AuthorPoster extends Component {
       placeholder,
       ...otherProps
     } = this.props;
-    const { currentPhotoIndex, isHovering, isLoading, loadedPhotoUrls, showSandersonOverlay } = this.state;
+    const imageProps = { ...otherProps, onError: this.onImageError };
+    const { isHovering, isLoading, loadedPhotoUrls, showSandersonOverlay } = this.state;
     const isSandersonTarget = this.isBrandonSandersonTarget(foreignAuthorId);
     
-    // Filter and deduplicate poster images
-    // The backend sends multiple size variants (poster.jpg, poster-250.jpg, poster-500.jpg)
-    // We need to deduplicate these to show only unique posters
+    // Size variants share one carousel position.
     const posterImages = deduplicatePosterImages(images);
     
     const hasMultiplePhotos = posterImages.length > 1;
     
-    // Ensure currentPhotoIndex is valid after filtering
-    const safePhotoIndex = Math.min(currentPhotoIndex, Math.max(0, posterImages.length - 1));
+    const safePhotoIndex = this.getCurrentPhotoIndex(posterImages);
     
     // Determine if arrows should be shown
     let showArrows = false;
@@ -421,7 +402,7 @@ class AuthorPoster extends Component {
     
     // Create modified images array with only the current photo showing
     let displayImages = images;
-    if (hasMultiplePhotos && posterImages.length > 0) {
+    if (posterImages.length > 0) {
       const selectedPoster = posterImages[safePhotoIndex];
       const selectedLocalUrl = loadedPhotoUrls[getImageKey(selectedPoster)];
       const displayPoster = selectedLocalUrl ?
@@ -456,9 +437,9 @@ class AuthorPoster extends Component {
       >
         <div className={styles.posterImageWrapper}>
           <AuthorImage
-            {...otherProps}
+            {...imageProps}
             images={displayImages}
-            placeholder={placeholder}
+            placeholder={placeholder.startsWith('/Content/') ? getPathWithUrlBase(placeholder) : placeholder}
             size={size}
           />
           
@@ -518,6 +499,7 @@ AuthorPoster.propTypes = {
   size: PropTypes.number.isRequired,
   className: PropTypes.string,
   onPhotoChange: PropTypes.func,
+  onError: PropTypes.func,
   isEditorActive: PropTypes.bool,
   showArrowsOnHover: PropTypes.bool
 };
