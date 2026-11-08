@@ -82,6 +82,14 @@ namespace NzbDrone.Core.Configuration
             });
         }
 
+        public string GetConversionOrphanReviewProgress() => GetValue("ConversionOrphanReviewProgress", string.Empty);
+
+        public void SetConversionOrphanReviewProgress(string value)
+        {
+            if (GetConversionOrphanReviewProgress() != value)
+                SetValue("ConversionOrphanReviewProgress", value);
+        }
+
         public bool IsDefined(string key)
         {
             return _repository.Get(key.ToLower()) != null;
@@ -622,30 +630,6 @@ namespace NzbDrone.Core.Configuration
             GetValueEnum("CertificateValidation", CertificateValidationType.Enabled);
 
         public string ApplicationUrl => GetValue("ApplicationUrl", string.Empty);
-
-        public bool TrustCgnatIpAddresses
-        {
-            get { return GetValueBoolean("TrustCgnatIpAddresses", false); }
-            set { SetValue("TrustCgnatIpAddresses", value); }
-        }
-
-        public bool UseGitHubUpdates
-        {
-            get { return GetValueBoolean("UseGitHubUpdates", false); }
-            set { SetValue("UseGitHubUpdates", value); }
-        }
-
-        public string GitHubOwner
-        {
-            get { return GetValue("GitHubOwner", "chaptarr"); }
-            set { SetValue("GitHubOwner", value); }
-        }
-
-        public string GitHubRepo
-        {
-            get { return GetValue("GitHubRepo", "chaptarr"); }
-            set { SetValue("GitHubRepo", value); }
-        }
 
         private string GetValue(string key)
         {

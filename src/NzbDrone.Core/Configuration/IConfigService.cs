@@ -10,6 +10,8 @@ namespace NzbDrone.Core.Configuration
     public interface IConfigService
     {
         void SaveConfigDictionary(Dictionary<string, object> configValues);
+        string GetConversionOrphanReviewProgress();
+        void SetConversionOrphanReviewProgress(string value);
 
         bool IsDefined(string key);
 
@@ -127,10 +129,5 @@ namespace NzbDrone.Core.Configuration
 
         CertificateValidationType CertificateValidation { get; }
         string ApplicationUrl { get; }
-
-        // GitHub Updates
-        bool UseGitHubUpdates { get; set; }
-        string GitHubOwner { get; set; }
-        string GitHubRepo { get; set; }
     }
 }
