@@ -278,6 +278,13 @@
               "type": "boolean",
               "default": true
             }
+          },
+          {
+            "name": "mediaType",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -430,6 +437,13 @@
             }
           },
           {
+            "name": "mediaType",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "id",
             "in": "path",
             "required": true,
@@ -539,6 +553,14 @@
           },
           {
             "name": "applyToBothFormats",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "deleteOtherAuthorsFiles",
             "in": "query",
             "schema": {
               "type": "boolean",
@@ -994,6 +1016,66 @@
               "text/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorResource"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/author/deletepreview": {
+      "post": {
+        "tags": [
+          "AuthorDeletePreview"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/AuthorEditorResource"
+                  }
+                ]
+              }
+            },
+            "text/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/AuthorEditorResource"
+                  }
+                ]
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/AuthorEditorResource"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorDeletionPreview"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorDeletionPreview"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorDeletionPreview"
                 }
               }
             }
@@ -2873,6 +2955,66 @@
         }
       }
     },
+    "/api/v1/bookfile/deletepreview": {
+      "post": {
+        "tags": [
+          "BookFile"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/BookFileDeletePreviewRequest"
+                  }
+                ]
+              }
+            },
+            "text/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/BookFileDeletePreviewRequest"
+                  }
+                ]
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/BookFileDeletePreviewRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookFileDeletePreviewResource"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookFileDeletePreviewResource"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookFileDeletePreviewResource"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/bookfile/bulk": {
       "delete": {
         "tags": [
@@ -2972,6 +3114,26 @@
           },
           "400": {
             "description": "Bad Request",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResource"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResource"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResource"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
             "content": {
               "text/plain": {
                 "schema": {
@@ -7468,6 +7630,75 @@
         }
       }
     },
+    "/api/v1/manualimport/replacementfiles": {
+      "post": {
+        "tags": [
+          "ManualImport"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ManualImportReplacementRequest"
+                  }
+                ]
+              }
+            },
+            "text/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ManualImportReplacementRequest"
+                  }
+                ]
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ManualImportReplacementRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ManualImportReplacementFile"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ManualImportReplacementFile"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ManualImportReplacementFile"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/matchinglog/preview": {
       "post": {
         "tags": [
@@ -7681,6 +7912,35 @@
         }
       }
     },
+    "/api/v1/config/mediamanagement": {
+      "get": {
+        "tags": [
+          "MediaManagementConfig"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaManagementConfigResource"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaManagementConfigResource"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaManagementConfigResource"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/config/mediamanagement/{id}": {
       "put": {
         "tags": [
@@ -7770,35 +8030,6 @@
             "description": "OK",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MediaManagementConfigResource"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/config/mediamanagement": {
-      "get": {
-        "tags": [
-          "MediaManagementConfig"
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "$ref": "#/components/schemas/MediaManagementConfigResource"
-                }
-              },
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MediaManagementConfigResource"
-                }
-              },
-              "text/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MediaManagementConfigResource"
                 }
@@ -10996,7 +11227,7 @@
         "tags": [
           "Release"
         ],
-        "description": "Requests a stop for an active grouped author search identified by its UUID searchId. The current book finishes; remaining books are not searched. isStopping confirms the request, not completion. The SignalR stream delivers the terminal result. An inactive searchId returns isStopping=false; malformed or missing IDs return 400.",
+        "description": "Requests a stop for an active grouped author search identified by its UUID searchId. Queued work is removed atomically (isRemoved=true); otherwise the current book finishes and remaining books are not searched. isStopping confirms a running stop request, not completion. The SignalR stream delivers the terminal result. An inactive searchId returns isStopping=false; malformed or missing IDs return 400.",
         "parameters": [
           {
             "name": "searchId",
@@ -11111,7 +11342,7 @@
         "tags": [
           "Release"
         ],
-        "description": "GET /api/v1/release returns ReleaseResource[] when bookId, authorId, and searchId are absent; bookId or authorId without searchId returns the flat ReleaseSearchResponse; a UUID searchId with authorId and explicit audiobook/ebook mediaType queues a grouped search and immediately returns an AuthorReleaseSearchResponse acknowledgement. Book results and completion arrive through SignalR; ending the GET does not cancel the search. Other searchId combinations return 400. Per-book AuthorSearchResults SignalR messages use the same grouped envelope. Scoped grabs must echo searchId and searchedBookId alongside bookId, authorId, indexerId and guid.",
+        "description": "GET /api/v1/release with existing=true, authorId and mediaType returns the retained grouped search or null, without querying indexers. Otherwise it returns ReleaseResource[] when bookId, authorId, and searchId are absent; bookId or authorId without searchId returns the flat ReleaseSearchResponse; a UUID searchId with authorId and explicit audiobook/ebook mediaType queues a grouped search and immediately returns an AuthorReleaseSearchResponse acknowledgement. Book results and completion arrive through SignalR; ending the GET does not cancel the search. Other searchId combinations return 400. Per-book AuthorSearchResults SignalR messages use the same grouped envelope. Scoped grabs must echo searchId and searchedBookId alongside bookId, authorId, indexerId and guid.",
         "parameters": [
           {
             "name": "bookId",
@@ -11150,6 +11381,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "existing",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         ],
         "responses": {
@@ -11175,6 +11414,9 @@
                 }
               }
             }
+          },
+          "204": {
+            "description": "No Content"
           },
           "400": {
             "description": "Bad Request",
@@ -13894,6 +14136,65 @@
           },
           "searchForMissingBooks": {
             "type": "boolean"
+          },
+          "awaitingMetadata": {
+            "type": "boolean",
+            "readOnly": true
+          },
+          "initialFormatSyncFailureCount": {
+            "type": "integer",
+            "format": "int32",
+            "readOnly": true
+          },
+          "initialFormatSyncNotBefore": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "readOnly": true
+          },
+          "metadataUnavailable": {
+            "type": "boolean",
+            "readOnly": true
+          },
+          "audiobookSetupPending": {
+            "type": "boolean",
+            "readOnly": true
+          },
+          "ebookSetupPending": {
+            "type": "boolean",
+            "readOnly": true
+          },
+          "audiobookAwaitingMetadata": {
+            "type": "boolean",
+            "readOnly": true
+          },
+          "ebookAwaitingMetadata": {
+            "type": "boolean",
+            "readOnly": true
+          },
+          "audiobookSetupPendingImportId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true,
+            "readOnly": true
+          },
+          "ebookSetupPendingImportId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true,
+            "readOnly": true
+          },
+          "audiobookSetupSearchForMissingBooks": {
+            "type": "boolean",
+            "readOnly": true
+          },
+          "ebookSetupSearchForMissingBooks": {
+            "type": "boolean",
+            "readOnly": true
+          },
+          "independentSearchForMissingBooks": {
+            "type": "boolean",
+            "readOnly": true
           }
         },
         "additionalProperties": false
@@ -13910,6 +14211,10 @@
           },
           "searchForNewBook": {
             "type": "boolean"
+          },
+          "monitorBook": {
+            "type": "boolean",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -14146,6 +14451,108 @@
         ],
         "type": "string"
       },
+      "AuthorDeletionFile": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthorDeletionFolder": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "nullable": true
+          },
+          "deleteContents": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "bookFileCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "otherFiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthorDeletionOtherAuthor": {
+        "type": "object",
+        "properties": {
+          "authorId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "fileCount": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthorDeletionPreview": {
+        "type": "object",
+        "properties": {
+          "recycleBin": {
+            "type": "string",
+            "nullable": true
+          },
+          "folders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuthorDeletionFolder"
+            },
+            "nullable": true
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuthorDeletionFile"
+            },
+            "nullable": true
+          },
+          "otherAuthors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuthorDeletionOtherAuthor"
+            },
+            "nullable": true
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
       "AuthorEditorResource": {
         "type": "object",
         "properties": {
@@ -14237,6 +14644,9 @@
             "type": "boolean"
           },
           "deleteFiles": {
+            "type": "boolean"
+          },
+          "deleteOtherAuthorsFiles": {
             "type": "boolean"
           },
           "mediaType": {
@@ -14436,6 +14846,21 @@
       "AuthorReleaseSearchResponse": {
         "type": "object",
         "properties": {
+          "startedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
           "commandId": {
             "type": "integer",
             "format": "int32",
@@ -14476,6 +14901,9 @@
         "type": "object",
         "properties": {
           "isStopping": {
+            "type": "boolean"
+          },
+          "isRemoved": {
             "type": "boolean"
           }
         },
@@ -14760,6 +15188,14 @@
               }
             ],
             "nullable": true
+          },
+          "initialScanPaths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "readOnly": true
           },
           "ratings": {
             "allOf": [
@@ -15159,6 +15595,44 @@
         },
         "additionalProperties": false
       },
+      "BookFileDeletePreviewRequest": {
+        "type": "object",
+        "properties": {
+          "bookFileIds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "nullable": true
+          },
+          "bookIds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "BookFileDeletePreviewResource": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManualImportReplacementFile"
+            },
+            "nullable": true
+          },
+          "hasCalibreFiles": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "BookFileListResource": {
         "type": "object",
         "properties": {
@@ -15168,6 +15642,10 @@
               "type": "integer",
               "format": "int32"
             },
+            "nullable": true
+          },
+          "audioProductionOverride": {
+            "type": "boolean",
             "nullable": true
           },
           "quality": {
@@ -15208,6 +15686,10 @@
             "type": "string",
             "format": "date-time"
           },
+          "audioProductionOverride": {
+            "type": "boolean",
+            "nullable": true
+          },
           "quality": {
             "allOf": [
               {
@@ -15240,6 +15722,9 @@
           "narrator": {
             "type": "string",
             "nullable": true
+          },
+          "isGraphicAudio": {
+            "type": "boolean"
           },
           "tags": {
             "type": "object",
@@ -15486,6 +15971,14 @@
       "BookReleaseSearchResult": {
         "type": "object",
         "properties": {
+          "indexersQueried": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "indexersFailed": {
+            "type": "integer",
+            "format": "int32"
+          },
           "bookId": {
             "type": "integer",
             "format": "int32"
@@ -15538,6 +16031,15 @@
             "type": "string",
             "nullable": true
           },
+          "seriesLabels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ordered labels for all same-media Goodreads series memberships; submitted changes are ignored.",
+            "nullable": true,
+            "readOnly": true
+          },
           "disambiguation": {
             "type": "string",
             "nullable": true
@@ -15565,6 +16067,12 @@
           "baseBookId": {
             "type": "string",
             "nullable": true
+          },
+          "existingCopy": {
+            "type": "boolean",
+            "description": "An existing copy of this provider edition (on any audiobook row of the same work) was returned unchanged; nothing was changed or searched.",
+            "nullable": true,
+            "readOnly": true
           },
           "hardcoverBookId": {
             "type": "string",
@@ -15618,12 +16126,16 @@
                 "$ref": "#/components/schemas/Ratings"
               }
             ],
-            "nullable": true
+            "description": "Provider metadata; changes submitted to PUT are ignored.",
+            "nullable": true,
+            "readOnly": true
           },
           "releaseDate": {
             "type": "string",
+            "description": "Provider metadata; changes submitted to PUT are ignored.",
             "format": "date-time",
-            "nullable": true
+            "nullable": true,
+            "readOnly": true
           },
           "added": {
             "type": "string",
@@ -15729,12 +16241,28 @@
             },
             "nullable": true
           },
+          "availableNarratorCredits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NarratorResource"
+            },
+            "nullable": true,
+            "readOnly": true
+          },
           "narratorNames": {
             "type": "array",
             "items": {
               "type": "string"
             },
             "nullable": true
+          },
+          "narrators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NarratorResource"
+            },
+            "nullable": true,
+            "readOnly": true
           },
           "duration": {
             "type": "string",
@@ -15743,8 +16271,10 @@
           },
           "durationMinutes": {
             "type": "number",
+            "description": "Provider metadata; changes submitted to PUT are ignored.",
             "format": "double",
-            "nullable": true
+            "nullable": true,
+            "readOnly": true
           },
           "hasFiles": {
             "type": "boolean"
@@ -16075,6 +16605,10 @@
             "readOnly": true
           },
           "isLongRunning": {
+            "type": "boolean",
+            "readOnly": true
+          },
+          "supportsCancellation": {
             "type": "boolean",
             "readOnly": true
           },
@@ -16900,8 +17434,16 @@
             "type": "integer",
             "format": "int32"
           },
-          "monitoredByAnotherAudiobookBook": {
-            "type": "boolean"
+          "existingCopyId": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true,
+            "readOnly": true
+          },
+          "existingCopyMonitored": {
+            "type": "boolean",
+            "nullable": true,
+            "readOnly": true
           },
           "remoteCover": {
             "type": "string",
@@ -16917,6 +17459,14 @@
               "type": "string"
             },
             "nullable": true
+          },
+          "narrators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NarratorResource"
+            },
+            "nullable": true,
+            "readOnly": true
           },
           "durationSeconds": {
             "type": "integer",
@@ -16959,7 +17509,9 @@
           "bookFileRetagged",
           "downloadIgnored",
           "bookFileConverted",
-          "bookFileConversionFailed"
+          "bookFileConversionFailed",
+          "authorsMerged",
+          "authorSplit"
         ],
         "type": "string"
       },
@@ -17300,6 +17852,10 @@
             "format": "int32"
           },
           "bindAddress": {
+            "type": "string",
+            "nullable": true
+          },
+          "allowedHosts": {
             "type": "string",
             "nullable": true
           },
@@ -17708,6 +18264,14 @@
             "type": "boolean",
             "nullable": true
           },
+          "audiobookMonitorListedBooks": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "ebookMonitorListedBooks": {
+            "type": "boolean",
+            "nullable": true
+          },
           "audiobookMonitor": {
             "allOf": [
               {
@@ -18051,6 +18615,10 @@
           "supportsSearch": {
             "type": "boolean"
           },
+          "supportsNarratorMetadata": {
+            "type": "boolean",
+            "nullable": true
+          },
           "protocol": {
             "allOf": [
               {
@@ -18100,6 +18668,9 @@
             "type": "integer",
             "format": "int32"
           },
+          "exactMatch": {
+            "type": "boolean"
+          },
           "name": {
             "type": "string",
             "nullable": true
@@ -18125,7 +18696,14 @@
             "type": "integer",
             "format": "int32"
           },
+          "exactMatch": {
+            "type": "boolean"
+          },
           "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "matchedEditionTitle": {
             "type": "string",
             "nullable": true
           },
@@ -18440,6 +19018,92 @@
         },
         "additionalProperties": false
       },
+      "ManualImportReplacementFile": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "bookId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "path": {
+            "type": "string",
+            "nullable": true
+          },
+          "editionId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "editionTitle": {
+            "type": "string",
+            "nullable": true
+          },
+          "narrator": {
+            "type": "string",
+            "nullable": true
+          },
+          "quality": {
+            "type": "string",
+            "nullable": true
+          },
+          "mediaType": {
+            "type": "string",
+            "nullable": true
+          },
+          "retentionReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "isGraphicAudio": {
+            "type": "boolean"
+          },
+          "audioProductionType": {
+            "type": "string",
+            "nullable": true
+          },
+          "isPermanentDelete": {
+            "type": "boolean"
+          },
+          "associatedPaths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManualImportReplacementRequest": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManualImportReplacementSelection"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManualImportReplacementSelection": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "nullable": true
+          },
+          "bookId": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
       "ManualImportResource": {
         "type": "object",
         "properties": {
@@ -18535,6 +19199,13 @@
             "type": "string",
             "nullable": true
           },
+          "audioProductionOverride": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "isGraphicAudio": {
+            "type": "boolean"
+          },
           "qualityWeight": {
             "type": "integer",
             "format": "int32"
@@ -18574,6 +19245,10 @@
           },
           "additionalFile": {
             "type": "boolean"
+          },
+          "selectByDefault": {
+            "type": "boolean",
+            "nullable": true
           },
           "replaceExistingFiles": {
             "type": "boolean"
@@ -18648,6 +19323,10 @@
           },
           "releaseGroup": {
             "type": "string",
+            "nullable": true
+          },
+          "audioProductionOverride": {
+            "type": "boolean",
             "nullable": true
           },
           "indexerFlags": {
@@ -19652,6 +20331,20 @@
           },
           "hasExistingVariant": {
             "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NarratorResource": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "isCastLabel": {
+            "type": "boolean",
+            "readOnly": true
           }
         },
         "additionalProperties": false
@@ -20885,6 +21578,9 @@
           "upgradeAllowed": {
             "type": "boolean"
           },
+          "confirmAutomaticUpgrades": {
+            "type": "boolean"
+          },
           "preferCustomFormatsOverQuality": {
             "type": "boolean"
           },
@@ -21154,6 +21850,9 @@
           "canRetryImport": {
             "type": "boolean"
           },
+          "awaitingImportConfirmation": {
+            "type": "boolean"
+          },
           "protocol": {
             "allOf": [
               {
@@ -21393,6 +22092,14 @@
           "id": {
             "type": "integer",
             "format": "int32"
+          },
+          "isGrabbed": {
+            "type": "boolean"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
           },
           "guid": {
             "type": "string",
@@ -21651,6 +22358,14 @@
       "ReleaseSearchResponse": {
         "type": "object",
         "properties": {
+          "indexersQueried": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "indexersFailed": {
+            "type": "integer",
+            "format": "int32"
+          },
           "releases": {
             "type": "array",
             "items": {
@@ -22194,6 +22909,10 @@
             "type": "string",
             "nullable": true
           },
+          "publisher": {
+            "type": "string",
+            "nullable": true
+          },
           "isGraphicAudio": {
             "type": "boolean"
           },
@@ -22321,6 +23040,10 @@
             "type": "boolean",
             "readOnly": true
           },
+          "supportsCancellation": {
+            "type": "boolean",
+            "readOnly": true
+          },
           "name": {
             "type": "string",
             "nullable": true,
@@ -22418,6 +23141,12 @@
           "position": {
             "type": "string",
             "nullable": true
+          },
+          "positionOrder": {
+            "type": "number",
+            "description": "Presentation order derived from the original series position.",
+            "format": "double",
+            "readOnly": true
           },
           "seriesPosition": {
             "type": "integer",
@@ -22871,6 +23600,9 @@
       "SettingsBackupRestoreRequest": {
         "type": "object",
         "properties": {
+          "preview": {
+            "type": "boolean"
+          },
           "filePath": {
             "type": "string",
             "nullable": true
@@ -22900,6 +23632,13 @@
       "SettingsBackupRestoreResult": {
         "type": "object",
         "properties": {
+          "wouldRemove": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
           "applied": {
             "type": "array",
             "items": {

@@ -850,7 +850,6 @@
     "IsShowingMonitoredMonitorSelected": "Отслеживание выбрано",
     "SearchForAllMissingBooks": "Искать все недостающие эпизоды",
     "Book": "Книга",
-    "DataExistingBooks": "Отслеживать эпизоды, у которых нет файлов или которые еще не вышли в эфир",
     "LogRotateHelpText": "Максимальное количество сохраняемых файлов в каталоге журналов",
     "ConsoleLogLevel": "Уровень журналирования консоли",
     "Books": "Книга",
