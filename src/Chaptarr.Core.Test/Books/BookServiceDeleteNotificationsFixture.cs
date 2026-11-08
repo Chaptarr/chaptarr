@@ -65,7 +65,7 @@ namespace Chaptarr.Core.Test.Books
                 var files = new MediaFileRepository(database, events);
                 var file = files.Insert(new BookFile
                 {
-                    EditionId = selectedEdition.Id, Path = "/fixture/Author/Book.epub", Quality = new QualityModel(),
+                    EditionId = selectedEdition.Id, Path = @"C:\fixture\Author\Book.epub".AsOsAgnostic(), Quality = new QualityModel(),
                     DateAdded = DateTime.UtcNow, Modified = DateTime.UtcNow, MediaInfo = new MediaInfoModel()
                 });
                 var snapshot = filesAlreadyDeleted ? files.GetFilesByBook(selected.Id) : null;

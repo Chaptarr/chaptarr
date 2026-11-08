@@ -108,7 +108,7 @@ namespace Chaptarr.Core.Test.Backup
         [SetUp]
         public void SetUp()
         {
-            _root = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"backup_coverage_{Guid.NewGuid():N}");
+            _root = Path.Combine(TestContext.CurrentContext.WorkDirectory.GetActualCasing(), $"backup_coverage_{Guid.NewGuid():N}");
             Directory.CreateDirectory(_root);
             _disk.AvailableSpace = null;
             _disk.SpaceForPath = null;

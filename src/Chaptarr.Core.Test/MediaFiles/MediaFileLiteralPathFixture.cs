@@ -70,7 +70,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Assert.That(repository.GetFilesWithBasePath(root, "ebook").Select(file => file.Id), Is.EquivalentTo(ids));
                     Assert.That(repository.GetFileStatsWithBasePath(root).Select(file => file.Id), Is.EquivalentTo(ids));
                     Assert.That(repository.GetFileStatsWithBasePath(root, "ebook").Select(file => file.Id), Is.EquivalentTo(ids));
-                    Assert.That(repository.GetReplicaPathsWithBasePath(root), Is.EquivalentTo(expected.SelectMany(file => file.ReplicaPaths)));
+                    Assert.That(repository.GetReplicaPathsWithBasePath(root), Is.EquivalentTo(expected.SelectMany(file => file.ReplicaPaths).Distinct(NzbDrone.Common.PathEqualityComparer.Instance)));
                     Assert.That(repository.GetFilePathOwnership(Array.Empty<int>(), new[] { root }).Select(file => file.Id), Is.EquivalentTo(ids));
                 });
             });
@@ -133,7 +133,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             DualDatabaseFixture.Run(postgres, db =>
             {
                 var root = Path.Combine(Path.GetTempPath(), "Åsa Larsson");
-                var storedRoot = OperatingSystem.IsWindows() ? root.ToUpperInvariant().Replace('\\', '/') : root;
+                var storedRoot = OperatingSystem.IsWindows() ? root.ToUpperInvariant() : root;
                 var repository = new MediaFileRepository(db, null);
                 var file = repository.Insert(new BookFile
                 {
