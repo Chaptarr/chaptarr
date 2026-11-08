@@ -401,7 +401,7 @@ jobs:
       (
         true
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-jit-linux-22-04","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-platform-runtime-packs"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
     permissions:
       contents: read
@@ -455,7 +455,7 @@ jobs:
       (
         true
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-{1}-standalone-assets"]}}', github.run_id, strategy.job-index)) }}
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:

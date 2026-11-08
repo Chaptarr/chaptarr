@@ -128,6 +128,8 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                 if workflow_path.name == "release-distribution.yml" and line.strip() == "runs-on: windows-2025":
                     self.assertIn("inputs.runner_pool == 'private'", source)
                     continue
+                if workflow_path.name in {"release.yml", "docker-publish.yml"} and line.strip() == "runs-on: ubuntu-24.04":
+                    continue
                 self.assertNotRegex(
                     line,
                     r"runs-on:.*\b(?:ubuntu-latest|ubuntu-[0-9]|windows-latest|macos-[0-9])",
@@ -147,6 +149,18 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                         r"self-hosted|group|fromJSON",
                         f"{workflow_path}: {line}",
                     )
+
+    def test_release_builders_use_public_runners_without_changing_gates(self) -> None:
+        release = (WORKFLOW.parent / "release.yml").read_text(encoding="utf-8")
+        docker = (WORKFLOW.parent / "docker-publish.yml").read_text(encoding="utf-8")
+        for name in ("platform-runtime-packs", "standalone-assets"):
+            job = job_block(release, name)
+            self.assertIn("runs-on: ubuntu-24.04", job, name)
+            self.assertIn("Verify checked-out release source", job, name)
+        for name in ("require-release-readiness", "build-and-push"):
+            self.assertIn("runs-on: ubuntu-24.04", job_block(docker, name), name)
+        self.assertIn("needs: require-release-readiness", job_block(docker, "build-and-push"))
+        self.assertIn("needs: [preflight, release, docker, standalone-assets, rpm-source, windows-migration-installer, legacy-desktop-candidates]", job_block(release, "publish-release"))
 
     def test_bookshelfng_differential_uses_runner_temp_in_step_context(self) -> None:
         path = WORKFLOW.parent / "bookshelfng-api-differential.yml"
