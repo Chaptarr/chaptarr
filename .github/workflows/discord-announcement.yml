@@ -64,7 +64,7 @@ jobs:
       if: inputs.action == 'inspect'
       env:
         DISCORD_RELEASE_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
-      run: node scripts/inspect-discord-destination.mjs
+      run: node scripts/inspect-discord-destination.mjs --require-chaptarrng-guild
 
     - name: Post announcement
       if: inputs.action == 'announce'
