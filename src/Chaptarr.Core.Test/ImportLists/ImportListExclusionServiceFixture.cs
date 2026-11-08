@@ -97,7 +97,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 return new ImportListExclusionService(repository, LogManager.GetCurrentClassLogger());
             }
 
-            private IDbConnection OpenConnection()
+            public IDbConnection OpenConnection()
             {
                 IDbConnection connection = _postgres
                     ? new NpgsqlConnection(_postgresConnectionString)
@@ -130,13 +130,15 @@ namespace Chaptarr.Core.Test.ImportLists
             public List<int> DeletedIds { get; } = new List<int>();
             public int InsertManyCalls { get; private set; }
             public int DeleteManyCalls { get; private set; }
+            public List<string> QueriedIds { get; private set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 switch (targetMethod?.Name)
                 {
-                    case nameof(IImportListExclusionRepository.All):
-                        return Existing;
+                    case nameof(IImportListExclusionRepository.FindByForeignId):
+                        QueriedIds = (List<string>)args[0];
+                        return Existing.Where(row => QueriedIds.Contains(row.ForeignId, StringComparer.OrdinalIgnoreCase)).ToList();
 
                     case nameof(IImportListExclusionRepository.InsertMany):
                         InsertManyCalls++;
@@ -202,6 +204,17 @@ namespace Chaptarr.Core.Test.ImportLists
 
         [TestCase(false)]
         [TestCase(true)]
+        public void repeated_author_exclusion_keeps_legacy_case_and_whitespace_row(bool postgres)
+        {
+            using var database = new DatabaseHarness(postgres);
+            var service = database.CreateService();
+            var row = service.Add(new ImportListExclusion { ForeignId = " GR:58 ", Name = "Frank Herbert", MediaType = BookMediaType.Ebook });
+            service.AddAuthorExclusions(new[] { new Author { Name = "Frank Herbert", GoodreadsAuthorId = "gr:58" } }, BookMediaType.Ebook);
+            Assert.That(service.All().Select(exclusion => exclusion.Id), Is.EqualTo(new[] { row.Id }));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
         public void author_merge_preserves_both_scoped_exclusions_for_the_same_provider_identity(bool postgres)
         {
             using var db = new DatabaseHarness(postgres);
@@ -239,6 +252,7 @@ namespace Chaptarr.Core.Test.ImportLists
             service.AddAuthorExclusions(new[] { author });
 
             Assert.That(repoProxy.InsertManyCalls, Is.EqualTo(1));
+            Assert.That(repoProxy.QueriedIds, Is.EquivalentTo(new[] { "hc:1", "gr:2" }));
             Assert.That(repoProxy.Inserted.Select(e => e.ForeignId), Is.EqualTo(new[] { "hc:1" }));
             Assert.That(repoProxy.Inserted[0].Name, Is.EqualTo("Test Author"));
         }
@@ -256,7 +270,30 @@ namespace Chaptarr.Core.Test.ImportLists
             }));
 
             Assert.That(error.Errors.Single().ErrorCode, Is.EqualTo("AUTHOR_PROVIDER_ID_REQUIRED"));
+            Assert.That(error.Message, Does.Contain("Local-only author (ID 991)"));
             Assert.That(repoProxy.InsertManyCalls, Is.Zero);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void bounded_lookup_keeps_legacy_goodreads_case_and_provider_boundaries(bool postgres)
+        {
+            using var database = new DatabaseHarness(postgres);
+            var service = database.CreateService();
+            service.Add(new ImportListExclusion { ForeignId = "  GR:58 ", Name = "qualified", MediaType = BookMediaType.Audiobook });
+            service.Add(new ImportListExclusion { ForeignId = "58", Name = "legacy", MediaType = BookMediaType.Ebook });
+            service.Add(new ImportListExclusion { ForeignId = "hc:58", Name = "other provider" });
+            using (var connection = database.OpenConnection())
+            using (var transaction = connection.BeginTransaction())
+            {
+                connection.Execute("INSERT INTO \"ImportListExclusions\" (\"ForeignId\", \"Name\") VALUES (@ForeignId, 'unrelated')",
+                    Enumerable.Range(1000, 1000).Select(i => new { ForeignId = $"gr:{i}" }), transaction);
+                transaction.Commit();
+            }
+            var ids = ImportListProviderIdHelper.GetExclusionLookupIds(new[] { "gr:58" });
+            Assert.That(service.FindByForeignId(ids).Select(row => row.Name), Is.EquivalentTo(new[] { "qualified", "legacy" }));
+            Assert.That(service.FindByForeignId(ImportListProviderIdHelper.GetExclusionLookupIds(new[] { "hc:58" })).Select(row => row.Name), Is.EqualTo(new[] { "other provider" }));
+            Assert.That(service.FindByForeignId(new List<string>()), Is.Empty);
         }
 
         [TestCase(false)]

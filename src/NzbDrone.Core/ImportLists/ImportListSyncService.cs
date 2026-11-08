@@ -272,7 +272,7 @@ namespace NzbDrone.Core.ImportLists
             }, CommandPriority.Normal);
         }
 
-        private void AddListedBooksToMonitor(MonitoringConfig config, IEnumerable<ImportListItemInfo> reports)
+        private void AddListedBooksToMonitor(ImportListDefinition importList, MonitoringConfig config, IEnumerable<ImportListItemInfo> reports)
         {
             if (config == null || reports == null)
             {
@@ -280,10 +280,11 @@ namespace NzbDrone.Core.ImportLists
             }
 
             var bookIds = reports.Select(GetBookProviderId).Where(id => id.IsNotNullOrWhiteSpace()).ToList();
-            config.AudiobookBooksToMonitor = config.CreateAudiobook
+            var options = importList.GetMonitoringOptions();
+            config.AudiobookBooksToMonitor = config.CreateAudiobook && options.GetMonitorListedBooks(BookMediaType.Audiobook, importList.ShouldMonitor)
                 ? (config.AudiobookBooksToMonitor ?? Enumerable.Empty<string>()).Concat(bookIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
                 : null;
-            config.EbookBooksToMonitor = config.CreateEbook
+            config.EbookBooksToMonitor = config.CreateEbook && options.GetMonitorListedBooks(BookMediaType.Ebook, importList.ShouldMonitor)
                 ? (config.EbookBooksToMonitor ?? Enumerable.Empty<string>()).Concat(bookIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
                 : null;
         }
@@ -670,7 +671,7 @@ namespace NzbDrone.Core.ImportLists
             }
         }
 
-        private ImportListLocalLookup BuildImportListLocalLookup()
+        private ImportListLocalLookup BuildImportListLocalLookup(IReadOnlySet<int> editionBookIds, int incompleteLookups, Exception lookupError)
         {
             var stopwatch = Stopwatch.StartNew();
             var lookup = new ImportListLocalLookup();
@@ -680,10 +681,16 @@ namespace NzbDrone.Core.ImportLists
                 lookup.AddAuthor(author);
             }
 
-            var books = _bookService.GetAllBooks() ?? new List<Book>();
-            var booksNeedingEditions = books
-                .Where(book => book?.Id > 0 && book.LazyEditions?.IsLoaded == false)
-                .ToList();
+            var books = _bookService.GetImportListBookIdentities() ?? new List<Book>();
+            if (editionBookIds == null)
+            {
+                _logger.Warn(lookupError, "Import list sync: {0} provider lookups incomplete; loading editions for all {1} books this run", incompleteLookups, books.Count);
+            }
+            var unloadedBooks = books.Where(book => book?.Id > 0 && book.LazyEditions?.IsLoaded == false).ToList();
+            var booksNeedingEditions = unloadedBooks.Where(book => editionBookIds == null || editionBookIds.Contains(book.Id)).ToList();
+            // All work identities remain available for owner/cached-mapping checks. Only requested
+            // works/editions need edition metadata; never let indexing trigger a lazy query per book.
+            foreach (var book in unloadedBooks) book.Editions = new List<Edition>();
             if (booksNeedingEditions.Count > 0)
             {
                 var editionsByBook = _editionService.GetEditionRowsByBook(booksNeedingEditions.Select(book => book.Id))
@@ -700,7 +707,7 @@ namespace NzbDrone.Core.ImportLists
                 lookup.AddBook(book);
             }
 
-            _logger.Debug("Indexed {0} authors and {1} books for import lists in {2} ms", lookup.AuthorCount, lookup.BookCount, stopwatch.ElapsedMilliseconds);
+            _logger.Debug("Indexed {0} authors and {1} books for import lists; loaded editions for {2} books in {3} ms", lookup.AuthorCount, lookup.BookCount, booksNeedingEditions.Count, stopwatch.ElapsedMilliseconds);
             return lookup;
         }
 
@@ -998,10 +1005,6 @@ namespace NzbDrone.Core.ImportLists
             var liveBookLookupHitCache = new Dictionary<string, Book>(StringComparer.OrdinalIgnoreCase);
 
             _logger.ProgressInfo("Import list sync: fetched {0} list items; indexing local library", items.Count);
-            var localLookup = BuildImportListLocalLookup();
-            _logger.ProgressInfo("Import list sync: local match index ready ({0} authors, {1} books)",
-                localLookup.AuthorCount, localLookup.BookCount);
-
             var lookupKeys = items.SelectMany(report => new[]
                 {
                     (Scope: "work", Id: NormalizeProviderId(report.BookProviderId, "gr")),
@@ -1011,26 +1014,33 @@ namespace NzbDrone.Core.ImportLists
                     var (provider, _) = SplitProviderId(key.Id);
                     return (key.Scope, Provider: provider, key.Id);
                 }).Where(key => key.Provider.IsNotNullOrWhiteSpace()).Distinct().ToList();
-            if (lookupKeys.Count > 0)
+            Dictionary<(string Scope, string Provider, string Id), List<int>> providerMatches = null;
+            var incomplete = new HashSet<(string Scope, string Provider, string Id)>();
+            var lookupTimer = Stopwatch.StartNew();
+            Exception lookupError = null;
+            try
             {
-                try
+                providerMatches = lookupKeys.Count == 0 ? new() : _bookService.FindBookIdsByProviderIds(lookupKeys, key => incomplete.Add(key));
+            }
+            catch (Exception ex)
+            {
+                lookupError = ex;
+                incomplete.UnionWith(lookupKeys);
+            }
+            _logger.Debug("Import list sync: batch lookup of {0} provider keys, {1} incomplete, took {2} ms", lookupKeys.Count, incomplete.Count, lookupTimer.ElapsedMilliseconds);
+            var localLookup = BuildImportListLocalLookup(incomplete.Count == 0 ? providerMatches?.Values.SelectMany(ids => ids).ToHashSet() : null, incomplete.Count, lookupError);
+            if (providerMatches != null)
+            {
+                foreach (var (key, ids) in providerMatches)
                 {
-                    var incomplete = new HashSet<(string Scope, string Provider, string Id)>();
-                    var matches = _bookService.FindBookIdsByProviderIds(lookupKeys, key => incomplete.Add(key));
-                    foreach (var (key, ids) in matches)
-                    {
-                        localLookup.AddProviderMatches(key, ids);
-                        if (key.Scope == "work" && !incomplete.Contains(key))
-                        {
-                            liveBookLookupHitCache[key.Id] = localLookup.FindBook(key.Id);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warn(ex, "Import list sync: could not batch local provider matches; using individual lookups");
+                    localLookup.AddProviderMatches(key, ids);
+                    if (key.Scope == "work" && !incomplete.Contains(key))
+                        liveBookLookupHitCache[key.Id] = localLookup.FindBook(key.Id);
                 }
             }
+            _logger.ProgressInfo("Import list sync: local match index ready ({0} authors, {1} books)",
+                localLookup.AuthorCount, localLookup.BookCount);
+
 
             var reportNumber = 1;
             var listExclusions = _importListExclusionService.All();
@@ -1325,10 +1335,7 @@ namespace NzbDrone.Core.ImportLists
                         }
 
                         var config = BuildConfigFromImportList(importList, report.Author, roots);
-                        if (importList.ShouldMonitor != ImportListMonitorType.None)
-                        {
-                            AddListedBooksToMonitor(config, reportsByListAndAuthor[(importList.Id, authorProviderId)]);
-                        }
+                        AddListedBooksToMonitor(importList, config, reportsByListAndAuthor[(importList.Id, authorProviderId)]);
 
                         if (QueueAuthorForImportList(importList, authorProviderId, report.Author, config, pendingAuthors, "author pass", reportsByListAndAuthor[(importList.Id, authorProviderId)], listExclusions))
                         {
@@ -1349,10 +1356,7 @@ namespace NzbDrone.Core.ImportLists
                             var config = BuildConfigFromImportList(importList, report.Author, roots);
                             config.CreateAudiobook &= missingAudiobookSide;
                             config.CreateEbook &= missingEbookSide;
-                            if (importList.ShouldMonitor != ImportListMonitorType.None)
-                            {
-                                AddListedBooksToMonitor(config, reportsByListAndAuthor[(importList.Id, authorProviderId)]);
-                            }
+                            AddListedBooksToMonitor(importList, config, reportsByListAndAuthor[(importList.Id, authorProviderId)]);
                             if (config.CreateAudiobook || config.CreateEbook)
                             {
                                 if (QueueAuthorForImportList(importList, authorProviderId, report.Author, config, null,
@@ -1614,10 +1618,7 @@ namespace NzbDrone.Core.ImportLists
             }
 
             var searchBooks = bookIdsToSearch.Select(id => selectedBooks[id]).ToList();
-            var pausedSearches = searchBooks.Where(book => !book.IsMonitoredWithAuthor()).ToList();
-            var pausedIds = pausedSearches.Select(book => book.Id).ToHashSet();
-            var automaticSearchIds = bookIdsToSearch.Where(id => !pausedIds.Contains(id)).OrderBy(id => id).ToList();
-            foreach (var book in pausedSearches)
+            foreach (var book in searchBooks)
             {
                 book.AddOptions ??= new AddBookOptions();
                 book.AddOptions.SearchForNewBook = true;
@@ -1629,67 +1630,27 @@ namespace NzbDrone.Core.ImportLists
                 _bookService.SetAddOptions(changedAddOptions.Values);
             }
 
-            _logger.Info("Import list sync: queuing {0} books in an automatic search batch and {1} one-time searches for unmonitored authors",
-                automaticSearchIds.Count, pausedSearches.Count);
-            var searchedBooks = new List<Book>();
             var acceptedSearchIds = new HashSet<int>();
             var rejectedSearchIds = new HashSet<int>();
-            var failedSearches = 0;
-            try
+            if (searchBooks.Count > 0)
             {
-                if (automaticSearchIds.Any())
+                try
                 {
-                    try
-                    {
-                        _commandQueueManager.Push(new BookSearchCommand(automaticSearchIds));
-                        acceptedSearchIds.UnionWith(automaticSearchIds);
-                        searchedBooks.AddRange(searchBooks.Where(book => !pausedIds.Contains(book.Id) && book.AddOptions?.SearchForNewBook == true));
-                    }
-                    catch (Exception ex)
-                    {
-                        failedSearches += automaticSearchIds.Count;
-                        rejectedSearchIds.UnionWith(automaticSearchIds);
-                        var held = searchBooks.Where(book => !pausedIds.Contains(book.Id)).ToList();
-                        foreach (var book in held)
-                        {
-                            book.AddOptions ??= new AddBookOptions();
-                            book.AddOptions.SearchForNewBook = true;
-                        }
-                        _bookService.SetAddOptions(held);
-                        _logger.Warn(ex, "Import list sync: could not queue automatic searches for {0} books; continuing with other entries", automaticSearchIds.Count);
-                    }
+                    if (_commandQueueManager.Push(new BookSearchCommand(bookIdsToSearch.OrderBy(id => id).ToList())) == null)
+                        throw new InvalidOperationException("The search command was not accepted");
+                    acceptedSearchIds.UnionWith(bookIdsToSearch);
                 }
-
-                foreach (var book in pausedSearches.OrderBy(book => book.Id))
+                catch (Exception ex)
                 {
-                    try
-                    {
-                        _commandQueueManager.Push(new BookSearchCommand(new List<int> { book.Id }), trigger: CommandTrigger.Manual);
-                        searchedBooks.Add(book);
-                        acceptedSearchIds.Add(book.Id);
-                    }
-                    catch (Exception ex)
-                    {
-                        failedSearches++;
-                        rejectedSearchIds.Add(book.Id);
-                        _logger.Warn(ex, "Import list sync: could not queue search for '{0}'; continuing with other entries", book.Title);
-                    }
+                    rejectedSearchIds.UnionWith(bookIdsToSearch);
+                    _logger.Warn(ex, "Import list sync: could not queue searches for {0} books; requests retained for retry", searchBooks.Count);
                 }
-            }
-            finally
-            {
-                if (searchedBooks.Any())
+                if (acceptedSearchIds.Count > 0)
                 {
-                    searchedBooks.ForEach(book => book.AddOptions.SearchForNewBook = false);
-                    _bookService.SetAddOptions(searchedBooks);
+                    searchBooks.ForEach(book => book.AddOptions.SearchForNewBook = false);
+                    _bookService.SetAddOptions(searchBooks);
+                    _logger.Info("Import list sync: queued {0} books in one automatic search batch", searchBooks.Count);
                 }
-
-                _logger.Debug("Import list sync: {0} one-time searches remain held for retry", pausedSearches.Count(book => book.AddOptions.SearchForNewBook));
-            }
-
-            if (failedSearches > 0)
-            {
-                _logger.Warn("Import list sync: {0} book searches could not be queued", failedSearches);
             }
 
             if (changedEditionBookIds.Any())
@@ -1702,7 +1663,8 @@ namespace NzbDrone.Core.ImportLists
                 if (!GetImportListDefinition(listItems.Key).GetMonitoringOptions().AddMissingAuthors)
                 {
                     var skipped = listItems.Select(GetAuthorProviderId).Where(id => id.IsNotNullOrWhiteSpace())
-                        .Distinct(StringComparer.OrdinalIgnoreCase).Count(id => localLookup.FindAuthor(id) == null && !liveAuthorLookupHitCache.ContainsKey(id));
+                        .Distinct(StringComparer.OrdinalIgnoreCase).Count(id => localLookup.FindAuthor(id) == null &&
+                            (!liveAuthorLookupHitCache.TryGetValue(id, out var liveAuthor) || liveAuthor == null));
                     _logger.Info("Import list {0}: skipped {1} missing authors because adding is off", GetImportListDefinition(listItems.Key).Name, skipped);
                 }
             }

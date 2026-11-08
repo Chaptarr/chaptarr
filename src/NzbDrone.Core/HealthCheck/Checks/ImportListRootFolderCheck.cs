@@ -4,12 +4,20 @@ using System.Linq;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Core.Books.Events;
+using NzbDrone.Core.Datastore.Events;
 using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.Localization;
 using NzbDrone.Core.MediaFiles.Events;
+using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.RootFolders;
+using NzbDrone.Core.ThingiProvider.Events;
 
 namespace NzbDrone.Core.HealthCheck.Checks
 {
+    [CheckOn(typeof(ProviderAddedEvent<IImportList>))]
+    [CheckOn(typeof(ProviderUpdatedEvent<IImportList>))]
+    [CheckOn(typeof(ProviderDeletedEvent<IImportList>))]
+    [CheckOn(typeof(ModelEvent<RootFolder>))]
     [CheckOn(typeof(AuthorDeletedEvent))]
     [CheckOn(typeof(AuthorMovedEvent))]
     [CheckOn(typeof(BookImportedEvent), CheckOnCondition.FailedOnly)]
@@ -56,6 +64,14 @@ namespace NzbDrone.Core.HealthCheck.Checks
 
                 var message = string.Format(_localizationService.GetLocalizedString("ImportListMultipleMissingRoots"), string.Join(" | ", missingRootFolders.Select(m => FormatRootFolder(m.Key, m.Value))));
                 return new HealthCheck(GetType(), HealthCheckResult.Error, message, "#import-list-missing-root-folder");
+            }
+
+            var inactiveLists = importLists.Where(list => list.Enable && list.Settings is DualMediaImportListSettings
+                { MonitorAudiobooks: false, MonitorEbooks: false }).Select(list => list.Name).ToList();
+            if (inactiveLists.Count > 0)
+            {
+                return new HealthCheck(GetType(), HealthCheckResult.Warning,
+                    string.Format(_localizationService.GetLocalizedString("ImportListNoFormatEnabled"), string.Join(", ", inactiveLists)));
             }
 
             return new HealthCheck(GetType());

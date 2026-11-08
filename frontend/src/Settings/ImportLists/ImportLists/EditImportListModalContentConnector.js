@@ -2,6 +2,7 @@ import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
+import ConfirmModal from 'Components/Modal/ConfirmModal';
 import { getRootFolderMediaTypes } from 'Helpers/Props/folderTypes';
 import { fetchRootFolders } from 'Store/Actions/Settings/rootFolders';
 import {
@@ -12,6 +13,7 @@ import {
   toggleAdvancedSettings
 } from 'Store/Actions/settingsActions';
 import createProviderSettingsSelector from 'Store/Selectors/createProviderSettingsSelector';
+import translate from 'Utilities/String/translate';
 import EditImportListModalContent from './EditImportListModalContent';
 
 function getMonitoringDefaults(root, mediaType) {
@@ -40,7 +42,7 @@ function createMapStateToProps() {
       return {
         advancedSettings,
         rootFolders: rootFolders.items,
-        isRootFoldersPopulated: rootFolders.isPopulated,
+        isRootFoldersPopulated: rootFolders.isPopulated && !rootFolders.isFetching && !rootFolders.error,
         rootFoldersError: rootFolders.error,
         monitoringDefaults,
         ...importList
@@ -59,34 +61,49 @@ const mapDispatchToProps = {
 };
 
 class EditImportListModalContentConnector extends Component {
+  state = { defaultsRootField: null };
 
   //
   // Lifecycle
 
   componentDidMount() {
     this.props.fetchRootFolders();
-    if (!this.props.id) {
-      this.fillRootDefaults(['audiobookRootFolderPath', 'ebookRootFolderPath']);
-    }
+    this.applyInitialRootDefaults();
   }
 
   componentDidUpdate(prevProps) {
-    const initialRootsLoaded = !this.props.id && !prevProps.rootFolders.length && this.props.rootFolders.length;
-    const changedRoots = ['audiobookRootFolderPath', 'ebookRootFolderPath'].filter((name) => {
-      return initialRootsLoaded ||
-        this.props.item.fields?.find((field) => field.name === name)?.value !==
-        prevProps.item.fields?.find((field) => field.name === name)?.value;
-    });
-    if (changedRoots.length) {
-      this.fillRootDefaults(changedRoots);
-    }
+    this.applyInitialRootDefaults();
 
     if (prevProps.isSaving && !this.props.isSaving && !this.props.saveError) {
       this.props.onModalClose();
     }
   }
 
-  fillRootDefaults = (changedRoots) => {
+  initializedRoots = new Set();
+
+  applyInitialRootDefaults = () => {
+    if (!this.props.id && this.props.isRootFoldersPopulated) {
+      const roots = ['audiobookRootFolderPath', 'ebookRootFolderPath'].filter((name) => {
+        const path = this.props.item.fields?.find((field) => field.name === name)?.value;
+        return !this.initializedRoots.has(name) && this.props.rootFolders.some((root) => root.path === path);
+      });
+      roots.forEach((name) => this.initializedRoots.add(name));
+      if (roots.length) {
+        this.fillRootDefaults(roots);
+      }
+    }
+  };
+
+  onDefaultsCancel = () => {
+    this.setState({ defaultsRootField: null });
+  };
+
+  onDefaultsConfirm = () => {
+    this.fillRootDefaults([this.state.defaultsRootField]);
+    this.onDefaultsCancel();
+  };
+
+  fillRootDefaults = (changedRoots, keepOverrides = false) => {
     const { item, rootFolders } = this.props;
     const before = item.monitoringOptions?.value || {};
     const options = { ...before };
@@ -98,10 +115,17 @@ class EditImportListModalContentConnector extends Component {
         return;
       }
 
-      Object.assign(options, getMonitoringDefaults(root, mediaType));
+      Object.entries(getMonitoringDefaults(root, mediaType)).forEach(([key, value]) => {
+        if (!keepOverrides || options[key] == null) {
+          options[key] = value;
+        }
+      });
       ['QualityProfileId', 'MetadataProfileId', 'Tags'].forEach((suffix) => {
         const fieldName = `${mediaType}${suffix}`;
         const field = item.fields.find((value) => value.name === fieldName);
+        if (keepOverrides && (suffix === 'Tags' || field?.value)) {
+          return;
+        }
         const value = root[fieldName] ?? root[mediaType]?.[suffix[0].toLowerCase() + suffix.slice(1)] ?? (suffix === 'Tags' ? [] : 0);
         if (field && JSON.stringify(field.value) !== JSON.stringify(value)) {
           this.props.setImportListFieldValue({ name: fieldName, value });
@@ -121,18 +145,31 @@ class EditImportListModalContentConnector extends Component {
   };
 
   onFieldChange = ({ name, value }) => {
+    const previousValue = this.props.item.fields?.find((field) => field.name === name)?.value;
+    const rootChanged = ['audiobookRootFolderPath', 'ebookRootFolderPath'].includes(name) && value !== previousValue &&
+      (this.props.id || previousValue);
+    if (rootChanged) {
+      // Resolve inherited choices against the old root before changing it.
+      this.fillRootDefaults([name], true);
+    }
     this.props.setImportListFieldValue({ name, value });
+    if (rootChanged) {
+      this.initializedRoots.add(name);
+      if (this.props.rootFolders.some((root) => root.path === value)) {
+        this.setState({ defaultsRootField: name });
+      }
+    }
   };
 
   onSavePress = () => {
     if (this.props.item.monitoringOptions?.value?.addMissingAuthors !== false && !this.props.isRootFoldersPopulated) {
       return;
     }
-    this.props.saveImportList({ id: this.props.id });
+    this.props.saveImportList({ id: this.props.id, shouldMonitor: undefined });
   };
 
   onTestPress = () => {
-    this.props.testImportList({ id: this.props.id });
+    this.props.testImportList({ id: this.props.id, shouldMonitor: undefined });
   };
 
   onAdvancedSettingsPress = () => {
@@ -144,14 +181,26 @@ class EditImportListModalContentConnector extends Component {
 
   render() {
     return (
-      <EditImportListModalContent
-        {...this.props}
-        onSavePress={this.onSavePress}
-        onTestPress={this.onTestPress}
-        onAdvancedSettingsPress={this.onAdvancedSettingsPress}
-        onInputChange={this.onInputChange}
-        onFieldChange={this.onFieldChange}
-      />
+      <>
+        <EditImportListModalContent
+          {...this.props}
+          onSavePress={this.onSavePress}
+          onTestPress={this.onTestPress}
+          onAdvancedSettingsPress={this.onAdvancedSettingsPress}
+          onInputChange={this.onInputChange}
+          onFieldChange={this.onFieldChange}
+          onRetryRootFolders={() => this.props.fetchRootFolders()}
+        />
+        <ConfirmModal
+          isOpen={!!this.state.defaultsRootField}
+          title={translate('ApplyRootFolderDefaults')}
+          message={translate('ApplyRootFolderDefaultsConfirm')}
+          confirmLabel={translate('Apply')}
+          cancelLabel={translate('KeepCurrentSettings')}
+          onConfirm={this.onDefaultsConfirm}
+          onCancel={this.onDefaultsCancel}
+        />
+      </>
     );
   }
 }

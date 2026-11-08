@@ -61,7 +61,7 @@ const initialList = {
   id: 1, name: 'Example list', implementation: 'ChaptarrImport', implementationName: 'Chaptarr',
   enableAutomaticAdd: true, shouldMonitor: 'specificBook', shouldMonitorExisting: true, shouldSearch: false,
   rootFolderPath: '/data/audio', qualityProfileId: 1, metadataProfileId: 1, tags: [], fields: [...mediaFields(), field('baseUrl', 'http://remote.test', 'Remote URL')],
-  monitoringOptions: { addMissingAuthors: true, resumePausedAuthors: false }
+  monitoringOptions: { addMissingAuthors: true, resumePausedAuthors: false, audiobookMonitorListedBooks: false, ebookMonitorListedBooks: false }
 };
 
 async function verifyGrouping(page, addingEnabled = true) {
@@ -72,7 +72,7 @@ async function verifyGrouping(page, addingEnabled = true) {
   assert.equal(await existing.locator('input[name="resumePausedAuthors"]').count(), 1);
   assert.equal(await existing.locator('input[name="monitorListedBooks"]').count(), 0);
   assert.equal(await adding.locator('input[name="addMissingAuthors"]').count(), 1);
-  assert.equal(await adding.locator('input[name="monitorListedBooks"]').count(), addingEnabled ? 1 : 0);
+  assert.equal(await adding.locator('input[name="monitorListedBooks"]').count(), 0);
   assert.equal(await adding.locator('input[name="shouldMonitorExisting"]').count(), 0);
   assert.equal(await page.getByText(strings.ImportListKeepListedBooks, { exact: true }).count(), 1);
   assert.equal(await page.getByText(strings.ImportListResumeAuthors, { exact: true }).count(), 1);
@@ -92,6 +92,7 @@ async function verify(browser, width) {
   const writes = [];
   let availableRoots = roots;
   let holdRoots = false;
+  let failRoots = false;
   let heldRootRequest = null;
   let rootRequestReady = null;
   let bulkFailure = null;
@@ -109,6 +110,9 @@ async function verify(browser, width) {
       return route.fulfill({ json: { Strings: strings } });
     }
     if (pathname.toLowerCase().endsWith('/rootfolder')) {
+      if (failRoots) {
+        return route.fulfill({ status: 500, json: { message: 'Root folders unavailable' } });
+      }
       if (holdRoots) {
         heldRootRequest = route;
         rootRequestReady();
@@ -157,7 +161,7 @@ async function verify(browser, width) {
       };
       await page.evaluate((value) => window.renderList(value), hydrated);
       await page.locator('input[name="addMissingAuthors"]').waitFor();
-      if (!holdRoots) {
+      if (!holdRoots && !failRoots) {
         await page.waitForFunction(() => window.listRootState().isPopulated);
       }
     };
@@ -181,9 +185,13 @@ async function verify(browser, width) {
         options: state.pendingChanges.monitoringOptions || item.monitoringOptions
       };
     });
-    const chooseRoot = async(from, to) => {
+    const chooseRoot = async(from, to, apply = true) => {
+      const before = await setup();
       await page.getByText(from, { exact: true }).click();
       await page.getByText(to, { exact: true }).click();
+      await page.getByText(strings.ApplyRootFolderDefaultsConfirm, { exact: true }).waitFor();
+      assert.equal((await setup()).fields.audiobookTags.join(), before.fields.audiobookTags.join(), 'Root selection cannot change tags before confirmation');
+      await page.getByRole('button', { name: apply ? strings.Apply : strings.KeepCurrentSettings, exact: true }).click();
     };
     const showAdvanced = () => page.getByTitle(strings.HiddenClickToShow, { exact: true }).click();
     const hideAdvanced = () => page.getByTitle(strings.ShownClickToHide, { exact: true }).click();
@@ -202,6 +210,25 @@ async function verify(browser, width) {
       assert.equal(value.options[`${mediaType}Monitor`], root[`${mediaType}MonitorExistingMode`]);
       assert.equal(value.options[`${mediaType}MonitorNewItems`], root[`${mediaType}MonitorNewItems`]);
     };
+
+    // A failed load cannot save incomplete settings; Retry uses the existing GET.
+    failRoots = true;
+    await render({ ...withField(initialList, 'audiobookQualityProfileId', 0), monitoringOptions: {
+      ...initialList.monitoringOptions, audiobookMonitored: null, audiobookMonitor: null, audiobookMonitorNewItems: null
+    } });
+    await page.getByText(strings.UnableToLoadRootFolders, { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: strings.Save, exact: true }).isDisabled(), true);
+    failRoots = false;
+    await page.getByRole('button', { name: strings.Retry, exact: true }).click();
+    await page.waitForFunction(() => window.listRootState().isPopulated);
+    assert.equal(await page.getByRole('button', { name: strings.Save, exact: true }).isEnabled(), true);
+    await chooseRoot('[Audio] /data/audio', '[Other] /data/other', false);
+    assert.equal((await setup()).fields.audiobookRootFolderPath, '/data/other');
+    assert.equal((await setup()).fields.audiobookQualityProfileId, 1);
+    assert.deepEqual((await setup()).fields.audiobookTags, [1]);
+    assert.equal((await setup()).options.audiobookMonitored, false);
+    assert.equal((await setup()).options.audiobookMonitor, 'missing', 'Declining keeps even inherited monitoring from the old root');
+    assert.equal(writes.length, 0);
 
     // A new list's prepopulated roots load complete defaults after the roots arrive.
     holdRoots = true;
@@ -301,7 +328,6 @@ async function verify(browser, width) {
     await assertRootSetup('audiobook', roots[0]);
     await initialField().getByRole('button', { name: strings.MissingBooks, exact: true }).click();
     await page.locator('[class*="HintedSelectInputOption-optionText"]').getByText(strings.None, { exact: true }).click();
-    await page.locator('input[name="monitorListedBooks"]').uncheck({ force: true });
     for (const name of ['shouldMonitorExisting', 'resumePausedAuthors', 'shouldSearch']) {
       assert.equal(await page.locator(`input[name="${name}"]`).isDisabled(), false);
     }
@@ -311,7 +337,7 @@ async function verify(browser, width) {
     assert.equal(await page.locator('input[name="resumePausedAuthors"]').isChecked(), true);
     assert.equal(await page.locator('input[name="shouldMonitorExisting"]').isChecked(), false);
     const savedExplicit = await save();
-    assert.equal(savedExplicit.shouldMonitor, 'none');
+    assert.equal(Object.hasOwn(savedExplicit, 'shouldMonitor'), false, 'Modern UI saves omit legacy monitoring intent');
     assert.equal(savedExplicit.shouldMonitorExisting, false);
     assert.deepEqual(savedExplicit.monitoringOptions, { ...explicit.monitoringOptions, ...audiobookDefaults, audiobookMonitor: 'none', resumePausedAuthors: true },
       'Existing-author actions do not overwrite lower author or book policies');
@@ -330,6 +356,108 @@ async function verify(browser, width) {
     assert.deepEqual(savedDual.monitoringOptions, { ...initialList.monitoringOptions, ebookMonitored: false },
       'An ebook override does not freeze inherited policies on either side');
 
+    // A saved catalog-wide mode can be changed to list-only on one format.
+    const migratedAll = { ...dualList, shouldMonitor: 'entireAuthor', monitoringOptions: {
+      addMissingAuthors: true, resumePausedAuthors: false,
+      audiobookMonitor: 'all', ebookMonitor: 'all',
+      audiobookMonitorListedBooks: null, ebookMonitorListedBooks: null
+    } };
+    await render(migratedAll);
+    await noOptionsDraft();
+    const unchangedAll = await save();
+    assert.deepEqual(unchangedAll.monitoringOptions, migratedAll.monitoringOptions, 'No-op saves retain nullable legacy flags');
+    assert.equal(Object.hasOwn(unchangedAll, 'shouldMonitor'), false);
+    await render(migratedAll);
+    await initialField().getByRole('button', { name: strings.AllBooks, exact: true }).focus();
+    await page.keyboard.press('ArrowDown');
+    const listChoices = page.locator('[class*="HintedSelectInputOption-optionText"]');
+    assert.equal(await listChoices.count(), 5, 'The existing dropdown explicitly includes list-only monitoring');
+    assert.equal(await initialField().getByRole('button', { name: strings.AllBooks, exact: true }).evaluate((button) => button === document.activeElement), true,
+      'Opening the options retains focus on the control that handles navigation');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await initialValue(), strings.ImportListOnlyListedBooks, 'Arrow navigation previews the next choice');
+    await noOptionsDraft();
+    await page.keyboard.press('Enter');
+    assert.equal(await initialValue(), strings.ImportListOnlyListedBooks, 'The list-only choice works with the existing keyboard select');
+    assert.equal(await page.locator('input[name="audiobookMonitorListedBooks"]').count(), 0, 'List-only needs no second setting');
+    const listOnly = await save();
+    assert.equal(listOnly.monitoringOptions.audiobookMonitor, 'specificBook');
+    assert.equal(listOnly.monitoringOptions.audiobookMonitorListedBooks, true);
+    assert.equal(listOnly.monitoringOptions.ebookMonitor, 'all', 'Audiobook list-only does not change ebook initial monitoring');
+    assert.equal(listOnly.monitoringOptions.ebookMonitorListedBooks, null, 'The untouched format retains its legacy flag');
+    assert.equal(Object.hasOwn(listOnly, 'shouldMonitor'), false);
+    await render({ ...listOnly, shouldMonitor: migratedAll.shouldMonitor });
+    await noOptionsDraft();
+    assert.equal(await initialValue(), strings.ImportListOnlyListedBooks, 'Saved list-only intent renders on reopen');
+
+    // Old additive selections display their complete meaning without rewriting saved data.
+    const legacyCombinations = { ...dualList, monitoringOptions: {
+      addMissingAuthors: true, resumePausedAuthors: false,
+      audiobookMonitor: 'missing', ebookMonitor: 'existing'
+    } };
+    await render(legacyCombinations);
+    await noOptionsDraft();
+    assert.equal(await initialValue(), strings.MissingBooks);
+    assert.equal(await page.locator('input[name="audiobookMonitorListedBooks"]').isChecked(), true);
+    const ebookInitialField = () => page.getByText(strings.InitialBookMonitoring, { exact: true }).nth(1).locator('..');
+    assert.equal(await ebookInitialField().getByRole('button', { name: strings.BooksWithFiles, exact: true }).count(), 1);
+    assert.equal(await page.locator('input[name="ebookMonitorListedBooks"]').isChecked(), true);
+    const unchangedCombinations = await save();
+    assert.deepEqual(unchangedCombinations.monitoringOptions, legacyCombinations.monitoringOptions);
+    await render(legacyCombinations);
+    await ebookInitialField().getByRole('button', { name: strings.BooksWithFiles, exact: true }).click();
+    await listChoices.getByText(strings.ImportListOnlyListedBooks, { exact: true }).click();
+    const ebookListOnly = await save();
+    assert.equal(ebookListOnly.monitoringOptions.ebookMonitor, 'specificBook');
+    assert.equal(ebookListOnly.monitoringOptions.ebookMonitorListedBooks, true);
+    assert.equal(ebookListOnly.monitoringOptions.audiobookMonitor, 'missing');
+    assert.equal(Object.hasOwn(ebookListOnly.monitoringOptions, 'audiobookMonitorListedBooks'), false);
+    await render({ ...legacyCombinations, monitoringOptions: {
+      ...legacyCombinations.monitoringOptions, audiobookMonitor: 'none', ebookMonitor: 'none'
+    } });
+    assert.equal(await initialValue(), strings.ImportListOnlyListedBooks, 'Legacy None plus listed books displays list-only');
+    await noOptionsDraft();
+
+    await render({ ...legacyCombinations, shouldMonitor: undefined });
+    await noOptionsDraft();
+    assert.equal(await page.locator('input[name="audiobookMonitorListedBooks"]').isChecked(), false, 'An omitted legacy policy uses the API None default');
+    assert.equal(await page.locator('input[name="ebookMonitorListedBooks"]').isChecked(), false);
+
+    // Changing one format can remove or retain additive list intent without touching the other.
+    await render(legacyCombinations);
+    await page.locator('input[name="audiobookMonitorListedBooks"]').uncheck({ force: true });
+    const missingOnly = await save();
+    assert.equal(missingOnly.monitoringOptions.audiobookMonitor, 'missing');
+    assert.equal(missingOnly.monitoringOptions.audiobookMonitorListedBooks, false);
+    assert.equal(missingOnly.monitoringOptions.ebookMonitor, 'existing');
+    await render({ ...missingOnly, shouldMonitor: 'specificBook' });
+    await page.locator('input[name="audiobookMonitorListedBooks"]').focus();
+    await page.keyboard.press('Space');
+    assert.equal(await page.locator('input[name="audiobookMonitorListedBooks"]').isChecked(), true);
+    const missingAndListed = await save();
+    assert.equal(missingAndListed.monitoringOptions.audiobookMonitor, 'missing');
+    assert.equal(missingAndListed.monitoringOptions.audiobookMonitorListedBooks, true);
+    const allWithoutListed = { ...dualList, monitoringOptions: {
+      ...initialList.monitoringOptions, audiobookMonitor: 'all', ebookMonitor: 'all'
+    } };
+    await render(allWithoutListed);
+    await noOptionsDraft();
+    assert.equal(await page.locator('input[name="audiobookMonitorListedBooks"]').isChecked(), false);
+    assert.deepEqual((await save()).monitoringOptions, allWithoutListed.monitoringOptions, 'All retains an explicit listed flag off');
+    await render(allWithoutListed);
+    await page.locator('input[name="audiobookMonitorListedBooks"]').check({ force: true });
+    const allAndListed = await save();
+    assert.equal(allAndListed.monitoringOptions.audiobookMonitor, 'all');
+    assert.equal(allAndListed.monitoringOptions.audiobookMonitorListedBooks, true, 'All can independently request listed editions');
+    assert.equal(allAndListed.monitoringOptions.ebookMonitorListedBooks, false);
+    await render({ ...allAndListed, shouldMonitor: 'specificBook' });
+    await initialField().getByRole('button', { name: strings.AllBooks, exact: true }).click();
+    await listChoices.getByText(strings.None, { exact: true }).click();
+    assert.equal(await page.locator('input[name="audiobookMonitorListedBooks"]').count(), 0, 'None has no additive listed-books trap');
+    const noneSelected = await save();
+    assert.equal(noneSelected.monitoringOptions.audiobookMonitor, 'none');
+    assert.equal(noneSelected.monitoringOptions.audiobookMonitorListedBooks, false);
+
     await render({ ...initialList, id: undefined });
     await assertRootSetup('audiobook', roots[0]);
     await assertRootSetup('ebook', roots[2]);
@@ -343,7 +471,8 @@ async function verify(browser, width) {
     const newOverride = await save(strings.AddListAudiobooks);
     assert.equal(newOverride.monitoringOptions.audiobookMonitor, 'none', 'The list can select None even when the root uses All');
     assert.equal(newOverride.monitoringOptions.audiobookMonitored, false);
-    assert.equal(newOverride.shouldMonitor, 'specificBook', 'Listed books remain additional to initial catalog selection');
+    assert.equal(Object.hasOwn(newOverride, 'shouldMonitor'), false);
+    assert.equal(newOverride.monitoringOptions.audiobookMonitorListedBooks, false, 'None does not also request listed books');
 
     const ebookOverrides = { ebookMonitored: false, ebookMonitor: 'missing', ebookMonitorNewItems: 'new' };
     await render({ ...dualList, id: undefined });

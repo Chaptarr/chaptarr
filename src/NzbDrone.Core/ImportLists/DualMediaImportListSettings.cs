@@ -10,6 +10,7 @@ using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Tags;
+using NzbDrone.Core.Validation.Paths;
 
 namespace NzbDrone.Core.ImportLists
 {
@@ -72,17 +73,12 @@ namespace NzbDrone.Core.ImportLists
                 return failures;
             }
 
-            if (settings.MonitorAudiobooks && settings.AudiobookRootFolderPath.IsNullOrWhiteSpace())
-            {
-                failures.Add(new ValidationFailure(nameof(settings.AudiobookRootFolderPath), "Root folder is required"));
-            }
-
-            if (settings.MonitorEbooks && settings.EbookRootFolderPath.IsNullOrWhiteSpace())
-            {
-                failures.Add(new ValidationFailure(nameof(settings.EbookRootFolderPath), "Root folder is required"));
-            }
-
-            return failures;
+            var validator = new InlineValidator<DualMediaImportListSettings>();
+            validator.RuleFor(value => value.AudiobookRootFolderPath).Cascade(CascadeMode.Stop)
+                .NotEmpty().WithMessage("Root folder is required").IsValidPath().When(value => value.MonitorAudiobooks);
+            validator.RuleFor(value => value.EbookRootFolderPath).Cascade(CascadeMode.Stop)
+                .NotEmpty().WithMessage("Root folder is required").IsValidPath().When(value => value.MonitorEbooks);
+            return validator.Validate(settings).Errors.ToList();
         }
 
         public static object HandleRequestAction(

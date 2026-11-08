@@ -71,6 +71,7 @@ namespace NzbDrone.Core.ImportLists
 
         public override ImportListDefinition Create(ImportListDefinition definition)
         {
+            definition.PreserveMonitoringOptions(null);
             TryUpdateHardcoverCachedIdentity(definition, existing: null);
             return base.Create(definition);
         }

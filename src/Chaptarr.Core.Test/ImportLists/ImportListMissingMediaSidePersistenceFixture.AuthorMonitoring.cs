@@ -203,7 +203,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 Assert.Multiple(() =>
                 {
                     Assert.That(monitoringWrites, Is.EqualTo(1));
-                    Assert.That(library.Calls.GetValueOrDefault(nameof(IBookService.GetAllBooks)), Is.EqualTo(1));
+                    Assert.That(library.Calls.GetValueOrDefault(nameof(IBookService.GetImportListBookIdentities)), Is.EqualTo(1));
                     Assert.That(library.Calls.GetValueOrDefault(nameof(IBookService.GetExistingBooks)), Is.EqualTo(1));
                     Assert.That(library.Calls.GetValueOrDefault(nameof(IBookService.FindBookIdsByProviderIds)), Is.EqualTo(1));
                     Assert.That(library.Commands.OfType<ProcessPendingImportsCommand>().Count(), Is.EqualTo(monitorBooks ? 1 : 0));

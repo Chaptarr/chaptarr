@@ -152,7 +152,7 @@ namespace Chaptarr.Core.Test.Datastore
                     Assert.That(options.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
                     Assert.That(options.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
                     Assert.That(options.AddMissingAuthors, Is.True);
-                    Assert.That(options.ResumePausedAuthors, Is.EqualTo(mode == ImportListMonitorType.SpecificBook));
+                    Assert.That(options.ResumePausedAuthors, Is.False, "An upgrade must not authorize lists to resume paused authors");
                     Assert.That(connection.ExecuteScalar<bool>(@"SELECT ""ShouldMonitorExisting"" FROM ""ImportLists"" WHERE ""Id""=@Id", new { row.Id }), Is.EqualTo(mode != ImportListMonitorType.None));
                 }
             });
@@ -302,6 +302,47 @@ namespace Chaptarr.Core.Test.Datastore
                 Assert.That(stored, Has.Count.EqualTo(count));
                 Assert.That(stored.All(settings => settings["monitorAudiobooks"]?.Value<bool>() == true && settings["monitorEbooks"]?.Value<bool>() == true), Is.True);
                 TestContext.Progress.WriteLine($"Generic list migration {(postgres ? "PostgreSQL" : "SQLite")}: {count} lists, {readers.Count} snapshot readers, {timer.ElapsedMilliseconds} ms; existing transactional batch updates.");
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void migration_111_output_must_keep_its_reviewed_fingerprint(bool postgres)
+        {
+            WithLegacyDatabase(postgres, (connection, upgrade) =>
+            {
+                var profiles = SeedProfiles(connection);
+                var path = @"C:\FingerprintRoot".AsOsAgnostic();
+                InsertRoot(connection, NewRoot(path, profiles));
+                foreach (var implementation in new[] { "ChaptarrImport", "LazyLibrarianImport", "GoodreadsBookshelf", "HardcoverLibraryImportList" })
+                foreach (var mode in new[] { ImportListMonitorType.None, ImportListMonitorType.SpecificBook, ImportListMonitorType.EntireAuthor })
+                foreach (var root in new[] { path, path + "/missing/nested", @"C:\Unavailable".AsOsAgnostic() })
+                    InsertList(connection, implementation, root, profiles.LegacyAudio, profiles.GeneralMetadata,
+                        SourceSettings(implementation).ToString(Formatting.None), mode);
+
+                // Identity input intentionally covers foreign IDs, case, nested edition IDs and multiple ASINs.
+                connection.Execute(@"INSERT INTO ""Authors"" (""Name"",""Path"",""Added"",""Monitored"",""CleanName"") VALUES ('Fingerprint Author', '/fingerprint', CURRENT_TIMESTAMP, @No, 'fingerprint author');
+                    INSERT INTO ""Books"" (""AuthorId"",""Title"",""CleanTitle"",""AnyEditionOk"",""Added"")
+                    VALUES (1, 'Fingerprint Book', 'fingerprint book', @No, CURRENT_TIMESTAMP);
+                    INSERT INTO ""Editions"" (""BookId"",""Title"",""Monitored"",""ForeignEditionId"",""GoodreadsEditionId"",""HardcoverEditionId"",""OpenLibraryEditionId"",""GoogleBooksEditionId"",""Asin"",""AudibleASIN"",""Asins"")
+                    VALUES (1, 'Fingerprint Edition', @No, 'hc:edition:456', 123, 'hc:456', 'OL789M', 'gb:xyz', 'b000000001', 'B000000002', '[""B000000003"",""az:B000000004""]');", new { No = false });
+                upgrade();
+                var rows = connection.Query(@"SELECT ""Settings"", ""MonitoringOptions"", ""ShouldMonitorExisting"" FROM ""ImportLists"" ORDER BY ""Id""");
+                var output = new JArray(rows.Select(row => new JObject
+                {
+                    ["settings"] = JObject.Parse((string)row.Settings),
+                    ["options"] = JObject.Parse((string)row.MonitoringOptions),
+                    ["monitorExisting"] = System.Convert.ToBoolean(row.ShouldMonitorExisting)
+                }));
+                output.Add(JArray.FromObject(connection.Query(@"SELECT ""EntityType"",""EntityId"",""Scope"",""Provider"",""NormalizedProviderId"" FROM ""ProviderAliasIndex"" ORDER BY ""EntityType"",""EntityId"",""Scope"",""Provider"",""NormalizedProviderId""")));
+                foreach (var value in output.Descendants().OfType<JValue>().Where(value => value.Type == JTokenType.String))
+                    value.Value = ((string)value.Value).Replace('\\', '/').Replace("C:/", "/");
+                var json = output.ToString(Formatting.None);
+                var fingerprint = System.Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(json)));
+                TestContext.WriteLine("Migration 111 output: " + fingerprint);
+                TestContext.WriteLine(json);
+                Assert.That(fingerprint, Is.EqualTo("2001E5220D01756E8C7BEF6671F58BF1780BFDAF093BD1195ABCCD6120343078"),
+                    "Migration 111 output changed. Preserve its historical contract; review live helper changes before upgrading existing databases.");
             });
         }
 

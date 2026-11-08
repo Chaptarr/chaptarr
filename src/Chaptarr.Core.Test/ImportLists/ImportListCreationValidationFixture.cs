@@ -33,6 +33,8 @@ using NzbDrone.Core.ImportLists.Hardcover.Library;
 using NzbDrone.Core.ImportLists.LazyLibrarianImport;
 using NzbDrone.Core.Localization;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Messaging.Commands;
+using NzbDrone.Core.ThingiProvider.Events;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Profiles.Metadata;
@@ -66,6 +68,264 @@ namespace Chaptarr.Core.Test.ImportLists
             using var container = new Container();
             container.RegisterInstance<ILocalizationService>(InterfaceProxy.Proxy<ILocalizationService>((method, args) => args[0]));
             SchemaBuilder.Initialize(container);
+        }
+
+        [TestCase(false, 1)]
+        [TestCase(true, 1)]
+        [TestCase(false, 2)]
+        [TestCase(true, 2)]
+        [TestCase(false, 3)]
+        [TestCase(true, 3)]
+        public void modern_listed_only_should_project_legacy_value_and_allow_legacy_all_roundtrip(bool postgres, int sides)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database, typeof(GoodreadsBookshelf));
+                var definition = h.Definition(addMissing: false);
+                definition.ShouldMonitor = ImportListMonitorType.EntireAuthor;
+                var settings = (DualMediaImportListSettings)definition.Settings;
+                settings.MonitorAudiobooks = (sides & 1) != 0;
+                settings.MonitorEbooks = (sides & 2) != 0;
+                definition.MonitoringOptions.AudiobookMonitor = MonitorTypes.All;
+                definition.MonitoringOptions.EbookMonitor = MonitorTypes.All;
+                definition.MonitoringOptions.AudiobookMonitorListedBooks = true;
+                definition.MonitoringOptions.EbookMonitorListedBooks = true;
+                var saved = h.Factory.Create(definition);
+                var json = JObject.Parse(STJson.ToJson(h.Resource(saved)));
+                json.Remove("shouldMonitor");
+                var modern = STJson.Deserialize<ImportListResource>(json.ToString());
+                if ((sides & 1) != 0) modern.MonitoringOptions.AudiobookMonitor = MonitorTypes.SpecificBook;
+                if ((sides & 2) != 0) modern.MonitoringOptions.EbookMonitor = MonitorTypes.SpecificBook;
+                h.Controller.UpdateProvider(modern, forceSave: true);
+                var readback = h.Repository.Get(saved.Id);
+                Assert.That(readback.ShouldMonitor, Is.EqualTo(ImportListMonitorType.SpecificBook));
+                Assert.That(readback.MonitoringOptions.AudiobookMonitor, Is.EqualTo((sides & 1) != 0 ? MonitorTypes.SpecificBook : MonitorTypes.All));
+                Assert.That(readback.MonitoringOptions.EbookMonitor, Is.EqualTo((sides & 2) != 0 ? MonitorTypes.SpecificBook : MonitorTypes.All));
+                h.ResetCounts();
+                h.Controller.UpdateProvider(h.Resource(readback), forceSave: true);
+                Assert.That(h.Updates, Is.Zero, "A GET/PUT roundtrip must not change a representable modern selection");
+                var legacy = h.Resource(readback);
+                legacy.ShouldMonitor = ImportListMonitorType.EntireAuthor;
+                h.Controller.UpdateProvider(legacy, forceSave: true);
+                readback = h.Repository.Get(saved.Id);
+                Assert.That(readback.ShouldMonitor, Is.EqualTo(ImportListMonitorType.EntireAuthor));
+                Assert.That(readback.MonitoringOptions.AudiobookMonitor, Is.EqualTo(MonitorTypes.All));
+                Assert.That(readback.MonitoringOptions.EbookMonitor, Is.EqualTo(MonitorTypes.All));
+                h.ResetCounts();
+                h.Controller.UpdateProvider(h.Resource(readback), forceSave: true);
+                Assert.That(h.Updates, Is.Zero);
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void modern_nonrepresentable_policies_should_retain_legacy_value_and_survive_unchanged_save(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database, typeof(GoodreadsBookshelf));
+                foreach (var policy in new (MonitorTypes? Audio, MonitorTypes? Ebook, bool Listed)[]
+                {
+                    (MonitorTypes.SpecificBook, MonitorTypes.All, true),
+                    (MonitorTypes.Missing, MonitorTypes.Missing, true),
+                    (MonitorTypes.Existing, MonitorTypes.Existing, true),
+                    (MonitorTypes.All, MonitorTypes.All, false),
+                    (null, MonitorTypes.All, true)
+                })
+                {
+                    var definition = h.Definition(addMissing: false);
+                    definition.ShouldMonitor = ImportListMonitorType.EntireAuthor;
+                    definition.MonitoringOptions.AudiobookMonitor = MonitorTypes.All;
+                    definition.MonitoringOptions.EbookMonitor = MonitorTypes.All;
+                    definition.MonitoringOptions.AudiobookMonitorListedBooks = true;
+                    definition.MonitoringOptions.EbookMonitorListedBooks = true;
+                    var saved = h.Factory.Create(definition);
+                    var json = JObject.Parse(STJson.ToJson(h.Resource(saved)));
+                    json.Remove("shouldMonitor");
+                    var resource = STJson.Deserialize<ImportListResource>(json.ToString());
+                    resource.MonitoringOptions.AudiobookMonitor = policy.Audio;
+                    resource.MonitoringOptions.EbookMonitor = policy.Ebook;
+                    resource.MonitoringOptions.AudiobookMonitorListedBooks = policy.Listed;
+                    resource.MonitoringOptions.EbookMonitorListedBooks = policy.Listed;
+                    h.Controller.UpdateProvider(resource, forceSave: true);
+                    var readback = h.Repository.Get(saved.Id);
+                    Assert.That(readback.ShouldMonitor, Is.EqualTo(ImportListMonitorType.EntireAuthor));
+                    Assert.That(readback.MonitoringOptions.AudiobookMonitor, Is.EqualTo(policy.Audio));
+                    Assert.That(readback.MonitoringOptions.EbookMonitor, Is.EqualTo(policy.Ebook));
+                    Assert.That(readback.MonitoringOptions.AudiobookMonitorListedBooks, Is.EqualTo(policy.Listed));
+                    Assert.That(readback.MonitoringOptions.EbookMonitorListedBooks, Is.EqualTo(policy.Listed));
+                    h.ResetCounts();
+                    h.Controller.UpdateProvider(h.Resource(readback), forceSave: true);
+                    Assert.That(h.Updates, Is.Zero, "An unrepresentable legacy projection must not normalize modern choices");
+                }
+            });
+        }
+
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        public void legacy_monitor_switch_should_translate_omitted_or_unchanged_modern_options(bool postgres, bool echoModern)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database, typeof(GoodreadsBookshelf));
+                var definition = h.Definition(addMissing: false);
+                definition.ShouldMonitor = ImportListMonitorType.EntireAuthor;
+                definition.MonitoringOptions.AudiobookMonitor = MonitorTypes.All;
+                definition.MonitoringOptions.EbookMonitor = MonitorTypes.All;
+                var saved = h.Factory.Create(definition);
+                var resource = h.Resource(saved);
+                resource.ShouldMonitor = ImportListMonitorType.SpecificBook;
+                if (!echoModern) resource.MonitoringOptions = null;
+                h.Controller.UpdateProvider(resource, forceSave: true);
+                var readback = h.Repository.Get(saved.Id);
+                Assert.Multiple(() =>
+                {
+                    Assert.That(readback.ShouldMonitor, Is.EqualTo(ImportListMonitorType.SpecificBook));
+                    Assert.That(readback.MonitoringOptions.AudiobookMonitor, Is.EqualTo(MonitorTypes.SpecificBook));
+                    Assert.That(readback.MonitoringOptions.EbookMonitor, Is.EqualTo(MonitorTypes.SpecificBook));
+                    Assert.That(readback.MonitoringOptions.AudiobookMonitorListedBooks, Is.True);
+                    Assert.That(readback.MonitoringOptions.EbookMonitorListedBooks, Is.True);
+                    Assert.That(readback.MonitoringOptions.AddMissingAuthors, Is.False);
+                    Assert.That(h.SyncCommands, Has.Count.EqualTo(1));
+                });
+                h.ResetCounts();
+                h.Controller.UpdateProvider(h.Resource(readback), forceSave: true);
+                Assert.That(h.Updates, Is.Zero, "A repeated unchanged legacy save must not write or resync");
+
+                var modernJson = JObject.Parse(STJson.ToJson(h.Resource(readback)));
+                modernJson.Remove("shouldMonitor");
+                var modern = STJson.Deserialize<ImportListResource>(modernJson.ToString());
+                modern.MonitoringOptions.EbookMonitor = MonitorTypes.Existing;
+                modern.MonitoringOptions.EbookMonitorListedBooks = false;
+                h.Controller.UpdateProvider(modern, forceSave: true);
+                readback = h.Repository.Get(saved.Id);
+                Assert.That(readback.ShouldMonitor, Is.EqualTo(ImportListMonitorType.SpecificBook), "Omission must retain a non-default legacy value");
+                Assert.That(readback.MonitoringOptions.EbookMonitor, Is.EqualTo(MonitorTypes.Existing));
+                Assert.That(readback.MonitoringOptions.EbookMonitorListedBooks, Is.False);
+                Assert.That(readback.MonitoringOptions.AudiobookMonitor, Is.EqualTo(MonitorTypes.SpecificBook));
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void explicit_modern_side_should_win_while_legacy_switch_translates_other_side(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database, typeof(GoodreadsBookshelf));
+                var definition = h.Definition(addMissing: false);
+                definition.ShouldMonitor = ImportListMonitorType.EntireAuthor;
+                definition.MonitoringOptions.AudiobookMonitor = MonitorTypes.All;
+                definition.MonitoringOptions.EbookMonitor = MonitorTypes.All;
+                var saved = h.Factory.Create(definition);
+                var resource = h.Resource(saved);
+                resource.ShouldMonitor = ImportListMonitorType.None;
+                resource.MonitoringOptions.AudiobookMonitor = MonitorTypes.Missing;
+                resource.MonitoringOptions.AudiobookMonitorListedBooks = true;
+                h.Controller.UpdateProvider(resource, forceSave: true);
+                var readback = h.Repository.Get(saved.Id);
+                Assert.Multiple(() =>
+                {
+                    Assert.That(readback.MonitoringOptions.AudiobookMonitor, Is.EqualTo(MonitorTypes.Missing));
+                    Assert.That(readback.MonitoringOptions.AudiobookMonitorListedBooks, Is.True);
+                    Assert.That(readback.MonitoringOptions.EbookMonitor, Is.EqualTo(MonitorTypes.None));
+                    Assert.That(readback.MonitoringOptions.EbookMonitorListedBooks, Is.False);
+                });
+
+                resource = h.Resource(readback);
+                var json = JObject.Parse(STJson.ToJson(resource));
+                json.Remove("shouldMonitor");
+                resource = STJson.Deserialize<ImportListResource>(json.ToString());
+                resource.MonitoringOptions.EbookMonitor = MonitorTypes.Existing;
+                resource.MonitoringOptions.EbookMonitorListedBooks = true;
+                h.Controller.UpdateProvider(resource, forceSave: true);
+                readback = h.Repository.Get(saved.Id);
+                Assert.That(readback.ShouldMonitor, Is.EqualTo(ImportListMonitorType.None));
+                Assert.That(readback.MonitoringOptions.EbookMonitor, Is.EqualTo(MonitorTypes.Existing));
+                Assert.That(readback.MonitoringOptions.EbookMonitorListedBooks, Is.True);
+                Assert.That(readback.MonitoringOptions.AudiobookMonitor, Is.EqualTo(MonitorTypes.Missing));
+
+                resource = h.Resource(readback);
+                resource.ShouldMonitor = ImportListMonitorType.EntireAuthor;
+                resource.MonitoringOptions.AudiobookMonitor = null;
+                resource.MonitoringOptions.AudiobookMonitorListedBooks = null;
+                h.Controller.UpdateProvider(resource, forceSave: true);
+                readback = h.Repository.Get(saved.Id);
+                Assert.That(readback.MonitoringOptions.AudiobookMonitor, Is.Null, "Explicit inheritance is a modern edit");
+                Assert.That(readback.MonitoringOptions.AudiobookMonitorListedBooks, Is.Null);
+                Assert.That(readback.MonitoringOptions.EbookMonitor, Is.EqualTo(MonitorTypes.All));
+            });
+        }
+
+        [TestCase(ImportListMonitorType.None, MonitorTypes.None, false)]
+        [TestCase(ImportListMonitorType.SpecificBook, MonitorTypes.SpecificBook, true)]
+        [TestCase(ImportListMonitorType.EntireAuthor, MonitorTypes.All, true)]
+        public void legacy_creation_should_translate_only_omitted_modern_sides(ImportListMonitorType legacy, MonitorTypes expected, bool listed)
+        {
+            var mapper = new ImportListResourceMapper();
+            var resource = STJson.Deserialize<ImportListResource>("{\"shouldMonitor\":\"" + legacy + "\",\"monitoringOptions\":{\"ebookMonitor\":null,\"ebookMonitorListedBooks\":false}}");
+            var model = mapper.ToModel(resource);
+            model.PreserveMonitoringOptions(null);
+            Assert.That(model.MonitoringOptions.AudiobookMonitor, Is.EqualTo(expected));
+            Assert.That(model.MonitoringOptions.AudiobookMonitorListedBooks, Is.EqualTo(listed));
+            Assert.That(model.MonitoringOptions.EbookMonitor, Is.Null);
+            Assert.That(model.MonitoringOptions.EbookMonitorListedBooks, Is.False);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void partial_monitoring_options_should_preserve_saved_properties_and_honor_explicit_null(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database, typeof(GoodreadsBookshelf));
+                var definition = h.Definition(addMissing: false);
+                definition.MonitoringOptions = new ImportListMonitoringOptions
+                {
+                    AddMissingAuthors = false, ResumePausedAuthors = true,
+                    AudiobookMonitored = false, EbookMonitored = true,
+                    AudiobookMonitorListedBooks = true, EbookMonitorListedBooks = false,
+                    AudiobookMonitor = MonitorTypes.All, EbookMonitor = MonitorTypes.Existing,
+                    AudiobookMonitorNewItems = NewItemMonitorTypes.New, EbookMonitorNewItems = NewItemMonitorTypes.None
+                };
+                var saved = h.Factory.Create(definition);
+                var resource = h.Resource(saved);
+                resource.MonitoringOptions = STJson.Deserialize<ImportListMonitoringOptions>("{\"audiobookMonitor\":\"missing\",\"ebookMonitored\":null}");
+                h.ResetCounts();
+                h.ValidateResource(resource, "PUT");
+                h.Controller.UpdateProvider(resource, forceSave: true);
+                var readback = h.Repository.Get(saved.Id).GetMonitoringOptions();
+                Assert.Multiple(() =>
+                {
+                    Assert.That(readback.AddMissingAuthors, Is.False);
+                    Assert.That(readback.ResumePausedAuthors, Is.True);
+                    Assert.That(readback.AudiobookMonitored, Is.False);
+                    Assert.That(readback.EbookMonitored, Is.Null);
+                    Assert.That(readback.AudiobookMonitorListedBooks, Is.True);
+                    Assert.That(readback.EbookMonitorListedBooks, Is.False);
+                    Assert.That(readback.AudiobookMonitor, Is.EqualTo(MonitorTypes.Missing));
+                    Assert.That(readback.EbookMonitor, Is.EqualTo(MonitorTypes.Existing));
+                    Assert.That(readback.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
+                    Assert.That(readback.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.None));
+                    Assert.That(h.Updates, Is.EqualTo(1));
+                    Assert.That(h.RootReads + h.QualityReads + h.MetadataReads, Is.Zero);
+                });
+                resource = h.Resource(h.Repository.Get(saved.Id));
+                resource.MonitoringOptions = STJson.Deserialize<ImportListMonitoringOptions>("{\"resumePausedAuthors\":false,\"audiobookMonitor\":null}");
+                h.Controller.UpdateProvider(resource, forceSave: true);
+                readback = h.Repository.Get(saved.Id).GetMonitoringOptions();
+                Assert.That(readback.ResumePausedAuthors, Is.False);
+                Assert.That(readback.AudiobookMonitor, Is.Null);
+                Assert.That(readback.EbookMonitor, Is.EqualTo(MonitorTypes.Existing));
+
+                resource = h.Resource(h.Repository.Get(saved.Id));
+                resource.MonitoringOptions = new ImportListMonitoringOptions();
+                h.ResetCounts();
+                h.Controller.UpdateProvider(resource, forceSave: true);
+                Assert.That(h.Updates, Is.Zero, "An empty partial options object must not rewrite the saved definition");
+            });
         }
 
         [TestCaseSource(nameof(ProviderDatabases))]
@@ -198,6 +458,62 @@ namespace Chaptarr.Core.Test.ImportLists
             });
         }
 
+        [Test]
+        public void creation_settings_are_validated_on_enabled_and_disabled_saves(
+            [Values] bool postgres, [Values] bool enabled, [Values] bool update)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database, typeof(ChaptarrImport));
+                var definition = h.Definition(addMissing: true);
+                definition.EnableAutomaticAdd = enabled;
+                h.SelectRoots(definition);
+                if (update) definition = h.Factory.Create(definition);
+                var original = update ? h.Repository.Get(definition.Id).ToJson() : null;
+                foreach (var field in new[] { "AudiobookRootFolderPath", "EbookRootFolderPath", "AudiobookQualityProfileId", "EbookQualityProfileId", "AudiobookMetadataProfileId", "EbookMetadataProfileId" })
+                {
+                    var invalid = STJson.Deserialize<ImportListResource>(STJson.ToJson(h.Resource(definition)));
+                    var value = field.EndsWith("Path") ? (object)"relative/path" : 999;
+                    invalid.Fields.Single(item => item.Name.Equals(field, StringComparison.OrdinalIgnoreCase)).Value = value;
+                    var error = Assert.Throws<ValidationException>(() =>
+                    {
+                        h.ValidateResource(invalid, update ? "PUT" : "POST");
+                        if (update) h.Controller.UpdateProvider(invalid, forceSave: true);
+                        else h.Controller.CreateProvider(invalid, forceSave: true);
+                    });
+                    Assert.That(error.Errors, Has.Some.Matches<FluentValidation.Results.ValidationFailure>(failure => failure.PropertyName == field));
+                    Assert.That(h.Repository.All(), Has.Count.EqualTo(update ? 1 : 0));
+                    if (update) Assert.That(h.Repository.Get(definition.Id).ToJson(), Is.EqualTo(original));
+                }
+                var valid = h.Resource(definition);
+                h.ValidateResource(valid, update ? "PUT" : "POST");
+                Assert.DoesNotThrow(() =>
+                {
+                    if (update) h.Controller.UpdateProvider(valid, forceSave: true);
+                    else h.Controller.CreateProvider(valid, forceSave: true);
+                });
+            });
+        }
+
+        [TestCaseSource(nameof(ProviderDatabases))]
+        public void relative_creation_paths_are_rejected_even_for_a_forced_save(Type providerType, bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database, providerType);
+                foreach (var field in new[] { "AudiobookRootFolderPath", "EbookRootFolderPath" })
+                {
+                    var definition = h.Definition(addMissing: true);
+                    h.SelectRoots(definition);
+                    Set(definition.Settings, field, "relative/library");
+                    var error = Assert.Throws<ValidationException>(() => h.Controller.CreateProvider(h.Resource(definition), forceSave: true));
+                    Assert.That(error.Errors, Has.Some.Matches<FluentValidation.Results.ValidationFailure>(failure =>
+                        failure.PropertyName == field && failure.ErrorMessage.Contains("Invalid Path")));
+                    Assert.That(h.Repository.All(), Is.Empty);
+                }
+            });
+        }
+
         [TestCaseSource(nameof(ProviderDatabases))]
         public void shared_schema_and_destination_options_should_preserve_source_filters(Type providerType, bool postgres)
         {
@@ -301,9 +617,18 @@ namespace Chaptarr.Core.Test.ImportLists
                     Assert.That(h.RootReads, Is.EqualTo(1));
                 });
                 h.ResetCounts();
+                var unchanged = STJson.Deserialize<ImportListResource>(STJson.ToJson(h.Controller.GetAll().Single()));
+                Assert.DoesNotThrow(() => h.Controller.UpdateProvider(unchanged));
+                Assert.That(h.QualityReads + h.MetadataReads + h.RootReads, Is.Zero, "Unchanged Save does not retest creation profiles");
+                Assert.That(h.Updates, Is.Zero);
+                Assert.That(h.SyncCommands, Is.Empty, "No unchanged-save ProviderUpdatedEvent reaches the real sync handler");
+                valid.Name += " changed";
+                h.ResetCounts();
                 Assert.DoesNotThrow(() => h.Controller.UpdateProvider(h.Resource(valid)));
-                Assert.That(h.QualityReads, Is.EqualTo(1));
+                Assert.That(h.QualityReads, Is.EqualTo(1), "Changed Save still validates profiles");
                 Assert.That(h.MetadataReads, Is.EqualTo(1));
+                Assert.That(h.Updates, Is.EqualTo(1));
+                Assert.That(h.SyncCommands, Has.Count.EqualTo(1));
                 valid.MonitoringOptions.AddMissingAuthors = false;
                 Set(valid.Settings, "AudiobookQualityProfileId", 999999);
                 Set(valid.Settings, "EbookMetadataProfileId", 999999);
@@ -507,11 +832,27 @@ namespace Chaptarr.Core.Test.ImportLists
             public int QualityReads;
             public int MetadataReads;
             public int ExistingGets;
+            public int Updates;
+            public List<ImportListSyncCommand> SyncCommands = new();
 
             public Harness(IMainDatabase database, Type providerType)
             {
                 var logger = LogManager.GetCurrentClassLogger();
-                var events = InterfaceProxy.Proxy<IEventAggregator>((method, args) => null);
+                var handler = new ImportListUpdatedHandler(InterfaceProxy.Proxy<IManageCommandQueue>((method, args) =>
+                {
+                    Assert.That(method.Name, Is.EqualTo("Push"));
+                    SyncCommands.Add((ImportListSyncCommand)args[0]);
+                    return new CommandModel();
+                }));
+                var events = InterfaceProxy.Proxy<IEventAggregator>((method, args) =>
+                {
+                    if (args[0] is ProviderUpdatedEvent<IImportList> updated)
+                    {
+                        Updates++;
+                        handler.Handle(updated);
+                    }
+                    return null;
+                });
                 var config = InterfaceProxy.Proxy<IConfigService>((method, args) => method.ReturnType.IsValueType ? Activator.CreateInstance(method.ReturnType) : null);
                 var roots = new RootFolderRepository(database, events);
                 roots.Insert(AuthorLibraryServiceSpecificBookMonitoringFixture.BuildAudiobookRoot(AudioPath));
@@ -665,7 +1006,7 @@ namespace Chaptarr.Core.Test.ImportLists
             }
 
             public JArray Options(ImportListDefinition definition, string action) => (JArray)JObject.FromObject(Factory.RequestAction(definition, action, new Dictionary<string, string>()))["options"];
-            public void ResetCounts() { RootReads = 0; QualityReads = 0; MetadataReads = 0; ExistingGets = 0; }
+            public void ResetCounts() { RootReads = 0; QualityReads = 0; MetadataReads = 0; ExistingGets = 0; Updates = 0; SyncCommands.Clear(); }
             public void ValidateResource(ImportListResource resource, string method)
             {
                 Controller.Request.Method = method;

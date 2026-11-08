@@ -43,10 +43,27 @@ namespace Chaptarr.Core.Test.ImportLists
             public FluentValidation.Results.ValidationResult Validate(ImportListResource resource) => SharedValidator.Validate(resource);
         }
 
+        [TestCase("none", true)]
+        [TestCase("specificBook", true)]
+        [TestCase("entireAuthor", true)]
+        [TestCase("999", false)]
+        public void api_should_reject_undefined_legacy_monitoring_policies(string policy, bool valid)
+        {
+            var encoded = int.TryParse(policy, out _) ? policy : "\"" + policy + "\"";
+            var resource = NzbDrone.Common.Serializer.STJson.Deserialize<ImportListResource>("{\"shouldMonitor\":" + encoded + "}");
+            resource.Name = "Options";
+            resource.Implementation = "GoodreadsBookshelf";
+            resource.ConfigContract = nameof(GoodreadsBookshelfImportListSettings);
+            var result = new OptionsController().Validate(resource);
+            Assert.That(result.Errors.Where(error => error.PropertyName == nameof(ImportListResource.ShouldMonitor)),
+                valid ? Is.Empty : Is.Not.Empty);
+        }
+
         [TestCase("{\"audiobookMonitor\":999}", false)]
         [TestCase("{\"ebookMonitorNewItems\":999}", false)]
         [TestCase("{\"audiobookMonitor\":\"none\",\"ebookMonitor\":\"missing\",\"ebookMonitorNewItems\":\"new\"}", true)]
         [TestCase("{\"audiobookMonitor\":null,\"ebookMonitorNewItems\":null}", true)]
+        [TestCase("{\"audiobookMonitor\":\"specificBook\",\"ebookMonitor\":\"specificBook\"}", true)]
         [TestCase("null", true)]
         public void api_should_validate_monitoring_policies_before_save(string optionsJson, bool valid)
         {
@@ -95,7 +112,7 @@ namespace Chaptarr.Core.Test.ImportLists
         [TestCase(true, false)]
         [TestCase(false, true)]
         [TestCase(true, true)]
-        public void migration_and_repository_should_preserve_legacy_then_save_independent_options(bool postgres, bool previousVersionRecorded)
+        public void migration_should_leave_authors_paused_and_save_independent_options(bool postgres, bool previousVersionRecorded)
         {
             var path = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"list_options_{Guid.NewGuid():N}.db");
             var schema = "list_options_" + Guid.NewGuid().ToString("N");
@@ -236,7 +253,7 @@ namespace Chaptarr.Core.Test.ImportLists
                         Assert.That(options, Is.Not.Null);
                         Assert.That(options.AddMissingAuthors, Is.True);
                         Assert.That(list.ShouldMonitorExisting, Is.EqualTo(list.ShouldMonitor != ImportListMonitorType.None));
-                        Assert.That(options.ResumePausedAuthors, Is.EqualTo(list.ShouldMonitor == ImportListMonitorType.SpecificBook));
+                        Assert.That(options.ResumePausedAuthors, Is.False, "An upgrade must leave paused authors paused");
                         Assert.That(options.AudiobookMonitored, Is.EqualTo(list.ShouldMonitor != ImportListMonitorType.None));
                         Assert.That(options.EbookMonitored, Is.EqualTo(list.ShouldMonitor == ImportListMonitorType.SpecificBook));
                         Assert.That(options.AudiobookMonitor, Is.EqualTo(list.ShouldMonitor == ImportListMonitorType.EntireAuthor ? MonitorTypes.All : MonitorTypes.None));
@@ -255,14 +272,14 @@ namespace Chaptarr.Core.Test.ImportLists
                     "Later root edits must not change unopened saved lists");
                 var saved = migrated.Single(list => list.Name == ImportListMonitorType.SpecificBook.ToString());
                 Assert.That(saved.MonitoringOptions, Is.Not.Null);
-                Assert.That(saved.GetMonitoringOptions().ResumePausedAuthors, Is.True);
+                Assert.That(saved.GetMonitoringOptions().ResumePausedAuthors, Is.False);
                 saved.Settings = new GoodreadsBookshelfImportListSettings();
                 var mapper = new ImportListResourceMapper();
                 var resource = mapper.ToResource(saved);
                 resource.EnableAutomaticAdd = false;
                 resource.MonitoringOptions = new ImportListMonitoringOptions
                 {
-                    AddMissingAuthors = false, ResumePausedAuthors = false,
+                    AddMissingAuthors = false, ResumePausedAuthors = true,
                     AudiobookMonitored = false, EbookMonitored = true,
                     AudiobookMonitor = MonitorTypes.Existing, EbookMonitor = MonitorTypes.Missing,
                     AudiobookMonitorNewItems = NewItemMonitorTypes.None, EbookMonitorNewItems = NewItemMonitorTypes.New
@@ -273,7 +290,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 {
                     Assert.That(readback.EnableAutomaticAdd, Is.False);
                     Assert.That(readback.MonitoringOptions.AddMissingAuthors, Is.False);
-                    Assert.That(readback.MonitoringOptions.ResumePausedAuthors, Is.False);
+                    Assert.That(readback.MonitoringOptions.ResumePausedAuthors, Is.True, "Explicit opt-in must remain available after upgrade");
                     Assert.That(readback.MonitoringOptions.AudiobookMonitor, Is.EqualTo(MonitorTypes.Existing));
                     Assert.That(readback.MonitoringOptions.EbookMonitor, Is.EqualTo(MonitorTypes.Missing));
                     Assert.That(readback.MonitoringOptions.EbookMonitored, Is.True);

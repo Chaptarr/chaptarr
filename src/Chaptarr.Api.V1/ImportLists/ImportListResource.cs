@@ -7,8 +7,11 @@ namespace Chaptarr.Api.V1.ImportLists
 {
     public class ImportListResource : ProviderResource<ImportListResource>
     {
+        private ImportListMonitorType? _shouldMonitor;
+
         public bool EnableAutomaticAdd { get; set; }
-        public ImportListMonitorType ShouldMonitor { get; set; }
+        public ImportListMonitorType ShouldMonitor { get => _shouldMonitor.GetValueOrDefault(); set => _shouldMonitor = value; }
+        public bool HasLegacyMonitoringIntent() => _shouldMonitor.HasValue;
         public bool ShouldMonitorExisting { get; set; }
         public bool ShouldSearch { get; set; }
         public string RootFolderPath { get; set; }
@@ -69,7 +72,7 @@ namespace Chaptarr.Api.V1.ImportLists
             var definition = base.ToModel(resource);
 
             definition.EnableAutomaticAdd = resource.EnableAutomaticAdd;
-            definition.ShouldMonitor = resource.ShouldMonitor;
+            if (resource.HasLegacyMonitoringIntent()) definition.ShouldMonitor = resource.ShouldMonitor;
             definition.ShouldMonitorExisting = resource.ShouldMonitorExisting;
             definition.ShouldSearch = resource.ShouldSearch;
             definition.RootFolderPath = resource.RootFolderPath;

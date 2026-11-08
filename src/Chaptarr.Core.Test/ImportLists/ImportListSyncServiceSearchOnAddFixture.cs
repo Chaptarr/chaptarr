@@ -45,9 +45,7 @@ namespace Chaptarr.Core.Test.ImportLists
             public List<ImportListExclusion> All() => Exclusions;
             public void Delete(int id) => throw new NotImplementedException();
             public void Delete(List<int> ids) => throw new NotImplementedException();
-            public void Delete(string foreignId) => throw new NotImplementedException();
             public ImportListExclusion Get(int id) => throw new NotImplementedException();
-            public ImportListExclusion FindByForeignId(string foreignId) => throw new NotImplementedException();
             public List<ImportListExclusion> FindByForeignId(List<string> foreignIds, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
             public List<ImportListExclusion> FindByForeignId(List<string> foreignIds) => Exclusions.Where(exclusion => foreignIds.Contains(exclusion.ForeignId)).ToList();
             public ImportListExclusion Update(ImportListExclusion importListExclusion) => throw new NotImplementedException();
@@ -65,6 +63,7 @@ namespace Chaptarr.Core.Test.ImportLists
         {
             public List<Command> Pushed { get; } = new();
             public int? RejectSearchNumber { get; set; }
+            public bool ReturnNullOnRejection { get; set; }
             private int _searches;
 
             public List<CommandModel> PushMany<TCommand>(List<TCommand> commands) where TCommand : Command
@@ -81,6 +80,11 @@ namespace Chaptarr.Core.Test.ImportLists
             {
                 if (command is BookSearchCommand && ++_searches == RejectSearchNumber)
                 {
+                    if (ReturnNullOnRejection)
+                    {
+                        return null;
+                    }
+
                     throw new InvalidOperationException("Queue is full");
                 }
 
@@ -102,6 +106,7 @@ namespace Chaptarr.Core.Test.ImportLists
             public void Fail(CommandModel command, string message, Exception e) => throw new NotImplementedException();
             public void Requeue() => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void Pause(int id) => throw new NotImplementedException();
             public void Resume(int id) => throw new NotImplementedException();
             public void CleanCommands() => throw new NotImplementedException();
@@ -139,6 +144,7 @@ namespace Chaptarr.Core.Test.ImportLists
             public void ScheduleRetry(PendingAuthorImport item, string error) => throw new NotImplementedException();
             public bool IsActiveRequest(int id, long version) => true;
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void RetryNow(int id) => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
             public void CleanupOldCompleted() { }
@@ -344,7 +350,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     return WantedEditions((List<Edition>)args[0], Books);
                 }
 
-                if (targetMethod?.Name == nameof(IBookService.GetAllBooks) && (args == null || args.Length == 0))
+                if (targetMethod?.Name == nameof(IBookService.GetImportListBookIdentities))
                 {
                     return Books;
                 }
@@ -467,6 +473,7 @@ namespace Chaptarr.Core.Test.ImportLists
             public List<Edition> Editions { get; set; } = new();
             public int RowOnlyLookupCount { get; private set; }
             public int HydratedBatchLookupCount { get; private set; }
+            public HashSet<int> RequestedBookIds { get; private set; } = new();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -475,6 +482,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 {
                     RowOnlyLookupCount++;
                     var ids = bookIds.ToHashSet();
+                    RequestedBookIds.UnionWith(ids);
                     return Editions.Where(edition => ids.Contains(edition.BookId)).ToList();
                 }
 
@@ -568,7 +576,7 @@ namespace Chaptarr.Core.Test.ImportLists
         }
 
         [Test]
-        public void local_lookup_should_batch_unloaded_editions_and_keep_edition_provider_matches()
+        public void local_lookup_should_load_only_requested_editions_and_keep_all_work_identity_controls()
         {
             var books = Enumerable.Range(1, 25)
                 .Select(index => new Book
@@ -589,13 +597,16 @@ namespace Chaptarr.Core.Test.ImportLists
 
             var buildLookup = typeof(ImportListSyncService).GetMethod("BuildImportListLocalLookup",
                 BindingFlags.Instance | BindingFlags.NonPublic);
-            var lookup = buildLookup.Invoke(service, null);
+            var lookup = buildLookup.Invoke(service, new object[] { new HashSet<int> { 1, 25 }, 0, null });
             var findBook = lookup.GetType().GetMethod("FindBook");
 
             Assert.Multiple(() =>
             {
                 Assert.That(((BatchEditionServiceProxy)(object)editionService).RowOnlyLookupCount, Is.EqualTo(1));
                 Assert.That(((BatchEditionServiceProxy)(object)editionService).HydratedBatchLookupCount, Is.Zero);
+                Assert.That(((BatchEditionServiceProxy)(object)editionService).RequestedBookIds, Is.EquivalentTo(new[] { 1, 25 }));
+                Assert.That(findBook.Invoke(lookup, new object[] { "az:B000000002" }), Is.Null);
+                Assert.That(findBook.Invoke(lookup, new object[] { "hc:2" }), Is.SameAs(books[1]));
                 Assert.That(findBook.Invoke(lookup, new object[] { "az:B000000001" }), Is.SameAs(books[0]));
                 Assert.That(findBook.Invoke(lookup, new object[] { "az:B000000025" }), Is.SameAs(books[24]));
             });
@@ -1531,14 +1542,14 @@ namespace Chaptarr.Core.Test.ImportLists
                 Assert.That(pending.Enqueued, Is.Empty);
                 Assert.That(recorder.UpdateCount, Is.EqualTo(1));
                 Assert.That(recorder.CatalogReadCount, Is.Zero);
-                Assert.That(commands.Pushed, Has.Count.EqualTo(2));
-                Assert.That(commands.Pushed.All(command => command is BookSearchCommand search && search.BookIds.Count == 1 && search.Trigger == CommandTrigger.Manual), Is.True);
+                Assert.That(commands.Pushed, Has.Count.EqualTo(1));
+                Assert.That(commands.Pushed.All(command => command is BookSearchCommand search && search.BookIds.Count == 2 && search.Trigger != CommandTrigger.Manual), Is.True);
             });
 
             books[0].EbookMonitored = false;
             service.Execute(new ImportListSyncCommand(list.Id));
             Assert.That(books[0].EbookMonitored, Is.True);
-            Assert.That(commands.Pushed, Has.Count.EqualTo(3));
+            Assert.That(commands.Pushed, Has.Count.EqualTo(2));
         }
 
         [TestCase(false)]
@@ -1561,14 +1572,15 @@ namespace Chaptarr.Core.Test.ImportLists
             });
         }
 
-        [Test]
-        public void failed_search_queue_should_retain_only_unqueued_book_requests_for_next_sync()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void failed_search_queue_should_retain_only_unqueued_book_requests_for_next_sync(bool returnNull)
         {
             var (list, author, books, reports) = ExistingListScenario();
-            var commands = new StubCommandQueueManager { RejectSearchNumber = 2 };
+            var commands = new StubCommandQueueManager { RejectSearchNumber = 1, ReturnNullOnRejection = returnNull };
             var service = BuildExistingAuthorService(list, author, books, reports, commands);
             Assert.DoesNotThrow(() => service.Execute(new ImportListSyncCommand(list.Id)));
-            Assert.That(books[0].AddOptions.SearchForNewBook, Is.False);
+            Assert.That(books[0].AddOptions.SearchForNewBook, Is.True);
             Assert.That(books[1].AddOptions.SearchForNewBook, Is.True);
             service.Execute(new ImportListSyncCommand(list.Id));
             Assert.That(commands.Pushed.OfType<BookSearchCommand>().SelectMany(command => command.BookIds), Is.EqualTo(new[] { 1, 2 }));
@@ -1792,7 +1804,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 Editions = new List<Edition> { new() { Id = 2, BookId = 1, HardcoverEditionId = "hc:123", GoodreadsEditionId = 123 } }
             };
             var service = BuildExistingAuthorService(null, null, new List<Book> { book }, new List<ImportListItemInfo>());
-            var lookup = typeof(ImportListSyncService).GetMethod("BuildImportListLocalLookup", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(service, null);
+            var lookup = typeof(ImportListSyncService).GetMethod("BuildImportListLocalLookup", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(service, new object[] { null, 0, null });
             Assert.That(lookup.GetType().GetMethod("FindBook").Invoke(lookup, new object[] { providerId }), Is.Null);
         }
 
@@ -2654,7 +2666,7 @@ namespace Chaptarr.Core.Test.ImportLists
         }
 
         [Test]
-        public void rejected_automatic_batch_should_retain_demand_and_allow_paused_book_tail_searches()
+        public void rejected_automatic_batch_should_retain_all_requested_books_including_paused_authors()
         {
             var (list, author, books, reports) = ExistingListScenario();
             author.EbookMonitored = true;
@@ -2668,9 +2680,10 @@ namespace Chaptarr.Core.Test.ImportLists
             var service = BuildExistingAuthorService(list, author, books, reports, commands, authorServiceOverride: authors);
             Assert.DoesNotThrow(() => service.Execute(new ImportListSyncCommand(list.Id)));
             Assert.That(books.Take(2).All(book => book.AddOptions.SearchForNewBook), Is.True);
-            Assert.That(commands.Pushed.OfType<BookSearchCommand>().SelectMany(command => command.BookIds), Is.EqualTo(new[] { tail.Id }));
+            Assert.That(commands.Pushed.OfType<BookSearchCommand>(), Is.Empty);
+            Assert.That(tail.AddOptions.SearchForNewBook, Is.True);
             service.Execute(new ImportListSyncCommand(list.Id));
-            Assert.That(commands.Pushed.OfType<BookSearchCommand>().SelectMany(command => command.BookIds), Is.EqualTo(new[] { tail.Id, 1, 2 }));
+            Assert.That(commands.Pushed.OfType<BookSearchCommand>().SelectMany(command => command.BookIds), Is.EqualTo(new[] { 1, 2, tail.Id }));
         }
 
         [Test]
@@ -2829,6 +2842,40 @@ namespace Chaptarr.Core.Test.ImportLists
                 Is.EqualTo(new[] { "gr:123" }));
         }
 
+        [Test]
+        public void skipped_missing_author_count_should_include_cached_misses_without_repeating_lookups()
+        {
+            var (list, author, _, _) = ExistingListScenario();
+            var reports = new List<ImportListItemInfo>
+            {
+                new() { ImportListId = list.Id, AuthorProviderId = "gr:999999", Author = "Missing Author" },
+                new() { ImportListId = list.Id, AuthorProviderId = "gr:999999", Author = "Repeated Missing Author" },
+                new() { ImportListId = list.Id, AuthorProviderId = author.GoodreadsAuthorId, Author = author.Name }
+            };
+            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            var pending = new RecordingPendingAuthorImportService();
+            using var logs = new LogFactory();
+            var memory = new NLog.Targets.MemoryTarget { Layout = "${message}" };
+            var logging = new NLog.Config.LoggingConfiguration(logs);
+            logging.AddRule(LogLevel.Info, LogLevel.Fatal, memory);
+            logs.Configuration = logging;
+
+            BuildExistingAuthorService(list, author, new List<Book>(), reports,
+                pendingImports: pending, authorServiceOverride: authorService,
+                logger: logs.GetLogger("skipped-missing-author-count"))
+                .Execute(new ImportListSyncCommand(list.Id));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(memory.Logs.Where(message => message.Contains("missing authors because adding is off")),
+                    Is.EqualTo(new[] { $"Import list {list.Name}: skipped 1 missing authors because adding is off" }));
+                Assert.That(((AuthorServiceProxy)(object)authorService).ProviderLookupCount, Is.EqualTo(1),
+                    "the cached missing author is reused, and the local existing author needs no live lookup");
+                Assert.That(pending.Enqueued, Is.Empty);
+                Assert.That(author.EbookMonitored, Is.False);
+            });
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void missing_authors_should_remain_absent_with_add_off(bool narration)
@@ -2890,7 +2937,7 @@ namespace Chaptarr.Core.Test.ImportLists
             bool monitored, IAuthorService authors, IBookService books, IEditionService editions,
             IPendingAuthorImportService pending, IRootFolderService roots, IManageCommandQueue queue, bool bothSides = false, bool newAuthor = false,
             List<ImportListItemInfo> reports = null, bool keep = true, List<ImportListExclusion> exclusions = null, bool search = true,
-            Action<string, BookMediaType> metadataLookup = null, Action<ImportListDefinition> configureList = null, bool addMissingAuthors = true)
+            Action<string, BookMediaType> metadataLookup = null, Action<ImportListDefinition> configureList = null, bool addMissingAuthors = true, Logger logger = null)
         {
             var (list, _, _, _) = ExistingListScenario();
             list.MonitoringOptions.AddMissingAuthors = addMissingAuthors;
@@ -2925,7 +2972,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 new StubFetchAndParseImportList { Items = items }, bookInfo,
                 authors, books, editions, pending, roots,
                 new RootFolderSettingsResolver(roots),
-                new StubEventAggregator(), queue, LogManager.GetCurrentClassLogger(),
+                new StubEventAggregator(), queue, logger ?? LogManager.GetCurrentClassLogger(),
                 DispatchProxy.Create<IImportListBookIdentityCacheRepository, ThrowingProxy<IImportListBookIdentityCacheRepository>>());
         }
 

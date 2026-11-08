@@ -33,7 +33,8 @@ function EditImportListExclusionModalContent(props) {
 
   const {
     authorName,
-    foreignId
+    foreignId,
+    mediaType
   } = item;
 
   return (
@@ -84,6 +85,21 @@ function EditImportListExclusionModalContent(props) {
                   name="foreignId"
                   helpText={translate('ForeignIdHelpText')}
                   {...foreignId}
+                  onChange={onInputChange}
+                />
+              </FormGroup>
+              <FormGroup>
+                <FormLabel>{translate('AuthorDeleteFormat')}</FormLabel>
+                <FormInputGroup
+                  type={inputTypes.SELECT}
+                  name="mediaType"
+                  {...mediaType}
+                  value={mediaType?.value || 'all'}
+                  values={[
+                    { key: 'all', value: translate('AuthorDeleteBothFormats') },
+                    { key: 'audiobook', value: translate('Audiobooks') },
+                    { key: 'ebook', value: translate('Ebooks') }
+                  ]}
                   onChange={onInputChange}
                 />
               </FormGroup>

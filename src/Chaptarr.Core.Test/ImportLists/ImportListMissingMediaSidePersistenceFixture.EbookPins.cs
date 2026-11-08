@@ -592,11 +592,11 @@ namespace Chaptarr.Core.Test.ImportLists
                         Assert.That(rows, Has.Count.EqualTo(count));
                         Assert.That(rows.All(book => !book.AnyEditionOk && BookEditionIdentity.GetMonitoredEdition(book).ManualAdd), Is.True);
                         Assert.That(calls.GetValueOrDefault(nameof(IBookService.AddWantedEditions)), Is.EqualTo(1));
-                        Assert.That(calls.GetValueOrDefault(nameof(IBookService.GetAllBooks)), Is.EqualTo(1));
+                        Assert.That(calls.GetValueOrDefault(nameof(IBookService.GetImportListBookIdentities)), Is.EqualTo(1));
                         Assert.That(calls.GetValueOrDefault(nameof(IBookService.FindByProviderId)), Is.Zero);
                     });
                     measurements.Add(reads.Count);
-                    TestContext.WriteLine($"{database.DatabaseType}: {count} explicit Ebook reports; {reads.Count} SELECTs, writer batches={calls.GetValueOrDefault(nameof(IBookService.AddWantedEditions))}, catalog reads={calls.GetValueOrDefault(nameof(IBookService.GetAllBooks))}, {watch.ElapsedMilliseconds}ms.");
+                    TestContext.WriteLine($"{database.DatabaseType}: {count} explicit Ebook reports; {reads.Count} SELECTs, writer batches={calls.GetValueOrDefault(nameof(IBookService.AddWantedEditions))}, catalog reads={calls.GetValueOrDefault(nameof(IBookService.GetImportListBookIdentities))}, {watch.ElapsedMilliseconds}ms.");
                 });
             }
             Assert.That(measurements[1], Is.EqualTo(measurements[0]), "Increasing source items from 1 to 25 must not add catalog, owner or edition SELECTs per item.");

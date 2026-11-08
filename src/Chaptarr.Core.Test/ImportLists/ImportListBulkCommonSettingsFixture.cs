@@ -68,6 +68,23 @@ namespace Chaptarr.Core.Test.ImportLists
             SchemaBuilder.Initialize(container);
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void bulk_enable_rejects_missing_creation_roots_without_saving(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database);
+                var list = h.Insert(0, 1, addMissing: true);
+                list.EnableAutomaticAdd = false;
+                ((DualMediaImportListSettings)list.Settings).AudiobookRootFolderPath = null;
+                h.Repository.Update(list);
+                Assert.Throws<ValidationException>(() => h.Save(new ImportListBulkResource { EnableAutomaticAdd = true }, list));
+                Assert.That(h.Repository.Get(list.Id).EnableAutomaticAdd, Is.False);
+                Assert.That(h.Repository.BulkWrites, Is.Zero);
+            });
+        }
+
         [TestCaseSource(nameof(ProviderDatabases))]
         public void explicit_bulk_edit_should_reach_persisted_common_settings_and_sync_builder(int provider, bool postgres)
         {

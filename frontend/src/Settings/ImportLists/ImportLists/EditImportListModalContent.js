@@ -30,6 +30,15 @@ import createAjaxRequest from 'Utilities/createAjaxRequest';
 import translate from 'Utilities/String/translate';
 import styles from './EditImportListModalContent.css';
 
+const listMonitorOptions = monitorOptions.flatMap((option) => {
+  if (option.key === 'all') {
+    return [option, { key: 'specificBook', get value() {
+      return translate('ImportListOnlyListedBooks');
+    } }];
+  }
+  return [option];
+});
+
 function EditImportListModalContent(props) {
 
   const {
@@ -44,6 +53,7 @@ function EditImportListModalContent(props) {
     item,
     onInputChange,
     onFieldChange,
+    onRetryRootFolders,
     onModalClose,
     onSavePress,
     onTestPress,
@@ -69,70 +79,105 @@ function EditImportListModalContent(props) {
 
   const options = monitoringOptions?.value || {};
   const addMissingAuthors = options.addMissingAuthors !== false;
-  const monitorListedBooks = shouldMonitor?.value !== 'none';
   const changeOptions = ({ name: optionName, value }) => onInputChange({
     name: 'monitoringOptions', value: { ...options, [optionName]: value }
   });
 
-  const renderNewAuthorMonitoring = (mediaType) => (
-    <>
-      <FormGroup>
-        <FormLabel>
-          {translate('ImportListMonitorWhenAdded')}
-          <Popover
-            anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
-            title={translate('ImportListMonitorWhenAdded')}
-            body={<AuthorMonitoringGatePopoverContent />}
-            position={tooltipPositions.RIGHT}
+  const renderNewAuthorMonitoring = (mediaType) => {
+    const monitor = options[`${mediaType}Monitor`] ?? monitoringDefaults[`${mediaType}Monitor`] ?? 'none';
+    const legacyMonitorListedBooks = ['specificBook', 'entireAuthor'].includes(shouldMonitor?.value);
+    const monitorListedBooks = options[`${mediaType}MonitorListedBooks`] ?? legacyMonitorListedBooks;
+    const selectedMonitor = monitorListedBooks && monitor === 'none' ? 'specificBook' : monitor;
+    const changeMonitor = ({ value }) => {
+      const includeListed = value === 'specificBook' || (value !== 'none' && monitorListedBooks);
+      onInputChange({
+        name: 'monitoringOptions',
+        value: {
+          ...options,
+          [`${mediaType}Monitor`]: value,
+          [`${mediaType}MonitorListedBooks`]: includeListed
+        }
+      });
+    };
+
+    return (
+      <>
+        <FormGroup>
+          <FormLabel>
+            {translate('ImportListMonitorWhenAdded')}
+            <Popover
+              anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
+              title={translate('ImportListMonitorWhenAdded')}
+              body={<AuthorMonitoringGatePopoverContent />}
+              position={tooltipPositions.RIGHT}
+            />
+          </FormLabel>
+          <FormInputGroup
+            type={inputTypes.CHECK}
+            name={`${mediaType}Monitored`}
+            value={options[`${mediaType}Monitored`] ?? monitoringDefaults[`${mediaType}Monitored`]}
+            onChange={changeOptions}
           />
-        </FormLabel>
-        <FormInputGroup
-          type={inputTypes.CHECK}
-          name={`${mediaType}Monitored`}
-          value={options[`${mediaType}Monitored`] ?? monitoringDefaults[`${mediaType}Monitored`]}
-          onChange={changeOptions}
-        />
-      </FormGroup>
-      <FormGroup>
-        <FormLabel>
-          {translate('InitialBookMonitoring')}
-          <Popover
-            anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
-            title={translate('InitialBookMonitoring')}
-            body={<AuthorMonitoringOptionsPopoverContent />}
-            position={tooltipPositions.RIGHT}
+        </FormGroup>
+        <FormGroup>
+          <FormLabel>
+            {translate('InitialBookMonitoring')}
+            <Popover
+              anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
+              title={translate('InitialBookMonitoring')}
+              body={
+                <>
+                  <AuthorMonitoringOptionsPopoverContent />
+                  <p>{translate('ImportListBookMonitoringOptionsHelp')}</p>
+                </>
+              }
+              position={tooltipPositions.RIGHT}
+            />
+          </FormLabel>
+          <FormInputGroup
+            type={inputTypes.SELECT}
+            name={`${mediaType}Monitor`}
+            values={listMonitorOptions}
+            value={selectedMonitor}
+            helpText={translate('ImportListInitialBooksHelp')}
+            onChange={changeMonitor}
           />
-        </FormLabel>
-        <FormInputGroup
-          type={inputTypes.SELECT}
-          name={`${mediaType}Monitor`}
-          values={monitorOptions}
-          value={options[`${mediaType}Monitor`] ?? monitoringDefaults[`${mediaType}Monitor`]}
-          helpText={translate('ImportListInitialBooksHelp')}
-          onChange={changeOptions}
-        />
-      </FormGroup>
-      <FormGroup>
-        <FormLabel>
-          {translate('MonitorNewBooks')}
-          <Popover
-            anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
-            title={translate('MonitorNewBooks')}
-            body={<AuthorMonitorNewItemsOptionsPopoverContent />}
-            position={tooltipPositions.RIGHT}
+        </FormGroup>
+        {
+          ['all', 'missing', 'existing'].includes(selectedMonitor) &&
+            <FormGroup>
+              <FormLabel>{translate('ImportListMonitorListedBooks')}</FormLabel>
+              <FormInputGroup
+                type={inputTypes.CHECK}
+                name={`${mediaType}MonitorListedBooks`}
+                value={monitorListedBooks}
+                helpText={translate('ImportListMonitorListedBooksHelp')}
+                onChange={changeOptions}
+              />
+            </FormGroup>
+        }
+        <FormGroup>
+          <FormLabel>
+            {translate('MonitorNewBooks')}
+            <Popover
+              anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
+              title={translate('MonitorNewBooks')}
+              body={<AuthorMonitorNewItemsOptionsPopoverContent />}
+              position={tooltipPositions.RIGHT}
+            />
+          </FormLabel>
+          <FormInputGroup
+            type={inputTypes.SELECT}
+            name={`${mediaType}MonitorNewItems`}
+            values={monitorNewItemsOptions}
+            value={options[`${mediaType}MonitorNewItems`] ?? monitoringDefaults[`${mediaType}MonitorNewItems`]}
+            helpText={translate('ImportListFutureBooksHelp')}
+            onChange={changeOptions}
           />
-        </FormLabel>
-        <FormInputGroup
-          type={inputTypes.SELECT}
-          name={`${mediaType}MonitorNewItems`}
-          values={monitorNewItemsOptions}
-          value={options[`${mediaType}MonitorNewItems`] ?? monitoringDefaults[`${mediaType}MonitorNewItems`]}
-          helpText={translate('ImportListFutureBooksHelp')}
-          onChange={changeOptions}
-        />
-      </FormGroup>
-    </>
-  );
+        </FormGroup>
+      </>
+    );
+  };
 
   const isHardcoverLibraryImportList = (implementation?.value === 'HardcoverLibraryImportList') ||
     (implementationName === 'Hardcover Library');
@@ -640,22 +685,15 @@ function EditImportListModalContent(props) {
                 </FormGroup>
                 {
                   addMissingAuthors &&
-                    <>
-                      <FormGroup>
-                        <FormLabel>{translate('ImportListMonitorListedBooks')}</FormLabel>
-                        <FormInputGroup
-                          type={inputTypes.CHECK}
-                          name="monitorListedBooks"
-                          value={monitorListedBooks}
-                          helpText={translate('ImportListMonitorListedBooksHelp')}
-                          onChange={({ value }) => onInputChange({ name: 'shouldMonitor', value: value ? 'specificBook' : 'none' })}
-                        />
-                      </FormGroup>
-                      <Alert kind={kinds.INFO}>{translate('ImportListRootDefaultsHelp')}</Alert>
-                    </>
+                    <Alert kind={kinds.INFO}>{translate('ImportListRootDefaultsHelp')}</Alert>
                 }
                 {addMissingAuthors && !isRootFoldersPopulated && !rootFoldersError && <LoadingIndicator />}
-                {addMissingAuthors && !isRootFoldersPopulated && rootFoldersError && <Alert kind={kinds.DANGER}>{translate('UnableToLoadRootFolders')}</Alert>}
+                {addMissingAuthors && !isRootFoldersPopulated && rootFoldersError && (
+                  <Alert kind={kinds.DANGER}>
+                    <div>{translate('UnableToLoadRootFolders')}</div>
+                    <Button onPress={onRetryRootFolders}>{translate('Retry')}</Button>
+                  </Alert>
+                )}
                 {(isRootFoldersPopulated || !addMissingAuthors) && renderDualMediaImportListFields()}
               </FieldSet>
 
@@ -728,6 +766,7 @@ EditImportListModalContent.propTypes = {
   monitoringDefaults: PropTypes.object,
   onInputChange: PropTypes.func.isRequired,
   onFieldChange: PropTypes.func.isRequired,
+  onRetryRootFolders: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired,
   onSavePress: PropTypes.func.isRequired,
   onTestPress: PropTypes.func.isRequired,

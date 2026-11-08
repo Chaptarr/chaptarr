@@ -101,6 +101,15 @@ namespace Chaptarr.Api.V1.ImportLists
                     if (ebookMetadata) settings.EbookMetadataProfileId = resource.MetadataProfileId.Value;
                 }
             }
+            var creationFailures = existingDefinitions.Where(definition => definition.Enable)
+                .SelectMany(definition => DualMediaImportListActions.ValidateCreationSettings(definition)
+                    .Select(failure => new ValidationFailure(failure.PropertyName, $"{definition.Name}: {failure.ErrorMessage}")))
+                .ToList();
+            if (creationFailures.Count > 0)
+            {
+                throw new ValidationException(creationFailures);
+            }
+
             return existingDefinitions;
         }
     }
