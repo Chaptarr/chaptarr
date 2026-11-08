@@ -153,10 +153,11 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
     def test_release_builders_use_public_runners_without_changing_gates(self) -> None:
         release = (WORKFLOW.parent / "release.yml").read_text(encoding="utf-8")
         docker = (WORKFLOW.parent / "docker-publish.yml").read_text(encoding="utf-8")
-        for name in ("platform-runtime-packs", "standalone-assets"):
+        for name in ("platform-runtime-packs", "standalone-assets", "rpm-source"):
             job = job_block(release, name)
             self.assertIn("runs-on: ubuntu-24.04", job, name)
             self.assertIn("Verify checked-out release source", job, name)
+        self.assertIn("sudo apt-get install --yes --no-install-recommends rpm", job_block(release, "rpm-source"))
         for name in ("require-release-readiness", "build-and-push"):
             self.assertIn("runs-on: ubuntu-24.04", job_block(docker, name), name)
         self.assertIn("needs: require-release-readiness", job_block(docker, "build-and-push"))
