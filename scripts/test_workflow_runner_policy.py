@@ -196,6 +196,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             "PREDECESSOR_SHA256",
             "test-bookshelf-standalone-handoff.py",
             "--candidate-revision \"$RELEASE_SHA\"",
+            "uname -r > \"$RUNNER_TEMP/standalone-handoff/kernel-release.txt\"",
         ):
             self.assertIn(token, installed)
         self.assertNotIn("build-standalone.sh", installed)

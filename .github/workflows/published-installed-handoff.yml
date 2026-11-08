@@ -143,6 +143,11 @@ jobs:
             --output /work/evidence --candidate-revision "$RELEASE_SHA" --runtime-id "$RID" "${fixture_options[@]}" \
             2>&1 | tee "$RUNNER_TEMP/standalone-handoff/acceptance.log"
         fi
+    - name: Record native runner kernel
+      if: always()
+      run: |
+        mkdir -p "$RUNNER_TEMP/standalone-handoff"
+        uname -r > "$RUNNER_TEMP/standalone-handoff/kernel-release.txt"
     - name: Retain installed handoff evidence
       if: always()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -151,5 +156,6 @@ jobs:
         path: |
           ${{ runner.temp }}/standalone-handoff/acceptance.log
           ${{ runner.temp }}/standalone-handoff/evidence/**
+          ${{ runner.temp }}/standalone-handoff/kernel-release.txt
         retention-days: 30
         if-no-files-found: warn
