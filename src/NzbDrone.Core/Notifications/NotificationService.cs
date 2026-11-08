@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using NLog;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Download;
@@ -18,6 +19,7 @@ namespace NzbDrone.Core.Notifications
 {
     public class NotificationService
         : IHandle<BookGrabbedEvent>,
+          IHandleAsync<ApplicationStartedEvent>,
           IHandle<BookImportedEvent>,
           IHandle<AuthorRenamedEvent>,
           IHandle<AuthorAddedEvent>,
@@ -369,6 +371,11 @@ namespace NzbDrone.Core.Notifications
 
         public void Handle(BookFileDeletedEvent message)
         {
+            if (message.Reason == DeleteMediaFileReason.NoLinkedEpisodes)
+            {
+                return;
+            }
+
             var deleteMessage = new BookFileDeleteMessage();
 
             var book = new List<Book> { message.BookFile.Edition.Book };
@@ -467,7 +474,12 @@ namespace NzbDrone.Core.Notifications
             // TODO: Build out this message so that we can pass on what failed and what was successful
             var downloadMessage = new BookDownloadMessage
             {
-                Message = GetBookIncompleteImportMessage(message.TrackedDownload.DownloadItem.Title)
+                AwaitingImportConfirmation = message.TrackedDownload.AwaitingImportConfirmation,
+                Author = message.TrackedDownload.RemoteBook?.Author,
+                DownloadId = message.TrackedDownload.DownloadItem.DownloadId,
+                Message = message.TrackedDownload.AwaitingImportConfirmation
+                    ? $"{message.TrackedDownload.DownloadItem.Title}: waiting for you to confirm replacement in Manual Import."
+                    : GetBookIncompleteImportMessage(message.TrackedDownload.DownloadItem.Title)
             };
 
             foreach (var notification in _notificationFactory.OnImportFailureEnabled())
@@ -570,6 +582,8 @@ namespace NzbDrone.Core.Notifications
                 _notificationStatusService.RecordSuccess(notification.Definition.Id);
             }
         }
+
+        public void HandleAsync(ApplicationStartedEvent message) => ProcessQueue();
 
         private void ProcessQueue()
         {
