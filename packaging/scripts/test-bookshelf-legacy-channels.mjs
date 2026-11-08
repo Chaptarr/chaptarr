@@ -708,7 +708,7 @@ test('Linux release jobs install the checksum-pinned ChaptarrNG GitHub CLI actio
   }
 });
 
-test('Windows release uses private Packer and verifies the BookshelfNG handoff archive', () => {
+test('Windows release uses a hosted Windows runner and verifies the BookshelfNG handoff archive', () => {
   const workflow = read('.github/workflows/release-distribution.yml');
   const job = readWorkflowJob(workflow, 'build-chocolatey');
   const handoff = read('packaging/scripts/test-chocolatey-bookshelfng-handoff.ps1');
@@ -716,10 +716,7 @@ test('Windows release uses private Packer and verifies the BookshelfNG handoff a
   const build = readWorkflowJob(buildWorkflow, 'build');
   const legacyInstaller = read('packaging/legacy/chocolatey/tools/chocolateyinstall.ps1.in');
 
-  assert.match(job, /runs-on: \$\{\{ fromJSON\(format\(/);
-  assert.match(job, /"group":"packer-windows"/);
-  assert.match(job, /"labels":\["self-hosted","Windows","X64","on-demand","packer-windows","ChaptarrNG","gha-\{0\}-build-chocolatey"\]/);
-  assert.match(job, /github\.run_id/);
+  assert.match(job, /runs-on: windows-2025/);
   const downloadStep = job.indexOf('name: Download and verify the release archive');
   const packageStep = job.indexOf('name: Render and pack Chocolatey package');
   assert.ok(downloadStep >= 0 && downloadStep < packageStep,
