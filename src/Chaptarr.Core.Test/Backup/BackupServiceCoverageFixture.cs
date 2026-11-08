@@ -108,7 +108,8 @@ namespace Chaptarr.Core.Test.Backup
         [SetUp]
         public void SetUp()
         {
-            _root = Path.Combine(TestContext.CurrentContext.WorkDirectory.GetActualCasing(), $"backup_coverage_{Guid.NewGuid():N}");
+            // Leave room for native SQLite journal paths under Windows temporary directories.
+            _root = Path.Combine(TestContext.CurrentContext.WorkDirectory.GetActualCasing(), Path.GetRandomFileName());
             Directory.CreateDirectory(_root);
             _disk.AvailableSpace = null;
             _disk.SpaceForPath = null;
