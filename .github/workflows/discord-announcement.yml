@@ -9,24 +9,26 @@ on:
         type: choice
         options:
           - announce
+          - inspect
         required: true
       runner_pool:
-        description: Required private JIT runner pool
+        description: Runner pool
         type: choice
         options:
           - private
+          - public
         required: true
       title:
         description: Discord embed title
-        required: true
+        required: false
         type: string
       url:
         description: HTTPS link opened by the embed
-        required: true
+        required: false
         type: string
       body:
         description: Announcement text
-        required: true
+        required: false
         type: string
 
 permissions:
@@ -39,14 +41,14 @@ jobs:
         github.event_name != 'workflow_dispatch' ||
         (
           github.ref == 'refs/heads/main' &&
-          inputs.action == 'announce' &&
-          inputs.runner_pool == 'private'
+          (inputs.action == 'announce' || inputs.action == 'inspect') &&
+          (inputs.runner_pool == 'private' || inputs.runner_pool == 'public')
         )
       ) &&
       (
         github.ref == 'refs/heads/main'
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-announce"]}}', github.run_id)) }}
+    runs-on: ${{ inputs.runner_pool == 'public' && 'ubuntu-24.04' || fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-announce"]}}', github.run_id)) }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -58,7 +60,14 @@ jobs:
         node-version: 26.12.1
         package-manager-cache: false
 
+    - name: Inspect Discord destination
+      if: inputs.action == 'inspect'
+      env:
+        DISCORD_RELEASE_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+      run: node scripts/inspect-discord-destination.mjs
+
     - name: Post announcement
+      if: inputs.action == 'announce'
       env:
         DISCORD_RELEASE_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
         ANNOUNCEMENT_TITLE: ${{ inputs.title }}

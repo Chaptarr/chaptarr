@@ -126,6 +126,19 @@ for (let index = 0; index < chunks.length; index += 1) {
   if (!receipt.id) {
     throw new Error('Discord did not confirm the announcement message.');
   }
+  if (!/^\d+$/.test(receipt.guild_id) || !/^\d+$/.test(receipt.channel_id)) {
+    throw new Error('Discord did not confirm the announcement destination.');
+  }
+  console.log(
+    'Discord announcement message ' +
+      (index + 1) +
+      ': https://discord.com/channels/' +
+      receipt.guild_id +
+      '/' +
+      receipt.channel_id +
+      '/' +
+      receipt.id
+  );
   // Discord normalizes line endings and trims surrounding whitespace in embeds,
   // so a text difference alone does not mean the message was lost.
   const normalize = (value) =>
