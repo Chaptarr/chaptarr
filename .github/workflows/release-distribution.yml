@@ -1,4 +1,4 @@
-# ng-runner-policy: private-jit-only-v1
+# ng-runner-policy: trusted-hosted-or-private-jit-v1
 # packer-windows-jit-v1
 name: Publish package-manager channels
 run-name: >-
@@ -420,7 +420,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       inputs.action == 'publish' &&
       inputs.runner_pool == 'private'
-    runs-on: ${{ fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","ChaptarrNG","gha-{0}-build-chocolatey"]}}', github.run_id)) }}
+    runs-on: windows-2025
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -605,7 +605,7 @@ jobs:
       inputs.action == 'publish' &&
       inputs.runner_pool == 'private' &&
       needs.credentials.outputs.chocolatey == 'true'
-    runs-on: ${{ fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","ChaptarrNG","gha-{0}-publish-chocolatey"]}}', github.run_id)) }}
+    runs-on: windows-2025
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:

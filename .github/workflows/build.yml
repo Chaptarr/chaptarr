@@ -195,6 +195,7 @@ jobs:
 
     - name: Verify exact release tag source
       if: inputs.action == 'publish'
+      shell: bash
       env:
         RELEASE_TAG: ${{ inputs.release_tag }}
         RELEASE_SHA: ${{ inputs.release_sha }}
