@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export const RELEASE_NOTE_DIRECTORY = 'release-notes';
+export const DEFAULT_GITHUB_RELEASE_BODY_LIMIT = 120_000;
 
 const CATEGORIES = new Map([
   ['added', 'Added'],
@@ -281,6 +282,57 @@ export function injectCuratedNotes(changelog, curatedNotes) {
     '\n' +
     changelog.slice(insertionPoint).replace(/^\n*/u, '\n')
   );
+}
+
+export function prepareReleaseBodies(
+  changelog,
+  curatedNotes,
+  {
+    maxLength = DEFAULT_GITHUB_RELEASE_BODY_LIMIT,
+    overflowAssetName,
+  } = {}
+) {
+  if (!Number.isInteger(maxLength) || maxLength < 1) {
+    throw new RangeError('Release body maximum length must be a positive integer.');
+  }
+
+  const fullBody = injectCuratedNotes(changelog, curatedNotes);
+  if (fullBody.length <= maxLength) {
+    return { releaseBody: fullBody, fullBody, overflowed: false };
+  }
+
+  if (
+    typeof overflowAssetName !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(overflowAssetName)
+  ) {
+    throw new Error('A safe overflow asset name is required when the release body exceeds its limit.');
+  }
+
+  const heading = /^## .+$/mu.exec(changelog);
+  if (!heading || heading.index === undefined) {
+    throw new Error('Cannot bound an oversized release body without a release heading.');
+  }
+
+  const preamble = changelog.slice(0, heading.index + heading[0].length).trim();
+  const overflowNotice = [
+    '### Complete changelog',
+    '',
+    'The complete generated changelog is attached to this release as `' +
+      overflowAssetName +
+      '`.',
+  ].join('\n');
+  const releaseBody = [preamble, curatedNotes, overflowNotice]
+    .filter(Boolean)
+    .join('\n\n')
+    .trim() + '\n';
+
+  if (releaseBody.length > maxLength) {
+    throw new Error(
+      'Curated release notes exceed the configured release body limit; shorten or split the fragments.'
+    );
+  }
+
+  return { releaseBody, fullBody, overflowed: true };
 }
 
 export function hasExplicitNoReleaseNote(body) {

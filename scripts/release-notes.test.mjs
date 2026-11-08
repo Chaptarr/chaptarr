@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-import { hasExplicitNoReleaseNote } from './release-notes.mjs';
+import {
+  hasExplicitNoReleaseNote,
+  prepareReleaseBodies,
+} from './release-notes.mjs';
 
 const pullRequestTemplate = fs.readFileSync(
   new URL('../.github/pull_request_template.md', import.meta.url),
@@ -42,4 +45,47 @@ test('release-note markers inside fenced code examples are ignored', () => {
 
 test('the CodeQL internal-note marker remains supported', () => {
   assert.equal(hasExplicitNoReleaseNote('release-note-none-codeql-action'), true);
+});
+
+test('release bodies below the limit retain the complete changelog', () => {
+  const changelog = '# Changelog\n\n## 0.9.978\n\n- Fixed one issue.\n';
+  const bodies = prepareReleaseBodies(changelog, '### User-facing changes\n\n- One fix.', {
+    maxLength: 500,
+    overflowAssetName: 'chaptarrng-v0.9.978-full-changelog.md',
+  });
+
+  assert.equal(bodies.overflowed, false);
+  assert.equal(bodies.releaseBody, bodies.fullBody);
+  assert.match(bodies.releaseBody, /One fix/u);
+  assert.match(bodies.releaseBody, /Fixed one issue/u);
+});
+
+test('oversized release bodies retain curated notes and attach the complete changelog', () => {
+  const changelog = '# Changelog\n\n## 0.9.978\n\n' + '- Commit detail.\n'.repeat(100);
+  const bodies = prepareReleaseBodies(
+    changelog,
+    '### User-facing changes\n\n- Migration and rollback are ready.',
+    {
+      maxLength: 300,
+      overflowAssetName: 'chaptarrng-v0.9.978-full-changelog.md',
+    }
+  );
+
+  assert.equal(bodies.overflowed, true);
+  assert.ok(bodies.releaseBody.length <= 300);
+  assert.match(bodies.releaseBody, /Migration and rollback are ready/u);
+  assert.match(bodies.releaseBody, /chaptarrng-v0\.9\.978-full-changelog\.md/u);
+  assert.match(bodies.fullBody, /Commit detail/u);
+  assert.ok(bodies.fullBody.length > bodies.releaseBody.length);
+});
+
+test('oversized curated notes fail instead of being silently truncated', () => {
+  assert.throws(
+    () =>
+      prepareReleaseBodies('# Changelog\n\n## 0.9.978\n\n' + 'x'.repeat(500), 'y'.repeat(500), {
+        maxLength: 200,
+        overflowAssetName: 'chaptarrng-v0.9.978-full-changelog.md',
+      }),
+    /Curated release notes exceed/u
+  );
 });

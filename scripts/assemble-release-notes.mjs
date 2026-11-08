@@ -9,6 +9,7 @@ import {
   injectCuratedNotes,
   isReleaseNoteShipped,
   isShippedReleaseNoteChanged,
+  prepareReleaseBodies,
   readReleaseNotes,
 } from './release-notes.mjs';
 
@@ -26,6 +27,9 @@ const previousTag = args.get('--previous-tag');
 const head = args.get('--head');
 const changelogPath = args.get('--changelog');
 const outputPath = args.get('--output');
+const fullOutputPath = args.get('--full-output');
+const maxLengthArgument = args.get('--max-length');
+const overflowAssetName = args.get('--overflow-asset-name');
 
 if (!previousTag || !head || !changelogPath || !outputPath) {
   console.error(
@@ -67,6 +71,38 @@ if (errors.length > 0) {
 }
 
 const changelog = fs.readFileSync(changelogPath, 'utf8');
-fs.writeFileSync(outputPath, injectCuratedNotes(changelog, formatCuratedNotes(notes)));
-console.log('Assembled ' + notes.length + ' curated release-note fragment(s).');
+const curatedNotes = formatCuratedNotes(notes);
+
+if (fullOutputPath || maxLengthArgument || overflowAssetName) {
+  if (!fullOutputPath || !maxLengthArgument || !overflowAssetName) {
+    console.error(
+      '--full-output, --max-length, and --overflow-asset-name must be supplied together'
+    );
+    process.exit(2);
+  }
+
+  const maxLength = Number(maxLengthArgument);
+  let bodies;
+  try {
+    bodies = prepareReleaseBodies(changelog, curatedNotes, {
+      maxLength,
+      overflowAssetName,
+    });
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
+
+  fs.writeFileSync(outputPath, bodies.releaseBody);
+  fs.writeFileSync(fullOutputPath, bodies.fullBody);
+  console.log(
+    'Assembled ' +
+      notes.length +
+      ' curated release-note fragment(s); complete changelog attachment ' +
+      (bodies.overflowed ? 'required.' : 'retained.')
+  );
+} else {
+  fs.writeFileSync(outputPath, injectCuratedNotes(changelog, curatedNotes));
+  console.log('Assembled ' + notes.length + ' curated release-note fragment(s).');
+}
 

@@ -246,13 +246,17 @@ jobs:
         }
 
         current_changelog="$RUNNER_TEMP/chaptarrng-current-changelog.md"
+        full_changelog="$RUNNER_TEMP/chaptarrng-${TAG}-full-changelog.md"
         git-cliff --config .github/cliff.toml --tag "$TAG" "$PREVIOUS_TAG..$SOURCE_SHA" \
           --output "$current_changelog"
         node scripts/assemble-release-notes.mjs \
           --previous-tag "$PREVIOUS_TAG" \
           --head "$SOURCE_SHA" \
           --changelog "$current_changelog" \
-          --output "$current_changelog"
+          --output "$current_changelog" \
+          --full-output "$full_changelog" \
+          --max-length 120000 \
+          --overflow-asset-name "chaptarrng-${TAG}-full-changelog.md"
         grep -Eq '^## \[?[0-9]+\.[0-9]+\.[0-9]+' "$current_changelog" || {
           echo "Generated changelog is missing its release heading."
           exit 1
@@ -300,7 +304,9 @@ jobs:
       run: |
         set -euo pipefail
         notes="$RUNNER_TEMP/chaptarrng-release-notes.md"
+        full_changelog="$RUNNER_TEMP/chaptarrng-${TAG}-full-changelog.md"
         printf '%s\n' "$RELEASE_BODY" > "$notes"
+        test -s "$full_changelog"
 
         if gh release view "$TAG" >/dev/null 2>&1; then
           if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == "true" ]]; then
@@ -319,6 +325,7 @@ jobs:
             --draft \
             --verify-tag
         fi
+        gh release upload "$TAG" "$full_changelog" --clobber
 
   # Images publish here and nowhere else, so merging PRs never ships an update.
   docker:

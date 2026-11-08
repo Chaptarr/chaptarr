@@ -295,6 +295,9 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertIn("ref: ${{ needs.preflight.outputs.release_sha }}", release)
         self.assertIn("EXPECTED_RELEASE_SHA: ${{ needs.preflight.outputs.release_sha }}", release)
         self.assertIn("RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}", release)
+        self.assertIn("--full-output \"$full_changelog\"", release)
+        self.assertIn("--max-length 120000", release)
+        self.assertIn('gh release upload "$TAG" "$full_changelog" --clobber', release)
 
         windows = job_block(source, "windows-migration-installer")
         for token in (
