@@ -40,6 +40,16 @@ for workflow in "$repo_root/.github/workflows/build.yml" \
       echo 'Hosted PostgreSQL client installation must be restricted to the explicit public runner pool.' >&2
       exit 1
     fi
+  elif [[ "$workflow" == "$release_workflow" ]]; then
+    rpm_job="$(sed -n '/^  rpm-source:/,/^  publish-release:/p' "$workflow")"
+    release_apt_count="$(grep -Fc 'sudo apt-get' "$workflow" || true)"
+    rpm_apt_count="$(grep -Fc 'sudo apt-get' <<< "$rpm_job" || true)"
+    if [[ "$release_apt_count" != "$rpm_apt_count" ]] ||
+      ! grep -Fq 'runs-on: ubuntu-24.04' <<< "$rpm_job" ||
+      ! grep -Fq 'sudo apt-get install --yes --no-install-recommends rpm' <<< "$rpm_job"; then
+      echo 'Release package installation must stay inside the hosted RPM source job.' >&2
+      exit 1
+    fi
   elif grep -Fq 'sudo apt-get' "$workflow"; then
     echo "Private JIT release dependencies must be installed by the broker: $workflow" >&2
     exit 1
