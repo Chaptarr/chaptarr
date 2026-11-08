@@ -1,5 +1,20 @@
 # BookshelfNG channel acceptance — 2026-10-26
 
+## Current release and channel state — 2026-11-08
+
+[ChaptarrNG v0.9.986](https://github.com/snapetech-org/chaptarrng/releases/tag/v0.9.986)
+is public. [Release run 42515404591](https://github.com/snapetech-org/chaptarrng/actions/runs/42515404591)
+passed native validation, all ten standalone archives, the standard image,
+and final asset publication. [Distribution run 42523595619](https://github.com/snapetech-org/chaptarrng/actions/runs/42523595619)
+passed ChaptarrNG AUR and Chocolatey publication. Public AUR lists
+`chaptarrng-bin 0.9.986-1`, and the public
+[COPR build 11288368](https://copr.fedorainfracloud.org/coprs/slskdn/chaptarrng/build/11288368/)
+reports `chaptarrng 0.9.986-1` succeeded. The Chocolatey publisher job passed;
+public index propagation was not independently verified. Legacy BookshelfNG
+package identities, external catalogs and production cutover remain separate
+gates; the migration bridge was disabled for this release. The dated sections
+below are historical evidence and may describe earlier publication status.
+
 ## Runner-policy update — 2026-11-03
 
 The entries below record evidence and runner policy as of their dated

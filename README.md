@@ -33,8 +33,9 @@ is the latest public release. Its [public release run](https://github.com/snapet
 passed native Linux, Windows, macOS, PostgreSQL and Docker validation, all ten
 standalone archive builds, and release publication. A separate
 [package distribution retry](https://github.com/snapetech-org/chaptarrng/actions/runs/42523595619)
-passed ChaptarrNG AUR and Chocolatey publication; COPR accepted its build
-trigger. The legacy BookshelfNG package bridges remain disabled. Existing
+passed ChaptarrNG AUR and Chocolatey publication; the
+[COPR `0.9.986-1` build](https://copr.fedorainfracloud.org/coprs/slskdn/chaptarrng/build/11288368/)
+also succeeded. The legacy BookshelfNG package bridges remain disabled. Existing
 BookshelfNG installations should follow the [preview, backup, migration and
 rollback guide](docs/MIGRATE_FROM_BOOKSHELFNG.md) before changing production
 service or package identities.

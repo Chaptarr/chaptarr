@@ -7,8 +7,9 @@ is public with ten checksummed standalone archives and the standard container
 image. Its [release run](https://github.com/snapetech-org/chaptarrng/actions/runs/42515404591)
 passed native Linux, Windows, macOS, PostgreSQL, Docker, the archive builders
 and final publication. The [package distribution retry](https://github.com/snapetech-org/chaptarrng/actions/runs/42523595619)
-passed ChaptarrNG AUR and Chocolatey publication and the COPR trigger. COPR
-build completion is a separate downstream result.
+passed ChaptarrNG AUR and Chocolatey publication. The public
+[COPR `0.9.986-1` build](https://copr.fedorainfracloud.org/coprs/slskdn/chaptarrng/build/11288368/)
+also succeeded.
 
 The application and data-migration qualification at `b5c25742` below remains
 the installed and operator-data evidence for the release payload. The later
@@ -1727,11 +1728,13 @@ BookshelfNG's in-app updater checks the Readarr-owned update service, which
 Snapetech cannot redirect. No single server-side change can move every pinned,
 offline, third-party, or manually installed copy automatically.
 
-## Retirement acceptance
+## Retirement acceptance (historical checklist; see current status above)
 
 BookshelfNG is not ready to retire solely because the converter and a
-ChaptarrNG release exist. No new ChaptarrNG release or legacy redirect is
-authorized while these gates remain open. The remaining work is:
+ChaptarrNG release exist. The checklist below records earlier channel and
+cutover gaps at their original dates. The ChaptarrNG release is now public;
+legacy redirects and production retirement remain gated. The historical
+remaining work was:
 
 1. Close each BookshelfNG feature row with behavioral and converted-data
    evidence, or record an explicit maintainer decision to retire that behavior.
