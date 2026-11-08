@@ -19,6 +19,20 @@ bridges remain disabled, and no production installation was migrated or
 retired by publishing this release. Keep the source backup and use explicit
 preview, apply and rollback for each installation. External catalogs and
 production cutover still require their own channel and operator acceptance.
+
+Exact published-archive [installed acceptance](https://github.com/snapetech-org/chaptarrng/actions/runs/42524674959)
+passed No, headless Manual, Yes with retained source backup, and forced-failure
+rollback with restored predecessor health for Linux x64, ARM64, both musl
+variants, and x86. The evidence records candidate SHA `665e89a7` and archive
+hashes in the [channel matrix](maintainers/BOOKSHELFNG_CHANNEL_ACCEPTANCE_2026-10-26.md).
+A second [hosted run](https://github.com/snapetech-org/chaptarrng/actions/runs/42525035012)
+on kernel `7.0.0-1017-azure` passed four targets on its first attempt; the
+published BookshelfNG x86 predecessor intermittently crashed before the Yes
+case, after No and Manual had passed. Its isolated x86 retry passed every
+case with the 32 bit candidate executable. Keep both results; the source-only
+emulated-host failure is not a ChaptarrNG migration or rollback failure, but
+it limits claims about the old x86 binary on that host.
+
 The dated sections below are historical checkpoints, including their earlier
 statements about the then-latest public version.
 

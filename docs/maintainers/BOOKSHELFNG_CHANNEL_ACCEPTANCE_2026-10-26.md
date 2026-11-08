@@ -15,6 +15,28 @@ package identities, external catalogs and production cutover remain separate
 gates; the migration bridge was disabled for this release. The dated sections
 below are historical evidence and may describe earlier publication status.
 
+The [published-archive installed run](https://github.com/snapetech-org/chaptarrng/actions/runs/42524674959)
+passed No, headless Manual, Yes with source retention, target health, and
+forced-failure rollback with restored source health on five Linux RIDs. The
+same release tag `v0.9.986` and commit `665e89a7` supplied every archive.
+The follow-up [run 42525035012](https://github.com/snapetech-org/chaptarrng/actions/runs/42525035012)
+recorded kernel `7.0.0-1017-azure`: four targets passed first attempt; the
+immutable BookshelfNG x86 predecessor exited before Yes in the first x86
+attempt, after No and Manual passed. The x86 failed-job retry passed all four
+cases. This is retained as an intermittent source-runtime/emulation finding,
+not attributed to the target package. x86 used preinitialized source
+auxiliary databases and excluded the unsupported legacy MAM indexer; the
+candidate executable was 32 bit ELF machine 3, even though the Python harness
+reported a 64 bit host process.
+
+| Published `.986` archive | SHA-256 | Installed result |
+| --- | --- | --- |
+| `linux-x64` | `8af5e4d148de231725e7b3f4daa0c272003e30f1b4274a77bab4e46b858bf21e` | Pass |
+| `linux-arm64` | `bef23cec42511c9c2a3b132ba6e2619bf582b0a093581d797ea2740dc3f5dd0d` | Pass |
+| `linux-musl-x64` | `1c80b65f472fa74957a662a8fb75b61795ca100ba73ddc4b59c71e09db1dd8a3` | Pass |
+| `linux-musl-arm64` | `a3e779beb6808428b9a373a6cb8b82c43d864f72a464935df7273a8d85b68ac0` | Pass |
+| `linux-x86` | `19e5254b91940c5521403f501126c91341ff0a2ff36e74fc185912f733874db3` | Pass; source-only hosted flake retained |
+
 ## Runner-policy update — 2026-11-03
 
 The entries below record evidence and runner policy as of their dated
