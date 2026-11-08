@@ -76,7 +76,7 @@ jobs:
         ANNOUNCEMENT_WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
         if [[ -z "$DISCORD_RELEASE_WEBHOOK" ]]; then
-          echo "::error::Add the DISCORD_RELEASE_WEBHOOK repository secret using the same webhook configured for SeerrNG."
+          echo "::error::Add a Chaptarr community server webhook as the DISCORD_RELEASE_WEBHOOK repository secret."
           exit 1
         fi
         node scripts/post-discord-announcement.mjs

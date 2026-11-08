@@ -108,7 +108,9 @@ jobs:
       if: steps.release-request.outputs.release_requested == 'true'
       env:
         DISCORD_RELEASE_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
-      run: bash packaging/scripts/validate-release-publisher-config.sh discord
+      run: |
+        bash packaging/scripts/validate-release-publisher-config.sh discord
+        node scripts/inspect-discord-destination.mjs --require-chaptarrng-guild
 
   validate:
     if: needs.preflight.outputs.release_requested == 'true'
@@ -975,7 +977,7 @@ jobs:
     - name: Check Discord destination
       run: |
         if [[ -z "$DISCORD_RELEASE_WEBHOOK" ]]; then
-          echo "::error::Add the DISCORD_RELEASE_WEBHOOK repository secret using the same webhook configured for SeerrNG."
+          echo "::error::Add a Chaptarr community server webhook as the DISCORD_RELEASE_WEBHOOK repository secret."
           exit 1
         fi
 
