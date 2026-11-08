@@ -2,12 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Text.RegularExpressions;
+using System.Net;
 using NLog;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Http;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Indexers;
+using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser.Model;
@@ -74,18 +76,29 @@ namespace NzbDrone.Core.DecisionEngine
                     continue;
                 }
 
-                foreach (var release in group)
+                var candidates = group.ToList();
+                for (var index = 0; index < candidates.Count; index++)
                 {
+                    var release = candidates[index];
                     try
                     {
-                        if (IsLikelyAudiobook(release) && NeedsMetadata(release, searchCriteria.Author, books, targets, conditions))
+                        if (!NeedsMetadata(release, searchCriteria.Author, books, targets, conditions))
                         {
-                            lookups++;
-                            if (provider.TryPopulateNarratorMetadata(release))
-                            {
-                                populated.Add(release);
-                            }
+                            continue;
                         }
+
+                        lookups++;
+                        if (provider.TryPopulateNarratorMetadata(release))
+                        {
+                            populated.Add(release);
+                        }
+                    }
+                    catch (Exception ex) when (ex is RequestLimitReachedException or ApiKeyException ||
+                        ex is HttpException http && http.Response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                    {
+                        _logger.Warn("Narrator metadata stopped for indexer '{0}' ({1}): {2}; {3} remaining release(s) left unchecked in this batch",
+                            release.Indexer, release.IndexerId, ex.Message, candidates.Count - index - 1);
+                        break;
                     }
                     catch (Exception ex)
                     {
@@ -179,17 +192,5 @@ namespace NzbDrone.Core.DecisionEngine
                         ReleaseNarratorEvidenceExtractor.ContainsKnownNarratorName(new[] { name }, field)) == true));
         }
 
-        private static bool IsLikelyAudiobook(ReleaseInfo release)
-        {
-            var title = release?.Title ?? string.Empty;
-
-            if (Regex.IsMatch(title, @"\b(epub|mobi|azw3?|pdf|djvu|cbz|cbr|fb2|ebook)\b", RegexOptions.IgnoreCase) &&
-                !Regex.IsMatch(title, @"\b(audiobook|audible|mp3|m4b|m4a|flac|aac|opus|ogg|wav)\b", RegexOptions.IgnoreCase))
-            {
-                return false;
-            }
-
-            return true;
-        }
     }
 }

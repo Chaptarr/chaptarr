@@ -82,7 +82,7 @@ namespace NzbDrone.Core.Indexers.Newznab
         [FieldDefinition(2, Label = "API Key", Privacy = PrivacyLevel.ApiKey)]
         public string ApiKey { get; set; }
 
-        [FieldDefinition(3, Label = "Categories", Type = FieldType.Select, SelectOptionsProviderAction = "newznabCategories", HelpText = "Select every category this indexer should search. At search time Chaptarr routes by media type — audiobook searches use only your selected Audio (3000-3999) categories, ebook searches use only your selected Books (7000-7999) categories.")]
+        [FieldDefinition(3, Label = "Categories", Type = FieldType.Select, SelectOptionsProviderAction = "newznabCategories", HelpText = "Select every category this indexer should search. Audiobook searches use your selected Audio (3000-3999) categories; ebook searches use your selected Books (7000-7999) categories. Generic Books (7000), when selected, is searched for both formats.")]
         public IEnumerable<int> Categories { get; set; }
 
         [FieldDefinition(4, Type = FieldType.Number, Label = "Early Download Limit", HelpText = "Time before release date Chaptarr will download from this indexer, empty is no limit", Unit = "days", Advanced = true)]

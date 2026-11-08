@@ -17,8 +17,10 @@ import createCustomFiltersSelector from 'Store/Selectors/createCustomFiltersSele
 import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
 import filterCollection from 'Utilities/Array/filterCollection';
 import sortCollection from 'Utilities/Array/sortCollection';
+import { shouldConfirmSearch } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import generateUUIDv4 from 'Utilities/String/generateUUIDv4';
 import translate from 'Utilities/String/translate';
+import getNoResultsMessage from './getNoResultsMessage';
 import InteractiveSearch from './InteractiveSearch';
 import InteractiveSearchRow from './InteractiveSearchRow';
 import styles from './InteractiveSearch.css';
@@ -36,7 +38,8 @@ function createMapStateToProps() {
   );
 
   return createSelector(
-    (state) => state.releases.authorSearch,
+    (state, props) => (state.releases.authorSearch.authorId === props.authorId &&
+      state.releases.authorSearch.mediaType === props.selectedMediaType ? state.releases.authorSearch : releaseActions.defaultState.authorSearch),
     selectAuthorFilterState,
     createUISettingsSelector(),
     (authorSearch, filterState, uiSettings) => ({
@@ -57,16 +60,12 @@ function createMapDispatchToProps(dispatch) {
       dispatch(releaseActions.fetchAuthorReleases(payload));
     },
 
-    dispatchCancelAuthorReleases(payload) {
-      dispatch(releaseActions.cancelAuthorReleases(payload));
+    dispatchRestoreAuthorSearch(payload) {
+      dispatch(releaseActions.restoreAuthorSearch(payload));
     },
 
     dispatchRequestAuthorReleaseStop(payload) {
       return dispatch(releaseActions.requestAuthorReleaseStop(payload));
-    },
-
-    dispatchClearAuthorSearch(payload) {
-      dispatch(releaseActions.clearAuthorSearch(payload));
     },
 
     dispatchToggleAuthorSearchBook(payload) {
@@ -96,7 +95,7 @@ function getGroupStatusText(bookResult, authorSearch) {
 
   if (bookResult.status === 'complete') {
     if (!(bookResult.releases || []).length && !(bookResult.hiddenReleases || []).length) {
-      return translate('AuthorSearchNoResultsReturned');
+      return getNoResultsMessage(bookResult, 'AuthorSearchNoResultsReturned');
     }
 
     if (!(bookResult.releases || []).some(isPreferredRelease)) {
@@ -137,49 +136,35 @@ class AuthorInteractiveSearchTable extends Component {
 
   componentDidMount() {
     this._isMounted = true;
-    window.addEventListener('pagehide', this.onPageHide);
+    this.scheduleExpiry();
+    const { authorId, selectedMediaType } = this.props;
+    if (authorId && selectedMediaType) {
+      this.props.dispatchRestoreAuthorSearch({ authorId, mediaType: selectedMediaType });
+    }
+  }
+
+  componentDidUpdate(prevProps) {
+    if (this.props.authorSearch.expiresAt !== prevProps.authorSearch.expiresAt) {
+      this.scheduleExpiry();
+    }
   }
 
   componentWillUnmount() {
-    window.removeEventListener('pagehide', this.onPageHide);
-    this.stopOnLeave();
     this._isMounted = false;
+    clearTimeout(this._expiryTimer);
   }
 
-  onPageHide = () => this.stopOnLeave(true);
-
-  stopOnLeave = (keepalive = false) => {
-    const { authorSearch, authorId, selectedMediaType } = this.props;
-
-    if (
-      authorSearch.searchId &&
-      authorSearch.authorId === authorId &&
-      authorSearch.mediaType === selectedMediaType
-    ) {
-      const scope = {
-        searchId: authorSearch.searchId,
-        authorId,
-        mediaType: selectedMediaType
-      };
-
-      const stopRequestAlreadySent = this.state.stopSearchId === authorSearch.searchId && this.state.stopRequestStatus;
-
-      if (authorSearch.isFetching && !authorSearch.isComplete && !authorSearch.isCancelled && (keepalive || !stopRequestAlreadySent)) {
-        const stopRequest = this.props.dispatchRequestAuthorReleaseStop({ searchId: authorSearch.searchId, keepalive });
-
-        if (stopRequest && typeof stopRequest.fail === 'function') {
-          stopRequest.fail(() => {});
-        }
-      }
-
-      this.props.dispatchCancelAuthorReleases({ searchId: authorSearch.searchId });
-      this.props.dispatchClearAuthorSearch(scope);
+  scheduleExpiry = () => {
+    clearTimeout(this._expiryTimer);
+    const expiresAt = Date.parse(this.props.authorSearch.expiresAt);
+    this.setState({ resultsExpired: expiresAt <= Date.now() });
+    if (expiresAt > Date.now()) {
+      this._expiryTimer = setTimeout(() => this.setState({ resultsExpired: true }), expiresAt - Date.now());
     }
-
   };
 
   onSearchPress = () => {
-    if (this.props.searchCount > 5) {
+    if (shouldConfirmSearch(this.props.searchCount)) {
       this.setState({ isConfirmOpen: true });
       return;
     }
@@ -249,10 +234,13 @@ class AuthorInteractiveSearchTable extends Component {
           return null;
         }
 
-        return {
-          stopRequestStatus: data && data.isStopping === true ? 'stopping' : 'finishing',
-          stopError: false
-        };
+        let stopRequestStatus = 'finishing';
+        if (data?.isRemoved) {
+          stopRequestStatus = 'removed';
+        } else if (data?.isStopping) {
+          stopRequestStatus = 'stopping';
+        }
+        return { stopRequestStatus, stopError: false };
       });
     });
 
@@ -423,6 +411,8 @@ class AuthorInteractiveSearchTable extends Component {
       stopStatusText = 'AuthorSearchStopRequesting';
     } else if (stopRequestStatus === 'stopping') {
       stopStatusText = 'AuthorSearchStopping';
+    } else if (stopRequestStatus === 'removed') {
+      stopStatusText = 'AuthorSearchRemoved';
     } else if (stopRequestStatus === 'finishing') {
       stopStatusText = 'AuthorSearchStopFinishing';
     }
@@ -454,7 +444,7 @@ class AuthorInteractiveSearchTable extends Component {
             aria-live="polite"
           >
             <LoadingIndicator />
-            <span>{translate(stopStatusText || 'AuthorSearchInProgress')}</span>
+            <span>{translate(stopStatusText || (authorSearch.isAccepted && !authorSearch.startedAt ? 'AuthorSearchQueued' : 'AuthorSearchInProgress'))}</span>
           </div> :
           null}
 
@@ -473,6 +463,7 @@ class AuthorInteractiveSearchTable extends Component {
           onCancel={this.onSearchCancelled}
         />
 
+        {this.state.resultsExpired ? <Alert kind={kinds.INFO}>{translate('SearchResultsExpired')}</Alert> : null}
         {authorSearch.error ?
           <Alert kind={kinds.WARNING}>
             {translate('AuthorSearchIncomplete')}
@@ -480,7 +471,7 @@ class AuthorInteractiveSearchTable extends Component {
           null}
         {authorSearch.isCancelled ?
           <Alert kind={kinds.WARNING}>
-            {translate('AuthorSearchStopped')}
+            {translate(authorSearch.startedAt ? 'AuthorSearchStopped' : 'AuthorSearchRemoved')}
           </Alert> :
           null}
         {!authorSearch.isFetching && authorSearch.isComplete && !authorSearch.isCancelled && !authorSearch.error && !authorSearch.bookResults.length ?
@@ -513,9 +504,8 @@ AuthorInteractiveSearchTable.propTypes = {
   longDateFormat: PropTypes.string.isRequired,
   timeFormat: PropTypes.string.isRequired,
   dispatchFetchAuthorReleases: PropTypes.func.isRequired,
-  dispatchCancelAuthorReleases: PropTypes.func.isRequired,
+  dispatchRestoreAuthorSearch: PropTypes.func.isRequired,
   dispatchRequestAuthorReleaseStop: PropTypes.func.isRequired,
-  dispatchClearAuthorSearch: PropTypes.func.isRequired,
   dispatchToggleAuthorSearchBook: PropTypes.func.isRequired,
   onSortPress: PropTypes.func.isRequired,
   onGrabPress: PropTypes.func.isRequired

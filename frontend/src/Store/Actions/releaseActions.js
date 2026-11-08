@@ -3,7 +3,8 @@ import { filterBuilderTypes, filterBuilderValueTypes, filterTypes, sortDirection
 import { set } from 'Store/Actions/baseActions';
 import { createThunk, handleThunks } from 'Store/thunks';
 import { isCommandComplete, isCommandFailed } from 'Utilities/Command';
-import createAjaxRequest, { prepareAjaxOptions } from 'Utilities/createAjaxRequest';
+import createAjaxRequest from 'Utilities/createAjaxRequest';
+import generateUUIDv4 from 'Utilities/String/generateUUIDv4';
 import translate from 'Utilities/String/translate';
 import createHandleActions from './Creators/createHandleActions';
 import createSetClientSideCollectionFilterReducer from './Creators/Reducers/createSetClientSideCollectionFilterReducer';
@@ -17,9 +18,9 @@ export const bookSection = 'releases.book';
 export const authorSection = 'releases.author';
 
 let abortCurrentRequest = null;
-const authorSearchCancelRequests = new Map();
 const authorReleaseStopRequests = new Map();
 const authorCommandRequests = new Map();
+const authorSnapshotRequests = new Map();
 
 //
 // State
@@ -47,6 +48,8 @@ export const defaultState = {
   sortDirection: sortDirections.ASCENDING,
   bypassFilters: false,
   filterSummary: null,
+  indexersQueried: 0,
+  indexersFailed: 0,
   siblingBookId: null,
   siblingMediaType: null,
   siblingToggleEnabled: false,
@@ -263,11 +266,11 @@ export const SET_BYPASS_FILTERS = 'releases/setBypassFilters';
 export const SET_FILTER_SUMMARY = 'releases/setFilterSummary';
 export const SET_RELEASE_SEARCH_RESPONSE = 'releases/setReleaseSearchResponse';
 export const FETCH_AUTHOR_RELEASES = 'releases/fetchAuthorReleases';
-export const CANCEL_AUTHOR_RELEASES = 'releases/cancelAuthorReleases';
+export const RESTORE_AUTHOR_SEARCH = 'releases/restoreAuthorSearch';
+export const RECEIVE_AUTHOR_SEARCH_RESULTS = 'releases/receiveAuthorSearchResults';
 export const REQUEST_AUTHOR_RELEASE_STOP = 'releases/requestAuthorReleaseStop';
 export const SET_AUTHOR_SEARCH_RESULTS = 'releases/setAuthorSearchResults';
 export const RECONCILE_AUTHOR_SEARCH_COMMAND = 'releases/reconcileAuthorSearchCommand';
-export const CLEAR_AUTHOR_SEARCH = 'releases/clearAuthorSearch';
 export const TOGGLE_AUTHOR_SEARCH_BOOK = 'releases/toggleAuthorSearchBook';
 
 //
@@ -285,11 +288,11 @@ export const setBypassFilters = createAction(SET_BYPASS_FILTERS);
 export const setFilterSummary = createAction(SET_FILTER_SUMMARY);
 export const setReleaseSearchResponse = createAction(SET_RELEASE_SEARCH_RESPONSE);
 export const fetchAuthorReleases = createThunk(FETCH_AUTHOR_RELEASES);
-export const cancelAuthorReleases = createThunk(CANCEL_AUTHOR_RELEASES);
+export const restoreAuthorSearch = createThunk(RESTORE_AUTHOR_SEARCH);
+export const receiveAuthorSearchResults = createThunk(RECEIVE_AUTHOR_SEARCH_RESULTS);
 export const requestAuthorReleaseStop = createThunk(REQUEST_AUTHOR_RELEASE_STOP);
 export const setAuthorSearchResults = createAction(SET_AUTHOR_SEARCH_RESULTS);
 export const reconcileAuthorSearchCommand = createThunk(RECONCILE_AUTHOR_SEARCH_COMMAND);
-export const clearAuthorSearch = createAction(CLEAR_AUTHOR_SEARCH);
 export const toggleAuthorSearchBook = createAction(TOGGLE_AUTHOR_SEARCH_BOOK);
 
 //
@@ -317,6 +320,8 @@ function parseReleaseSearchResponse(data) {
   return {
     items: releases || [],
     hiddenItems: hiddenReleases,
+    indexersQueried: data?.indexersQueried ?? 0,
+    indexersFailed: data?.indexersFailed ?? 0,
     filterSummary,
     siblingBookId,
     siblingMediaType,
@@ -422,6 +427,8 @@ export const actionHandlers = handleThunks({
       items: [],
       hiddenItems: [],
       filterSummary: null,
+      indexersQueried: 0,
+      indexersFailed: 0,
       siblingBookId: null,
       siblingMediaType: null,
       siblingToggleEnabled: false,
@@ -458,12 +465,14 @@ export const actionHandlers = handleThunks({
 
   [FETCH_AUTHOR_RELEASES]: function(getState, payload, dispatch) {
     const { searchId, authorId, mediaType } = payload;
-    let stopAfterAdmission = false;
+    const requestId = generateUUIDv4();
 
     dispatch(set({
       section,
       authorSearch: {
         ...defaultState.authorSearch,
+        requestId,
+        isAttaching: true,
         searchId,
         authorId,
         mediaType,
@@ -477,29 +486,16 @@ export const actionHandlers = handleThunks({
       traditional: true
     });
 
-    // Leaving before admission completes must still stop the queued work.
-    authorSearchCancelRequests.set(searchId, () => {
-      stopAfterAdmission = true;
-    });
-
     request.done((data) => {
-      authorSearchCancelRequests.delete(searchId);
-      if (stopAfterAdmission) {
-        dispatch(requestAuthorReleaseStop({ searchId }));
+      if (getState().releases.authorSearch.requestId !== requestId) {
         return;
       }
-
-      dispatch(setAuthorSearchResults({
-        ...data,
-        isAccepted: true
-      }));
+      dispatch(setAuthorSearchResults({ ...data, attached: true, isAccepted: true }));
       dispatch(reconcileAuthorSearchCommand());
     });
 
     request.fail((xhr) => {
-      authorSearchCancelRequests.delete(searchId);
-
-      if (!xhr.aborted) {
+      if (!xhr.aborted && getState().releases.authorSearch.requestId === requestId) {
         dispatch(setAuthorSearchResults({
           searchId,
           authorId,
@@ -511,22 +507,84 @@ export const actionHandlers = handleThunks({
     });
   },
 
-  [CANCEL_AUTHOR_RELEASES]: function(getState, payload) {
-    const cancelRequest = authorSearchCancelRequests.get(payload.searchId);
-
-    if (cancelRequest) {
-      authorSearchCancelRequests.delete(payload.searchId);
-      cancelRequest();
+  [RECEIVE_AUTHOR_SEARCH_RESULTS]: function(getState, payload, dispatch) {
+    if (!payload.isComplete) {
+      dispatch(setAuthorSearchResults(payload));
+      return;
     }
+
+    const current = getState().releases.authorSearch;
+    if (current.searchId !== payload.searchId || current.authorId !== payload.authorId ||
+        current.mediaType !== payload.mediaType || current.isComplete) {
+      return;
+    }
+
+    // A completion notice carries no rows. Keep received results until the snapshot arrives.
+    dispatch(setAuthorSearchResults({ ...payload, isComplete: false, commandEnded: true }));
+    return dispatch(restoreAuthorSearch({ authorId: payload.authorId, mediaType: payload.mediaType, searchFinished: true }));
+  },
+
+  [RESTORE_AUTHOR_SEARCH]: function(getState, payload, dispatch) {
+    const { authorId, mediaType } = payload;
+    const current = getState().releases.authorSearch;
+    const scope = `${authorId}:${mediaType}`;
+    const pending = authorSnapshotRequests.get(scope);
+    if (pending && pending.requestId === current.requestId) {
+      pending.searchFinished ||= payload.searchFinished;
+      return pending.request;
+    }
+
+    const requestId = generateUUIDv4();
+    const sameScope = current.authorId === authorId && current.mediaType === mediaType;
+    dispatch(set({ section, authorSearch: {
+      ...(sameScope ? current : defaultState.authorSearch), authorId, mediaType, requestId, isAttaching: true
+    } }));
+    const request = createAjaxRequest({ url: '/release', data: { authorId, mediaType, existing: true } }).request;
+    const entry = { requestId, request, searchFinished: payload.searchFinished };
+    authorSnapshotRequests.set(scope, entry);
+    request.always(() => {
+      if (authorSnapshotRequests.get(scope) === entry) {
+        authorSnapshotRequests.delete(scope);
+      }
+    });
+    request.done((data) => {
+      if (getState().releases.authorSearch.requestId !== requestId) {
+        return;
+      }
+      dispatch(setAuthorSearchResults({ ...data, authorId, mediaType, attached: true, noSearch: !data, previousSearchId: sameScope ? current.searchId : null, previousIsComplete: current.isComplete, isAccepted: !!data }));
+      // A read begun before the completion notice may still return the running snapshot.
+      if (entry.searchFinished && data && !data.isComplete) {
+        dispatch(restoreAuthorSearch({ authorId, mediaType }));
+      } else {
+        dispatch(reconcileAuthorSearchCommand({ lookup: true }));
+      }
+    });
+    request.fail(() => {
+      if (getState().releases.authorSearch.requestId === requestId) {
+        dispatch(set({ section, authorSearch: { ...getState().releases.authorSearch, isAttaching: false } }));
+      }
+    });
+    return request;
   },
 
   [RECONCILE_AUTHOR_SEARCH_COMMAND]: function(getState, payload, dispatch) {
     const search = getState().releases?.authorSearch;
-    if (!search?.commandId || search.isComplete || search.commandEnded) {
+    if (!search?.commandId || search.isComplete) {
+      return;
+    }
+    if (search.commandEnded) {
+      if (payload.commands) {
+        dispatch(restoreAuthorSearch({ authorId: search.authorId, mediaType: search.mediaType }));
+      }
       return;
     }
 
     const applyCommand = (command) => {
+      const current = getState().releases.authorSearch;
+      if (current.searchId !== search.searchId || current.authorId !== search.authorId || current.mediaType !== search.mediaType ||
+          current.isComplete || current.commandEnded) {
+        return;
+      }
       if (command && (command.id !== search.commandId ||
           command.body?.searchId !== search.searchId ||
           command.body?.authorId !== search.authorId ||
@@ -541,6 +599,7 @@ export const actionHandlers = handleThunks({
           mediaType: search.mediaType,
           commandEnded: true
         }));
+        dispatch(restoreAuthorSearch({ authorId: search.authorId, mediaType: search.mediaType }));
       }
     };
 
@@ -548,6 +607,9 @@ export const actionHandlers = handleThunks({
       .find((item) => item.id === search.commandId);
     if (!payload.lookup && command) {
       applyCommand(command);
+      if (payload.commands && !isCommandComplete(command) && !isCommandFailed(command)) {
+        dispatch(restoreAuthorSearch({ authorId: search.authorId, mediaType: search.mediaType }));
+      }
       return;
     }
 
@@ -569,11 +631,6 @@ export const actionHandlers = handleThunks({
 
   [REQUEST_AUTHOR_RELEASE_STOP]: function(getState, payload, dispatch) {
     const searchId = payload.searchId;
-    if (payload.keepalive) {
-      const { url, headers } = prepareAjaxOptions({ url: `/release?searchId=${encodeURIComponent(searchId)}` });
-      return window.fetch(url, { method: 'DELETE', headers, keepalive: true }).catch(() => {});
-    }
-
     const existingRequest = authorReleaseStopRequests.get(searchId);
 
     if (existingRequest) {
@@ -588,7 +645,9 @@ export const actionHandlers = handleThunks({
 
     authorReleaseStopRequests.set(searchId, request);
     request.done((data) => {
-      if (!data.isStopping && getState().releases.authorSearch.searchId === searchId) {
+      const current = getState().releases.authorSearch;
+      if (!data.isStopping && current.searchId === searchId && !current.isComplete) {
+        dispatch(restoreAuthorSearch({ authorId: current.authorId, mediaType: current.mediaType }));
         dispatch(reconcileAuthorSearchCommand({ lookup: true }));
       }
     });
@@ -673,6 +732,8 @@ export const reducers = createHandleActions({
       items: normalizeReleaseItems(payload.items),
       hiddenItems: normalizeReleaseItems(payload.hiddenItems),
       filterSummary: payload.filterSummary || null,
+      indexersQueried: payload.indexersQueried ?? 0,
+      indexersFailed: payload.indexersFailed ?? 0,
       siblingBookId: payload.siblingBookId ?? null,
       siblingMediaType: payload.siblingMediaType ?? null,
       siblingToggleEnabled: payload.siblingToggleEnabled === true,
@@ -684,15 +745,27 @@ export const reducers = createHandleActions({
   },
 
   [SET_AUTHOR_SEARCH_RESULTS]: (state, { payload }) => {
-    const current = state.authorSearch;
+    let current = state.authorSearch;
+    if (payload.authorId !== current.authorId || payload.mediaType !== current.mediaType) {
+      return state;
+    }
 
-    if (
-      !current.searchId ||
-      payload.searchId !== current.searchId ||
-      payload.authorId !== current.authorId ||
-      payload.mediaType !== current.mediaType ||
-      current.isComplete
-    ) {
+    if (payload.attached && payload.noSearch) {
+      if (current.searchId !== payload.previousSearchId || (current.searchId && (!current.isComplete || !payload.previousIsComplete))) {
+        return Object.assign({}, state, { authorSearch: { ...current, isAttaching: false } });
+      }
+      return Object.assign({}, state, { authorSearch: { ...defaultState.authorSearch, authorId: current.authorId, mediaType: current.mediaType } });
+    }
+    if (current.isAttaching && payload.searchId) {
+      if (current.commandId && payload.commandId && payload.commandId < current.commandId) {
+        return payload.attached ? Object.assign({}, state, { authorSearch: { ...current, isAttaching: false } }) : state;
+      }
+      if (payload.searchId !== current.searchId) {
+        current = { ...defaultState.authorSearch, authorId: current.authorId, mediaType: current.mediaType,
+          requestId: current.requestId, isAttaching: current.isAttaching, searchId: payload.searchId };
+      }
+    }
+    if (!current.searchId || payload.searchId !== current.searchId || (current.isComplete && !payload.attached)) {
       return state;
     }
 
@@ -715,6 +788,9 @@ export const reducers = createHandleActions({
     return Object.assign({}, state, {
       authorSearch: {
         ...current,
+        isAttaching: payload.attached ? false : current.isAttaching,
+        startedAt: payload.startedAt ?? current.startedAt,
+        expiresAt: payload.expiresAt ?? current.expiresAt,
         bookResults,
         commandId: payload.commandId ?? current.commandId,
         commandEnded: !isComplete && commandEnded,
@@ -725,21 +801,6 @@ export const reducers = createHandleActions({
         error: payload.isFailed ? true : error
       }
     });
-  },
-
-  [CLEAR_AUTHOR_SEARCH]: (state, { payload }) => {
-    const current = state.authorSearch;
-
-    if (
-      !current.searchId ||
-      payload.searchId !== current.searchId ||
-      payload.authorId !== current.authorId ||
-      payload.mediaType !== current.mediaType
-    ) {
-      return state;
-    }
-
-    return Object.assign({}, state, { authorSearch: defaultState.authorSearch });
   },
 
   [TOGGLE_AUTHOR_SEARCH_BOOK]: (state, { payload }) => {

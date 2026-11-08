@@ -21,6 +21,7 @@ window.renderIndexer = (indexer, theme = 'dark') => {
   store.dispatch(set({ section: 'tags', isPopulated: true, items: [] }));
   store.dispatch(set({ section: 'settings.indexers', isPopulated: true, items: [indexer], pendingChanges: {} }));
   window.indexerState = () => store.getState().settings.indexers;
+  window.categoryState = () => store.getState().providerOptions.newznabCategories;
   window.closeCount = 0;
   const render = (open) => ReactDOM.render(
     <Provider store={store}><Router history={history}>

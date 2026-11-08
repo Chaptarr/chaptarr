@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Linq;
+using NzbDrone.Core.Datastore.Events;
 using System.Threading;
 using System.Threading.Tasks;
 using Chaptarr.Api.V1.Indexers;
@@ -19,6 +21,7 @@ namespace Chaptarr.Core.Test.Common
         public Exception EnqueueFailure { get; set; }
         public GroupedAuthorSearchService Service { get; }
         public ConcurrentDictionary<string, InteractiveAuthorSearchCommand> Commands { get; } = new();
+        public ConcurrentDictionary<int, CommandModel> Models { get; } = new();
         public ConcurrentDictionary<string, Task> Executions { get; } = new();
 
         public GroupedAuthorSearchDriver(ISearchForReleases search, IPrioritizeDownloadDecision prioritizer,
@@ -39,6 +42,15 @@ namespace Chaptarr.Core.Test.Common
 
             protected override object Invoke(MethodInfo method, object[] args)
             {
+                if (method.Name == nameof(IManageCommandQueue.Get)) return Driver.Models[(int)args[0]];
+                if (method.Name == nameof(IManageCommandQueue.CancelIfQueued))
+                {
+                    var cancelled = Driver.Models[(int)args[0]];
+                    if (cancelled.Status != CommandStatus.Queued) return false;
+                    cancelled.Status = CommandStatus.Cancelled;
+                    Driver.Service.HandleAsync(new ModelEvent<CommandModel>(cancelled, ModelAction.Updated));
+                    return true;
+                }
                 if (method.Name != nameof(IManageCommandQueue.Push))
                 {
                     throw new NotImplementedException(method.Name);
@@ -50,21 +62,28 @@ namespace Chaptarr.Core.Test.Common
                 }
 
                 var command = (InteractiveAuthorSearchCommand)args[0];
-                NUnit.Framework.Assert.That(args[1], NUnit.Framework.Is.EqualTo(CommandPriority.High));
+                NUnit.Framework.Assert.That(args[1], NUnit.Framework.Is.EqualTo(CommandPriority.Normal));
                 NUnit.Framework.Assert.That(args[2], NUnit.Framework.Is.EqualTo(CommandTrigger.Manual));
                 Driver.Commands[command.SearchId] = command;
+                var model = new CommandModel { Id = Driver.Commands.Count, Body = command, Status = CommandStatus.Queued };
+                Driver.Models[model.Id] = model;
                 if (AutoStart)
                 {
-                    Driver.Executions[command.SearchId] = Task.Run(() => Driver.Service.Run(command, CancellationToken.None));
+                    Driver.Executions[command.SearchId] = Task.Run(() => Driver.Run(command.SearchId));
                 }
 
-                return new CommandModel { Id = Driver.Commands.Count, Body = command };
+                return model;
             }
         }
 
         public Task Run(string searchId)
         {
-            return Service.Run(Commands[searchId], CancellationToken.None);
+            var command = Commands[searchId];
+            var model = Models.Values.Single(m => ReferenceEquals(m.Body, command));
+            if (model.Status == CommandStatus.Cancelled) return Task.CompletedTask;
+            model.Status = CommandStatus.Started;
+            model.StartedAt = DateTime.UtcNow;
+            return Service.Run(command, CancellationToken.None);
         }
     }
 }

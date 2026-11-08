@@ -1,6 +1,8 @@
 using System.Linq;
 using NUnit.Framework;
+using NzbDrone.Core.Books;
 using NzbDrone.Core.Parser;
+using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
 
 namespace Chaptarr.Core.Test.Parser
@@ -13,6 +15,78 @@ namespace Chaptarr.Core.Test.Parser
     [TestFixture]
     public class QualityParserTitleFormatEvidenceFixture
     {
+        [TestCase("Audiobook")]
+        [TestCase("Audio Book")]
+        [TestCase("Audible")]
+        [TestCase("Graphic Audio")]
+        [TestCase("GraphicAudio Full Cast")]
+        [TestCase("Full Cast")]
+        [TestCase("Ungekuerzt")]
+        [TestCase("Ungekürzt")]
+        public void audio_words_should_classify_an_unsettled_format_in_title_or_description(string hint)
+        {
+            foreach (var categories in new[] { new[] { 7000 }, new[] { 3030, 7020 }, System.Array.Empty<int>() })
+            {
+                foreach (var inDescription in new[] { false, true })
+                {
+                    var title = inDescription ? "Test Writer - Paper Lanterns" : $"Test Writer - Paper Lanterns ({hint})";
+                    var result = QualityParser.ParseQuality(title, inDescription ? hint : null, categories.ToList());
+                    Assert.That(result.Quality, Is.EqualTo(Quality.UnknownAudio), $"categories={string.Join(',', categories)}, description={inDescription}");
+                    Assert.That(result.QualityDetectionSource, Is.EqualTo(QualityDetectionSource.Name));
+                }
+            }
+        }
+
+        [TestCase("Audiobook")]
+        [TestCase("GraphicAudio Full Cast")]
+        [TestCase("Ungekürzt")]
+        public void explicit_file_formats_and_single_media_categories_should_precede_audio_words(string hint)
+        {
+            foreach (var category in new[] { 7000, 3030, 7020 })
+            {
+                var title = $"Test Writer - Paper Lanterns ({hint})";
+                var release = new ReleaseInfo { Title = title, Categories = new() { category } };
+                var categoryResult = QualityParser.ParseQuality(title, categories: release.Categories);
+                Assert.That(categoryResult.Quality, Is.EqualTo(category == 7020 ? Quality.Unknown : Quality.UnknownAudio));
+                Assert.That(QualityMediaTypeHelper.DetectMediaType(categoryResult.Quality, release),
+                    Is.EqualTo(category == 7020 ? BookMediaType.Ebook : BookMediaType.Audiobook));
+                if (category == 3030)
+                {
+                    Assert.That(categoryResult.QualityDetectionSource, Is.EqualTo(QualityDetectionSource.Category));
+                }
+
+                foreach (var suffix in new[] { " [M4B]", ".m4b", " [EPUB]", ".epub" })
+                {
+                    var result = QualityParser.ParseQuality(title + suffix, categories: release.Categories);
+                    Assert.That(result.Quality, Is.EqualTo(suffix.ToLowerInvariant().Contains("m4b") ? Quality.M4B : Quality.EPUB));
+                }
+
+                var descriptionResult = QualityParser.ParseQuality("Test Writer - Paper Lanterns", hint, release.Categories);
+                Assert.That(descriptionResult.Quality, Is.EqualTo(category == 7020 ? Quality.Unknown : Quality.UnknownAudio));
+            }
+        }
+
+        [TestCase("Test Writer - Paper Lanterns")]
+        [TestCase("Test Writer - Paper Lanterns (audiobooks)")]
+        [TestCase("Test Writer - Paper Lanterns (full casting)")]
+        public void shared_category_without_an_audio_word_should_stay_unknown(string title)
+        {
+            var result = QualityParser.ParseQuality(title, categories: new() { 7000 });
+            Assert.That(result.Quality, Is.EqualTo(Quality.Unknown));
+        }
+
+        [TestCase("A memoir", "Unknown")]
+        [TestCase("MPEG-4 Audio", "M4B")]
+        [TestCase("MP3", "MP3")]
+        [TestCase("FLAC", "FLAC")]
+        [TestCase("WAV", "FLAC")]
+        [TestCase("EPUB", "EPUB")]
+        public void descriptions_should_require_a_recognized_codec_before_assigning_a_specific_quality(string description, string qualityName)
+        {
+            var result = QualityParser.ParseQuality("Test Writer - Paper Lanterns", description, new() { 7000 });
+            Assert.That(result.Quality.Name, Is.EqualTo(qualityName));
+        }
+
         // The release behind the 2026-07-25 report: a Usenet request post asking for an epub, filled
         // with a mobi. Before tiering, the leftmost word won and Chaptarr grabbed it as an EPUB.
         private const string RequestPostWithMobiPayload =

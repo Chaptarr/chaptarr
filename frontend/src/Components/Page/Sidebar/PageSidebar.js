@@ -93,7 +93,7 @@ const links = [
         to: '/wanted/cutoffunmet'
       },
       {
-        title: () => translate('Authors'),
+        title: () => translate('AuthorRequests'),
         to: '/wanted/authors'
       }
     ]

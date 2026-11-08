@@ -2,27 +2,41 @@ import { createMemoryHistory } from 'history';
 import React, { useState } from 'react';
 import ReactDOM from 'react-dom';
 import { Provider, useDispatch, useSelector } from 'react-redux';
+import { MemoryRouter } from 'react-router-dom';
 import { createStore } from 'redux';
 import headerStyles from 'Author/Details/AuthorDetails.css';
+import bookTableStyles from 'Author/Details/AuthorDetailsBookTable.css';
 import AuthorDetailsHeader from 'Author/Details/AuthorDetailsHeader';
+import { AuthorInitialScanStatus } from 'Author/Details/AuthorInitialScanStatus';
 import BookRow from 'Author/Details/BookRow';
 import MediaTypeTripleToggle from 'Author/Index/MediaTypeTripleToggle';
+import BookIndex from 'Book/Index/BookIndex';
 import bookIndexStyles from 'Book/Index/BookIndex.css';
 import bookFooterStyles from 'Book/Index/BookIndexFooter.css';
 import BookIndexFooterConnector from 'Book/Index/BookIndexFooterConnector';
 import getBookIndexQuery from 'Book/Index/getBookIndexQuery';
 import BookIndexFilterMenu from 'Book/Index/Menus/BookIndexFilterMenu';
 import BookIndexProgressBar from 'Book/Index/ProgressBar/BookIndexProgressBar';
+import CalendarPage from 'Calendar/CalendarPage';
+import { createMissingBookIdsSelector } from 'Calendar/CalendarPageConnector';
+import NarratorCell from 'Components/Book/NarratorCell';
+import CheckInput from 'Components/Form/CheckInput';
+import MediaTypeToggle from 'Components/Form/MediaTypeToggle';
 import IconButton from 'Components/Link/IconButton';
 import Menu from 'Components/Menu/Menu';
 import MenuContent from 'Components/Menu/MenuContent';
 import MenuItem from 'Components/Menu/MenuItem';
 import ToolbarMenuButton from 'Components/Menu/ToolbarMenuButton';
+import ConfirmModal from 'Components/Modal/ConfirmModal';
+import Modal from 'Components/Modal/Modal';
+import ModalBody from 'Components/Modal/ModalBody';
+import ModalContent from 'Components/Modal/ModalContent';
 import PageToolbar from 'Components/Page/Toolbar/PageToolbar';
 import PageToolbarButton from 'Components/Page/Toolbar/PageToolbarButton';
 import PageToolbarSection from 'Components/Page/Toolbar/PageToolbarSection';
 import PageToolbarSeparator from 'Components/Page/Toolbar/PageToolbarSeparator';
 import SwipeHeader from 'Components/Swipe/SwipeHeader';
+import Table from 'Components/Table/Table';
 import TableOptionsModalWrapper from 'Components/Table/TableOptions/TableOptionsModalWrapper';
 import { icons } from 'Helpers/Props';
 import { setSelectedMediaType } from 'Store/Actions/appActions';
@@ -32,8 +46,12 @@ import { buildQueryParams } from 'Store/Actions/bookInfiniteScrollActions';
 import createAppStore from 'Store/createAppStore';
 import createBookClientSideCollectionItemsSelector from 'Store/Selectors/createBookClientSideCollectionItemsSelector';
 import createClientSideCollectionSelector from 'Store/Selectors/createClientSideCollectionSelector';
+import { isBookSearchEligible, SEARCH_CONFIRMATION_THRESHOLD, shouldConfirmSearch } from 'Utilities/Author/getAuthorStatisticsForMediaType';
+import getNarratorNamesForDisplay from 'Utilities/Book/getNarratorNamesForDisplay';
 import isLibraryBook from 'Utilities/Book/isLibraryBook';
 import { fetchTranslations } from 'Utilities/String/translate';
+import CutoffUnmet from 'Wanted/CutoffUnmet/CutoffUnmet';
+import Missing from 'Wanted/Missing/Missing';
 
 import 'Styles/scaffolding.css';
 
@@ -477,3 +495,160 @@ window.renderHeaderFixture = async() => {
     h(IconButton, { className: headerStyles.authorNavigationButton, name: icons.ARROW_RIGHT, size: 30, title: 'Next author', onPress: () => {} })
   ))), document.getElementById('root'));
 };
+
+// Exercise the production cells, table scroller and shared dialog controls.
+window.renderBookColumnFixture = () => {
+  const tableColumns = ['title', 'narrator', 'position', 'rating'].map((name) => ({
+    name, label: name, isVisible: true, className: bookTableStyles[name]
+  }));
+  ReactDOM.render(h(MemoryRouter, null, h(Table, { columns: tableColumns, className: bookTableStyles.table },
+    h('tbody', null, h(BookRow, {
+      id: 1, authorId: 1, authorName: 'Example Author', title: 'Dune Messiah',
+      narrator: 'A very long narrator name '.repeat(25), hasPinnedEdition: true,
+      manualAdd: true, anyEditionOk: false, selectedMediaType: 'audiobook',
+      ratings: { value: 4.2, votes: 100 }, bookFiles: [], position: '2',
+      columns: tableColumns, onMonitorBookPress: () => {}
+    })))), document.getElementById('root'));
+};
+
+function DialogToggleFixture() {
+  const [mediaType, setMediaType] = React.useState('audiobook');
+  const [checked, setChecked] = React.useState(false);
+  return h(Modal, { isOpen: true, onModalClose: () => {} },
+    h(ModalContent, { onModalClose: () => {} }, h(ModalBody, null,
+      h(MediaTypeToggle, { selectedMediaType: mediaType, includeBoth: true, onMediaTypeChange: setMediaType }),
+      h(CheckInput, { name: 'fixtureMonitor', value: checked, onChange: ({ value }) => setChecked(value), helpText: 'Monitor this book' })
+    )));
+}
+
+window.renderDialogToggleFixture = () => {
+  ReactDOM.render(h(DialogToggleFixture), document.getElementById('root'));
+};
+
+window.renderCastLabelFixture = () => {
+  const cases = [
+    [{ name: 'A Full Cast', isCastLabel: true }, { name: 'Inés del Castillo', isCastLabel: false }],
+    [{ name: 'Varios narradores', isCastLabel: true }],
+    [{ name: 'Full Cast', isCastLabel: false }], // The server's flag, not an English browser rule, decides.
+    [{ name: 'Diverse', isCastLabel: true }, { name: 'Dietmar Wunder', isCastLabel: false }, { name: 'Martin May', isCastLabel: false }]
+  ];
+  window.narratorDiscoveryNames = cases.map((credits) => getNarratorNamesForDisplay(credits));
+  ReactDOM.render(h('div', null, cases.map((narrators, index) => h('div', { key: index, 'data-cast-case': index },
+    h(NarratorCell, { bookId: 1, authorName: 'Test Author', bookTitle: 'Test Book', narrators, hasFiles: true })))),
+  document.getElementById('root'));
+};
+
+window.renderInitialScanFixture = async(state = 'waiting') => {
+  await fetchTranslations();
+  window.initialScanCommand = null;
+  ReactDOM.render(h(AuthorInitialScanStatus, {
+    authorId: 42, paths: state === 'complete' ? [] : ['/ebooks/Frank Herbert'],
+    isScanning: state === 'scanning', executeCommand: (command) => {
+      window.initialScanCommand = command;
+    }
+  }), document.getElementById('root'));
+};
+
+// Render the toolbar returned by each actual page; do not duplicate its control layout.
+window.renderPageToolbarFixture = async(pageName) => {
+  await fetchTranslations();
+  window.toolbarCalls = [];
+  const record = (name) => (...args) => window.toolbarCalls.push({ name, args });
+  const pageProps = {
+    items: [{ id: 1 }], totalItems: 1, totalRecords: 1,
+    columns, filters: bookFilters, customFilters: [],
+    view: 'table', selectedMediaType: 'audiobook', selectedFilterKey: 'all',
+    sortKey: 'title', sortDirection: 'ascending',
+    onFilterSelect: record('filter'), onSortSelect: record('sort'), onViewSelect: record('view'),
+    onRssSyncPress: record('rss'), onSearchSelectedPress: record('search'),
+    onMediaTypeChange: record('media'), setMissingMediaType: record('media'),
+    onTableOptionChange: record('options')
+  };
+  const component = pageName === 'books' ? new BookIndex(pageProps) : new Missing(pageProps);
+  const toolbar = React.Children.toArray(component.render().props.children).find((child) => child.type === PageToolbar);
+  ReactDOM.render(h(Provider, { store }, toolbar), document.getElementById('root'));
+};
+
+// Exercise each page's real action and modal, isolated from unrelated table rendering.
+window.renderSearchWarningFixture = async(pageName, count, selected = true, mediaType = 'audiobook', monitoredView = true) => {
+  await fetchTranslations();
+  window.searchWarningCalls = [];
+  window.searchWarningRequests = [];
+  const record = (ids, monitoredOnly) => {
+    window.searchWarningCalls.push(ids);
+    window.searchWarningRequests.push({ ids, monitoredOnly });
+  };
+  const ids = Array.from({ length: count }, (_, index) => index + 1);
+  const author = { id: 1, audiobookMonitored: true, ebookMonitored: true, audiobookQualityProfileId: 1, ebookQualityProfileId: 1 };
+  const books = Array.from({ length: 20 }, (_, index) => ({
+    id: index + 1, authorId: index >= count && index % 2 === 0 ? 2 : 1, mediaType,
+    audiobookMonitored: index < count, ebookMonitored: index < count,
+    releaseDate: '2020-06-01', statistics: { percentOfBooks: 0 }
+  }));
+  const paused = { ...author, id: 2, audiobookMonitored: false, ebookMonitored: false };
+  for (const book of books) {
+    if (book.authorId === 2) {
+      book[`${mediaType}Monitored`] = true;
+    }
+    book.author = book.authorId === 2 ? paused : author;
+    book.isSearchEligible = isBookSearchEligible(book);
+  }
+  const missingBookIds = createMissingBookIdsSelector()({
+    calendar: { start: '2020-01-01', end: '2021-01-01', items: books }, queue: { details: { items: [] } },
+    authors: { items: [author, paused], itemMap: { 1: 0, 2: 1 } }
+  });
+  const props = {
+    items: books,
+    totalItems: 20, totalRecords: monitoredView ? count : 1, columns, customFilters: [],
+    filters: [{ key: 'test', filters: [{ key: 'monitored', value: monitoredView }] }],
+    view: 'table', selectedMediaType: mediaType, selectedFilterKey: 'test',
+    sortKey: 'title', sortDirection: 'ascending',
+    isPopulated: true, isAuthorPopulated: true, hasAuthor: false,
+    missingBookIds, calendarItems: [],
+    onSearchPress: record, onSearchSelectedPress: record, onSearchMissingPress: record,
+    onSearchAllMissingPress: () => record(ids),
+    onSearchAllCutoffUnmetPress: () => record(ids),
+    onSearchCountError: (error) => {
+      window.searchCountError = error.status;
+    }
+  };
+  const Page = { books: BookIndex, missing: Missing, cutoff: CutoffUnmet, calendar: CalendarPage }[pageName];
+  const component = new Page(props);
+  component.state.selectedState = Object.fromEntries(ids.map((id) => [id, selected]));
+  component.state.isEditorActive = selected;
+  const action = {
+    books: component.onSearchPress,
+    calendar: component.onSearchMissingPress,
+    missing: selected ? component.onSearchSelectedPress : component.onSearchAllMissingPress,
+    cutoff: selected ? component.onSearchSelectedPress : component.onSearchAllCutoffUnmetPress
+  }[pageName];
+  function dialogs(element) {
+    if (!React.isValidElement(element)) {
+      return [];
+    }
+    if (element.type === ConfirmModal) {
+      return [element];
+    }
+    return React.Children.toArray(element.props.children).flatMap(dialogs);
+  }
+  function render() {
+    ReactDOM.render(h(Provider, { store }, h(React.Fragment, null,
+      h('button', { onClick: action }, 'Run search action'),
+      ...dialogs(component.render()).map((element, index) => React.cloneElement(element, { key: index }))
+    )), document.getElementById('root'));
+  }
+  component.setState = (update) => {
+    component.state = { ...component.state, ...(typeof update === 'function' ? update(component.state, props) : update) };
+    render();
+  };
+  ReactDOM.unmountComponentAtNode(document.getElementById('root'));
+  render();
+};
+
+window.searchConfirmationRules = () => ({
+  threshold: SEARCH_CONFIRMATION_THRESHOLD,
+  five: shouldConfirmSearch(5), six: shouldConfirmSearch(6),
+  unsupportedMedia: isBookSearchEligible({ mediaType: 'other', otherMonitored: true }, { otherMonitored: true, otherQualityProfileId: 1 })
+});
+
+window.getLibraryFilterLabel = () => bookFilters.find((filter) => filter.key === 'library').label();

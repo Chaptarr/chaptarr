@@ -4,14 +4,17 @@ import PropTypes from 'prop-types';
 import React, { useState } from 'react';
 import ReactDOM from 'react-dom';
 import { Provider } from 'react-redux';
+import { Router } from 'react-router-dom';
 import { Tab, TabList, TabPanel, Tabs } from 'react-tabs';
 import { applyMiddleware, createStore } from 'redux';
 import { enableBatching } from 'redux-batched-actions';
 import thunk from 'redux-thunk';
 import ApplyTheme from 'App/ApplyTheme';
 import AuthorDetailsConnector from 'Author/Details/AuthorDetailsConnector';
+import AuthorDetailsSeriesConnector from 'Author/Details/AuthorDetailsSeriesConnector';
 import EditAuthorModal from 'Author/Edit/EditAuthorModal';
 import EditAuthorModalConnector from 'Author/Edit/EditAuthorModalConnector';
+import AuthorEditorFooter from 'Author/Editor/AuthorEditorFooter';
 import AuthorIndexItemConnector from 'Author/Index/AuthorIndexItemConnector';
 import MessagesConnector from 'Components/Page/Sidebar/Messages/MessagesConnector';
 import SignalRConnector from 'Components/SignalRConnector';
@@ -25,10 +28,11 @@ import AddNewSeriesModal from 'Search/Series/AddNewSeriesModal';
 import { defaultState as appState, reducers as appReducer, showMessage } from 'Store/Actions/appActions';
 import { toggleAuthorMonitored } from 'Store/Actions/authorActions';
 import { set } from 'Store/Actions/baseActions';
-import { defaultState as commandState, fetchCommands, finishCommand, reducers as commandReducer, removeCommand, showCommandProgress, updateCommand } from 'Store/Actions/commandActions';
-import { defaultState as releaseState, grabRelease, reducers as releaseReducer, setAuthorSearchResults, setBypassFilters } from 'Store/Actions/releaseActions';
+import { cancelCommand, defaultState as commandState, fetchCommands, finishCommand, reducers as commandReducer, removeCommand, showCommandProgress, updateCommand } from 'Store/Actions/commandActions';
+import { defaultState as releaseState, grabRelease, receiveAuthorSearchResults, reducers as releaseReducer, setBypassFilters } from 'Store/Actions/releaseActions';
 import { addBook } from 'Store/Actions/searchActions';
 import createAppStore from 'Store/createAppStore';
+import QueuedTaskRow from 'System/Tasks/Queued/QueuedTaskRow';
 import { getAuthorSearchBookCount } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import getNewBook from 'Utilities/Book/getNewBook';
 import { fetchTranslations } from 'Utilities/String/translate';
@@ -154,6 +158,7 @@ window.renderAuthorSearchFixture = async(view, audio, ebook, overrides = {}, pre
     app: { ...appState, dimensions: { width: innerWidth, height: innerHeight, isSmallScreen: false } },
     releases: releaseState,
     commands: commandState,
+    authors: { items: [], itemMap: {} },
     customFilters: { items: [] },
     settings: { ui: { item: { theme: 'light', longDateFormat: 'MMMM D, YYYY', shortDateFormat: 'MMM D, YYYY', timeFormat: 'h:mm A' } } }
   };
@@ -164,7 +169,7 @@ window.renderAuthorSearchFixture = async(view, audio, ebook, overrides = {}, pre
     commands: commandReducer(state.commands, action)
   })), applyMiddleware(thunk));
   fixtureStore = store;
-  window.readReleaseResults = () => ({ items: store.getState().releases.items, hiddenItems: store.getState().releases.hiddenItems });
+  window.readReleaseResults = () => store.getState().releases;
   window.readAuthorSearchState = () => store.getState().releases.authorSearch;
   window.readSearchCommands = () => store.getState().commands;
   const commandSignalR = new SignalR({
@@ -179,6 +184,9 @@ window.renderAuthorSearchFixture = async(view, audio, ebook, overrides = {}, pre
     commandSignalR.onReconnecting();
     commandSignalR.onReconnected();
   };
+  window.cancelSearchCommand = (id) => {
+    store.dispatch(cancelCommand({ id }));
+  };
   window.sendSearchCommand = (resource) => commandSignalR.handleCommand({ action: 'updated', resource });
   window.sendBookProgress = (body) => commandSignalR.handleBulkauthorbookprogress(body);
   window.readSidebarMessages = () => store.getState().app.messages.items;
@@ -188,7 +196,7 @@ window.renderAuthorSearchFixture = async(view, audio, ebook, overrides = {}, pre
   window.sendAuthorSearchSignalR = (body) => {
     const handler = new SignalR({
       authorSearch: store.getState().releases.authorSearch,
-      dispatchAuthorSearchResults: (payload) => store.dispatch(setAuthorSearchResults(payload))
+      dispatchAuthorSearchResults: (payload) => store.dispatch(receiveAuthorSearchResults(payload))
     });
     handler.handleMessage({ name: 'AuthorSearchResults', body });
   };
@@ -215,10 +223,22 @@ window.renderAuthorSearchFixture = async(view, audio, ebook, overrides = {}, pre
     hideUnmonitoredMissing: false,
     ...overrides
   };
+  if (view === 'task-row') {
+    ReactDOM.render(<Provider store={store}><table><tbody>
+      <QueuedTaskRow id={88000} commandName="RssSync"
+        trigger="scheduled"
+        queued="2026-01-01T00:00:00Z" status={overrides.status}
+        body={{ name: 'RssSync', supportsCancellation: overrides.supportsCancellation }}
+      />
+    </tbody></table></Provider>, document.getElementById('root'));
+    return;
+  }
   if (view === 'command-messages') {
+    const history = createMemoryHistory();
+    window.readMessageLocation = () => history.location;
     ReactDOM.render(
       <Provider store={store}>
-        <MessagesConnector />
+        <Router history={history}><MessagesConnector /></Router>
       </Provider>, document.getElementById('root')
     );
     return;
@@ -331,6 +351,22 @@ window.renderAddAuthorFixture = async(mediaType, family = 'author', capturedResu
   if (options.authorDefaults) {
     store.dispatch(set({ section: 'search', authorDefaults: { ...store.getState().search.authorDefaults, ...options.authorDefaults } }));
   }
+  window.openBulkMoveFixture = (shared) => {
+    const author = { id: 10, authorName: 'Walter Isaacson', audiobookFolder: '/fixture/audio/Walter Isaacson',
+      ebookFolder: shared ? '/fixture/audio/Walter Isaacson' : '/fixture/ebook/Walter Isaacson' };
+    store.dispatch(set({ section: 'authors', items: [author], itemMap: { 10: 0 } }));
+    ReactDOM.unmountComponentAtNode(document.getElementById('root'));
+    ReactDOM.render(<Provider store={store}><Router history={history}>
+      <AuthorEditorFooter authorIds={[10]} selectedCount={1}
+        selectedMediaType="audiobook"
+        isSaving={false} isDeleting={false}
+        isOrganizingAuthor={false} isRetaggingAuthor={false}
+        showMetadataProfile={false} onSaveSelected={() => {}}
+        onOrganizeAuthorPress={() => {}}
+        onRetagAuthorPress={() => {}}
+      />
+    </Router></Provider>, document.getElementById('root'));
+  };
   window.openNewAuthorEntryFixture = () => {
     ReactDOM.unmountComponentAtNode(document.getElementById('root'));
     ReactDOM.render(
@@ -486,4 +522,59 @@ window.getBookModalMetadataPayload = (mediaType, profileId, legacyFallback = fal
     return;
   }
   return getNewBook(book, payload, mediaType);
+};
+
+window.renderSeriesMembershipFixture = async(mediaType, theme) => {
+  await fetchTranslations();
+  const root = document.getElementById('root');
+  ReactDOM.unmountComponentAtNode(root);
+  const history = createMemoryHistory();
+  const store = createAppStore(history);
+  const positions = [
+    { position: '2.2', positionOrder: 2.2 },
+    { position: '序章', positionOrder: 7.922816251426434e28 },
+    { position: '10', positionOrder: 10 },
+    { position: '2.02', positionOrder: 2.02 },
+    { position: '1', positionOrder: 1 },
+    { position: '0.25', positionOrder: 0.25 }
+  ];
+  const books = ['audiobook', 'ebook'].flatMap((side, index) => {
+    const start = 501 + index * 100;
+    return [
+      { id: start, title: 'Shared membership title' },
+      ...positions.map(({ position }, offset) => ({ id: start + offset + 1, title: `Position ${position}` }))
+    ].map((book) => ({ ...book, authorId: 77, mediaType: side, monitored: false,
+      audiobookMonitored: false, ebookMonitored: false, isSaving: false, editions: [],
+      ratings: { value: 0, votes: 0 }, images: [], titleSlug: `book-${book.id}` }));
+  });
+  const series = ['audiobook', 'ebook'].flatMap((side, index) => {
+    const start = 501 + index * 100;
+    return [
+      { id: start, title: 'First membership group', links: [
+        ...positions.map((position, offset) => ({ ...position, bookId: start + offset + 1 })),
+        { bookId: start, position: '1-3', positionOrder: 1 }
+      ] },
+      { id: start + 1, title: 'Second membership group', links: [{ bookId: start, position: '6', positionOrder: 6 }] }
+    ].map((group) => ({ ...group, mediaType: side }));
+  });
+  store.dispatch(set({ section: 'app', hideUnmonitoredMissing: false, selectedMediaType: mediaType,
+    dimensions: { width: innerWidth, height: innerHeight, isSmallScreen: innerWidth <= 768 } }));
+  store.dispatch(set({ section: 'settings.ui', item: { ...store.getState().settings.ui.item, theme } }));
+  store.dispatch(set({ section: 'authors', items: [{ id: 77, authorName: 'Series writer',
+    audiobookRootFolderPath: '/audio', ebookRootFolderPath: '/ebooks' }], itemMap: { 77: 0 } }));
+  store.dispatch(set({ section: 'authorDetails', filterValue: '' }));
+  store.dispatch(set({ section: 'books', items: books, itemMap: Object.fromEntries(books.map((book, index) => [book.id, index])) }));
+  store.dispatch(set({ section: 'series', items: series, sortKey: 'position', sortDirection: 'ascending',
+    columns: store.getState().series.columns.filter(({ name }) => ['monitored', 'title', 'position'].includes(name)) }));
+  window.readSeriesMembershipBooks = () => store.getState().books.items;
+  ReactDOM.render(<Provider store={store}><Router history={history}><ApplyTheme>
+    {series.filter((group) => group.mediaType === mediaType).map((group, index) => (
+      <div key={group.id} data-series-fixture={index === 0 ? 'first' : 'second'}>
+        <AuthorDetailsSeriesConnector seriesId={group.id} authorId={77}
+          selectedMediaType={mediaType}
+          isExpanded={true} onExpandPress={noop}
+        />
+      </div>
+    ))}
+  </ApplyTheme></Router></Provider>, root);
 };

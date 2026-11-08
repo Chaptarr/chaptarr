@@ -118,7 +118,16 @@ module.exports = async(page, { makeRelease, beginSearch, requestCount, artifacts
       await button('Preferred and Alternatives', true).click();
       await button('One Preferred', true).click();
       assert.equal(await summary.locator('[class*="preferredBadge"]').count(), 0, 'Collapsing removes the badge again');
-      await updateSearch([group(702, 'Hidden Only'), group(701, 'Preferred and Alternatives')]);
+      await updateSearch([
+        group(702, 'Hidden Only'), group(701, 'Preferred and Alternatives'),
+        { ...group(708, 'All failed'), indexersQueried: 2, indexersFailed: 2 },
+        { ...group(709, 'Partial failure'), indexersQueried: 3, indexersFailed: 1 },
+        { ...group(710, 'No attempt'), indexersQueried: 0, indexersFailed: 0 }
+      ]);
+      await page.getByText('All indexers failed', { exact: true }).waitFor();
+      await page.getByText('No results (1 of 3 indexers failed)', { exact: true }).waitFor();
+      assert.ok(await page.getByText('No results returned', { exact: true }).count() >= 1);
+
       assert.equal(await button('Hidden Only').isDisabled(), true, 'A later empty snapshot disables the formerly expanded hidden group');
       assert.equal(await button('Hidden Only').getAttribute('aria-expanded'), 'false', 'A resultless group renders collapsed even when its saved expansion is true');
       assert.equal(await summary.locator('td[class*="authorSearchExpandedCell"]').count(), 0, 'No empty expanded row remains behind a disabled disclosure');

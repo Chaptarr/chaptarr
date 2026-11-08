@@ -58,7 +58,7 @@ namespace NzbDrone.Core.Indexers
                 return Task.FromResult<IList<ReleaseInfo>>(Array.Empty<ReleaseInfo>());
             }
 
-            return FetchReleases(g => g.GetSearchRequests(searchCriteria));
+            return FetchReleases(g => g.GetSearchRequests(searchCriteria), searchStatistics: searchCriteria.IndexerStatistics);
         }
 
         public override HttpRequest GetDownloadRequest(string link)
@@ -66,11 +66,13 @@ namespace NzbDrone.Core.Indexers
             return new HttpRequest(link);
         }
 
-        protected virtual async Task<IList<ReleaseInfo>> FetchReleases(Func<IIndexerRequestGenerator, IndexerPageableRequestChain> pageableRequestChainSelector, bool isRecent = false)
+        protected virtual async Task<IList<ReleaseInfo>> FetchReleases(Func<IIndexerRequestGenerator, IndexerPageableRequestChain> pageableRequestChainSelector, bool isRecent = false,
+            NzbDrone.Core.IndexerSearch.IndexerSearchStatistics searchStatistics = null)
         {
             var releases = new List<ReleaseInfo>();
             var url = string.Empty;
             var minimumBackoff = TimeSpan.FromHours(1);
+            var succeeded = false;
 
             try
             {
@@ -98,6 +100,7 @@ namespace NzbDrone.Core.Indexers
                         foreach (var request in pageableRequest)
                         {
                             url = request.Url.FullUri;
+                            searchStatistics?.RecordRequest(Definition.Id);
 
                             var page = await FetchPage(request, parser);
 
@@ -176,6 +179,7 @@ namespace NzbDrone.Core.Indexers
                 }
 
                 _indexerStatusService.RecordSuccess(Definition.Id);
+                succeeded = true;
             }
             catch (WebException webException)
             {
@@ -257,6 +261,14 @@ namespace NzbDrone.Core.Indexers
                 _indexerStatusService.RecordFailure(Definition.Id);
                 ex.WithData("FeedUrl", url);
                 _logger.Error(ex, "An error occurred while processing feed. {0}", url);
+            }
+
+            finally
+            {
+                if (!succeeded)
+                {
+                    searchStatistics?.RecordFailure(Definition.Id);
+                }
             }
 
             return CleanupReleases(releases);

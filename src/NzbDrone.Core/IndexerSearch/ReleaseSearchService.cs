@@ -22,8 +22,9 @@ namespace NzbDrone.Core.IndexerSearch
         Task<List<DownloadDecision>> BookSearch(int bookId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false);
         Task<List<DownloadDecision>> BookSearch(Book book, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false);
         Task<List<DownloadDecision>> BookSearch(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false);
+        Task<BookSearchResult> BookSearchWithOutcome(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false);
         Task<List<DownloadDecision>> AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType, CancellationToken cancellationToken);
-        Task AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType, Func<IReadOnlyList<Book>, Task> onSearchStarted, Func<Book, List<DownloadDecision>, Exception, Task> onBookCompleted, CancellationToken cancellationToken = default);
+        Task AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType, Func<IReadOnlyList<Book>, Task> onSearchStarted, Func<Book, BookSearchResult, Exception, Task> onBookCompleted, CancellationToken cancellationToken = default);
     }
 
     public class ReleaseSearchService : ISearchForReleases
@@ -62,7 +63,7 @@ namespace NzbDrone.Core.IndexerSearch
                 null,
                 (_, decisions, _) =>
                 {
-                    downloadDecisions.AddRange(decisions);
+                    downloadDecisions.AddRange(decisions.Decisions);
                     return Task.CompletedTask;
                 },
                 cancellationToken);
@@ -70,13 +71,13 @@ namespace NzbDrone.Core.IndexerSearch
             return DeDupeDecisions(downloadDecisions);
         }
 
-        public async Task AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType, Func<IReadOnlyList<Book>, Task> onSearchStarted, Func<Book, List<DownloadDecision>, Exception, Task> onBookCompleted, CancellationToken cancellationToken = default)
+        public async Task AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType, Func<IReadOnlyList<Book>, Task> onSearchStarted, Func<Book, BookSearchResult, Exception, Task> onBookCompleted, CancellationToken cancellationToken = default)
         {
             var author = _authorService.GetAuthor(authorId);
             await AuthorSearch(author, missingOnly, userInvokedSearch, interactiveSearch, mediaType, onSearchStarted, onBookCompleted, cancellationToken);
         }
 
-        public async Task AuthorSearch(Author author, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType = null, Func<IReadOnlyList<Book>, Task> onSearchStarted = null, Func<Book, List<DownloadDecision>, Exception, Task> onBookCompleted = null, CancellationToken cancellationToken = default)
+        public async Task AuthorSearch(Author author, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType = null, Func<IReadOnlyList<Book>, Task> onSearchStarted = null, Func<Book, BookSearchResult, Exception, Task> onBookCompleted = null, CancellationToken cancellationToken = default)
         {
             var authorCatalog = GetAuthorCatalog(author, null);
             var books = authorCatalog
@@ -100,11 +101,11 @@ namespace NzbDrone.Core.IndexerSearch
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                List<DownloadDecision> bookDecisions = new();
+                BookSearchResult bookDecisions = new();
                 Exception searchException = null;
                 try
                 {
-                    bookDecisions = await BookSearch(book, authorCatalog, missingOnly, userInvokedSearch, interactiveSearch);
+                    bookDecisions = await BookSearchWithOutcome(book, authorCatalog, missingOnly, userInvokedSearch, interactiveSearch);
                 }
                 catch (Exception ex)
                 {
@@ -125,7 +126,7 @@ namespace NzbDrone.Core.IndexerSearch
 
                         try
                         {
-                            await onBookCompleted(book, new List<DownloadDecision>(), callbackException);
+                            await onBookCompleted(book, new BookSearchResult(), callbackException);
                         }
                         catch (Exception errorCallbackException)
                         {
@@ -136,6 +137,8 @@ namespace NzbDrone.Core.IndexerSearch
                     }
                 }
             }
+
+            cancellationToken.ThrowIfCancellationRequested();
         }
 
         public Task<List<DownloadDecision>> BookSearch(Book book, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
@@ -145,11 +148,16 @@ namespace NzbDrone.Core.IndexerSearch
 
         public async Task<List<DownloadDecision>> BookSearch(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
         {
+            return (await BookSearchWithOutcome(book, authorCatalog, missingOnly, userInvokedSearch, interactiveSearch, allowUnmonitored)).Decisions;
+        }
+
+        public async Task<BookSearchResult> BookSearchWithOutcome(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
+        {
             _logger.Debug("[RELEASE_SEARCH_SERVICE] ===== BookSearch STARTED =====");
             _logger.Debug("[RELEASE_SEARCH_SERVICE] Book: '{0}' (ID: {1}, AuthorId: {2}, MediaType: {3})", book?.Title ?? "NULL", book?.Id ?? -1, book?.AuthorId ?? -1, book?.MediaType);
             _logger.Debug("[RELEASE_SEARCH_SERVICE] Parameters: missingOnly={0}, userInvokedSearch={1}, interactiveSearch={2}", missingOnly, userInvokedSearch, interactiveSearch);
 
-            var author = book.Author?.Id == book.AuthorId ? book.Author : null;
+            var author = (interactiveSearch || allowUnmonitored) && book.Author?.Id == book.AuthorId ? book.Author : null;
             if (author == null)
             {
                 _logger.Debug("[RELEASE_SEARCH_SERVICE] Getting author with ID {0}...", book.AuthorId);
@@ -163,7 +171,7 @@ namespace NzbDrone.Core.IndexerSearch
                 _logger.Debug("[RELEASE_SEARCH_SERVICE] Skipping book search for '{0}' because the book or its author {1} side is not monitored",
                     book?.Title ?? "NULL",
                     book?.MediaType == BookMediaType.Ebook ? "ebook" : "audiobook");
-                return new List<DownloadDecision>();
+                return new BookSearchResult();
             }
 
             _logger.Debug("[RELEASE_SEARCH_SERVICE] Retrieved author: '{0}' (ID: {1})", author?.Name ?? "NULL", author?.Id ?? -1);
@@ -178,13 +186,17 @@ namespace NzbDrone.Core.IndexerSearch
                     book?.Title ?? "NULL",
                     author?.Name ?? "NULL",
                     book?.MediaType ?? BookMediaType.Audiobook);
-                return new List<DownloadDecision>();
+                return new BookSearchResult();
             }
 
             _logger.Debug("[RELEASE_SEARCH_SERVICE] Creating search criteria...");
             var searchSpec = CreateBookSearchCriteria(author, book, authorCatalog, userInvokedSearch, interactiveSearch, !allowUnmonitored);
 
-            return await Dispatch(indexer => indexer.Fetch(searchSpec), searchSpec);
+            return new BookSearchResult
+            {
+                Decisions = await Dispatch(indexer => indexer.Fetch(searchSpec), searchSpec),
+                Indexers = searchSpec.IndexerStatistics
+            };
         }
 
         internal BookSearchCriteria CreateBookSearchCriteria(Author author, Book book, List<Book> authorCatalog,
@@ -390,6 +402,7 @@ namespace NzbDrone.Core.IndexerSearch
             }
             catch (Exception ex)
             {
+                criteriaBase.IndexerStatistics.RecordFailure(indexer.Definition.Id);
                 _logger.Error(ex, "Error while searching for {0}", criteriaBase);
             }
 
@@ -425,10 +438,10 @@ namespace NzbDrone.Core.IndexerSearch
             var torrentInfo = report as TorrentInfo;
             if (torrentInfo?.FileType.IsNotNullOrWhiteSpace() == true && IsMAMIndexer(report.Indexer))
             {
-                return QualityParser.ParseQualityFromFileType(torrentInfo.FileType, report.Title, (int)report.IndexerFlags, report.Indexer);
+                return QualityParser.ParseQualityFromFileType(torrentInfo.FileType, report.Title, (int)report.IndexerFlags, report.Indexer, QualityMediaTypeHelper.GetCategoryMediaType(report));
             }
 
-            return QualityParser.ParseQuality(report.Title, null, report.Categories, report.Indexer, null, (int)report.IndexerFlags);
+            return QualityParser.ParseQuality(report.Title, null, report.Categories, report.Indexer, null, (int)report.IndexerFlags, QualityMediaTypeHelper.GetCategoryMediaType(report));
         }
 
         private static bool IsMAMIndexer(string indexerName)

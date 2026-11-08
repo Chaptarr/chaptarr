@@ -44,7 +44,8 @@ const indexer = {
   configContract: 'NewznabSettings', enableRss: true, enableAutomaticSearch: true, enableInteractiveSearch: true,
   supportsRss: true, supportsSearch: true, protocol: 'usenet', priority: 25, downloadClientId: 0, proxyId: null, tags: [],
   fields: [field('baseUrl', 'https://indexer.example'), field('apiKey', '********'),
-    field('enableNarratorMetadata', true, 'checkbox'), field('narratorMetadataBaseUrl', '')]
+    field('enableNarratorMetadata', true, 'checkbox'), field('narratorMetadataBaseUrl', ''),
+    { ...field('categories', [7000, 7020], 'select'), label: 'Categories', selectOptionsProviderAction: 'newznabCategories' }]
 };
 let browser = null;
 (async() => {
@@ -59,6 +60,8 @@ let browser = null;
       const posts = [];
       let supported = false;
       let testGate = null;
+      let categoryCalls = 0;
+      let categoryName = 'Old ebooks';
       await page.route('**/*', async(route) => {
         const request = route.request();
         const pathname = new URL(request.url()).pathname;
@@ -71,6 +74,13 @@ let browser = null;
             await testGate;
           }
           return route.fulfill({ json: { successMessages: [], resource: { supportsNarratorMetadata: supported } } });
+        }
+        if (pathname.endsWith('/indexer/action/newznabCategories')) {
+          categoryCalls++;
+          assert.deepEqual(request.postDataJSON().fields.find((entry) => entry.name === 'categories').value, [7000, 7020]);
+          return route.fulfill({ json: { options: [
+            { value: 7000, name: 'Books' }, { value: 7020, name: categoryName, parentValue: 7000 }
+          ] } });
         }
         if (pathname === '/fixture.js') {
           return route.fulfill({ path: path.join(output, 'fixture.js'), contentType: 'text/javascript' });
@@ -98,11 +108,18 @@ let browser = null;
       assert.equal(await checkbox.isChecked(), true);
       assert.equal(await checkbox.isEnabled(), true);
       assert.equal(posts.length, 0);
+      await page.waitForFunction(() => window.categoryState()?.isPopulated === true);
+      const callsBeforeTest = categoryCalls;
+      categoryName = 'Current ebooks';
       await page.getByRole('button', { name: 'Test', exact: true }).click();
       await page.waitForFunction(() => window.indexerState().isTesting === false && window.indexerState().pendingChanges.supportsNarratorMetadata === false);
       assert.equal(await checkbox.isDisabled(), true);
       assert.equal(await checkbox.isChecked(), true);
       assert.equal(posts.length, 1);
+      await page.waitForFunction(() => window.categoryState().items.some((item) => item.name === 'Current ebooks'));
+      assert.equal(categoryCalls, callsBeforeTest + 1, 'Successful Test reloads category options once');
+      assert.equal(await page.evaluate(() => window.indexerState().pendingChanges.fields?.categories), undefined,
+        'Refreshing options must not edit the selected categories');
       if (process.env.CHAPTARR_NFO_SCREENSHOTS) {
         await page.screenshot({ path: path.join(process.env.CHAPTARR_NFO_SCREENSHOTS, `indexer-${theme}-${width}.png`) });
       }
@@ -128,6 +145,7 @@ let browser = null;
         finishTest = resolve;
       });
       supported = false;
+      const callsBeforeStaleTest = categoryCalls;
       await page.getByRole('button', { name: 'Test', exact: true }).click();
       await page.waitForFunction(() => window.indexerState().isTesting === true);
       await page.locator('input[name="baseUrl"]').fill('https://another.example');
@@ -135,6 +153,7 @@ let browser = null;
       await page.waitForFunction(() => window.indexerState().isTesting === false);
       assert.equal(await checkbox.isEnabled(), true, 'A stale result must not disable a different endpoint');
       assert.equal(await checkbox.isChecked(), true);
+      assert.equal(categoryCalls, callsBeforeStaleTest + 1, 'Only changing the endpoint reloads categories; stale Test does not');
       testGate = null;
       supported = null;
       await page.getByRole('button', { name: 'Test', exact: true }).focus();

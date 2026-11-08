@@ -1,6 +1,13 @@
 const assert = require('node:assert/strict');
 
 module.exports = async(page, expectedErrors) => {
+  for (const [status, supportsCancellation, count] of [
+    ['queued', false, 1], ['started', false, 0], ['started', true, 1],
+    ['completed', true, 0], ['failed', true, 0]
+  ]) {
+    await page.evaluate((options) => window.renderAuthorSearchFixture('task-row', 0, 0, options), { status, supportsCancellation });
+    assert.equal(await page.locator('button[title]').count(), count, `${status}, supportsCancellation=${supportsCancellation}`);
+  }
   await page.clock.install();
   let snapshot = [];
   let failSnapshot = false;
@@ -43,7 +50,19 @@ module.exports = async(page, expectedErrors) => {
     await page.waitForFunction(() => !window.readSearchCommands().isFetching);
   };
   try {
-    for (const name of ['RefreshAuthor', 'BulkRefreshAuthor']) {
+    const running = await start('BookSearch');
+    const cancellationError = 'This task can\'t be cancelled once it has started.';
+    const cancellationRoute = `**/api/v1/command/${running.id}`;
+    await page.route(cancellationRoute, async(route) => {
+      assert.equal(route.request().method(), 'DELETE');
+      expectedErrors.push({ url: route.request().url(), status: 409 });
+      await route.fulfill({ status: 409, json: { message: cancellationError } });
+    });
+    await page.evaluate((id) => window.cancelSearchCommand(id), running.id);
+    await page.getByText(cancellationError, { exact: true }).waitFor();
+    assert.equal((await page.evaluate(() => window.readSearchCommands())).items[0].status, 'started');
+    await page.unroute(cancellationRoute);
+    for (const name of ['RssSync', 'BookSearch', 'RefreshAuthor', 'BulkRefreshAuthor', 'RefreshUnmappedFiles', 'RetryUnmappedMatch']) {
       for (const status of ['completed', 'failed', 'cancelled', 'aborted', 'orphaned']) {
         const command = await start(name);
         await send({ ...command, status, message: `Finished: ${status}` });
@@ -119,13 +138,17 @@ module.exports = async(page, expectedErrors) => {
     await page.evaluate((id) => window.removeSearchCommand(id), newer.id);
     assert.deepEqual(await messages(), [], 'Removing a command clears all its progress');
 
-    const timed = await start();
+    const timed = await start('RssSync');
     await send({ ...timed, status: 'completed', message: 'Timed completion' });
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 5; i++) {
       await page.clock.runFor(750);
       await send({ ...timed, id: ++nextId, status: 'started', body: { suppressMessages: true } });
     }
+    await page.getByText('Timed completion', { exact: true }).waitFor();
+    assert.equal((await messages()).length, 1, 'RSS completion stays readable for four seconds');
+    await page.clock.runFor(500);
     assert.deepEqual(await messages(), [], 'Unrelated command traffic must not reset the completion timer');
+    await page.getByText('Timed completion', { exact: true }).waitFor({ state: 'detached' });
 
     await page.evaluate(() => window.showSidebarMessage({
       id: 'unmounted', name: 'Notice', message: 'Unmounted notice', type: 'info', hideAfter: 0.1
@@ -133,6 +156,27 @@ module.exports = async(page, expectedErrors) => {
     await page.evaluate(() => window.unmountAuthorSearchFixture());
     await page.clock.runFor(250);
     assert.equal((await messages()).length, 1, 'Unmount cancels the dismissal timer');
+
+    let searchResult = null;
+    const releaseRoute = '**/api/v1/release?**';
+    await page.route(releaseRoute, (route) => route.fulfill({ json: searchResult }));
+    try {
+      for (const [queried, failed, expected] of [
+        [2, 2, 'All indexers failed'],
+        [3, 1, 'No results (1 of 3 indexers failed)'],
+        [2, 0, 'No results found'],
+        [0, 0, 'No results found']
+      ]) {
+        searchResult = { releases: [], hiddenReleases: [], indexersQueried: queried, indexersFailed: failed };
+        await page.evaluate(() => window.renderAuthorSearchFixture('book-tab', 0, 0));
+        await page.getByText(expected, { exact: true }).waitFor();
+        const state = await page.evaluate(() => window.readReleaseResults());
+        assert.equal(state.indexersQueried, queried);
+        assert.equal(state.indexersFailed, failed);
+      }
+    } finally {
+      await page.unroute(releaseRoute);
+    }
 
     console.log(`Sidebar command-message browser check passed: terminal states, reconnect/expiry, late events, snapshot races, failed fetch, timer churn and unmount (${requests} read-only command refreshes).`);
   } finally {

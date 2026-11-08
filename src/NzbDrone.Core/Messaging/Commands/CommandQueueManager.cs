@@ -34,6 +34,7 @@ namespace NzbDrone.Core.Messaging.Commands
         void Fail(CommandModel command, string message, Exception e);
         void Requeue();
         void Cancel(int id);
+        bool CancelIfQueued(int id);
         void Pause(int id);
         void Resume(int id);
         void CleanCommands();
@@ -255,27 +256,40 @@ namespace NzbDrone.Core.Messaging.Commands
         {
             // Marks the command as started in the DB, the queue takes care of marking it as started on it's own
             _logger.Trace("Marking command as started: {0}", command.Name);
-            _repo.Start(command);
+            lock (command)
+            {
+                if (command.Status != CommandStatus.Cancelled)
+                {
+                    _repo.Start(command);
+                }
+            }
         }
 
         public void Complete(CommandModel command, string message)
         {
-            // If the result hasn't been set yet then set it to successful
-            if (command.Result == CommandResult.Unknown)
+            lock (command)
             {
-                command.Result = CommandResult.Successful;
-            }
+                if (command.Result == CommandResult.Unknown && command.Status != CommandStatus.Cancelled)
+                {
+                    command.Result = CommandResult.Successful;
+                }
 
-            Update(command, CommandStatus.Completed, message);
+                // Cancellation and completion race on the same queued command instance.
+                Update(command, command.Status == CommandStatus.Cancelled ? CommandStatus.Cancelled : CommandStatus.Completed,
+                    command.Status == CommandStatus.Cancelled ? command.Message : message);
+            }
 
             _commandQueue.PulseAllConsumers();
         }
 
         public void Fail(CommandModel command, string message, Exception e)
         {
-            command.Exception = e.ToString();
-
-            Update(command, CommandStatus.Failed, message);
+            lock (command)
+            {
+                command.Exception = e.ToString();
+                Update(command, command.Status == CommandStatus.Cancelled ? CommandStatus.Cancelled : CommandStatus.Failed,
+                    command.Status == CommandStatus.Cancelled ? command.Message : message);
+            }
 
             _commandQueue.PulseAllConsumers();
         }
@@ -288,7 +302,11 @@ namespace NzbDrone.Core.Messaging.Commands
             }
         }
 
-        public void Cancel(int id)
+        public void Cancel(int id) => Cancel(id, false);
+
+        public bool CancelIfQueued(int id) => Cancel(id, true);
+
+        private bool Cancel(int id, bool onlyIfQueued)
         {
             _logger.Debug("Attempting to cancel command with ID: {0}", id);
 
@@ -298,41 +316,37 @@ namespace NzbDrone.Core.Messaging.Commands
                 throw new NzbDroneClientException(HttpStatusCode.NotFound, "Command not found");
             }
 
-            if (command.Status == CommandStatus.Completed ||
-                command.Status == CommandStatus.Failed ||
-                command.Status == CommandStatus.Cancelled ||
-                command.Status == CommandStatus.Aborted ||
-                command.Status == CommandStatus.Orphaned)
+            lock (command)
             {
-                throw new NzbDroneClientException(HttpStatusCode.Conflict, "Cannot cancel a command that has already finished");
-            }
+                if (command.Status == CommandStatus.Completed ||
+                    command.Status == CommandStatus.Failed ||
+                    command.Status == CommandStatus.Cancelled ||
+                    command.Status == CommandStatus.Aborted ||
+                    command.Status == CommandStatus.Orphaned)
+                {
+                    if (onlyIfQueued) return false;
+                    throw new NzbDroneClientException(HttpStatusCode.Conflict, "Cannot cancel a command that has already finished");
+                }
 
-            // If queued, remove from the in-memory queue to prevent execution.
-            if (command.Status == CommandStatus.Queued)
-            {
-                _commandQueue.RemoveIfQueued(id);
-            }
+                if (!_commandQueue.RemoveIfQueued(id))
+                {
+                    if (onlyIfQueued) return false;
+                    if (!command.Body.SupportsCancellation)
+                    {
+                        throw new NzbDroneClientException(HttpStatusCode.Conflict, "This task can't be cancelled once it has started.");
+                    }
+                }
 
-            // Best-effort: cancel running work if a token source exists.
-            if (_cancellationTokenSources.TryRemove(id, out var cancellationTokenSource))
-            {
-                _logger.Info("Cancelling command with ID: {0}", id);
-                cancellationTokenSource.Cancel();
-                cancellationTokenSource.Dispose();
-            }
-
-            if (command.Status == CommandStatus.Queued ||
-                command.Status == CommandStatus.Started ||
-                command.Status == CommandStatus.Paused)
-            {
                 Update(command, CommandStatus.Cancelled, "Cancelled by user");
+                if (_cancellationTokenSources.TryGetValue(id, out var cancellationTokenSource))
+                {
+                    cancellationTokenSource.Cancel();
+                }
+
                 _commandQueue.PulseAllConsumers();
-
                 _logger.Info("Successfully cancelled command with ID: {0}", id);
-                return;
+                return true;
             }
-
-            throw new NzbDroneClientException(HttpStatusCode.Conflict, "Unable to cancel task - it may not support cancellation");
         }
 
         public void Pause(int id)
@@ -444,7 +458,15 @@ namespace NzbDrone.Core.Messaging.Commands
         public void RegisterCancellationToken(int commandId, CancellationTokenSource cancellationTokenSource)
         {
             _logger.Debug("Registering cancellation token for command ID: {0}", commandId);
-            _cancellationTokenSources.TryAdd(commandId, cancellationTokenSource);
+            var command = Get(commandId);
+            lock (command)
+            {
+                _cancellationTokenSources.TryAdd(commandId, cancellationTokenSource);
+                if (command.Status == CommandStatus.Cancelled)
+                {
+                    cancellationTokenSource.Cancel();
+                }
+            }
         }
 
         public void UnregisterCancellationToken(int commandId)
@@ -452,10 +474,7 @@ namespace NzbDrone.Core.Messaging.Commands
             _logger.Debug("Unregistering cancellation token for command ID: {0}", commandId);
             if (_cancellationTokenSources.TryRemove(commandId, out var cancellationTokenSource))
             {
-                if (!cancellationTokenSource.Token.IsCancellationRequested)
-                {
-                    cancellationTokenSource.Dispose();
-                }
+                cancellationTokenSource.Dispose();
             }
         }
 

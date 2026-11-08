@@ -67,7 +67,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 },
                 (book, decisions, exception) =>
                 {
-                    completed.Add((book.Id, decisions, exception));
+                    completed.Add((book.Id, decisions.Decisions, exception));
                     return Task.CompletedTask;
                 });
 
@@ -83,7 +83,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 Assert.That(completed[2].Decisions.Single().RemoteBook.Release.Guid, Is.EqualTo("shared-guid"));
                 Assert.That(fetchedBookIds, Is.EqualTo(new[] { first.Id, empty.Id, third.Id }));
                 Assert.That(harness.BookService.CatalogLoads, Is.EqualTo(1));
-                Assert.That(harness.AuthorService.AuthorLoads, Is.EqualTo(1));
+                Assert.That(harness.AuthorService.AuthorLoads, Is.EqualTo(1 + roster.Count), "Each automatic book search rechecks the cached author; the catalog is loaded only once.");
                 Assert.That(harness.Indexer.Searches.Select(criteria => criteria.AuthorCatalog.Count), Is.All.EqualTo(3));
                 Assert.That(harness.Indexer.Searches.All(criteria => criteria.AuthorCatalog.All(book => book.MediaType == BookMediaType.Audiobook)), Is.True);
             });
@@ -154,7 +154,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 Assert.That(harness.Indexer.Searches.Select(criteria => criteria.Books.Single().Id).ToArray(), Is.EqualTo(expectedBookIds));
                 Assert.That(harness.Indexer.Searches.All(criteria => criteria.AuthorCatalog.All(book => book.MediaType == mediaType)), Is.True);
                 Assert.That(harness.BookService.CatalogLoads, Is.EqualTo(1));
-                Assert.That(harness.AuthorService.AuthorLoads, Is.EqualTo(1));
+                Assert.That(harness.AuthorService.AuthorLoads, Is.EqualTo(1 + expectedBookIds.Length), "Each automatic book search rechecks the cached author; the catalog is loaded only once.");
             });
         }
 
@@ -230,7 +230,10 @@ namespace Chaptarr.Core.Test.IndexerSearch
             var admission = await result.Content.ReadFromJsonAsync<AuthorReleaseSearchResponse>();
             Assert.That(admission.IsComplete, Is.False);
             await driver.Executions[searchId].WaitAsync(TimeSpan.FromSeconds(10));
-            var response = broadcaster.LastResult;
+            Assert.That(broadcaster.LastResult.BookResults, Is.Empty, "Completion is a compact notification; results are fetched from the saved search");
+            var response = await client.GetFromJsonAsync<AuthorReleaseSearchResponse>(
+                $"/api/v1/release?authorId={author.Id}&mediaType=audiobook&existing=true");
+            Assert.That(response.SearchId, Is.EqualTo(searchId));
             var expectedBookIds = currentCatalog.Select(book => book.Id).ToArray();
 
             Assert.Multiple(() =>
@@ -264,7 +267,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 Assert.That(result, Has.Count.EqualTo(1));
                 Assert.That(result.Single().RemoteBook.Release.Guid, Is.EqualTo("shared-guid"));
                 Assert.That(harness.Indexer.Searches.Select(criteria => criteria.Books.Single().Id), Is.EqualTo(new[] { first.Id, second.Id }));
-                Assert.That(harness.AuthorService.AuthorLoads, Is.EqualTo(1));
+                Assert.That(harness.AuthorService.AuthorLoads, Is.EqualTo(3), "Each automatic book search rechecks the cached author; the catalog is loaded only once.");
                 Assert.That(harness.BookService.CatalogLoads, Is.EqualTo(1));
             });
         }
@@ -397,7 +400,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 null,
                 (book, decisions, exception) =>
                 {
-                    completed.Add((book.Id, decisions, exception));
+                    completed.Add((book.Id, decisions.Decisions, exception));
                     return Task.CompletedTask;
                 });
 
@@ -437,7 +440,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 null,
                 (book, decisions, exception) =>
                 {
-                    callbackResults.Add((book.Id, decisions.Count, exception));
+                    callbackResults.Add((book.Id, decisions.Decisions.Count, exception));
                     if (book.Id == first.Id && exception == null)
                     {
                         return Task.FromException(callbackFailure);
@@ -485,7 +488,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 null,
                 (book, decisions, exception) =>
                 {
-                    callbackResults.Add((book.Id, decisions.Count, exception));
+                    callbackResults.Add((book.Id, decisions.Decisions.Count, exception));
                     return Task.FromException(exception == null ? callbackFailure : errorCallbackFailure);
                 });
 
@@ -610,11 +613,14 @@ namespace Chaptarr.Core.Test.IndexerSearch
             var admission = await result.Content.ReadFromJsonAsync<AuthorReleaseSearchResponse>();
             Assert.That(admission.IsComplete, Is.False);
             await driver.Executions[searchId].WaitAsync(TimeSpan.FromSeconds(10));
-            var response = broadcaster.LastResult;
+            Assert.That(broadcaster.LastResult.BookResults, Is.Empty, "Completion is a compact notification; results are fetched from the saved search");
+            var response = await client.GetFromJsonAsync<AuthorReleaseSearchResponse>(
+                $"/api/v1/release?authorId={author.Id}&mediaType=audiobook&existing=true");
+            Assert.That(response.SearchId, Is.EqualTo(searchId));
             Assert.Multiple(() =>
             {
                 Assert.That(response.IsComplete, Is.True);
-                Assert.That(response.IsCancelled, Is.EqualTo(hasPendingBook && requestStop));
+                Assert.That(response.IsCancelled, Is.EqualTo(requestStop));
                 Assert.That(response.BookResults.Select(group => group.Status),
                     Is.EqualTo(hasPendingBook ? new[] { "complete", "complete", requestStop ? "pending" : "complete" } : new[] { "complete", "complete" }));
                 Assert.That(response.BookResults.SelectMany(group => group.Releases).Select(release => release.Guid),
@@ -622,7 +628,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 Assert.That(harness.Indexer.Searches.Select(criteria => criteria.Books.Single().Id),
                     Is.EqualTo(requestStop || !hasPendingBook ? new[] { first.Id, active.Id } : new[] { first.Id, active.Id, pending.Id }));
                 Assert.That(broadcaster.LastResult.IsComplete, Is.True);
-                Assert.That(broadcaster.LastResult.IsCancelled, Is.EqualTo(hasPendingBook && requestStop));
+                Assert.That(broadcaster.LastResult.IsCancelled, Is.EqualTo(requestStop));
             });
 
             using var afterCompletion = await client.DeleteAsync($"/api/v1/release?searchId={searchId}");
@@ -655,6 +661,37 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 FirstPublishedBookResultCount ??= LastResult.BookResults.Count;
                 return Task.CompletedTask;
             }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void selected_search_keeps_per_book_times_and_single_manual_unmonitored_search(bool unmonitoredSingle)
+        {
+            var author = BuildAuthor();
+            var catalog = Enumerable.Range(101, 3).Select(id => BuildBook(id, BookMediaType.Audiobook, author, DateTime.MinValue)).ToList();
+            if (unmonitoredSingle)
+            {
+                author.AudiobookMonitored = false;
+                catalog.ForEach(book => book.AudiobookMonitored = false);
+            }
+            var harness = BuildHarness(catalog, author);
+            harness.Indexer.FetchHandler = _ => Task.FromResult<IList<ReleaseInfo>>(new List<ReleaseInfo>());
+            var processor = InterfaceProxy.Proxy<NzbDrone.Core.Download.IProcessDownloadDecisions>((_, _) =>
+                Task.FromResult(new NzbDrone.Core.Download.ProcessedDecisions(new(), new(), new())));
+            var service = new BookSearchService(harness.Subject, (IBookService)(object)harness.BookService, null, null, processor, LogManager.GetCurrentClassLogger());
+            var selected = unmonitoredSingle ? new List<int> { 102 } : new List<int> { 103, 101, 102 };
+            var before = DateTime.UtcNow;
+
+            service.Execute(new BookSearchCommand(selected) { Trigger = NzbDrone.Core.Messaging.Commands.CommandTrigger.Manual });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(harness.BookService.CatalogLoads, Is.EqualTo(1));
+                Assert.That(harness.BookService.SearchTimeUpdates, Is.EqualTo(selected));
+                Assert.That(harness.Indexer.Searches.Select(criteria => criteria.Books.Single().Id), Is.EqualTo(selected));
+                Assert.That(catalog.Where(book => selected.Contains(book.Id)).All(book => book.LastSearchTime >= before), Is.True);
+                Assert.That(catalog.Where(book => !selected.Contains(book.Id)).All(book => book.LastSearchTime == DateTime.MinValue), Is.True);
+            });
         }
 
         private static Author BuildAuthor()
@@ -751,6 +788,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
         {
             public List<Book> Catalog { get; set; }
             public int CatalogLoads { get; private set; }
+            public List<int> SearchTimeUpdates { get; } = new();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -760,8 +798,15 @@ namespace Chaptarr.Core.Test.IndexerSearch
                     return Catalog;
                 }
 
+                if (targetMethod.Name == nameof(IBookService.GetBooks) || targetMethod.Name == nameof(IBookService.GetExistingBooks))
+                {
+                    var ids = ((IEnumerable<int>)args[0]).ToHashSet();
+                    return Catalog.Where(book => ids.Contains(book.Id)).ToList();
+                }
+
                 if (targetMethod.Name == nameof(IBookService.UpdateLastSearchTime))
                 {
+                    SearchTimeUpdates.AddRange(((IEnumerable<Book>)args[0]).Select(book => book.Id));
                     return null;
                 }
 

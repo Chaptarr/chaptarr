@@ -1,6 +1,7 @@
 using System;
 using System.Data;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 
 namespace Chaptarr.Core.Test.Common
 {
@@ -29,7 +30,13 @@ namespace Chaptarr.Core.Test.Common
                 Observe(command);
             }
 
-            var result = method.Invoke(Target, args);
+            object result;
+            try { result = method.Invoke(Target, args); }
+            catch (TargetInvocationException ex) when (ex.InnerException != null)
+            {
+                ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+                throw;
+            }
             return result is IDbCommand created ? Wrap(created, Observe, IncludeWrites) : result;
         }
     }

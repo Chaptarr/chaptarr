@@ -43,6 +43,41 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(((SearchScopeProxy)(object)search).Scopes, Is.Empty);
         }
 
+        [TestCase(0, 0)]
+        [TestCase(2, 0)]
+        [TestCase(2, 1)]
+        [TestCase(2, 2)]
+        public async Task book_response_carries_indexer_counts_without_a_second_book_lookup(int queried, int failed)
+        {
+            var author = new Author { Id = 10 };
+            var book = new Book { Id = 11, AuthorId = 10 };
+            var outcome = new BookSearchResult();
+            for (var id = 1; id <= queried; id++) outcome.Indexers.RecordRequest(id);
+            for (var id = 1; id <= failed; id++) outcome.Indexers.RecordFailure(id);
+            var searches = 0;
+            var search = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<ISearchForReleases>((method, args) =>
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(ISearchForReleases.BookSearchWithOutcome)));
+                Assert.That(args[0], Is.SameAs(book));
+                Assert.That(book.Author, Is.SameAs(author));
+                searches++;
+                return Task.FromResult(outcome);
+            });
+            var controller = new ReleaseController(null, search, null,
+                DispatchProxy.Create<IPrioritizeDownloadDecision, SearchScopeProxy>(), null,
+                Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IAuthorService>((_, _) => author),
+                Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookService>((method, _) => method.Name == nameof(IBookService.GetBook) ? book : throw new NotImplementedException(method.Name)),
+                null, null, new CacheManager(), LogManager.GetCurrentClassLogger(), null)
+            {
+                ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { Request = { QueryString = new QueryString("?bookId=11") } } }
+            };
+            var response = (ReleaseSearchResponse)await controller.GetReleases(book.Id, null);
+            Assert.That(response.IndexersQueried, Is.EqualTo(queried));
+            Assert.That(response.IndexersFailed, Is.EqualTo(failed));
+            Assert.That(response.Releases, Is.Empty);
+            Assert.That(searches, Is.EqualTo(1));
+        }
+
         private static ReleaseController BuildSearchController(ISearchForReleases search)
         {
             return new ReleaseController(null, search, null,

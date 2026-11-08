@@ -383,11 +383,12 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(JObject.Parse(Encoding.UTF8.GetString(requests[9].HttpRequest.ContentData))["tor"]?["startNumber"]?.Value<string>(), Is.EqualTo("900"));
         }
 
-        [Test]
-        public void should_search_all_torrents_when_zero_seeders_are_allowed()
+        [TestCase(0)]
+        [TestCase(3)]
+        public void should_search_all_torrents_regardless_of_minimum_seeders(int minimumSeeders)
         {
             var generator = CreateGenerator();
-            generator.Settings.MinimumSeeders = 0;
+            generator.Settings.MinimumSeeders = minimumSeeders;
 
             var payload = GetRequestPayloadObject(generator.GetSearchRequests(CreateAudiobookCriteria("en")), 0);
 

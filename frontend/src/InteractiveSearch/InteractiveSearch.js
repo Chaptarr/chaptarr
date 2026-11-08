@@ -8,6 +8,7 @@ import Table from 'Components/Table/Table';
 import TableBody from 'Components/Table/TableBody';
 import { icons, kinds, sortDirections } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
+import getNoResultsMessage from './getNoResultsMessage';
 import FilterWarning from './FilterWarning';
 import InteractiveSearchMediaTypeToggle from './InteractiveSearchMediaTypeToggle';
 import InteractiveSearchRow from './InteractiveSearchRow';
@@ -263,7 +264,7 @@ class InteractiveSearch extends Component {
 
         {!isFetching && isPopulated && !totalReleasesCount && (!filterSummary || !filterSummary.hasSoftFilters) ?
           <Alert kind={kinds.INFO}>
-            {translate('NoResultsFound')}
+            {getNoResultsMessage(this.props, 'NoResultsFound')}
           </Alert> :
           null}
 
@@ -394,6 +395,8 @@ InteractiveSearch.propTypes = {
   timeFormat: PropTypes.string.isRequired,
   bypassFilters: PropTypes.bool,
   filterSummary: PropTypes.object,
+  indexersQueried: PropTypes.number,
+  indexersFailed: PropTypes.number,
   siblingBookId: PropTypes.number,
   siblingMediaType: PropTypes.oneOf(['audiobook', 'ebook']),
   siblingToggleEnabled: PropTypes.bool,

@@ -14,6 +14,137 @@ namespace Chaptarr.Core.Test.Indexers
     [TestFixture]
     public class ReleaseResourceMapperFixture
     {
+        [TestCase(BookMediaType.Audiobook)]
+        [TestCase(BookMediaType.Ebook)]
+        public void unclassified_newznab_release_must_not_inherit_target_media_type(BookMediaType target)
+        {
+            var release = new ReleaseInfo
+            {
+                Title = "Patrick Stewart - Making It So",
+                Indexer = "NZBFinder",
+                Size = 7587090,
+                Categories = new System.Collections.Generic.List<int> { 7060, 107060 }
+            };
+            var quality = QualityParser.ParseQuality(release.Title, categories: release.Categories);
+            var resource = new DownloadDecision(new RemoteBook
+            {
+                Books = new System.Collections.Generic.List<Book> { new() { MediaType = target } },
+                Release = release,
+                ParsedBookInfo = new ParsedBookInfo { Quality = quality }
+            }).ToResource();
+
+            Assert.That(quality.Quality.Id, Is.EqualTo(0));
+            Assert.That(QualityMediaTypeHelper.DetectMediaType(quality.Quality, release), Is.Null);
+            Assert.That(resource.Quality.Quality.Name, Is.EqualTo("Unknown"));
+            Assert.That(resource.FormatType, Is.Null);
+            Assert.That(System.Text.Json.JsonSerializer.Serialize(resource), Does.Not.Contain("Unknown Text"));
+        }
+
+        [TestCase("Patrick Stewart - Making It So [Audiobook]", 7000, "Unknown Audio", "audiobook")]
+        [TestCase("Patrick Stewart - Making It So [ebook]", 7060, "Unknown", null)]
+        [TestCase("Patrick Stewart - Making It So (Ungekuerzt)", 0, "Unknown Audio", "audiobook")]
+        [TestCase("Patrick Stewart - Making It So [Audiobook]", 7020, "Unknown", "ebook")]
+        [TestCase("Patrick Stewart - Making It So (Ungekuerzt)", 7020, "Unknown", "ebook")]
+        [TestCase("Patrick Stewart - Making It So [Audiobook].epub", 3030, "EPUB", "ebook")]
+        [TestCase("Patrick Stewart - Making It So [Audiobook].m4b", 7020, "M4B", "audiobook")]
+        [TestCase("Patrick Stewart - Making It So", 7000, "Unknown", null)]
+        [TestCase("Patrick Stewart - Making It So", 7020, "Unknown", "ebook")]
+        [TestCase("Patrick Stewart - Making It So", 3030, "Unknown Audio", "audiobook")]
+        [TestCase("Patrick Stewart - Making It So.epub", 7060, "EPUB", "ebook")]
+        [TestCase("Patrick Stewart - Making It So.m4b", 7060, "M4B", "audiobook")]
+        public void release_display_media_requires_positive_evidence(string title, int category, string qualityName, string mediaType)
+        {
+            var release = new ReleaseInfo { Title = title, Categories = new System.Collections.Generic.List<int> { category } };
+            var quality = QualityParser.ParseQuality(title, categories: release.Categories);
+            var resource = new DownloadDecision(new RemoteBook
+            {
+                Release = release,
+                ParsedBookInfo = new ParsedBookInfo { Quality = quality }
+            }).ToResource();
+
+            Assert.That(resource.Quality.Quality.Name, Is.EqualTo(qualityName));
+            Assert.That(resource.FormatType, Is.EqualTo(mediaType));
+        }
+
+        [Test]
+        public void conflicting_media_categories_do_not_assert_an_unknown_audio_format()
+        {
+            var release = new ReleaseInfo { Title = "Patrick Stewart - Making It So", Categories = new() { 3030, 7020 } };
+            var quality = QualityParser.ParseQuality(release.Title, categories: release.Categories);
+            var resource = new DownloadDecision(new RemoteBook { Release = release, ParsedBookInfo = new() { Quality = quality } }).ToResource();
+            Assert.That(resource.Quality.Quality.Name, Is.EqualTo("Unknown"));
+            Assert.That(resource.FormatType, Is.Null);
+        }
+
+        [Test]
+        public void conflicting_media_categories_can_use_canonical_audio_hint_fallback()
+        {
+            var release = new ReleaseInfo { Title = "Patrick Stewart - Making It So [Audiobook]", Categories = new() { 3030, 7020 } };
+            var quality = QualityParser.ParseQuality(release.Title, categories: release.Categories);
+            var resource = new DownloadDecision(new RemoteBook { Release = release, ParsedBookInfo = new() { Quality = quality } }).ToResource();
+            Assert.That(resource.Quality.Quality.Name, Is.EqualTo("Unknown Audio"));
+            Assert.That(resource.FormatType, Is.EqualTo("audiobook"));
+        }
+
+        [Test]
+        public void release_without_quality_or_format_evidence_does_not_default_to_audio()
+        {
+            var resource = new DownloadDecision(new RemoteBook { Release = new ReleaseInfo { Title = "Unclassified release" } }).ToResource();
+            Assert.That(resource.FormatType, Is.Null);
+            Assert.That(resource.Quality.Quality.Name, Is.EqualTo("Unknown"));
+        }
+
+        [TestCase("Scott Brick", null)]
+        [TestCase(null, "10:30:00")]
+        [TestCase("Scott Brick", "10:30:00")]
+        public void torrent_narrator_and_duration_do_not_prove_media_type(string narrator, string duration)
+        {
+            var release = new TorrentInfo
+            {
+                Title = "Unclassified release",
+                Categories = new() { 7000 },
+                Narrator = narrator,
+                Duration = duration
+            };
+            var resource = new DownloadDecision(new RemoteBook
+            {
+                Release = release,
+                ParsedBookInfo = new ParsedBookInfo { Quality = new QualityModel(Quality.Unknown) }
+            }).ToResource();
+
+            Assert.That(resource.FormatType, Is.Null);
+            Assert.That(resource.Quality.Quality.Name, Is.EqualTo("Unknown"));
+        }
+
+        [TestCase(1, null, "audiobook")]
+        [TestCase(2, null, "ebook")]
+        [TestCase(0, "Audiobooks - Fantasy", "audiobook")]
+        [TestCase(0, "Ebooks - Fantasy", "ebook")]
+        public void legacy_tracker_hints_label_the_api_without_changing_acquisition(int mediaType, string categoryName, string expected)
+        {
+            var release = new TorrentInfo { Title = "Known tracker media", MediaType = mediaType, CategoryName = categoryName };
+            var resource = new DownloadDecision(new RemoteBook
+            {
+                Release = release,
+                ParsedBookInfo = new ParsedBookInfo { Quality = new QualityModel(Quality.Unknown) }
+            }).ToResource();
+            Assert.That(resource.FormatType, Is.EqualTo(expected));
+            Assert.That(QualityMediaTypeHelper.DetectMediaType(Quality.Unknown, release), Is.Null);
+        }
+
+        [TestCase(1, "Audiobooks - Fantasy", "ebook")]
+        [TestCase(2, "Ebooks - Fantasy", "audiobook")]
+        public void canonical_format_evidence_wins_over_conflicting_display_hints(int mediaType, string categoryName, string expected)
+        {
+            var release = new TorrentInfo { Title = "Known format", MediaType = mediaType, CategoryName = categoryName };
+            var resource = new DownloadDecision(new RemoteBook
+            {
+                Release = release,
+                ParsedBookInfo = new ParsedBookInfo { Quality = new QualityModel(mediaType == 1 ? Quality.EPUB : Quality.M4B) }
+            }).ToResource();
+            Assert.That(resource.FormatType, Is.EqualTo(expected));
+        }
+
         [TestCase(NzbDrone.Core.Books.BookMediaType.Audiobook, "Scott Brick")]
         [TestCase(NzbDrone.Core.Books.BookMediaType.Ebook, null)]
         public void raw_narrator_fields_should_display_only_known_audio_target_names(NzbDrone.Core.Books.BookMediaType media, string expected)

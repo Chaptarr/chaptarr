@@ -9,6 +9,7 @@ using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Messaging.Commands;
@@ -17,15 +18,27 @@ using NzbDrone.Core.Queue;
 namespace Chaptarr.Core.Test.IndexerSearch
 {
     [TestFixture]
-    public class BookSearchServiceFixture
+    public partial class BookSearchServiceFixture
     {
+        private static IBookService SelectedBooks()
+        {
+            var service = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            var author = new Author { Id = 10, AudiobookQualityProfileId = 1 };
+            ((BookServiceProxy)(object)service).AuthorBooks[10] = new List<Book>
+            {
+                new() { Id = 5792, AuthorId = 10, Author = author, MediaType = BookMediaType.Audiobook },
+                new() { Id = 5793, AuthorId = 10, Author = author, MediaType = BookMediaType.Audiobook }
+            };
+            return service;
+        }
+
         [Test]
         public void book_search_command_should_search_each_book_id_once()
         {
             var releaseSearch = new RecordingReleaseSearch();
             var subject = new BookSearchService(
                 releaseSearch,
-                null,
+                SelectedBooks(),
                 null,
                 null,
                 new EmptyDecisionProcessor(),
@@ -46,7 +59,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
             var releaseSearch = new RecordingReleaseSearch();
             var subject = new BookSearchService(
                 releaseSearch,
-                null,
+                SelectedBooks(),
                 null,
                 null,
                 new EmptyDecisionProcessor(),
@@ -61,12 +74,12 @@ namespace Chaptarr.Core.Test.IndexerSearch
         }
 
         [Test]
-        public void manual_multi_book_search_should_not_bypass_monitoring()
+        public void manual_selected_books_search_should_bypass_monitoring_once()
         {
             var releaseSearch = new RecordingReleaseSearch();
             var subject = new BookSearchService(
                 releaseSearch,
-                null,
+                SelectedBooks(),
                 null,
                 null,
                 new EmptyDecisionProcessor(),
@@ -77,7 +90,18 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 Trigger = CommandTrigger.Manual
             });
 
-            Assert.That(releaseSearch.AllowUnmonitoredValues, Is.EqualTo(new[] { false, false }));
+            Assert.That(releaseSearch.AllowUnmonitoredValues, Is.EqualTo(new[] { true, true }));
+        }
+
+        [Test]
+        public void automatic_list_batch_respects_monitoring_and_delay_profiles()
+        {
+            var search = new RecordingReleaseSearch();
+            var subject = new BookSearchService(search, SelectedBooks(), null, null, new EmptyDecisionProcessor(), LogManager.GetCurrentClassLogger());
+            subject.Execute(new BookSearchCommand(new List<int> { 5792, 5793 }));
+            Assert.That(search.BookSearchIds, Is.EqualTo(new[] { 5792, 5793 }));
+            Assert.That(search.AllowUnmonitoredValues, Is.All.False);
+            Assert.That(search.UserInvokedValues, Is.All.False);
         }
 
         [TestCase(CommandTrigger.Manual)]
@@ -185,8 +209,9 @@ namespace Chaptarr.Core.Test.IndexerSearch
             Assert.That(new MissingBookSearchCommand(10).IsTypeExclusive, Is.False);
         }
 
-        [Test]
-        public void missing_search_should_revalidate_targets_and_queue_before_loading_an_author()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void missing_search_should_revalidate_targets_and_queue_before_loading_an_author(bool cleanupWarning)
         {
             var author = new Author { Id = 10, AudiobookQualityProfileId = 1 };
             var books = new List<Book>
@@ -217,18 +242,19 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 releaseSearch,
                 bookService,
                 null,
-                new StaticQueueService(103),
+                new StaticQueueService(103) { State = cleanupWarning ? TrackedDownloadState.Imported : TrackedDownloadState.Downloading },
                 new EmptyDecisionProcessor(),
                 LogManager.GetLogger("BookSearchServiceFixture"));
 
             subject.Execute(new MissingBookSearchCommand { Trigger = CommandTrigger.Manual });
 
             Assert.That(bookServiceProxy.AuthorCatalogRequests, Is.EqualTo(new[] { 10 }));
-            Assert.That(releaseSearch.BookSearchBooks.Select(book => book.Id), Is.EqualTo(new[] { 102 }));
+            Assert.That(releaseSearch.BookSearchBooks.Select(book => book.Id), Is.EqualTo(cleanupWarning ? new[] { 102, 103 } : new[] { 102 }));
         }
 
-        [Test]
-        public void cutoff_unmet_search_should_revalidate_targets_and_load_each_local_author_catalog_once()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void cutoff_unmet_search_should_revalidate_targets_and_load_each_local_author_catalog_once(bool cleanupWarning)
         {
             var firstAuthor = new Author { Id = 10, AudiobookQualityProfileId = 1 };
             var secondAuthor = new Author { Id = 20, AudiobookQualityProfileId = 1 };
@@ -273,7 +299,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 releaseSearch,
                 bookService,
                 cutoffService,
-                new EmptyQueueService(),
+                new StaticQueueService(201) { State = cleanupWarning ? TrackedDownloadState.Imported : TrackedDownloadState.Downloading },
                 new EmptyDecisionProcessor(),
                 LogManager.GetLogger("BookSearchServiceFixture"));
 
@@ -281,9 +307,9 @@ namespace Chaptarr.Core.Test.IndexerSearch
 
             Assert.That(cutoffService.TargetRequests, Is.EqualTo(new int?[] { null, 10, 20 }));
             Assert.That(cutoffService.QualityRuleRequests, Is.EqualTo(1));
-            Assert.That(bookServiceProxy.AuthorCatalogRequests, Is.EqualTo(new[] { 10, 20 }));
-            Assert.That(releaseSearch.BookSearchBooks.Select(book => book.Id), Is.EqualTo(new[] { 102, 101, 201 }));
-            Assert.That(releaseSearch.AuthorCatalogSizes, Is.EqualTo(new[] { 3, 3, 1 }));
+            Assert.That(bookServiceProxy.AuthorCatalogRequests, Is.EqualTo(cleanupWarning ? new[] { 10, 20 } : new[] { 10 }));
+            Assert.That(releaseSearch.BookSearchBooks.Select(book => book.Id), Is.EqualTo(cleanupWarning ? new[] { 102, 101, 201 } : new[] { 102, 101 }));
+            Assert.That(releaseSearch.AuthorCatalogSizes, Is.EqualTo(cleanupWarning ? new[] { 3, 3, 1 } : new[] { 3, 3 }));
         }
 
         [Test]
@@ -297,11 +323,19 @@ namespace Chaptarr.Core.Test.IndexerSearch
         {
             public List<BookSearchTarget> SearchTargets { get; set; } = new();
             public Func<BookMediaType?, int?, List<BookSearchTarget>> MissingTargetSelector { get; set; }
+            public int SelectedBookRequests { get; private set; }
             public Dictionary<int, List<Book>> AuthorBooks { get; } = new();
             public List<int> AuthorCatalogRequests { get; } = new();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (targetMethod.Name == nameof(IBookService.GetExistingBooks))
+                {
+                    SelectedBookRequests++;
+                    var ids = ((IEnumerable<int>)args[0]).ToHashSet();
+                    return AuthorBooks.Values.SelectMany(books => books).Where(book => ids.Contains(book.Id)).ToList();
+                }
+
                 if (targetMethod.Name == nameof(IBookService.GetMissingBookSearchTargets))
                 {
                     return (MissingTargetSelector?.Invoke((BookMediaType?)args[0], (int?)args[1]) ?? SearchTargets).ToList();
@@ -325,11 +359,13 @@ namespace Chaptarr.Core.Test.IndexerSearch
             public List<Book> BookSearchBooks { get; } = new();
             public List<int> AuthorCatalogSizes { get; } = new();
             public List<bool> AllowUnmonitoredValues { get; } = new();
+            public List<bool> UserInvokedValues { get; } = new();
 
             public Task<List<DownloadDecision>> BookSearch(int bookId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
             {
                 BookSearchIds.Add(bookId);
                 AllowUnmonitoredValues.Add(allowUnmonitored);
+                UserInvokedValues.Add(userInvokedSearch);
                 return Task.FromResult(new List<DownloadDecision>());
             }
 
@@ -338,16 +374,24 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 BookSearchBooks.Add(book);
                 AuthorCatalogSizes.Add(book.Author?.Books?.Count ?? 0);
                 AllowUnmonitoredValues.Add(allowUnmonitored);
+                UserInvokedValues.Add(userInvokedSearch);
                 return Task.FromResult(new List<DownloadDecision>());
             }
 
             public Task<List<DownloadDecision>> BookSearch(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
             {
                 OnBookSearch?.Invoke(book);
+                BookSearchIds.Add(book.Id);
                 BookSearchBooks.Add(book);
                 AuthorCatalogSizes.Add(authorCatalog?.Count ?? 0);
                 AllowUnmonitoredValues.Add(allowUnmonitored);
+                UserInvokedValues.Add(userInvokedSearch);
                 return Task.FromResult(new List<DownloadDecision>());
+            }
+
+            public async Task<BookSearchResult> BookSearchWithOutcome(Book book, List<Book> authorCatalog, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, bool allowUnmonitored = false)
+            {
+                return new BookSearchResult { Decisions = await BookSearch(book, authorCatalog, missingOnly, userInvokedSearch, interactiveSearch, allowUnmonitored) };
             }
 
             public Task<List<DownloadDecision>> AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType, CancellationToken cancellationToken)
@@ -355,7 +399,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
                 return Task.FromResult(new List<DownloadDecision>());
             }
 
-            public Task AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType, Func<IReadOnlyList<Book>, Task> onSearchStarted, Func<Book, List<DownloadDecision>, Exception, Task> onBookCompleted, CancellationToken cancellationToken = default)
+            public Task AuthorSearch(int authorId, bool missingOnly, bool userInvokedSearch, bool interactiveSearch, BookMediaType? mediaType, Func<IReadOnlyList<Book>, Task> onSearchStarted, Func<Book, BookSearchResult, Exception, Task> onBookCompleted, CancellationToken cancellationToken = default)
             {
                 return Task.CompletedTask;
             }
@@ -395,6 +439,8 @@ namespace Chaptarr.Core.Test.IndexerSearch
         {
             private readonly List<NzbDrone.Core.Queue.Queue> _items;
 
+            public TrackedDownloadState? State { get; set; }
+
             public StaticQueueService(params int[] bookIds)
             {
                 _items = bookIds.Select(bookId => new NzbDrone.Core.Queue.Queue
@@ -405,6 +451,7 @@ namespace Chaptarr.Core.Test.IndexerSearch
 
             public List<NzbDrone.Core.Queue.Queue> GetQueue(bool includeConversionStatus = true)
             {
+                foreach (var item in _items) item.TrackedDownloadState = State;
                 return _items.ToList();
             }
 

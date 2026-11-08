@@ -3,6 +3,7 @@ import { messageTypes } from 'Helpers/Props';
 import { createThunk, handleThunks } from 'Store/thunks';
 import { isCommandComplete, isCommandFailed, isSameCommand } from 'Utilities/Command';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import { hideMessage, showMessage } from './appActions';
 import { removeItem, set, update, updateItem } from './baseActions';
@@ -76,6 +77,14 @@ export function showCommandProgress(payload) {
 //
 // Helpers
 
+function completeCommandCallback(command) {
+  const commandFinished = commandFinishedCallbacks[command.id];
+  delete commandFinishedCallbacks[command.id];
+  if (commandFinished) {
+    commandFinished(command);
+  }
+}
+
 function clearCommandProgress(getState, dispatch, shouldClear) {
   (getState().app.messages?.items || []).forEach((message) => {
     if (message.commandId != null && message.hideAfter === 0 && shouldClear(message.commandId)) {
@@ -84,12 +93,12 @@ function clearCommandProgress(getState, dispatch, shouldClear) {
   });
 }
 
-function showCommandMessage(payload, dispatch) {
+function showCommandMessage(payload, dispatch, getState) {
   const {
     id,
     name,
     trigger,
-    message,
+    message: commandMessage,
     body = {},
     status
   } = payload;
@@ -99,14 +108,38 @@ function showCommandMessage(payload, dispatch) {
     suppressMessages
   } = body;
 
-  if (!message || !body || !sendUpdatesToClient || suppressMessages) {
+  const isAuthorSearch = name === 'InteractiveAuthorSearch';
+  const isTerminal = isCommandComplete(payload) || isCommandFailed(payload);
+  let message = commandMessage;
+  if (isAuthorSearch) {
+    const format = translate(body.mediaType === 'ebook' ? 'Ebooks' : 'Audiobooks');
+    const author = body.authorName || body.authorId;
+    if (status === 'queued') {
+      message = translate('AuthorSearchQueued');
+    } else if (isTerminal) {
+      message = translate('AuthorSearchViewResults', { author, format });
+    } else {
+      message = translate('AuthorSearchProgress', { author, format, done: body.booksDone || 0, total: body.booksTotal || 0 });
+    }
+  }
+
+  if (!message || !sendUpdatesToClient || suppressMessages) {
     return;
   }
 
   let type = messageTypes.INFO;
   let hideAfter = 0;
-  const clickable = false;
-  const onClick = undefined;
+  const link = name === 'InteractiveAuthorSearch' && body.authorId && body.mediaType ?
+    `/author/${body.authorId}?tab=search&mediaType=${encodeURIComponent(body.mediaType)}` : undefined;
+  if (link) {
+    getState().app.messages.items.forEach((item) => {
+      if (item.id !== id && item.link === link) {
+        dispatch(hideMessage({ id: item.id }));
+      }
+    });
+  }
+  const clickable = !!link;
+  const onClick = isAuthorSearch && isTerminal ? () => dispatch(hideMessage({ id })) : undefined;
 
   // Handle scan commands specially
   if (name === 'RescanFolders' &&
@@ -122,6 +155,13 @@ function showCommandMessage(payload, dispatch) {
     hideAfter = trigger === 'manual' ? 10 : 4;
   }
 
+  if (isAuthorSearch && isTerminal && body.resultsExpireAt) {
+    hideAfter = Math.max(0, (Date.parse(body.resultsExpireAt) - Date.now()) / 1000);
+    if (!hideAfter) {
+      return;
+    }
+  }
+
   dispatch(showMessage({
     id,
     commandId: id,
@@ -130,6 +170,7 @@ function showCommandMessage(payload, dispatch) {
     type,
     hideAfter,
     clickable,
+    link,
     onClick
   }));
 }
@@ -154,6 +195,8 @@ function scheduleRemoveCommand(command, dispatch) {
     return;
   }
 
+  const removeAfter = command.name === 'InteractiveAuthorSearch' && command.body?.resultsExpireAt ?
+    Math.max(0, Date.parse(command.body.resultsExpireAt) - Date.now()) : 60000 * 5;
   removeCommandTimeoutIds[id] = setTimeout(() => {
     dispatch(batchActions([
       removeCommand({ section: 'commands', id }),
@@ -161,7 +204,7 @@ function scheduleRemoveCommand(command, dispatch) {
     ]));
 
     delete removeCommandTimeoutIds[id];
-  }, 60000 * 5);
+  }, removeAfter);
 }
 
 export function executeCommandHelper(payload, dispatch) {
@@ -199,6 +242,7 @@ export function executeCommandHelper(payload, dispatch) {
     }
 
     dispatch(addCommand(data));
+    return data;
   });
 }
 
@@ -248,7 +292,7 @@ export const actionHandlers = handleThunks({
       data
         .filter(shouldRestoreCommandMessage)
         .forEach((command) => {
-          showCommandMessage(command, dispatch);
+          showCommandMessage(command, dispatch, getState);
         });
     });
 
@@ -268,7 +312,21 @@ export const actionHandlers = handleThunks({
     return executeCommandHelper(payload, dispatch);
   },
 
-  [CANCEL_COMMAND]: createRemoveItemHandler(section, '/command'),
+  [CANCEL_COMMAND]: function(getState, payload, dispatch) {
+    const request = createRemoveItemHandler(section, '/command')(getState, payload, dispatch);
+    request.fail((xhr) => {
+      if (!xhr.aborted) {
+        dispatch(showMessage({
+          id: `command-cancel-${payload.id}`,
+          name: 'CancelCommand',
+          message: getErrorMessage(xhr, translate('UnableToCancelTask')),
+          type: messageTypes.ERROR,
+          hideAfter: 8
+        }));
+      }
+    });
+    return request;
+  },
 
   [PAUSE_COMMAND]: function(getState, payload, dispatch) {
     const promise = createAjaxRequest({
@@ -387,12 +445,18 @@ export const actionHandlers = handleThunks({
 
   [ADD_COMMAND]: function(getState, payload, dispatch) {
     const current = getState().commands.items.find((command) => command.id === payload.id);
-    if (shouldRestoreCommandMessage(payload) && (isCommandComplete(current) || isCommandFailed(current))) {
-      return;
+    if (isCommandComplete(current) || isCommandFailed(current)) {
+      completeCommandCallback(current);
+      if (shouldRestoreCommandMessage(payload)) {
+        return;
+      }
     }
 
     dispatch(updateItem({ section: 'commands', ...payload }));
     dispatch(reconcileAuthorSearchCommand({ command: payload }));
+    if (isCommandComplete(payload) || isCommandFailed(payload)) {
+      completeCommandCallback(payload);
+    }
   },
 
   [UPDATE_COMMAND]: function(getState, payload, dispatch) {
@@ -404,7 +468,7 @@ export const actionHandlers = handleThunks({
     dispatch(updateItem({ section: 'commands', ...payload }));
     dispatch(reconcileAuthorSearchCommand({ command: payload }));
 
-    showCommandMessage(payload, dispatch);
+    showCommandMessage(payload, dispatch, getState);
     scheduleRemoveCommand(payload, dispatch);
   },
 
@@ -420,19 +484,13 @@ export const actionHandlers = handleThunks({
       }
     });
 
-    const commandFinished = commandFinishedCallbacks[payload.id];
-
-    if (commandFinished) {
-      commandFinished(payload);
-    }
-
-    delete commandFinishedCallbacks[payload.id];
+    completeCommandCallback(payload);
 
     dispatch(updateItem({ section: 'commands', ...payload }));
     dispatch(reconcileAuthorSearchCommand({ command: payload }));
     clearCommandProgress(getState, dispatch, (id) => id === payload.id);
     scheduleRemoveCommand(payload, dispatch);
-    showCommandMessage(payload, dispatch);
+    showCommandMessage(payload, dispatch, getState);
   },
 
   [REMOVE_COMMAND]: function(getState, payload, dispatch) {

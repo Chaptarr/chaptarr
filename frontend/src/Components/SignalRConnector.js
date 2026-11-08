@@ -10,7 +10,7 @@ import { removeItem, update, updateItem } from 'Store/Actions/baseActions';
 import { deleteAuthorBooks } from 'Store/Actions/bookActions';
 import { fetchCommands, finishCommand, pauseCommand, resumeCommand, showCommandProgress, updateCommand } from 'Store/Actions/commandActions';
 import { fetchQueue, fetchQueueDetails } from 'Store/Actions/queueActions';
-import { setAuthorSearchResults } from 'Store/Actions/releaseActions';
+import { receiveAuthorSearchResults } from 'Store/Actions/releaseActions';
 import { fetchQualityDefinitions, fetchRootFolders } from 'Store/Actions/settingsActions';
 import { fetchHealth } from 'Store/Actions/systemActions';
 import { fetchTagDetails, fetchTags } from 'Store/Actions/tagActions';
@@ -18,6 +18,7 @@ import { isCommandComplete, isCommandFailed } from 'Utilities/Command';
 import { detectOrphanedModals, forceCloseAllModals } from 'Utilities/modalCleanup';
 import { repopulatePage } from 'Utilities/pagePopulator';
 import titleCase from 'Utilities/String/titleCase';
+import translate from 'Utilities/String/translate';
 
 function getHandlerName(name) {
   name = titleCase(name);
@@ -58,7 +59,7 @@ function createMapStateToProps() {
 
 const mapDispatchToProps = {
   dispatchFetchCommands: fetchCommands,
-  dispatchAuthorSearchResults: setAuthorSearchResults,
+  dispatchAuthorSearchResults: receiveAuthorSearchResults,
   dispatchUpdateCommand: updateCommand,
   dispatchFinishCommand: finishCommand,
   dispatchShowCommandProgress: showCommandProgress,
@@ -537,6 +538,16 @@ class SignalRConnector extends Component {
     });
   };
 
+  handleAuthoridentity = (body) => {
+    this.props.dispatchShowMessage({
+      id: `author-identity-${body.sourceId}-${body.targetId}`,
+      name: 'AuthorIdentity',
+      message: `${translate(body.isSplit ? 'AuthorSplitNotice' : 'AuthorsMergedNotice', { source: body.sourceName, target: body.targetName })} ${body.details || ''}`,
+      type: 'info',
+      hideAfter: 30
+    });
+  };
+
   // Track active pending import notifications to prevent UI clutter
   pendingImportNotifications = new Set();
   flushPendingImportProgress = () => {
@@ -996,6 +1007,7 @@ SignalRConnector.propTypes = {
   dispatchUpdateCommand: PropTypes.func.isRequired,
   dispatchFinishCommand: PropTypes.func.isRequired,
   dispatchShowCommandProgress: PropTypes.func.isRequired,
+  dispatchShowMessage: PropTypes.func.isRequired,
   dispatchPauseCommand: PropTypes.func.isRequired,
   dispatchResumeCommand: PropTypes.func.isRequired,
   dispatchSetAppValue: PropTypes.func.isRequired,

@@ -281,8 +281,8 @@ namespace NzbDrone.Core.DecisionEngine
                         remoteBook.ReleaseSource = releaseSource;
                         AttachPackDetection(remoteBook, report);
 
-                        // parse quality again with title and category if unknown (or missing)
-                        if (remoteBook.ParsedBookInfo.Quality == null || remoteBook.ParsedBookInfo.Quality.Quality == Quality.Unknown)
+                        // Re-evaluate provisional title evidence with the release's category and file type.
+                        if (NeedsReportQuality(remoteBook.ParsedBookInfo.Quality))
                         {
                             // For MAM releases with FileType, use direct parsing
                             var torrentInfo = report as TorrentInfo;
@@ -290,12 +290,12 @@ namespace NzbDrone.Core.DecisionEngine
                             {
                                 _logger.Trace("MAM_FILETYPE_PARSING: Using FileType '{0}' for title '{1}'", torrentInfo.FileType, report.Title);
                                 remoteBook.ParsedBookInfo.Quality = QualityParser.ParseQualityFromFileType(
-                                    torrentInfo.FileType, report.Title, (int)report.IndexerFlags, report.Indexer);
+                                    torrentInfo.FileType, report.Title, (int)report.IndexerFlags, report.Indexer, QualityMediaTypeHelper.GetCategoryMediaType(report));
                                 _logger.Trace("MAM_FILETYPE_RESULT: Parsed quality '{0}' from FileType", remoteBook.ParsedBookInfo.Quality);
                             }
                             else
                             {
-                                remoteBook.ParsedBookInfo.Quality = QualityParser.ParseQuality(report.Title, null, report.Categories, report.Indexer, null, (int)report.IndexerFlags);
+                                remoteBook.ParsedBookInfo.Quality = QualityParser.ParseQuality(report.Title, null, report.Categories, report.Indexer, null, (int)report.IndexerFlags, QualityMediaTypeHelper.GetCategoryMediaType(report));
                             }
                         }
 
@@ -307,13 +307,13 @@ namespace NzbDrone.Core.DecisionEngine
                             {
                                 _logger.Trace("MAM_FILETYPE_REPARSE: Using FileType '{0}' for enhanced parsing of '{1}'", torrentInfo.FileType, report.Title);
                                 remoteBook.ParsedBookInfo.Quality = QualityParser.ParseQualityFromFileType(
-                                    torrentInfo.FileType, report.Title, (int)report.IndexerFlags, report.Indexer);
+                                    torrentInfo.FileType, report.Title, (int)report.IndexerFlags, report.Indexer, QualityMediaTypeHelper.GetCategoryMediaType(report));
                                 _logger.Trace("MAM_FILETYPE_REPARSE_RESULT: Enhanced quality '{0}' from FileType", remoteBook.ParsedBookInfo.Quality);
                             }
                             else
                             {
                                 _logger.Trace("MAM_NO_FILETYPE: No FileType available for '{0}', using standard parsing", report.Title);
-                                remoteBook.ParsedBookInfo.Quality = QualityParser.ParseQuality(report.Title, null, report.Categories, report.Indexer, null, (int)report.IndexerFlags);
+                                remoteBook.ParsedBookInfo.Quality = QualityParser.ParseQuality(report.Title, null, report.Categories, report.Indexer, null, (int)report.IndexerFlags, QualityMediaTypeHelper.GetCategoryMediaType(report));
                             }
                         }
 
@@ -370,9 +370,9 @@ namespace NzbDrone.Core.DecisionEngine
                             parsedBookInfo = new ParsedBookInfo();
                         }
 
-                        if (parsedBookInfo.Quality == null)
+                        if (NeedsReportQuality(parsedBookInfo.Quality))
                         {
-                            parsedBookInfo.Quality = QualityParser.ParseQuality(report.Title, null, report.Categories, report.Indexer, null, (int)report.IndexerFlags);
+                            parsedBookInfo.Quality = QualityParser.ParseQuality(report.Title, null, report.Categories, report.Indexer, null, (int)report.IndexerFlags, QualityMediaTypeHelper.GetCategoryMediaType(report));
                         }
 
                         var unparsedRemoteBook = new RemoteBook
@@ -401,6 +401,9 @@ namespace NzbDrone.Core.DecisionEngine
 
             EnrichNarratorMetadataForVisibleDecisions(decisions, searchCriteria, catalogPreparation);
             _logger.Debug("Processed {0} releases in {1} ms", reports.Count, stopwatch.ElapsedMilliseconds);
+            _logger.Debug("[TITLE-SIBLINGS] {0} releases, {1} score passes, {2} sibling comparisons (largest scan {3}), {4} numeric variant checks; sibling scans took {5:F2} ms",
+                reports.Count, catalogPreparation.ScorePasses, catalogPreparation.SiblingsCompared,
+                catalogPreparation.LargestSiblingScan, catalogPreparation.NumberVariantChecks, catalogPreparation.SiblingScanTime.TotalMilliseconds);
 
             return decisions;
         }
@@ -527,21 +530,25 @@ namespace NzbDrone.Core.DecisionEngine
 
         private Dictionary<ReleaseInfo, RemoteBook> PrepareRssMappings(List<ReleaseInfo> reports, ReleaseTitleMatchScorer.CatalogPreparation preparation)
         {
+            var stopwatch = Stopwatch.StartNew();
             var mapped = new Dictionary<ReleaseInfo, RemoteBook>();
+            var recallCalls = 0;
+            var reportNumber = 0;
             foreach (var report in reports)
             {
+                _logger.ProgressTrace("Matching release {0}/{1}", ++reportNumber, reports.Count);
                 try
                 {
                     var parsed = Parser.Parser.ParseBookTitle(report.Title) ?? new ParsedBookInfo();
                     parsed.AuthorName = FirstNotBlank(parsed.AuthorName, report.Author);
                     parsed.BookTitle = FirstNotBlank(parsed.BookTitle, report.Book, report.Title);
                     parsed.ReleaseTitle = FirstNotBlank(parsed.ReleaseTitle, report.Title);
-                    if (parsed.Quality == null || parsed.Quality.Quality == Quality.Unknown)
+                    if (NeedsReportQuality(parsed.Quality))
                     {
                         parsed.Quality = ParseQualityForSearchDecision(report);
                     }
 
-                    var remoteBook = TryMapRssRelease(report, parsed, preparation);
+                    var remoteBook = TryMapRssRelease(report, parsed, preparation, ref recallCalls);
                     if (remoteBook != null)
                     {
                         remoteBook.Release = report;
@@ -554,17 +561,19 @@ namespace NzbDrone.Core.DecisionEngine
                 }
             }
 
+            _logger.Debug("RSS mapping: reports={0}, mapped={1}, recallCalls={2}, elapsedMs={3}",
+                reports.Count, mapped.Count, recallCalls, stopwatch.ElapsedMilliseconds);
             return mapped;
         }
 
-        private RemoteBook TryMapRssRelease(ReleaseInfo report, ParsedBookInfo parsedBookInfo, ReleaseTitleMatchScorer.CatalogPreparation catalogPreparation)
+        private RemoteBook TryMapRssRelease(ReleaseInfo report, ParsedBookInfo parsedBookInfo, ReleaseTitleMatchScorer.CatalogPreparation catalogPreparation, ref int recallCalls)
         {
             if (report.PendingContext != null)
             {
                 var pending = report.PendingContext;
                 var saved = pending.AdditionalInfo;
                 var context = pending.RemoteBook ?? _parsingService.Map(parsedBookInfo, pending.AuthorId, saved.BookIds);
-                var pendingMediaType = QualityMediaTypeHelper.GetKnownMediaType(parsedBookInfo.Quality?.Quality);
+                var pendingMediaType = QualityMediaTypeHelper.DetectMediaType(parsedBookInfo.Quality?.Quality, report);
                 var targets = (context?.Books ?? new List<Book>())
                     .Where(book => book?.AuthorId == pending.AuthorId && (!pendingMediaType.HasValue || book.MediaType == pendingMediaType.Value)).ToList();
                 if (targets.Count == 0 || targets.Select(book => book.MediaType).Distinct().Count() != 1 ||
@@ -601,19 +610,19 @@ namespace NzbDrone.Core.DecisionEngine
                 return null;
             }
 
-            var mediaType = QualityMediaTypeHelper.GetKnownMediaType(parsedBookInfo.Quality?.Quality);
+            var mediaType = QualityMediaTypeHelper.DetectMediaType(parsedBookInfo.Quality?.Quality, report);
             var mediaTypes = mediaType.HasValue
                 ? new[] { mediaType.Value }
                 : new[] { BookMediaType.Audiobook, BookMediaType.Ebook };
 
-            var recalls = mediaTypes
-                .SelectMany(candidateMediaType => _editionFtsRepository.RecallBooks(
-                    null,
-                    tokens,
-                    candidateMediaType,
-                    limit: 20,
-                    monitoredOnly: true))
-                .GroupBy(candidate => candidate.BookId)
+            var recalledBooks = new List<BookFtsMatch>();
+            foreach (var candidateMediaType in mediaTypes)
+            {
+                recallCalls++;
+                recalledBooks.AddRange(_editionFtsRepository.RecallBooks(null, tokens, candidateMediaType, limit: 20, monitoredOnly: true));
+            }
+
+            var recalls = recalledBooks.GroupBy(candidate => candidate.BookId)
                 .Select(group => group.OrderByDescending(candidate => candidate.MatchScore).First())
                 .ToList();
 
@@ -771,7 +780,10 @@ namespace NzbDrone.Core.DecisionEngine
                 parsedBookInfo.ReleaseGroup = Parser.Parser.ParseReleaseGroup(report.Title);
             }
 
-            parsedBookInfo.Quality ??= ParseQualityForSearchDecision(report);
+            if (NeedsReportQuality(parsedBookInfo.Quality))
+            {
+                parsedBookInfo.Quality = ParseQualityForSearchDecision(report);
+            }
 
             return parsedBookInfo;
         }
@@ -788,10 +800,16 @@ namespace NzbDrone.Core.DecisionEngine
                 return;
             }
 
-            if (remoteBook.ParsedBookInfo.Quality == null || remoteBook.ParsedBookInfo.Quality.Quality == Quality.Unknown || IsMAMIndexer(report.Indexer))
+            if (NeedsReportQuality(remoteBook.ParsedBookInfo.Quality) || IsMAMIndexer(report.Indexer))
             {
                 remoteBook.ParsedBookInfo.Quality = ParseQualityForSearchDecision(report);
             }
+        }
+
+        private static bool NeedsReportQuality(QualityModel quality)
+        {
+            return quality == null || quality.Quality == Quality.Unknown ||
+                (quality.Quality == Quality.UnknownAudio && quality.QualityDetectionSource == QualityDetectionSource.Name);
         }
 
         private QualityModel ParseQualityForSearchDecision(ReleaseInfo report)
@@ -799,10 +817,10 @@ namespace NzbDrone.Core.DecisionEngine
             var torrentInfo = report as TorrentInfo;
             if (torrentInfo?.FileType.IsNotNullOrWhiteSpace() == true && IsMAMIndexer(report.Indexer))
             {
-                return QualityParser.ParseQualityFromFileType(torrentInfo.FileType, report.Title, (int)report.IndexerFlags, report.Indexer);
+                return QualityParser.ParseQualityFromFileType(torrentInfo.FileType, report.Title, (int)report.IndexerFlags, report.Indexer, QualityMediaTypeHelper.GetCategoryMediaType(report));
             }
 
-            return QualityParser.ParseQuality(report.Title, null, report.Categories, report.Indexer, null, (int)report.IndexerFlags);
+            return QualityParser.ParseQuality(report.Title, null, report.Categories, report.Indexer, null, (int)report.IndexerFlags, QualityMediaTypeHelper.GetCategoryMediaType(report));
         }
 
         private void PreferAllowedDetectedQuality(RemoteBook remoteBook)
@@ -902,7 +920,7 @@ namespace NzbDrone.Core.DecisionEngine
         {
             var profile = author.GetQualityProfileForQuality(quality);
 
-            return profile?.Items?.Any(item => item.Allowed && item.GetQualities().Any(q => q.Id == quality.Id)) == true;
+            return profile?.IsQualityAllowed(quality.Id) == true;
         }
 
         private static int CompareDetectedQuality(Quality left, Quality right, Author author)
@@ -973,8 +991,6 @@ namespace NzbDrone.Core.DecisionEngine
                    indexerName.Contains("MAM", StringComparison.OrdinalIgnoreCase);
         }
 
-        // Identity and pack rejections cannot be rescued by narrator metadata. Keep hidden-only
-        // enrichment for interactive results, where Show Hidden lets the user choose those releases.
         private void EnrichNarratorMetadataForVisibleDecisions(List<DownloadDecision> decisions,
                                                                SearchCriteriaBase searchCriteria,
                                                                ReleaseTitleMatchScorer.CatalogPreparation catalogPreparation)
@@ -984,30 +1000,21 @@ namespace NzbDrone.Core.DecisionEngine
                 return;
             }
 
-            var candidates = decisions.Where(d => !HasProcessingError(d)).ToList();
-            if (candidates.Count == 0)
+            // NFO evidence can change a custom-format score, not identity or other grab requirements.
+            var targets = decisions.Where(decision => decision.Rejections.All(rejection =>
+                rejection.Category == CustomFormatAllowedbyProfileSpecification.RejectionCategory)).ToList();
+            if (targets.Count == 0)
             {
                 return;
             }
-
-            var visible = candidates.Where(d => !InteractiveSearchVisibility.IsHidden(d)).ToList();
-            if (visible.Count == 0 && searchCriteria?.InteractiveSearch != true)
-            {
-                return;
-            }
-
-            var targets = visible.Count > 0 ? visible : candidates;
 
             var releases = targets
                 .Select(d => d.RemoteBook?.Release)
                 .Where(r => r != null)
                 .ToList();
 
-            _logger.Trace("Narrator metadata: offering {0} of {1} release(s) for lookup ({2}); {3} hidden or errored release(s) skipped",
-                releases.Count,
-                decisions.Count,
-                visible.Count > 0 ? "visible" : "hidden fallback",
-                decisions.Count - targets.Count);
+            _logger.Trace("Narrator metadata: offering {0} of {1} release(s) for lookup; {2} ineligible release(s) skipped",
+                releases.Count, decisions.Count, decisions.Count - targets.Count);
 
             var enriched = _releaseNarratorMetadataEnricher.EnrichReleaseNarratorMetadata(releases, searchCriteria);
             if (enriched.Count == 0)
@@ -1015,7 +1022,7 @@ namespace NzbDrone.Core.DecisionEngine
                 return;
             }
 
-            _logger.Debug("Narrator metadata populated {0} of {1} offered release(s); {2} hidden or errored release(s) cost no lookup",
+            _logger.Debug("Narrator metadata populated {0} of {1} offered release(s); {2} ineligible release(s) cost no lookup",
                 enriched.Count, releases.Count, decisions.Count - targets.Count);
 
             var enrichedReleases = new HashSet<ReleaseInfo>(enriched);

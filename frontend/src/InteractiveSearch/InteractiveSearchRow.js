@@ -191,10 +191,37 @@ class InteractiveSearchRow extends Component {
     };
   }
 
+  componentDidMount() {
+    this.scheduleExpiry();
+  }
+
+  componentDidUpdate(previous) {
+    if (previous.expiresAt !== this.props.expiresAt) {
+      this.scheduleExpiry();
+    }
+  }
+
+  componentWillUnmount() {
+    clearTimeout(this._expiryTimer);
+  }
+
+  isExpired = () => this.props.expiresAt && Date.parse(this.props.expiresAt) <= Date.now();
+
+  scheduleExpiry = () => {
+    clearTimeout(this._expiryTimer);
+    const remaining = Date.parse(this.props.expiresAt) - Date.now();
+    if (remaining > 0) {
+      this._expiryTimer = setTimeout(() => this.forceUpdate(), remaining + 1);
+    }
+  };
+
   //
   // Listeners
 
   onGrabPress = () => {
+    if (this.isExpired()) {
+      return;
+    }
     const {
       guid,
       indexerId,
@@ -223,6 +250,9 @@ class InteractiveSearchRow extends Component {
   };
 
   onGrabConfirm = () => {
+    if (this.isExpired()) {
+      return;
+    }
     this.setState({ isConfirmGrabModalOpen: false });
 
     const {
@@ -300,9 +330,13 @@ class InteractiveSearchRow extends Component {
     const narratorDisplay = renderNarratorDisplay(this.props.narrator);
     const resolvedGrabTarget = hasResolvedGrabTarget(authorId, bookId);
     const isValidScopedGrabTarget = isScopedGrabTargetValid(bookId, getSearchScope(this.props));
-    const downloadButtonTitle = isValidScopedGrabTarget ?
+    const expired = this.isExpired();
+    let downloadButtonTitle = isValidScopedGrabTarget ?
       getDownloadTooltip(isGrabbing, isGrabbed, grabError) :
       translate('InteractiveSearchGrabBookMismatch');
+    if (expired) {
+      downloadButtonTitle = translate('SearchResultsExpired');
+    }
     const rowClassName = classNames(
       tableRowStyles.row,
       isPreferredChoice && styles.preferredRow
@@ -348,7 +382,7 @@ class InteractiveSearchRow extends Component {
               name={getDownloadIcon(isGrabbing, isGrabbed, grabError)}
               kind={getDownloadKind(isGrabbed, grabError, downloadAllowed)}
               title={downloadButtonTitle}
-              isDisabled={!isValidScopedGrabTarget}
+              isDisabled={expired || !isValidScopedGrabTarget}
               isSpinning={isGrabbing}
               onPress={downloadAllowed || resolvedGrabTarget ? this.onGrabPress : this.onConfirmGrabPress}
             />
@@ -508,7 +542,7 @@ class InteractiveSearchRow extends Component {
               name={getDownloadIcon(isGrabbing, isGrabbed, grabError)}
               kind={getDownloadKind(isGrabbed, grabError, downloadAllowed)}
               title={downloadButtonTitle}
-              isDisabled={!isValidScopedGrabTarget}
+              isDisabled={expired || !isValidScopedGrabTarget}
               isSpinning={isGrabbing}
               onPress={downloadAllowed || resolvedGrabTarget ? this.onGrabPress : this.onConfirmGrabPress}
             />
@@ -530,6 +564,7 @@ class InteractiveSearchRow extends Component {
 }
 
 InteractiveSearchRow.propTypes = {
+  expiresAt: PropTypes.string,
   rank: PropTypes.number.isRequired,
   guid: PropTypes.string.isRequired,
   protocol: PropTypes.string.isRequired,

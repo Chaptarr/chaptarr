@@ -1,19 +1,21 @@
 const assert = require('node:assert/strict');
+const createRouteCapture = require('./capture-browser-route.cjs');
 
 module.exports = async(page, strings, makeRelease, expectedErrors, unloadStops) => {
   let command = null;
+  let snapshot = null;
   let listed = true;
   let lookupStatus = 200;
   let searchCount = 0;
   let lookupCount = 0;
   let holdLookup = false;
-  let heldLookup = null;
+  const heldLookups = createRouteCapture('previous author-search command');
   const commandHandler = async(route) => {
     const isList = new URL(route.request().url()).pathname.endsWith('/command');
     if (!isList) {
       lookupCount++;
       if (holdLookup) {
-        heldLookup = route;
+        heldLookups.capture(route);
         return;
       }
     }
@@ -32,23 +34,40 @@ module.exports = async(page, strings, makeRelease, expectedErrors, unloadStops) 
       return;
     }
     const query = new URL(route.request().url()).searchParams;
+    if (query.get('existing') === 'true') {
+      const matchesScope = snapshot && String(snapshot.authorId) === query.get('authorId') && snapshot.mediaType === query.get('mediaType');
+      return matchesScope ? route.fulfill({ json: snapshot }) : route.fulfill({ status: 204, body: '' });
+    }
     command = {
       id: ++searchCount,
       name: 'InteractiveAuthorSearch',
       status: 'started',
       body: { searchId: query.get('searchId'), authorId: 10, mediaType: 'audiobook', sendUpdatesToClient: true, suppressMessages: true }
     };
-    await route.fulfill({ json: { ...command.body, commandId: command.id, bookResults: [], isComplete: false } });
+    snapshot = { ...command.body, commandId: command.id, bookResults: [], isComplete: false };
+    await route.fulfill({ json: snapshot });
   };
   await page.route('**/api/v1/command{,/*}', commandHandler);
   await page.route('**/api/v1/release?*', releaseHandler);
-  const state = () => page.evaluate(() => window.readAuthorSearchState());
-  const send = (body) => page.evaluate((value) => window.sendAuthorSearchSignalR(value), body);
+  const state = () => page.evaluate(() => {
+    const { requestId, isAttaching, ...search } = window.readAuthorSearchState();
+    return search;
+  });
+  const send = async(body) => {
+    if (body.isComplete) {
+      snapshot = body;
+    }
+    await page.evaluate((value) => window.sendAuthorSearchSignalR(value), body.isComplete ? { ...body, bookResults: [] } : body);
+    if (body.isComplete) {
+      await page.waitForFunction(() => !window.readAuthorSearchState().isAttaching);
+    }
+  };
   const reconnect = async() => {
     await page.evaluate(() => window.reconnectSearchFixture());
     await page.waitForFunction(() => window.readSearchCommands().isPopulated && !window.readSearchCommands().isFetching);
   };
   const start = async() => {
+    snapshot = null;
     await page.evaluate(() => window.renderAuthorSearchFixture('grouped-tabs', 2, 0));
     await page.getByRole('tab', { name: 'Search tab', exact: true }).click();
     await page.getByRole('button', { name: 'Search', exact: true }).click();
@@ -127,9 +146,9 @@ module.exports = async(page, strings, makeRelease, expectedErrors, unloadStops) 
     const oldCommand = { ...command, status: 'failed' };
     holdLookup = true;
     listed = false;
-    const lookupRequested = page.waitForRequest((request) => new URL(request.url()).pathname === `/api/v1/command/${oldCommand.id}`);
+    const lookupRequested = heldLookups.next();
     await reconnect();
-    await lookupRequested;
+    const heldLookup = await lookupRequested;
     await page.evaluate((value) => window.sendSearchCommand(value), oldCommand);
     await page.waitForFunction(() => !window.readAuthorSearchState().isFetching);
     holdLookup = false;
@@ -137,7 +156,7 @@ module.exports = async(page, strings, makeRelease, expectedErrors, unloadStops) 
     await page.getByRole('button', { name: 'Search', exact: true }).click();
     await page.waitForFunction((id) => window.readAuthorSearchState().commandId !== id && window.readAuthorSearchState().commandId != null, oldCommand.id);
     const currentSearch = await state();
-    assert.ok(heldLookup, 'The fallback must really be in flight');
+    assert.equal(new URL(heldLookup.request().url()).pathname, `/api/v1/command/${oldCommand.id}`);
     await heldLookup.fulfill({ json: oldCommand });
     await page.evaluate(() => window.reconnectSearchFixture());
     await page.waitForFunction(() => !window.readSearchCommands().isFetching);
@@ -145,27 +164,14 @@ module.exports = async(page, strings, makeRelease, expectedErrors, unloadStops) 
     await start();
     await page.evaluate(() => window.renderAuthorSearchFixture('grouped-tabs', 2, 0, { selectedMediaType: 'ebook' }, true));
     await reconnect();
-    assert.equal((await state()).searchId, null, 'Reconnect cannot resurrect a search cleared by leaving its media side');
+    assert.equal((await state()).searchId, null, 'Reconnect cannot attach audiobook results to the ebook side');
     const { scope: leavingScope } = await start();
     assert.equal((await state()).isFetching, true, 'Reload witness must have an active search');
     await page.reload();
     await page.waitForFunction(() => typeof window.renderAuthorSearchFixture === 'function');
-    await new Promise((resolve, reject) => {
-      const deadline = Date.now() + 5000;
-      const check = () => {
-        if (unloadStops.some((request) => request.searchId === leavingScope.searchId)) {
-          resolve();
-        } else if (Date.now() >= deadline) {
-          reject(new Error('The HTTP server did not receive the reload Stop request'));
-        } else {
-          setTimeout(check, 25);
-        }
-      };
-      check();
-    });
-    assert.deepEqual(unloadStops.filter((request) => request.searchId === leavingScope.searchId),
-      [{ searchId: leavingScope.searchId, apiKey: 'fixture' }], 'Reload must deliver exactly one authenticated, search-scoped Stop');
-    console.log('Reload sends a scoped Stop using the existing authenticated endpoint.');
+    assert.deepEqual(unloadStops.filter((request) => request.searchId === leavingScope.searchId), [],
+      'Reload must not cancel the background search');
+    console.log('Command reconciliation handles completion, failures, stale results and reload without rerunning or stopping searches.');
   } finally {
     await page.unroute('**/api/v1/command{,/*}', commandHandler);
     await page.unroute('**/api/v1/release?*', releaseHandler);

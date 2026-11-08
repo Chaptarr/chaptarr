@@ -1,14 +1,18 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Threading.Tasks;
 using FluentValidation.Results;
 using NLog;
+using NLog.Config;
+using NLog.Targets;
 using NUnit.Framework;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Indexers;
+using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.ThingiProvider;
@@ -117,6 +121,22 @@ namespace Chaptarr.Core.Test.DecisionEngine
         }
 
         [Test]
+        public void offered_release_is_not_rejected_again_for_a_format_word_in_its_title()
+        {
+            var indexer = new StubEnhancedIndexer(1, release =>
+            {
+                release.Narrator = "Jim Dale";
+                return true;
+            });
+            var release = new ReleaseInfo { Title = "Harry Potter with bonus ebook", IndexerId = 1 };
+            var populated = CreateEnricher(indexer).EnrichReleaseNarratorMetadata(
+                new List<ReleaseInfo> { release }, CreateCriteria(anyEditionOk: false));
+            Assert.That(indexer.PopulateCalls, Is.EqualTo(1));
+            Assert.That(populated, Is.EqualTo(new[] { release }));
+            Assert.That(release.Narrator, Is.EqualTo("Jim Dale"));
+        }
+
+        [Test]
         public void should_not_enrich_when_search_has_no_preferred_narrator_target()
         {
             var indexer = new StubEnhancedIndexer(1, release =>
@@ -134,8 +154,9 @@ namespace Chaptarr.Core.Test.DecisionEngine
             Assert.That(release.Narrator, Is.Null);
         }
 
-        [Test]
-        public void should_enrich_every_offered_release_and_report_the_populated_ones()
+        [TestCase(12)]
+        [TestCase(75)]
+        public void should_enrich_every_offered_release_and_report_the_populated_ones(int count)
         {
             var indexer = new StubEnhancedIndexer(1, release =>
             {
@@ -144,14 +165,14 @@ namespace Chaptarr.Core.Test.DecisionEngine
             });
 
             var enricher = CreateEnricher(indexer);
-            var releases = Enumerable.Range(1, 12)
+            var releases = Enumerable.Range(1, count)
                 .Select(i => new ReleaseInfo { Title = $"Harry Potter {i} m4b", IndexerId = 1 })
                 .ToList();
 
             var enriched = enricher.EnrichReleaseNarratorMetadata(releases, CreateCriteria(anyEditionOk: false));
 
-            Assert.That(indexer.PopulateCalls, Is.EqualTo(12));
-            Assert.That(releases.Count(release => release.Narrator == "Jim Dale"), Is.EqualTo(12));
+            Assert.That(indexer.PopulateCalls, Is.EqualTo(count));
+            Assert.That(releases.Count(release => release.Narrator == "Jim Dale"), Is.EqualTo(count));
             Assert.That(enriched, Is.EquivalentTo(releases));
         }
 
@@ -160,6 +181,47 @@ namespace Chaptarr.Core.Test.DecisionEngine
             return new ReleaseNarratorMetadataEnricher(
                 LogManager.GetCurrentClassLogger(),
                 new StubIndexerFactory(indexers), null);
+        }
+
+        [TestCase("quota")]
+        [TestCase("api-key")]
+        [TestCase("http-429")]
+        [TestCase("http-401")]
+        [TestCase("http-403")]
+        public void quota_or_auth_failure_should_stop_only_that_indexer_for_the_current_batch(string failure)
+        {
+            var failed = new StubEnhancedIndexer(1, _ => throw failure switch
+            {
+                "quota" => new RequestLimitReachedException("API limit reached"),
+                "api-key" => new ApiKeyException("Invalid API key"),
+                _ => new HttpException(new HttpResponse(new HttpRequest("https://example.test/api"), new HttpHeader(),
+                    "not available", (HttpStatusCode)int.Parse(failure.Substring(5))))
+            });
+            var healthy = new StubEnhancedIndexer(2, release => { release.Narrator = "Jim Dale"; return true; });
+            var releases = Enumerable.Range(0, 4).Select(index => new ReleaseInfo
+            {
+                Title = "Harry Potter M4B " + index, IndexerId = 1, Indexer = "Quota indexer"
+            }).ToList();
+            releases.Add(new ReleaseInfo { Title = "Harry Potter M4B", IndexerId = 2 });
+            using var logs = new LogFactory();
+            var messages = new MemoryTarget { Layout = "${level}|${message}" };
+            var configuration = new LoggingConfiguration(logs);
+            configuration.AddRule(LogLevel.Warn, LogLevel.Fatal, messages);
+            logs.Configuration = configuration;
+            var enricher = new ReleaseNarratorMetadataEnricher(logs.GetLogger("enrichment"), new StubIndexerFactory(failed, healthy), null);
+
+            var populated = enricher.EnrichReleaseNarratorMetadata(releases, CreateCriteria(anyEditionOk: false));
+            Assert.Multiple(() =>
+            {
+                Assert.That(failed.PopulateCalls, Is.EqualTo(1));
+                Assert.That(healthy.PopulateCalls, Is.EqualTo(1));
+                Assert.That(populated, Is.EqualTo(new[] { releases.Last() }));
+                Assert.That(messages.Logs, Has.Count.EqualTo(1));
+                Assert.That(messages.Logs.Single(), Does.Contain("Quota indexer").And.Contain("3 remaining release(s) left unchecked"));
+            });
+
+            enricher.EnrichReleaseNarratorMetadata(releases.Take(1).ToList(), CreateCriteria(anyEditionOk: false));
+            Assert.That(failed.PopulateCalls, Is.EqualTo(2), "A later batch is not suppressed by new persistent state");
         }
 
         [Test]

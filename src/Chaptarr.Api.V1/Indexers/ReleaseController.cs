@@ -79,7 +79,7 @@ namespace Chaptarr.Api.V1.Indexers
         [HttpDelete]
         [ProducesResponseType(typeof(AuthorReleaseSearchStopResponse), 200)]
         [ProducesResponseType(400)]
-        [SwaggerOperation(Description = "Requests a stop for an active grouped author search identified by its UUID searchId. The current book finishes; remaining books are not searched. isStopping confirms the request, not completion. The SignalR stream delivers the terminal result. An inactive searchId returns isStopping=false; malformed or missing IDs return 400.")]
+        [SwaggerOperation(Description = "Requests a stop for an active grouped author search identified by its UUID searchId. Queued work is removed atomically (isRemoved=true); otherwise the current book finishes and remaining books are not searched. isStopping confirms a running stop request, not completion. The SignalR stream delivers the terminal result. An inactive searchId returns isStopping=false; malformed or missing IDs return 400.")]
         public AuthorReleaseSearchStopResponse StopAuthorSearch(string searchId)
         {
             if (!Guid.TryParse(searchId, out var id))
@@ -103,7 +103,9 @@ namespace Chaptarr.Api.V1.Indexers
                 }
             }
 
-            var decision = _downloadDecisionCache.Find(InteractiveReleaseMapper.GetCacheKey(release));
+            var decision = release.SearchId == null
+                ? _downloadDecisionCache.Find(InteractiveReleaseMapper.GetCacheKey(release))
+                : _groupedAuthorSearch.GetDecision(release);
 
             if (decision?.RemoteBook == null)
             {
@@ -177,6 +179,7 @@ namespace Chaptarr.Api.V1.Indexers
                 }
 
                 await _downloadService.DownloadReport(remoteBook, release.DownloadClientId);
+                if (release.SearchId != null) _groupedAuthorSearch.MarkGrabbed(release);
             }
             catch (DownloadClientRejectedReleaseException ex)
             {
@@ -215,12 +218,23 @@ namespace Chaptarr.Api.V1.Indexers
 
         [HttpGet]
         [ProducesResponseType(200)]
+        [ProducesResponseType(204)]
         [ProducesResponseType(400)]
         [ProducesResponseType(409)]
         [SwaggerOperationFilter(typeof(ReleaseSearchResponseOperationFilter))]
-        [SwaggerOperation(Description = "GET /api/v1/release returns ReleaseResource[] when bookId, authorId, and searchId are absent; bookId or authorId without searchId returns the flat ReleaseSearchResponse; a UUID searchId with authorId and explicit audiobook/ebook mediaType queues a grouped search and immediately returns an AuthorReleaseSearchResponse acknowledgement. Book results and completion arrive through SignalR; ending the GET does not cancel the search. Other searchId combinations return 400. Per-book AuthorSearchResults SignalR messages use the same grouped envelope. Scoped grabs must echo searchId and searchedBookId alongside bookId, authorId, indexerId and guid.")]
-        public async Task<object> GetReleases(int? bookId, int? authorId, bool bypassFilters = false, string mediaType = null, string searchId = null)
+        [SwaggerOperation(Description = "GET /api/v1/release with existing=true, authorId and mediaType returns the retained grouped search or null, without querying indexers. Otherwise it returns ReleaseResource[] when bookId, authorId, and searchId are absent; bookId or authorId without searchId returns the flat ReleaseSearchResponse; a UUID searchId with authorId and explicit audiobook/ebook mediaType queues a grouped search and immediately returns an AuthorReleaseSearchResponse acknowledgement. Book results and completion arrive through SignalR; ending the GET does not cancel the search. Other searchId combinations return 400. Per-book AuthorSearchResults SignalR messages use the same grouped envelope. Scoped grabs must echo searchId and searchedBookId alongside bookId, authorId, indexerId and guid.")]
+        public async Task<object> GetReleases(int? bookId, int? authorId, bool bypassFilters = false, string mediaType = null, string searchId = null, bool existing = false)
         {
+            if (existing)
+            {
+                var parsedMediaType = MediaTypeParameterParser.ParseOptional(mediaType);
+                if (bookId.HasValue || !authorId.HasValue || !parsedMediaType.HasValue || searchId != null)
+                {
+                    throw new BadRequestException("Existing search lookup requires authorId and audiobook or ebook mediaType, without bookId or searchId");
+                }
+                return _groupedAuthorSearch.GetSnapshot(authorId.Value, parsedMediaType.Value);
+            }
+
             if (searchId != null)
             {
                 var parsedMediaType = MediaTypeParameterParser.ParseOptional(mediaType);
@@ -252,11 +266,9 @@ namespace Chaptarr.Api.V1.Indexers
                 var book = _bookService.GetBook(bookId);
                 var author = _authorService.GetAuthor(book.AuthorId);
 
-                // Start indexer search
-                var indexerSearchTask = _releaseSearchService.BookSearch(bookId, true, true, true);
-
-                // Wait for indexer search to complete
-                var decisions = await indexerSearchTask;
+                book.Author = author;
+                var outcome = await _releaseSearchService.BookSearchWithOutcome(book, null, true, true, true);
+                var decisions = outcome.Decisions;
 
                 var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(decisions);
                 var siblingToggleInfo = BuildSiblingToggleInfo(book, author);
@@ -280,6 +292,8 @@ namespace Chaptarr.Api.V1.Indexers
                 {
                     Releases = results,
                     HiddenReleases = hiddenResults,
+                    IndexersQueried = outcome.Indexers.Queried,
+                    IndexersFailed = outcome.Indexers.Failed,
                     FilterSummary = filterSummary,
                     SiblingBookId = siblingToggleInfo.SiblingBookId,
                     SiblingMediaType = siblingToggleInfo.SiblingMediaType,

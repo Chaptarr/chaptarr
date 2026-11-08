@@ -384,16 +384,17 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             var decisions = maker.GetSearchDecision(reports, _criteria);
 
+            var quotaStopped = failure == "429";
             Assert.Multiple(() =>
             {
                 Assert.That(decisions.Select(decision => decision.RemoteBook.Release), Is.EqualTo(reports));
                 Assert.That(decisions.All(decision => decision.Approved && decision.RemoteBook.DownloadAllowed), Is.True);
                 Assert.That(decisions[0].RemoteBook.CustomFormatScore, Is.Zero);
-                Assert.That(decisions[1].RemoteBook.CustomFormatScore, Is.EqualTo(50));
+                Assert.That(decisions[1].RemoteBook.CustomFormatScore, Is.EqualTo(quotaStopped ? 0 : 50));
                 Assert.That(reports[0].Narrator, Is.Null);
                 Assert.That(reports[0].Duration, Is.EqualTo("4h"));
-                Assert.That(reports[1].Narrator, Is.EqualTo("Jim Dale"));
-                Assert.That(_requests, Has.Count.EqualTo(2));
+                Assert.That(reports[1].Narrator, Is.EqualTo(quotaStopped ? null : "Jim Dale"));
+                Assert.That(_requests, Has.Count.EqualTo(quotaStopped ? 1 : 2));
             });
 
             _respond = null;
@@ -401,7 +402,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             Assert.Multiple(() =>
             {
-                Assert.That(_requests, Has.Count.EqualTo(3));
+                Assert.That(_requests, Has.Count.EqualTo(quotaStopped ? 2 : 3));
                 Assert.That(recovered.Approved, Is.True);
                 Assert.That(recovered.RemoteBook.Release.Narrator, Is.EqualTo("Jim Dale"));
                 Assert.That(recovered.RemoteBook.CustomFormatScore, Is.EqualTo(50));

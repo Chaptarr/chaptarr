@@ -18,6 +18,7 @@ namespace NzbDrone.Core.IndexerSearch.Definitions
         public Author Author { get; set; }
         public List<Book> Books { get; set; }
         public List<Book> AuthorCatalog { get; set; }
+        public IndexerSearchStatistics IndexerStatistics { get; } = new();
 
         public string AuthorQuery => GetQueryTitle(Author.Name);
 

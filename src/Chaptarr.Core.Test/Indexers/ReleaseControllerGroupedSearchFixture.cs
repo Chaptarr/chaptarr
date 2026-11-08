@@ -37,7 +37,7 @@ using NzbDrone.SignalR;
 namespace Chaptarr.Core.Test.Indexers
 {
     [TestFixture]
-    public class ReleaseControllerGroupedSearchFixture
+    public partial class ReleaseControllerGroupedSearchFixture
     {
         private const int AuthorId = 71;
         private const int IndexerId = 9;
@@ -69,7 +69,7 @@ namespace Chaptarr.Core.Test.Indexers
             harness.Search.Handler = async (_, _, _, _, _, onSearchStarted, onBookCompleted, _) =>
             {
                 await onSearchStarted(new[] { book });
-                await onBookCompleted(book, new List<DownloadDecision> { large, small }, null);
+                await onBookCompleted(book, new BookSearchResult { Decisions = new List<DownloadDecision> { large, small } }, null);
             };
             var response = await GetGroupedResults(harness, SearchId, mediaType);
             var streamed = GroupedMessages(harness.Broadcaster).SelectMany(message => message.BookResults)
@@ -84,6 +84,30 @@ namespace Chaptarr.Core.Test.Indexers
             var legacy = (ReleaseSearchResponse)await harness.Controller.GetReleases(null, AuthorId, mediaType: mediaType.ToString().ToLowerInvariant());
             Assert.That(legacy.Releases.Single(release => release.IsPreferredChoice).Guid, Is.EqualTo("healthy"));
             Assert.That(legacy.Releases.First().AutoPickReasons, Is.EqualTo(new[] { "Better torrent health" }));
+        }
+
+        [TestCase(0, 0)]
+        [TestCase(2, 0)]
+        [TestCase(2, 1)]
+        [TestCase(2, 2)]
+        public async Task grouped_result_preserves_operation_local_indexer_outcomes(int queried, int failed)
+        {
+            var harness = CreateHarness();
+            var book = CreateBook(101, "Mort", CreateAuthor());
+            var outcome = new BookSearchResult();
+            for (var id = 1; id <= queried; id++) outcome.Indexers.RecordRequest(id);
+            for (var id = 1; id <= failed; id++) outcome.Indexers.RecordFailure(id);
+            harness.Search.Handler = async (_, _, _, _, _, started, completed, _) =>
+            {
+                await started(new[] { book });
+                await completed(book, outcome, null);
+            };
+            var response = await GetGroupedResults(harness);
+            var group = response.BookResults.Single();
+            Assert.That(group.IndexersQueried, Is.EqualTo(queried));
+            Assert.That(group.IndexersFailed, Is.EqualTo(failed));
+            Assert.That(group.Status, Is.EqualTo("complete"));
+            Assert.That(group.Releases, Is.Empty);
         }
 
         [Test]
@@ -133,8 +157,8 @@ namespace Chaptarr.Core.Test.Indexers
             harness.Search.Handler = async (_, _, _, _, _, onSearchStarted, onBookCompleted, _) =>
             {
                 await onSearchStarted(new[] { firstBook, secondBook });
-                await onBookCompleted(secondBook, new List<DownloadDecision> { hiddenIndexZeroDecision, secondDecision }, null);
-                await onBookCompleted(firstBook, new List<DownloadDecision> { visibleRejectedDecision, firstDecision }, null);
+                await onBookCompleted(secondBook, new BookSearchResult { Decisions = new List<DownloadDecision> { hiddenIndexZeroDecision, secondDecision } }, null);
+                await onBookCompleted(firstBook, new BookSearchResult { Decisions = new List<DownloadDecision> { visibleRejectedDecision, firstDecision } }, null);
             };
 
             var response = await GetGroupedResults(harness);
@@ -236,10 +260,10 @@ namespace Chaptarr.Core.Test.Indexers
             harness.Search.Handler = async (_, _, _, _, _, onSearchStarted, onBookCompleted, _) =>
             {
                 await onSearchStarted(new[] { firstBook, secondBook });
-                await onBookCompleted(firstBook, new List<DownloadDecision> { firstDecision }, null);
+                await onBookCompleted(firstBook, new BookSearchResult { Decisions = new List<DownloadDecision> { firstDecision } }, null);
                 firstBookPublished.TrySetResult(true);
                 await allowSecondBook.Task;
-                await onBookCompleted(secondBook, new List<DownloadDecision> { secondDecision }, null);
+                await onBookCompleted(secondBook, new BookSearchResult { Decisions = new List<DownloadDecision> { secondDecision } }, null);
             };
 
             var searchTask = GetGroupedResults(harness);
@@ -301,7 +325,7 @@ namespace Chaptarr.Core.Test.Indexers
                 searchStarted.TrySetResult(true);
                 await allowCurrentBookToFinish.Task;
                 await onBookCompleted(completedBook,
-                    new List<DownloadDecision> { CreateDecision(author, completedBook, "finished-after-stop") }, null);
+                    new BookSearchResult { Decisions = new List<DownloadDecision> { CreateDecision(author, completedBook, "finished-after-stop") } }, null);
                 token.ThrowIfCancellationRequested();
             };
 
@@ -351,7 +375,7 @@ namespace Chaptarr.Core.Test.Indexers
                 searchStarted.TrySetResult(true);
                 await allowSearchToObserveCancellation.Task;
                 await onBookCompleted(completedBook,
-                    new List<DownloadDecision> { CreateDecision(author, completedBook, "current-book-complete") }, null);
+                    new BookSearchResult { Decisions = new List<DownloadDecision> { CreateDecision(author, completedBook, "current-book-complete") } }, null);
                 token.ThrowIfCancellationRequested();
             };
 
@@ -404,7 +428,7 @@ namespace Chaptarr.Core.Test.Indexers
                 firstStarted.TrySetResult(true);
                 await allowFirstToFinish.Task;
                 await onBookCompleted(firstCompletedBook,
-                    new List<DownloadDecision> { CreateDecision(author, firstCompletedBook, "isolated-current-book") }, null);
+                    new BookSearchResult { Decisions = new List<DownloadDecision> { CreateDecision(author, firstCompletedBook, "isolated-current-book") } }, null);
                 token.ThrowIfCancellationRequested();
             };
             secondHarness.Search.Handler = async (_, _, _, _, _, onSearchStarted, _, token) =>
@@ -416,7 +440,7 @@ namespace Chaptarr.Core.Test.Indexers
             };
 
             var firstTask = GetGroupedResults(firstHarness);
-            var secondTask = GetGroupedResults(secondHarness, secondSearchId);
+            var secondTask = GetGroupedResults(secondHarness, secondSearchId, BookMediaType.Ebook);
             await Task.WhenAll(firstStarted.Task, secondStarted.Task).WaitAsync(TimeSpan.FromSeconds(5));
 
             var stopResponse = stopHarness.Controller.StopAuthorSearch(SearchId);
@@ -473,7 +497,7 @@ namespace Chaptarr.Core.Test.Indexers
         }
 
         [Test]
-        public async Task duplicate_active_search_id_should_conflict_without_disturbing_the_first_search()
+        public async Task duplicate_active_author_and_format_should_attach_without_disturbing_the_first_search()
         {
             var sharedCache = new CacheManager();
             var firstHarness = CreateHarness(cacheManager: sharedCache);
@@ -492,11 +516,12 @@ namespace Chaptarr.Core.Test.Indexers
             var firstTask = GetGroupedResults(firstHarness);
             await searchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-            var duplicate = Assert.ThrowsAsync<NzbDroneClientException>(() =>
-                GetGroupedResults(duplicateHarness, Guid.Parse(SearchId).ToString("B")));
+            var duplicate = (AuthorReleaseSearchResponse)await duplicateHarness.Controller.GetReleases(null, AuthorId,
+                mediaType: "audiobook", searchId: Guid.NewGuid().ToString());
             Assert.Multiple(() =>
             {
-                Assert.That(duplicate.StatusCode, Is.EqualTo(System.Net.HttpStatusCode.Conflict));
+                Assert.That(duplicate.SearchId, Is.EqualTo(SearchId));
+                Assert.That(duplicateHarness.Driver.Commands, Is.Empty);
                 Assert.That(searchToken.IsCancellationRequested, Is.False);
             });
 
@@ -520,7 +545,7 @@ namespace Chaptarr.Core.Test.Indexers
             harness.Search.Handler = async (_, _, _, _, _, onSearchStarted, onBookCompleted, _) =>
             {
                 await onSearchStarted(new[] { book });
-                await onBookCompleted(book, new List<DownloadDecision> { decision }, null);
+                await onBookCompleted(book, new BookSearchResult { Decisions = new List<DownloadDecision> { decision } }, null);
             };
 
             var response = await GetGroupedResults(harness);
@@ -555,9 +580,9 @@ namespace Chaptarr.Core.Test.Indexers
             harness.Search.Handler = async (_, _, _, _, _, onSearchStarted, onBookCompleted, _) =>
             {
                 await onSearchStarted(books);
-                await onBookCompleted(firstBook, new List<DownloadDecision> { decisions[0] }, null);
-                await onBookCompleted(failingBook, new List<DownloadDecision>(), failure);
-                await onBookCompleted(lastBook, new List<DownloadDecision> { decisions[1] }, null);
+                await onBookCompleted(firstBook, new BookSearchResult { Decisions = new List<DownloadDecision> { decisions[0] } }, null);
+                await onBookCompleted(failingBook, new BookSearchResult { Decisions = new List<DownloadDecision>() }, failure);
+                await onBookCompleted(lastBook, new BookSearchResult { Decisions = new List<DownloadDecision> { decisions[1] } }, null);
             };
 
             var response = await GetGroupedResults(harness);
@@ -581,7 +606,7 @@ namespace Chaptarr.Core.Test.Indexers
         }
 
         [Test]
-        public void unrecoverable_grouped_callback_failure_should_publish_failed_pending_groups()
+        public void unrecoverable_grouped_callback_failure_should_retain_failed_pending_groups()
         {
             var harness = CreateHarness();
             var author = CreateAuthor();
@@ -591,13 +616,13 @@ namespace Chaptarr.Core.Test.Indexers
             harness.Search.Handler = async (_, _, _, _, _, onSearchStarted, onBookCompleted, _) =>
             {
                 await onSearchStarted(new[] { completedBook, pendingBook });
-                await onBookCompleted(completedBook, new List<DownloadDecision> { CreateDecision(author, completedBook, "completed-before-error") }, null);
+                await onBookCompleted(completedBook, new BookSearchResult { Decisions = new List<DownloadDecision> { CreateDecision(author, completedBook, "completed-before-error") } }, null);
                 throw failure;
             };
 
             var thrown = Assert.ThrowsAsync<InvalidOperationException>(() => GetGroupedResults(harness));
             var finalMessage = GroupedMessages(harness.Broadcaster).Last();
-            var failedGroup = finalMessage.BookResults.Single(group => group.Status == "failed");
+            var failedGroup = harness.Driver.Service.GetSnapshot(AuthorId, BookMediaType.Audiobook).BookResults.Single(group => group.Status == "failed");
 
             Assert.Multiple(() =>
             {
@@ -621,10 +646,10 @@ namespace Chaptarr.Core.Test.Indexers
             harness.Search.Handler = async (_, _, _, _, _, started, completed, token) =>
             {
                 await started(new[] { first, second });
-                await completed(first, new List<DownloadDecision> { CreateDecision(author, first, "first") }, null);
+                await completed(first, new BookSearchResult { Decisions = new List<DownloadDecision> { CreateDecision(author, first, "first") } }, null);
                 cancellation.Cancel();
                 token.ThrowIfCancellationRequested();
-                await completed(second, new List<DownloadDecision> { CreateDecision(author, second, "second") }, null);
+                await completed(second, new BookSearchResult { Decisions = new List<DownloadDecision> { CreateDecision(author, second, "second") } }, null);
             };
 
             var response = await GetGroupedResults(harness);
@@ -640,7 +665,7 @@ namespace Chaptarr.Core.Test.Indexers
                 mediaType: "audiobook", searchId: SearchId);
             Assert.That(acknowledgement.IsComplete, Is.False);
             Assert.That(harness.Search.AuthorSearchCalls, Is.Zero);
-            Assert.That(harness.Controller.StopAuthorSearch(SearchId).IsStopping, Is.True);
+            Assert.That(harness.Controller.StopAuthorSearch(SearchId).IsStopping, Is.False);
             await harness.Driver.Run(SearchId);
             Assert.That(harness.Search.AuthorSearchCalls, Is.Zero);
             Assert.That(GroupedMessages(harness.Broadcaster).Last().IsCancelled, Is.True);
@@ -657,7 +682,8 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(harness.Controller.StopAuthorSearch(SearchId).IsStopping, Is.False);
             harness.Driver.EnqueueFailure = null;
             await harness.Controller.GetReleases(null, AuthorId, mediaType: "audiobook", searchId: SearchId);
-            Assert.That(harness.Controller.StopAuthorSearch(SearchId).IsStopping, Is.True);
+            Assert.That(harness.Controller.StopAuthorSearch(SearchId).IsStopping, Is.False);
+            Assert.That(harness.Driver.Service.GetSnapshot(AuthorId, BookMediaType.Audiobook).IsCancelled, Is.True);
             await harness.Driver.Run(SearchId);
         }
 
@@ -668,7 +694,8 @@ namespace Chaptarr.Core.Test.Indexers
             await beforeRestart.Controller.GetReleases(null, AuthorId, mediaType: "audiobook", searchId: SearchId);
             var restored = beforeRestart.Driver.Commands[SearchId];
             var afterRestart = CreateHarness();
-            await afterRestart.Driver.Service.Run(restored, CancellationToken.None);
+            var error = Assert.ThrowsAsync<CommandFailedException>(() => afterRestart.Driver.Service.Run(restored, CancellationToken.None));
+            Assert.That(error.Message, Does.Contain("Search interrupted").And.Contain("Start a new search"));
             Assert.That(afterRestart.Search.AuthorSearchCalls, Is.Zero);
             Assert.That(afterRestart.Broadcaster.Messages, Is.Empty);
             beforeRestart.Controller.StopAuthorSearch(SearchId);
@@ -717,6 +744,8 @@ namespace Chaptarr.Core.Test.Indexers
         [TestCase(true, 3)]
         [TestCase(false, 4)]
         [TestCase(true, 4)]
+        [TestCase(false, 5)]
+        [TestCase(true, 5)]
         public void native_command_worker_should_execute_or_cancel_the_grouped_search(bool postgres, int stopMode)
         {
             DualDatabaseFixture.Run(postgres, database =>
@@ -728,7 +757,7 @@ namespace Chaptarr.Core.Test.Indexers
                 harness.Search.Handler = async (_, _, _, _, _, started, completed, token) =>
                 {
                     await started(new[] { book });
-                    await completed(book, new List<DownloadDecision> { CreateDecision(author, book, "worker-result") }, null);
+                    await completed(book, new BookSearchResult { Decisions = new List<DownloadDecision> { CreateDecision(author, book, "worker-result") } }, null);
                     stopWhileRunning?.Invoke();
                     token.ThrowIfCancellationRequested();
                     if (stopMode == 4)
@@ -748,23 +777,32 @@ namespace Chaptarr.Core.Test.Indexers
                 using var container = new ServiceCollection().AddSingleton<IExecute<InteractiveAuthorSearchCommand>>(service).BuildServiceProvider();
                 var executor = new CommandExecutor(new ServiceFactory(container), queue, events, logger);
                 observed.Updated = service.HandleAsync;
+                observed.Executed = service.HandleAsync;
+                observed.OnCommandUpdated = update =>
+                {
+                    if (stopMode == 5 && update.Command.Status == CommandStatus.Started)
+                    {
+                        service.Stop(Guid.Parse(SearchId));
+                    }
+                };
                 var admission = service.Start(AuthorId, BookMediaType.Audiobook, SearchId);
                 var persisted = repository.All().Single();
                 Assert.That(admission.CommandId, Is.EqualTo(persisted.Id));
                 Assert.That(persisted.Body.SendUpdatesToClient, Is.True);
-                Assert.That(persisted.Body.SuppressMessages, Is.True);
+                Assert.That(persisted.Body.SuppressMessages, Is.False);
                 Assert.That(persisted.Body, Is.TypeOf<InteractiveAuthorSearchCommand>());
                 Assert.That(((InteractiveAuthorSearchCommand)persisted.Body).SearchId, Is.EqualTo(SearchId));
                 Assert.That(((InteractiveAuthorSearchCommand)persisted.Body).MediaType, Is.EqualTo(BookMediaType.Audiobook));
-                Assert.That(persisted.Priority, Is.EqualTo(CommandPriority.High));
+                Assert.That(persisted.Priority, Is.EqualTo(CommandPriority.Normal));
                 Assert.That(persisted.Trigger, Is.EqualTo(CommandTrigger.Manual));
                 if (stopMode == 1)
                 {
-                    queue.Cancel(persisted.Id);
+                    Assert.That(service.Stop(Guid.Parse(SearchId)).IsStopping, Is.False);
                     Assert.That(repository.Get(persisted.Id).Status, Is.EqualTo(CommandStatus.Cancelled));
                     Assert.That(GroupedMessages(harness.Broadcaster).Last().IsCancelled, Is.True);
                     Assert.That(service.Stop(Guid.Parse(SearchId)).IsStopping, Is.False);
                     Assert.That(harness.Search.AuthorSearchCalls, Is.Zero);
+                    Assert.That(service.GetSnapshot(AuthorId, BookMediaType.Audiobook).IsCancelled, Is.True);
                     return;
                 }
 
@@ -781,9 +819,16 @@ namespace Chaptarr.Core.Test.Indexers
                 try
                 {
                     observed.Completed.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
-                    Assert.That(repository.Get(persisted.Id).Status, Is.EqualTo(stopMode == 4 ? CommandStatus.Failed : stopMode == 3 ? CommandStatus.Cancelled : CommandStatus.Completed));
-                    Assert.That(GroupedMessages(harness.Broadcaster).Last().IsCancelled, Is.EqualTo(stopMode == 2 || stopMode == 3));
-                    Assert.That(GroupedMessages(harness.Broadcaster).Last().BookResults.Single().Releases.Single().Guid, Is.EqualTo("worker-result"));
+                    Assert.That(repository.Get(persisted.Id).Status, Is.EqualTo(stopMode == 4 ? CommandStatus.Failed : (stopMode == 2 || stopMode == 3 || stopMode == 5) ? CommandStatus.Cancelled : CommandStatus.Completed));
+                    Assert.That(GroupedMessages(harness.Broadcaster).Last().IsCancelled, Is.EqualTo(stopMode == 2 || stopMode == 3 || stopMode == 5));
+                    if (stopMode == 5)
+                    {
+                        Assert.That(GroupedMessages(harness.Broadcaster).Last().BookResults, Is.Empty);
+                    }
+                    else
+                    {
+                        Assert.That(service.GetSnapshot(AuthorId, BookMediaType.Audiobook).BookResults.Single().Releases.Single().Guid, Is.EqualTo("worker-result"));
+                    }
                     Assert.That(GroupedMessages(harness.Broadcaster).Last().IsFailed, Is.EqualTo(stopMode == 4));
                     Assert.That(observed.Statuses, Does.Contain(CommandStatus.Started));
                     Assert.That(observed.Statuses.Last(), Is.EqualTo(repository.Get(persisted.Id).Status));
@@ -794,7 +839,7 @@ namespace Chaptarr.Core.Test.Indexers
                     Assert.That(commandController.GetStartedCommands(), Is.Empty);
                     Assert.That(commandController.GetResourceByIdWithErrorHandler(persisted.Id).Value.Status,
                         Is.EqualTo(repository.Get(persisted.Id).Status));
-                    Assert.That(harness.Search.AuthorSearchCalls, Is.EqualTo(1));
+                    Assert.That(harness.Search.AuthorSearchCalls, Is.EqualTo(stopMode == 5 ? 0 : 1));
                     Assert.That(service.Stop(Guid.Parse(SearchId)).IsStopping, Is.False);
                 }
                 finally
@@ -842,7 +887,8 @@ namespace Chaptarr.Core.Test.Indexers
                 var service = new GroupedAuthorSearchService((ISearchForReleases)(object)harness.Search,
                     DispatchProxy.Create<IPrioritizeDownloadDecision, PrioritizeProxy>(), restoredQueue,
                     new InteractiveReleaseMapper(cache, logger), harness.Broadcaster, cache, logger);
-                service.Execute((InteractiveAuthorSearchCommand)recovered.Body);
+                var error = Assert.Throws<CommandFailedException>(() => service.Execute((InteractiveAuthorSearchCommand)recovered.Body));
+                Assert.That(error.Message, Does.Contain("Search interrupted"));
                 Assert.That(harness.Search.AuthorSearchCalls, Is.Zero);
                 Assert.That(GroupedMessages(harness.Broadcaster), Is.Empty);
             });
@@ -853,6 +899,8 @@ namespace Chaptarr.Core.Test.Indexers
             public TaskCompletionSource<bool> Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public Action<ModelEvent<CommandModel>> Updated { get; set; }
             public ConcurrentQueue<CommandStatus> Statuses { get; } = new();
+            public Action<CommandUpdatedEvent> OnCommandUpdated { get; set; }
+            public Action<CommandExecutedEvent> Executed { get; set; }
 
             protected override object Invoke(MethodInfo method, object[] args)
             {
@@ -864,10 +912,12 @@ namespace Chaptarr.Core.Test.Indexers
                 if (args[0] is CommandUpdatedEvent commandUpdated)
                 {
                     Statuses.Enqueue(commandUpdated.Command.Status);
+                    OnCommandUpdated?.Invoke(commandUpdated);
                 }
 
-                if (args[0] is CommandExecutedEvent)
+                if (args[0] is CommandExecutedEvent executed)
                 {
+                    Executed?.Invoke(executed);
                     Completed.TrySetResult(true);
                 }
 
@@ -881,7 +931,8 @@ namespace Chaptarr.Core.Test.Indexers
                 mediaType: mediaType.ToString().ToLowerInvariant(), searchId: searchId);
             Assert.That(acknowledgement.IsComplete, Is.False);
             await harness.Driver.Run(searchId);
-            return GroupedMessages(harness.Broadcaster).Last();
+            Assert.That(GroupedMessages(harness.Broadcaster).Last().BookResults, Is.Empty, "Completion is a notice; GET supplies the saved rows");
+            return harness.Driver.Service.GetSnapshot(AuthorId, mediaType);
         }
 
         private static async Task Grab(ReleaseController controller, ReleaseResource release)
@@ -996,7 +1047,7 @@ namespace Chaptarr.Core.Test.Indexers
             bool interactiveSearch,
             BookMediaType? mediaType,
             Func<IReadOnlyList<Book>, Task> onSearchStarted,
-            Func<Book, List<DownloadDecision>, Exception, Task> onBookCompleted,
+            Func<Book, BookSearchResult, Exception, Task> onBookCompleted,
             CancellationToken cancellationToken);
 
         private delegate Task<List<DownloadDecision>> FlatSearchHandler(
@@ -1046,7 +1097,7 @@ namespace Chaptarr.Core.Test.Indexers
                     (bool)args[3],
                     (BookMediaType?)args[4],
                     (Func<IReadOnlyList<Book>, Task>)args[5],
-                    (Func<Book, List<DownloadDecision>, Exception, Task>)args[6],
+                    (Func<Book, BookSearchResult, Exception, Task>)args[6],
                     (CancellationToken)args[7]);
             }
         }

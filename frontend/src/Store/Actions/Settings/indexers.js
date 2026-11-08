@@ -13,6 +13,8 @@ import createTestProviderHandler, { createCancelTestProviderHandler } from 'Stor
 import createSetClientSideCollectionSortReducer from 'Store/Actions/Creators/Reducers/createSetClientSideCollectionSortReducer';
 import createSetProviderFieldValueReducer from 'Store/Actions/Creators/Reducers/createSetProviderFieldValueReducer';
 import createSetSettingValueReducer from 'Store/Actions/Creators/Reducers/createSetSettingValueReducer';
+import { fetchOptions } from 'Store/Actions/providerOptionActions';
+import createProviderSettingsSelector from 'Store/Selectors/createProviderSettingsSelector';
 import { createThunk } from 'Store/thunks';
 import getSectionState from 'Utilities/State/getSectionState';
 import selectProviderSchema from 'Utilities/State/selectProviderSchema';
@@ -127,6 +129,15 @@ export default {
         dispatch(updateItem({ section, id: saved.id, supportsNarratorMetadata }));
       }
       dispatch(setIndexerValue({ name: 'supportsNarratorMetadata', value: supportsNarratorMetadata }));
+      const { item } = createProviderSettingsSelector('indexers')(getState(), { id: testData.id });
+      if (item.fields?.some((field) => field.selectOptionsProviderAction === 'newznabCategories')) {
+        dispatch(fetchOptions({
+          section: 'newznabCategories',
+          action: 'newznabCategories',
+          provider: 'indexer',
+          providerData: item
+        }));
+      }
     }),
     [CANCEL_TEST_INDEXER]: createCancelTestProviderHandler(section),
     [TEST_ALL_INDEXERS]: createTestAllProvidersHandler(section, '/indexer'),

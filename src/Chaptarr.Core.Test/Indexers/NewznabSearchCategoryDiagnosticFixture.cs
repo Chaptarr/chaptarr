@@ -82,6 +82,22 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(_generator.Settings.Categories, Is.EqualTo(new[] { 3030, 7020 }));
         }
 
+        [Test]
+        public void should_search_selected_generic_books_for_either_media_type([Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType,
+            [Values(false, true)] bool interactive, [Values(false, true)] bool genericOnly)
+        {
+            var configured = genericOnly ? new[] { 7000 } : new[] { 7000, 3030, 7020, 7030 };
+            var expectedCategories = genericOnly ? "7000" : mediaType == BookMediaType.Audiobook ? "7000,3030" : "7000,7020,7030";
+            _generator.Settings.Categories = configured;
+
+            var requests = Requests(_generator.GetSearchRequests(Criteria(interactive, mediaType)));
+
+            Assert.That(requests, Has.Count.EqualTo(5));
+            Assert.That(requests.All(r => r.Url.FullUri.Contains($"cat={expectedCategories}&")), Is.True);
+            Assert.That(_messages.Logs, Is.Empty);
+            Assert.That(_generator.Settings.Categories, Is.EqualTo(configured));
+        }
+
         [TestCase(true)]
         [TestCase(false)]
         public void should_keep_all_configured_categories_for_mixed_or_unspecified_media(bool mixed)
@@ -137,7 +153,7 @@ namespace Chaptarr.Core.Test.Indexers
         {
             public int Calls { get; private set; }
 
-            public NewznabCapabilities GetCapabilities(NewznabSettings settings, int? proxyId)
+            public NewznabCapabilities GetCapabilities(NewznabSettings settings, int? proxyId, bool forceRefresh = false)
             {
                 Calls++;
                 return new NewznabCapabilities();

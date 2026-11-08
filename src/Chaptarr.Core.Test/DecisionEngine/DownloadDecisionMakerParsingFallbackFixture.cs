@@ -20,6 +20,7 @@ using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Profiles;
 using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.Qualities;
 
@@ -102,6 +103,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
         private sealed class TestEditionFtsRepository : IEditionFtsRepository
         {
             public List<BookFtsMatch> Recalls { get; } = new();
+            public Action OnRecall { get; set; }
             public List<(BookMediaType MediaType, bool MonitoredOnly, List<string> Tokens)> Requests { get; } = new();
 
             public void EnsureIndexPopulated() => RebuildIndex();
@@ -120,6 +122,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 int limit = 20,
                 bool monitoredOnly = false)
             {
+                OnRecall?.Invoke();
                 Requests.Add((mediaType, monitoredOnly, tokens.ToList()));
                 return Recalls.Take(limit).ToList();
             }
@@ -136,7 +139,8 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
         private sealed class NoOpCustomFormatCalculationService : ICustomFormatCalculationService
         {
-            public List<CustomFormat> ParseCustomFormat(RemoteBook remoteBook, long size) => new();
+            public Func<RemoteBook, List<CustomFormat>> ParseRelease { get; init; }
+            public List<CustomFormat> ParseCustomFormat(RemoteBook remoteBook, long size) => ParseRelease?.Invoke(remoteBook) ?? new();
             public List<CustomFormat> ParseCustomFormat(BookFile bookFile, Author artist) => new();
             public List<CustomFormat> ParseCustomFormat(BookFile bookFile) => new();
             public List<CustomFormat> ParseCustomFormat(Blocklist blocklist, Author artist) => new();
@@ -179,6 +183,14 @@ namespace Chaptarr.Core.Test.DecisionEngine
             }
         }
 
+        private sealed class FixedRejectionSpecification(string category) : IDecisionEngineSpecification
+        {
+            public SpecificationPriority Priority => SpecificationPriority.Default;
+            public RejectionType Type => RejectionType.Permanent;
+            public Decision IsSatisfiedBy(RemoteBook remoteBook, SearchCriteriaBase searchCriteria) =>
+                Decision.RejectHardFilter("Cannot be changed by narrator metadata", category);
+        }
+
         private sealed class RecordingReleaseSourceSpecification : IDecisionEngineSpecification
         {
             public ReleaseSourceType? SeenSource { get; private set; }
@@ -190,6 +202,55 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 SeenSource = remoteBook.ReleaseSource;
                 return Decision.Accept();
             }
+        }
+
+        private static (DownloadDecisionMaker Maker, IBookService Books) CreateTitleDecisionMaker(
+            Author author, List<Book> catalog, Book target, BookMatchingStrictness mode, Logger logger = null)
+        {
+            var parsing = new TestParsingService { MappedAuthor = author, MappedBooks = catalog };
+            var books = CatalogBookService.Create(catalog);
+            var fts = new TestEditionFtsRepository();
+            fts.Recalls.Add(new BookFtsMatch { BookId = target.Id, AuthorId = author.Id, BookTitle = target.Title });
+            var config = ConfigServiceTestProxy.Create(mode);
+            logger ??= LogManager.GetCurrentClassLogger();
+            var maker = new DownloadDecisionMaker(new IDecisionEngineSpecification[]
+            {
+                new ReleaseTitleMatchSpecification(logger, config),
+                new MultiBookReleaseSpecification(logger),
+                new QualityAllowedByProfileSpecification(logger),
+                new NzbDrone.Core.DecisionEngine.Specifications.RssSync.MonitoredBookSpecification(logger)
+            }, parsing, books, fts, new NoOpCustomFormatCalculationService(), new NoOpRemoteBookAggregationService(),
+                new NoOpReleaseNarratorMetadataEnricher(), config, logger);
+            return (maker, books);
+        }
+
+        [Test]
+        public void sibling_comparison_cost_is_logged_once_per_release_batch()
+        {
+            using var factory = new LogFactory();
+            var log = new NLog.Targets.MemoryTarget { Layout = "${message}" };
+            var logging = new NLog.Config.LoggingConfiguration(factory);
+            logging.AddRule(LogLevel.Debug, LogLevel.Fatal, log);
+            factory.Configuration = logging;
+            var author = new Author { Id = 1, Name = "Frank Herbert" };
+            Book MakeBook(int id, string title) => new Book
+            {
+                Id = id, AuthorId = author.Id, Author = author, Title = title, MediaType = BookMediaType.Audiobook,
+                Editions = new List<Edition> { new() { Id = id, BookId = id, Title = title, Monitored = true } }
+            };
+            var target = MakeBook(1, "Dune");
+            var catalog = new List<Book> { target, MakeBook(2, "Dune Messiah") };
+            var (maker, _) = CreateTitleDecisionMaker(author, catalog, target, BookMatchingStrictness.Balanced, factory.GetLogger("SiblingCost"));
+            var reports = new[] { "Frank Herbert Dune MP3", "Frank Herbert Dune Messiah MP3" }
+                .Select((title, index) => new ReleaseInfo { Guid = index.ToString(), Title = title, Indexer = "Fixture", Categories = new List<int> { 3030 } }).ToList();
+
+            maker.GetSearchDecision(reports, new BookSearchCriteria { Author = author, Books = new List<Book> { target }, AuthorCatalog = catalog });
+
+            var lines = log.Logs.Where(line => line.StartsWith("[TITLE-SIBLINGS]", StringComparison.Ordinal)).ToList();
+            Assert.That(lines, Has.Count.EqualTo(1));
+            Assert.That(lines.Single(), Does.StartWith("[TITLE-SIBLINGS] 2 releases"));
+            Assert.That(lines.Single(), Does.Match(@"[1-9]\d* sibling comparisons \(largest scan 1\)"));
+            Assert.That(lines.Single(), Does.Contain("numeric variant checks; sibling scans took"));
         }
 
         [TestCase(0)]
@@ -221,20 +282,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 target.SeriesName = "Dune";
                 target.SeriesPosition = "1";
                 var catalog = new List<Book> { target, MakeBook(2, "Dune Messiah", false), MakeBook(3, "Children of Dune", false) };
-                var parsing = new TestParsingService { MappedAuthor = author, MappedBooks = catalog };
-                var books = CatalogBookService.Create(catalog);
-                var fts = new TestEditionFtsRepository();
-                fts.Recalls.Add(new BookFtsMatch { BookId = target.Id, AuthorId = author.Id, BookTitle = target.Title });
-                var config = ConfigServiceTestProxy.Create(mode);
-                var logger = LogManager.GetCurrentClassLogger();
-                var maker = new DownloadDecisionMaker(new IDecisionEngineSpecification[]
-                {
-                    new ReleaseTitleMatchSpecification(logger, config),
-                    new MultiBookReleaseSpecification(logger),
-                    new QualityAllowedByProfileSpecification(logger),
-                    new NzbDrone.Core.DecisionEngine.Specifications.RssSync.MonitoredBookSpecification(logger)
-                }, parsing, books, fts, new NoOpCustomFormatCalculationService(), new NoOpRemoteBookAggregationService(),
-                    new NoOpReleaseNarratorMetadataEnricher(), config, logger);
+                var (maker, books) = CreateTitleDecisionMaker(author, catalog, target, mode);
                 var cases = new[]
                 {
                     ("Frank.Herbert.Dune.Repack.m4b.Scott.Brick.Euan.Morton.Simon.vance.320kps", true),
@@ -267,10 +315,142 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 for (var index = 0; index < cases.Length; index++)
                 {
                     var decision = decisions.SingleOrDefault(item => item.RemoteBook.Release.Guid == index.ToString());
-                    Assert.That(decision?.Approved == true, Is.EqualTo(cases[index].Item2), mode + ": " + cases[index].Item1);
+                    if (path == 0 && !cases[index].Item2 && cases[index].Item1 != "Frank Herbert - Dune FLAC")
+                    {
+                        Assert.That(decision, Is.Null, "RSS must discard unmatched identity: " + cases[index].Item1);
+                    }
+                    else
+                    {
+                        Assert.That(decision, Is.Not.Null, mode + ": " + cases[index].Item1);
+                        Assert.That(decision.Approved, Is.EqualTo(cases[index].Item2), mode + ": " + cases[index].Item1);
+                    }
                 }
 
                 Assert.That(((CatalogBookService)(object)books).Calls, Is.EqualTo(path == 0 ? 1 : 0));
+            }
+        }
+
+        [TestCase(0, 1)]
+        [TestCase(1, 1)]
+        [TestCase(2, 1)]
+        [TestCase(0, 2)]
+        [TestCase(1, 2)]
+        [TestCase(2, 2)]
+        public void possessive_author_credits_should_preserve_title_identity_on_every_search_path(int path, int targetId)
+        {
+            foreach (var mode in new[] { BookMatchingStrictness.Balanced, BookMatchingStrictness.Strict })
+            {
+                var profile = new QualityProfile
+                {
+                    Id = 1, ProfileType = ProfileType.Audiobook, Cutoff = Quality.MP3.Id,
+                    Items = new List<QualityProfileQualityItem>
+                    {
+                        new QualityProfileQualityItem { Quality = Quality.UnknownAudio, Allowed = true },
+                        new QualityProfileQualityItem { Quality = Quality.MP3, Allowed = true },
+                        new QualityProfileQualityItem { Quality = Quality.M4B, Allowed = true },
+                        new QualityProfileQualityItem { Quality = Quality.FLAC, Allowed = true }
+                    }
+                };
+                var author = new Author { Id = 1, Name = "Frank Herbert", AudiobookMonitored = true, AudiobookQualityProfileId = 1, AudiobookQualityProfile = profile };
+                Book MakeBook(int id, string title, string position) => new Book
+                {
+                    Id = id, AuthorId = author.Id, Author = author, Title = title, MediaType = BookMediaType.Audiobook,
+                    AudiobookMonitored = id == targetId, AnyEditionOk = true, SeriesName = "Dune", SeriesPosition = position,
+                    Editions = new List<Edition> { new Edition { Id = id, BookId = id, Title = title, Monitored = true } }
+                };
+                var catalog = new List<Book> { MakeBook(1, "Dune", "1"), MakeBook(2, "Dune Messiah", "2"), MakeBook(3, "Children of Dune", "3") };
+                catalog[0].Editions[0].Narrator = "Scott Brick";
+                var target = catalog.Single(b => b.Id == targetId);
+                var (maker, books) = CreateTitleDecisionMaker(author, catalog, target, mode);
+                var cases = new[]
+                {
+                    ("Frank Herberts Dune, Bk 1 - Dune (NMR", 1),
+                    ("Frank Herberts Dune. Bk 1 - Dune (NMR", 1),
+                    ("Frank Herberts Dune, Bk 2 - Dune Messiah (NMR", 2),
+                    ("Frank Herberts Dune. Bk 2 - Dune Messiah (NMR", 2),
+                    ("Frank Herberts Dune Messiah", 2),
+                    ("Frank Herberts Dune, Bk 3 - Children of Dune (NMR", 3),
+                    ("Frank Herbert's Dune, Bk 1 - Dune (NMR", 1),
+                    ("Frank Herbert's Dune, Bk 2 - Dune Messiah (NMR", 2),
+                    // Captured release spellings retain the existing different-author title gap.
+                    ("Frank Herberts Prelude to Dune, Bk 1 - House Atreides (NMR", 1),
+                    ("Frank Herbert's 'Prelude to Dune', Bk 1 - House Atreides (NMR 48 kbps)", 1),
+                    ("Frank Herberts Legends of Dune, Bk 1 - The Butlerian Jihad (NMR", 1),
+                    ("Frank Herbert's 'Dune' - The Legends of Dune, Bk 1 - The Butlerian Jihad NMR", 1),
+                    ("Brian Herberts Dune, Bk 1 - Dune (NMR", -1),
+                    ("Brian Herbert - Dune - House Atreides", -1),
+                    ("Frank Hebert - Dune (NMR", -1),
+                    ("Dune - Scott Brick MP3", -1)
+                };
+                var reports = cases.Select((item, index) => new ReleaseInfo
+                {
+                    Guid = index.ToString(), Title = item.Item1, Author = null, Indexer = "Generic",
+                    Categories = new List<int> { 3030 }, PublishDate = DateTime.UtcNow
+                }).ToList();
+                var decisions = path == 0 ? maker.GetRssDecision(reports) : maker.GetSearchDecision(reports, new BookSearchCriteria
+                {
+                    Author = author, Books = new List<Book> { target }, AuthorCatalog = catalog,
+                    InteractiveSearch = path == 2
+                });
+                for (var index = 0; index < cases.Length; index++)
+                {
+                    var decision = decisions.SingleOrDefault(item => item.RemoteBook.Release.Guid == index.ToString());
+                    if (path == 0 && cases[index].Item2 != targetId)
+                    {
+                        Assert.That(decision, Is.Null, "RSS must discard unmatched identity: " + cases[index].Item1);
+                        continue;
+                    }
+
+                    Assert.That(decision, Is.Not.Null, $"path={path}, target={target.Title}, release={cases[index].Item1}");
+                    Assert.That(decision.Approved, Is.EqualTo(cases[index].Item2 == targetId),
+                        $"path={path}, target={target.Title}, mode={mode}, release={cases[index].Item1}");
+                    if (decision.Approved)
+                    {
+                        Assert.That(decision.RemoteBook.Books.Select(book => book.Id), Is.EqualTo(new[] { targetId }));
+                    }
+                }
+            }
+        }
+
+        [TestCase(0)]
+        [TestCase(1)]
+        [TestCase(2)]
+        public void captured_dune_companion_ebooks_should_record_current_decisions(int path)
+        {
+            var profile = new QualityProfile
+            {
+                Id = 1, ProfileType = ProfileType.Ebook, Cutoff = Quality.EPUB.Id,
+                Items = new List<QualityProfileQualityItem>
+                {
+                    new QualityProfileQualityItem { Quality = Quality.EPUB, Allowed = true },
+                    new QualityProfileQualityItem { Quality = Quality.PDF, Allowed = true }
+                }
+            };
+            var author = new Author { Id = 1, Name = "Frank Herbert", EbookMonitored = true,
+                EbookQualityProfileId = 1, EbookQualityProfile = profile };
+            var target = new Book { Id = 1, AuthorId = 1, Author = author, Title = "Dune", MediaType = BookMediaType.Ebook,
+                EbookMonitored = true, AnyEditionOk = true, SeriesName = "Dune", SeriesPosition = "1",
+                Editions = new List<Edition> { new Edition { Id = 1, BookId = 1, Title = "Dune", Monitored = true } } };
+            var catalog = new List<Book> { target };
+            var (maker, _) = CreateTitleDecisionMaker(author, catalog, target, BookMatchingStrictness.Balanced);
+            var titles = new[]
+            {
+                "Kara Kennedy - Frank Herberts Dune- A Critical Companion (pdf)",
+                "The Secrets of Frank Herberts Dune- The Authorized Behind-the-Scenes Story of the New Epic Mini-Series (retail) (epub)"
+            };
+            titles = titles.Concat(titles.Select(title => title.Replace("Herberts", "Herbert's"))).ToArray();
+            var reports = titles.Select((title, index) => new ReleaseInfo { Guid = index.ToString(), Title = title,
+                Indexer = "Generic", Categories = new List<int> { 7020 }, PublishDate = DateTime.UtcNow }).ToList();
+            var decisions = path == 0 ? maker.GetRssDecision(reports) : maker.GetSearchDecision(reports, new BookSearchCriteria
+            {
+                Author = author, Books = catalog, AuthorCatalog = catalog, InteractiveSearch = path == 2
+            });
+            for (var index = 0; index < titles.Length; index++)
+            {
+                var decision = decisions.SingleOrDefault(item => item.RemoteBook.Release.Guid == index.ToString());
+                Assert.That(decision, Is.Not.Null, titles[index]);
+                TestContext.Progress.WriteLine($"Companion decision: path={path}, title={titles[index]}, approved={decision.Approved}, rejections={string.Join("; ", decision.Rejections.Select(item => item.Reason))}");
+                Assert.That(decision.Approved, Is.True, titles[index]);
             }
         }
 
@@ -1026,6 +1206,43 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 Assert.That(parsingService.MappedBookIds, Is.EqualTo(new[] { book.Id }));
                 Assert.That(decisions, Is.Empty);
             });
+        }
+
+        private sealed class RssProgressTarget : Target
+        {
+            public List<string> Progress { get; } = new();
+            public List<string> Messages { get; } = new();
+            protected override void Write(LogEventInfo logEvent)
+            {
+                Messages.Add(logEvent.FormattedMessage);
+                if (logEvent.Properties.ContainsKey("Status")) Progress.Add(logEvent.FormattedMessage);
+            }
+        }
+
+        [Test]
+        public void rss_reports_matching_progress_before_each_recall_then_decision_progress()
+        {
+            using var factory = new LogFactory();
+            var target = new RssProgressTarget();
+            var logging = new LoggingConfiguration(factory);
+            logging.AddRuleForAllLevels(target);
+            factory.Configuration = logging;
+            var recall = new TestEditionFtsRepository { OnRecall = () => target.Progress.Add("recall") };
+            var maker = new DownloadDecisionMaker(new List<IDecisionEngineSpecification>(), new TestParsingService(),
+                CatalogBookService.Create(new List<Book>()), recall, new NoOpCustomFormatCalculationService(),
+                new NoOpRemoteBookAggregationService(), new NoOpReleaseNarratorMetadataEnricher(), null, factory.GetLogger("rss-progress"));
+            maker.GetRssDecision(new List<ReleaseInfo>
+            {
+                new() { Title = "First Work EPUB", Indexer = "Fixture", PublishDate = DateTime.UtcNow },
+                new() { Title = "Second Work M4B", Indexer = "Fixture", PublishDate = DateTime.UtcNow }
+            });
+            factory.Flush();
+            Assert.That(target.Progress, Is.EqualTo(new[]
+            {
+                "Processing 2 releases", "Matching release 1/2", "recall", "Matching release 2/2", "recall",
+                "Processing release 1/2", "Processing release 2/2"
+            }));
+            Assert.That(target.Messages, Has.Some.StartsWith("RSS mapping: reports=2, mapped=0, recallCalls=2, elapsedMs="));
         }
 
         [Test]
@@ -2494,7 +2711,8 @@ namespace Chaptarr.Core.Test.DecisionEngine
         [TestCase("John Smith", "James O H N Smith", false)]
         [TestCase("JOHN SMITH", "James O H N Smith", false)]
         [TestCase("John Smith", "John Smith's", true)]
-        [TestCase("John Smith", "John Smiths", false)]
+        // One trailing surname s is compatible in either direction.
+        [TestCase("John Smith", "John Smiths", true)]
         public void common_author_policy_should_agree_for_raw_and_structured_credits(string expectedAuthor, string credit, bool accepted)
         {
             foreach (var structured in new[] { false, true })
@@ -3330,22 +3548,32 @@ namespace Chaptarr.Core.Test.DecisionEngine
             return memory;
         }
 
-        [TestCase(true, true)]
-        [TestCase(true, false)]
-        [TestCase(false, true)]
-        [TestCase(false, false)]
-        public void narrator_enrichment_should_offer_visible_releases_and_only_interactive_hidden_fallback(
+        [TestCase(true, true, null)]
+        [TestCase(true, false, null)]
+        [TestCase(false, true, null)]
+        [TestCase(false, false, null)]
+        [TestCase(true, true, "Size")]
+        [TestCase(true, true, "Seeders")]
+        [TestCase(true, true, "Blocklist")]
+        [TestCase(true, true, "Queue")]
+        [TestCase(true, true, "History")]
+        [TestCase(true, true, "General")]
+        public void narrator_enrichment_should_require_identity_and_only_allow_rescuable_score_rejections(
             bool interactiveSearch,
-            bool anyVisible)
+            bool anyVisible, string otherRejection)
         {
+            var format = new CustomFormat { Id = 1, Name = "Preferred narrator" };
             var profile = new QualityProfile
             {
                 Id = 1,
                 ProfileType = ProfileType.Audiobook,
                 Cutoff = Quality.MP3.Id,
+                MinFormatScore = 10,
+                FormatItems = new List<ProfileFormatItem> { new ProfileFormatItem { Format = format, Score = 10 } },
                 Items = new List<QualityProfileQualityItem>
                 {
-                    new QualityProfileQualityItem { Quality = Quality.MP3, Allowed = true }
+                    new QualityProfileQualityItem { Quality = Quality.MP3, Allowed = true },
+                    new QualityProfileQualityItem { Quality = Quality.FLAC, Allowed = false }
                 }
             };
             var author = new Author { Id = 1, Name = "Frank Herbert", AudiobookMonitored = true, AudiobookQualityProfileId = 1, AudiobookQualityProfile = profile };
@@ -3363,19 +3591,32 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var config = ConfigServiceTestProxy.Create(BookMatchingStrictness.Balanced);
             var logger = LogManager.GetCurrentClassLogger();
             var enricher = new RecordingReleaseNarratorMetadataEnricher();
-            var maker = new DownloadDecisionMaker(new IDecisionEngineSpecification[]
+            var specifications = new List<IDecisionEngineSpecification>
             {
                 new ReleaseTitleMatchSpecification(logger, config),
-                new MultiBookReleaseSpecification(logger)
-            }, parsing, CatalogBookService.Create(catalog), fts, new NoOpCustomFormatCalculationService(), new NoOpRemoteBookAggregationService(),
-                enricher, config, logger);
+                new MultiBookReleaseSpecification(logger),
+                new QualityAllowedByProfileSpecification(logger),
+                new CustomFormatAllowedbyProfileSpecification()
+            };
+            if (otherRejection != null)
+            {
+                specifications.Add(new FixedRejectionSpecification(otherRejection));
+            }
+
+            var formats = new NoOpCustomFormatCalculationService
+            {
+                ParseRelease = remote => remote.Release.Narrator == "Scott Brick" ? new List<CustomFormat> { format } : new()
+            };
+            var maker = new DownloadDecisionMaker(specifications, parsing, CatalogBookService.Create(catalog), fts,
+                formats, new NoOpRemoteBookAggregationService(), enricher, config, logger);
 
             var titles = anyVisible
                 ? new[] { "Frank Herbert - Dune MP3", "Frank Herbert - Children of Dune MP3", "Frank Herbert - Dune Trilogy MP3" }
                 : new[] { "Frank Herbert - Children of Dune MP3", "Frank Herbert - Dune Trilogy MP3" };
+            titles = titles.Concat(new[] { "Brian Herbert - Dune MP3", "Frank Herbert - Dune FLAC" }).ToArray();
             var reports = titles.Select((title, index) => new ReleaseInfo
             {
-                Guid = index.ToString(), Title = title, Author = author.Name, Indexer = "Generic",
+                Guid = index.ToString(), Title = title, Author = null, Indexer = "Generic",
                 Categories = new List<int> { 3030 }, PublishDate = DateTime.UtcNow
             }).ToList();
 
@@ -3395,19 +3636,18 @@ namespace Chaptarr.Core.Test.DecisionEngine
             Assert.That(InteractiveSearchVisibility.IsHidden(packRejection), Is.True);
             Assert.That(packRejection.Rejections.Select(rejection => rejection.Category), Does.Contain("Pack"));
 
-            if (anyVisible)
+            Assert.That(decisions.Single(decision => decision.RemoteBook.Release.Title == "Brian Herbert - Dune MP3").Rejected, Is.True);
+            var qualityRejected = decisions.Single(decision => decision.RemoteBook.Release.Title == "Frank Herbert - Dune FLAC");
+            Assert.That(qualityRejected.Rejections.Select(rejection => rejection.Category), Does.Contain("Quality"));
+            Assert.That(qualityRejected.RemoteBook.Release.Narrator, Is.Null);
+
+            if (anyVisible && otherRejection == null)
             {
                 Assert.That(enricher.OfferedTitles, Is.EqualTo(new[] { "Frank Herbert - Dune MP3" }));
                 Assert.That(enricher.CallCount, Is.EqualTo(1));
-            }
-            else if (interactiveSearch)
-            {
-                Assert.That(enricher.OfferedTitles, Is.EqualTo(new[]
-                {
-                    "Frank Herbert - Children of Dune MP3",
-                    "Frank Herbert - Dune Trilogy MP3"
-                }));
-                Assert.That(enricher.CallCount, Is.EqualTo(1));
+                var accepted = decisions.Single(decision => decision.RemoteBook.Release.Title == "Frank Herbert - Dune MP3");
+                Assert.That(accepted.Approved, Is.True);
+                Assert.That(accepted.RemoteBook.CustomFormatScore, Is.EqualTo(10));
             }
             else
             {

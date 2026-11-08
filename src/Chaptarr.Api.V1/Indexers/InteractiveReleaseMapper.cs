@@ -9,6 +9,7 @@ namespace Chaptarr.Api.V1.Indexers
 {
     public class InteractiveReleaseMapper
     {
+        public static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(30);
         private readonly ICached<DownloadDecision> _downloadDecisionCache;
         private readonly Logger _logger;
 
@@ -29,8 +30,12 @@ namespace Chaptarr.Api.V1.Indexers
                 resource.MagnetUrl = null;
             }
 
-            // Cache before publishing a row with a grab action.
-            _downloadDecisionCache.Set(GetCacheKey(resource), decision, TimeSpan.FromMinutes(30));
+            // Grouped searches own their decisions until thirty minutes after the batch ends.
+            if (searchId == null)
+            {
+                resource.ExpiresAt = DateTime.UtcNow + CacheLifetime;
+                _downloadDecisionCache.Set(GetCacheKey(resource), decision, CacheLifetime);
+            }
             return resource;
         }
 

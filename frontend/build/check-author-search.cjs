@@ -8,6 +8,8 @@ const path = require('node:path');
 const webpack = require('webpack');
 const { chromium } = require('playwright');
 const checkReconnect = require('./author-search-reconnect-check.cjs');
+const checkRetention = require('./author-search-retention-check.cjs');
+const checkCompletion = require('./author-search-completion-check.cjs');
 const checkTable = require('./author-search-table-check.cjs');
 const checkAuthorSync = require('./author-sync-check.cjs');
 const checkCommandMessages = require('./command-message-check.cjs');
@@ -553,7 +555,7 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
     }
     for (const phase of ['manual', 'reopened']) {
       if (phase === 'reopened') {
-        await page.locator('#portal-root [class*="ModalContent"]').waitFor({ state: 'detached' });
+        await page.locator('#portal-root [class*="ModalContent-modalContent-"]').waitFor({ state: 'detached' });
         await page.evaluate(() => window.reopenAddSeriesFixture());
         await page.locator(`select[name="${sides[0]}MetadataProfileId"] option[value="${defaults[sides[0]].metadata}"]`).waitFor({ state: 'attached' });
       }
@@ -644,7 +646,8 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const css = fs.readdirSync(path.join(output, 'Content')).find((name) => name.endsWith('.css'));
     const strings = JSON.parse(fs.readFileSync(path.join(root, 'src/NzbDrone.Core/Localization/Core/en.json')));
-    const page = await browser.newPage();
+    const context = await browser.newContext();
+    const page = await context.newPage();
     const errors = [];
     const releaseRequests = [];
     const importRequests = [];
@@ -665,7 +668,17 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
     const requestFailures = [];
     const authorLifecycleEvents = [];
     const activeAuthorSearches = new Set();
+    const completedSearches = new Map();
+    const sendAuthorResults = async(body) => {
+      const result = { startedAt: new Date().toISOString(), ...body };
+      if (result.isComplete) {
+        completedSearches.set(`${result.authorId}:${result.mediaType}`, result);
+      }
+      await page.evaluate((value) => window.sendAuthorSearchSignalR(value),
+        result.isComplete ? { ...result, bookResults: [] } : result);
+    };
     let heldAdmissionRoute = null;
+    let heldAdmissionCommand = null;
     let holdNextAdmission = false;
     const heldBookRoutes = new Map();
     let holdNextAuthorSearch = false;
@@ -699,7 +712,7 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
           observedExpectedHttpErrors.push({ ...expectedCommandErrors.splice(expectedIndex, 1)[0], message: message.text() });
           return;
         }
-        errors.push({ type: 'console', message: message.text() });
+        errors.push({ type: 'console', message: message.text(), url: message.location().url });
       }
     });
     page.on('response', (response) => {
@@ -722,10 +735,13 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
         authorLifecycleEvents.push({ event: 'failed', method: request.method(), searchId });
       }
     });
-    await page.route('**/*', async(route) => {
+    await page.context().route('**/*', async(route) => {
       const request = route.request();
       const url = new URL(request.url());
       const pathname = url.pathname;
+      if (heldAdmissionCommand && pathname === `/api/v1/command/${heldAdmissionCommand.id}`) {
+        return route.fulfill({ json: heldAdmissionCommand });
+      }
       if (process.env.CHAPTARR_PROVIDER_CAPTURE_MANIFEST && request.resourceType() === 'image') {
         return route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>' });
       }
@@ -774,7 +790,12 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
           grabRequests.push(payload);
           return route.fulfill({ json: {} });
         }
+        if (params.existing === 'true') {
+          const result = completedSearches.get(`${params.authorId}:${params.mediaType}`);
+          return result ? route.fulfill({ json: result }) : route.fulfill({ status: 204, body: '' });
+        }
         if (params.authorId) {
+          completedSearches.delete(`${params.authorId}:${params.mediaType}`);
           authorRequests.push(params);
           if (holdNextAuthorSearch) {
             holdNextAuthorSearch = false;
@@ -822,6 +843,9 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
       if (pathname.endsWith('/localization')) {
         return route.fulfill({ json: { Strings: strings } });
       }
+      if (pathname === '/Content/Images/author-placeholder-muted.png') {
+        return route.fulfill({ path: path.join(root, 'frontend/src/Content/Images/author-placeholder-muted.png'), contentType: 'image/png' });
+      }
       if (pathname === '/Content/Images/chaptarr-logo.svg') {
         return route.fulfill({ path: path.join(root, 'frontend/src/Content/Images/chaptarr-logo.svg'), contentType: 'image/svg+xml' });
       }
@@ -837,9 +861,29 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
         }
         return route.fulfill({ status: 404, body: '' });
       }
-      return route.fulfill({ contentType: 'text/html', body: '<!doctype html><link rel="stylesheet" href="/style.css"><div id="root"></div><div id="portal-root"></div><script>window.Chaptarr={isProduction:true,apiRoot:"/api/v1",apiKey:"fixture"};</script><script src="/fixture.js"></script>' });
+      return route.fulfill({ contentType: 'text/html', body: '<!doctype html><link rel="stylesheet" href="/style.css"><div id="root"></div><div id="portal-root"></div><script>window.Chaptarr={isProduction:true,urlBase:"",apiRoot:"/api/v1",apiKey:"fixture"};</script><script src="/fixture.js"></script>' });
     });
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    if (process.env.CHAPTARR_COMPLETION_ONLY) {
+      await checkCompletion(page, strings, makeRelease, expectedCommandErrors);
+      assert.deepEqual(expectedCommandErrors, []);
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CHAPTARR_LIFECYCLE_ONLY) {
+      await checkCompletion(page, strings, makeRelease, expectedCommandErrors);
+      await checkRetention(page, strings, makeRelease);
+      await checkReconnect(page, strings, makeRelease, expectedCommandErrors, unloadStops);
+      await checkCommandMessages(page, expectedCommandErrors);
+      assert.deepEqual(expectedCommandErrors, []);
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CHAPTARR_RETENTION_ONLY) {
+      await checkRetention(page, strings, makeRelease);
+      assert.deepEqual(errors, []);
+      return;
+    }
     if (process.env.CHAPTARR_RECONNECT_ONLY) {
       await checkReconnect(page, strings, makeRelease, expectedCommandErrors, unloadStops);
       assert.deepEqual(expectedCommandErrors, []);
@@ -887,7 +931,7 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
         await page.waitForFunction(() => window.readAuthorSearchState().isAccepted === true);
         const { searchId } = await page.evaluate(() => window.readAuthorSearchState());
         const updateSearch = async(results, isComplete = false) => {
-          await page.evaluate((body) => window.sendAuthorSearchSignalR(body), {
+          await sendAuthorResults({
             searchId, authorId: 10, mediaType, bookResults: results, isComplete, isCancelled: false
           });
           if (isComplete) {
@@ -1007,7 +1051,7 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
 
     const pendingTitles = ['Analgesia', 'Slipstream', 'Forgive & Forget', 'The Summoner', 'Rain Whore', 'Pervert'];
     const pendingRoster = pendingTitles.map((title, index) => makeBookResult(700 + index, title, 'pending', []));
-    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), {
+    await sendAuthorResults({
       searchId: pendingRosterSearchId,
       authorId: 10,
       mediaType: 'audiobook',
@@ -1028,7 +1072,7 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
     const firstRosterRelease = makeRelease({
       guid: 'pending-roster-first-result', title: firstRosterBook.title, bookId: firstRosterBook.bookId, rank: 1, preferred: true
     });
-    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), {
+    await sendAuthorResults({
       searchId: pendingRosterSearchId,
       authorId: 10,
       mediaType: 'audiobook',
@@ -1046,7 +1090,7 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
       assert.match(await row.innerText(), /Waiting for results/, `${title} should remain visibly waiting after the first result`);
     }
 
-    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), {
+    await sendAuthorResults({
       searchId: pendingRosterSearchId,
       authorId: 10,
       mediaType: 'audiobook',
@@ -1128,14 +1172,14 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
       makeRelease({ guid: 'no-preferred', title: 'No Preferred Candidate', bookId: 107, rank: 70 })
     ]);
 
-    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), {
+    await sendAuthorResults({
       searchId, authorId: 10, mediaType: 'audiobook', bookResults: [bookA], isComplete: false, isCancelled: false
     });
     let searchState = await page.evaluate(() => window.readAuthorSearchState());
     assert.equal(searchState.isFetching, true);
     assert.deepEqual(searchState.bookResults.map((result) => result.bookId), [101], 'The first SignalR delivery should render before the HTTP final response');
 
-    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), {
+    await sendAuthorResults({
       searchId, authorId: 10, mediaType: 'audiobook', bookResults: [bookB, bookC, waitingBook, emptyBook, failedBook, noPreferredBook], isComplete: false, isCancelled: false
     });
     searchState = await page.evaluate(() => window.readAuthorSearchState());
@@ -1264,7 +1308,7 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
       isComplete: false, isCancelled: false
     };
     const beforeWrongAuthorEvent = JSON.stringify(await page.evaluate(() => window.readAuthorSearchState()));
-    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), wrongAuthorEvent);
+    await sendAuthorResults(wrongAuthorEvent);
     assert.equal(JSON.stringify(await page.evaluate(() => window.readAuthorSearchState())), beforeWrongAuthorEvent, 'Late events for another author must be ignored');
 
     await page.getByRole('button', { name: 'Open book modal', exact: true }).click();
@@ -1317,7 +1361,7 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
       isComplete: true,
       isCancelled: false
     };
-    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), finalAuthorResult);
+    await sendAuthorResults(finalAuthorResult);
     activeAuthorSearches.delete(searchId);
     await page.waitForFunction(() => window.readAuthorSearchState().isComplete === true);
     searchState = await page.evaluate(() => window.readAuthorSearchState());
@@ -1353,7 +1397,7 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
     await page.getByText('Showing 1-50 of 51', { exact: true }).waitFor();
 
     const beforeTerminalLateEvent = JSON.stringify(await page.evaluate(() => window.readAuthorSearchState()));
-    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), {
+    await sendAuthorResults({
       searchId, authorId: 10, mediaType: 'audiobook', bookResults: [bookA], isComplete: false, isCancelled: false
     });
     assert.equal(JSON.stringify(await page.evaluate(() => window.readAuthorSearchState())), beforeTerminalLateEvent, 'SignalR updates after the final response must be ignored');
@@ -1408,7 +1452,7 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
       makeBookResult(202, 'Pending At Stop', 'pending', []),
       makeBookResult(203, 'Not Started', 'pending', [])
     ];
-    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), {
+    await sendAuthorResults({
       searchId: cancelledSearchId,
       authorId: 10,
       mediaType: 'audiobook',
@@ -1416,7 +1460,7 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
       isComplete: false,
       isCancelled: false
     });
-    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), {
+    await sendAuthorResults({
       searchId: cancelledSearchId,
       authorId: 10,
       mediaType: 'audiobook',
@@ -1500,7 +1544,7 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
       isComplete: true,
       isCancelled: true
     };
-    await page.evaluate((body) => window.sendAuthorSearchSignalR(body), finalStoppedResult);
+    await sendAuthorResults(finalStoppedResult);
     activeAuthorSearches.delete(cancelledSearchId);
     await page.waitForFunction(() => {
       const state = window.readAuthorSearchState();
@@ -1542,27 +1586,16 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
     const unmountSearchId = unmountRequestParams.searchId;
     assert.equal(await page.getByRole('button', { name: 'Stop search', exact: true }).count(), 0,
       'Stop is unavailable before admission or roster registration');
-    const lifecycleStart = authorLifecycleEvents.length;
-    const unmountStopRequest = page.waitForResponse((response) =>
-      response.request().method() === 'DELETE' && new URL(response.url()).searchParams.get('searchId') === unmountSearchId);
     await page.evaluate(() => window.renderAuthorSearchFixture('filter-warning', 0, 0));
-    await (await unmountStopRequest).finished();
-    await page.waitForFunction(() => !window.readAuthorSearchState().searchId);
-    const afterAdmissionStop = page.waitForResponse((response) =>
-      response.request().method() === 'DELETE' && new URL(response.url()).searchParams.get('searchId') === unmountSearchId);
-    // The first Stop has finished before the delayed acknowledgement reaches the browser.
-    await page.waitForFunction(() => window.readAuthorSearchState().searchId === null);
+    heldAdmissionCommand = {
+      id: 999, name: 'InteractiveAuthorSearch', status: 'started',
+      body: { searchId: unmountSearchId, authorId: 10, mediaType: 'audiobook', sendUpdatesToClient: true }
+    };
     await heldAdmissionRoute.fulfill({ json: {
       commandId: 999, searchId: unmountSearchId, authorId: 10, mediaType: 'audiobook', bookResults: [], isComplete: false
     } });
-    await (await afterAdmissionStop).finished();
-    const unmountEvents = authorLifecycleEvents.slice(lifecycleStart).filter((event) => event.searchId === unmountSearchId);
-    assert.ok(unmountEvents.some((event) => event.event === 'request' && event.method === 'DELETE'),
-      'Unmount should request explicit server cancellation');
-    assert.equal(unmountEvents.some((event) => event.event === 'failed' && event.method === 'GET'), false,
-      'Admission must finish so a late-queued search can also be stopped');
-    assert.deepEqual(stopRequests, [{ searchId: unmountSearchId }, { searchId: unmountSearchId }],
-      'A late admission after page exit needs its own Stop');
+    await page.waitForTimeout(100);
+    assert.deepEqual(stopRequests, [], 'Leaving before admission must not stop the background search');
     activeAuthorSearches.delete(unmountSearchId);
 
     await page.evaluate(() => window.renderAuthorSearchFixture('grouped-tabs', 3, 3, { selectedMediaType: 'audiobook' }));
@@ -1571,15 +1604,17 @@ async function checkModalReopenAndZeroFallback(page, seriesRequests, bookRequest
     await page.getByRole('button', { name: 'Search', exact: true }).click();
     await page.waitForFunction(() => window.readAuthorSearchState().isAccepted === true);
     const failedSearchId = (await page.evaluate(() => window.readAuthorSearchState())).searchId;
-    await page.evaluate((failedId) => window.sendAuthorSearchSignalR({
-      searchId: failedId, authorId: 10, mediaType: 'audiobook', bookResults: [], isComplete: true, isFailed: true
-    }), failedSearchId);
+    await sendAuthorResults({
+      searchId: failedSearchId, authorId: 10, mediaType: 'audiobook', bookResults: [], isComplete: true, isFailed: true
+    });
     await page.getByText(strings.AuthorSearchIncomplete, { exact: true }).waitFor();
     assert.equal(await page.getByText(strings.AuthorSearchNoBooksReturned, { exact: true }).count(), 0,
       'A failed background search must not also claim there were no books');
     assert.equal((await page.evaluate(() => window.readAuthorSearchState())).isFetching, false);
     activeAuthorSearches.delete(failedSearchId);
 
+    await checkCompletion(page, strings, makeRelease, expectedCommandErrors);
+    await checkRetention(page, strings, makeRelease);
     await checkReconnect(page, strings, makeRelease, expectedCommandErrors, unloadStops);
     await checkTableFixture();
     assert.deepEqual(expectedCommandErrors, [], 'Only the explicitly injected command lookup errors are expected');

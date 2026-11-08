@@ -10,6 +10,7 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.MediaFiles;
 
 namespace NzbDrone.Core.Indexers.Newznab
 {
@@ -51,7 +52,6 @@ namespace NzbDrone.Core.Indexers.Newznab
 
         private static readonly Regex NarratorLineRegex = new Regex(@"^(?:narration|narrator|narrated\s+by|read\s+by)\s*[:>]+\s*(.+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex LengthLineRegex = new Regex(@"^(?:length|duration|runtime)\s*[:>]+\s*(.+)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-        private static readonly Regex GraphicAudioRegex = new Regex(@"\bgraphic\s*audio\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private readonly IIndexerHttpClient _httpClient;
         private readonly NewznabSettings _settings;
@@ -447,7 +447,7 @@ namespace NzbDrone.Core.Indexers.Newznab
 
             foreach (var line in lines)
             {
-                if (!isGraphicAudio && GraphicAudioRegex.IsMatch(line))
+                if (!isGraphicAudio && AudioProductionDetector.ContainsGraphicAudioBrand(line))
                 {
                     isGraphicAudio = true;
                 }

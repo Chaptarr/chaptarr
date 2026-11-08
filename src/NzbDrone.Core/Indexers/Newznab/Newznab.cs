@@ -132,7 +132,7 @@ namespace NzbDrone.Core.Indexers.Newznab
         {
             try
             {
-                var capabilities = _capabilitiesProvider.GetCapabilities(Settings, (Definition as IndexerDefinition)?.ProxyId);
+                var capabilities = _capabilitiesProvider.GetCapabilities(Settings, (Definition as IndexerDefinition)?.ProxyId, forceRefresh: true);
 
                 if (capabilities.SupportedSearchParameters != null && capabilities.SupportedSearchParameters.Contains("q"))
                 {
@@ -158,7 +158,7 @@ namespace NzbDrone.Core.Indexers.Newznab
             {
                 _logger.Warn(ex, "Unable to connect to indexer: " + ex.Message);
 
-                return new ValidationFailure(string.Empty, "Unable to connect to indexer, check the log for more details");
+                return new ValidationFailure(string.Empty, NewznabCapabilitiesProvider.GetTestFailureMessage(ex));
             }
         }
 
