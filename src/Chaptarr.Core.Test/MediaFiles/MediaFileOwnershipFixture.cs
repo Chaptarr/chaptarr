@@ -49,16 +49,24 @@ namespace Chaptarr.Core.Test.MediaFiles
                     CreateSchema<BookFile>(connection);
                     connection.Execute(@"INSERT INTO ""Authors"" (""Id"", ""Name"") VALUES (10, 'Selected Author'), (20, 'Other Author');
                         INSERT INTO ""Books"" (""Id"", ""AuthorId"") VALUES (1, 10), (2, 20);
-                        INSERT INTO ""Editions"" (""Id"", ""BookId"") VALUES (11, 1), (12, 1), (21, 2);
-                        INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Path"", ""ReplicaPaths"") VALUES
-                            (1, 11, '/audio/A/book.m4b', '[]'),
-                            (2, 12, '/ebooks/A/book.epub', '[""/audio/A/copy.epub""]'),
-                            (3, 21, '/audio/A/other-author.epub', NULL),
-                            (4, 0, '/audio/A/unmapped.m4b', '[]'),
-                            (5, 21, '/audio/B/unrelated.m4b', '[]'),
-                            (6, 21, '/audio/B/replica-owner.epub', '[""/audio/A/managed.epub""]'),
-                            (7, 21, '/audio/AB/prefix-lookalike.epub', '[]');
-                        UPDATE ""BookFiles"" SET ""CalibreId"" = 7 WHERE ""Id"" = 2;");
+                        INSERT INTO ""Editions"" (""Id"", ""BookId"") VALUES (11, 1), (12, 1), (21, 2);");
+                    var rows = new[]
+                    {
+                        (1, 11, @"C:\audio\A\book.m4b", (string)null),
+                        (2, 12, @"C:\ebooks\A\book.epub", @"C:\audio\A\copy.epub"),
+                        (3, 21, @"C:\audio\A\other-author.epub", (string)null),
+                        (4, 0, @"C:\audio\A\unmapped.m4b", (string)null),
+                        (5, 21, @"C:\audio\B\unrelated.m4b", (string)null),
+                        (6, 21, @"C:\audio\B\replica-owner.epub", @"C:\audio\A\managed.epub"),
+                        (7, 21, @"C:\audio\AB\prefix-lookalike.epub", (string)null)
+                    };
+                    connection.Execute(@"INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Path"", ""ReplicaPaths"")
+                        VALUES (@Id, @EditionId, @Path, @Replicas)", rows.Select(row => new
+                    {
+                        Id = row.Item1, EditionId = row.Item2, Path = row.Item3.AsOsAgnostic(),
+                        Replicas = row.Item1 == 3 ? null : row.Item4 == null ? "[]" : System.Text.Json.JsonSerializer.Serialize(new[] { row.Item4.AsOsAgnostic() })
+                    }));
+                    connection.Execute(@"UPDATE ""BookFiles"" SET ""CalibreId"" = 7 WHERE ""Id"" = 2;");
                     return connection;
                 }
                 catch
@@ -78,19 +86,13 @@ namespace Chaptarr.Core.Test.MediaFiles
                 _ => throw new NotImplementedException(method.Name)
             });
             var repository = new MediaFileRepository(database, null);
-            if (System.IO.Path.DirectorySeparatorChar != '/')
-            {
-                connection.Execute(@"UPDATE ""BookFiles"" SET ""Path"" = replace(""Path"", '/', @separator),
-                    ""ReplicaPaths"" = replace(""ReplicaPaths"", '/', @jsonSeparator)",
-                    new { separator = System.IO.Path.DirectorySeparatorChar.ToString(), jsonSeparator = "\\\\" });
-            }
-            var files = repository.GetFilePathOwnership(new[] { 10 }, new[] { "/audio/A".AsOsAgnostic() });
+            var files = repository.GetFilePathOwnership(new[] { 10 }, new[] { @"C:\audio\A".AsOsAgnostic() });
             Assert.That(files, Has.Count.EqualTo(5));
             Assert.That(files.Single(file => file.Id == 2).CalibreId, Is.EqualTo(7));
             Assert.That(files.Single(file => file.Id == 1).Author.Id, Is.EqualTo(10));
             Assert.That(files.Single(file => file.Id == 1).Author.Name, Is.EqualTo("Selected Author"));
             Assert.That(files.Single(file => file.Id == 2).Author.Id, Is.EqualTo(10));
-            Assert.That(files.Single(file => file.Id == 2).ReplicaPaths, Is.EqualTo(new[] { "/audio/A/copy.epub".AsOsAgnostic() }));
+            Assert.That(files.Single(file => file.Id == 2).ReplicaPaths, Is.EqualTo(new[] { @"C:\audio\A\copy.epub".AsOsAgnostic() }));
             Assert.That(files.Single(file => file.Id == 3).Author.Id, Is.EqualTo(20));
             Assert.That(files.Single(file => file.Id == 3).Author.Name, Is.EqualTo("Other Author"));
             Assert.That(files.Single(file => file.Id == 4).Author, Is.Null);
@@ -111,7 +113,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var service = new MediaFileService(repository, events, ingest, null, LogManager.GetCurrentClassLogger());
             service.DeleteRecordsForAuthorDeletion(files.Where(file => file.Author == null).ToList());
             Assert.That(connection.Query<int>(@"SELECT ""Id"" FROM ""BookFiles"" ORDER BY ""Id"""), Is.EqualTo(new[] { 1, 2, 3, 5, 6, 7 }));
-            Assert.That(purgedPaths, Is.EqualTo(new[] { "/audio/A/unmapped.m4b".AsOsAgnostic() }));
+            Assert.That(purgedPaths, Is.EqualTo(new[] { @"C:\audio\A\unmapped.m4b".AsOsAgnostic() }));
         }
 
         [TestCase(false)]

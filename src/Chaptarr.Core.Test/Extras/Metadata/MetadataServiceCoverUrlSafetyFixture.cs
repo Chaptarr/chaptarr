@@ -92,7 +92,7 @@ namespace Chaptarr.Core.Test.Extras.Metadata
             Assert.Multiple(() =>
             {
                 Assert.That(harness.Downloads, Is.EqualTo(new[] { new Uri(url).ToString() }));
-                Assert.That(harness.Files.Keys, Is.EqualTo(new[] { harness.CoverPath }));
+                Assert.That(harness.Files.Keys.Select(Path.GetFullPath), Is.EqualTo(new[] { harness.CoverPath }));
                 Assert.That(result, Has.Count.EqualTo(1));
                 Assert.That(((MetadataFile)result.Single()).Hash, Is.Not.Null.And.Not.Empty);
                 Assert.That(harness.Logs.Logs.Any(message => message.StartsWith("Warn|")), Is.False);

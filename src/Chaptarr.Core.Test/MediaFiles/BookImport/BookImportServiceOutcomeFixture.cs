@@ -281,7 +281,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
         private static Context CreateContext(IMainDatabase database = null, BookMediaType mediaType = BookMediaType.Ebook)
         {
-            var author = new Author { Id = 1, Name = "Author", Path = "/books/Author", HardcoverAuthorId = "101" };
+            var author = new Author { Id = 1, Name = "Author", Path = @"C:\books\Author".AsOsAgnostic(), HardcoverAuthorId = "101" };
             var book = new Book
             {
                 Id = 10,
@@ -697,7 +697,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 var modified = DateTime.UtcNow;
                 for (var part = 1; part <= 64; part++)
                 {
-                    var path = $"/books/Author/Book/part-{part:000}.mp3";
+                    var path = $@"C:\books\Author\Book\part-{part:000}.mp3".AsOsAgnostic();
                     context.Disk.Files[path] = (100, modified);
                     requests.Add((new DiscoveredFileWithMetadata { Path = path, Size = 100, Modified = modified,
                         DurationSeconds = 60, Quality = new QualityModel(Quality.MP3) }, context.TargetEdition.Id, null));

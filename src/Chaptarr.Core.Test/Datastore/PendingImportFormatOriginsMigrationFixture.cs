@@ -20,8 +20,7 @@ namespace Chaptarr.Core.Test.Datastore
                 using var connection = database.OpenConnection();
                 connection.Execute(@"INSERT INTO ""PendingAuthorImport"" (""ProviderId"", ""ProviderPrefix"", ""AudiobookStatus"", ""EbookStatus"", ""OverallStatus"", ""CreatedAt"", ""NextAttemptAt"", ""RequestedBy"")
                     VALUES ('gr:58', 'gr', 1, 0, 1, @Now, @Now, 'ImportList:Favorites')", new { Now = DateTime.UtcNow });
-                var connectionString = postgres ? new Npgsql.NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING"))
-                    { Database = connection.Database }.ConnectionString : connection.ConnectionString;
+                var connectionString = connection.ConnectionString;
                 void Upgrade() => new MigrationController(LogManager.GetCurrentClassLogger(), null).Migrate(connectionString,
                     new MigrationContext(MigrationType.Main, 125), database.DatabaseType);
                 Upgrade();
