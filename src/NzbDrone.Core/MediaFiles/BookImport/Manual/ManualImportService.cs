@@ -1286,7 +1286,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                 }
 
                 if (isExplicitLocalSelection &&
-                    !ManualEditionSelectionMatchesBook(edition, book, file.EditionId, out var manualEditionRejection))
+                    !ManualEditionSelectionMatchesBook(edition, book, file.EditionId, out var manualEditionRejection, file.ForeignEditionId))
                 {
                     throw new InvalidOperationException(manualEditionRejection);
                 }
@@ -1661,7 +1661,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
             return true;
         }
 
-        internal static bool ManualEditionSelectionMatchesBook(Edition edition, Book book, int requestedEditionId, out string rejectionReason)
+        internal static bool ManualEditionSelectionMatchesBook(Edition edition, Book book, int requestedEditionId, out string rejectionReason, string requestedForeignEditionId = null)
         {
             rejectionReason = null;
 
@@ -1672,7 +1672,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 
             if (requestedEditionId <= 0)
             {
-                rejectionReason = $"Edition must be selected for '{book.Title}'.";
+                // Name the field: the request may carry foreignEditionId instead, which only
+                // applies to metadata suggestions and is not used for a book already in the library.
+                var editionLookup = $"GET /api/v1/edition?bookId={book.Id}";
+                rejectionReason = string.IsNullOrWhiteSpace(requestedForeignEditionId)
+                    ? $"Edition must be selected for '{book.Title}': editionId is missing. Send the numeric editionId of one of its editions ({editionLookup})."
+                    : $"Edition must be selected for '{book.Title}': editionId is missing. foreignEditionId '{requestedForeignEditionId.Trim()}' is only used for metadata suggestions; for a book already in the library send the numeric editionId ({editionLookup}).";
                 return false;
             }
 
