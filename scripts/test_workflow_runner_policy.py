@@ -376,7 +376,12 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         ):
             self.assertIn(token, target)
 
-        self.assertIn("needs: [release-target]", job_block(source, "credentials"))
+        credentials = job_block(source, "credentials")
+        self.assertIn("needs: [release-target]", credentials)
+        self.assertLess(
+            credentials.index("actions/checkout@"),
+            credentials.index("packaging/scripts/validate-release-publisher-config.sh publishers"),
+        )
         for name in ("build-chocolatey", "publish-chocolatey"):
             job = job_block(source, name)
             for token in (
