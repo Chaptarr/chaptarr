@@ -211,8 +211,26 @@ try {
   [IO.File]::WriteAllText($packageInstallScriptPath, $packageMetadata.InstallScript, [Text.UTF8Encoding]::new($false))
   & (Join-Path $PSScriptRoot 'test-chocolatey-migration-choice.ps1') -InstallScriptPath $packageInstallScriptPath
 
-  & dotnet build $smokeProject --configuration Release --verbosity quiet
-  if ($LASTEXITCODE -ne 0) { throw 'The Windows migration fixture could not be built for this handoff.' }
+  # The smoke project references the installer, whose embedded resource must
+  # exist at compile time. Use the already verified release archive as its
+  # exact payload and remove only the file staged by this test.
+  $payloadDirectory = Join-Path $repoRoot 'distribution\windows\installer-net\Payload'
+  $payloadPath = Join-Path $payloadDirectory 'Chaptarr.payload.zip'
+  if (Test-Path -LiteralPath $payloadPath) {
+    throw "Refusing to replace an existing Windows installer payload: $payloadPath"
+  }
+  $createdPayloadDirectory = -not (Test-Path -LiteralPath $payloadDirectory)
+  if ($createdPayloadDirectory) { New-Item -ItemType Directory -Path $payloadDirectory | Out-Null }
+  try {
+    Copy-Item -LiteralPath $ArchivePath -Destination $payloadPath
+    & dotnet build $smokeProject --configuration Release --verbosity quiet
+    if ($LASTEXITCODE -ne 0) { throw 'The Windows migration fixture could not be built for this handoff.' }
+  } finally {
+    if (Test-Path -LiteralPath $payloadPath) { Remove-Item -LiteralPath $payloadPath -Force }
+    if ($createdPayloadDirectory -and (Test-Path -LiteralPath $payloadDirectory)) {
+      Remove-Item -LiteralPath $payloadDirectory
+    }
+  }
   $smokeExecutable = Get-ChildItem -LiteralPath (Join-Path $repoRoot 'distribution\windows\installer-net-smoke\bin\Release') -Filter 'ChaptarrNG.Installer.Smoke.exe' -File -Recurse |
     Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1 -ExpandProperty FullName
   if (-not $smokeExecutable) { throw 'The self-contained Windows migration fixture executable was not produced.' }
