@@ -365,6 +365,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertNotIn("inputs.tag", run_name)
 
         target = job_block(source, "release-target")
+        self.assertIn("fetch-depth: 0", target)
         for token in (
             "github.ref == 'refs/heads/main'",
             "inputs.action == 'publish'",
