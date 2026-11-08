@@ -689,8 +689,8 @@ test('Linux release jobs install the checksum-pinned ChaptarrNG GitHub CLI actio
 
   for (const name of ['release', 'dispatch-legacy-ghcr', 'publish-release']) {
     const job = readWorkflowJob(release, name);
-    assert.match(job, /ng-shared-main-jit/);
-    assert.ok(job.includes(action), `${name} installs the pinned GitHub CLI on its private runner`);
+    assert.match(job, /runs-on: ubuntu-24\.04/);
+    assert.ok(job.includes(action), `${name} installs the pinned GitHub CLI on its public runner`);
     assert.ok(job.indexOf(action) < job.search(/gh release|dispatch-ghcr-release-bridge\.sh/),
       `${name} installs the CLI before the first use`);
     if (name === 'dispatch-legacy-ghcr') {
@@ -702,8 +702,8 @@ test('Linux release jobs install the checksum-pinned ChaptarrNG GitHub CLI actio
 
   for (const name of ['release-target', 'build-legacy-ppa', 'build-aur']) {
     const job = readWorkflowJob(distribution, name);
-    assert.match(job, /ng-shared-main-jit/);
-    assert.ok(job.includes(action), `${name} installs the pinned GitHub CLI on its private runner`);
+    assert.match(job, /runs-on: ubuntu-24\.04/);
+    assert.ok(job.includes(action), `${name} installs the pinned GitHub CLI on its public runner`);
     assert.ok(job.indexOf(action) < job.search(/gh release/), `${name} installs the CLI before release operations`);
   }
 });
