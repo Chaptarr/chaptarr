@@ -2,7 +2,7 @@
 category: fixed
 audience: users, operators
 area: authentication
-action: none
+action: Ensure the OIDC provider returns a verified email claim before upgrading.
 breaking: true
 ---
 

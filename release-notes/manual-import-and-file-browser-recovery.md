@@ -1,1 +1,9 @@
+---
+category: fixed
+audience: users
+area: import
+action: none
+breaking: false
+---
+
 Manual Import and File Browser failures now announce the available error details and provide Retry actions. Manual Import hides stale file rows and disables submission until the preview reloads successfully.

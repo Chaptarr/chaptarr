@@ -1,5 +1,9 @@
-# Localization language availability and RTL gate
+---
+category: changed
+audience: users, operators
+area: localization
+action: none
+breaking: false
+---
 
-The UI language selector now shows each language's native name and English name. New choices are limited to locales whose resolved catalog contains at least one real non-English UI value; locale variants that inherit a translated parent remain available. The four empty catalogs (Azerbaijani, Kazakh, Malay, and Uzbek) no longer appear as new choices. Existing saved values remain visible so users can move them to a supported language without invalidating settings.
-
-Arabic keeps its `lang` metadata, but the application and login document roots stay left-to-right until shared layouts use direction-safe logical positioning and pass headed visual review. Per-field direction handling and mixed-script isolation remain active. This note does not claim full RTL acceptance.
+The language selector shows native and English names and offers only catalogs containing translated UI text, including variants that inherit a translated parent. Existing saved choices remain visible for safe migration. Arabic retains language metadata and field-level direction handling, while shared layouts remain left-to-right pending full RTL acceptance.

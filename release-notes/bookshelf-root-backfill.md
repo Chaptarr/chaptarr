@@ -5,4 +5,4 @@ area: library
 action: none
 breaking: false
 ---
-Settings > Media Management > Root Folders can preview and fill missing author root folders. The preview shows skipped authors; confirmation rechecks current settings, queues author refreshes, and does not move book files. Failed preview or queue requests show retryable feedback. The dialog stays open while queueing, ignores duplicate confirmations, clears stale queue errors before a new preview, and rejects invalid counts without dispatching an update. Previews with no eligible updates offer only a Close action.
+Root Folder settings can preview and fill missing author root folders without moving book files. The preview reports skipped authors, rechecks settings before queueing refreshes, prevents duplicate or invalid submissions, and provides retryable feedback. When no authors are eligible, the dialog offers only Close.
