@@ -68,7 +68,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             "github.ref == 'refs/heads/main'",
             "inputs.action == 'ci'",
             "inputs.action == 'publish'",
-            "inputs.runner_pool == 'private'",
+            "(inputs.runner_pool == 'private' || inputs.runner_pool == 'public')",
             "inputs.release_tag != ''",
             "inputs.release_sha != ''",
             "inputs.release_sha || github.sha",
@@ -99,6 +99,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         workflow_dir = WORKFLOW.parent
         hosted_routes = {
             "build.yml",
+            "release.yml",
             "helm-handoff.yml",
             "bookshelfng-standalone-macos-acceptance.yml",
             "standalone-asset-validation.yml",
@@ -118,6 +119,9 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                     or line.rstrip().endswith("runs-on: >-")
                 ):
                     self.assertIn("fromJSON", source, str(workflow_path))
+                    continue
+                if workflow_path.name == "release.yml" and line.strip() == "runs-on: windows-2025":
+                    self.assertIn("inputs.runner_pool == 'private'", job_block(source, "windows-migration-installer"))
                     continue
                 self.assertNotRegex(
                     line,
@@ -206,7 +210,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             source,
         )
 
-    def test_windows_release_jobs_use_the_private_packer_route(self) -> None:
+    def test_windows_release_jobs_use_explicit_compatible_routes(self) -> None:
         windows_release_jobs = (
             ("release.yml", "windows-migration-installer", "windows-migration-installer"),
             ("release-distribution.yml", "build-chocolatey", "build-chocolatey"),
@@ -218,6 +222,9 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             runner_match = re.search(r"(?m)^    runs-on: (?P<runner>[^\n]+)$", job)
             self.assertIsNotNone(runner_match, f"{workflow_name}:{job_name}")
             runner = runner_match.group("runner").replace("\\", "")
+            if workflow_name == "release.yml":
+                self.assertEqual(runner, "windows-2025")
+                continue
             self.assertIn('"group":"packer-windows"', runner)
             self.assertIn('"on-demand"', runner)
             self.assertIn('"ChaptarrNG"', runner)
@@ -239,17 +246,18 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         self.assertIn("inputs.runner_pool == 'public'", job_block(build, "build"))
         for workflow_name in ("release.yml", "release-distribution.yml"):
             source = (WORKFLOW.parent / workflow_name).read_text(encoding="utf-8")
+            policy = "trusted-hosted-or-private-jit-v1" if workflow_name == "release.yml" else "private-jit-only-v1"
             self.assertTrue(
                 source.startswith(
-                    "# ng-runner-policy: private-jit-only-v1\n# packer-windows-jit-v1"
+                    f"# ng-runner-policy: {policy}\n# packer-windows-jit-v1"
                 ),
                 workflow_name,
             )
-            self.assertNotRegex(
-                source,
-                r"(?m)^\s*runs-on:\s*(?:ubuntu-latest|ubuntu-[0-9]+|windows-latest|macos-[0-9]+)",
-                workflow_name,
-            )
+            if workflow_name == "release-distribution.yml":
+                self.assertNotRegex(
+                    source,
+                    r"(?m)^\s*runs-on:\s*(?:ubuntu-latest|ubuntu-[0-9]+|windows-latest|macos-[0-9]+)",
+                )
 
     def test_release_dispatch_builds_the_exact_main_tag(self) -> None:
         source = (WORKFLOW.parent / "release.yml").read_text(encoding="utf-8")
@@ -285,7 +293,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         validate = job_block(source, "validate")
         for token in (
             "action: publish",
-            "runner_pool: private",
+            "runner_pool: public",
             "release_tag: ${{ needs.preflight.outputs.release_tag }}",
             "release_sha: ${{ needs.preflight.outputs.release_sha }}",
         ):

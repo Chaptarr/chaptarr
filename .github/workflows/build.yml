@@ -168,7 +168,7 @@ jobs:
       ) || (
         github.ref == 'refs/heads/main' &&
         inputs.action == 'publish' &&
-        inputs.runner_pool == 'private' &&
+        (inputs.runner_pool == 'private' || inputs.runner_pool == 'public') &&
         inputs.release_tag != '' &&
         inputs.release_sha != ''
       )
@@ -190,7 +190,7 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        ref: ${{ inputs.action == 'publish' && inputs.runner_pool == 'private' && inputs.release_tag != '' && inputs.release_sha || github.sha }}
+        ref: ${{ inputs.action == 'publish' && inputs.release_tag != '' && inputs.release_sha || github.sha }}
         fetch-depth: 0
 
     - name: Verify exact release tag source
@@ -810,7 +810,7 @@ jobs:
       ) || (
         github.ref == 'refs/heads/main' &&
         inputs.action == 'publish' &&
-        inputs.runner_pool == 'private' &&
+        (inputs.runner_pool == 'private' || inputs.runner_pool == 'public') &&
         inputs.release_tag != '' &&
         inputs.release_sha != ''
       )
@@ -832,7 +832,7 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        ref: ${{ inputs.action == 'publish' && inputs.runner_pool == 'private' && inputs.release_tag != '' && inputs.release_sha || github.sha }}
+        ref: ${{ inputs.action == 'publish' && inputs.release_tag != '' && inputs.release_sha || github.sha }}
 
     - name: Configure user-writable .NET install directory
       shell: bash
@@ -954,7 +954,7 @@ jobs:
       ) || (
         github.ref == 'refs/heads/main' &&
         inputs.action == 'publish' &&
-        inputs.runner_pool == 'private' &&
+        (inputs.runner_pool == 'private' || inputs.runner_pool == 'public') &&
         inputs.release_tag != '' &&
         inputs.release_sha != ''
       )
@@ -967,7 +967,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        ref: ${{ inputs.action == 'publish' && inputs.runner_pool == 'private' && inputs.release_tag != '' && inputs.release_sha || github.sha }}
+        ref: ${{ inputs.action == 'publish' && inputs.release_tag != '' && inputs.release_sha || github.sha }}
 
     - name: Set up QEMU for target-platform runtime steps
       uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0

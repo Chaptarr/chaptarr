@@ -1,4 +1,4 @@
-# ng-runner-policy: private-jit-only-v1
+# ng-runner-policy: trusted-hosted-or-private-jit-v1
 # packer-windows-jit-v1
 name: Release
 run-name: >-
@@ -121,7 +121,7 @@ jobs:
       pull-requests: read
     with:
       action: publish
-      runner_pool: private
+      runner_pool: public
       release_tag: ${{ needs.preflight.outputs.release_tag }}
       release_sha: ${{ needs.preflight.outputs.release_sha }}
 
@@ -545,7 +545,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       inputs.action == 'publish' &&
       inputs.runner_pool == 'private'
-    runs-on: ${{ fromJSON(format('{{"group":"packer-windows","labels":["self-hosted","Windows","X64","on-demand","packer-windows","ChaptarrNG","gha-{0}-windows-migration-installer"]}}', github.run_id)) }}
+    runs-on: windows-2025
     permissions:
       contents: read
     steps:
