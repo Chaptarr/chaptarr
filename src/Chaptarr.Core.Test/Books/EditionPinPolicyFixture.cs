@@ -20,11 +20,12 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(EditionPinPolicy.FindConflictingProtectedEdition(book, new List<Edition> { pinned, matched }, pinned.Id), Is.Null);
         }
 
-        [Test]
-        public void manual_add_remains_protected_when_any_edition_is_otherwise_allowed()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void manual_add_remains_protected_when_any_edition_is_otherwise_allowed(bool selected)
         {
             var book = new Book { Id = 1, AnyEditionOk = true };
-            var preserved = new Edition { Id = 10, BookId = book.Id, Monitored = true, ManualAdd = true };
+            var preserved = new Edition { Id = 10, BookId = book.Id, Monitored = selected, ManualAdd = true };
             var matched = new Edition { Id = 11, BookId = book.Id };
 
             var conflict = EditionPinPolicy.FindConflictingProtectedEdition(book, new List<Edition> { preserved, matched }, matched.Id);
@@ -57,6 +58,26 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(EditionPinPolicy.CanAutomationSelectEdition(automatic, new[] { automaticEdition }), Is.True);
                 Assert.That(EditionPinPolicy.CanAutomationSelectEdition(guiPinned, new[] { guiPinnedEdition }), Is.False);
                 Assert.That(EditionPinPolicy.CanAutomationSelectEdition(manuallyPreserved, new[] { manuallyPreservedEdition }), Is.False);
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void explicit_selection_releases_only_the_displaced_choice(bool manual)
+        {
+            var previous = new Edition { Id = 10, Monitored = true, ManualAdd = true };
+            var selected = new Edition { Id = 11 };
+            var retained = new Edition { Id = 12, ManualAdd = true };
+            var editions = new List<Edition> { previous, selected, retained };
+            EditionPinPolicy.ApplyExplicitSelection(editions, selected.Id, new HashSet<int> { previous.Id }, manual);
+            Assert.Multiple(() =>
+            {
+                Assert.That(previous.Monitored, Is.False);
+                Assert.That(previous.ManualAdd, Is.False);
+                Assert.That(selected.Monitored, Is.True);
+                Assert.That(selected.ManualAdd, Is.EqualTo(manual));
+                Assert.That(retained.Monitored, Is.False);
+                Assert.That(retained.ManualAdd, Is.True);
             });
         }
 

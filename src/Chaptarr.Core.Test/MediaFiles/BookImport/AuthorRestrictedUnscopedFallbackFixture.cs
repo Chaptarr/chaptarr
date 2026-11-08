@@ -1,3 +1,4 @@
+using Chaptarr.Core.Test.Common;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -52,24 +53,27 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
             public Author GetAuthor(int authorId) => _author;
 
+            public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => throw new System.NotImplementedException();
+
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new System.NotImplementedException();
             public Author AddAuthor(Author newAuthor, bool doRefresh) => throw new System.NotImplementedException();
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new System.NotImplementedException();
             public Author FindByProviderId(string provider, string providerId) => throw new System.NotImplementedException();
             public Author FindByName(string title) => throw new System.NotImplementedException();
-            public Author FindByNameInexact(string title) => throw new System.NotImplementedException();
             public List<Author> GetCandidates(string title) => throw new System.NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new System.NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new System.NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new System.NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new System.NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new System.NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new System.NotImplementedException();
+            public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
             public Author UpdateAuthor(Author author) => throw new System.NotImplementedException();
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new System.NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new System.NotImplementedException();
-            public Dictionary<int, string> AllAuthorPaths() => throw new System.NotImplementedException();
+            public List<KeyValuePair<int, string>> AllAuthorPaths() => throw new System.NotImplementedException();
             public bool AuthorPathExists(string folder) => throw new System.NotImplementedException();
-            public void RemoveAddOptions(Author author) => throw new System.NotImplementedException();
+            public void SetAddOptions(Author author) => throw new System.NotImplementedException();
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new System.NotImplementedException();
             public long GetAuthorSizeForMediaType(int authorId, string mediaType) => throw new System.NotImplementedException();
             public void UpdateLastSelectedMediaType(int authorId, string mediaType) => throw new System.NotImplementedException();
@@ -78,16 +82,16 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public void ClearAuthorCache() => throw new System.NotImplementedException();
         }
 
-        private sealed class BranchingEditionFtsRepository : IEditionFtsRepository
+        private sealed class BranchingEditionFtsRepository : StagedEditionFtsStub
         {
             public readonly List<int?> AuthorIdCalls = new List<int?>();
 
-            public bool FtsTableExists() => true;
-            public void RebuildIndex()
+            public override bool FtsTableExists() => true;
+            public override void RebuildIndex()
             {
             }
 
-            public List<EditionFtsMatch> SearchWithTwoStep(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit = 20)
+            protected override List<EditionFtsMatch> SelectEditions(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit)
             {
                 AuthorIdCalls.Add(authorId);
 

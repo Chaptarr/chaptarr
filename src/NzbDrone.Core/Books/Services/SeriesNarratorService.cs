@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using NLog;
+using NzbDrone.Core.Parser;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books.Repositories;
 
@@ -55,7 +56,7 @@ namespace NzbDrone.Core.Books.Services
 
                 // Get all books in the series
                 var booksInSeries = _bookRepository.GetBooksBySeries(seriesId);
-                var narrators = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var narrators = new HashSet<string>(NzbDrone.Core.Parser.Parser.NarratorNameComparer);
 
                 foreach (var book in booksInSeries)
                 {
@@ -93,9 +94,7 @@ namespace NzbDrone.Core.Books.Services
 
             try
             {
-                var booksInSeries = _bookRepository.GetBooksBySeries(seriesId)
-                    .OrderBy(b => b.SeriesLinks?.FirstOrDefault()?.SeriesPosition ?? 0)
-                    .ToList();
+                var booksInSeries = _bookRepository.GetBooksBySeries(seriesId);
 
                 if (booksInSeries.Count < 2)
                 {
@@ -103,7 +102,7 @@ namespace NzbDrone.Core.Books.Services
                     return new List<string>();
                 }
 
-                var narratorContinuity = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
+                var narratorContinuity = new Dictionary<string, List<int>>(NzbDrone.Core.Parser.Parser.NarratorNameComparer);
 
                 // Track narrator positions across the series
                 for (var i = 0; i < booksInSeries.Count; i++)
@@ -125,7 +124,7 @@ namespace NzbDrone.Core.Books.Services
 
                     // Remove duplicates (case-insensitive)
                     bookNarrators = bookNarrators
-                        .GroupBy(n => n.ToLowerInvariant())
+                        .GroupBy(n => n, NzbDrone.Core.Parser.Parser.NarratorNameComparer)
                         .Select(g => g.First())
                         .ToList();
 
@@ -197,12 +196,12 @@ namespace NzbDrone.Core.Books.Services
         {
             _logger.Debug("Getting narrator book counts for series ID: {0}", seriesId);
 
-            var narratorCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var narratorCounts = new Dictionary<string, int>(NzbDrone.Core.Parser.Parser.NarratorNameComparer);
             var booksInSeries = _bookRepository.GetBooksBySeries(seriesId);
 
             foreach (var book in booksInSeries)
             {
-                var bookNarrators = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var bookNarrators = new HashSet<string>(NzbDrone.Core.Parser.Parser.NarratorNameComparer);
 
                 // Add book narrator
                 if (book.Narrator.IsNotNullOrWhiteSpace())
@@ -243,7 +242,7 @@ namespace NzbDrone.Core.Books.Services
                 Narrator = kvp.Key,
                 BookCount = kvp.Value,
                 Percentage = totalBooks > 0 ? (kvp.Value * 100.0) / totalBooks : 0,
-                HasSequentialOverlap = sequentialNarrators.Contains(kvp.Key, StringComparer.OrdinalIgnoreCase),
+                HasSequentialOverlap = sequentialNarrators.Contains(kvp.Key, NzbDrone.Core.Parser.Parser.NarratorNameComparer),
                 IsMainNarrator = totalBooks > 0 && (kvp.Value * 100.0) / totalBooks >= 70, // 70%+ coverage
                 IsSporadicNarrator = totalBooks > 0 && (kvp.Value * 100.0) / totalBooks < 30 // <30% coverage
             })

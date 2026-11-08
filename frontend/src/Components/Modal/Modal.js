@@ -164,15 +164,21 @@ class Modal extends Component {
   };
 
   onKeyDown = (event) => {
-    const keyCode = event.keyCode;
+    if (event.defaultPrevented || openModals[openModals.length - 1] !== this._modalId) {
+      return;
+    }
 
-    if (keyCode === keyCodes.ESCAPE) {
-      if (openModals.indexOf(this._modalId) === openModals.length - 1) {
-        event.preventDefault();
-        event.stopPropagation();
-
-        this.props.onModalClose();
-      }
+    if (event.keyCode === keyCodes.ESCAPE) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.props.onModalClose();
+    } else if (event.keyCode === keyCodes.ENTER && this.props.onEnterPress &&
+               !event.isComposing && !event.repeat && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey &&
+               !event.target.closest('button, a[href], input, textarea, select, summary, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [role="textbox"], [role="combobox"]')) {
+      // Focused controls own Enter. Only the top dialog may use an otherwise unhandled Enter.
+      event.preventDefault();
+      event.stopPropagation();
+      this.props.onEnterPress();
     }
   };
 
@@ -235,7 +241,8 @@ Modal.propTypes = {
   children: PropTypes.node,
   isOpen: PropTypes.bool.isRequired,
   closeOnBackgroundClick: PropTypes.bool.isRequired,
-  onModalClose: PropTypes.func.isRequired
+  onModalClose: PropTypes.func.isRequired,
+  onEnterPress: PropTypes.func
 };
 
 Modal.defaultProps = {

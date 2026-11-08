@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.OpenApi.Models;
 using NLog.Extensions.Logging;
@@ -53,6 +54,8 @@ namespace NzbDrone.Host
                 b.ClearProviders();
                 b.SetMinimumLevel(Microsoft.Extensions.Logging.LogLevel.Trace);
                 b.AddFilter("Microsoft.AspNetCore", Microsoft.Extensions.Logging.LogLevel.Warning);
+                b.AddFilter("Microsoft.AspNetCore.HostFiltering", LogLevel.Information);
+                b.AddFilter("Microsoft.AspNetCore.HttpOverrides", LogLevel.Debug);
                 b.AddFilter("Chaptarr.Http.Authentication", LogLevel.Information);
                 b.AddFilter("Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager", LogLevel.Error);
                 b.AddNLog();
@@ -60,6 +63,7 @@ namespace NzbDrone.Host
 
             services.Configure<ForwardedHeadersOptions>(options =>
             {
+                options.ForwardLimit = null;
                 options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
                 options.KnownIPNetworks.Add(new IPNetwork(IPAddress.Parse("10.0.0.0"), 8));
                 options.KnownIPNetworks.Add(new IPNetwork(IPAddress.Parse("172.16.0.0"), 12));
@@ -116,6 +120,8 @@ namespace NzbDrone.Host
                     }
                 });
                 c.EnableAnnotations();
+                // Referenced properties need a wrapper to retain nullable and other member metadata.
+                c.UseAllOfToExtendReferenceSchemas();
 
                 var apiKeyHeader = new OpenApiSecurityScheme
                 {
@@ -216,8 +222,11 @@ namespace NzbDrone.Host
                               Lazy<IMainDatabase> mainDatabaseFactory,
                               Lazy<ILogDatabase> logDatabaseFactory,
                               Lazy<ICacheDatabase> cacheDatabaseFactory,
+                              IRestoreDatabase restoreDatabase,
+                              IConnectionStringFactory connectionStringFactory,
+                              IStagingDbContext stagingDbContext,
+                              IHostApplicationLifetime hostApplicationLifetime,
                               DatabaseTarget dbTarget,
-                              ISingleInstancePolicy singleInstancePolicy,
                               InitializeLogger initializeLogger,
                               ReconfigureLogging reconfigureLogging,
                               IAppFolderFactory appFolderFactory,
@@ -232,16 +241,12 @@ namespace NzbDrone.Host
             appFolderFactory.Register();
             pidFileProvider.Write();
 
+            InitializeDatabases(restoreDatabase, mainDatabaseFactory, logDatabaseFactory, cacheDatabaseFactory, stagingDbContext, hostApplicationLifetime,
+                connectionStringFactory.MainDbConnection.DatabaseType);
+
             configFileProvider.EnsureDefaultConfigFile();
 
             reconfigureLogging.Reconfigure();
-
-            EnsureSingleInstance(false, startupContext, singleInstancePolicy);
-
-            // instantiate the databases to initialize/migrate them
-            _ = mainDatabaseFactory.Value;
-            _ = logDatabaseFactory.Value;
-            _ = cacheDatabaseFactory.Value;
 
             dbTarget.Register();
             SchemaBuilder.Initialize(container);
@@ -258,7 +263,7 @@ namespace NzbDrone.Host
                 firewallAdapter.MakeAccessible();
             }
 
-            app.UseForwardedHeaders();
+            app.UseValidatedForwardedHeaders();
             app.UsePathBase(new PathString(configFileProvider.UrlBase));
             app.UseMiddleware<ServarrMediaTypeScopeMiddleware>();
             app.UseMiddleware<LoggingMiddleware>();
@@ -301,29 +306,55 @@ namespace NzbDrone.Host
             });
         }
 
-        private void EnsureSingleInstance(bool isService, IStartupContext startupContext, ISingleInstancePolicy instancePolicy)
+        private static void InitializeDatabases(IRestoreDatabase restoreDatabase,
+                                               Lazy<IMainDatabase> mainDatabaseFactory,
+                                               Lazy<ILogDatabase> logDatabaseFactory,
+                                               Lazy<ICacheDatabase> cacheDatabaseFactory,
+                                               IStagingDbContext stagingDbContext,
+                                               IHostApplicationLifetime hostApplicationLifetime,
+                                               DatabaseType databaseType)
         {
-            if (startupContext.Flags.Contains(StartupContext.NO_SINGLE_INSTANCE_CHECK))
+            var restoreInProgress = restoreDatabase.Restore(databaseType, hostApplicationLifetime.ApplicationStopping);
+            try
             {
-                return;
+                _ = mainDatabaseFactory.Value;
+                _ = logDatabaseFactory.Value;
+                _ = cacheDatabaseFactory.Value;
+                try
+                {
+                    stagingDbContext.InitializeDatabase();
+                }
+                catch (Exception ex) when (!restoreInProgress)
+                {
+                    NLog.LogManager.GetCurrentClassLogger().Error(ex, "The import queue could not be initialized. Chaptarr will retry initialization when the queue is next used.");
+                }
+                if (restoreInProgress)
+                {
+                    // Keep originals until listener binding and all hosted services have started successfully.
+                    hostApplicationLifetime.ApplicationStarted.Register(() =>
+                    {
+                        try
+                        {
+                            restoreDatabase.Commit();
+                        }
+                        catch
+                        {
+                            hostApplicationLifetime.StopApplication();
+                            throw;
+                        }
+                    });
+                }
             }
+            catch
+            {
+                if (restoreInProgress)
+                {
+                    restoreDatabase.Rollback();
+                }
 
-            if (startupContext.Flags.Contains(StartupContext.TERMINATE))
-            {
-                instancePolicy.KillAllOtherInstance();
-            }
-            else if (startupContext.Args.ContainsKey(StartupContext.APPDATA))
-            {
-                instancePolicy.WarnIfAlreadyRunning();
-            }
-            else if (isService)
-            {
-                instancePolicy.KillAllOtherInstance();
-            }
-            else
-            {
-                instancePolicy.PreventStartIfAlreadyRunning();
+                throw;
             }
         }
+
     }
 }

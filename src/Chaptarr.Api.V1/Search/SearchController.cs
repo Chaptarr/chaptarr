@@ -7,6 +7,7 @@ using Chaptarr.Api.V1.Series;
 using Chaptarr.Http;
 using Chaptarr.Http.Middleware;
 using Microsoft.AspNetCore.Mvc;
+using NLog;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MetadataSource;
@@ -24,8 +25,9 @@ namespace Chaptarr.Api.V1.Search
         private readonly IAuthorService _authorService;
         private readonly IBookService _bookService;
         private readonly IProviderAliasService _providerAliasService;
+        private readonly Logger _logger;
 
-        public SearchController(ISearchForNewEntity searchProxy, IBuildFileNames fileNameBuilder, IMapCoversToLocal coverMapper, IMediaCoverProxy mediaCoverProxy, IAuthorService authorService, IBookService bookService, IProviderAliasService providerAliasService = null)
+        public SearchController(ISearchForNewEntity searchProxy, IBuildFileNames fileNameBuilder, IMapCoversToLocal coverMapper, IMediaCoverProxy mediaCoverProxy, IAuthorService authorService, IBookService bookService, IProviderAliasService providerAliasService = null, Logger logger = null)
         {
             _searchProxy = searchProxy;
             _fileNameBuilder = fileNameBuilder;
@@ -34,6 +36,7 @@ namespace Chaptarr.Api.V1.Search
             _authorService = authorService;
             _bookService = bookService;
             _providerAliasService = providerAliasService;
+            _logger = logger ?? LogManager.GetCurrentClassLogger();
         }
 
         [HttpGet]
@@ -41,7 +44,7 @@ namespace Chaptarr.Api.V1.Search
         public ActionResult<List<SearchResource>> Search([FromQuery] string term, [FromQuery] string provider = null)
         {
             // Add logging to trace the search request
-            var logger = NLog.LogManager.GetCurrentClassLogger();
+            var logger = _logger;
             logger.Info($"[SEARCH API] Called with term: '{term}', provider: '{provider ?? "null"}'");
 
             try
@@ -86,7 +89,29 @@ namespace Chaptarr.Api.V1.Search
         {
             var isAudiobookProvider = string.Equals(provider, "audible", StringComparison.OrdinalIgnoreCase);
             var id = 1;
-            foreach (var result in results)
+            var resources = new List<SearchResource>();
+            var bookResources = new List<BookResource>();
+
+            var resultList = results.ToList();
+            var localBooks = BookLocalInstanceLookup.FindExistingBooks(_bookService, _providerAliasService, resultList.OfType<Book>());
+            var existingAuthors = resultList.OfType<NzbDrone.Core.Books.Author>()
+                .Concat(resultList.OfType<Book>().Select(book => book.Author)).Where(author => author != null)
+                .Distinct<NzbDrone.Core.Books.Author>(ReferenceEqualityComparer.Instance)
+                // Reuse only identical provider evidence. Keep secondary aliases in
+                // the key so a failed primary lookup cannot hide a distinct author.
+                .GroupBy(author => (author.HardcoverAuthorId, author.GoodreadsAuthorId, author.OpenLibraryAuthorId,
+                    author.GoogleBooksAuthorId, author.AudnexusAuthorId,
+                    RemoteIds: string.Concat((author.RemoteProviderIds ?? Enumerable.Empty<string>())
+                        .Where(id => !string.IsNullOrWhiteSpace(id)).OrderBy(id => id, StringComparer.Ordinal)
+                        .Select(id => $"{id.Length}:{id}"))))
+                .SelectMany(group =>
+                {
+                    var existingAuthor = FindExistingAuthor(group.First());
+                    return group.Select(author => (Author: author, Existing: existingAuthor));
+                })
+                .ToDictionary(item => item.Author, item => item.Existing,
+                    (IEqualityComparer<NzbDrone.Core.Books.Author>)ReferenceEqualityComparer.Instance);
+            foreach (var result in resultList)
             {
                 var resource = new SearchResource();
                 resource.Id = id++;
@@ -96,7 +121,7 @@ namespace Chaptarr.Api.V1.Search
                     resource.Author = author.ToResource(facadeContext);
 
                     // Cross-reference against local library to detect existing authors
-                    var existingAuthor = FindExistingAuthor(author);
+                    var existingAuthor = existingAuthors[author];
                     if (existingAuthor != null)
                     {
                         resource.Author.Id = existingAuthor.Id;
@@ -147,11 +172,11 @@ namespace Chaptarr.Api.V1.Search
                 {
                     resource.Book = book.ToResource(new BookResourceMappingOptions { FacadeContext = facadeContext });
 
-                    resource.Book.LocalAudiobookBooks = FindExistingBooks(book, BookMediaType.Audiobook)
+                    resource.Book.LocalAudiobookBooks = localBooks[book].Where(localBook => localBook.MediaType == BookMediaType.Audiobook)
                         .Select(x => x.ToLocalInstanceResource())
                         .Where(x => x != null)
                         .ToList();
-                    resource.Book.LocalEbookBooks = FindExistingBooks(book, BookMediaType.Ebook)
+                    resource.Book.LocalEbookBooks = localBooks[book].Where(localBook => localBook.MediaType == BookMediaType.Ebook)
                         .Select(x => x.ToLocalInstanceResource())
                         .Where(x => x != null)
                         .ToList();
@@ -164,7 +189,7 @@ namespace Chaptarr.Api.V1.Search
                     resource.Book.Author = book.Author.ToResource(facadeContext);
 
                     // Cross-reference book's author against local library
-                    var existingBookAuthor = book.Author != null ? FindExistingAuthor(book.Author) : null;
+                    var existingBookAuthor = book.Author != null ? existingAuthors[book.Author] : null;
                     if (existingBookAuthor != null)
                     {
                         resource.Book.Author.Id = existingBookAuthor.Id;
@@ -192,21 +217,7 @@ namespace Chaptarr.Api.V1.Search
                         .ToList();
                     resource.ExistingLocalId = localBookIds.Count == 1 ? localBookIds[0] : (int?)null;
 
-                    // For search results, use MediaCoverProxy to proxy remote images
-                    if (resource.Book.Id == 0 && resource.Book.Images != null)
-                    {
-                        foreach (var image in resource.Book.Images)
-                        {
-                            if (!string.IsNullOrWhiteSpace(image.Url))
-                            {
-                                image.Url = _mediaCoverProxy.RegisterUrl(image.Url);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        _coverMapper.ConvertToLocalUrls(resource.Book.Id, MediaCoverEntity.Book, resource.Book.Images);
-                    }
+                    bookResources.Add(resource.Book);
 
                     var cover = book.Editions.FirstOrDefault(x => x.Monitored)?.Images?.FirstOrDefault(c => c.CoverType == MediaCoverTypes.Cover);
 
@@ -292,8 +303,16 @@ namespace Chaptarr.Api.V1.Search
                     throw new NotImplementedException($"Bad response from search all proxy - unknown type: {result?.GetType()?.Name ?? "null"}");
                 }
 
-                yield return resource;
+                resources.Add(resource);
             }
+
+            if (bookResources.Count > 0)
+            {
+                _coverMapper.ConvertBookCoversToLocalUrls(bookResources.Select(book =>
+                    new KeyValuePair<int, List<MediaCover>>(book.Id, book.Images)));
+            }
+
+            return resources;
         }
 
         private NzbDrone.Core.Books.Author FindExistingAuthor(NzbDrone.Core.Books.Author searchAuthor)
@@ -311,9 +330,9 @@ namespace Chaptarr.Api.V1.Search
                         return _authorService.GetAuthor(aliasAuthorId);
                     }
                 }
-                catch
+                catch (Exception exception)
                 {
-                    // Ignore alias-index lookup failures; legacy single-field lookup below remains as fallback.
+                    _logger.Warn(exception, "Local author alias lookup failed; provider-column lookup remains available");
                 }
             }
 
@@ -341,9 +360,9 @@ namespace Chaptarr.Api.V1.Search
                         return existing;
                     }
                 }
-                catch
+                catch (Exception exception)
                 {
-                    // Ignore lookup failures
+                    _logger.Warn(exception, "Local author lookup failed for provider {0}; remaining provider identities will still be checked", provider);
                 }
             }
 
@@ -377,11 +396,6 @@ namespace Chaptarr.Api.V1.Search
             }
 
             return ids.ToList();
-        }
-
-        private List<NzbDrone.Core.Books.Book> FindExistingBooks(NzbDrone.Core.Books.Book searchBook, BookMediaType mediaType)
-        {
-            return BookLocalInstanceLookup.FindExistingBooks(_bookService, _providerAliasService, searchBook, mediaType);
         }
     }
 }

@@ -3,6 +3,10 @@ using NLog;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Parser;
+using NzbDrone.Core.Profiles.Metadata;
+using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.RootFolders;
+using NzbDrone.Core.Tags;
 
 namespace NzbDrone.Core.ImportLists.LazyLibrarianImport
 {
@@ -14,8 +18,17 @@ namespace NzbDrone.Core.ImportLists.LazyLibrarianImport
         public override TimeSpan MinRefreshInterval => TimeSpan.FromMinutes(15);
         public override int PageSize => 1000;
 
-        public LazyLibrarianImport(IHttpClient httpClient, IImportListStatusService importListStatusService, IConfigService configService, IParsingService parsingService, Logger logger)
-            : base(httpClient, importListStatusService, configService, parsingService, logger)
+        public LazyLibrarianImport(IHttpClient httpClient,
+            IImportListStatusService importListStatusService,
+            IConfigService configService,
+            IParsingService parsingService,
+            Lazy<IQualityProfileService> qualityProfileService,
+            Lazy<IMetadataProfileService> metadataProfileService,
+            Lazy<ITagService> tagService,
+            IRootFolderService rootFolderService,
+            IRootFolderSettingsResolver rootFolderSettingsResolver,
+            Logger logger)
+            : base(httpClient, importListStatusService, configService, parsingService, qualityProfileService, metadataProfileService, tagService, rootFolderService, rootFolderSettingsResolver, logger)
         {
         }
 

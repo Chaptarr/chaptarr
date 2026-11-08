@@ -1,3 +1,4 @@
+using NzbDrone.Common.Extensions;
 using System;
 using System.IO;
 using NLog;
@@ -29,7 +30,7 @@ namespace NzbDrone.Common.Processes
                 return;
             }
 
-            var filename = Path.Combine(_appFolderInfo.AppDataFolder, "chaptarr.pid");
+            var filename = _appFolderInfo.GetPidFile();
             try
             {
                 File.WriteAllText(filename, ProcessProvider.GetCurrentProcessId().ToString());

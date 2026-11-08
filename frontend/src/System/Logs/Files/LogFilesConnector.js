@@ -4,10 +4,9 @@ import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import * as commandNames from 'Commands/commandNames';
 import { executeCommand } from 'Store/Actions/commandActions';
+import { fetchGeneralSettings, saveGeneralSettingsFields } from 'Store/Actions/settingsActions';
 import { fetchLogFiles } from 'Store/Actions/systemActions';
-import { fetchGeneralSettings, saveGeneralSettings, setGeneralSettingsValue } from 'Store/Actions/settingsActions';
 import createCommandExecutingSelector from 'Store/Selectors/createCommandExecutingSelector';
-import createSettingsSectionSelector from 'Store/Selectors/createSettingsSectionSelector';
 import combinePath from 'Utilities/String/combinePath';
 import LogFiles from './LogFiles';
 
@@ -15,7 +14,7 @@ function createMapStateToProps() {
   return createSelector(
     (state) => state.system.logFiles,
     (state) => state.system.status.item,
-    createSettingsSectionSelector('general'),
+    (state) => state.settings.general,
     createCommandExecutingSelector(commandNames.DELETE_LOG_FILES),
     (logFiles, status, generalSettings, deleteFilesExecuting) => {
       const {
@@ -28,12 +27,7 @@ function createMapStateToProps() {
         isWindows
       } = status;
 
-      const {
-        settings,
-        isSaving: isSavingSettings
-      } = generalSettings;
-
-      const logLevel = settings?.logLevel?.value || 'info';
+      const logLevel = generalSettings.item.logLevel || 'info';
 
       return {
         isFetching,
@@ -42,7 +36,8 @@ function createMapStateToProps() {
         currentLogView: 'Log Files',
         location: combinePath(isWindows, appData, ['logs']),
         logLevel,
-        isSavingSettings
+        isSettingsLoaded: generalSettings.isPopulated && !generalSettings.isFetching && !generalSettings.error,
+        settingsError: generalSettings.error
       };
     }
   );
@@ -52,11 +47,11 @@ const mapDispatchToProps = {
   fetchLogFiles,
   executeCommand,
   fetchGeneralSettings,
-  saveGeneralSettings,
-  setGeneralSettingsValue
+  saveGeneralSettings: saveGeneralSettingsFields
 };
 
 class LogFilesConnector extends Component {
+  state = { isSavingSettings: false, saveSettingsError: null };
 
   //
   // Lifecycle
@@ -66,11 +61,18 @@ class LogFilesConnector extends Component {
     this.props.fetchGeneralSettings();
   }
 
+  componentWillUnmount() {
+    this.saveRequest = null;
+  }
+
   //
   // Listeners
 
   onRefreshPress = () => {
     this.props.fetchLogFiles();
+    if (!this.props.isSettingsLoaded) {
+      this.props.fetchGeneralSettings();
+    }
   };
 
   onDeleteFilesPress = () => {
@@ -85,12 +87,22 @@ class LogFilesConnector extends Component {
   };
 
   onLogLevelChange = ({ value }) => {
-    this.props.setGeneralSettingsValue({ name: 'logLevel', value });
-    
-    // Save after a small delay to ensure state is updated
-    setTimeout(() => {
-      this.props.saveGeneralSettings();
-    }, 100);
+    if (!this.props.isSettingsLoaded || this.state.isSavingSettings) {
+      return;
+    }
+    this.setState({ isSavingSettings: true, saveSettingsError: null });
+    const request = this.props.saveGeneralSettings({ logLevel: value });
+    this.saveRequest = request;
+    request.done(() => {
+      if (this.saveRequest === request) {
+        this.setState({ isSavingSettings: false });
+      }
+    });
+    request.fail((saveSettingsError) => {
+      if (this.saveRequest === request) {
+        this.setState({ isSavingSettings: false, saveSettingsError });
+      }
+    });
   };
 
   //
@@ -103,18 +115,19 @@ class LogFilesConnector extends Component {
         onDeleteFilesPress={this.onDeleteFilesPress}
         onLogLevelChange={this.onLogLevelChange}
         {...this.props}
+        {...this.state}
       />
     );
   }
 }
 
 LogFilesConnector.propTypes = {
+  isSettingsLoaded: PropTypes.bool.isRequired,
   deleteFilesExecuting: PropTypes.bool.isRequired,
   fetchLogFiles: PropTypes.func.isRequired,
   executeCommand: PropTypes.func.isRequired,
   fetchGeneralSettings: PropTypes.func.isRequired,
-  saveGeneralSettings: PropTypes.func.isRequired,
-  setGeneralSettingsValue: PropTypes.func.isRequired
+  saveGeneralSettings: PropTypes.func.isRequired
 };
 
 export default connect(createMapStateToProps, mapDispatchToProps)(LogFilesConnector);

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Common.Instrumentation.Extensions;
@@ -8,12 +10,14 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
+using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Queue;
 
 namespace NzbDrone.Core.IndexerSearch
 {
     internal class BookSearchService : IExecute<BookSearchCommand>,
+                               IExecute<AuthorSearchCommand>,
                                IExecute<MissingBookSearchCommand>,
                                IExecute<CutoffUnmetBookSearchCommand>
     {
@@ -54,13 +58,15 @@ namespace NzbDrone.Core.IndexerSearch
             };
         }
 
-        private async Task<int> SearchForBooks(IEnumerable<Book> books, bool userInvokedSearch, HashSet<int> searchedBookIds = null, List<Book> authorCatalog = null)
+        private async Task<int> SearchForBooks(IEnumerable<Book> books, bool userInvokedSearch, HashSet<int> searchedBookIds = null, List<Book> authorCatalog = null,
+            CancellationToken cancellationToken = default, Action<int> onBookCompleted = null, bool allowUnmonitored = false)
         {
             var downloadedCount = 0;
             searchedBookIds ??= new HashSet<int>();
 
             foreach (var book in books.Where(b => b?.Id > 0).OrderBy(a => a.LastSearchTime ?? DateTime.MinValue))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!searchedBookIds.Add(book.Id))
                 {
                     _logger.Debug("Skipping duplicate search request for book: [{0}]", book);
@@ -71,19 +77,23 @@ namespace NzbDrone.Core.IndexerSearch
 
                 try
                 {
-                    decisions = await _releaseSearchService.BookSearch(book, authorCatalog, false, userInvokedSearch, false);
+                    decisions = await _releaseSearchService.BookSearch(book, authorCatalog, false, userInvokedSearch, false, allowUnmonitored);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
                 {
                     _logger.Error(ex, "Unable to search for book: [{0}]", book);
+                    onBookCompleted?.Invoke(0);
                     continue;
                 }
 
+                cancellationToken.ThrowIfCancellationRequested();
                 var processed = await _processDownloadDecisions.ProcessDecisions(decisions);
 
                 downloadedCount += processed.Grabbed.Count;
+                onBookCompleted?.Invoke(processed.Grabbed.Count);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             return downloadedCount;
         }
 
@@ -117,7 +127,8 @@ namespace NzbDrone.Core.IndexerSearch
         {
             var queuedBookIds = new HashSet<int>();
 
-            foreach (var queueItem in queue ?? Enumerable.Empty<Queue.Queue>())
+            foreach (var queueItem in (queue ?? Enumerable.Empty<Queue.Queue>())
+                .Where(item => item.TrackedDownloadState != TrackedDownloadState.Imported))
             {
                 if (queueItem.Book?.Id > 0)
                 {
@@ -153,6 +164,40 @@ namespace NzbDrone.Core.IndexerSearch
                 .ToHashSet();
         }
 
+        public void Execute(AuthorSearchCommand message)
+        {
+            Execute(message, CancellationToken.None);
+        }
+
+        public void Execute(AuthorSearchCommand message, CancellationToken cancellationToken)
+        {
+            var timer = Stopwatch.StartNew();
+            var authorCatalog = _bookService.GetBooksByAuthor(message.AuthorId, onlyMonitoredEditions: true);
+            var books = FilterBooksWithConfiguredProfiles(authorCatalog.Where(book => book.IsMonitoredWithAuthor()));
+            var authorName = authorCatalog.FirstOrDefault()?.Author?.Name ?? "Unknown author";
+            var completed = 0;
+            var grabbed = 0;
+            var outcome = "failed";
+            _logger.ProgressInfo("Searching {0} monitored books for {1} (author {2})", books.Count, authorName, message.AuthorId);
+            try
+            {
+                SearchForBooks(books, message.Trigger == CommandTrigger.Manual,
+                    authorCatalog: authorCatalog, cancellationToken: cancellationToken,
+                    onBookCompleted: count => { completed++; grabbed += count; }).GetAwaiter().GetResult();
+                outcome = "finished";
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                outcome = "cancelled";
+                throw;
+            }
+            finally
+            {
+                _logger.ProgressInfo("Author search for {0} (author {1}) {2} after {3} of {4} books in {5:F1} s: {6} grabbed",
+                    authorName, message.AuthorId, outcome, completed, books.Count, timer.Elapsed.TotalSeconds, grabbed);
+            }
+        }
+
         public void Execute(BookSearchCommand message)
         {
             var bookIds = (message.BookIds ?? new List<int>())
@@ -165,15 +210,34 @@ namespace NzbDrone.Core.IndexerSearch
                 return;
             }
 
-            var allowUnmonitored = message.Trigger == CommandTrigger.Manual && bookIds.Count == 1;
+            var allowUnmonitored = message.Trigger == CommandTrigger.Manual && !message.MonitoredOnly;
+            var selected = _bookService.GetExistingBooks(bookIds).ToDictionary(book => book.Id);
+            var catalogs = new Dictionary<int, List<Book>>();
+            var lastBookByAuthor = bookIds.Where(selected.ContainsKey).GroupBy(id => selected[id].AuthorId)
+                .ToDictionary(group => group.Key, group => group.Last());
 
             foreach (var bookId in bookIds)
             {
-                var userInvokedSearch = message.Trigger == CommandTrigger.Manual;
-                var decisions = _releaseSearchService.BookSearch(bookId, false, userInvokedSearch, false, allowUnmonitored).GetAwaiter().GetResult();
-                var processed = _processDownloadDecisions.ProcessDecisions(decisions).GetAwaiter().GetResult();
+                if (!selected.TryGetValue(bookId, out var book))
+                {
+                    _logger.Warn("Skipping selected book {0}: it is no longer in the library", bookId);
+                    continue;
+                }
+                if (!catalogs.TryGetValue(book.AuthorId, out var catalog))
+                {
+                    var timer = Stopwatch.StartNew();
+                    catalog = _bookService.GetBooksByAuthor(book.AuthorId, onlyMonitoredEditions: true);
+                    catalogs.Add(book.AuthorId, catalog);
+                    _logger.Debug("Loaded selected-search catalog for author {0}: {1} books in {2} ms", book.AuthorId, catalog.Count, timer.ElapsedMilliseconds);
+                }
 
-                _logger.ProgressInfo("Book search completed. {0} reports downloaded.", processed.Grabbed.Count);
+                var grabbed = SearchForBooks(new[] { book }, message.Trigger == CommandTrigger.Manual,
+                    authorCatalog: catalog, allowUnmonitored: allowUnmonitored).GetAwaiter().GetResult();
+                _logger.ProgressInfo("Book search completed. {0} reports downloaded.", grabbed);
+                if (lastBookByAuthor[book.AuthorId] == bookId)
+                {
+                    catalogs.Remove(book.AuthorId);
+                }
             }
         }
 
@@ -198,7 +262,7 @@ namespace NzbDrone.Core.IndexerSearch
                     continue;
                 }
 
-                var authorBooks = _bookService.GetBooksByAuthor(authorTargets.Key);
+                var authorBooks = _bookService.GetBooksByAuthor(authorTargets.Key, onlyMonitoredEditions: true);
                 if (authorBooks == null || authorBooks.Count == 0)
                 {
                     continue;
@@ -236,7 +300,7 @@ namespace NzbDrone.Core.IndexerSearch
                     continue;
                 }
 
-                var authorBooks = _bookService.GetBooksByAuthor(authorTargets.Key);
+                var authorBooks = _bookService.GetBooksByAuthor(authorTargets.Key, onlyMonitoredEditions: true);
                 if (authorBooks == null || authorBooks.Count == 0)
                 {
                     continue;

@@ -18,6 +18,11 @@ namespace Chaptarr.Http.Middleware
                 return false;
             }
 
+            return IsCacheableResource(request);
+        }
+
+        private static bool IsCacheableResource(HttpRequest request)
+        {
             if (request.Path.StartsWithSegments("/api", StringComparison.CurrentCultureIgnoreCase))
             {
                 return false;
@@ -55,10 +60,13 @@ namespace Chaptarr.Http.Middleware
             // Cache only when the request includes an explicit version signal (cache breaker).
             // - `h`: our production cache-breaker hash
             // - `cb`: webpack cache-buster (from index.html)
-            // - `lastWrite`: MediaCover URL versioning
+            // - `lastWrite`: legacy MediaCover URL versioning
+            // - `v`: current author-photo and book-cover content version
             return request.Query.ContainsKey("h") ||
                    request.Query.ContainsKey("cb") ||
-                   request.Query.ContainsKey("lastWrite");
+                   request.Query.ContainsKey("lastWrite") ||
+                   (request.Path.StartsWithSegments("/MediaCover", StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(request.Query["v"]));
         }
     }
 }

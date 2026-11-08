@@ -1,9 +1,11 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import Alert from 'Components/Alert';
 import SpinnerButton from 'Components/Link/SpinnerButton';
 import TableRowCell from 'Components/Table/Cells/TableRowCell';
 import TableRow from 'Components/Table/TableRow';
 import { kinds, sizes } from 'Helpers/Props';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import stripHtml from 'Utilities/String/stripHtml';
 import translate from 'Utilities/String/translate';
 import styles from './NarratorSearchRow.css';
@@ -19,12 +21,23 @@ class NarratorSearchRow extends Component {
   constructor(props, context) {
     super(props, context);
 
+    this.errorRef = React.createRef();
+    this.detailsRef = React.createRef();
     this.state = {
       imageError: false
     };
   }
 
   componentDidUpdate(prevProps) {
+    if (this.props.error && this.props.error !== prevProps.error) {
+      this.errorRef.current?.scrollIntoView({ block: 'nearest' });
+    }
+
+    if (prevProps.isSelecting && !this.props.isSelecting && document.activeElement === this.detailsRef.current) {
+      const target = this.props.error ? this.errorRef.current : this.detailsRef.current?.closest('tr')?.querySelector('button');
+      target?.focus({ preventScroll: true });
+    }
+
     const previousPhoto = typeof prevProps.narrator === 'object' ? prevProps.narrator.photo : null;
     const currentPhoto = typeof this.props.narrator === 'object' ? this.props.narrator.photo : null;
 
@@ -50,6 +63,7 @@ class NarratorSearchRow extends Component {
 
   onSelectPress = () => {
     const { narrator, onSelect } = this.props;
+    this.detailsRef.current?.focus({ preventScroll: true });
     onSelect(narrator);
   };
 
@@ -61,12 +75,12 @@ class NarratorSearchRow extends Component {
       narrator,
       status,
       onSelect,
-      isSelecting
+      isSelecting,
+      error
     } = this.props;
 
     const isAvailable = status === 'available';
     const isExisting = status === 'existing';
-    const isMonitored = status === 'monitored';
 
     const narratorName = typeof narrator === 'string' ? narrator : narrator.name;
     const editionTitle = typeof narrator === 'object' ? narrator.title : null;
@@ -107,7 +121,11 @@ class NarratorSearchRow extends Component {
                 loading="lazy"
               />
             </div>
-            <div className={styles.narratorDetails}>
+            <div
+              ref={this.detailsRef}
+              className={styles.narratorDetails}
+              tabIndex={-1}
+            >
               {!!editionTitle && (
                 <div className={styles.editionTitle}>
                   {editionTitle}
@@ -144,6 +162,13 @@ class NarratorSearchRow extends Component {
                   {translate('NarratorDurationDisplay', { hours: Math.floor(narratorDuration / 60), minutes: narratorDuration % 60 })}
                 </div>
               )}
+              {error && (
+                <div ref={this.errorRef} tabIndex={-1}>
+                  <Alert kind={kinds.DANGER} role="alert">
+                    {error.message || getErrorMessage(error, translate('WantedEditionAddFailed'))}
+                  </Alert>
+                </div>
+              )}
             </div>
           </div>
         </TableRowCell>
@@ -152,16 +177,13 @@ class NarratorSearchRow extends Component {
           {isExisting && (
             <span className={styles.inLibraryStatus}>
               <span className={styles.statusIcon}>✓</span>
-              {translate('InLibrary')}
-            </span>
-          )}
-          {isMonitored && (
-            <span className={styles.monitoredStatus}>
-              {translate('Monitored')}
+              {translate('WantedEditionAlreadyHaveCopy')}
+              {narrator.existingCopyMonitored === false ? ` (${translate('WantedEditionBookNotMonitored')})` : null}
             </span>
           )}
           {isAvailable && onSelect && (
             <SpinnerButton
+              className={styles.addButton}
               kind={kinds.PRIMARY}
               size={sizes.SMALL}
               isSpinning={isSelecting}
@@ -194,13 +216,13 @@ NarratorSearchRow.propTypes = {
       editionId: PropTypes.number,
       narratorNames: PropTypes.arrayOf(PropTypes.string),
       monitored: PropTypes.bool,
-      monitoredByAnotherAudiobookBook: PropTypes.bool,
-      bookFileCount: PropTypes.number,
+      existingCopyMonitored: PropTypes.bool,
       status: PropTypes.string
     })
   ]).isRequired,
-  status: PropTypes.oneOf(['available', 'existing', 'monitored']).isRequired,
+  status: PropTypes.oneOf(['available', 'existing']).isRequired,
   onSelect: PropTypes.func,
+  error: PropTypes.object,
   isSelecting: PropTypes.bool.isRequired
 };
 

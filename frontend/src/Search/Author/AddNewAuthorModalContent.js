@@ -54,6 +54,8 @@ class AddNewAuthorModalContent extends Component {
       onSetDefaultMediaType,
       isSavingDefaultMediaType,
       rootFoldersPopulated,
+      existingAuthor,
+      hasUnresolvedSyncOptions,
       audiobookRootFolderPath,
       ebookRootFolderPath,
       audiobookQualityProfileId,
@@ -77,14 +79,17 @@ class AddNewAuthorModalContent extends Component {
     const needsAudiobook = selectedMediaType === 'audiobook' || selectedMediaType === 'both';
     const needsEbook = selectedMediaType === 'ebook' || selectedMediaType === 'both';
 
-    const isAddDisabled = !rootFoldersPopulated ||
+    const isAddDisabled = isAdding || hasUnresolvedSyncOptions || !rootFoldersPopulated ||
       (needsAudiobook && (!audiobookRoot || !audiobookProfile || audiobookProfile === 0 || audiobookProfile === 'none')) ||
       (needsEbook && (!ebookRoot || !ebookProfile || ebookProfile === 0 || ebookProfile === 'none'));
+    const formatName = { audiobook: 'Audiobooks', ebook: 'Ebooks', both: 'AudiobooksAndEbooks' }[selectedMediaType];
 
     return (
       <ModalContent onModalClose={onModalClose}>
         <ModalHeader>
-          {translate('AddNewAuthor')}
+          {existingAuthor ? translate('AddAsFormat', {
+            format: translate(formatName)
+          }) : translate('AddNewAuthor')}
         </ModalHeader>
 
         <ModalBody>
@@ -126,6 +131,7 @@ class AddNewAuthorModalContent extends Component {
               <AddAuthorOptionsForm
                 includeNoneMetadataProfile={false}
                 includeBothMediaType={true}
+                includeSyncMonitoredAcrossFormats={true}
                 selectedMediaType={selectedMediaType}
                 onMediaTypeChange={onMediaTypeChange}
                 defaultMediaType={defaultMediaType}
@@ -179,6 +185,7 @@ AddNewAuthorModalContent.propTypes = {
   images: PropTypes.arrayOf(PropTypes.object).isRequired,
   isAdding: PropTypes.bool.isRequired,
   addError: PropTypes.object,
+  existingAuthor: PropTypes.object,
   isSmallScreen: PropTypes.bool.isRequired,
   selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook', 'both']).isRequired,
   onMediaTypeChange: PropTypes.func.isRequired,
@@ -186,6 +193,7 @@ AddNewAuthorModalContent.propTypes = {
   onSetDefaultMediaType: PropTypes.func,
   isSavingDefaultMediaType: PropTypes.bool,
   rootFoldersPopulated: PropTypes.bool.isRequired,
+  hasUnresolvedSyncOptions: PropTypes.bool,
   audiobookRootFolderPath: PropTypes.object,
   ebookRootFolderPath: PropTypes.object,
   audiobookQualityProfileId: PropTypes.object,

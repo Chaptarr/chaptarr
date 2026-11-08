@@ -1,7 +1,14 @@
+using System.Collections.Generic;
+using System.Linq;
+using System.Net;
 using Chaptarr.Api.V1.MediaTypes;
+using Chaptarr.Http.Middleware;
+using Chaptarr.Http.REST;
+using NzbDrone.Core.Exceptions;
 using Chaptarr.Http;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.Messaging.Commands;
 
 namespace Chaptarr.Api.V1.Books
@@ -11,11 +18,13 @@ namespace Chaptarr.Api.V1.Books
     {
         private readonly IBookService _bookService;
         private readonly IManageCommandQueue _commandQueueManager;
+        private readonly IMapCoversToLocal _coverMapper;
 
-        public BookEditorController(IBookService bookService, IManageCommandQueue commandQueueManager)
+        public BookEditorController(IBookService bookService, IManageCommandQueue commandQueueManager, IMapCoversToLocal coverMapper)
         {
             _bookService = bookService;
             _commandQueueManager = commandQueueManager;
+            _coverMapper = coverMapper;
         }
 
         [HttpPut]
@@ -46,17 +55,34 @@ namespace Chaptarr.Api.V1.Books
                 }
             }
 
-            _bookService.UpdateMany(booksToUpdate);
-            return Accepted(booksToUpdate.ToResource());
+            _bookService.UpdateManyWithLifecycle(booksToUpdate);
+
+            var resources = booksToUpdate.ToResource();
+            _coverMapper.ConvertBookCoversToLocalUrls(resources.Select(book =>
+                new KeyValuePair<int, List<MediaCover>>(book.Id, book.Images)));
+
+            return Accepted(resources);
         }
 
         [HttpDelete]
-        public void DeleteBook([FromBody] BookEditorResource resource)
+        [ProducesResponseType(200)]
+        [ProducesResponseType(typeof(ApiErrorResource), 400)]
+        [ProducesResponseType(typeof(ApiErrorResource), 409)]
+        public object DeleteBook([FromBody] BookEditorResource resource)
         {
+            var scope = MediaTypeParameterParser.ParseDeletionScope(false, HttpContext.GetReadarrFacadeContext()?.MediaType, resource.MediaType);
+            if (scope.HasValue && _bookService.GetBooks(resource.BookIds).Any(book => book.MediaType != scope.Value))
+            {
+                throw new NzbDroneClientException(HttpStatusCode.Conflict,
+                    "The selection contains books of a different media type than the requested scope. Nothing was changed.");
+            }
+
             foreach (var bookId in resource.BookIds)
             {
                 _bookService.DeleteBook(bookId, resource.DeleteFiles ?? false, resource.AddImportListExclusion ?? false);
             }
+
+            return new { };
         }
     }
 }

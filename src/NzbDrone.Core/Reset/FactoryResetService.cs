@@ -56,7 +56,7 @@ namespace NzbDrone.Core.Reset
                 // From here until the process restarts, live services would be querying a schema
                 // that is being dropped. Flip the process-wide gate so the HTTP pipeline answers
                 // 503 instead of surfacing raw "no such table" errors to browsers and logs.
-                FactoryResetState.MarkResetting();
+                DatabaseRestorationService.CancelPendingRestore(_appFolderInfo, forFactoryReset: true);
 
                 // Capture host-level connectivity settings so users do not get locked out after reset.
                 // All other settings (including auth + API key) will be regenerated.
@@ -237,7 +237,7 @@ namespace NzbDrone.Core.Reset
         private void ResetStagingDatabase()
         {
             // staging.db is durable but disposable; wipe it as part of a full reset.
-            var stagingPath = System.IO.Path.Combine(_appFolderInfo.AppDataFolder, "staging.db");
+            var stagingPath = _appFolderInfo.GetStagingDatabase();
 
             _logger.Warn("[FACTORY-RESET] Resetting staging database: {0}", stagingPath);
 
@@ -273,6 +273,8 @@ namespace NzbDrone.Core.Reset
 
         private void ResetAppDataFiles(Dictionary<string, object> preservedHostConfig)
         {
+            TryDeleteFile(_appFolderInfo.GetScheduledBackupFailure());
+
             // Wipe app-level caches.
             TryDeleteFolder(_appFolderInfo.GetMediaCoverPath(), recursive: true);
             TryDeleteFolder(_appFolderInfo.GetDataProtectionPath(), recursive: true);

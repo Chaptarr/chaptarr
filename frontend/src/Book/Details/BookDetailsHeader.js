@@ -2,6 +2,7 @@ import moment from 'moment';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import TextTruncate from 'react-text-truncate';
+import { findImage, getCoverImageUrl } from 'Author/AuthorImage';
 import AuthorNameLink from 'Author/AuthorNameLink';
 import BookCover from 'Book/BookCover';
 import HeartRating from 'Components/HeartRating';
@@ -23,10 +24,6 @@ import styles from './BookDetailsHeader.css';
 
 const defaultFontSize = parseInt(fonts.defaultFontSize);
 const lineHeight = parseFloat(fonts.lineHeight);
-
-function getFanartUrl(images) {
-  return images.find((x) => x.coverType === 'fanart')?.url;
-}
 
 function getDownloadStatusLabel(queueItem, grabbed) {
   if (!queueItem && !grabbed) {
@@ -177,7 +174,7 @@ class BookDetailsHeader extends Component {
       titleWidth
     } = this.state;
 
-    const fanartUrl = getFanartUrl(author.images);
+    const fanartUrl = getCoverImageUrl(findImage(author.images, 'fanart'), 'fanart', width || window.innerWidth);
     const marqueeWidth = titleWidth - (isSmallScreen ? 85 : 160);
     const isDownloading = !!queueItem || grabbed;
     const downloadStatus = getDownloadStatusLabel(queueItem, grabbed);
@@ -217,6 +214,7 @@ class BookDetailsHeader extends Component {
             images={images}
             size={250}
             lazy={false}
+            allowTemporaryUrl={true}
           />
 
           <div className={styles.info}>

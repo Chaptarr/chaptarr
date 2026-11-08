@@ -1,17 +1,16 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import BookQuality from 'Book/BookQuality';
+import DeleteBookFilesModal from 'BookFile/Editor/DeleteBookFilesModal';
 import FileDetailsModal from 'BookFile/FileDetailsModal';
 import IconButton from 'Components/Link/IconButton';
-import ConfirmModal from 'Components/Modal/ConfirmModal';
 import RelativeDateCellConnector from 'Components/Table/Cells/RelativeDateCellConnector';
 import VirtualTableRowCell from 'Components/Table/Cells/VirtualTableRowCell';
 import VirtualTableSelectCell from 'Components/Table/Cells/VirtualTableSelectCell';
-import { icons, kinds } from 'Helpers/Props';
+import { icons } from 'Helpers/Props';
 import InteractiveImportModal from 'InteractiveImport/InteractiveImportModal';
 import { getMediaTypeFromExtension } from 'Utilities/MediaFile/getMediaTypeFromExtension';
 import formatBytes from 'Utilities/Number/formatBytes';
-import translate from 'Utilities/String/translate';
 import styles from './UnmappedFilesTableRow.css';
 
 class UnmappedFilesTableRow extends Component {
@@ -228,12 +227,9 @@ class UnmappedFilesTableRow extends Component {
           id={id}
         />
 
-        <ConfirmModal
+        <DeleteBookFilesModal
           isOpen={isConfirmDeleteModalOpen}
-          kind={kinds.DANGER}
-          title={translate('DeleteBookFile')}
-          message={translate('DeleteBookFileMessageText', [path])}
-          confirmLabel={translate('Delete')}
+          fileIds={[id]}
           onConfirm={this.onConfirmDelete}
           onCancel={this.onConfirmDeleteModalClose}
         />

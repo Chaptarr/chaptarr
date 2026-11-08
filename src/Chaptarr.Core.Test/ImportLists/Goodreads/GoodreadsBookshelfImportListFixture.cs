@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Xml.Linq;
 using Newtonsoft.Json.Linq;
 using NLog;
 using NUnit.Framework;
@@ -29,7 +30,7 @@ namespace Chaptarr.Core.Test.ImportLists.Goodreads
             public List<QualityProfile> All() => new();
             public List<QualityProfile> GetByType(ProfileType type) => new();
             public QualityProfile Get(int id) => throw new NotImplementedException();
-            public bool Exists(int id) => false;
+            public bool Exists(int id, ProfileType? profileType = null) => false;
             public QualityProfile GetDefaultProfile(string name, Quality cutoff = null, params Quality[] allowed) => throw new NotImplementedException();
         }
 
@@ -40,8 +41,14 @@ namespace Chaptarr.Core.Test.ImportLists.Goodreads
             public void Delete(int id) => throw new NotImplementedException();
             public List<MetadataProfile> All() => new();
             public MetadataProfile Get(int id) => throw new NotImplementedException();
-            public bool Exists(int id) => false;
+            public bool Exists(int id, MetadataProfileType? profileType = null) => false;
             public List<Book> FilterBooks(Author input, int profileId) => input?.Books ?? new List<Book>();
+
+            public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds) =>
+                FilterBooks(input, profileId, requestedNarrationIds, null);
+
+            public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds) =>
+                FilterBooks(input, profileId);
         }
 
         private sealed class StubTagService : ITagService
@@ -113,7 +120,10 @@ namespace Chaptarr.Core.Test.ImportLists.Goodreads
 
             public HttpResponse Get(HttpRequest request)
             {
-                Requests.Add(request);
+                lock (Requests)
+                {
+                    Requests.Add(request);
+                }
 
                 var url = request.Url.FullUri;
 
@@ -190,7 +200,10 @@ namespace Chaptarr.Core.Test.ImportLists.Goodreads
 
             public HttpResponse Get(HttpRequest request)
             {
-                Requests.Add(request);
+                lock (Requests)
+                {
+                    Requests.Add(request);
+                }
 
                 var url = request.Url.FullUri;
                 if (url.Contains("/user/show/12345678", StringComparison.OrdinalIgnoreCase))
@@ -495,6 +508,50 @@ namespace Chaptarr.Core.Test.ImportLists.Goodreads
             Assert.That(items.Single().AuthorGoodreadsId, Is.Null);
             Assert.That(httpClient.Requests.Any(r => r.Url.FullUri.Contains("/review/list.xml", StringComparison.OrdinalIgnoreCase)), Is.True);
             Assert.That(httpClient.Requests.Any(r => r.Url.FullUri.Contains("/review/list_rss/", StringComparison.OrdinalIgnoreCase)), Is.True);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void should_limit_api_shelf_by_unique_works_and_keep_complete_fetched_page(bool secondWorkOnFirstPage)
+        {
+            var firstPage = XDocument.Parse(BuildReviewListXml(1, 200, secondWorkOnFirstPage ? 1600 : 203, 200));
+            foreach (var work in firstPage.Descendants("work").Elements("id"))
+            {
+                work.Value = "1001";
+            }
+            if (secondWorkOnFirstPage)
+            {
+                firstPage.Descendants("review").ElementAt(2).Element("book").Element("work").Element("id").Value = "2001";
+            }
+            var secondPage = XDocument.Parse(BuildReviewListXml(201, 3, 203, 203));
+            var secondWorks = secondPage.Descendants("work").Elements("id").ToList();
+            secondWorks[0].Value = "2001";
+            secondWorks[1].Value = "1001";
+            secondWorks[2].Value = "3001";
+            var httpClient = new StubHttpClient(shelfListXml: BuildShelfListXml(new[] { "read" }),
+                reviewListPage1Xml: firstPage.ToString(), reviewListPage2Xml: secondPage.ToString());
+            var importList = new GoodreadsBookshelf(new StubImportListStatusService(), null, null, httpClient,
+                new Lazy<IQualityProfileService>(() => new StubQualityProfileService()),
+                new Lazy<IMetadataProfileService>(() => new StubMetadataProfileService()),
+                new Lazy<ITagService>(() => new StubTagService()), new StubRootFolderService(),
+                new StubRootFolderSettingsResolver(), LogManager.GetCurrentClassLogger())
+            {
+                Definition = new ImportListDefinition
+                {
+                    Id = 1,
+                    Name = "Goodreads Bookshelves",
+                    Settings = new GoodreadsBookshelfImportListSettings { UserId = "12345678", BookshelfIds = new[] { "read" }, ImportLimit = 2 }
+                }
+            };
+
+            var items = importList.Fetch();
+
+            Assert.That(items, Has.Count.EqualTo(secondWorkOnFirstPage ? 200 : 202));
+            Assert.That(items.Select(item => item.BookProviderId).Distinct(), Is.EquivalentTo(new[] { "gr:1001", "gr:2001" }));
+            Assert.That(items.Any(item => item.EditionProviderId == "gr:200"), Is.True);
+            Assert.That(items.Any(item => item.EditionProviderId == "gr:202"), Is.EqualTo(!secondWorkOnFirstPage));
+            Assert.That(httpClient.Requests.Count(request => request.Url.FullUri.Contains("/review/list.xml", StringComparison.OrdinalIgnoreCase)),
+                Is.EqualTo(secondWorkOnFirstPage ? 1 : 2));
         }
 
         [Test]

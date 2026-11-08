@@ -5,6 +5,8 @@ using System.Text.RegularExpressions;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.Indexers;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
@@ -47,7 +49,7 @@ namespace NzbDrone.Core.Parser
 
         private const int MaxFormatTokenGap = 3;
 
-        public static QualityModel ParseQuality(string name, string desc = null, List<int> categories = null, string indexerName = null, List<string> tags = null, int indexerFlags = 0)
+        public static QualityModel ParseQuality(string name, string desc = null, List<int> categories = null, string indexerName = null, List<string> tags = null, int indexerFlags = 0, BookMediaType? categoryMediaType = null)
         {
             Logger.Trace("Trying to parse quality for '{0}'", name);
 
@@ -64,7 +66,7 @@ namespace NzbDrone.Core.Parser
                 var descCodec = ParseCodec(desc, "");
                 Logger.Trace("Got codec {0}", descCodec);
 
-                result.Quality = FindQuality(descCodec);
+                result.Quality = descCodec == Codec.Unknown ? Quality.Unknown : FindQuality(descCodec);
 
                 if (result.Quality != Quality.Unknown)
                 {
@@ -106,24 +108,19 @@ namespace NzbDrone.Core.Parser
             }
 
             //Based on category
-            if (result.Quality == Quality.Unknown && categories != null)
+            categoryMediaType ??= SearchMediaTypeHelper.GetMediaTypeFromCategories(categories);
+            if (result.Quality == Quality.Unknown && categoryMediaType == BookMediaType.Audiobook)
             {
-                if (categories.Any(x => x >= 3000 && x < 4000))
-                {
-                    result.Quality = Quality.UnknownAudio;
-                    result.QualityDetectionSource = QualityDetectionSource.Category;
-                }
+                result.Quality = Quality.UnknownAudio;
+                result.QualityDetectionSource = QualityDetectionSource.Category;
             }
 
-            // If we still couldn't determine a codec but the title/description strongly indicates audio,
-            // classify as Unknown Audio instead of Unknown Text.
-            if (result.Quality == Quality.Unknown)
+            // Title and description hints apply only when neither a format nor a category settles the media type.
+            if (result.Quality == Quality.Unknown && !categoryMediaType.HasValue &&
+                (AudioHintRegex.IsMatch(name) || (desc.IsNotNullOrWhiteSpace() && AudioHintRegex.IsMatch(desc))))
             {
-                if (AudioHintRegex.IsMatch(name) || (desc.IsNotNullOrWhiteSpace() && AudioHintRegex.IsMatch(desc)))
-                {
-                    result.Quality = Quality.UnknownAudio;
-                    result.QualityDetectionSource = QualityDetectionSource.Name;
-                }
+                result.Quality = Quality.UnknownAudio;
+                result.QualityDetectionSource = QualityDetectionSource.Name;
             }
 
             // MAM tier enhancements removed: keep generic base quality (MP3/M4B/FLAC/etc.)
@@ -131,7 +128,7 @@ namespace NzbDrone.Core.Parser
             return result;
         }
 
-        public static QualityModel ParseQualityFromFileType(string fileType, string title, int indexerFlags, string indexerName = null)
+        public static QualityModel ParseQualityFromFileType(string fileType, string title, int indexerFlags, string indexerName = null, BookMediaType? categoryMediaType = null)
         {
             Logger.Trace("Parsing quality from fileType '{0}' for title '{1}'", fileType, title);
 
@@ -176,6 +173,11 @@ namespace NzbDrone.Core.Parser
                 {
                     // Ignore invalid path chars
                 }
+            }
+
+            if (categoryMediaType.HasValue)
+            {
+                return ParseQuality(title, indexerName: indexerName, indexerFlags: indexerFlags, categoryMediaType: categoryMediaType);
             }
 
             // Still unknown

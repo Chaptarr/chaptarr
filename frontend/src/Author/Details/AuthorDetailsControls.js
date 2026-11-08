@@ -56,33 +56,31 @@ function AuthorDetailsControls(props) {
   return (
     <div className={styles.controlsContainer}>
       <div className={styles.topRow}>
-        <div className={styles.leftControls}>
-          <div className={styles.syncAndToggle}>
-            {
-              syncMonitoredAcrossFormats ?
-                <div
-                  className={styles.syncIndicator}
-                  title={translate('AudioEbookSyncTooltip')}
-                >
-                  <Icon
-                    name={icons.REFRESH}
-                    size={13}
-                  />
-                  <span>{translate('AudioEbookSyncIsOn')}</span>
-                </div> :
-                null
-            }
+        <div className={styles.syncAndToggle}>
+          {
+            syncMonitoredAcrossFormats ?
+              <div
+                className={styles.syncIndicator}
+                title={translate('AudioEbookSyncTooltip')}
+              >
+                <Icon
+                  name={icons.REFRESH}
+                  size={13}
+                />
+                <span>{translate('AudioEbookSyncIsOn')}</span>
+              </div> :
+              null
+          }
 
-            <MediaTypeToggle
-              selectedMediaType={selectedMediaType}
-              onMediaTypeChange={onMediaTypeChange}
-              hasAudiobookRootFolder={hasAudiobookRootFolder}
-              hasEbookRootFolder={hasEbookRootFolder}
-            />
-          </div>
-
-          <FilterSearchInput authorId={authorId} />
+          <MediaTypeToggle
+            selectedMediaType={selectedMediaType}
+            onMediaTypeChange={onMediaTypeChange}
+            hasAudiobookRootFolder={hasAudiobookRootFolder}
+            hasEbookRootFolder={hasEbookRootFolder}
+          />
         </div>
+
+        <FilterSearchInput authorId={authorId} />
         <div className={styles.rightControls}>
           <BookVisibilityToggle />
         </div>

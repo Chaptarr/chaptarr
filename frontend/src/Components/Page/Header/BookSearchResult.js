@@ -2,11 +2,13 @@ import PropTypes from 'prop-types';
 import React from 'react';
 import AuthorPoster from 'Author/AuthorPoster';
 import BookFormatActions from 'Components/Book/BookFormatActions';
+import translate from 'Utilities/String/translate';
 import styles from './BookSearchResult.css';
 
 function BookSearchResult(props) {
   const {
     title,
+    matchedEditionTitle,
     authorName,
     images,
     monitored,
@@ -44,6 +46,12 @@ function BookSearchResult(props) {
               {authorName}
             </div>
         }
+        {
+          !!matchedEditionTitle &&
+            <div className={styles.subtitle}>
+              {translate('MatchedEditionTitle', { title: matchedEditionTitle })}
+            </div>
+        }
       </div>
     </div>
   );
@@ -52,6 +60,7 @@ function BookSearchResult(props) {
 BookSearchResult.propTypes = {
   title: PropTypes.string.isRequired,
   authorName: PropTypes.string,
+  matchedEditionTitle: PropTypes.string,
   monitored: PropTypes.bool.isRequired,
   localAudiobookBooks: PropTypes.arrayOf(PropTypes.object),
   localEbookBooks: PropTypes.arrayOf(PropTypes.object),

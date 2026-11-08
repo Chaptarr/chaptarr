@@ -134,7 +134,7 @@ function QueueStatusCell(props) {
     }
 
     if (trackedDownloadState === 'importBlocked') {
-      title = `${translate('Downloaded')} - ${translate('ManualImport')} ${translate('Required')}`;
+      title = props.awaitingImportConfirmation ? translate('WaitingForImportConfirmation') : `${translate('Downloaded')} - ${translate('ManualImport')} ${translate('Required')}`;
       iconKind = kinds.WARNING;
     }
 
@@ -215,6 +215,7 @@ function QueueStatusCell(props) {
 }
 
 QueueStatusCell.propTypes = {
+  awaitingImportConfirmation: PropTypes.bool,
   sourceTitle: PropTypes.string.isRequired,
   status: PropTypes.string.isRequired,
   trackedDownloadStatus: PropTypes.string.isRequired,

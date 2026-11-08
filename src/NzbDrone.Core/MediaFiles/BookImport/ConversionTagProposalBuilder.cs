@@ -106,6 +106,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             var year = GetCanonicalYear(book, edition);
             var genre = book?.Genres?.Any() == true ? string.Join("; ", book.Genres.Where(g => g.IsNotNullOrWhiteSpace()).Distinct(StringComparer.OrdinalIgnoreCase)) : null;
             var description = FirstNonEmpty(edition?.Overview, book?.Overview);
+            var series = BookSeries.Select(book);
 
             return new ConversionTagOptions
             {
@@ -118,8 +119,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 Genre = genre,
                 Comment = Truncate(description, 4096),
                 Copyright = FirstNonEmpty(edition?.Publisher, book?.Publisher),
-                Series = book?.SeriesName,
-                SeriesPart = book?.SeriesPosition,
+                Series = series?.Series?.Value?.Title,
+                SeriesPart = series?.Position,
                 UseFilenamesAsChapters = sources.Count > 1,
                 IgnoreSourceTags = true
             };

@@ -24,8 +24,10 @@ namespace NzbDrone.Core.Profiles.Metadata
         void Delete(int id);
         List<MetadataProfile> All();
         MetadataProfile Get(int id);
-        bool Exists(int id);
+        bool Exists(int id, MetadataProfileType? profileType = null);
         List<Book> FilterBooks(Author input, int profileId);
+        List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds);
+        List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds);
     }
 
     public class MetadataProfileService : IMetadataProfileService, IHandle<ApplicationStartedEvent>
@@ -99,7 +101,8 @@ namespace NzbDrone.Core.Profiles.Metadata
                     c.MetadataProfileId == id ||
                     c.AudiobookMetadataProfileId == id ||
                     c.EbookMetadataProfileId == id) ||
-                _importListFactory.All().Any(c => c.MetadataProfileId == id) ||
+                _importListFactory.All().Any(c => c.MetadataProfileId == id || c.Settings is DualMediaImportListSettings settings &&
+                    (settings.AudiobookMetadataProfileId == id || settings.EbookMetadataProfileId == id)) ||
                 _rootFolderService.All().Any(r =>
                     (r.GetAudiobookSettings()?.MetadataProfileId == id) ||
                     (r.GetEbookSettings()?.MetadataProfileId == id)) ||
@@ -130,12 +133,20 @@ namespace NzbDrone.Core.Profiles.Metadata
             return _profileRepository.Get(id);
         }
 
-        public bool Exists(int id)
+        public bool Exists(int id, MetadataProfileType? profileType = null)
         {
-            return _profileRepository.Exists(id);
+            if (!profileType.HasValue) return _profileRepository.Exists(id);
+
+            var profile = _profileRepository.Find(id);
+            return profile != null && (profile.ProfileType == MetadataProfileType.General || profile.ProfileType == profileType.Value);
         }
 
-        public List<Book> FilterBooks(Author input, int profileId)
+        public List<Book> FilterBooks(Author input, int profileId) => FilterBooks(input, profileId, null);
+
+        public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds)
+            => FilterBooks(input, profileId, requestedNarrationIds, null);
+
+        public List<Book> FilterBooks(Author input, int profileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds)
         {
             // Defensive null checks to prevent crashes
             if (input == null)
@@ -206,11 +217,12 @@ namespace NzbDrone.Core.Profiles.Metadata
 
             // Ensure input.Books is not null
             var booksToFilter = input.Books ?? new List<Book>();
-            return FilterBooks(booksToFilter, localBooks, localFiles, seriesLinks, profileId);
+            return FilterBooks(booksToFilter, localBooks, localFiles, seriesLinks, profileId, requestedNarrationIds, requestedNarrationWorkIds);
         }
 
-        private List<Book> FilterBooks(IEnumerable<Book> remoteBooks, List<Book> localBooks, List<BookFile> localFiles, Dictionary<Book, List<SeriesBookLink>> seriesLinks, int metadataProfileId)
+        private List<Book> FilterBooks(IEnumerable<Book> remoteBooks, List<Book> localBooks, List<BookFile> localFiles, Dictionary<Book, List<SeriesBookLink>> seriesLinks, int metadataProfileId, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationIds, IReadOnlyDictionary<BookMediaType, IReadOnlySet<string>> requestedNarrationWorkIds)
         {
+            requestedNarrationIds = requestedNarrationIds?.ToDictionary(pair => pair.Key, pair => EditionMetadataProfileFilter.NormalizeProtectionIds(pair.Value));
             var profile = Get(metadataProfileId);
 
             _logger.Trace($"Filtering:\n{remoteBooks.Select(x => x.ToString()).Join("\n")}");
@@ -219,46 +231,53 @@ namespace NzbDrone.Core.Profiles.Metadata
                 var titles = new HashSet<string>(remoteBooks.Select(x => x.Title));
 
                 var remoteBookKeysByEditionToken = BuildRemoteBookKeysByEditionToken(hash);
+                var protectedFilesByBook = GetProtectedFilesByBook(localFiles, remoteBookKeysByEditionToken);
 
                 var localHash = new HashSet<string>(
                     localBooks
-                        .Where(x => x.AddOptions?.AddType == BookAddType.Manual)
+                        .Where(BookIdentity.HasUserPreservationMarker)
                         .Select(GetBookKey));
 
-                localHash.UnionWith(localFiles
-                    .Select(x => x.Edition?.Book)
-                    .Where(x => x != null)
-                    .Select(GetBookKey));
+                localHash.UnionWith(protectedFilesByBook.Select(group => group.Key));
 
-                localHash.UnionWith(GetProtectedBookKeysFromLocalFiles(localFiles, remoteBookKeysByEditionToken));
+                // Explicit edition intent preserves its same-media parent even when that edition is unavailable.
+                var requestedBooks = new HashSet<Book>(hash.Where(book =>
+                    ((requestedNarrationWorkIds?.Count > 0 && BookIdentity.GetStableWorkProviderIdentityTokens(book).Any(id => requestedNarrationWorkIds.GetValueOrDefault(book.MediaType)?.Contains(id) == true)) ||
+                     (requestedNarrationIds?.Count > 0 && EditionMetadataProfileFilter.ResolveProtectedEditions(book.Editions, null, requestedNarrationIds.GetValueOrDefault(book.MediaType)).Count > 0))), BookReferenceComparer.Instance);
+                bool IsProtectedBook(Book book) => book.AddOptions?.AddType == BookAddType.Manual || requestedBooks.Contains(book) || localHash.Contains(GetBookKey(book));
 
-                FilterByPredicate(hash, GetBookKey, localHash, profile, BookAllowedByRating, "rating criteria not met");
-                FilterByPredicate(hash, GetBookKey, localHash, profile, (x, p) => !p.SkipMissingDate || x.ReleaseDate.HasValue, "release date is missing");
-                FilterByPredicate(hash, GetBookKey, localHash, profile, (x, p) => !p.SkipPartsAndSets || !IsPartOrSet(x, seriesLinks.GetValueOrDefault(x), titles), "book is part of set");
-                FilterByPredicate(hash, GetBookKey, localHash, profile, (x, p) => !p.SkipSeriesSecondary || !seriesLinks.ContainsKey(x) || seriesLinks[x].Any(y => y.IsPrimary), "book is a secondary series item");
-                FilterByPredicate(hash, GetBookKey, localHash, profile, OmnibusAllowedByProfile, "book is an omnibus/collection");
-                FilterByPredicate(hash, GetBookKey, localHash, profile, (x, p) => !p.Ignored.Any(i => MatchesTerms(x.Title, i)), "contains ignored terms");
+                var localEditionsByBook = localBooks.ToLookup(book => (GetBookProviderId(book), book.MediaType));
+                FilterByPredicate(hash, IsProtectedBook, profile, BookAllowedByRating, "rating criteria not met");
+                FilterByPredicate(hash, IsProtectedBook, profile, (x, p) => !p.SkipMissingDate || x.ReleaseDate.HasValue, "release date is missing");
+                FilterByPredicate(hash, IsProtectedBook, profile, (x, p) => !p.SkipPartsAndSets || !IsPartOrSet(x, seriesLinks.GetValueOrDefault(x), titles), "book is part of set");
+                FilterByPredicate(hash, IsProtectedBook, profile, (x, p) => !p.SkipSeriesSecondary || !seriesLinks.ContainsKey(x) || seriesLinks[x].Any(y => y.IsPrimary != false), "book is a secondary series item");
+                FilterByPredicate(hash, IsProtectedBook, profile, OmnibusAllowedByProfile, "book is an omnibus/collection");
+                FilterByPredicate(hash, IsProtectedBook, profile, (x, p) => !p.Ignored.Any(i => MatchesTerms(x.Title, i)), "contains ignored terms");
 
                 foreach (var book in hash)
                 {
                     var bookProviderId = GetBookProviderId(book);
 
                     // Metadata profile rules must not bleed across media types (audiobook vs ebook).
-                    var localEditions = localBooks
-                        .Where(x => GetBookProviderId(x) == bookProviderId && x.MediaType == book.MediaType)
+                    var matchingLocalBooks = localEditionsByBook[(bookProviderId, book.MediaType)].ToList();
+                    var localEditions = matchingLocalBooks
                         .SelectMany(x => x.Editions ?? Enumerable.Empty<Edition>())
                         .ToList();
 
-                    book.Editions = FilterEditions(book.Editions, localEditions, localFiles, profile, book.MediaType);
+                    var originalEditions = book.Editions;
+                    var filteredEditions = FilterEditions(originalEditions, localEditions, protectedFilesByBook[GetBookKey(book)].ToList(), profile, book.MediaType, requestedNarrationIds?.GetValueOrDefault(book.MediaType));
+                    book.Editions = book.AddOptions?.AddType == BookAddType.Manual || matchingLocalBooks.Any(local => local.AddOptions?.AddType == BookAddType.Manual)
+                        ? EditionSelector.EnsureWorkRepresentative(book.MediaType, originalEditions, filteredEditions)
+                        : filteredEditions;
                 }
 
-                FilterByPredicate(hash, GetBookKey, localHash, profile, (x, p) => x.Editions.Any(e => e.PageCount >= p.MinPages) || x.Editions.All(e => e.PageCount == 0), "minimum page count not met");
-                FilterByPredicate(hash, GetBookKey, localHash, profile, (x, p) => x.Editions.Any(), "all editions filtered out");
+                FilterByPredicate(hash, IsProtectedBook, profile, (x, p) => x.Editions.Any(e => e.PageCount >= p.MinPages) || x.Editions.All(e => e.PageCount == 0), "minimum page count not met");
+                FilterByPredicate(hash, IsProtectedBook, profile, (x, p) => x.Editions.Any(), "all editions filtered out");
 
                 return hash.ToList();
             }
 
-        private List<Edition> FilterEditions(IEnumerable<Edition> editions, List<Edition> localEditions, List<BookFile> localFiles, MetadataProfile profile, BookMediaType mediaType)
+        private List<Edition> FilterEditions(IEnumerable<Edition> editions, List<Edition> localEditions, List<BookFile> localFiles, MetadataProfile profile, BookMediaType mediaType, IReadOnlySet<string> requestedNarrationIds)
         {
             EditionMetadataProfileFilter.ParseAllowedLanguages(
                 profile.AllowedLanguages,
@@ -291,17 +310,16 @@ namespace NzbDrone.Core.Profiles.Metadata
                 _logger.Debug("No language filtering configured - all languages allowed");
             }
 
-            var hash = new HashSet<Edition>(editions);
+            var hash = new HashSet<Edition>(editions, ReferenceEqualityComparer.Instance);
 
-            var remoteEditionIdsByEditionToken = BuildRemoteEditionIdsByEditionToken(hash);
-            var localHash = new HashSet<string>(localEditions.Where(x => x.ManualAdd).Select(x => x.ForeignEditionId));
-            localHash.UnionWith(localFiles.Select(x => x.Edition.ForeignEditionId));
-            localHash.UnionWith(GetProtectedEditionIdsFromLocalFiles(localFiles, remoteEditionIdsByEditionToken, mediaType));
+            var localProtectedEditions = localEditions.Where(x => x.ManualAdd).Concat(localFiles.Select(file => file.Edition));
+            var protectedEditions = EditionMetadataProfileFilter.ResolveProtectedEditions(hash, localProtectedEditions,
+                requestedNarrationIds, _logger);
 
             // Language filtering logic: only filter if languages are explicitly configured
-            FilterByPredicate(hash, x => x.ForeignEditionId, localHash, profile, (x, p) => EditionMetadataProfileFilter.IsAllowedLanguage(x, allowedLanguages, allowUnknownLanguage, languageFilterConfigured), "edition language not allowed");
-            FilterByPredicate(hash, x => x.ForeignEditionId, localHash, profile, EditionMetadataProfileFilter.MeetsIdentifierRequirements, "missing required identifier(s)");
-            FilterByPredicate(hash, x => x.ForeignEditionId, localHash, profile, (x, p) => !p.Ignored.Any(i => MatchesTerms(x.Title, i)), "contains ignored terms");
+            FilterByPredicate(hash, x => EditionMetadataProfileFilter.IsProtectedEdition(x, protectedEditions), profile, (x, p) => EditionMetadataProfileFilter.IsAllowedLanguage(x, allowedLanguages, allowUnknownLanguage, languageFilterConfigured), "edition language not allowed");
+            FilterByPredicate(hash, x => EditionMetadataProfileFilter.IsProtectedEdition(x, protectedEditions), profile, EditionMetadataProfileFilter.MeetsIdentifierRequirements, "missing required identifier(s)");
+            FilterByPredicate(hash, x => EditionMetadataProfileFilter.IsProtectedEdition(x, protectedEditions), profile, (x, p) => !p.Ignored.Any(i => MatchesTerms(x.Title, i)), "contains ignored terms");
 
             return hash.ToList();
         }
@@ -354,32 +372,18 @@ namespace NzbDrone.Core.Profiles.Metadata
             return index;
         }
 
-        private Dictionary<string, HashSet<string>> BuildRemoteEditionIdsByEditionToken(IEnumerable<Edition> editions)
+        private ILookup<string, BookFile> GetProtectedFilesByBook(IEnumerable<BookFile> localFiles, Dictionary<string, HashSet<string>> remoteBookKeysByEditionToken)
         {
-            var index = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var edition in editions ?? Enumerable.Empty<Edition>())
-            {
-                if (edition == null || string.IsNullOrWhiteSpace(edition.ForeignEditionId))
-                {
-                    continue;
-                }
-
-                foreach (var token in BookEditionIdentity.GetRemoteEditionRehomeTokens(edition))
-                {
-                    AddIndexValue(index, token, edition.ForeignEditionId);
-                }
-            }
-
-            return index;
-        }
-
-        private HashSet<string> GetProtectedBookKeysFromLocalFiles(IEnumerable<BookFile> localFiles, Dictionary<string, HashSet<string>> remoteBookKeysByEditionToken)
-        {
-            var protectedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var protectedFiles = new List<(string BookKey, BookFile File)>();
 
             foreach (var file in localFiles ?? Enumerable.Empty<BookFile>())
             {
+                var storedBookKey = file?.Edition?.Book == null ? null : GetBookKey(file.Edition.Book);
+                if (storedBookKey != null)
+                {
+                    protectedFiles.Add((storedBookKey, file));
+                }
+
                 if (!TryGetFileMediaType(file, out var mediaType))
                 {
                     continue;
@@ -389,7 +393,11 @@ namespace NzbDrone.Core.Profiles.Metadata
                 var keys = ResolveMediaScopedKeys(tokens, remoteBookKeysByEditionToken, mediaType);
                 if (keys.Count == 1)
                 {
-                    protectedKeys.Add(keys.First());
+                    var remoteBookKey = keys.First();
+                    if (!string.Equals(storedBookKey, remoteBookKey, StringComparison.OrdinalIgnoreCase))
+                    {
+                        protectedFiles.Add((remoteBookKey, file));
+                    }
                 }
                 else if (keys.Count > 1)
                 {
@@ -401,37 +409,7 @@ namespace NzbDrone.Core.Profiles.Metadata
                 }
             }
 
-            return protectedKeys;
-        }
-
-        private HashSet<string> GetProtectedEditionIdsFromLocalFiles(IEnumerable<BookFile> localFiles, Dictionary<string, HashSet<string>> remoteEditionIdsByEditionToken, BookMediaType mediaType)
-        {
-            var protectedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var file in localFiles ?? Enumerable.Empty<BookFile>())
-            {
-                if (!TryGetFileMediaType(file, out var fileMediaType) || fileMediaType != mediaType)
-                {
-                    continue;
-                }
-
-                var tokens = BookEditionIdentity.GetEditionRehomeTokens(file.Edition);
-                var ids = ResolveKeys(tokens, remoteEditionIdsByEditionToken);
-                if (ids.Count == 1)
-                {
-                    protectedIds.Add(ids.First());
-                }
-                else if (ids.Count > 1)
-                {
-                    _logger.Warn("Skipping metadata-profile owned-edition protection for file '{0}': edition tokens [{1}] point to multiple remote editions [{2}] for mediaType={3}.",
-                        file.Path,
-                        string.Join(", ", tokens),
-                        string.Join(", ", ids.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)),
-                        mediaType);
-                }
-            }
-
-            return protectedIds;
+            return protectedFiles.ToLookup(item => item.BookKey, item => item.File, StringComparer.OrdinalIgnoreCase);
         }
 
         private static HashSet<string> ResolveMediaScopedKeys(IEnumerable<string> tokens, Dictionary<string, HashSet<string>> index, BookMediaType mediaType)
@@ -507,7 +485,7 @@ namespace NzbDrone.Core.Profiles.Metadata
             values.Add(value);
         }
 
-        private void FilterByPredicate<T>(HashSet<T> remoteItems, Func<T, string> getId, HashSet<string> localItems, MetadataProfile profile, Func<T, MetadataProfile, bool> bookAllowed, string message)
+        private void FilterByPredicate<T>(HashSet<T> remoteItems, Func<T, bool> isProtected, MetadataProfile profile, Func<T, MetadataProfile, bool> bookAllowed, string message)
         {
             // Performance optimization: process in batches for large collections
             const int batchSize = 1000;
@@ -523,7 +501,7 @@ namespace NzbDrone.Core.Profiles.Metadata
                 for (var i = 0; i < itemsList.Count; i += batchSize)
                 {
                     var batch = itemsList.Skip(i).Take(batchSize);
-                    var batchFiltered = batch.Where(x => !bookAllowed(x, profile) && !localItems.Contains(getId(x))).ToList();
+                    var batchFiltered = batch.Where(x => !bookAllowed(x, profile) && !isProtected(x)).ToList();
 
                     foreach (var item in batchFiltered)
                     {
@@ -546,7 +524,7 @@ namespace NzbDrone.Core.Profiles.Metadata
             else
             {
                 // Original logic for smaller collections
-                var filtered = new HashSet<T>(remoteItems.Where(x => !bookAllowed(x, profile) && !localItems.Contains(getId(x))), remoteItems.Comparer);
+                var filtered = new HashSet<T>(remoteItems.Where(x => !bookAllowed(x, profile) && !isProtected(x)), remoteItems.Comparer);
                 if (filtered.Any())
                 {
                     _logger.Trace($"Skipping {filtered.Count} {typeof(T).Name} because {message}:\n{filtered.ConcatToString(x => x.ToString(), "\n")}");

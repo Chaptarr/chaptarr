@@ -17,7 +17,8 @@ function BackupSettings(props) {
   const {
     backupFolder,
     backupInterval,
-    backupRetention
+    backupRetention,
+    backupIncludeLogsAndCache
   } = settings;
 
   if (!advancedSettings) {
@@ -55,7 +56,10 @@ function BackupSettings(props) {
           type={inputTypes.NUMBER}
           name="backupInterval"
           unit="days"
+          min={0}
+          max={7}
           helpText={translate('BackupIntervalHelpText')}
+          helpTextWarning={backupInterval.value === 0 ? translate('ScheduledBackupsDisabled') : undefined}
           onChange={onInputChange}
           {...backupInterval}
         />
@@ -76,6 +80,16 @@ function BackupSettings(props) {
           helpText={translate('BackupRetentionHelpText')}
           onChange={onInputChange}
           {...backupRetention}
+        />
+      </FormGroup>
+      <FormGroup advancedSettings={advancedSettings} isAdvanced={true}>
+        <FormLabel>{translate('BackupIncludeLogsAndCache')}</FormLabel>
+        <FormInputGroup
+          type={inputTypes.CHECK}
+          name="backupIncludeLogsAndCache"
+          helpText={translate('BackupIncludeLogsAndCacheHelp')}
+          onChange={onInputChange}
+          {...backupIncludeLogsAndCache}
         />
       </FormGroup>
     </FieldSet>

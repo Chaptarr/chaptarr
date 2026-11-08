@@ -1,0 +1,100 @@
+.editor {
+  margin-bottom: 20px;
+}
+
+.order {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 12px;
+  min-height: 60px;
+  border: 1px solid var(--borderColor);
+  border-radius: 4px;
+  background-color: var(--cardBackgroundColor);
+  gap: 4px;
+}
+
+.chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  max-width: none;
+  width: auto;
+  border: 1px solid #d35400;
+  border-radius: 4px;
+  background: #e67e22;
+  color: #fff;
+  font-weight: 500;
+  font-size: 11px;
+  cursor: grab;
+  transition: all 0.2s ease;
+  gap: 4px;
+}
+
+.chip:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+}
+
+.chip.dragging {
+  z-index: 1000;
+  cursor: grabbing;
+}
+
+.chipContent {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deleteButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 2px;
+  padding: 0;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.deleteButton:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  margin-top: 8px;
+
+  select {
+    max-width: calc(100% - 40px);
+    width: auto;
+  }
+}
+
+.preview {
+  margin-top: 8px;
+  color: var(--helpTextColor);
+}
+
+@media (max-width: 768px) {
+  .order {
+    gap: 8px;
+  }
+
+  .chip {
+    padding: 6px 10px;
+    max-width: 150px;
+  }
+}

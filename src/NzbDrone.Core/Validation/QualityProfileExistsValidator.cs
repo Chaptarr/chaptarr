@@ -1,3 +1,4 @@
+using System;
 using FluentValidation.Validators;
 using NzbDrone.Core.Profiles.Qualities;
 
@@ -12,7 +13,15 @@ namespace NzbDrone.Core.Validation
             _qualityProfileService = qualityProfileService;
         }
 
-        protected override string GetDefaultMessageTemplate() => "Quality Profile does not exist";
+        private ProfileType? _profileType;
+        private Func<object, int?> _storedProfileId;
+
+        public QualityProfileExistsValidator ForType(ProfileType profileType, Func<object, int?> storedProfileId = null) =>
+            new QualityProfileExistsValidator(_qualityProfileService) { _profileType = profileType, _storedProfileId = storedProfileId };
+
+        protected override string GetDefaultMessageTemplate() => _profileType.HasValue
+            ? $"Quality profile does not exist or is incompatible with {_profileType.Value}"
+            : "Quality Profile does not exist";
 
         protected override bool IsValid(PropertyValidatorContext context)
         {
@@ -21,7 +30,10 @@ namespace NzbDrone.Core.Validation
                 return true;
             }
 
-            return _qualityProfileService.Exists((int)context.PropertyValue);
+            var id = (int)context.PropertyValue;
+            // Keep validating existence; only a newly selected profile must match the side.
+            var unchanged = !NzbDrone.Core.Configuration.ConfigValueValidation.HasChanged(id, _storedProfileId?.Invoke(context.InstanceToValidate));
+            return _qualityProfileService.Exists(id, unchanged ? null : _profileType);
         }
     }
 }

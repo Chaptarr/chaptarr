@@ -6,6 +6,8 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Chaptarr.Core.Test" />
+    <Content Include="..\..\build-tools\unicode-comparison-fold-LICENSE.txt" Link="unicode-comparison-fold-LICENSE.txt"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="DryIoc.dll" />
@@ -18,9 +20,9 @@
     <PackageReference Include="Sentry" />
     <PackageReference Include="SharpZipLib" />
     <PackageReference Include="System.IO.Abstractions" />
-    <PackageReference Include="System.ValueTuple" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
+    <PackageReference Include="SQLite" />
     <PackageReference Include="System.Configuration.ConfigurationManager" />
     <PackageReference Include="System.ServiceProcess.ServiceController" />
   </ItemGroup>

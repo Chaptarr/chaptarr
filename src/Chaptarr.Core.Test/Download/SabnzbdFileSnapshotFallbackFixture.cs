@@ -31,6 +31,7 @@ namespace Chaptarr.Core.Test.Download
             public SabnzbdFullStatus GetFullStatus(SabnzbdSettings settings) => throw new NotImplementedException();
             public SabnzbdQueue GetQueue(int start, int limit, SabnzbdSettings settings) => Queue;
             public SabnzbdHistory GetHistory(int start, int limit, SabnzbdSettings settings) => History;
+            public List<OsPath> GetFiles(OsPath path, string title, SabnzbdSettings settings) => throw new NotImplementedException();
             public string RetryDownload(string id, SabnzbdSettings settings) => throw new NotImplementedException();
         }
 
@@ -92,7 +93,8 @@ namespace Chaptarr.Core.Test.Download
                 diskProvider: null,
                 remotePathMappingService: new PassthroughRemotePathMappingService(),
                 nzbValidationService: null,
-                logger: LogManager.GetCurrentClassLogger())
+                fileSnapshots: NoopDownloadClientFileSnapshotService.Instance,
+                logger: LogManager.GetCurrentClassLogger(), rootFolders: DownloadClientTestRoots.Empty)
             {
                 Definition = new DownloadClientDefinition
                 {

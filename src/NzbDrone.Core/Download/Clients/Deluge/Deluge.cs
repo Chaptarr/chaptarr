@@ -1,18 +1,22 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
 using FluentValidation.Results;
 using NLog;
+using NzbDrone.Common.Cache;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Blocklisting;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Clients;
+using NzbDrone.Core.Download.History;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MediaFiles.TorrentInfo;
 using NzbDrone.Core.Parser.Model;
@@ -21,9 +25,13 @@ using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Download.Clients.Deluge
 {
-    public class Deluge : TorrentClientBase<DelugeSettings>, IPreserveDownloadClientItemAfterImport
+    public class Deluge : TorrentClientBase<DelugeSettings>, IPreserveDownloadClientItemAfterImport, IRecoverDownloadClientOperations
     {
+        private readonly ICached<LabelChangeState> _labelChanges;
+
         private readonly IDelugeProxy _proxy;
+        private readonly IDownloadHistoryRepository _downloadHistory;
+        private readonly IDownloadSeedConfigProvider _downloadSeedConfigProvider;
 
         public Deluge(IDelugeProxy proxy,
                       ITorrentFileInfoReader torrentFileInfoReader,
@@ -32,10 +40,16 @@ namespace NzbDrone.Core.Download.Clients.Deluge
                       IDiskProvider diskProvider,
                       IRemotePathMappingService remotePathMappingService,
                       IBlocklistService blocklistService,
+                      IDownloadSeedConfigProvider downloadSeedConfigProvider,
+                      IDownloadHistoryRepository downloadHistory,
+                      ICacheManager cacheManager,
                       Logger logger)
             : base(torrentFileInfoReader, httpClient, configService, diskProvider, remotePathMappingService, blocklistService, logger)
         {
             _proxy = proxy;
+            _downloadHistory = downloadHistory;
+            _downloadSeedConfigProvider = downloadSeedConfigProvider;
+            _labelChanges = cacheManager.GetCache<LabelChangeState>(typeof(Deluge), "labelChanges");
         }
 
         private string GetPostImportCategory(DownloadClientItem downloadClientItem)
@@ -57,16 +71,195 @@ namespace NzbDrone.Core.Download.Clients.Deluge
             {
                 try
                 {
-                    _proxy.SetTorrentLabel(downloadClientItem.DownloadId.ToLower(), postImportCategory, Settings);
+                    var seedConfiguration = _downloadSeedConfigProvider.GetSeedConfiguration(downloadClientItem.DownloadId);
+                    if (seedConfiguration?.KeepSeeding == true)
+                    {
+                        ChangePreservedLabel(downloadClientItem.DownloadId, postImportCategory);
+                    }
+                    else
+                    {
+                        _proxy.SetTorrentLabel(downloadClientItem.DownloadId.ToLowerInvariant(), postImportCategory, Settings);
+                    }
+
                     downloadClientItem.Category = postImportCategory;
                 }
                 catch (DownloadClientUnavailableException)
                 {
-                    _logger.Warn("Failed to set torrent post-import label \"{0}\" for {1} in Deluge. Does the label exist?",
+                    _logger.Warn("Failed to set torrent post-import label \"{0}\" for {1} in Deluge; check the connection and label-change error",
                         postImportCategory,
                         downloadClientItem.Title);
                 }
             }
+        }
+
+        private sealed class LabelChange
+        {
+            public string Label { get; set; }
+            public bool AutoManaged { get; set; }
+            public bool Resume { get; set; }
+            public bool PauseConfirmed { get; set; }
+            public bool ResumeAttempted { get; set; }
+        }
+
+        private sealed class LabelChangeState
+        {
+            public bool RecoveryRequired = true;
+            public Dictionary<string, (string Name, string Reason)> Failures = new(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private LabelChangeState GetLabelChangeState() => _labelChanges.Get(Definition.Id.ToString(), () => new LabelChangeState());
+
+        public IReadOnlyList<(string Name, string Reason)> GetLabelChangeFailures()
+        {
+            var state = _labelChanges.Find(Definition.Id.ToString());
+            if (state == null) return Array.Empty<(string Name, string Reason)>();
+            lock (state) return state.Failures.Values.ToList();
+        }
+
+        private void ChangePreservedLabel(string downloadId, string label)
+        {
+            lock (GetLabelChangeState())
+            {
+                var hash = downloadId.ToLowerInvariant();
+                var torrent = _proxy.GetTorrent(hash, Settings);
+                var guard = (!string.IsNullOrEmpty(torrent.Label) && _proxy.GetLabelOptions(torrent.Label, Settings).ApplyQueue) ||
+                            _proxy.GetLabelOptions(label, Settings).ApplyQueue;
+                if (!guard)
+                {
+                    _proxy.SetTorrentLabel(hash, label, Settings);
+                    return;
+                }
+
+                var grab = _downloadHistory.FindByDownloadId(downloadId.ToUpperInvariant())
+                    .FirstOrDefault(h => h.DownloadClientId == Definition.Id && h.EventType == DownloadHistoryEventType.DownloadGrabbed);
+                if (grab == null)
+                {
+                    throw new DownloadClientException("Cannot safely change a preserved Deluge label without its grab history");
+                }
+
+                var pending = grab.Data.TryGetValue(DownloadHistory.PendingLabelChangeKey, out var saved);
+                var change = pending
+                    ? Json.Deserialize<LabelChange>(saved)
+                    : new LabelChange { Label = label, AutoManaged = torrent.IsAutoManaged, Resume = torrent.State is not ("Paused" or "Error") };
+                SaveLabelChange(grab, change);
+                FinishLabelChange(grab, change);
+            }
+        }
+
+        private void SaveLabelChange(DownloadHistory grab, LabelChange change)
+        {
+            // A failed write may have reached the database. Recheck durable state
+            // after every write attempt; an idle client needs only its startup check.
+            GetLabelChangeState().RecoveryRequired = true;
+            if (change == null) grab.Data.Remove(DownloadHistory.PendingLabelChangeKey);
+            else grab.Data[DownloadHistory.PendingLabelChangeKey] = change.ToJson();
+            _downloadHistory.SetFields(grab, h => h.Data);
+        }
+
+        private void FinishLabelChange(DownloadHistory grab, LabelChange change)
+        {
+            var step = "reading the torrent status";
+            try
+            {
+                var hash = grab.DownloadId.ToLowerInvariant();
+                var torrent = _proxy.GetTorrent(hash, Settings);
+                if (string.IsNullOrEmpty(torrent?.Hash))
+                {
+                    step = "saving label-change completion";
+                    SaveLabelChange(grab, null);
+                    GetLabelChangeState().Failures.Remove(grab.DownloadId);
+                    return;
+                }
+
+                if (!change.ResumeAttempted)
+                {
+                    if (!change.PauseConfirmed || torrent.Label != change.Label)
+                    {
+                        // A pending label write still needs the guard, even if it was
+                        // manually resumed meanwhile. Never apply ratio rules while running.
+                        if (change.PauseConfirmed && ResumeComplete(torrent)) change.Resume = true;
+                        SaveLabelChange(grab, change);
+                        step = "pausing the torrent";
+                        _proxy.SetTorrentPaused(hash, true, Settings);
+                        torrent = WaitForPauseState(hash, true);
+                        if (!PauseConfirmed(torrent))
+                        {
+                            throw UnconfirmedLabelStep("the pause");
+                        }
+
+                        change.PauseConfirmed = true;
+                        SaveLabelChange(grab, change);
+                    }
+
+                    step = "setting the label";
+                    if (torrent.Label != change.Label) _proxy.SetTorrentLabel(hash, change.Label, Settings);
+                    step = "setting unlimited seeding";
+                    _proxy.SetTorrentSeedingConfiguration(hash, new TorrentSeedConfiguration { KeepSeeding = true }, Settings);
+                    step = "restoring auto-management";
+                    _proxy.SetTorrentConfiguration(hash, "auto_managed", change.AutoManaged, Settings);
+                    step = "checking the seeding settings";
+                    torrent = _proxy.GetTorrent(hash, Settings);
+                    if (torrent.Label != change.Label || torrent.StopAtRatio || torrent.RemoveAtRatio || torrent.IsAutoManaged != change.AutoManaged)
+                    {
+                        throw UnconfirmedLabelStep(torrent.Label != change.Label ? "the label" :
+                            torrent.StopAtRatio || torrent.RemoveAtRatio ? "unlimited seeding" : "auto-management");
+                    }
+                }
+
+                if (change.Resume && !ResumeComplete(torrent))
+                {
+                    change.ResumeAttempted = true;
+                    SaveLabelChange(grab, change);
+                    step = "resuming the torrent";
+                    _proxy.SetTorrentPaused(hash, false, Settings);
+                    if (!ResumeComplete(WaitForPauseState(hash, false)))
+                    {
+                        throw UnconfirmedLabelStep("the resume");
+                    }
+                }
+
+                step = "saving label-change completion";
+                SaveLabelChange(grab, null);
+                GetLabelChangeState().Failures.Remove(grab.DownloadId);
+            }
+            catch (Exception ex)
+            {
+                var reason = ex is DownloadClientUnavailableException || ex is HttpRequestException || ex is WebException || ex is TimeoutException || ex is System.Threading.Tasks.TaskCanceledException
+                    ? "Deluge is not reachable"
+                    : ex.Data["delugeUnconfirmedStep"] is string unconfirmed
+                        ? $"Deluge did not confirm {unconfirmed}"
+                        : ex is DownloadClientException
+                            ? $"Deluge rejected {step}: {ex.Message}"
+                            : $"Unable to finish {step}: {ex.Message}";
+                GetLabelChangeState().Failures[grab.DownloadId] = (grab.SourceTitle ?? grab.DownloadId, reason);
+                throw;
+            }
+        }
+
+        private static DownloadClientException UnconfirmedLabelStep(string step)
+        {
+            var error = new DownloadClientException($"Deluge did not confirm {step}; the label change will retry on the next download check");
+            error.Data["delugeUnconfirmedStep"] = step;
+            return error;
+        }
+
+        private static bool ResumeComplete(DelugeTorrent torrent) => !torrent.Paused || torrent.State == "Queued";
+
+        // Deluge's ratio-removal loop checks the display state before the paused flag.
+        private static bool PauseConfirmed(DelugeTorrent torrent) => torrent.Paused && torrent.State == "Paused";
+
+        private DelugeTorrent WaitForPauseState(string hash, bool paused)
+        {
+            var timer = Stopwatch.StartNew();
+            DelugeTorrent torrent;
+            do
+            {
+                torrent = _proxy.GetTorrent(hash, Settings);
+                if (paused ? PauseConfirmed(torrent) : ResumeComplete(torrent)) return torrent;
+                System.Threading.Thread.Sleep(100);
+            }
+            while (timer.Elapsed < TimeSpan.FromSeconds(5));
+            return torrent;
         }
 
         public bool ShouldPreserveItemAfterImport(DownloadClientItem downloadClientItem)
@@ -87,24 +280,7 @@ namespace NzbDrone.Core.Download.Clients.Deluge
                 throw new DownloadClientException("Deluge failed to add magnet " + magnetLink);
             }
 
-            _proxy.SetTorrentSeedingConfiguration(actualHash, remoteBook.SeedConfiguration, Settings);
-
-            var category = remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? Settings.EbookCategory : Settings.AudiobookCategory;
-
-            if (category.IsNotNullOrWhiteSpace())
-            {
-                _proxy.SetTorrentLabel(actualHash, category, Settings);
-            }
-
-            var isRecentBook = remoteBook.IsRecentBook();
-
-            if ((isRecentBook && Settings.RecentTvPriority == (int)DelugePriority.First) ||
-                (!isRecentBook && Settings.OlderTvPriority == (int)DelugePriority.First))
-            {
-                _proxy.MoveTorrentToTopInQueue(actualHash, Settings);
-            }
-
-            return actualHash.ToUpper();
+            return ConfigureAddedTorrent(remoteBook, actualHash);
         }
 
         protected override string AddFromTorrentFile(RemoteBook remoteBook, string hash, string filename, byte[] fileContent)
@@ -116,13 +292,26 @@ namespace NzbDrone.Core.Download.Clients.Deluge
                 throw new DownloadClientException("Deluge failed to add torrent " + filename);
             }
 
-            _proxy.SetTorrentSeedingConfiguration(actualHash, remoteBook.SeedConfiguration, Settings);
+            return ConfigureAddedTorrent(remoteBook, actualHash);
+        }
+
+        private string ConfigureAddedTorrent(RemoteBook remoteBook, string actualHash)
+        {
+            if (remoteBook.SeedConfiguration?.KeepSeeding != true)
+            {
+                _proxy.SetTorrentSeedingConfiguration(actualHash, remoteBook.SeedConfiguration, Settings);
+            }
 
             var category = remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? Settings.EbookCategory : Settings.AudiobookCategory;
 
             if (category.IsNotNullOrWhiteSpace())
             {
                 _proxy.SetTorrentLabel(actualHash, category, Settings);
+            }
+
+            if (remoteBook.SeedConfiguration?.KeepSeeding == true)
+            {
+                _proxy.SetTorrentSeedingConfiguration(actualHash, remoteBook.SeedConfiguration, Settings);
             }
 
             var isRecentBook = remoteBook.IsRecentBook();
@@ -156,6 +345,34 @@ namespace NzbDrone.Core.Download.Clients.Deluge
         }
 
         public override string Name => "Deluge";
+
+        public void RecoverPendingOperations()
+        {
+            var state = GetLabelChangeState();
+            lock (state)
+            {
+                if (!state.RecoveryRequired) return;
+                var timer = Stopwatch.StartNew();
+                var pending = _downloadHistory.GetPendingLabelChanges(Definition.Id);
+                _logger.Debug("[DelugeLabelRecovery] client={0} pending={1} queryElapsed={2}ms", Definition.Id, pending.Count, timer.ElapsedMilliseconds);
+                var pendingIds = pending.Select(grab => grab.DownloadId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var id in state.Failures.Keys.Where(id => !pendingIds.Contains(id)).ToList()) state.Failures.Remove(id);
+                var recovered = true;
+                foreach (var grab in pending)
+                {
+                    try
+                    {
+                        FinishLabelChange(grab, Json.Deserialize<LabelChange>(grab.Data[DownloadHistory.PendingLabelChangeKey]));
+                    }
+                    catch (Exception ex)
+                    {
+                        recovered = false;
+                        _logger.Warn(ex, "Unable to finish preserved Deluge label change for {0}; it will be retried on the next refresh", grab.DownloadId);
+                    }
+                }
+                state.RecoveryRequired = !recovered;
+            }
+        }
 
         public override IEnumerable<DownloadClientItem> GetItems()
         {
@@ -344,7 +561,7 @@ namespace NzbDrone.Core.Download.Clients.Deluge
         public override DownloadClientInfo GetStatus()
         {
             var config = _proxy.GetConfig(Settings);
-            var label = Settings.MusicCategory.IsNotNullOrWhiteSpace() ? _proxy.GetLabelOptions(Settings) : null;
+            var label = Settings.MusicCategory.IsNotNullOrWhiteSpace() ? _proxy.GetLabelOptions(Settings.MusicCategory, Settings) : null;
 
             OsPath destDir;
 

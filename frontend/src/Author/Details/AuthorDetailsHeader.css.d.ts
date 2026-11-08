@@ -2,9 +2,6 @@
 // Please do not change this file!
 interface CssExports {
   'alternateTitlesIconContainer': string;
-  'authorNavigationButton': string;
-  'authorNavigationButtons': string;
-  'authorUpButton': string;
   'backdrop': string;
   'backdropOverlay': string;
   'details': string;

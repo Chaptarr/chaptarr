@@ -117,7 +117,7 @@ class Notification extends Component {
         }
 
         {
-          supportsOnUpgrade && onReleaseImport && onUpgrade ?
+          supportsOnUpgrade && onUpgrade ?
             <Label kind={kinds.SUCCESS}>
               {translate('OnUpgrade')}
             </Label> :
@@ -221,7 +221,7 @@ class Notification extends Component {
         }
 
         {
-          !onGrab && !onReleaseImport && !onRename && !onBookRetag && !onAuthorAdded && !onBookAdded && !onAuthorDelete && !onBookDelete && !onBookFileDelete && !onHealthIssue && !onDownloadFailure && !onImportFailure && !onApplicationUpdate ?
+          !onGrab && !onReleaseImport && !onUpgrade && !onRename && !onBookRetag && !onAuthorAdded && !onBookAdded && !onAuthorDelete && !onBookDelete && !onBookFileDelete && !onHealthIssue && !onDownloadFailure && !onImportFailure && !onApplicationUpdate ?
             <Label
               kind={kinds.DISABLED}
               outline={true}

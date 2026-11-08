@@ -93,7 +93,7 @@ namespace Chaptarr.Core.Test.Download
                 diskProvider: null,
                 remotePathMappingService: new PassthroughRemotePathMappingService(),
                 nzbValidationService: null,
-                logger: LogManager.GetCurrentClassLogger())
+                logger: LogManager.GetCurrentClassLogger(), rootFolders: DownloadClientTestRoots.Empty)
             {
                 Definition = new DownloadClientDefinition
                 {

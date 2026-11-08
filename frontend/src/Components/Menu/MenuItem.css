@@ -21,3 +21,10 @@
   color: var(--disabledColor);
   pointer-events: none;
 }
+
+button.isDisabled {
+  &:hover {
+    background-color: var(--toolbarMenuItemBackgroundColor);
+    color: var(--disabledColor);
+  }
+}

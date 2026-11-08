@@ -7,9 +7,12 @@ namespace NzbDrone.Core.Download
     {
         public TrackedDownload TrackedDownload { get; private set; }
 
-        public DownloadCanBeRemovedEvent(TrackedDownload trackedDownload)
+        public DownloadCleanupContext Cleanup { get; }
+
+        public DownloadCanBeRemovedEvent(TrackedDownload trackedDownload, DownloadCleanupContext cleanup = null)
         {
             TrackedDownload = trackedDownload;
+            Cleanup = cleanup;
         }
     }
 }

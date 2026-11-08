@@ -4,6 +4,12 @@ namespace NzbDrone.Core.Books.Commands
 {
     public class RefreshAuthorCommand : Command
     {
+        public override bool SupportsCancellation => true;
+
+        public static RefreshAuthorCommand InitialScan(Author author) => new RefreshAuthorCommand(
+            author.Id, refreshMetadata: author.AddOptions?.AwaitingMetadata == true,
+            rescanFolders: true, isNewAuthor: true);
+
         public int? AuthorId { get; set; }
         public bool IsNewAuthor { get; set; }
         public bool IsFromImport { get; set; }

@@ -3,7 +3,7 @@ function isCommandComplete(command) {
     return false;
   }
 
-  return command.status === 'complete';
+  return command.status === 'completed';
 }
 
 export default isCommandComplete;

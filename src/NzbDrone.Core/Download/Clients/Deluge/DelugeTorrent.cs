@@ -8,6 +8,8 @@ namespace NzbDrone.Core.Download.Clients.Deluge
         public string Hash { get; set; }
         public string Name { get; set; }
         public string State { get; set; }
+        public bool Paused { get; set; }
+        public string Label { get; set; }
         public double Progress { get; set; }
         public double Eta { get; set; }
         public string Message { get; set; }

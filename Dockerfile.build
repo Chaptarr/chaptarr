@@ -2,7 +2,7 @@
 
 ###### node stage ######
 # Use a pinned Node image instead of curl|bash installers.
-FROM node:20.11.1-bookworm-slim AS node
+FROM node:24.22.2-bookworm-slim AS node
 RUN npm install -g yarn@1.22.22 --force
 
 ###### mp4v2 stage ######
@@ -53,6 +53,7 @@ RUN mkdir -p /app/UI && cp -r _output/UI/* /app/UI/
 
 ###### runtime stage ######
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
+COPY build-tools/install-postgres-clients.sh /tmp/install-postgres-clients.sh
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     set -eux; \
@@ -64,6 +65,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         gosu \
         sqlite3 libsqlite3-0; \
     sqlite3 --version; \
+    sh /tmp/install-postgres-clients.sh; \
+    rm /tmp/install-postgres-clients.sh; \
     rm -rf /var/lib/apt/lists/*
 
 # Copy pinned mp4v2 tools used by m4b-tool for chapter and tag writes. These

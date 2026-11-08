@@ -1,66 +1,35 @@
 using System;
-using System.Collections.Generic;
-using System.Reflection;
+using Chaptarr.Core.Test.Common;
+using NLog;
 using NUnit.Framework;
 using NzbDrone.Core.Download.History;
 using NzbDrone.Core.History;
+using NzbDrone.Core.Messaging.Events;
+using static Chaptarr.Core.Test.Common.InterfaceProxy;
 
 namespace Chaptarr.Core.Test.Download
 {
     [TestFixture]
     public class DownloadHistoryServiceDownloadIdCasingFixture
     {
-        private class ThrowingProxy<T> : DispatchProxy where T : class
+        [TestCase(false)]
+        [TestCase(true)]
+        public void get_latest_download_history_item_should_normalize_to_uppercase(bool postgres)
         {
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            DualDatabaseFixture.Run(postgres, database =>
             {
-                throw new NotImplementedException($"Test proxy does not implement {typeof(T).Name}.{targetMethod?.Name}");
-            }
-        }
-
-        private class DownloadHistoryRepositoryProxy : DispatchProxy
-        {
-            public List<string> FindByDownloadIdCalls { get; } = new();
-            public Dictionary<string, List<DownloadHistory>> ByDownloadId { get; } = new(StringComparer.Ordinal);
-
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
-            {
-                if (targetMethod.Name == nameof(IDownloadHistoryRepository.FindByDownloadId))
+                var events = Proxy<IEventAggregator>((_, _) => null);
+                var repository = new DownloadHistoryRepository(database, events);
+                var grabbed = repository.Insert(new DownloadHistory
                 {
-                    var downloadId = (string)args[0];
-                    FindByDownloadIdCalls.Add(downloadId);
-
-                    return ByDownloadId.TryGetValue(downloadId, out var items)
-                        ? items
-                        : new List<DownloadHistory>();
-                }
-
-                throw new NotImplementedException($"Test proxy does not implement {targetMethod.DeclaringType?.Name}.{targetMethod.Name}");
-            }
-        }
-
-        [Test]
-        public void get_latest_download_history_item_should_normalize_to_uppercase()
-        {
-            var repository = DispatchProxy.Create<IDownloadHistoryRepository, DownloadHistoryRepositoryProxy>();
-            var proxy = (DownloadHistoryRepositoryProxy)(object)repository;
-
-            var grabbed = new DownloadHistory
-            {
-                DownloadId = "ABC",
-                EventType = DownloadHistoryEventType.DownloadGrabbed,
-                Date = DateTime.UtcNow
-            };
-
-            proxy.ByDownloadId["ABC"] = new List<DownloadHistory> { grabbed };
-
-            var historyService = DispatchProxy.Create<IHistoryService, ThrowingProxy<IHistoryService>>();
-            var service = new DownloadHistoryService(repository, historyService);
-
-            var result = service.GetLatestDownloadHistoryItem("abc");
-
-            Assert.That(result, Is.SameAs(grabbed));
-            Assert.That(proxy.FindByDownloadIdCalls, Is.EqualTo(new[] { "ABC" }));
+                    DownloadId = "ABC", SourceTitle = "Fixture release",
+                    EventType = DownloadHistoryEventType.DownloadGrabbed, Date = DateTime.UtcNow
+                });
+                var service = new DownloadHistoryService(repository,
+                    new HistoryService(new HistoryRepository(database, events), LogManager.GetCurrentClassLogger()));
+                Assert.That(service.GetLatestDownloadHistoryItem("abc").Id, Is.EqualTo(grabbed.Id));
+                Assert.That(service.GetLatestDownloadHistoryItem(null), Is.Null);
+            });
         }
     }
 }

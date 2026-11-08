@@ -29,6 +29,7 @@ namespace NzbDrone.Core.Messaging.Commands
         public virtual bool IsExclusive => false;
         public virtual bool IsTypeExclusive => false;
         public virtual bool IsLongRunning => false;
+        public virtual bool SupportsCancellation => false;
 
         public string Name { get; private set; }
         public DateTime? LastExecutionTime { get; set; }

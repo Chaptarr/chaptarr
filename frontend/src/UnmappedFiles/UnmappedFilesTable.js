@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import DeleteBookFilesModal from 'BookFile/Editor/DeleteBookFilesModal';
 import Alert from 'Components/Alert';
 import Button from 'Components/Link/Button';
 import Link from 'Components/Link/Link';
@@ -55,6 +56,7 @@ class UnmappedFilesTable extends Component {
       lastToggled: null,
       selectedMediaType: 'all',
       isConfirmDeleteModalOpen: false,
+      pendingRetry: null,
       isSendLogsPreviewModalOpen: false,
       isFetchingSendLogsPreview: false,
       sendLogsPreview: null,
@@ -448,6 +450,34 @@ class UnmappedFilesTable extends Component {
     this.setState({ isConfirmDeleteModalOpen: true });
   };
 
+  onRetryMatchPress = () => {
+    const filtered = this.getFilteredItems();
+    const bookCount = this.getBookUnitCount(filtered);
+    const selection = this.buildUnmappedFilesSelection();
+    const count = selection.scope === 'all' && !selection.exceptBookFileIds?.length ?
+      bookCount : this.getSelectionSummary(filtered, bookCount).selectedBookUnitsCount;
+    const pendingRetry = { mediaType: this.state.selectedMediaType, selection, count };
+
+    if (count > 5) {
+      this.setState({ pendingRetry });
+      return;
+    }
+
+    this.props.onRetryUnmappedMatchPress(pendingRetry.mediaType, selection);
+  };
+
+  onRetryMatchConfirmed = () => {
+    const { pendingRetry } = this.state;
+    this.onRetryMatchCancelled();
+    if (pendingRetry) {
+      this.props.onRetryUnmappedMatchPress(pendingRetry.mediaType, pendingRetry.selection);
+    }
+  };
+
+  onRetryMatchCancelled = () => {
+    this.setState({ pendingRetry: null });
+  };
+
   onConfirmDeleteUnmappedFiles = () => {
     const selectedIds = this.getSelectedIds();
 
@@ -765,7 +795,6 @@ class UnmappedFilesTable extends Component {
       isRefreshingFiles,
       isRetryMatching,
       onRefreshUnmappedFilesPress,
-      onRetryUnmappedMatchPress,
       ...otherProps
     } = this.props;
 
@@ -821,12 +850,16 @@ class UnmappedFilesTable extends Component {
 
     return (
       <PageContent title={titleWithCount}>
-        <PageToolbar>
-          <PageToolbarSection>
+        <PageToolbar
+          controls={
             <UnmappedFilesMediaTypeToggle
               selectedMediaType={selectedMediaType}
               onMediaTypeChange={this.onMediaTypeChange}
             />
+          }
+        >
+          <PageToolbarSection>
+
             <PageToolbarButton
               label={refreshFilesLabel}
               iconName={icons.RESCAN}
@@ -845,9 +878,7 @@ class UnmappedFilesTable extends Component {
               aria-label={retryMatchTitle}
               isDisabled={isPopulated && !error && !filteredItems.length}
               isSpinning={isRetryMatching}
-              onPress={() => {
-                onRetryUnmappedMatchPress(selectedMediaType, this.buildUnmappedFilesSelection());
-              }}
+              onPress={this.onRetryMatchPress}
             />
             <PageToolbarButton
               label={translate('DeleteSelected')}
@@ -859,8 +890,9 @@ class UnmappedFilesTable extends Component {
             <PageToolbarButton
               label={translate('UnmappedFilesSendLogsButton')}
               iconName={icons.BUG}
-              title={translate('UnmappedFilesSendLogsHeader')}
-              isDisabled={!isPopulated || !filteredItems.length}
+              title={translate('UnmappedFilesSendLogsDisabled')}
+              style={{ pointerEvents: 'auto' }}
+              isDisabled={true}
               isSpinning={this.props.isSendingLogs}
               onPress={this.onSendLogsForReview}
             />
@@ -939,14 +971,20 @@ class UnmappedFilesTable extends Component {
           }
         </PageContentBody>
 
-        <ConfirmModal
+        <DeleteBookFilesModal
           isOpen={isConfirmDeleteModalOpen}
-          kind={kinds.DANGER}
-          title={translate('DeleteSelectedBookFiles')}
-          message={translate('DeleteSelectedBookFilesMessageText')}
-          confirmLabel={translate('Delete')}
+          fileIds={this.getSelectedIds()}
           onConfirm={this.onConfirmDeleteUnmappedFiles}
           onCancel={this.onConfirmDeleteModalClose}
+        />
+
+        <ConfirmModal
+          isOpen={this.state.pendingRetry !== null}
+          title={retryMatchLabel}
+          message={translate('UnmappedFilesRetryMatchConfirm', { count: this.state.pendingRetry?.count ?? 0 })}
+          confirmLabel={retryMatchLabel}
+          onConfirm={this.onRetryMatchConfirmed}
+          onCancel={this.onRetryMatchCancelled}
         />
 
         {this.renderSendLogsPreviewModal()}

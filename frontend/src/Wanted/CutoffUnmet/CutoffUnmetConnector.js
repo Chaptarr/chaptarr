@@ -4,6 +4,7 @@ import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import * as commandNames from 'Commands/commandNames';
 import withCurrentPage from 'Components/withCurrentPage';
+import { set } from 'Store/Actions/baseActions';
 import { clearBookFiles, fetchBookFiles } from 'Store/Actions/bookFileActions';
 import { executeCommand } from 'Store/Actions/commandActions';
 import { clearQueueDetails, fetchQueueDetails } from 'Store/Actions/queueActions';
@@ -34,6 +35,7 @@ function createMapStateToProps() {
 
 const mapDispatchToProps = {
   ...wantedActions,
+  onSearchCountError: (error) => set({ section: 'wanted.cutoffUnmet', error }),
   executeCommand,
   fetchQueueDetails,
   clearQueueDetails,

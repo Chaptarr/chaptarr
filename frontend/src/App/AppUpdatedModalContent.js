@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types';
 import React from 'react';
+import Alert from 'Components/Alert';
 import Button from 'Components/Link/Button';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import InlineMarkdown from 'Components/Markdown/InlineMarkdown';
@@ -12,47 +13,9 @@ import UpdateChanges from 'System/Updates/UpdateChanges';
 import translate from 'Utilities/String/translate';
 import styles from './AppUpdatedModalContent.css';
 
-function mergeUpdates(items, version, prevVersion) {
-  let installedIndex = items.findIndex((u) => u.version === version);
-  let installedPreviouslyIndex = items.findIndex((u) => u.version === prevVersion);
-
-  if (installedIndex === -1) {
-    installedIndex = 0;
-  }
-
-  if (installedPreviouslyIndex === -1) {
-    installedPreviouslyIndex = items.length;
-  } else if (installedPreviouslyIndex === installedIndex && items.length) {
-    installedPreviouslyIndex += 1;
-  }
-
-  const appliedUpdates = items.slice(installedIndex, installedPreviouslyIndex);
-
-  if (!appliedUpdates.length) {
-    return null;
-  }
-
-  const appliedChanges = { new: [], fixed: [] };
-  appliedUpdates.forEach((u) => {
-    if (u.changes) {
-      appliedChanges.new.push(... u.changes.new);
-      appliedChanges.fixed.push(... u.changes.fixed);
-    }
-  });
-
-  const mergedUpdate = Object.assign({}, appliedUpdates[0], { changes: appliedChanges });
-
-  if (!appliedChanges.new.length && !appliedChanges.fixed.length) {
-    mergedUpdate.changes = null;
-  }
-
-  return mergedUpdate;
-}
-
 function AppUpdatedModalContent(props) {
   const {
     version,
-    prevVersion,
     isPopulated,
     error,
     items,
@@ -60,7 +23,11 @@ function AppUpdatedModalContent(props) {
     onModalClose
   } = props;
 
-  const update = mergeUpdates(items, version, prevVersion);
+  // Unlike the cumulative sibling-*arr popup, show only the installed release.
+  // The update API supplies its in-binary notes when the feed has no installed row.
+  // The manifest may omit zero version components that the running assembly includes.
+  const releaseVersion = (value) => value.replace(/(?:\.0)+$/, '');
+  const update = items.find((item) => releaseVersion(item.version) === releaseVersion(version));
 
   return (
     <ModalContent onModalClose={onModalClose}>
@@ -103,6 +70,13 @@ function AppUpdatedModalContent(props) {
         }
 
         {
+          !!error &&
+            <Alert kind={kinds.WARNING}>
+              {translate('FailedToFetchUpdates')}
+            </Alert>
+        }
+
+        {
           !isPopulated && !error &&
             <LoadingIndicator />
         }
@@ -128,7 +102,6 @@ function AppUpdatedModalContent(props) {
 
 AppUpdatedModalContent.propTypes = {
   version: PropTypes.string.isRequired,
-  prevVersion: PropTypes.string,
   isPopulated: PropTypes.bool.isRequired,
   error: PropTypes.object,
   items: PropTypes.arrayOf(PropTypes.object).isRequired,

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using Dapper;
 using Microsoft.Data.Sqlite;
@@ -174,7 +173,7 @@ namespace Chaptarr.Core.Test.Books
                 var service = new BookService(
                     repository,
                     editionService: null,
-                    eventAggregator: null,
+                    eventAggregator: new StubEventAggregator(),
                     authorService: null,
                     mediaFileService: null,
                     rootFolderService: null,
@@ -205,75 +204,17 @@ namespace Chaptarr.Core.Test.Books
 
         private static void WithRepository(Action<InspectableBookRepository, string> action)
         {
-            var databasePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"book_author_id_scalar_{Guid.NewGuid():N}.db");
-            var connectionString = new SqliteConnectionStringBuilder
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(false, database =>
             {
-                DataSource = databasePath,
-                Mode = SqliteOpenMode.ReadWriteCreate
-            }.ToString();
-
-            try
-            {
-                using (var connection = new SqliteConnection(connectionString))
+                var repository = new InspectableBookRepository(database, new StubEventAggregator());
+                repository.Insert(new Book
                 {
-                    connection.Open();
-                    CreateBookSchema(connection);
-                    connection.Execute("INSERT INTO \"Books\" (\"Id\", \"AuthorId\", \"Title\") VALUES (1, 10, 'Existing');");
-                }
-
-                var database = new Database("main", () =>
-                {
-                    var conn = new SqliteConnection(connectionString);
-                    conn.Open();
-                    return conn;
+                    AuthorId = 10, Title = "Existing", CleanTitle = "existing", TitleSlug = "existing",
+                    MediaType = BookMediaType.Audiobook, Added = DateTime.UtcNow
                 });
-
-                action(new InspectableBookRepository(new MainDatabase(database), new StubEventAggregator()), connectionString);
-            }
-            finally
-            {
-                try
-                {
-                    if (File.Exists(databasePath))
-                    {
-                        File.Delete(databasePath);
-                    }
-                }
-                catch
-                {
-                }
-            }
-        }
-
-        private static void CreateBookSchema(SqliteConnection connection)
-        {
-            var excluded = TableMapping.Mapper.ExcludeProperties(typeof(Book))
-                .Select(property => property.Name)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            var columns = typeof(Book)
-                .GetProperties()
-                .Where(property => property.Name == nameof(Book.Id) || (property.IsMappableProperty() && !excluded.Contains(property.Name)))
-                .GroupBy(property => property.Name, StringComparer.OrdinalIgnoreCase)
-                .Select(group => group.First())
-                .Select(property => property.Name == nameof(Book.Id)
-                    ? "\"Id\" INTEGER PRIMARY KEY AUTOINCREMENT"
-                    : $"\"{property.Name}\" {GetSqliteColumnType(property)} NULL")
-                .ToList();
-
-            connection.Execute($"CREATE TABLE \"Books\" ({string.Join(", ", columns)});");
-        }
-
-        private static string GetSqliteColumnType(System.Reflection.PropertyInfo property)
-        {
-            var type = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
-
-            if (type.IsEnum || type == typeof(int) || type == typeof(long) || type == typeof(bool))
-            {
-                return "INTEGER";
-            }
-
-            return "TEXT";
+                using var connection = database.OpenConnection();
+                action(repository, connection.ConnectionString);
+            });
         }
     }
 }

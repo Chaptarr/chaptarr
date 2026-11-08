@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System;
 using System.IO;
+using System.Diagnostics;
 using System.Linq;
 using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http;
@@ -16,6 +17,7 @@ using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport.Manual;
 using NzbDrone.Core.MediaFiles.BookImport.Services;
 using NzbDrone.Core.Qualities;
+using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RootFolders;
 
 namespace Chaptarr.Api.V1.ManualImport
@@ -29,6 +31,7 @@ namespace Chaptarr.Api.V1.ManualImport
         private readonly IManualImportService _manualImportService;
         private readonly IMediaFileService _mediaFileService;
         private readonly IRootFolderService _rootFolderService;
+        private readonly IManualImportReplacementFiles _replacementFiles;
         private readonly Logger _logger;
 
         public ManualImportController(IManualImportService manualImportService,
@@ -37,7 +40,8 @@ namespace Chaptarr.Api.V1.ManualImport
                                   IBookService bookService,
                                   IMediaFileService mediaFileService,
                                   IRootFolderService rootFolderService,
-                                  Logger logger)
+                                  Logger logger,
+                                  IManualImportReplacementFiles replacementFiles = null)
         {
             _authorService = authorService;
             _bookService = bookService;
@@ -46,6 +50,7 @@ namespace Chaptarr.Api.V1.ManualImport
             _mediaFileService = mediaFileService;
             _rootFolderService = rootFolderService;
             _logger = logger;
+            _replacementFiles = replacementFiles;
         }
 
         [HttpPost]
@@ -57,6 +62,33 @@ namespace Chaptarr.Api.V1.ManualImport
             }
 
             return Accepted(UpdateImportItems(resource));
+        }
+
+        [HttpPost("replacementfiles")]
+        public List<ManualImportReplacementFile> GetReplacementFiles([FromBody] ManualImportReplacementRequest request)
+        {
+            var files = request?.Files;
+            if (files == null || files.Count == 0 || files.Any(file => file == null || string.IsNullOrWhiteSpace(file.Path)))
+            {
+                throw new BadRequestException("Selected files and their paths are required");
+            }
+
+            var started = Stopwatch.GetTimestamp();
+            var existingFiles = _mediaFileService.GetFilesByBooks(files.Select(file => file.BookId).Where(id => id > 0).Distinct().ToList());
+            var storedSources = _mediaFileService.GetFileWithPath(files.Select(file => file.Path).Distinct(PathEqualityComparer.Instance).ToList());
+            var rootFolders = _rootFolderService.All();
+            var selections = files.Select(file => new LocalBook
+            {
+                Path = file.Path,
+                Book = new NzbDrone.Core.Books.Book { Id = file.BookId },
+                ExistingFile = _rootFolderService.GetBestRootFolder(file.Path, rootFolders) != null
+            }).ToList();
+
+            var preview = (_replacementFiles ?? throw new InvalidOperationException("Replacement preview service is unavailable"))
+                .Describe(ManualImportReplacementFiles.Get(existingFiles, selections, storedSources));
+            _logger.Debug("[REPLACEMENT-PREVIEW] {0} selected, {1} replacement files, {2} associated paths in {3}ms",
+                files.Count, preview.Count, preview.Sum(file => file.AssociatedPaths.Count), Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            return preview;
         }
 
         [HttpGet]
@@ -192,6 +224,7 @@ namespace Chaptarr.Api.V1.ManualImport
                     SuggestedEditionTitle = resource.SuggestedEditionTitle,
                     Quality = resource.Quality,
                     ReleaseGroup = resource.ReleaseGroup,
+                    AudioProductionOverride = resource.AudioProductionOverride,
                     IndexerFlags = resource.IndexerFlags,
                     DownloadId = resource.DownloadId,
                     AdditionalFile = resource.AdditionalFile,

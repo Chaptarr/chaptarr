@@ -70,6 +70,14 @@ namespace Chaptarr.Core.Test.Books
                 Title = "Guards! Guards! (Discworld, #8)",
                 SeriesName = "Discworld",
                 SeriesPosition = "8",
+                SeriesLinks = new List<SeriesBookLink>
+                {
+                    new SeriesBookLink
+                    {
+                        Series = new Series { Title = "Discworld", GoodreadsSeriesId = "40650", MediaType = BookMediaType.Audiobook },
+                        Position = "8"
+                    }
+                },
                 MediaType = BookMediaType.Audiobook,
                 Editions = new List<Edition>
                 {

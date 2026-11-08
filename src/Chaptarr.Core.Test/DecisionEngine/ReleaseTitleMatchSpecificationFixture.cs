@@ -14,6 +14,34 @@ namespace Chaptarr.Core.Test.DecisionEngine
     [TestFixture]
     public class ReleaseTitleMatchSpecificationFixture
     {
+        [TestCase(BookMatchingStrictness.Strict)]
+        [TestCase(BookMatchingStrictness.Balanced)]
+        [TestCase(BookMatchingStrictness.Aggressive)]
+        public void attachment_numbers_and_stored_part_titles_should_keep_their_identity_in_every_mode(BookMatchingStrictness strictness)
+        {
+            foreach (var (title, name, release, accepted) in new[]
+            {
+                ("Dune", "Frank Herbert", "Frank Herbert - Dune \"Dune 12.mp3\" MP3", true),
+                ("Dune", "Frank Herbert", "Frank Herbert - Dune 4", false),
+                ("Iron Flame (Part 2 of 2) (Dramatized Adaptation)", "Rebecca Yarros", "Rebecca Yarros - Iron Flame [GraphicAudio]", false),
+                ("Iron Flame (Part 2 of 2) (Dramatized Adaptation)", "Rebecca Yarros", "Rebecca Yarros - Iron Flame (Part 2 of 2) [GraphicAudio]", true)
+            })
+            {
+                var author = new Author { Id = 1, Name = name };
+                var book = new Book
+                {
+                    Id = 1, Title = title, Author = author, AuthorId = author.Id, MediaType = BookMediaType.Audiobook,
+                    SeriesName = title == "Dune" ? "Dune" : null, SeriesPosition = title == "Dune" ? "1" : null,
+                    Editions = new List<Edition> { new Edition { Id = 1, Title = title, Monitored = true } }
+                };
+                var criteria = new BookSearchCriteria { Author = author, Books = new List<Book> { book } };
+                var subject = new RemoteBook { Release = new ReleaseInfo { Title = release, Author = name } };
+                var spec = new ReleaseTitleMatchSpecification(LogManager.GetCurrentClassLogger(), ConfigServiceTestProxy.Create(strictness));
+
+                Assert.That(spec.IsSatisfiedBy(subject, criteria).Accepted, Is.EqualTo(accepted), release);
+            }
+        }
+
         [Test]
         public void should_accept_interactive_search_result_when_release_title_omits_author_but_release_author_hint_matches()
         {
@@ -166,7 +194,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
         }
 
         [Test]
-        public void should_reject_interactive_search_result_when_release_omits_the_monitored_edition_subtitle()
+        public void should_accept_metadata_supported_base_when_release_omits_the_edition_subtitle()
         {
             var author = new Author { Name = "Mitch Albom" };
             var book = new Book
@@ -209,7 +237,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             var decision = spec.IsSatisfiedBy(remoteBook, criteria);
 
-            Assert.That(decision.Accepted, Is.False);
+            Assert.That(decision.Accepted, Is.True);
         }
 
         [Test]
@@ -244,7 +272,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             Assert.That(decision.Accepted, Is.False);
             Assert.That(decision.CanBypass, Is.True);
-            Assert.That(decision.Reason, Is.EqualTo("Title/Author mismatch"));
+            Assert.That(decision.Reason, Is.EqualTo("Author mismatch: Lila Grey"));
         }
 
         [Test]
@@ -402,10 +430,10 @@ namespace Chaptarr.Core.Test.DecisionEngine
             });
         }
 
-        [TestCase(BookMatchingStrictness.Aggressive, true)]
-        [TestCase(BookMatchingStrictness.Balanced, true)]
+        [TestCase(BookMatchingStrictness.Aggressive, false)]
+        [TestCase(BookMatchingStrictness.Balanced, false)]
         [TestCase(BookMatchingStrictness.Strict, false)]
-        public void should_only_position_veto_a_target_series_label_in_strict_mode(BookMatchingStrictness strictness, bool expectedAccepted)
+        public void should_reject_a_different_number_bound_to_the_target_series_in_every_mode(BookMatchingStrictness strictness, bool expectedAccepted)
         {
             var author = new Author { Name = "Matt Dinniman" };
             var book = new Book
@@ -455,7 +483,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
                     new TitleMatchProblem { Code = TitleMatchProblemCode.SiblingTitleContradiction, Value = "Other Title" }
                 }
             };
-            var identity = new ReleaseIdentityEvidence { HasPositiveIdentityEvidence = true };
+            var identity = new ReleaseIdentityEvidence { HasAuthorIdentityEvidence = true };
 
             var accepted = ReleaseTitleMatchSpecification.IsAcceptedMatch(
                 match,
@@ -608,5 +636,174 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
             return (author, targetBook, siblingBook);
         }
+
+        [TestCase("1", true)]
+        [TestCase("𝟙", true)]
+        [TestCase("١", true)]
+        [TestCase("１", true)]
+        [TestCase("①", true)]
+        [TestCase("2", false)]
+        [TestCase("𝟚", false)]
+        [TestCase("٢", false)]
+        [TestCase("２", false)]
+        [TestCase("②", false)]
+        [TestCase("Ⅱ", false)]
+        [TestCase("II", false)]
+        [TestCase("٧", false)]
+        public void numeric_release_positions_should_keep_mode_semantics_across_scripts(string position, bool samePosition)
+        {
+            var author = new Author { Name = "Frank Herbert" };
+            var book = new Book { Title = "Dune", Author = author, SeriesName = "Dune", SeriesPosition = "1" };
+            var sibling = new Book { Title = "Dune Messiah", Author = author, SeriesName = "Dune", SeriesPosition = "2" };
+            var criteria = new BookSearchCriteria
+            {
+                Author = author,
+                Books = new List<Book> { book },
+                AuthorCatalog = new List<Book> { book, sibling }
+            };
+            foreach (var mode in new[] { BookMatchingStrictness.Strict, BookMatchingStrictness.Balanced, BookMatchingStrictness.Aggressive })
+            {
+                var subject = new RemoteBook { Release = new ReleaseInfo { Title = "Frank Herbert - Dune " + position, Author = author.Name } };
+                var spec = new ReleaseTitleMatchSpecification(LogManager.GetCurrentClassLogger(), ConfigServiceTestProxy.Create(mode));
+                Assert.That(spec.IsSatisfiedBy(subject, criteria).Accepted, Is.EqualTo(samePosition), mode + ": " + position);
+            }
+        }
+
+        [TestCase("Ready Player 2")]
+        [TestCase("Ready Player 𝟚")]
+        [TestCase("Ready Player ②")]
+        public void a_partial_title_must_not_prove_number_word_equivalence(string release)
+        {
+            var author = new Author { Name = "Ernest Cline" };
+            var books = new List<Book> { new Book { Title = "Ready Player One", Author = author }, new Book { Title = "Ready Player Two", Author = author } };
+            var criteria = new BookSearchCriteria { Author = author, Books = books };
+            foreach (var mode in new[] { BookMatchingStrictness.Strict, BookMatchingStrictness.Balanced, BookMatchingStrictness.Aggressive })
+            {
+                var subject = new RemoteBook { Release = new ReleaseInfo { Title = release, Author = author.Name } };
+                var spec = new ReleaseTitleMatchSpecification(LogManager.GetCurrentClassLogger(), ConfigServiceTestProxy.Create(mode));
+                Assert.That(spec.IsSatisfiedBy(subject, criteria).Accepted, Is.False, mode.ToString());
+            }
+        }
+
+        [TestCase("Ready Player One")]
+        [TestCase("Ready Player Two")]
+        public void literal_number_words_should_still_prove_the_correct_title(string title)
+        {
+            var author = new Author { Name = "Ernest Cline" };
+            var books = new List<Book> { new Book { Title = "Ready Player One", Author = author }, new Book { Title = "Ready Player Two", Author = author } };
+            Assert.That(ReleaseTitleMatchScorer.FindBestMatch(title, author.Name, books, author.Name, books)?.Book.Title, Is.EqualTo(title));
+        }
+
+        [TestCase("Ready Player 2", "Ready Player Two")]
+        [TestCase("Ready Player 𝟚", "Ready Player Two")]
+        [TestCase("Ready Player ٢", "Ready Player Two")]
+        [TestCase("Ready Player ２", "Ready Player Two")]
+        [TestCase("Ready Player ②", "Ready Player Two")]
+        [TestCase("Ready Player Ⅱ", "Ready Player Two")]
+        [TestCase("Ready Player 1", "Ready Player One")]
+        public void numeric_title_equality_should_not_merge_distinct_siblings(string release, string expectedTitle)
+        {
+            var author = new Author { Name = "Ernest Cline" };
+            var books = new List<Book>
+            {
+                new Book { Title = "Ready Player One", Author = author, Editions = new List<Edition> { new Edition { Title = "Ready Player 1", Monitored = true } } },
+                new Book { Title = "Ready Player Two", Author = author, Editions = new List<Edition> { new Edition { Title = "Ready Player 2", Monitored = true } } }
+            };
+            var result = ReleaseTitleMatchScorer.FindBestMatch(release, author.Name, books, author.Name, books);
+            Assert.That(result, Is.Not.Null);
+            Assert.That(result.Book.Title, Is.EqualTo(expectedTitle));
+            Assert.That(result.IsMatch, Is.True);
+        }
+
+
+        [Test]
+        public void a_suspicious_adjacent_number_should_be_forgiven_only_with_proven_identity()
+        {
+            var match = new TitleMatchResult
+            {
+                IsMatch = false,
+                ProblemCode = TitleMatchProblemCode.SuspiciousAdjacentNumber,
+                Problems = new List<TitleMatchProblem>
+                {
+                    new TitleMatchProblem { Code = TitleMatchProblemCode.SuspiciousAdjacentNumber, Value = "004" }
+                }
+            };
+
+            var authorProven = new ReleaseIdentityEvidence { HasAuthorIdentityEvidence = true };
+            var unproven = new ReleaseIdentityEvidence();
+
+            foreach (var strictness in new[] { BookMatchingStrictness.Balanced, BookMatchingStrictness.Aggressive })
+            {
+                // No identity at all: another publisher's numbered product, no tolerance.
+                Assert.That(ReleaseTitleMatchSpecification.IsAcceptedMatch(match, unproven, strictness), Is.False, strictness.ToString());
+
+                // Proven author identity keeps the tolerance.
+                Assert.That(ReleaseTitleMatchSpecification.IsAcceptedMatch(match, authorProven, strictness), Is.True, strictness.ToString());
+            }
+
+            // Strict never forgives it either way.
+            Assert.That(ReleaseTitleMatchSpecification.IsAcceptedMatch(match, authorProven, BookMatchingStrictness.Strict), Is.False);
+        }
+
+        [TestCase(BookMatchingStrictness.Strict)]
+        [TestCase(BookMatchingStrictness.Balanced)]
+        [TestCase(BookMatchingStrictness.Aggressive)]
+        public void should_accept_an_english_title_initial_article_omission_at_the_decision_boundary(BookMatchingStrictness strictness)
+        {
+            var author = new Author { Name = "Test Writer" };
+            var book = new Book
+            {
+                Author = author,
+                Title = "The Amber Road",
+                Editions = new List<Edition> { new Edition { Title = "The Amber Road", Language = "English", Monitored = true } }
+            };
+            author.Books = new List<Book> { book };
+            var criteria = new BookSearchCriteria { Author = author, Books = new List<Book> { book }, InteractiveSearch = true };
+            var subject = new RemoteBook
+            {
+                Release = new ReleaseInfo { Title = "Amber Road - Test Writer", Author = author.Name }
+            };
+            var spec = new ReleaseTitleMatchSpecification(LogManager.GetCurrentClassLogger(), ConfigServiceTestProxy.Create(strictness));
+
+            var decision = spec.IsSatisfiedBy(subject, criteria);
+
+            Assert.That(decision.Accepted, Is.True, strictness.ToString());
+        }
+
+        [TestCase(BookMatchingStrictness.Strict)]
+        [TestCase(BookMatchingStrictness.Balanced)]
+        [TestCase(BookMatchingStrictness.Aggressive)]
+        public void should_reject_a_shorter_search_when_an_article_bearing_sibling_explains_the_release(BookMatchingStrictness strictness)
+        {
+            var author = new Author { Name = "Frank Herbert" };
+            var target = new Book
+            {
+                Author = author,
+                Title = "Dune",
+                AudiobookMonitored = true,
+                Editions = new List<Edition> { new Edition { Title = "Dune", Language = "English", Monitored = true } }
+            };
+            var sibling = new Book
+            {
+                Author = author,
+                Title = "The Dune Encyclopedia",
+                AudiobookMonitored = false,
+                Editions = new List<Edition> { new Edition { Title = "The Dune Encyclopedia", Language = "English", Monitored = true } }
+            };
+            author.Books = new List<Book> { target, sibling };
+            var criteria = new BookSearchCriteria { Author = author, Books = new List<Book> { target }, InteractiveSearch = true };
+            var subject = new RemoteBook
+            {
+                Release = new ReleaseInfo { Title = "Dune Encyclopedia - Frank Herbert", Author = author.Name }
+            };
+            var spec = new ReleaseTitleMatchSpecification(LogManager.GetCurrentClassLogger(), ConfigServiceTestProxy.Create(strictness));
+
+            var decision = spec.IsSatisfiedBy(subject, criteria);
+
+            Assert.That(decision.Accepted, Is.False, strictness.ToString());
+            Assert.That(decision.CanBypass, Is.False, strictness.ToString());
+            Assert.That(decision.Reason, Is.EqualTo("Release appears to match a different book by this author"), strictness.ToString());
+        }
+
     }
 }

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 using NzbDrone.Core.Datastore;
 
 namespace NzbDrone.Core.Books
@@ -10,7 +11,9 @@ namespace NzbDrone.Core.Books
             BooksToMonitor = new List<string>();
         }
 
-        public MonitorTypes Monitor { get; set; }
+        // An omitted policy leaves existing monitoring unchanged.
+        [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+        public MonitorTypes? Monitor { get; set; }
         // Optional: when set, apply monitoring changes only to this media type (audiobook/ebook).
         // When null, apply to all books (legacy behavior).
         public BookMediaType? MediaType { get; set; }

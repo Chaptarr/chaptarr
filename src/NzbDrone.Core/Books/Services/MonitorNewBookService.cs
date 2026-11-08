@@ -34,7 +34,7 @@ namespace NzbDrone.Core.Books
                 if (!addedBook.ReleaseDate.HasValue || author == null || author.Added == default)
                 {
                     _logger.Debug(
-                        "Not monitoring newly inserted book '{0}' as a future release because its release date or the author's added date is unavailable",
+                        "Not monitoring newly inserted book '{0}' as a new release because its release date or the author's added date is unavailable",
                         addedBook.Title);
                     return false;
                 }

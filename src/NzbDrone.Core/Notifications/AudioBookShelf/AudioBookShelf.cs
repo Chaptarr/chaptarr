@@ -311,17 +311,13 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
 
                 if (response.HasHttpError)
                 {
-                    var message = response.Content.IsNullOrWhiteSpace()
-                        ? $"AudioBookShelf OIDC start failed: {(int)response.StatusCode} {response.StatusCode}"
-                        : response.Content;
-
                     if (response.StatusCode == HttpStatusCode.BadRequest &&
-                        message.IndexOf("Invalid redirect_uri", StringComparison.OrdinalIgnoreCase) >= 0)
+                        response.Content.ContainsIgnoreCase("Invalid redirect_uri"))
                     {
-                        message = $"AudioBookShelf rejected the callback URL. Add '{callbackUrl}' to AudioBookShelf → Settings → Authentication → OpenID Connect → Mobile Redirect URIs (or set it to '*'), then try again.";
+                        throw new BadRequestException($"AudioBookShelf rejected the callback URL. Add '{callbackUrl}' to AudioBookShelf → Settings → Authentication → OpenID Connect → Mobile Redirect URIs (or set it to '*'), then try again.");
                     }
 
-                    throw new BadRequestException(message);
+                    throw new BadRequestException($"AudioBookShelf OIDC start failed: {(int)response.StatusCode} {response.StatusCode}");
                 }
 
                 if (!response.HasHttpRedirect)
@@ -396,11 +392,7 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
                 var callbackResponse = _httpClient.Execute(callbackBuilder.Build());
                 if (callbackResponse.HasHttpError)
                 {
-                    var message = callbackResponse.Content.IsNullOrWhiteSpace()
-                        ? $"AudioBookShelf OIDC callback failed: {(int)callbackResponse.StatusCode} {callbackResponse.StatusCode}"
-                        : callbackResponse.Content;
-
-                    throw new BadRequestException(message);
+                    throw new BadRequestException($"AudioBookShelf OIDC callback failed: {(int)callbackResponse.StatusCode} {callbackResponse.StatusCode}");
                 }
 
                 var loginResponse = Json.Deserialize<AudioBookShelfOidcLoginResponse>(callbackResponse.Content);
@@ -445,11 +437,7 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
 
                 if (createResponse.HasHttpError)
                 {
-                    var message = createResponse.Content.IsNullOrWhiteSpace()
-                        ? $"Failed to create AudioBookShelf API key: {(int)createResponse.StatusCode} {createResponse.StatusCode}"
-                        : createResponse.Content;
-
-                    throw new BadRequestException(message);
+                    throw new BadRequestException($"Failed to create AudioBookShelf API key: {(int)createResponse.StatusCode} {createResponse.StatusCode}");
                 }
 
                 var apiKeyResponse = Json.Deserialize<AudioBookShelfApiKeyCreateResponse>(createResponse.Content);

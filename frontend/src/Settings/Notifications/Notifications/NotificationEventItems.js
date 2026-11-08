@@ -90,7 +90,7 @@ function NotificationEventItems(props) {
           }
 
           {
-            onReleaseImport.value && shouldShow(supportsOnUpgrade.value) &&
+            shouldShow(supportsOnUpgrade.value) &&
               <div>
                 <FormInputGroup
                   type={inputTypes.CHECK}

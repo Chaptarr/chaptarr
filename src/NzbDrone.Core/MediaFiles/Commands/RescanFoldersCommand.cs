@@ -5,6 +5,8 @@ namespace NzbDrone.Core.MediaFiles.Commands
 {
     public class RescanFoldersCommand : Command
     {
+        public override bool SupportsCancellation => true;
+
         public RescanFoldersCommand()
         {
             // These are the settings used in the scheduled task

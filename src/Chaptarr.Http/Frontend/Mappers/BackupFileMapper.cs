@@ -29,7 +29,7 @@ namespace Chaptarr.Http.Frontend.Mappers
 
         public override bool CanHandle(string resourceUrl)
         {
-            return resourceUrl.StartsWith("/backup/") && BackupService.BackupFileRegex.IsMatch(resourceUrl);
+            return resourceUrl.StartsWith("/backup/") && BackupService.BackupFileRegex.IsMatch(Path.GetFileName(resourceUrl));
         }
     }
 }

@@ -1,64 +1,17 @@
 .title {
   composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
   text-align: left;
 }
 
 .narrator {
   composes: cell from '~Components/Table/Cells/TableRowCell.css';
-  text-align: left;
-  
-  width: 150px;
-  min-width: 120px;
-  max-width: 200px;
+
   overflow: hidden;
+  max-width: 200px;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-@media only screen and (max-width: 768px) {
-  .narrator {
-    display: none;
-  }
-  
-  .position,
-  .rating,
-  .status {
-    min-width: 60px;
-    width: 80px;
-  }
-  
-  .releaseDate {
-    min-width: 80px;
-    width: 100px;
-  }
-  
-  .pageCount {
-    min-width: 50px;
-    width: 60px;
-  }
-  
-  .duration {
-    min-width: 60px;
-    width: 70px;
-  }
-}
-
-@media only screen and (max-width: 480px) {
-  .position,
-  .rating {
-    display: none;
-  }
-  
-  .status {
-    min-width: 50px;
-    width: 60px;
-  }
-  
-  .pageCount,
-  .duration {
-    min-width: 45px;
-    width: 55px;
-  }
 }
 
 .monitored {
@@ -74,6 +27,10 @@
 
   min-width: 80px;
   width: 100px;
+}
+
+.status {
+  width: 108px;
 }
 
 .releaseDate {
@@ -105,5 +62,6 @@
 
 .path {
   composes: cell from '~Components/Table/Cells/TableRowCell.css';
+
   text-align: left;
 }

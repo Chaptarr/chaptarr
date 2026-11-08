@@ -7,6 +7,7 @@ using Chaptarr.Api.V1.CustomFormats;
 using Chaptarr.Http.Middleware;
 using Chaptarr.Http.REST;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Qualities;
@@ -41,6 +42,7 @@ namespace Chaptarr.Api.V1.Queue
         public string ConversionMessage { get; set; }
         public bool CanCancelConversion { get; set; }
         public bool CanRetryImport { get; set; }
+        public bool AwaitingImportConfirmation { get; set; }
         public DownloadProtocol Protocol { get; set; }
         public string DownloadClient { get; set; }
         public bool DownloadClientHasPostImportCategory { get; set; }
@@ -64,7 +66,9 @@ namespace Chaptarr.Api.V1.Queue
             }
 
             var customFormats = model.RemoteBook?.CustomFormats;
-            var qualityProfile = model.RemoteBook?.Author?.GetQualityProfileForQuality(model.Quality.Quality);
+            var qualityProfile = model.Book != null
+                ? model.RemoteBook?.Author?.GetQualityProfileForMediaType(model.Book.MediaType)
+                : model.RemoteBook?.GetQualityProfile();
             var customFormatScore = qualityProfile?.CalculateCustomFormatScore(customFormats) ?? 0;
 
             return new QueueResource
@@ -96,6 +100,7 @@ namespace Chaptarr.Api.V1.Queue
                 ConversionMessage = model.ConversionMessage,
                 CanCancelConversion = model.CanCancelConversion,
                 CanRetryImport = model.CanRetryImport,
+                AwaitingImportConfirmation = model.AwaitingImportConfirmation,
                 Protocol = model.Protocol,
                 DownloadClient = model.DownloadClient,
                 DownloadClientHasPostImportCategory = model.DownloadClientHasPostImportCategory,

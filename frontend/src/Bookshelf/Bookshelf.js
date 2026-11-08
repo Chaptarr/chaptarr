@@ -359,13 +359,14 @@ class Bookshelf extends Component {
 
     return (
       <PageContent title={translate('BookStudio')}>
-        <PageToolbar>
-          <PageToolbarSection>
+        <PageToolbar
+          controls={
             <MediaTypeToggle
               selectedMediaType={selectedMediaType}
               onMediaTypeChange={onMediaTypeChange}
             />
-          </PageToolbarSection>
+          }
+        >
           <PageToolbarSection alignContent={align.RIGHT}>
             <FilterMenu
               alignMenu={align.RIGHT}

@@ -144,6 +144,8 @@ namespace Chaptarr.Core.Test.Extras
 
             public List<int> DeletedIds { get; } = new List<int>();
 
+            public void DeleteBookFiles(Book book) => throw new NotSupportedException();
+
             public List<OtherExtraFile> GetFilesByAuthor(int authorId)
             {
                 return _files.Where(f => f.AuthorId == authorId).ToList();

@@ -78,35 +78,9 @@ namespace Chaptarr.Http.Authentication
                     // which breaks our browser login flow for the UI controllers. Restore the previous behavior:
                     // - XHR requests: 401/403 with Location header
                     // - Browser requests: 302 redirect to /login
-                    options.Events.OnRedirectToLogin = context =>
-                    {
-                        if (IsXhr(context.Request))
-                        {
-                            context.Response.Headers.Location = context.RedirectUri;
-                            context.Response.StatusCode = 401;
-                        }
-                        else
-                        {
-                            context.Response.Redirect(context.RedirectUri);
-                        }
+                    options.Events.OnRedirectToLogin = context => RedirectCookieAuthentication(context, 401);
 
-                        return System.Threading.Tasks.Task.CompletedTask;
-                    };
-
-                    options.Events.OnRedirectToAccessDenied = context =>
-                    {
-                        if (IsXhr(context.Request))
-                        {
-                            context.Response.Headers.Location = context.RedirectUri;
-                            context.Response.StatusCode = 403;
-                        }
-                        else
-                        {
-                            context.Response.Redirect(context.RedirectUri);
-                        }
-
-                        return System.Threading.Tasks.Task.CompletedTask;
-                    };
+                    options.Events.OnRedirectToAccessDenied = context => RedirectCookieAuthentication(context, 403);
 
                     options.Events.OnValidatePrincipal = async context =>
                     {
@@ -143,35 +117,9 @@ namespace Chaptarr.Http.Authentication
                     options.Cookie.SameSite = Microsoft.AspNetCore.Http.SameSiteMode.Lax;
 
                     // See Forms cookie configuration for why this is required on ASP.NET Core 10+.
-                    options.Events.OnRedirectToLogin = context =>
-                    {
-                        if (IsXhr(context.Request))
-                        {
-                            context.Response.Headers.Location = context.RedirectUri;
-                            context.Response.StatusCode = 401;
-                        }
-                        else
-                        {
-                            context.Response.Redirect(context.RedirectUri);
-                        }
+                    options.Events.OnRedirectToLogin = context => RedirectCookieAuthentication(context, 401);
 
-                        return System.Threading.Tasks.Task.CompletedTask;
-                    };
-
-                    options.Events.OnRedirectToAccessDenied = context =>
-                    {
-                        if (IsXhr(context.Request))
-                        {
-                            context.Response.Headers.Location = context.RedirectUri;
-                            context.Response.StatusCode = 403;
-                        }
-                        else
-                        {
-                            context.Response.Redirect(context.RedirectUri);
-                        }
-
-                        return System.Threading.Tasks.Task.CompletedTask;
-                    };
+                    options.Events.OnRedirectToAccessDenied = context => RedirectCookieAuthentication(context, 403);
 
                     options.Events.OnValidatePrincipal = async context =>
                     {
@@ -204,35 +152,9 @@ namespace Chaptarr.Http.Authentication
                     options.ReturnUrlParameter = "returnUrl";
 
                     // See Forms cookie configuration for why this is required on ASP.NET Core 10+.
-                    options.Events.OnRedirectToLogin = context =>
-                    {
-                        if (IsXhr(context.Request))
-                        {
-                            context.Response.Headers.Location = context.RedirectUri;
-                            context.Response.StatusCode = 401;
-                        }
-                        else
-                        {
-                            context.Response.Redirect(context.RedirectUri);
-                        }
+                    options.Events.OnRedirectToLogin = context => RedirectCookieAuthentication(context, 401);
 
-                        return System.Threading.Tasks.Task.CompletedTask;
-                    };
-
-                    options.Events.OnRedirectToAccessDenied = context =>
-                    {
-                        if (IsXhr(context.Request))
-                        {
-                            context.Response.Headers.Location = context.RedirectUri;
-                            context.Response.StatusCode = 403;
-                        }
-                        else
-                        {
-                            context.Response.Redirect(context.RedirectUri);
-                        }
-
-                        return System.Threading.Tasks.Task.CompletedTask;
-                    };
+                    options.Events.OnRedirectToAccessDenied = context => RedirectCookieAuthentication(context, 403);
 
                     options.Events.OnValidatePrincipal = async context =>
                     {
@@ -460,7 +382,7 @@ namespace Chaptarr.Http.Authentication
 
                         if (config == null)
                         {
-                            return AuthenticationType.None.ToString();
+                            return AuthenticationType.Forms.ToString();
                         }
 
                         if (config.AuthenticationMethodIsMisconfigured)
@@ -477,7 +399,7 @@ namespace Chaptarr.Http.Authentication
                         var hasFormsCookie = context.Request.Cookies.ContainsKey($"{instanceName}Auth");
                         var hasOidcCookie = context.Request.Cookies.ContainsKey($"{instanceName}OidcAuth");
                         var hasPlexCookie = context.Request.Cookies.ContainsKey($"{instanceName}PlexAuth");
-                        var allowLocalFallback = TrustedNetworkPolicy.IsLocalOrTrusted(context, config);
+                        var allowLocalFallback = TrustedNetworkPolicy.MaySkipLocalLogin(context, config);
 
                         if (method == AuthenticationType.Oidc)
                         {
@@ -506,6 +428,26 @@ namespace Chaptarr.Http.Authentication
                     options.HeaderName = "X-Api-Key";
                     options.QueryName = "access_token";
                 });
+        }
+
+        private static Task RedirectCookieAuthentication(RedirectContext<CookieAuthenticationOptions> context, int statusCode)
+        {
+            // Preserve the framework's base path and encoded return URL without trusting its request-derived origin.
+            var origin = $"{context.Request.Scheme}://{context.Request.Host}";
+            var location = Uri.TryCreate(context.RedirectUri, UriKind.Absolute, out var redirectUri)
+                ? redirectUri.PathAndQuery
+                : context.RedirectUri.Substring(origin.Length);
+            if (IsXhr(context.Request))
+            {
+                context.Response.Headers.Location = location;
+                context.Response.StatusCode = statusCode;
+            }
+            else
+            {
+                context.Response.Redirect(location);
+            }
+
+            return Task.CompletedTask;
         }
 
         private static string ValidateAndNormalizeOidcPrincipal(ClaimsPrincipal principal, IConfigFileProvider configFileProvider)
@@ -667,7 +609,7 @@ namespace Chaptarr.Http.Authentication
 
         private static string GetMisconfiguredAuthenticationScheme(HttpContext context, IConfigFileProvider configFileProvider)
         {
-            return TrustedNetworkPolicy.IsLocalOrTrusted(context, configFileProvider)
+            return TrustedNetworkPolicy.MaySkipLocalLogin(context, configFileProvider)
                 ? AuthenticationType.None.ToString()
                 : "API";
         }

@@ -94,6 +94,7 @@ function EditIndexerModalContent(props) {
     enableInteractiveSearch,
     supportsRss,
     supportsSearch,
+    supportsNarratorMetadata,
     tags,
     fields,
     priority,
@@ -101,6 +102,11 @@ function EditIndexerModalContent(props) {
     downloadClientId,
     proxyId
   } = item;
+
+  const preserveTorrents = fields.some((field) =>
+    ['neverMoveOnImport', 'seedCriteria.neverMoveOnImport'].includes(field.name) && field.value === true
+  );
+  const disabledSeedFields = preserveTorrents ? ['seedTimeHours', 'seedCriteria.seedRatio', 'seedCriteria.seedTime', 'seedCriteria.discographySeedTime'] : [];
 
   const baseUrl = fields.find((field) => field.name === 'baseUrl')?.value;
   const isNewznabLike = implementationName === 'Newznab' || implementationName === 'Torznab';
@@ -227,6 +233,9 @@ function EditIndexerModalContent(props) {
                     provider="indexer"
                     providerData={item}
                     {...field}
+                    readOnly={disabledSeedFields.includes(field.name)}
+                    isDisabled={field.name === 'enableNarratorMetadata' && supportsNarratorMetadata?.value === false}
+                    helpTextWarning={field.name === 'enableNarratorMetadata' && supportsNarratorMetadata?.value === false ? translate('IndexerNfoUnsupported') : field.helpTextWarning}
                     onChange={onFieldChange}
                   />
                 ))

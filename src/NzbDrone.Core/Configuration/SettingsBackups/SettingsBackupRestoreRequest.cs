@@ -4,6 +4,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
 {
     public class SettingsBackupRestoreRequest
     {
+        public bool Preview { get; set; }
         public string FilePath { get; set; }
         public string Passphrase { get; set; }
         public HashSet<SettingsBackupCategory> Categories { get; set; } = new();

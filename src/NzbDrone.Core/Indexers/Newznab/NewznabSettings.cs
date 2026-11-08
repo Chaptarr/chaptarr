@@ -82,7 +82,7 @@ namespace NzbDrone.Core.Indexers.Newznab
         [FieldDefinition(2, Label = "API Key", Privacy = PrivacyLevel.ApiKey)]
         public string ApiKey { get; set; }
 
-        [FieldDefinition(3, Label = "Categories", Type = FieldType.Select, SelectOptionsProviderAction = "newznabCategories", HelpText = "Select every category this indexer should search. At search time Chaptarr routes by media type — audiobook searches use only your selected Audio (3000-3999) categories, ebook searches use only your selected Books (7000-7999) categories.")]
+        [FieldDefinition(3, Label = "Categories", Type = FieldType.Select, SelectOptionsProviderAction = "newznabCategories", HelpText = "Select every category this indexer should search. Audiobook searches use your selected Audio (3000-3999) categories; ebook searches use your selected Books (7000-7999) categories. Generic Books (7000), when selected, is searched for both formats.")]
         public IEnumerable<int> Categories { get; set; }
 
         [FieldDefinition(4, Type = FieldType.Number, Label = "Early Download Limit", HelpText = "Time before release date Chaptarr will download from this indexer, empty is no limit", Unit = "days", Advanced = true)]
@@ -91,7 +91,7 @@ namespace NzbDrone.Core.Indexers.Newznab
         [FieldDefinition(5, Label = "Additional Parameters", HelpText = "Additional Newznab parameters", Advanced = true)]
         public string AdditionalParameters { get; set; }
 
-        [FieldDefinition(6, Type = FieldType.Checkbox, Label = "Fetch Narrator Metadata", HelpText = "When a narrator-specific edition is selected, Chaptarr can use extra indexer API requests to populate narrator metadata before custom format scoring.")]
+        [FieldDefinition(6, Type = FieldType.Checkbox, Label = "Fetch Narrator Metadata", HelpText = "IndexerNarratorMetadataHelpText")]
         public bool EnableNarratorMetadata { get; set; }
 
         [FieldDefinition(7, Label = "Narrator Metadata URL", HelpText = "Only needed when this indexer was added via Prowlarr. Leave blank to use the main URL.")]

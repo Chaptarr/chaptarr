@@ -1,9 +1,11 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 using NLog;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Processes;
+using NzbDrone.Core.Backup;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.Messaging;
@@ -21,6 +23,7 @@ namespace NzbDrone.Host
         private readonly IProcessProvider _processProvider;
         private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
+        private readonly Lazy<IBackupService> _backupService;
 
         public AppLifetime(IHostApplicationLifetime appLifetime,
             IConfigFileProvider configFileProvider,
@@ -29,6 +32,7 @@ namespace NzbDrone.Host
             IBrowserService browserService,
             IProcessProvider processProvider,
             IEventAggregator eventAggregator,
+            Lazy<IBackupService> backupService,
             Logger logger)
         {
             _appLifetime = appLifetime;
@@ -38,10 +42,10 @@ namespace NzbDrone.Host
             _browserService = browserService;
             _processProvider = processProvider;
             _eventAggregator = eventAggregator;
+            _backupService = backupService;
             _logger = logger;
 
             appLifetime.ApplicationStarted.Register(OnAppStarted);
-            appLifetime.ApplicationStopped.Register(OnAppStopped);
         }
 
         public Task StartAsync(CancellationToken cancellationToken)
@@ -51,11 +55,18 @@ namespace NzbDrone.Host
 
         public Task StopAsync(CancellationToken cancellationToken)
         {
-            return Task.CompletedTask;
+            return _appLifetime.ApplicationStarted.IsCancellationRequested
+                ? _backupService.Value.WaitForBackupCompletion()
+                : Task.CompletedTask;
         }
 
         private void OnAppStarted()
         {
+            if (_appLifetime.ApplicationStopping.IsCancellationRequested)
+            {
+                return;
+            }
+
             _runtimeInfo.IsStarting = false;
             _runtimeInfo.IsExiting = false;
 
@@ -68,7 +79,7 @@ namespace NzbDrone.Host
             _eventAggregator.PublishEvent(new ApplicationStartedEvent());
         }
 
-        private void OnAppStopped()
+        public void RestartIfPending()
         {
             if (_runtimeInfo.RestartPending && !_runtimeInfo.IsWindowsService)
             {

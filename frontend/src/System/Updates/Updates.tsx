@@ -15,7 +15,7 @@ import PageContentBody from 'Components/Page/PageContentBody';
 import { icons, kinds } from 'Helpers/Props';
 import { executeCommand } from 'Store/Actions/commandActions';
 import { fetchGeneralSettings } from 'Store/Actions/settingsActions';
-import { fetchUpdates } from 'Store/Actions/systemActions';
+import { fetchBackupStatus, fetchUpdates } from 'Store/Actions/systemActions';
 import createCommandExecutingSelector from 'Store/Selectors/createCommandExecutingSelector';
 import createSystemStatusSelector from 'Store/Selectors/createSystemStatusSelector';
 import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
@@ -71,6 +71,10 @@ function Updates() {
     updateMechanism,
   } = useSelector(createUpdatesSelector());
 
+  const backupUnavailable = useSelector(
+    (state: AppState) =>
+      state.system.backupStatus.item.databaseBackupUnavailableReason
+  );
   const dispatch = useDispatch();
   const [isMajorUpdateModalOpen, setIsMajorUpdateModalOpen] = useState(false);
   const hasError = !!(updatesError || generalSettingsError);
@@ -110,12 +114,12 @@ function Updates() {
     hasUpdates && !hasUpdateToInstall && installedVersionIndex !== -1;
 
   const handleInstallLatestPress = useCallback(() => {
-    if (isMajorUpdate) {
+    if (isMajorUpdate || backupUnavailable) {
       setIsMajorUpdateModalOpen(true);
     } else {
       dispatch(executeCommand({ name: commandNames.APPLICATION_UPDATE }));
     }
-  }, [isMajorUpdate, setIsMajorUpdateModalOpen, dispatch]);
+  }, [isMajorUpdate, backupUnavailable, setIsMajorUpdateModalOpen, dispatch]);
 
   const handleInstallLatestMajorVersionPress = useCallback(() => {
     setIsMajorUpdateModalOpen(false);
@@ -123,10 +127,11 @@ function Updates() {
     dispatch(
       executeCommand({
         name: commandNames.APPLICATION_UPDATE,
-        installMajorUpdate: true,
+        installMajorUpdate: isMajorUpdate,
+        skipBackup: !!backupUnavailable,
       })
     );
-  }, [setIsMajorUpdateModalOpen, dispatch]);
+  }, [setIsMajorUpdateModalOpen, isMajorUpdate, backupUnavailable, dispatch]);
 
   const handleCancelMajorVersionPress = useCallback(() => {
     setIsMajorUpdateModalOpen(false);
@@ -134,6 +139,7 @@ function Updates() {
 
   useEffect(() => {
     dispatch(fetchUpdates());
+    dispatch(fetchBackupStatus());
     dispatch(fetchGeneralSettings());
   }, [dispatch]);
 
@@ -286,21 +292,36 @@ function Updates() {
         <ConfirmModal
           isOpen={isMajorUpdateModalOpen}
           kind={kinds.WARNING}
-          title={translate('InstallMajorVersionUpdate')}
+          title={translate(
+            backupUnavailable
+              ? 'UpdateWithoutBackup'
+              : 'InstallMajorVersionUpdate'
+          )}
           message={
             <div>
-              <div>{translate('InstallMajorVersionUpdateMessage')}</div>
-              <div>
-                <InlineMarkdown
-                  data={translate('InstallMajorVersionUpdateMessageLink', {
-                    domain: 'discord.gg',
-                    url: 'https://discord.gg/nqFGsGUug2',
-                  })}
-                />
-              </div>
+              {backupUnavailable ? (
+                <Alert kind={kinds.WARNING}>
+                  {translate('UpdateWithoutBackupWarning')}
+                </Alert>
+              ) : null}
+              {isMajorUpdate ? (
+                <>
+                  <div>{translate('InstallMajorVersionUpdateMessage')}</div>
+                  <div>
+                    <InlineMarkdown
+                      data={translate('InstallMajorVersionUpdateMessageLink', {
+                        domain: 'discord.gg',
+                        url: 'https://discord.gg/nqFGsGUug2',
+                      })}
+                    />
+                  </div>
+                </>
+              ) : null}
             </div>
           }
-          confirmLabel={translate('Install')}
+          confirmLabel={translate(
+            backupUnavailable ? 'UpdateWithoutBackup' : 'Install'
+          )}
           onConfirm={handleInstallLatestMajorVersionPress}
           onCancel={handleCancelMajorVersionPress}
         />

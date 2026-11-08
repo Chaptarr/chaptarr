@@ -2,20 +2,20 @@ import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
-import { clearNarratorDiscovery, fetchNarratorDiscovery, addNarratorVariant } from 'Store/Actions/narratorActions';
+import { addNarratorVariant, clearNarratorDiscovery, fetchNarratorDiscovery } from 'Store/Actions/narratorActions';
 import NarratorSearchModalContent from './NarratorSearchModalContent';
 
 function createMapStateToProps() {
   return createSelector(
     (state, { bookId }) => state.narrator.discovery[bookId],
     (state) => state.narrator.isSearching,
-    (state) => state.narrator.isSettingPreferred,
+    (state) => state.narrator.additions,
     (state) => state.narrator.error,
-    (discovery, isSearching, isSettingPreferred, error) => {
+    (discovery, isSearching, additions, error) => {
       return {
         discovery: discovery || {},
         isSearching,
-        isSettingPreferred,
+        additions,
         error
       };
     }
@@ -48,13 +48,8 @@ class NarratorSearchModalContentConnector extends Component {
 
   onNarratorSelect = (narrator, searchForNewBook) => {
     const { bookId } = this.props;
-    // Use addNarratorVariant to create a new missing book variant
+    // Add a wanted copy or return the existing copy of this edition.
     this.props.addNarratorVariant({ bookId, narrator, searchForNewBook: !!searchForNewBook });
-  };
-
-  onRefreshPress = () => {
-    const { bookId } = this.props;
-    this.props.fetchNarratorDiscovery({ bookId, refresh: true });
   };
 
   //
@@ -65,7 +60,6 @@ class NarratorSearchModalContentConnector extends Component {
       <NarratorSearchModalContent
         {...this.props}
         onNarratorSelect={this.onNarratorSelect}
-        onRefreshPress={this.onRefreshPress}
       />
     );
   }

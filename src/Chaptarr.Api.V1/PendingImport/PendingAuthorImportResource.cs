@@ -125,6 +125,12 @@ namespace Chaptarr.Api.V1.PendingImport
             return defaultValue;
         }
         
+        public static string DisplayAuthorName(this PendingAuthorImport model)
+        {
+            var name = model?.AuthorName;
+            return string.IsNullOrWhiteSpace(name) || name == "Pending Import" ? null : name;
+        }
+
         public static PendingAuthorImportResource ToResource(this PendingAuthorImport model)
         {
             if (model == null) return null;
@@ -134,7 +140,7 @@ namespace Chaptarr.Api.V1.PendingImport
                 Id = model.Id,
                 ProviderId = model.ProviderId,
                 ProviderPrefix = model.ProviderPrefix,
-                AuthorName = model.AuthorName,
+                AuthorName = model.DisplayAuthorName(),
                 
                 AudiobookStatus = model.AudiobookStatus.ToString(),
                 EbookStatus = model.EbookStatus.ToString(),

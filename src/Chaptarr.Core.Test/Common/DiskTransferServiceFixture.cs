@@ -69,6 +69,31 @@ namespace Chaptarr.Core.Test.Common
             });
         }
 
+        [Test]
+        public void copy_collision_after_preflight_does_not_rollback_someone_elses_file()
+        {
+            var source = Path.Combine(_tempDir, "source.nfo");
+            var target = Path.Combine(_tempDir, "target.nfo");
+            File.WriteAllText(source, "new notes");
+            var disk = RealDiskProvider.Create(LogManager.GetCurrentClassLogger());
+            var proxy = InterfaceProxy.Proxy<IDiskProvider>((method, args) =>
+            {
+                if (method.Name == nameof(IDiskProvider.CopyFile))
+                {
+                    File.WriteAllText(target, "existing notes");
+                    throw new FileAlreadyExistsException("Destination appeared", target);
+                }
+
+                try { return method.Invoke(disk, args); }
+                catch (System.Reflection.TargetInvocationException ex) { throw ex.InnerException; }
+            });
+            var subject = new DiskTransferService(proxy, LogManager.GetCurrentClassLogger());
+
+            Assert.Throws<FileAlreadyExistsException>(() => subject.TransferFile(source, target, TransferMode.Copy, false));
+            Assert.That(File.ReadAllText(source), Is.EqualTo("new notes"));
+            Assert.That(File.ReadAllText(target), Is.EqualTo("existing notes"));
+        }
+
         private static MemoryTarget ConfigureLogging()
         {
             var memoryTarget = new MemoryTarget("memory")

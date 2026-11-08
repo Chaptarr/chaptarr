@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using NzbDrone.Core.Books;
 
 namespace NzbDrone.Core.Parser.Model
 {
@@ -11,6 +13,10 @@ namespace NzbDrone.Core.Parser.Model
         public string Book { get; set; }
         public string BookProviderId { get; set; }
         public string EditionProviderId { get; set; }
+        public BookMediaType? EditionMediaType { get; set; }
+        public bool? EditionHasNarration { get; set; }
+        public List<string> EditionNarratorNames { get; set; }
+        public bool IsGenericBookRequest { get; set; }
         public string Isbn13 { get; set; }
         public string Asin { get; set; }
         public int? HardcoverReadingFormatId { get; set; }

@@ -8,6 +8,15 @@ namespace NzbDrone.Core.Download.History
 {
     public class DownloadHistory : ModelBase
     {
+        public const string KeepSeedingKey = "keepSeeding";
+        public const string PendingLabelChangeKey = "pendingDelugeLabelChange";
+
+        public bool ShouldKeepSeeding()
+        {
+            return EventType == DownloadHistoryEventType.DownloadGrabbed &&
+                   Data?.TryGetValue(KeepSeedingKey, out var value) == true && value == bool.TrueString;
+        }
+
         public DownloadHistoryEventType EventType { get; set; }
         public int AuthorId { get; set; }
         public int BookId { get; set; }

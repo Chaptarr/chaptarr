@@ -5,7 +5,6 @@ import Alert from 'Components/Alert';
 import SelectInput from 'Components/Form/SelectInput';
 import SpinnerButton from 'Components/Link/SpinnerButton';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
-import ConfirmModal from 'Components/Modal/ConfirmModal';
 import Table from 'Components/Table/Table';
 import TableBody from 'Components/Table/TableBody';
 import { kinds } from 'Helpers/Props';
@@ -16,6 +15,7 @@ import removeOldSelectedState from 'Utilities/Table/removeOldSelectedState';
 import selectAll from 'Utilities/Table/selectAll';
 import toggleSelected from 'Utilities/Table/toggleSelected';
 import BookFileEditorRow from './BookFileEditorRow';
+import DeleteBookFilesModal from './DeleteBookFilesModal';
 import styles from './BookFileEditorTableContent.css';
 
 class BookFileEditorTableContent extends Component {
@@ -199,12 +199,9 @@ class BookFileEditorTableContent extends Component {
           ) : null
         }
 
-        <ConfirmModal
+        <DeleteBookFilesModal
           isOpen={isConfirmDeleteModalOpen}
-          kind={kinds.DANGER}
-          title={translate('DeleteSelectedBookFiles')}
-          message={translate('DeleteSelectedBookFilesMessageText')}
-          confirmLabel={translate('Delete')}
+          fileIds={this.getSelectedIds()}
           onConfirm={this.onConfirmDelete}
           onCancel={this.onConfirmDeleteModalClose}
         />

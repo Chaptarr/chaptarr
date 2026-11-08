@@ -3,8 +3,8 @@
   display: flex;
   align-items: center;
   flex: 1;
-  max-width: 400px;
   min-width: 150px; /* Ensure it can shrink */
+  max-width: 400px;
   height: 41px;
 }
 
@@ -17,52 +17,52 @@
 }
 
 .searchInput {
-  width: 100%;
-  padding-left: 38px;
   padding-right: 30px;
+  padding-left: 38px;
+  width: 100%;
   height: 35px;
-  border-radius: 20px;
   border: 1px solid var(--inputBorderColor);
+  border-radius: 20px;
   background-color: var(--inputBackgroundColor);
+  color: var(--textColor);
   transition: all 0.2s ease-in-out;
 }
 
 .searchInput:focus {
   border-color: var(--inputFocusBorderColor);
   box-shadow: 0 0 0 1px var(--inputFocusBorderColor);
-  background-color: var(--white);
 }
 
 .clearIcon {
   position: absolute;
-  right: 10px;
   top: 50%;
-  transform: translateY(-50%);
+  right: 10px;
   color: var(--gray);
   cursor: pointer;
   transition: color 0.2s ease-in-out;
+  transform: translateY(-50%);
 }
 
 .clearIcon:hover {
   color: var(--dangerColor);
 }
 
-@media (max-width: 768px) {
+@media (max-width: $breakpointSmall) {
   .searchContainer {
-    max-width: 250px;
-    min-width: 120px;
-    margin: 0 5px;
+    margin: 0;
+    min-width: 0;
+    max-width: none;
+    height: 44px;
   }
-  
-  .searchInput {
-    font-size: 14px;
-    height: 32px;
-  }
-}
 
-@media (max-width: 480px) {
-  .searchContainer {
-    max-width: none; /* Allow full width when very narrow */
-    min-width: 100px;
+  .searchInput {
+    height: 44px;
+    font-size: 16px;
+  }
+
+  .clearIcon {
+    right: 0;
+    width: 44px;
+    height: 44px;
   }
 }
