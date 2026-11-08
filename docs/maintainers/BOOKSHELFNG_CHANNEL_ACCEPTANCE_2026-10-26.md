@@ -37,6 +37,16 @@ reported a 64 bit host process.
 | `linux-musl-arm64` | `a3e779beb6808428b9a373a6cb8b82c43d864f72a464935df7273a8d85b68ac0` | Pass |
 | `linux-x86` | `19e5254b91940c5521403f501126c91341ff0a2ff36e74fc185912f733874db3` | Pass; source-only hosted flake retained |
 
+The old identity feeds remain unbridged in a live 2026-11-08 check. Public
+[AUR `bookshelfng-bin`](https://aur.archlinux.org/packages/bookshelfng-bin)
+still lists `0.4.21.71-1`. The two latest public
+[BookshelfNG COPR builds](https://copr.fedorainfracloud.org/coprs/slskdn/bookshelfng/build/11165173/)
+failed before recording a source version; no `0.9.986` old-identity RPM is
+present. These feed states do not affect the standard ChaptarrNG release, but
+they prevent a claim that every existing package identity has a working
+automatic upgrade path. Keep the bridge disabled until the old channel
+publishers and installed handoff are accepted.
+
 ## Runner-policy update — 2026-11-03
 
 The entries below record evidence and runner policy as of their dated
