@@ -105,6 +105,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             "helm-handoff.yml",
             "bookshelfng-standalone-macos-acceptance.yml",
             "standalone-asset-validation.yml",
+            "published-installed-handoff.yml",
             "bookshelfng-api-differential.yml",
             "security.yml",
             "semgrep-community.yml",
@@ -130,6 +131,13 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                     continue
                 if workflow_path.name in {"release.yml", "release-distribution.yml", "docker-publish.yml"} and line.strip() == "runs-on: ubuntu-24.04":
                     continue
+                if workflow_path.name == "published-installed-handoff.yml":
+                    if line.strip() == "runs-on: ubuntu-24.04":
+                        continue
+                    if line.strip() == "runs-on: ${{ matrix.runner }}":
+                        self.assertIn("runner: ubuntu-24.04-arm", source)
+                        self.assertIn("runner: ubuntu-24.04", source)
+                        continue
                 self.assertNotRegex(
                     line,
                     r"runs-on:.*\b(?:ubuntu-latest|ubuntu-[0-9]|windows-latest|macos-[0-9])",
@@ -167,6 +175,30 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             self.assertIn("runs-on: ubuntu-24.04", job_block(docker, name), name)
         self.assertIn("needs: require-release-readiness", job_block(docker, "build-and-push"))
         self.assertIn("needs: [preflight, release, docker, standalone-assets, rpm-source, windows-migration-installer, legacy-desktop-candidates]", job_block(release, "publish-release"))
+
+    def test_published_installed_handoff_uses_exact_release_assets(self) -> None:
+        source = (WORKFLOW.parent / "published-installed-handoff.yml").read_text(encoding="utf-8")
+        preflight = job_block(source, "preflight")
+        installed = job_block(source, "installed-linux")
+        for token in (
+            "github.ref == 'refs/heads/main'",
+            "fetch-depth: 0",
+            'git merge-base --is-ancestor "$sha" refs/remotes/origin/main',
+            ".isDraft == false and .isPrerelease == false",
+        ):
+            self.assertIn(token, preflight)
+        for rid in ("linux-x64", "linux-arm64", "linux-musl-x64", "linux-musl-arm64", "linux-x86"):
+            self.assertIn(f"rid: {rid}", installed)
+        for token in (
+            "ref: ${{ needs.preflight.outputs.sha }}",
+            'gh release download "$RELEASE_TAG"',
+            'sha256sum --check "$candidate.sha256"',
+            "PREDECESSOR_SHA256",
+            "test-bookshelf-standalone-handoff.py",
+            "--candidate-revision \"$RELEASE_SHA\"",
+        ):
+            self.assertIn(token, installed)
+        self.assertNotIn("build-standalone.sh", installed)
 
     def test_bookshelfng_differential_uses_runner_temp_in_step_context(self) -> None:
         path = WORKFLOW.parent / "bookshelfng-api-differential.yml"
