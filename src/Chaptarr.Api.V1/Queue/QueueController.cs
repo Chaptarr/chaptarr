@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using Chaptarr.Http;
 using Chaptarr.Http.Extensions;
@@ -10,6 +11,7 @@ using Microsoft.AspNetCore.Mvc;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Blocklisting;
+using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Datastore.Events;
 using NzbDrone.Core.Download;
@@ -32,6 +34,7 @@ namespace Chaptarr.Api.V1.Queue
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         private readonly IQueueService _queueService;
         private readonly IPendingReleaseService _pendingReleaseService;
+        private readonly ISeriesBookLinkService _seriesBookLinkService;
 
         private readonly QualityModelComparer _qualityComparer;
         private readonly ITrackedDownloadService _trackedDownloadService;
@@ -43,7 +46,8 @@ namespace Chaptarr.Api.V1.Queue
         private readonly IConversionJobService _conversionJobService;
         private readonly IDownloadImportModeResolver _downloadImportModeResolver;
 
-        public QueueController(IDownloadImportModeResolver downloadImportModeResolver,
+        public QueueController(ISeriesBookLinkService seriesBookLinkService,
+                           IDownloadImportModeResolver downloadImportModeResolver,
                            IBroadcastSignalRMessage broadcastSignalRMessage,
                            IQueueService queueService,
                            IPendingReleaseService pendingReleaseService,
@@ -58,6 +62,7 @@ namespace Chaptarr.Api.V1.Queue
             : base(broadcastSignalRMessage)
         {
             _queueService = queueService;
+            _seriesBookLinkService = seriesBookLinkService ?? throw new ArgumentNullException(nameof(seriesBookLinkService));
             _downloadImportModeResolver = downloadImportModeResolver;
             _pendingReleaseService = pendingReleaseService;
             _trackedDownloadService = trackedDownloadService;
@@ -200,7 +205,7 @@ namespace Chaptarr.Api.V1.Queue
             }
 
             var cancelled = !queueItem.DownloadId.IsNullOrWhiteSpace() &&
-                            (_conversionJobService?.Cancel(queueItem.DownloadId) == true || _conversionTrackingService.Cancel(queueItem.DownloadId));
+                            (_conversionJobService?.Cancel(queueItem.DownloadId, ConversionRemovalOrigin.UserAction) == true || _conversionTrackingService.Cancel(queueItem.DownloadId));
             if (!cancelled)
             {
                 throw new BadRequestException("No active conversion found for this queue item");
@@ -216,7 +221,13 @@ namespace Chaptarr.Api.V1.Queue
             var pagingResource = new PagingResource<QueueResource>(paging);
             var pagingSpec = pagingResource.MapToPagingSpec<QueueResource, NzbDrone.Core.Queue.Queue>("timeleft", SortDirection.Ascending);
 
-            return pagingSpec.ApplyToPage((spec) => GetQueue(spec, includeUnknownAuthorItems, mediaType), (q) => MapToResource(q, includeAuthor, includeBook));
+            return pagingSpec.ApplyToPage(spec =>
+            {
+                var page = GetQueue(spec, includeUnknownAuthorItems, mediaType);
+                if (includeBook)
+                    BookSeries.LoadLinks(page.Records.Select(item => item.Book), ids => _seriesBookLinkService.GetLinksByBook(ids));
+                return page;
+            }, q => MapToResource(q, includeAuthor, includeBook));
         }
 
         private PagingSpec<NzbDrone.Core.Queue.Queue> GetQueue(PagingSpec<NzbDrone.Core.Queue.Queue> pagingSpec, bool includeUnknownAuthorItems, string mediaType)
@@ -363,7 +374,7 @@ namespace Chaptarr.Api.V1.Queue
 
         private TrackedDownload Remove(TrackedDownload trackedDownload, bool removeFromClient, bool blocklist, bool skipRedownload, bool changeCategory)
         {
-            var cleanupConversion = _conversionJobService?.PrepareArtifactRemoval(trackedDownload.DownloadItem.DownloadId);
+            var cleanupConversion = _conversionJobService?.PrepareArtifactRemoval(trackedDownload.DownloadItem.DownloadId, ConversionRemovalOrigin.UserAction);
             if (removeFromClient)
             {
                 var downloadClient = _downloadClientProvider.Get(trackedDownload.DownloadClient);
@@ -399,7 +410,7 @@ namespace Chaptarr.Api.V1.Queue
                 _failedDownloadService.MarkAsFailed(trackedDownload.DownloadItem.DownloadId, skipRedownload);
             }
 
-            if (!removeFromClient && !blocklist && !changeCategory)
+            if (!removeFromClient && !changeCategory)
             {
                 if (!_ignoredDownloadService.IgnoreDownload(trackedDownload))
                 {
@@ -410,6 +421,10 @@ namespace Chaptarr.Api.V1.Queue
             try
             {
                 cleanupConversion?.Invoke();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Logger.Warn(ex, "Download removal succeeded for {0}; conversion cleanup remains scheduled for retry", trackedDownload.DownloadItem.DownloadId);
             }
             catch (Exception ex)
             {

@@ -40,26 +40,27 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 return Decision.Reject("No quality profile configured for {0} files", subject.ParsedBookInfo.Quality.Quality.Name);
             }
 
-            foreach (var file in subject.GetBooksMatchingReleaseMediaType().SelectMany(b => b.BookFiles))
+            foreach (var book in subject.GetBooksMatchingReleaseMediaType())
             {
-                if (file == null)
+                foreach (var recording in RecordingCustomFormatHelper.GroupStoredForScoring(book.BookFiles, book: book))
                 {
-                    _logger.Trace("File is no longer available, skipping this file.");
-                    continue;
-                }
+                    var input = RecordingCustomFormatHelper.CreateStoredInput(recording, author: subject.Author, book: book);
+                    var fileCustomFormats = _formatService.ParseCustomFormat(input, subject.Author);
+                    foreach (var quality in recording.Select(file => file.Quality).Distinct())
+                    {
+                        _logger.Trace("Comparing file quality with report. Existing files contain {0}", quality);
 
-                var fileCustomFormats = _formatService.ParseCustomFormat(file, subject.Author);
-                _logger.Trace("Comparing file quality with report. Existing files contain {0}", file.Quality);
+                        if (!_upgradableSpecification.IsUpgradeAllowed(qualityProfile,
+                                                                       quality,
+                                                                       fileCustomFormats,
+                                                                       subject.ParsedBookInfo.Quality,
+                                                                       subject.CustomFormats))
+                        {
+                            _logger.Trace("Upgrading is not allowed by the quality profile");
 
-                if (!_upgradableSpecification.IsUpgradeAllowed(qualityProfile,
-                                                               file.Quality,
-                                                               fileCustomFormats,
-                                                               subject.ParsedBookInfo.Quality,
-                                                               subject.CustomFormats))
-                {
-                    _logger.Trace("Upgrading is not allowed by the quality profile");
-
-                    return Decision.Reject("Existing files and the Quality profile does not allow upgrades");
+                            return Decision.Reject("Existing files and the Quality profile does not allow upgrades");
+                        }
+                    }
                 }
             }
 

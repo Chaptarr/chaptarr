@@ -61,7 +61,7 @@ namespace Chaptarr.Core.Test.Configuration
             });
             var formatService = new StubCustomFormatService();
             formatService.Formats.Add(format);
-            var service = new SettingsBackupService(null, null, null, null, null, null, null, qualityService, null, formatService, null, null, null, null);
+            var service = new SettingsBackupService(null, null, null, null, null, null, null, qualityService, null, formatService, null, null, null, null, delayProfileService: null, releaseProfileService: null, qualityDefinitionService: null, mediaPaths: null, filenameValidation: SettingsBackupCoverageFixture.CreateFilenameValidation());
             var backup = InvokeToBackup(new QualityProfile
             {
                 Name = "Audio", ProfileType = ProfileType.Audiobook, UpgradeAllowed = true,
@@ -101,7 +101,7 @@ namespace Chaptarr.Core.Test.Configuration
             var formats = new StubCustomFormatService();
             formats.Formats.Add(existingFormat);
             formats.Inserted = format => current.FormatItems.Add(new ProfileFormatItem { Format = format, Score = 0 });
-            var service = new SettingsBackupService(null, null, null, null, null, null, null, qualityService, null, formats, null, null, null, null);
+            var service = new SettingsBackupService(null, null, null, null, null, null, null, qualityService, null, formats, null, null, null, null, delayProfileService: null, releaseProfileService: null, qualityDefinitionService: null, mediaPaths: null, filenameValidation: SettingsBackupCoverageFixture.CreateFilenameValidation());
             var backup = InvokeToBackup(new QualityProfile
             {
                 Name = "Audio", ProfileType = ProfileType.Audiobook,
@@ -517,7 +517,7 @@ namespace Chaptarr.Core.Test.Configuration
                 null,
                 null,
                 null,
-                null);
+                null, delayProfileService: null, releaseProfileService: null, qualityDefinitionService: null, mediaPaths: null, filenameValidation: SettingsBackupCoverageFixture.CreateFilenameValidation());
         }
 
         private static Dictionary<int, int> InvokeRestoreCustomFormats(

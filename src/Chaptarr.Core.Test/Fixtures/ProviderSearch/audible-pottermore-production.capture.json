@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-11-02T00:42:55.448176+00:00",
+  "request": "https://api.audible.com/1.0/catalog/products/B0F14RPXHR?response_groups=product_desc,contributors,media,product_attrs",
+  "headers": {
+    "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.240205.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.6422.165 Mobile Safari/537.36",
+    "Accept": "application/json,text/json,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://www.audible.com",
+    "Referer": "https://www.audible.com/",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-site"
+  }
+}

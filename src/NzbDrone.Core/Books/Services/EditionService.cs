@@ -309,14 +309,7 @@ namespace NzbDrone.Core.Books
                 }
 
                 var baseSlug = edition.TitleSlug.Trim();
-                var finalSlug = baseSlug;
-                var counter = 2;
-
-                while (reservedSlugs.Contains(finalSlug))
-                {
-                    finalSlug = $"{baseSlug}_{counter}";
-                    counter++;
-                }
+                var finalSlug = TitleSlugAllocator.FindAvailable(baseSlug, reservedSlugs.Contains);
 
                 if (!string.Equals(edition.TitleSlug, finalSlug, StringComparison.Ordinal))
                 {

@@ -19,10 +19,26 @@ export function getAuthorBookProgress(statistics = {}) {
   return bookCount ? availableBookCount / bookCount * 100 : 100;
 }
 
+export const SEARCH_CONFIRMATION_THRESHOLD = 5;
+
+export function shouldConfirmSearch(count) {
+  return count > SEARCH_CONFIRMATION_THRESHOLD;
+}
+
+export function isAuthorSearchEnabled(author, mediaType) {
+  return author?.[`${mediaType}Monitored`] === true && author?.[`${mediaType}QualityProfileId`] > 0;
+}
+
+export function isBookSearchEligible(book, author = book.author) {
+  const mediaType = book.mediaType;
+  return (mediaType === 'audiobook' || mediaType === 'ebook') &&
+    book[`${mediaType}Monitored`] === true && isAuthorSearchEnabled(author, mediaType);
+}
+
 export function getAuthorSearchBookCount(author, selectedMediaType) {
   const mediaTypes = selectedMediaType ? [selectedMediaType] : ['audiobook', 'ebook'];
   return mediaTypes.reduce((count, mediaType) => {
-    if (author?.[`${mediaType}Monitored`] !== true || !(author?.[`${mediaType}QualityProfileId`] > 0)) {
+    if (!isAuthorSearchEnabled(author, mediaType)) {
       return count;
     }
 

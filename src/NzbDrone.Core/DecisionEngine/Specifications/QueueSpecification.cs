@@ -57,7 +57,8 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 return Decision.Accept();
             }
 
-            var matchingBook = queue.Where(q => GetQueueBookIds(q).Intersect(subjectBookIds).Any())
+            var matchingBook = queue.Where(q => q.TrackedDownloadState != TrackedDownloadState.Imported &&
+                                        q.GetTargetBookIds().Intersect(subjectBookIds).Any())
                                     .ToList();
 
             foreach (var queueItem in matchingBook)
@@ -139,35 +140,6 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         private static List<int> GetSubjectBookIds(RemoteBook remoteBook)
         {
             return GetBookIds(remoteBook?.GetBooksMatchingReleaseMediaType());
-        }
-
-        private static List<int> GetQueueBookIds(Queue.Queue queueItem)
-        {
-            if (queueItem?.RemoteBook?.AlternativeCopies == true && queueItem.Book?.Id > 0)
-            {
-                return new List<int> { queueItem.Book.Id };
-            }
-
-            if (queueItem?.TargetBookIds?.Any() == true)
-            {
-                return queueItem.TargetBookIds
-                    .Where(id => id > 0)
-                    .Distinct()
-                    .ToList();
-            }
-
-            if (queueItem?.Book?.Id > 0)
-            {
-                return new List<int> { queueItem.Book.Id };
-            }
-
-            var matchingMediaTypeBooks = queueItem?.RemoteBook?.GetBooksMatchingReleaseMediaType();
-            if (matchingMediaTypeBooks?.Any() == true)
-            {
-                return GetBookIds(matchingMediaTypeBooks);
-            }
-
-            return GetBookIds(queueItem?.RemoteBook?.Books);
         }
 
         private static List<int> GetBookIds(IEnumerable<Book> books)

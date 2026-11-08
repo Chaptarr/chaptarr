@@ -73,6 +73,7 @@ namespace Chaptarr.Core.Test.Api
 
         private class ValidationEnvironmentProxy<T> : DispatchProxy where T : class
         {
+            public bool Writable { get; set; } = true;
             protected override object Invoke(MethodInfo method, object[] args)
             {
                 return method.Name switch
@@ -81,7 +82,7 @@ namespace Chaptarr.Core.Test.Api
                     "get_StartUpFolder" => @"C:\application".AsOsAgnostic(),
                     "get_IsWindowsService" => false,
                     nameof(IDiskProvider.FolderExists) => true,
-                    nameof(IDiskProvider.FolderWritable) => true,
+                    nameof(IDiskProvider.FolderWritable) => Writable,
                     nameof(IDiskProvider.GetFileInfos) => new List<IFileInfo>(),
                     _ => throw new NotImplementedException(method.Name)
                 };
@@ -109,7 +110,7 @@ namespace Chaptarr.Core.Test.Api
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
-            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
             public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
@@ -153,7 +154,7 @@ namespace Chaptarr.Core.Test.Api
             public TestableRootFolderController(
                 StubRootFolderService rootFolderService,
                 StubAuthorService authorService,
-                StubLocalizationService localizationService)
+                StubLocalizationService localizationService, bool writable = true)
                 : base(
                     rootFolderService,
                     DispatchProxy.Create<IRootFolderScanService, ThrowingProxy<IRootFolderScanService>>(),
@@ -170,7 +171,7 @@ namespace Chaptarr.Core.Test.Api
                         DispatchProxy.Create<IDiskProvider, ValidationEnvironmentProxy<IDiskProvider>>()),
                     new StartupFolderValidator(DispatchProxy.Create<IAppFolderInfo, ValidationEnvironmentProxy<IAppFolderInfo>>()),
                     new SystemFolderValidator(),
-                    new FolderWritableValidator(DispatchProxy.Create<IDiskProvider, ValidationEnvironmentProxy<IDiskProvider>>()),
+                    new FolderWritableValidator(CreateWritableDisk(writable)),
                     new FolderReadableValidator(DispatchProxy.Create<IDiskProvider, ValidationEnvironmentProxy<IDiskProvider>>()),
                     new QualityProfileExistsValidator(new TestQualityProfileService()),
                     new MetadataProfileExistsValidator(new TestMetadataProfileService()))
@@ -206,6 +207,30 @@ namespace Chaptarr.Core.Test.Api
             localizationService ??= new StubLocalizationService();
 
             return new TestableRootFolderController(rootFolderService, authorService, localizationService);
+        }
+
+        private static IDiskProvider CreateWritableDisk(bool writable)
+        {
+            var disk = DispatchProxy.Create<IDiskProvider, ValidationEnvironmentProxy<IDiskProvider>>();
+            ((ValidationEnvironmentProxy<IDiskProvider>)(object)disk).Writable = writable;
+            return disk;
+        }
+
+        [TestCase("POST")]
+        [TestCase("PUT")]
+        public void unwritable_root_reports_the_docker_bind_mount_hint_at_the_api(string verb)
+        {
+            var controller = new TestableRootFolderController(new StubRootFolderService(),
+                new StubAuthorService(new List<Author>()), new StubLocalizationService(), writable: false);
+            var resource = new RootFolderResource
+            {
+                Id = verb == "PUT" ? 42 : 0, Name = "Books", Path = @"C:\books".AsOsAgnostic(),
+                FolderType = (int)FolderType.Audiobook, AudiobookQualityProfileId = 10, AudiobookMetadataProfileId = 20
+            };
+            var error = Assert.Throws<FluentValidation.ValidationException>(() => controller.ValidateRequest(verb, resource));
+            var failure = error.Errors.Single(item => item.PropertyName.Equals("path", StringComparison.OrdinalIgnoreCase));
+            Assert.That(failure.ErrorCode, Is.EqualTo("RootFolderNotWritable"));
+            Assert.That(failure.ErrorMessage, Does.Contain("Docker bind mounts").And.Contain("root:root"));
         }
 
         [Test]

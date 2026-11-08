@@ -52,7 +52,7 @@ namespace Chaptarr.Core.Test.Books
                 });
                 var command = (BulkSyncFormatMonitoringCommand)h.Commands.Single();
                 Assert.That(command.AuthorIds, Is.EqualTo(new[] { h.Author.Id }));
-                h.Books.Execute(command);
+                new AuthorScannedHandler(null, h.Authors, h.Queue, null, h.Events, h.Logger, h.Books).Execute(command);
                 Assert.That(h.BookRows.GetBooksByAuthorId(h.Author.Id).Select(book => book.IsMonitored()), Is.EqualTo(new[] { true, true }));
             });
         }
@@ -187,7 +187,8 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(h.Author.SyncMonitoredAcrossFormats, Is.True);
                 Set(h.Controller, "_commandQueueManager", h.Queue);
                 h.Import(request);
-                h.Books.Execute(h.Commands.OfType<BulkSyncFormatMonitoringCommand>().Single());
+                new AuthorScannedHandler(null, h.Authors, h.Queue, null, h.Events, h.Logger, h.Books)
+                    .Execute(h.Commands.OfType<BulkSyncFormatMonitoringCommand>().Single());
                 Assert.That(h.BookRows.GetBooksByAuthorId(h.Author.Id).Select(book => book.IsMonitored()), Is.EqualTo(new[] { true, true }));
                 Assert.That(h.MetadataFetches, Is.Zero);
             });
@@ -205,7 +206,8 @@ namespace Chaptarr.Core.Test.Books
                 h.Import(request);
                 request.SyncMonitoredAcrossFormats = false;
                 h.Import(request);
-                h.Books.Execute(h.Commands.OfType<BulkSyncFormatMonitoringCommand>().Single());
+                new AuthorScannedHandler(null, h.Authors, h.Queue, null, h.Events, h.Logger, h.Books)
+                    .Execute(h.Commands.OfType<BulkSyncFormatMonitoringCommand>().Single());
                 Assert.That(h.Author.SyncMonitoredAcrossFormats, Is.False);
                 Assert.That(h.Commands, Has.Count.EqualTo(1));
                 Assert.That(h.BookRows.GetBooksByAuthorId(h.Author.Id).Single(book => book.MediaType == BookMediaType.Ebook).IsMonitored(), Is.False);

@@ -83,6 +83,13 @@ namespace NzbDrone.Core.Books
                 book.Editions?.Any(edition => edition?.ManualAdd == true) == true;
         }
 
+        // Decide from the loaded snapshot, before any edition or file ownership changes.
+        internal static bool CanAbsorbDuplicate(Book book, bool hasFiles) =>
+            !hasFiles && !HasLocalCopyMarker(book);
+
+        internal static bool HasLocalCopyMarker(Book book) =>
+            HasUserPreservationMarker(book) || !string.IsNullOrWhiteSpace(book.UnitKeyHash);
+
         internal static Book FindMatchingRemotePocket(IEnumerable<Book> candidates, Book local)
         {
             var matches = FindWorkFirstMatches(candidates?.Where(book => book.MediaType == local.MediaType), local);

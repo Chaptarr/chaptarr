@@ -110,9 +110,8 @@ class EditAuthorModalContent extends Component {
       ebookQualityProfileId,
       audiobookMetadataProfileId,
       ebookMetadataProfileId,
-      path,
-      audiobookPath,
-      ebookPath,
+      audiobookFolder,
+      ebookFolder,
       audiobookRootFolderPath,
       ebookRootFolderPath,
       tags,
@@ -293,9 +292,9 @@ class EditAuthorModalContent extends Component {
 
                   <FormInputGroup
                     type={inputTypes.PATH}
-                    name="audiobookPath"
-                    helpText={translate('AudiobookPathHelpText')}
-                    {...(audiobookPath || { value: item.audiobookRootFolderPath?.value ? `${item.audiobookRootFolderPath.value}/${authorName}` : '' })}
+                    name="audiobookFolder"
+                    helpText={audiobookFolder?.value ? translate('AudiobookPathHelpText') : translate('AuthorFolderSuggestion', { path: `${item.audiobookRootFolderPath?.value || ''}/${authorName}` })}
+                    {...(audiobookFolder || { value: '' })}
                     onChange={onInputChange}
                   />
                 </FormGroup>
@@ -432,9 +431,9 @@ class EditAuthorModalContent extends Component {
 
                   <FormInputGroup
                     type={inputTypes.PATH}
-                    name="ebookPath"
-                    helpText={translate('EbookPathHelpText')}
-                    {...(ebookPath || { value: item.ebookRootFolderPath?.value ? `${item.ebookRootFolderPath.value}/${authorName}` : '' })}
+                    name="ebookFolder"
+                    helpText={ebookFolder?.value ? translate('EbookPathHelpText') : translate('AuthorFolderSuggestion', { path: `${item.ebookRootFolderPath?.value || ''}/${authorName}` })}
+                    {...(ebookFolder || { value: '' })}
                     onChange={onInputChange}
                   />
                 </FormGroup>
@@ -481,7 +480,9 @@ class EditAuthorModalContent extends Component {
 
         <MoveAuthorModal
           originalPath={originalPath}
-          destinationPath={path.value}
+          destinationPath={this.props.pathChanges[0]?.destinationPath}
+          pathChanges={this.props.pathChanges}
+          sharedFolder={this.props.sharedFolder}
           isOpen={this.state.isConfirmMoveModalOpen}
           onSavePress={this.onSavePress}
           onMoveAuthorPress={this.onMoveAuthorPress}
@@ -493,6 +494,8 @@ class EditAuthorModalContent extends Component {
 }
 
 EditAuthorModalContent.propTypes = {
+  pathChanges: PropTypes.arrayOf(PropTypes.object).isRequired,
+  sharedFolder: PropTypes.bool.isRequired,
   authorId: PropTypes.number.isRequired,
   authorName: PropTypes.string.isRequired,
   item: PropTypes.object.isRequired,

@@ -21,6 +21,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.Configuration;
@@ -324,7 +325,6 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                         authorId,
                         page,
                         httpResponse.StatusCode);
-                    _logger.Trace("V5 author API error response: {0}", httpResponse.Content);
                     var typedTerminal = ParseTypedAuthorTerminal(httpResponse, authorId);
                     if (typedTerminal != null)
                     {
@@ -448,7 +448,6 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                         authorId,
                         page,
                         httpResponse.StatusCode);
-                    _logger.Trace("V5 author API error response: {0}", httpResponse.Content);
                     var typedTerminal = ParseTypedAuthorTerminal(httpResponse, authorId);
                     if (typedTerminal != null)
                     {
@@ -537,6 +536,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             _logger.Debug("RefreshAuthorInfo called for author {0}, ETag: {1}, ForceRefresh: {2}, ExpectedPublishedETag: {3}, BypassETag: {4}",
                 authorId, etag ?? "none", forceRefresh, expectedPublishedETag ?? "none", bypassEtag);
 
+            HttpStatusCode? responseStatus = null;
             try
             {
                 var metadataServerUrl = _configService.MetadataServerUrl;
@@ -572,6 +572,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 var httpRequest = httpRequestBuilder.Build();
                 var httpResponse = ExecuteV5Request(httpRequest, _httpClient.Get, $"author refresh {authorId}");
 
+                responseStatus = httpResponse.StatusCode;
                 _logger.Debug("Refresh API response status: {0}", httpResponse.StatusCode);
 
                 // Handle 304 Not Modified - no changes since last ETag
@@ -622,7 +623,6 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 {
                     var errorMsg = $"Refresh API error for author {authorId}: {httpResponse.StatusCode}";
                     _logger.Error(errorMsg);
-                    _logger.Trace("V5 author refresh error response: {0}", httpResponse.Content);
                     return RefreshResult.Error(errorMsg, httpResponse.StatusCode);
                 }
 
@@ -632,7 +632,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                 if (v5Response?.Author == null)
                 {
                     _logger.Error("Refresh API returned empty author data for {0}", authorId);
-                    return RefreshResult.Error("Empty author data received");
+                    return RefreshResult.Error("Empty author data received", responseStatus);
                 }
 
                 // Extract new ETag from response headers
@@ -648,7 +648,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             catch (Exception ex)
             {
                 _logger.Error(ex, "Error refreshing author info for {0}", authorId);
-                return RefreshResult.Error($"Refresh failed: {ex.Message}");
+                return RefreshResult.Error($"Refresh failed: {ex.Message}", (ex as HttpException)?.Response?.StatusCode ?? responseStatus);
             }
         }
 
@@ -1090,7 +1090,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     return ProviderIdHelper.Normalize(providerId, prefix);
                 }
 
-                var bookByMediaAndProviderId = new Dictionary<BookMediaType, Dictionary<string, Book>>();
+                var bookByMediaAndProviderId = new Dictionary<BookMediaType, Dictionary<string, List<Book>>>();
                 foreach (var book in author.Books)
                 {
                     if (book == null)
@@ -1100,7 +1100,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
                     if (!bookByMediaAndProviderId.TryGetValue(book.MediaType, out var map))
                     {
-                        map = new Dictionary<string, Book>(StringComparer.OrdinalIgnoreCase);
+                        map = new Dictionary<string, List<Book>>(StringComparer.OrdinalIgnoreCase);
                         bookByMediaAndProviderId[book.MediaType] = map;
                     }
 
@@ -1112,10 +1112,13 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                             return;
                         }
 
-                        if (!map.ContainsKey(normalized))
+                        if (!map.TryGetValue(normalized, out var books))
                         {
-                            map[normalized] = book;
+                            books = new List<Book>();
+                            map[normalized] = books;
                         }
+
+                        books.Add(book);
                     }
 
                     AddKey(book.HardcoverBookId);
@@ -1143,32 +1146,64 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                             continue;
                         }
 
-                        if (!map.TryGetValue(normalizedBookId, out var matchingBook))
+                        if (!map.TryGetValue(normalizedBookId, out var matchingBooks))
                         {
                             _logger.Trace("[SERIES-LINKS] No local {0} book match for series '{1}' member '{2}' ({3})",
                                 series.MediaType, series.Title, seriesBook?.Title, normalizedBookId);
                             continue;
                         }
 
-                        matchingBook.SeriesLinks ??= new List<SeriesBookLink>();
-
-                        if (matchingBook.SeriesLinks.Any(l => l?.Series?.IsLoaded == true && ReferenceEquals(l.Series.Value, series)))
+                        foreach (var matchingBook in matchingBooks)
                         {
-                            continue;
+                            matchingBook.SeriesLinks ??= new List<SeriesBookLink>();
+
+                            if (matchingBook.SeriesLinks.Any(l => l?.Series?.IsLoaded == true && ReferenceEquals(l.Series.Value, series)))
+                            {
+                                continue;
+                            }
+
+                            matchingBook.SeriesLinks.Add(new SeriesBookLink
+                            {
+                                Series = new LazyLoaded<Series>(series),
+                                Position = seriesBook.Position,
+                                SeriesPosition = int.TryParse(seriesBook.Position, out var pos) ? pos : 0,
+                                IsPrimary = seriesBook.IsPrimary
+                            });
                         }
-
-                        matchingBook.SeriesLinks.Add(new SeriesBookLink
-                        {
-                            Series = new LazyLoaded<Series>(series),
-                            Position = seriesBook.Position,
-                            SeriesPosition = int.TryParse(seriesBook.Position, out var pos) ? pos : 0,
-                            IsPrimary = seriesBook.IsPrimary
-                        });
                     }
                 }
             }
 
             author.Series = allSeries;
+            var missingPrimary = 0;
+            var unmatchedPrimary = 0;
+            var withoutMembership = 0;
+            var withMembership = 0;
+            foreach (var book in author.Books)
+            {
+                var links = BookSeries.GetLinks(book).ToList();
+                if (links.Count == 0)
+                {
+                    withoutMembership++;
+                    continue;
+                }
+
+                withMembership++;
+                if (!book.SeriesId.HasValue)
+                {
+                    missingPrimary++;
+                }
+                else if (BookSeries.GetHeaderLink(book, links) == null)
+                {
+                    unmatchedPrimary++;
+                }
+            }
+
+            if (unmatchedPrimary > 0)
+                _logger.Warn("[SERIES-V5] Author {0}: {1} book instances have a header series ID without a matching same-media Goodreads membership; retaining the existing series selection",
+                    author.Name, unmatchedPrimary);
+            _logger.Debug("[SERIES-V5] Author {0}: {1} book instances with Goodreads memberships, {2} without primary series ID, {3} with an unmatched primary ID, {4} without a Goodreads membership; no text-only memberships created",
+                author.Name, withMembership, missingPrimary, unmatchedPrimary, withoutMembership);
             _logger.Trace("[SERIES-TOTAL] Created {0} total series instances ({1} audiobook, {2} ebook) from V5 API data",
                 allSeries.Count,
                 allSeries.Count(s => s.MediaType == BookMediaType.Audiobook),
@@ -1656,7 +1691,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             {
                 book.SeriesName = v5Book.SeriesName;
                 book.SeriesPosition = v5Book.SeriesPosition;
-                book.SeriesId = v5Book.SeriesId.HasValue ? (int?)v5Book.SeriesId.Value : null;
+                book.SeriesId = checked((int?)v5Book.SeriesId);
             }
 
             // Create editions. Keep the full remote candidate set here; metadata-profile
@@ -1681,9 +1716,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             // Prefer matching the instance media type (audiobook/ebook) to avoid mixing physical dates into audiobook instances.
             if (!book.ReleaseDate.HasValue)
             {
-                var targetReadingFormatId = mediaType == BookMediaType.Audiobook ? 2 :
-                                            mediaType == BookMediaType.Ebook ? 3 :
-                                            (int?)null;
+                var targetReadingFormatId = EditionReadingFormat.NativeFor(mediaType);
 
                 var editionCandidates = v5Book.Editions ?? new List<V5.V5Edition>();
                 if (targetReadingFormatId.HasValue)
@@ -4584,11 +4617,10 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     .ToList();
             }
 
-            // Apply GraphicAudio normalization
-            if (resource.IsGraphicAudio)
-            {
-                edition.NarratorNames = new List<string> { "GraphicAudio" };
-            }
+            // Preserve provider credits. Cast size and performance style never establish a publisher.
+            edition.IsGraphicAudio = resource.IsGraphicAudio;
+            edition.AudioProductionType = resource.IsGraphicAudio ? "GraphicAudio"
+                : AudioProductionDetector.GetProductionType(edition.NarratorNames.Concat(new[] { resource.Title, resource.Subtitle }));
 
             book.Editions.Add(edition);
             EditionPinPolicy.MarkSelectionAsAutomatic(book, book.Editions);
@@ -5111,14 +5143,14 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             {
                 edition.RatingCount = edition.LegacyRatingsCount.Value;
             }
-            if (edition.ReadingFormatId == 0)
+            if (edition.ReadingFormatId == EditionReadingFormat.Unknown)
             {
                 edition.ReadingFormatId = edition.Format?.Trim().ToLowerInvariant() switch
                 {
-                    "audiobook" => 2,
-                    "ebook" => 3,
-                    "physical" => 1,
-                    _ => 0
+                    "audiobook" => EditionReadingFormat.Audiobook,
+                    "ebook" => EditionReadingFormat.Ebook,
+                    "physical" => EditionReadingFormat.Print,
+                    _ => EditionReadingFormat.Unknown
                 };
             }
 

@@ -35,7 +35,7 @@ namespace Chaptarr.Core.Test.Books
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
             public void AddMany(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Update(BookFile bookFile) => throw new NotImplementedException();
-            public int RelinkFilesByBook(int bookId, int editionId, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
@@ -110,13 +110,13 @@ namespace Chaptarr.Core.Test.Books
                     editionSelector: new EditionSelector(logger),
                     editionMetadataProfileFilter: new NzbDrone.Core.Books.Services.EditionMetadataProfileFilter(new TestTermMatcherService()),
                     mediaCoverService: null,
-                    logger: logger)
+                    logger: logger, mainDatabase: null)
             {
             }
 
             public Book MatchRemote(Book local, List<Book> remote)
             {
-                return GetRemoteData(local, remote, null).Entity;
+                return GetRemoteData(local, remote, null, CreateContext()).Entity;
             }
 
             public bool ShouldDeletePublic(Book local)
@@ -320,19 +320,20 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void copy_marker_alone_should_not_prevent_normal_pruning(
+        public void metadata_pruning_preserves_files_and_user_choices_but_not_an_empty_copy_marker(
             [Values(BookMediaType.Ebook, BookMediaType.Audiobook)] BookMediaType mediaType,
-            [Values("none", "files", "manual", "strict", "edition")] string protection)
+            [Values("none", "copy", "files", "manual", "strict", "edition")] string protection)
         {
             var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
             var local = new Book
             {
-                Id = 1, MediaType = mediaType, UnitKeyHash = "fixture-copy", AnyEditionOk = true,
+                Id = 1, MediaType = mediaType, AnyEditionOk = true,
                 AddOptions = new AddBookOptions { AddType = BookAddType.Automatic },
                 BookFiles = new List<BookFile>(), Editions = new List<Edition>()
             };
             switch (protection)
             {
+                case "copy": local.UnitKeyHash = "fixture-copy"; break;
                 case "files": local.BookFiles.Add(new BookFile { Id = 10 }); break;
                 case "manual": local.AddOptions.AddType = BookAddType.Manual; break;
                 case "strict": local.AnyEditionOk = false; break;
@@ -340,7 +341,7 @@ namespace Chaptarr.Core.Test.Books
             }
 
             Assert.That(service.MatchRemote(local, new List<Book>()), Is.Null);
-            Assert.That(service.ShouldDeletePublic(local), Is.EqualTo(protection == "none"));
+            Assert.That(service.ShouldDeletePublic(local), Is.EqualTo(protection is "none" or "copy"));
         }
 
         [Test]

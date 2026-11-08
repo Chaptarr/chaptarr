@@ -13,6 +13,7 @@ using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.TrackedDownloads;
+using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.MediaFiles.BookImport.Identification;
@@ -30,10 +31,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public ImportDecisionMakerInfo Info { get; set; }
             public int TrackedReads { get; set; }
             public DownloadClientItem DownloadItem { get; set; }
+            public int PreviewBookReads { get; set; }
+            public int PreviewHistoryReads { get; set; }
         }
 
         private static (ManualImportService Service, Observed Observed, string File) Service(
-            ParsingServiceTitleLookupFixture.Harness harness, ParsedBookInfo parsed, bool folder, Book identified = null, List<Book> identifiedBooks = null, bool alternativeCopies = false)
+            ParsingServiceTitleLookupFixture.Harness harness, ParsedBookInfo parsed, bool folder, Book identified = null, List<Book> identifiedBooks = null, bool alternativeCopies = false, bool trackedAvailable = true, bool noDecisions = false)
         {
             var directory = @"C:\Downloads\Test Writer\Paper Lanterns".AsOsAgnostic();
             var file = Path.Combine(directory, "Paper Lanterns.m4b");
@@ -52,7 +55,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var downloads = ParsingServiceTitleLookupFixture.Proxy<ITrackedDownloadService>((method, args) =>
             {
                 observed.TrackedReads++;
-                return tracked;
+                Assert.That(method.Name, Is.EqualTo(nameof(ITrackedDownloadService.Find)));
+                return trackedAvailable ? tracked : null;
             });
             var disk = ParsingServiceTitleLookupFixture.Proxy<IDiskProvider>((method, args) => method.Name switch
             {
@@ -69,6 +73,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             {
                 observed.Overrides = (IdentificationOverrides)args[1];
                 observed.Info = (ImportDecisionMakerInfo)args[2];
+                if (noDecisions) return new List<ImportDecision<LocalBook>>();
                 return ((List<IFileInfo>)args[0]).Select(info => new ImportDecision<LocalBook>(new LocalBook
                 {
                     Path = info.FullName, Quality = parsed.Quality,
@@ -76,10 +81,52 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 })).ToList();
             });
             var calculator = ParsingServiceTitleLookupFixture.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>());
-            var service = new ManualImportService(disk, harness.Parser, null, null, decisions, null, harness.Books,
-                null, null, null, null, null, null, null, null, calculator, downloads, null, null, null, null, null,
+            var history = ParsingServiceTitleLookupFixture.Proxy<IHistoryService>((method, args) =>
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(IHistoryService.FindByDownloadIds)));
+                Assert.That((IEnumerable<string>)args[0], Is.EqualTo(new[] { "tracked-1" }));
+                Assert.That(args[1], Is.EqualTo(EntityHistoryEventType.BookFileImported));
+                observed.PreviewHistoryReads++;
+                return new List<EntityHistory>();
+            });
+            var previewBooks = ParsingServiceTitleLookupFixture.Proxy<IBookService>((method, args) =>
+            {
+                if (method.Name == nameof(IBookService.GetBooksForLookup))
+                {
+                    observed.PreviewBookReads++;
+                    var ids = ((IEnumerable<int>)args[0]).ToHashSet();
+                    return harness.Catalog.Where(book => ids.Contains(book.Id)).ToList();
+                }
+                return method.Invoke(harness.Books, args);
+            });
+            var service = new ManualImportService(disk, harness.Parser, null, null, decisions, null, previewBooks,
+                null, null, null, null, null, null, null, null, calculator, downloads, null, history, null, null, null,
                 LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(NLog.LogManager.GetCurrentClassLogger()));
             return (service, observed, file);
+        }
+
+        [Test]
+        public void unavailable_tracked_download_returns_no_preview_without_reading_history()
+        {
+            var harness = new ParsingServiceTitleLookupFixture.Harness(new List<Book>());
+            var (service, observed, file) = Service(harness, ParsingServiceTitleLookupFixture.Parsed("Unknown"), true, trackedAvailable: false);
+            var results = service.GetMediaFiles("ignored", "tracked-1", null, FilterFilesType.None, false, exactPaths: new[] { file });
+            Assert.That(results, Is.Empty);
+            Assert.That(observed.TrackedReads, Is.EqualTo(1));
+            Assert.That(observed.PreviewHistoryReads, Is.Zero);
+            Assert.That(observed.PreviewBookReads, Is.Zero);
+        }
+
+        [Test]
+        public void empty_folder_decisions_return_no_preview_without_requesting_policy_history()
+        {
+            var harness = new ParsingServiceTitleLookupFixture.Harness(new List<Book>());
+            var (service, observed, file) = Service(harness, ParsingServiceTitleLookupFixture.Parsed("Unknown"), true, noDecisions: true);
+            var results = service.GetMediaFiles("ignored", "tracked-1", harness.Author, FilterFilesType.None, false, exactPaths: new[] { file });
+            Assert.That(results, Is.Empty);
+            Assert.That(observed.TrackedReads, Is.EqualTo(1));
+            Assert.That(observed.PreviewHistoryReads, Is.Zero);
+            Assert.That(observed.PreviewBookReads, Is.Zero);
         }
 
         [TestCase(false)]
@@ -98,7 +145,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(observed.Overrides.Book, Is.SameAs(audio));
             Assert.That(results.Single().Book, Is.SameAs(audio));
             Assert.That(harness.BookReads, Is.EqualTo(1));
-            Assert.That(observed.TrackedReads, Is.EqualTo(1));
+            Assert.That(observed.TrackedReads, Is.EqualTo(1), "Policy preview reuses the tracked download already resolved for this request");
+            Assert.That(observed.PreviewHistoryReads, Is.EqualTo(1));
         }
 
         [Test]
@@ -113,7 +161,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(observed.Overrides.Author, Is.SameAs(harness.Author));
             Assert.That(observed.Overrides.Book, Is.Null);
             Assert.That(harness.BookReads, Is.EqualTo(1));
-            Assert.That(observed.TrackedReads, Is.EqualTo(1));
+            Assert.That(observed.TrackedReads, Is.EqualTo(1), "Policy preview reuses the tracked download already resolved for this request");
+            Assert.That(observed.PreviewHistoryReads, Is.EqualTo(1));
         }
 
         [TestCase(false, false)]
@@ -136,7 +185,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(results.Single().Edition, Is.SameAs(edition));
             Assert.That(harness.BookReads, Is.Zero);
             Assert.That(harness.BookIdReads, Is.EqualTo(1));
-            Assert.That(observed.TrackedReads, Is.EqualTo(1));
+            Assert.That(observed.TrackedReads, Is.EqualTo(1), "Policy preview reuses the tracked download already resolved for this request");
+            Assert.That(observed.PreviewHistoryReads, Is.EqualTo(1));
         }
 
         [Test]

@@ -145,7 +145,7 @@ namespace Chaptarr.Core.Test.Organizer
         {
             var builder = CreateBuilder();
             var controller = new NamingConfigController(new StubNamingConfigService(),
-                new FileNameSampleService(builder), new FileNameValidationService(), builder);
+                new FileNameSampleService(builder), new FileNameValidationService(new FileNameSampleService(builder)), builder);
             var pattern = "{Book Series}/{Book SeriesPosition:00 - }{Book Title}";
             var config = new NamingConfigResource
             {
@@ -167,7 +167,7 @@ namespace Chaptarr.Core.Test.Organizer
         {
             var builder = CreateBuilder();
             var controller = new NamingConfigController(new StubNamingConfigService(),
-                new FileNameSampleService(builder), new FileNameValidationService(), builder);
+                new FileNameSampleService(builder), new FileNameValidationService(new FileNameSampleService(builder)), builder);
             var config = NamingConfig.Default;
             config.Id = 1;
             config.RenameBooks = config.EbookRenameBooks = true;
@@ -193,7 +193,7 @@ namespace Chaptarr.Core.Test.Organizer
         {
             var builder = CreateBuilder();
             var service = new StubNamingConfigService();
-            var controller = new NamingConfigController(service, new FileNameSampleService(builder), new FileNameValidationService(), builder);
+            var controller = new NamingConfigController(service, new FileNameSampleService(builder), new FileNameValidationService(new FileNameSampleService(builder)), builder);
             var config = NamingConfig.Default;
             config.Id = 1;
             config.RenameBooks = config.EbookRenameBooks = rename;
@@ -235,7 +235,7 @@ namespace Chaptarr.Core.Test.Organizer
         {
             var builder = CreateBuilder();
             var service = new StubNamingConfigService();
-            var controller = new NamingConfigController(service, new FileNameSampleService(builder), new FileNameValidationService(), builder);
+            var controller = new NamingConfigController(service, new FileNameSampleService(builder), new FileNameValidationService(new FileNameSampleService(builder)), builder);
             var config = NamingConfig.Default;
             config.Id = 1;
             if (mediaType == "ebook")
@@ -418,7 +418,7 @@ namespace Chaptarr.Core.Test.Organizer
             }
         }
 
-        private static FileNameBuilder CreateBuilder()
+        internal static FileNameBuilder CreateBuilder()
         {
             return new FileNameBuilder(new StubNamingConfigService(), new StubQualityDefinitionService(),
                 new CacheManager(), new StubCustomFormatCalculationService(), LogManager.GetCurrentClassLogger());

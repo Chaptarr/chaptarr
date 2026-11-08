@@ -162,8 +162,15 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 
         private bool DownloadIsTrackable(TrackedDownload trackedDownload)
         {
-            // If the download has already been imported or failed or the user ignored it don't track it
-            if (trackedDownload.State == TrackedDownloadState.Imported ||
+            // A deliberate cleanup refusal must stay visible, including failed downloads.
+            if (trackedDownload.CleanupDeletionRefused && !trackedDownload.DownloadItem.Removed &&
+                trackedDownload.State != TrackedDownloadState.Ignored)
+            {
+                return true;
+            }
+
+            // Keep failed cleanup checks visible while the imported download awaits a retry.
+            if ((trackedDownload.State == TrackedDownloadState.Imported && !trackedDownload.CleanupCheckFailed) ||
                 trackedDownload.State == TrackedDownloadState.DownloadFailed ||
                 trackedDownload.State == TrackedDownloadState.Ignored)
             {

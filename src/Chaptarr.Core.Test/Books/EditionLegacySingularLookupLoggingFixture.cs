@@ -227,7 +227,8 @@ namespace Chaptarr.Core.Test.Books
 
             var editionQueries = sql.Where(command => command.Contains("Editions", StringComparison.OrdinalIgnoreCase)).ToList();
             Assert.That(editionQueries, Has.Count.EqualTo(2));
-            Assert.That(sql.Count(command => command.Contains("ProviderAliasIndex", StringComparison.OrdinalIgnoreCase)), Is.EqualTo(2));
+            Assert.That(sql.Count(command => command.Contains("ProviderAliasIndex", StringComparison.OrdinalIgnoreCase)), Is.Zero,
+                "Provider IDs are stored on each edition row; loading editions must not re-read the derived index.");
             Assert.That(editionQueries[0], Does.Not.Contain("JOIN").IgnoreCase);
             Assert.That(editionQueries[1], Does.Contain("JOIN").IgnoreCase);
         }

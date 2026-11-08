@@ -9,8 +9,8 @@ export default function createBookSearchFilter(query, seriesTitle) {
   return (book) => Boolean(book) && (
     seriesMatches ||
     [book.title, book.authorTitle, book.seriesTitle, book.narrator].some(matches) ||
+    some(book.seriesLabels, matches) ||
     some(book.availableNarrators, matches) ||
-    some(book.seriesLinks, (link) => matches(link?.series?.title)) ||
     some(book.editions, (edition) => [edition?.title, edition?.subtitle, edition?.narrator].some(matches))
   );
 }

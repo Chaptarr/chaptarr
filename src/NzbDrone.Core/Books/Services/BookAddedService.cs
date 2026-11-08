@@ -51,7 +51,7 @@ namespace NzbDrone.Core.Books
                 {
                     try
                     {
-                        _commandQueueManager.Push(new BookSearchCommand(new List<int> { book.Id }), trigger: CommandTrigger.Manual);
+                        _commandQueueManager.Push(new BookSearchCommand(new List<int> { book.Id }));
                         queued.Add(book);
                     }
                     catch (Exception e)

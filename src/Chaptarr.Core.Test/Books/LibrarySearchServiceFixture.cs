@@ -50,12 +50,12 @@ namespace Chaptarr.Core.Test.Books
                 using var admin = new NpgsqlConnection(adminConnectionString);
                 admin.Open();
                 admin.Execute($"CREATE DATABASE \"{_databaseName}\"");
-                _connectionString = new NpgsqlConnectionStringBuilder(adminConnectionString) { Database = _databaseName, Pooling = false }.ConnectionString;
+                _connectionString = new NpgsqlConnectionStringBuilder(adminConnectionString) { Database = _databaseName, Pooling = false, CommandTimeout = 7 }.ConnectionString;
             }
             else
             {
                 _databasePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"library_search_{Guid.NewGuid():N}.db");
-                _connectionString = new SqliteConnectionStringBuilder { DataSource = _databasePath, Pooling = false }.ConnectionString;
+                _connectionString = new SqliteConnectionStringBuilder { DataSource = _databasePath, Pooling = false, DefaultTimeout = 7 }.ConnectionString;
             }
 
             using var connection = OpenConnection();
@@ -144,7 +144,7 @@ namespace Chaptarr.Core.Test.Books
                 var logger = LogManager.GetCurrentClassLogger();
                 var events = InterfaceProxy.Proxy<NzbDrone.Core.Messaging.Events.IEventAggregator>((_, _) => null);
                 var authors = new AuthorRepository(database, events, logger);
-                foreach (var name in new[] { "Adam Scott Huerta", "Adam Silvera", "Adam Southward", "Sarah Adams", "J.K. Rowling", "Camille Pagán", "Frank Herbert" })
+                foreach (var name in new[] { "Adam Scott Huerta", "Adam Silvera", "Adam Southward", "Sarah Adams", "J.K. Rowling", "Camille Pagán", "Frank Herbert", "C.N. Crawford", "Jean-Paul Sartre", "George R.R. Martin" })
                 {
                     authors.Insert(new Author { Name = name, CleanName = NzbDrone.Core.Parser.Parser.CleanAuthorName(name), SortName = name.ToLowerInvariant(), Path = "/header-prefix/" + name, Added = DateTime.UtcNow });
                 }
@@ -157,6 +157,10 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(service.Search("frank h", 1).Authors.Single().Name, Is.EqualTo("Frank Herbert"));
                 Assert.That(service.Search("frankx", 10).Authors, Is.Empty);
                 Assert.That(service.Search("J.K. Row", 1).Authors.Single().Name, Is.EqualTo("J.K. Rowling"));
+                foreach (var (query, expected) in new[] { ("jk rowling", "J.K. Rowling"), ("cn crawford", "C.N. Crawford"), ("jean paul sartre", "Jean-Paul Sartre"), ("george r r martin", "George R.R. Martin"), ("george rr martin", "George R.R. Martin"), ("martin rr george", "George R.R. Martin") })
+                {
+                    Assert.That(service.Search(query, 10).Authors.Select(author => author.Name), Does.Contain(expected), query);
+                }
                 if (_postgres)
                 {
                     string plan = null;
@@ -211,12 +215,6 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(_service.Search(query, 10).Books, Is.Empty);
         }
 
-        [TestCase("Ready Player 2")]
-        [TestCase("Ready Player 𝟚")]
-        [TestCase("Ready Player ٢")]
-        [TestCase("Ready Player ２")]
-        [TestCase("Ready Player ②")]
-        [TestCase("Ready Player Ⅱ")]
         [TestCase("Ready Player Two' OR 1=1")]
         [TestCase("Dune zzqqmissing")]
         [TestCase("Lessons in Chemistry")]
@@ -224,6 +222,69 @@ namespace Chaptarr.Core.Test.Books
         public void every_query_word_must_match_the_same_edition(string query)
         {
             Assert.That(_service.Search(query, 10).Books, Is.Empty);
+        }
+
+        // Header search adds numeric alternatives at query time only.
+        [TestCase("Ready Player 2")]
+        [TestCase("Ready Player 𝟚")]
+        [TestCase("Ready Player ٢")]
+        [TestCase("Ready Player ２")]
+        [TestCase("Ready Player ②")]
+        [TestCase("Ready Player Ⅱ")]
+        [TestCase("Ready Player II")]
+        public void numeric_query_alternatives_should_find_the_word_title(string query)
+        {
+            Assert.That(_service.Search(query, 10).Books.Select(book => book.Title), Does.Contain("Ready Player Two"));
+        }
+
+        [TestCase("Ready Player 2", "Ready Player Two")]
+        [TestCase("Ready Player 2", "Ready Player II")]
+        [TestCase("Ready Player II", "Ready Player Two")]
+        [TestCase("I had seven children", "I had 7 children")]
+        [TestCase("Volume Twenty One", "Volume 21")]
+        [TestCase("Volume 21", "Volume twenty one")]
+        [TestCase("Volume XXI", "Volume twenty-one")]
+        public void number_aliases_should_preserve_stored_titles_and_keys(string title, string query)
+        {
+            using var connection = OpenConnection();
+            var key = StringSuperNormalizer.ComputeMatchingTitle(title);
+            connection.Execute(@"INSERT INTO ""Books"" (""Id"", ""AuthorId"", ""Title"", ""MediaType"") VALUES (900, 3, @title, 0);
+                INSERT INTO ""Editions"" (""Id"", ""BookId"", ""Title"", ""MatchingTitle"") VALUES (900, 900, @title, @key);", new { title, key });
+            try
+            {
+                Assert.That(_service.Search(query, 50).Books.Select(book => book.Id), Does.Contain(900));
+                Assert.That(_service.Search(query + " missingword", 50).Books.Select(book => book.Id), Does.Not.Contain(900));
+                Assert.That(connection.QuerySingle<string>(@"SELECT ""MatchingTitle"" FROM ""Editions"" WHERE ""Id""=900"), Is.EqualTo(key));
+            }
+            finally
+            {
+                connection.Execute(@"DELETE FROM ""Editions"" WHERE ""Id""=900; DELETE FROM ""Books"" WHERE ""Id""=900;");
+            }
+        }
+
+        [TestCase("100", "Centennial", "C")]
+        [TestCase("one", "Island", "I")]
+        [TestCase("five", "Voyage", "V")]
+        public void generated_number_aliases_are_complete_tokens_not_prefixes(string query, string unrelated, string equivalent)
+        {
+            using var connection = OpenConnection();
+            foreach (var (id, title) in new[] { (900, unrelated), (901, equivalent) })
+            {
+                connection.Execute(@"INSERT INTO ""Books"" (""Id"", ""AuthorId"", ""Title"", ""MediaType"") VALUES (@id, 3, @title, 0);
+                    INSERT INTO ""Editions"" (""Id"", ""BookId"", ""Title"", ""MatchingTitle"") VALUES (@id, @id, @title, @key);",
+                    new { id, title, key = StringSuperNormalizer.ComputeMatchingTitle(title) });
+            }
+            try
+            {
+                var matches = _service.Search(query, 50).Books.Select(book => book.Id).ToArray();
+                Assert.That(matches, Does.Contain(901), "retain number equivalence");
+                Assert.That(matches, Does.Not.Contain(900), "generated Roman alias must not mean every word beginning with that letter");
+                Assert.That(_service.Search(unrelated[..3], 50).Books.Select(book => book.Id), Does.Contain(900), "literal typed prefixes still work");
+            }
+            finally
+            {
+                connection.Execute(@"DELETE FROM ""Editions"" WHERE ""Id"" IN (900,901); DELETE FROM ""Books"" WHERE ""Id"" IN (900,901);");
+            }
         }
 
         [TestCase("player ready")]
@@ -323,7 +384,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void search_executes_one_query_per_entity_type()
+        public void search_loads_series_in_one_batch_for_all_returned_books()
         {
             var count = 0;
             _observeCommand = _ => count++;
@@ -331,7 +392,7 @@ namespace Chaptarr.Core.Test.Books
             {
                 var result = _service.Search("It", 10);
                 Assert.That(result.Books, Has.Count.EqualTo(2));
-                Assert.That(count, Is.EqualTo(2));
+                Assert.That(count, Is.EqualTo(3));
             }
             finally
             {
@@ -379,18 +440,107 @@ namespace Chaptarr.Core.Test.Books
             });
         }
 
+        [Test]
+        public void author_query_timeout_warns_once_and_keeps_book_results()
+        {
+            using var factory = new LogFactory();
+            var messages = new MemoryTarget { Layout = "${level} ${message} ${exception:format=tostring}" };
+            var config = new LoggingConfiguration(factory);
+            config.AddRule(LogLevel.Warn, LogLevel.Fatal, messages);
+            factory.Configuration = config;
+            var authorQueries = 0;
+            int? authorCommandTimeout = null;
+            _observeCommand = command =>
+            {
+                if (!command.CommandText.Contains("FROM author_fts", StringComparison.Ordinal) &&
+                    !command.CommandText.Contains("JOIN author_candidates", StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                authorQueries++;
+                authorCommandTimeout = command.CommandTimeout;
+                if (_postgres)
+                {
+                    // Exercise the real driver's cancellation and reuse the same connection for books.
+                    command.CommandTimeout = 1;
+                    command.CommandText = "SELECT pg_sleep(10)";
+                }
+                else
+                {
+                    // SQLite has no pg_sleep; exercise the same failure boundary without a real lock.
+                    throw new TimeoutException("Author index read timed out");
+                }
+            };
+            try
+            {
+                var database = InterfaceProxy.Proxy<IMainDatabase>((method, _) => method.Name switch
+                {
+                    "OpenConnection" => OpenConnection(),
+                    "get_DatabaseType" => _postgres ? DatabaseType.PostgreSQL : DatabaseType.SQLite,
+                    _ => throw new NotSupportedException(method.Name)
+                });
+                var result = new LibrarySearchService(database, factory.GetLogger("timeout")).Search("Dune", 10);
+                Assert.That(authorQueries, Is.EqualTo(1), "A timeout must not repeat the expensive search");
+                Assert.That(authorCommandTimeout, Is.EqualTo(30), "The explicit bound must override the test connection default of 7 seconds");
+                Assert.That(result.Authors, Is.Empty);
+                Assert.That(result.Books.Select(book => book.Title), Does.Contain("Dune"));
+                Assert.That(messages.Logs, Has.Exactly(1).Contains("Author search failed"));
+                Assert.That(messages.Logs.Single(), Does.Contain("after").And.Contain("ms").And.Contain("Timeout"));
+            }
+            finally
+            {
+                _observeCommand = null;
+            }
+        }
+
+        [Test]
+        public void book_search_failure_warns_but_preserves_author_results()
+        {
+            using var factory = new LogFactory();
+            var messages = new MemoryTarget { Layout = "${level} ${message}" };
+            var config = new LoggingConfiguration(factory);
+            config.AddRule(LogLevel.Warn, LogLevel.Fatal, messages);
+            factory.Configuration = config;
+            _observeCommand = command =>
+            {
+                if (command.CommandText.Contains("FROM ranked r", StringComparison.Ordinal)) throw new InvalidOperationException("book index unavailable");
+            };
+            try
+            {
+                var database = InterfaceProxy.Proxy<IMainDatabase>((method, _) => method.Name switch
+                {
+                    "OpenConnection" => OpenConnection(),
+                    "get_DatabaseType" => _postgres ? DatabaseType.PostgreSQL : DatabaseType.SQLite,
+                    _ => throw new NotSupportedException(method.Name)
+                });
+                var service = new LibrarySearchService(database, factory.GetLogger("partial"));
+                var result = service.Search("Frank Herbert", 10);
+                Assert.That(result.Authors.Select(author => author.Name), Does.Contain("Frank Herbert"));
+                Assert.That(result.Books, Is.Empty);
+                Assert.That(messages.Logs, Has.Exactly(1).Contains("Book search failed"));
+                Assert.That(messages.Logs.Single(), Does.Contain("after").And.Contain("ms"));
+            }
+            finally
+            {
+                _observeCommand = null;
+            }
+        }
+
         private void Seed(IDbConnection connection)
         {
             var authorColumns = new[] { "Name", "SearchName", "CleanName", "SortName", "TitleSlug", "Images", "SelectedPosterHash", "HardcoverAuthorId", "GoodreadsAuthorId", "OpenLibraryAuthorId", "GoogleBooksAuthorId", "AudnexusAuthorId" };
             var bookColumns = new[] { "Title", "TitleSlug", "Images", "BaseBookId", "HardcoverBookId", "GoodreadsBookId", "GoodreadsWorkId", "OpenLibraryWorkId", "GoogleBooksId", "ASIN", "AudibleASIN", "Narrator", "SeriesName" };
             var boolean = _postgres ? "BOOLEAN DEFAULT TRUE" : "INTEGER DEFAULT 1";
             connection.Execute($"CREATE TABLE \"Authors\" (\"Id\" INTEGER PRIMARY KEY, {string.Join(", ", authorColumns.Select(column => $"\"{column}\" TEXT NULL"))});");
-            connection.Execute($"CREATE TABLE \"Books\" (\"Id\" INTEGER PRIMARY KEY, \"AuthorId\" INTEGER, \"MediaType\" INTEGER, \"AudiobookMonitored\" {boolean}, \"EbookMonitored\" {boolean}, {string.Join(", ", bookColumns.Select(column => $"\"{column}\" TEXT NULL"))});");
-            connection.Execute("CREATE TABLE \"Editions\" (\"Id\" INTEGER PRIMARY KEY, \"BookId\" INTEGER, \"Title\" TEXT, \"MatchingTitle\" TEXT, \"Subtitle\" TEXT, \"Narrator\" TEXT);");
+            connection.Execute($"CREATE TABLE \"Books\" (\"Id\" INTEGER PRIMARY KEY, \"AuthorId\" INTEGER, \"MediaType\" INTEGER, \"SeriesId\" INTEGER NULL, \"AudiobookMonitored\" {boolean}, \"EbookMonitored\" {boolean}, {string.Join(", ", bookColumns.Select(column => $"\"{column}\" TEXT NULL"))});");
+            connection.Execute("CREATE TABLE \"Editions\" (\"Id\" INTEGER PRIMARY KEY, \"BookId\" INTEGER, \"Title\" TEXT, \"MatchingTitle\" TEXT, \"Subtitle\" TEXT, \"Narrator\" TEXT, \"Monitored\" BOOLEAN DEFAULT FALSE);");
             connection.Execute("CREATE TABLE \"BookFiles\" (\"Id\" INTEGER PRIMARY KEY, \"EditionId\" INTEGER);");
+            connection.Execute("CREATE TABLE \"Series\" (\"Id\" INTEGER PRIMARY KEY, \"Title\" TEXT, \"GoodreadsSeriesId\" TEXT, \"MediaType\" INTEGER);");
+            connection.Execute("CREATE TABLE \"SeriesBookLink\" (\"BookId\" INTEGER, \"SeriesId\" INTEGER, \"Position\" TEXT);");
             if (!_postgres)
             {
-                connection.Execute("CREATE VIRTUAL TABLE author_fts USING fts5(Name, SortName, TitleSlug, content='', tokenize = 'unicode61 remove_diacritics 1 tokenchars ''-.''');");
+                FtsMaintenanceService.RebuildSqliteAuthorIndex(connection, null, LogManager.GetCurrentClassLogger());
                 EditionFtsRepository.RebuildSqliteHeaderIndex(connection, null, LogManager.GetCurrentClassLogger());
             }
 
@@ -427,10 +577,6 @@ namespace Chaptarr.Core.Test.Books
             }
 
             connection.Execute("DELETE FROM \"Authors\" WHERE \"Id\" = 2;");
-            if (!_postgres)
-            {
-                connection.Execute("INSERT INTO author_fts(rowid, Name, SortName, TitleSlug) SELECT Id, Name, SortName, TitleSlug FROM Authors;");
-            }
         }
     }
 }

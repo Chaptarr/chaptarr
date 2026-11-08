@@ -17,6 +17,7 @@ using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.MetadataSource;
+using NzbDrone.Core.Messaging.Commands;
 using static Chaptarr.Core.Test.Common.InterfaceProxy;
 
 namespace Chaptarr.Core.Test.Books
@@ -54,18 +55,18 @@ namespace Chaptarr.Core.Test.Books
                     h.AddBook(media, "hc:7000");
                     return Task.FromResult(h.Author);
                 });
-                var added = new List<int>();
                 var exclusions = Proxy<IImportListExclusionService>((method, args) => new List<ImportListExclusion>());
-                var service = new AddBookService(h.AuthorService, library, h.BookService, null,
-                    Proxy<IBookAddedService>((method, args) => { added.Add((int)args[0]); return null; }), info, exclusions,
+                var service = new AddBookService(h.AuthorService, library, h.BookService, null, info, exclusions,
                     null, null, null, null, null, h.EditionService, null, null, null, LogManager.GetCurrentClassLogger(), h.Queue);
                 var book = service.AddBook(requested).GetAwaiter().GetResult();
                 var saved = h.BookService.GetBook(book.Id);
                 Assert.That(saved.AuthorId, Is.EqualTo(h.Author.Id));
                 Assert.That(saved.MediaType, Is.EqualTo(media));
                 Assert.That(saved.IsMonitored(), Is.True);
-                Assert.That(saved.AddOptions.SearchForNewBook, Is.True);
-                Assert.That(added, Is.EqualTo(new[] { h.Author.Id }));
+                Assert.That(saved.AddOptions.SearchForNewBook, Is.False);
+                var search = h.Commands.OfType<BookSearchCommand>().Single();
+                Assert.That(search.BookIds, Is.EqualTo(new[] { saved.Id }));
+                Assert.That(search.Trigger, Is.EqualTo(CommandTrigger.Manual));
                 Assert.That(reads, Is.EqualTo(1));
             });
         }
@@ -190,6 +191,7 @@ namespace Chaptarr.Core.Test.Books
                 var rejected = h.AddBook(work: "hc:7001", edition: "hc:edition:7001");
                 var pending = h.Request(new() { "hc:7000", "hc:7001", "hc:7002" });
                 pending.RequestedBy = "UserInterface";
+                Harness.MarkExplicitSearches(pending);
                 h.Requests.Update(pending);
                 h.RejectedBookId = rejected.Id;
                 h.Run();

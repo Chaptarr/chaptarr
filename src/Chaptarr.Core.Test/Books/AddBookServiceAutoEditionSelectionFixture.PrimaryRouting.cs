@@ -8,6 +8,8 @@ using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.IndexerSearch;
+using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
@@ -69,9 +71,10 @@ namespace Chaptarr.Core.Test.Books
             var exclusion = (ImportListExclusionServiceProxy)exclusions;
             exclusion.Exclusions.AddRange(new[] { new ImportListExclusion { Id = 1, ForeignId = "hc:9001", MediaType = media },
                 new ImportListExclusion { Id = 2, ForeignId = "hc:2222", MediaType = media } });
-            var added = new RecordingBookAddedService();
+            var commandRepository = DispatchProxy.Create<ICommandRepository, CommandRepositoryProxy>();
+            var commands = new CommandQueueManager(commandRepository, null, null, NLog.LogManager.GetCurrentClassLogger());
             var service = BuildService(new StubAuthorService(null), books, new StubEditionService(Array.Empty<Edition>()),
-                new StubMetadataProfileService(), library, added, exclusions, info);
+                new StubMetadataProfileService(), library, exclusions, info, commandQueue: commands);
             var request = new Book { Title = "Requested Work", MediaType = media, Author = contributor,
                 HardcoverBookId = editionId == null ? "hc:7000" : null,
                 Editions = editionId == null ? null : new List<Edition> { RoutingEdition(editionId) },
@@ -97,7 +100,9 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(metadata.EditionReads, Is.EqualTo(editionId == null ? 0 : 1));
                 Assert.That(exclusion.DeletedIds, Does.Contain(1));
                 Assert.That(exclusion.DeletedIds, Does.Not.Contain(2));
-                Assert.That(added.AuthorIds, Is.EqualTo(new[] { selected.Id }));
+                var search = ((CommandRepositoryProxy)commandRepository).Commands.OfType<BookSearchCommand>().Single();
+                Assert.That(search.BookIds, Is.EqualTo(new[] { local.Id }));
+                Assert.That(search.Trigger, Is.EqualTo(CommandTrigger.Manual));
             });
         }
 

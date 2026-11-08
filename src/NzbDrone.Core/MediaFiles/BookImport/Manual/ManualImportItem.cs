@@ -25,6 +25,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
         public Edition Edition { get; set; }
         public QualityModel Quality { get; set; }
         public string ReleaseGroup { get; set; }
+        public bool? AudioProductionOverride { get; set; }
+        public bool IsGraphicAudio { get; set; }
         public string DownloadId { get; set; }
         public List<CustomFormat> CustomFormats { get; set; }
         public int IndexerFlags { get; set; }

@@ -50,16 +50,6 @@ namespace Chaptarr.Core.Test.Books
             }
         }
 
-        private sealed class RecordingBookAddedService : IBookAddedService
-        {
-            public List<int> AuthorIds { get; } = new();
-
-            public void SearchForRecentlyAdded(int authorId)
-            {
-                AuthorIds.Add(authorId);
-            }
-        }
-
         private class CommandRepositoryProxy : DispatchProxy
         {
             public List<Command> Commands { get; } = new();
@@ -96,53 +86,23 @@ namespace Chaptarr.Core.Test.Books
             public List<int> DeletedIds { get; } = new();
             public List<int> UpdatedIds { get; } = new();
             public List<List<string>> LookupIdLists { get; } = new();
-            public List<string> StringDeleteCalls { get; } = new();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IImportListExclusionService.FindByForeignId))
                 {
-                    if (targetMethod.ReturnType == typeof(List<ImportListExclusion>))
-                    {
-                        var ids = (List<string>)args[0];
-                        LookupIdLists.Add(ids.ToList());
-                        return Exclusions
-                            .Where(exclusion => ids.Contains(exclusion.ForeignId, StringComparer.OrdinalIgnoreCase))
-                            .ToList();
-                    }
-
-                    var foreignId = (string)args[0];
-                    var matches = Exclusions.Where(exclusion => exclusion.ForeignId == foreignId).ToList();
-                    if (matches.Count > 1)
-                    {
-                        throw new InvalidOperationException("Single exclusion lookup matched more than one row.");
-                    }
-
-                    return matches.SingleOrDefault();
+                    var ids = (List<string>)args[0];
+                    LookupIdLists.Add(ids.ToList());
+                    return Exclusions
+                        .Where(exclusion => ids.Contains(exclusion.ForeignId, StringComparer.OrdinalIgnoreCase))
+                        .ToList();
                 }
 
                 if (targetMethod?.Name == nameof(IImportListExclusionService.Delete))
                 {
-                    if (args[0] is int id)
-                    {
-                        DeletedIds.Add(id);
-                        Exclusions.RemoveAll(exclusion => exclusion.Id == id);
-                    }
-                    else if (args[0] is string foreignId)
-                    {
-                        StringDeleteCalls.Add(foreignId);
-                        var matches = Exclusions.Where(exclusion => exclusion.ForeignId == foreignId).ToList();
-                        if (matches.Count > 1)
-                        {
-                            throw new InvalidOperationException("Single exclusion lookup matched more than one row.");
-                        }
-
-                        if (matches.SingleOrDefault() is ImportListExclusion match)
-                        {
-                            DeletedIds.Add(match.Id);
-                            Exclusions.RemoveAll(exclusion => exclusion.Id == match.Id);
-                        }
-                    }
+                    var id = (int)args[0];
+                    DeletedIds.Add(id);
+                    Exclusions.RemoveAll(exclusion => exclusion.Id == id);
 
                     return null;
                 }
@@ -170,7 +130,7 @@ namespace Chaptarr.Core.Test.Books
 
             public Author GetAuthor(int authorId) => _author != null && _author.Id == authorId ? _author : null;
             public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
-            public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
+            public List<Author> GetAuthors(IEnumerable<int> authorIds) => _author != null && authorIds.Contains(_author.Id) ? new List<Author> { _author } : new List<Author>();
             public Author AddAuthor(Author newAuthor, bool doRefresh) => throw new NotImplementedException();
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new NotImplementedException();
             public Author FindByProviderId(string provider, string providerId) => _findByProviderId != null ? _findByProviderId(provider, providerId) : throw new NotImplementedException();
@@ -178,7 +138,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
-            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
@@ -200,6 +160,8 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class StubBookService : IBookService
         {
+            public List<Book> GetImportListBookIdentities() => GetAllBooks();
+
             public List<Book> AuthorBooks { get; set; } = new();
             public List<Book> AddOptionsBooks { get; private set; }
             public Book AddedBook { get; private set; }
@@ -252,7 +214,7 @@ namespace Chaptarr.Core.Test.Books
 
                 return newBook;
             }
-            public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
+            public List<Book> FindBySlug(string titleSlug) => throw new NotImplementedException();
             public Book FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Book FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public Book FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
@@ -315,10 +277,12 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId)
+            public (Book Book, bool ExistingCopy) AddWantedEditionCopy(int bookId, int editionId) => throw new NotImplementedException();
+            public Dictionary<int, Book> AddWantedEditions(List<Edition> requestedEditions, Action<Edition, Exception> onFailure = null)
             {
-                WantedRequest = (bookId, editionId);
-                return WantedResult ?? throw new NotImplementedException();
+                var edition = requestedEditions.Single();
+                WantedRequest = (edition.BookId, edition.Id);
+                return new Dictionary<int, Book> { [edition.Id] = WantedResult ?? throw new NotImplementedException() };
             }
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
@@ -436,18 +400,18 @@ namespace Chaptarr.Core.Test.Books
             IEditionService editionService,
             IMetadataProfileService metadataProfileService,
             IAuthorLibraryService authorLibraryService = null,
-            IBookAddedService bookAddedService = null,
             IImportListExclusionService importListExclusionService = null,
             IProvideBookInfo bookInfo = null,
             IBookMonitoredService bookMonitoredService = null,
             IManageCommandQueue commandQueue = null)
         {
+            commandQueue ??= new CommandQueueManager(DispatchProxy.Create<ICommandRepository, CommandRepositoryProxy>(),
+                null, null, LogManager.GetCurrentClassLogger());
             return new AddBookService(
                 authorService,
                 authorLibraryService ?? DispatchProxy.Create<IAuthorLibraryService, ThrowingProxy<IAuthorLibraryService>>(),
                 bookService,
                 bookMonitoredService ?? new RecordingBookMonitoredService(),
-                bookAddedService ?? DispatchProxy.Create<IBookAddedService, ThrowingProxy<IBookAddedService>>(),
                 bookInfo ?? DispatchProxy.Create<IProvideBookInfo, RoutingBookInfoProxy>(),
                 importListExclusionService ?? DispatchProxy.Create<IImportListExclusionService, ThrowingProxy<IImportListExclusionService>>(),
                 DispatchProxy.Create<ISeriesBookLinkService, ThrowingProxy<ISeriesBookLinkService>>(),
@@ -466,19 +430,20 @@ namespace Chaptarr.Core.Test.Books
         [Test]
         public async Task root_scoped_request_should_preserve_settings_and_search_only_its_target(
             [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType,
-            [Values(false, true)] bool configured,
+            [Values(-1, 0, 1)] int profileId,
             [Values(MonitorTypes.None, MonitorTypes.All)] MonitorTypes initial,
             [Values(false, true)] bool searchNow)
         {
             var audio = mediaType == BookMediaType.Audiobook;
+            var configured = profileId > 0;
             var author = new Author
             {
                 Id = 42,
                 HardcoverAuthorId = "hc:777",
-                AudiobookQualityProfileId = !audio || configured ? 1 : null,
-                AudiobookRootFolderPath = !audio || configured ? @"C:\Audio" : null,
-                EbookQualityProfileId = audio || configured ? 2 : null,
-                EbookRootFolderPath = audio || configured ? @"C:\Books" : null,
+                AudiobookQualityProfileId = !audio ? 1 : profileId < 0 ? null : profileId,
+                AudiobookRootFolderPath = !audio || profileId >= 0 ? @"C:\Audio" : null,
+                EbookQualityProfileId = audio ? 2 : profileId < 0 ? null : profileId,
+                EbookRootFolderPath = audio || profileId >= 0 ? @"C:\Books" : null,
                 AudiobookMonitored = false,
                 EbookMonitored = false,
                 AudiobookMonitorNewItems = NewItemMonitorTypes.New,
@@ -499,10 +464,9 @@ namespace Chaptarr.Core.Test.Books
             ((AuthorLibraryProxy)library).AddedAuthor = author;
             var commandRepository = DispatchProxy.Create<ICommandRepository, CommandRepositoryProxy>();
             var queue = new CommandQueueManager(commandRepository, null, null, LogManager.GetCurrentClassLogger());
-            var bookAdded = new RecordingBookAddedService();
             var info = DispatchProxy.Create<IProvideBookInfo, RoutingBookInfoProxy>();
             var service = BuildService(new StubAuthorService(author, (_, _) => author), books,
-                new StubEditionService(Array.Empty<Edition>()), new StubMetadataProfileService(), library, bookAdded,
+                new StubEditionService(Array.Empty<Edition>()), new StubMetadataProfileService(), library,
                 DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>(), bookInfo: info, commandQueue: queue);
             var result = await service.AddBook(new Book
             {
@@ -535,7 +499,6 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(author.EbookMonitored, Is.False);
                 Assert.That(author.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
                 Assert.That(author.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.None));
-                Assert.That(bookAdded.AuthorIds, Is.Empty);
                 Assert.That(books.UpdatedBook, Is.Null);
                 Assert.That(((RoutingBookInfoProxy)info).WorkReads, Is.EqualTo(configured ? 0 : 1));
                 Assert.That(target.AddOptions.AddType, Is.EqualTo(BookAddType.Manual));
@@ -1705,7 +1668,7 @@ namespace Chaptarr.Core.Test.Books
                     new MetadataProfile { Id = 1, AllowedLanguages = "eng" },
                     new MetadataProfile { Id = 2, AllowedLanguages = "eng" }),
                 importListExclusionService: DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>(),
-                bookAddedService: bookAdded, commandQueue: queue);
+                commandQueue: queue);
 
             var request = new Book
             {
@@ -1811,7 +1774,8 @@ namespace Chaptarr.Core.Test.Books
             var authorService = new StubAuthorService(existingAuthor, (_, _) => existingAuthor);
             var authorLibraryService = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryProxy>();
             ((AuthorLibraryProxy)authorLibraryService).AddedAuthor = existingAuthor;
-            var bookAddedService = new RecordingBookAddedService();
+            var commandRepository = DispatchProxy.Create<ICommandRepository, CommandRepositoryProxy>();
+            var queue = new CommandQueueManager(commandRepository, null, null, LogManager.GetCurrentClassLogger());
             var storedEdition = new Edition
             {
                 Id = requestedEdition.Id,
@@ -1829,8 +1793,7 @@ namespace Chaptarr.Core.Test.Books
                     new MetadataProfile { Id = 1, AllowedLanguages = "eng" },
                     new MetadataProfile { Id = 2, AllowedLanguages = "eng" }),
                 authorLibraryService,
-                bookAddedService,
-                importListExclusionService: DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>());
+                importListExclusionService: DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>(), commandQueue: queue);
 
             var result = await service.AddBook(requestedBook);
 
@@ -1839,7 +1802,7 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(bookService.RequestedMonitoringCalls.Single().MediaType,
                 Is.EqualTo(mediaType == BookMediaType.Audiobook ? "audiobook" : "ebook"));
             Assert.That(bookService.AddedBook, Is.Null, "A direct book add must never create a row outside the authoritative author catalog.");
-            Assert.That(result.AddOptions.SearchForNewBook, Is.True);
+            Assert.That(result.AddOptions.SearchForNewBook, Is.False);
             Assert.That(result.IsMonitored(), Is.True);
             Assert.That(result.IsMonitoredWithAuthor(), Is.False);
             Assert.That(
@@ -1857,7 +1820,9 @@ namespace Chaptarr.Core.Test.Books
                 Is.EqualTo(new[] { "hc:1001" }));
             Assert.That(mediaType == BookMediaType.Audiobook ? config.AudiobookBooksToSearch : config.EbookBooksToSearch,
                 Is.EqualTo(new[] { "hc:1001" }));
-            Assert.That(bookAddedService.AuthorIds, Is.EqualTo(new[] { existingAuthor.Id }));
+            var search = ((CommandRepositoryProxy)commandRepository).Commands.OfType<BookSearchCommand>().Single();
+            Assert.That(search.BookIds, Is.EqualTo(new[] { result.Id }));
+            Assert.That(search.Trigger, Is.EqualTo(CommandTrigger.Manual));
         }
 
         [Test]
@@ -1914,7 +1879,8 @@ namespace Chaptarr.Core.Test.Books
             };
             var authorLibraryService = DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryProxy>();
             ((AuthorLibraryProxy)authorLibraryService).AddedAuthor = importedAuthor;
-            var bookAddedService = new RecordingBookAddedService();
+            var commandRepository = DispatchProxy.Create<ICommandRepository, CommandRepositoryProxy>();
+            var queue = new CommandQueueManager(commandRepository, null, null, LogManager.GetCurrentClassLogger());
             var importListExclusionService = DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>();
             var service = BuildService(
                 new StubAuthorService(importedAuthor, (_, _) => null),
@@ -1922,8 +1888,7 @@ namespace Chaptarr.Core.Test.Books
                 new StubEditionService(Array.Empty<Edition>()),
                 new StubMetadataProfileService(),
                 authorLibraryService,
-                bookAddedService,
-                importListExclusionService);
+                importListExclusionService, commandQueue: queue);
 
             var result = await service.AddBook(requestedBook);
 
@@ -1933,11 +1898,13 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(((AuthorLibraryProxy)authorLibraryService).Config.AudiobookBooksToSearch, Does.Contain("hc:1001"));
             Assert.That(((AuthorLibraryProxy)authorLibraryService).Config.EbookBooksToSearch, Is.Null);
             Assert.That(bookService.AddOptionsBooks, Is.EqualTo(new[] { importedBook }));
-            Assert.That(importedBook.AddOptions.SearchForNewBook, Is.True);
+            Assert.That(importedBook.AddOptions.SearchForNewBook, Is.False);
             Assert.That(importedBook.IsMonitored(), Is.True);
             Assert.That(importedAuthor.AudiobookMonitored, Is.False);
             Assert.That(((AuthorLibraryProxy)authorLibraryService).Config.AudiobookMonitored, Is.False);
-            Assert.That(bookAddedService.AuthorIds, Is.EqualTo(new[] { importedAuthor.Id }));
+            var search = ((CommandRepositoryProxy)commandRepository).Commands.OfType<BookSearchCommand>().Single();
+            Assert.That(search.BookIds, Is.EqualTo(new[] { result.Id }));
+            Assert.That(search.Trigger, Is.EqualTo(CommandTrigger.Manual));
         }
 
         [Test]
@@ -1953,7 +1920,6 @@ namespace Chaptarr.Core.Test.Books
                 new StubEditionService(Array.Empty<Edition>()),
                 new StubMetadataProfileService(),
                 authorLibraryService,
-                new RecordingBookAddedService(),
                 DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>());
             var request = new Book
             {
@@ -1999,7 +1965,7 @@ namespace Chaptarr.Core.Test.Books
             ((AuthorLibraryProxy)library).AddedAuthor = new Author { Id = -77 };
             var service = BuildService(new StubAuthorService(null, (_, _) => null), new StubBookService(),
                 new StubEditionService(Array.Empty<Edition>()), new StubMetadataProfileService(), library,
-                new RecordingBookAddedService(), DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>());
+                DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>());
             var audio = mediaType == BookMediaType.Audiobook;
             var author = new Author { GoodreadsAuthorId = "777", AddOptions = initialPolicy.HasValue ? new AddAuthorOptions { Monitor = initialPolicy } : null };
             if (explicitSettings)
@@ -2043,7 +2009,6 @@ namespace Chaptarr.Core.Test.Books
                 new StubEditionService(Array.Empty<Edition>()),
                 new StubMetadataProfileService(),
                 authorLibraryService,
-                new RecordingBookAddedService(),
                 DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>());
             var request = new Book
             {
@@ -2092,7 +2057,6 @@ namespace Chaptarr.Core.Test.Books
                 new StubEditionService(Array.Empty<Edition>()),
                 new StubMetadataProfileService(),
                 authorLibraryService,
-                new RecordingBookAddedService(),
                 exclusionService);
             var request = new Book
             {
@@ -2148,7 +2112,6 @@ namespace Chaptarr.Core.Test.Books
 
             var authorIds = AuthorIdentity.GetProviderIdentityTokenList(author);
             Assert.That(exclusionProxy.LookupIdLists.Any(ids => ids.SequenceEqual(authorIds)), Is.True);
-            Assert.That(exclusionProxy.StringDeleteCalls, Is.Empty);
             Assert.That(exclusionProxy.DeletedIds, Is.EquivalentTo(new[]
             {
                 mediaType == BookMediaType.Audiobook ? 1 : 2,

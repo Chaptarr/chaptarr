@@ -147,7 +147,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             protected override object Invoke(MethodInfo method, object[] args) => method.Name switch
             {
                 "GetFilePathOwnership" or "GetFilesByAuthor" => new List<BookFile>(),
-                "All" => new List<Author>(),
+                "All" or "AllAuthorPaths" => new List<Author>(),
                 "DeleteRecordsForAuthorDeletion" => null,
                 _ => throw new NotImplementedException(method.Name)
             };
@@ -167,8 +167,11 @@ namespace Chaptarr.Core.Test.MediaFiles
                     case nameof(IDiskProvider.FolderEmpty):
                         return false;
 
+                    case nameof(IDiskProvider.FileExists):
                     case nameof(IDiskProvider.FileExistsCanonical):
                         return false;
+                    case nameof(IDiskProvider.GetFiles):
+                        return Array.Empty<string>();
 
                     case nameof(IDiskProvider.GetFileAttributes):
                         return FileAttributes.Directory;
@@ -206,6 +209,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (targetMethod?.Name == "get_RecycleBin") return string.Empty;
                 if (targetMethod?.Name == "get_DeleteEmptyFolders")
                 {
                     return false;
@@ -218,9 +222,11 @@ namespace Chaptarr.Core.Test.MediaFiles
         private class RecordingMediaFileServiceProxy : DispatchProxy
         {
             public List<BookFile> Deleted { get; } = new();
+            public List<BookFile> Kept { get; } = new();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (targetMethod?.Name == nameof(IMediaFileService.Update)) { Kept.Add((BookFile)args[0]); return args[0]; }
                 if (targetMethod?.Name == nameof(IMediaFileService.Delete))
                 {
                     Deleted.Add((BookFile)args[0]);
@@ -284,6 +290,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (targetMethod?.Name == "get_RecycleBin") return string.Empty;
                 if (targetMethod?.Name == "get_DeleteEmptyFolders")
                 {
                     return true;
@@ -311,6 +318,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     case nameof(IDiskProvider.FolderExists):
                         return ExistingFolders.Contains((string)args[0]);
 
+                    case nameof(IDiskProvider.GetFiles): return ExistingFiles.Where(path => ((string)args[0]).IsParentPath(path)).ToArray();
                     case nameof(IDiskProvider.GetDirectories):
                         return FoldersWithSubfolders.Contains((string)args[0])
                             ? new[] { Path.Combine(((string)args[0]).TrimEnd(Path.DirectorySeparatorChar), "Some Author") }
@@ -361,7 +369,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 eventAggregator,
                 new StubRootFolderService(rootFolders),
                 DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), metadataFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Metadata.Files.MetadataFile>(), otherFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Others.OtherExtraFile>(), metadataFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Metadata(), otherFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Other());
 
             return new TrackFileDeleteSubject
             {
@@ -392,7 +400,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 new RecordingEventAggregator(),
                 new StubRootFolderService(authorRoots.Select(path => new RootFolder { Path = path.GetParentPath() }).ToArray()),
                 DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), metadataFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Metadata.Files.MetadataFile>(), otherFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Others.OtherExtraFile>(), metadataFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Metadata(), otherFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Other());
 
             return (service, diskProxy);
         }
@@ -437,7 +445,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 events,
                 new StubRootFolderService(new RootFolder { Id = 1, Path = "/ebooks" }, new RootFolder { Id = 2, Path = "/audiobooks" }),
                 DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), metadataFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Metadata.Files.MetadataFile>(), otherFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Others.OtherExtraFile>(), metadataFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Metadata(), otherFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Other());
 
             var book = new Book
             {
@@ -452,6 +460,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     {
                         Id = 1,
                         Path = bookFolder + "/Captains Fury.epub",
+                        MediaType = "ebook",
                         Author = author,
                         ReplicaPaths = new List<string> { colocatedFolder + "/Captains Fury.epub" }
                     }
@@ -566,7 +575,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 eventAggregator,
                 rootFolderService,
                 DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), metadataFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Metadata.Files.MetadataFile>(), otherFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Others.OtherExtraFile>(), metadataFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Metadata(), otherFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Other());
 
             var author = new Author
             {
@@ -603,7 +612,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 eventAggregator,
                 rootFolderService,
                 DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), metadataFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Metadata.Files.MetadataFile>(), otherFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Others.OtherExtraFile>(), metadataFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Metadata(), otherFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Other());
 
             var author = new Author
             {
@@ -649,7 +658,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 eventAggregator,
                 rootFolderService,
                 DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), metadataFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Metadata.Files.MetadataFile>(), otherFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Others.OtherExtraFile>(), metadataFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Metadata(), otherFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Other());
 
             var bookFile = new BookFile
             {
@@ -677,7 +686,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 new RecordingEventAggregator(),
                 new StubRootFolderService(),
                 DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), metadataFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Metadata.Files.MetadataFile>(), otherFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Others.OtherExtraFile>(), metadataFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Metadata(), otherFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Other());
 
             var bookFile = new BookFile
             {
@@ -690,7 +699,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
-        public void should_remove_stale_row_without_deleting_a_loose_apostrophe_match()
+        public void should_keep_stale_row_unmapped_without_deleting_a_loose_apostrophe_match()
         {
             var diskProvider = DispatchProxy.Create<IDiskProvider, StaleTrackedPathDiskProviderProxy>();
             var mediaFileService = DispatchProxy.Create<IMediaFileService, RecordingMediaFileServiceProxy>();
@@ -712,15 +721,17 @@ namespace Chaptarr.Core.Test.MediaFiles
                 eventAggregator,
                 new StubRootFolderService(),
                 DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), metadataFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Metadata.Files.MetadataFile>(), otherFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Others.OtherExtraFile>(), metadataFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Metadata(), otherFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Other());
 
             Assert.DoesNotThrow(() => service.DeleteTrackFile(bookFile));
 
             Assert.Multiple(() =>
             {
-                Assert.That(mediaProxy.Deleted, Is.EqualTo(new[] { bookFile }));
+                Assert.That(mediaProxy.Deleted, Is.Empty);
+                Assert.That(mediaProxy.Kept, Is.EqualTo(new[] { bookFile }));
+                Assert.That(bookFile.EditionId, Is.Zero);
                 Assert.That(recycleBinProvider.DeletedFiles, Is.Empty);
-                Assert.That(eventAggregator.Events.OfType<DeleteCompletedEvent>(), Has.Exactly(1).Items);
+                Assert.That(eventAggregator.Events.OfType<DeleteCompletedEvent>(), Is.Empty);
             });
         }
 
@@ -961,7 +972,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
-        public void should_warn_for_an_unresolved_standalone_path_and_still_cleanup_its_record()
+        public void should_warn_for_a_missing_standalone_file_and_cleanup_its_record()
         {
             var memory = new MemoryTarget("media-file-deletion-memory")
             {
@@ -986,7 +997,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Id = 1,
                     Author = author,
                     MediaType = BookMediaType.Ebook.ToString(),
-                    Path = @"C:\books\Test Author\Book.epub".AsOsAgnostic()
+                    Path = @"C:\books\Scattered\Book.epub".AsOsAgnostic()
                 };
                 var diskProvider = DispatchProxy.Create<IDiskProvider, AuthorDeleteDiskProviderProxy>();
                 var diskProxy = (AuthorDeleteDiskProviderProxy)(object)diskProvider;
@@ -1005,7 +1016,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     new StubRootFolderService(root),
                     DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
-                    factory.GetLogger(nameof(MediaFileDeletionServiceFixture)));
+                    factory.GetLogger(nameof(MediaFileDeletionServiceFixture)), metadataFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Metadata.Files.MetadataFile>(), otherFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Others.OtherExtraFile>(), metadataFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Metadata(), otherFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Other());
 
                 service.DeleteAuthorFiles(new List<Author> { author }, BookMediaType.Ebook);
                 factory.Flush();

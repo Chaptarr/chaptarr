@@ -12,7 +12,7 @@ namespace NzbDrone.Common.Disk
     public interface IDiskTransferService
     {
         TransferMode TransferFolder(string sourcePath, string targetPath, TransferMode mode);
-        TransferMode TransferFolder(string sourcePath, string targetPath, TransferMode mode, bool includeIgnored, Action<string> onMoved = null);
+        TransferMode TransferFolder(string sourcePath, string targetPath, TransferMode mode, bool includeIgnored, Action<string> onMoved = null, bool overwrite = true);
         TransferMode TransferFile(string sourcePath, string targetPath, TransferMode mode, bool overwrite = false);
         int MirrorFolder(string sourcePath, string targetPath);
     }
@@ -58,7 +58,7 @@ namespace NzbDrone.Common.Disk
             return TransferFolder(sourcePath, targetPath, mode, false);
         }
 
-        public TransferMode TransferFolder(string sourcePath, string targetPath, TransferMode mode, bool includeIgnored, Action<string> onMoved = null)
+        public TransferMode TransferFolder(string sourcePath, string targetPath, TransferMode mode, bool includeIgnored, Action<string> onMoved = null, bool overwrite = true)
         {
             Ensure.That(sourcePath, () => sourcePath).IsValidPath(PathValidationType.CurrentOs);
             Ensure.That(targetPath, () => targetPath).IsValidPath(PathValidationType.CurrentOs);
@@ -125,7 +125,7 @@ namespace NzbDrone.Common.Disk
                     continue;
                 }
 
-                result &= TransferFolder(subDir.FullName, Path.Combine(targetPath, subDir.Name), mode, includeIgnored, onMoved);
+                result &= TransferFolder(subDir.FullName, Path.Combine(targetPath, subDir.Name), mode, includeIgnored, onMoved, overwrite);
             }
 
             var sourceFiles = includeIgnored
@@ -140,7 +140,17 @@ namespace NzbDrone.Common.Disk
 
                 var destFile = Path.Combine(targetPath, sourceFile.Name);
 
-                var fileResult = TransferFile(sourceFile.FullName, destFile, mode, true);
+                TransferMode fileResult;
+                try
+                {
+                    fileResult = TransferFile(sourceFile.FullName, destFile, mode, overwrite);
+                }
+                catch (DestinationAlreadyExistsException) when (!overwrite)
+                {
+                    _logger.Warn("Keeping source '{0}': destination '{1}' already exists and was not overwritten", sourceFile.FullName, destFile);
+                    continue;
+                }
+
                 result &= fileResult;
                 if (fileResult.HasFlag(TransferMode.Move))
                 {
@@ -228,7 +238,7 @@ namespace NzbDrone.Common.Disk
 
                 var targetFile = Path.Combine(targetPath, sourceFile.Name);
 
-                if (CompareFiles(sourceFile.FullName, targetFile))
+                if (_diskProvider.FilesEqual(sourceFile.FullName, targetFile))
                 {
                     continue;
                 }
@@ -238,49 +248,6 @@ namespace NzbDrone.Common.Disk
             }
 
             return filesCopied;
-        }
-
-        private bool CompareFiles(string sourceFile, string targetFile)
-        {
-            if (!_diskProvider.FileExists(sourceFile) || !_diskProvider.FileExists(targetFile))
-            {
-                return false;
-            }
-
-            if (_diskProvider.GetFileSize(sourceFile) != _diskProvider.GetFileSize(targetFile))
-            {
-                return false;
-            }
-
-            var sourceBuffer = new byte[64 * 1024];
-            var targetBuffer = new byte[64 * 1024];
-            using (var sourceStream = _diskProvider.OpenReadStream(sourceFile))
-            using (var targetStream = _diskProvider.OpenReadStream(targetFile))
-            {
-                while (true)
-                {
-                    var sourceLength = sourceStream.Read(sourceBuffer, 0, sourceBuffer.Length);
-                    var targetLength = targetStream.Read(targetBuffer, 0, targetBuffer.Length);
-
-                    if (sourceLength != targetLength)
-                    {
-                        return false;
-                    }
-
-                    if (sourceLength == 0)
-                    {
-                        return true;
-                    }
-
-                    for (var i = 0; i < sourceLength; i++)
-                    {
-                        if (sourceBuffer[i] != targetBuffer[i])
-                        {
-                            return false;
-                        }
-                    }
-                }
-            }
         }
 
         public TransferMode TransferFile(string sourcePath, string targetPath, TransferMode mode, bool overwrite = false)
@@ -540,9 +507,13 @@ namespace NzbDrone.Common.Disk
                     throw new IOException(string.Format("File copy incomplete. [{0}] was {1} bytes long instead of {2} bytes.", targetPath, targetSize, originalSize));
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                RollbackCopy(sourcePath, targetPath);
+                if (ex is not FileAlreadyExistsException)
+                {
+                    RollbackCopy(sourcePath, targetPath);
+                }
+
                 throw;
             }
         }

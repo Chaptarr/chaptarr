@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
+import { createSelector } from 'reselect';
 import withCurrentPage from 'Components/withCurrentPage';
 import {
   cancelWantedAuthor,
@@ -101,4 +102,22 @@ const mapDispatchToProps = {
   deleteWantedAuthor
 };
 
-export default withCurrentPage(connect((state) => state.wanted.authors, mapDispatchToProps)(AuthorsConnector));
+const selectAuthors = createSelector(
+  (state) => state.wanted.authors,
+  (state) => state.authors.items,
+  (wanted, authors) => {
+    const setups = new Map();
+    for (const author of authors) {
+      if (author.initialScanPaths?.length) {
+        for (const id of [author.addOptions?.audiobookSetupPendingImportId, author.addOptions?.ebookSetupPendingImportId]) {
+          if (id) {
+            setups.set(id, { authorId: author.id, paths: author.initialScanPaths });
+          }
+        }
+      }
+    }
+    return { ...wanted, items: wanted.items.map((item) => ({ ...item, initialScan: setups.get(item.id) })) };
+  }
+);
+
+export default withCurrentPage(connect(selectAuthors, mapDispatchToProps)(AuthorsConnector));

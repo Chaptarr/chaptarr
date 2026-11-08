@@ -102,6 +102,43 @@ namespace Chaptarr.Core.Test.Datastore
             });
         }
 
+        // Historical migration fixtures use the historical columns, not today's INSERT shape.
+        private static T InsertLegacy<T>(IMainDatabase db, T model) where T : ModelBase
+        {
+            using var connection = db.OpenConnection();
+            var table = TableMapping.Mapper.TableNameMapping(typeof(T));
+            var excluded = TableMapping.Mapper.ExcludeProperties(typeof(T)).Select(property => property.Name).ToHashSet();
+            string[] columns;
+            using (var reader = connection.ExecuteReader($"SELECT * FROM \"{table}\" WHERE 1 = 0"))
+                columns = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName)
+                    .Where(name => name != "Id" && !excluded.Contains(name) && typeof(T).GetProperty(name) != null).ToArray();
+            var parameters = new DynamicParameters();
+            foreach (var name in columns) parameters.Add(name, typeof(T).GetProperty(name).GetValue(model));
+            model.Id = connection.ExecuteScalar<int>($"INSERT INTO \"{table}\" ({string.Join(",", columns.Select(name => $"\"{name}\""))}) VALUES ({string.Join(",", columns.Select(name => $"@{name}"))}) RETURNING \"Id\"", parameters);
+            return model;
+        }
+
+        private static Book AddLegacyBook(IMainDatabase db, BookMediaType mediaType = BookMediaType.Audiobook, bool anyEditionOk = true)
+        {
+            var author = InsertLegacy(db, new Author { Name = "Test Author", CleanName = "testauthor", SortName = "testauthor",
+                TitleSlug = Guid.NewGuid().ToString(), Path = "/fixture/author", Added = DateTime.UtcNow });
+            return InsertLegacy(db, new Book { Title = "Test Book", CleanTitle = "testbook", TitleSlug = Guid.NewGuid().ToString(),
+                AuthorId = author.Id, MediaType = mediaType, AnyEditionOk = anyEditionOk, Added = DateTime.UtcNow });
+        }
+
+        private sealed class LegacyEditions : BasicRepository<Edition>
+        {
+            private readonly IMainDatabase _legacyDatabase;
+            public LegacyEditions(IMainDatabase db) : base(db, Events) { _legacyDatabase = db; }
+            public override Edition Insert(Edition edition) => InsertLegacy(_legacyDatabase, edition);
+            public override Edition Update(Edition edition)
+            {
+                using var connection = _database.OpenConnection();
+                connection.Execute("UPDATE \"Editions\" SET \"ReadingFormatId\"=@ReadingFormatId WHERE \"Id\"=@Id", edition);
+                return edition;
+            }
+        }
+
         private static Edition NewEdition(Book book, bool monitored = false, int format = 2, int votes = 1, bool manual = false)
         {
             return new Edition
@@ -110,6 +147,29 @@ namespace Chaptarr.Core.Test.Datastore
                 ReadingFormatId = format, Ratings = new Ratings { Votes = votes, Value = 4m },
                 Monitored = monitored, ManualAdd = manual
             };
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void migration_repair_uses_the_migration_timeout_for_every_read_and_write(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, db =>
+            {
+                var book = AddLegacyBook(db);
+                var editions = new LegacyEditions(db);
+                editions.Insert(NewEdition(book, true));
+                editions.Insert(NewEdition(book, true, votes: 100));
+                using var connection = db.OpenConnection();
+                using var transaction = connection.BeginTransaction();
+                var timeouts = new List<int>();
+                var observed = CommandObserver.Wrap<System.Data.IDbConnection>(connection, command => timeouts.Add(command.CommandTimeout), includeWrites: true);
+                CleanupOrphanedEditions.Cleanup(observed, transaction, MigrationController.CommandTimeoutSeconds);
+                Assert.That(FixMultipleMonitoredEditions.Repair(observed, transaction, db.DatabaseType,
+                    LogManager.GetCurrentClassLogger(), true, MigrationController.CommandTimeoutSeconds), Is.EqualTo(1));
+                Assert.That(timeouts.Count, Is.GreaterThan(4));
+                Assert.That(timeouts, Is.All.EqualTo(300));
+                transaction.Commit();
+            }, desiredVersion: 116);
         }
 
         [TestCase(false)]
@@ -247,17 +307,17 @@ namespace Chaptarr.Core.Test.Datastore
         {
             DualDatabaseFixture.Run(postgres, db =>
             {
-                var editions = new BasicRepository<Edition>(db, Events);
+                var editions = new LegacyEditions(db);
                 var expected = new List<int>();
                 using var connection = db.OpenConnection();
                 for (var scenario = 0; scenario < 8; scenario++)
                 {
-                    var book = AddBook(db, scenario == 4 ? BookMediaType.Ebook : BookMediaType.Audiobook, anyEditionOk: scenario != 5);
+                    var book = AddLegacyBook(db, scenario == 4 ? BookMediaType.Ebook : BookMediaType.Audiobook, anyEditionOk: scenario != 5);
                     var first = editions.Insert(NewEdition(book, true, format: scenario == 3 ? 3 : 2, votes: 1000, manual: scenario == 0));
                     var second = editions.Insert(NewEdition(book, scenario != 6, format: scenario == 4 ? 3 : 2, votes: scenario is 6 or 7 ? 100000 : 10, manual: scenario == 1));
                     if (scenario is 0 or 6)
                     {
-                        new BasicRepository<BookFile>(db, Events).Insert(new BookFile
+                        InsertLegacy(db, new BookFile
                         {
                             EditionId = second.Id, Path = $"/fixture/{book.Id}/book.m4b", Size = 1,
                             DateAdded = DateTime.UtcNow, Modified = DateTime.UtcNow,
@@ -274,7 +334,7 @@ namespace Chaptarr.Core.Test.Datastore
                     editions.Update(second);
                     expected.Add(scenario is 0 or 1 or 2 or 4 or 7 ? second.Id : first.Id);
                 }
-                var unselected = editions.Insert(NewEdition(AddBook(db), false));
+                var unselected = editions.Insert(NewEdition(AddLegacyBook(db), false));
                 var filesBefore = connection.Query<(int Id, int EditionId)>("SELECT \"Id\",\"EditionId\" FROM \"BookFiles\"").ToArray();
                 var migration = new MigrationController(LogManager.GetCurrentClassLogger(), null);
                 var connectionString = postgres
@@ -297,9 +357,9 @@ namespace Chaptarr.Core.Test.Datastore
         {
             DualDatabaseFixture.Run(postgres, db =>
             {
-                var validBook = AddBook(db);
-                var missingBook = AddBook(db);
-                var editions = new BasicRepository<Edition>(db, Events);
+                var validBook = AddLegacyBook(db);
+                var missingBook = AddLegacyBook(db);
+                var editions = new LegacyEditions(db);
                 var retained = editions.Insert(NewEdition(validBook, true, manual: true));
                 var invalid = new[]
                 {
@@ -537,16 +597,18 @@ namespace Chaptarr.Core.Test.Datastore
                 var service = new BookService(books, editionService, events, authors, media, null,
                     new SeriesBookLinkRepository(db, events), null, logger,
                     deleteMediaFiles: new Lazy<IDeleteMediaFiles>(() => Proxy<IDeleteMediaFiles>((method, _) =>
-                        method.Name == nameof(IDeleteMediaFiles.DeleteBookFiles) ? null : throw new NotSupportedException(method.Name))));
+                        method.Name == nameof(IDeleteMediaFiles.DeleteBookFiles) ? new List<BookFile> { file } : throw new NotSupportedException(method.Name))));
                 void Delete()
                 {
-                    if (bulk) service.DeleteMany(new List<Book> { book }, filesAlreadyDeleted: deleteFiles);
+                    if (bulk) service.DeleteMany(new List<Book> { book }, filesAlreadyDeleted: deleteFiles,
+                        deletedBookFiles: deleteFiles ? new List<BookFile> { file } : null);
                     else service.DeleteBook(book.Id, deleteFiles);
                 }
 
                 if (failDelete)
                 {
-                    Assert.Catch(Delete);
+                    var error = Assert.Catch(Delete);
+                    Assert.That(error.ToString(), Does.Contain("constructed delete failure"));
                     Assert.That(books.Find(book.Id), Is.Not.Null);
                     Assert.That(editions.Find(edition.Id), Is.Not.Null);
                     Assert.That(files.Get(file.Id).EditionId, Is.EqualTo(edition.Id));
@@ -602,7 +664,7 @@ namespace Chaptarr.Core.Test.Datastore
                 var queue = Proxy<IIngestQueueRepository>((method, args) => method.Name is nameof(IIngestQueueRepository.PurgePaths) or nameof(IIngestQueueRepository.PurgeUnderPath)
                     ? 0 : throw new NotImplementedException(method.Name));
                 var media = new MediaFileService(files, events, queue, disk, logger);
-                var diskDeletion = new MediaFileDeletionService(disk, null, media, authors, null, events, null, null, logger);
+                var diskDeletion = new MediaFileDeletionService(disk, null, media, authors, null, events, null, null, logger, metadataFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Metadata.Files.MetadataFile>(), otherFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Others.OtherExtraFile>(), metadataFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Metadata(), otherFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Other());
                 var notificationSends = 0;
                 var notificationFailures = 0;
                 var discordProxy = Proxy<IDiscordProxy>((method, args) =>
@@ -755,7 +817,7 @@ namespace Chaptarr.Core.Test.Datastore
 
         [TestCase(false)]
         [TestCase(true)]
-        public void refresh_rehome_of_selected_editions_preserves_one_selection_and_all_file_links(bool postgres)
+        public void refresh_pocket_convergence_preserves_each_populated_copys_selection_and_file_links(bool postgres)
         {
             DualDatabaseFixture.Run(postgres, db =>
             {
@@ -788,11 +850,11 @@ namespace Chaptarr.Core.Test.Datastore
                     });
                 }
                 var filesBefore = files.All().Select(file => (file.Id, file.EditionId, file.Path)).ToArray();
-                var bookService = Proxy<IBookService>((method, args) => method.Name switch
+                var bookService = Proxy<IBookService>((method, args) =>
                 {
-                    nameof(IBookService.GetBooksByAuthorId) => books.GetBooksByAuthorId((int)args[0]),
-                    nameof(IBookService.DeleteBook) => null,
-                    _ => throw new NotImplementedException(method.Name)
+                    if (method.Name == nameof(IBookService.GetBooksByAuthorId)) return books.GetBooksByAuthorId((int)args[0]);
+                    if (method.Name == nameof(IBookService.UpdateMany)) { books.UpdateMany((List<Book>)args[0]); return null; }
+                    throw new NotImplementedException(method.Name);
                 });
                 var editionService = Proxy<IEditionService>((method, args) =>
                 {
@@ -802,20 +864,26 @@ namespace Chaptarr.Core.Test.Datastore
                 });
                 var mediaFiles = Proxy<IMediaFileService>((method, args) => method.Name == nameof(IMediaFileService.GetFilesByBooks)
                     ? files.All() : throw new NotImplementedException(method.Name));
-                var service = new RefreshAuthorService(authorInfo: null, authorService: null, bookService: bookService,
+                var service = new RefreshAuthorService(MetadataHealthGateStub.Ready(), authorInfo: null, authorService: null, bookService: bookService,
                     editionService: editionService, metadataProfileService: null, refreshBookService: null,
                     refreshSeriesService: null, eventAggregator: Events, commandQueueManager: null,
-                    mediaFileService: mediaFiles, historyService: null, rootFolderService: null,
+                    mediaFileService: mediaFiles, historyRepository: new global::NzbDrone.Core.History.HistoryRepository(db, Events), rootFolderService: null,
                     checkIfAuthorShouldBeRefreshed: null, monitorNewBookService: null, configService: null,
                     importListExclusionService: null, syncMetadataService: null, syncQueueService: null,
-                    rootFolderSettingsResolver: null, logger: LogManager.GetCurrentClassLogger());
+                    rootFolderSettingsResolver: null, logger: LogManager.GetCurrentClassLogger(), mainDatabase: db, bookRepository: new BookRepository(db, Events), authorRepository: new AuthorRepository(db, Events, LogManager.GetCurrentClassLogger()));
                 service.RepairOverMergedBookEditions(target.AuthorId, new List<Book>
                 {
-                    new() { GoodreadsWorkId = target.GoodreadsWorkId, MediaType = target.MediaType, Editions = moved }
+                    new() { Title = target.Title, CleanTitle = target.CleanTitle, GoodreadsWorkId = target.GoodreadsWorkId, MediaType = target.MediaType, Editions = moved }
                 });
-                var stored = editions.FindRowsByBook(new[] { target.Id });
-                Assert.That(stored.Select(edition => edition.Id), Is.EquivalentTo(moved.Select(edition => edition.Id).Append(current.Id)));
-                Assert.That(stored.Single(edition => edition.Monitored).Id, Is.EqualTo(moved[1].Id));
+                // The empty target is absorbed; both populated local copies and their selections survive.
+                Assert.That(books.Find(target.Id), Is.Null);
+                Assert.That(sources.Select(book => book.Id), Does.Contain(editions.Get(current.Id).BookId));
+                foreach (var source in sources)
+                {
+                    Assert.That(books.Get(source.Id).GoodreadsWorkId, Is.EqualTo(target.GoodreadsWorkId));
+                    Assert.That(editions.FindRowsByBook(new[] { source.Id }).Single(edition => edition.Monitored).Id,
+                        Is.EqualTo(moved.Single(edition => edition.BookId == source.Id).Id));
+                }
                 Assert.That(files.All().Select(file => (file.Id, file.EditionId, file.Path)), Is.EqualTo(filesBefore));
             });
         }

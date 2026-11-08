@@ -21,6 +21,7 @@ namespace NzbDrone.Core.Books
 		    public interface IBookRepository : IBasicRepository<Book>
 		    {
 		        List<Book> GetBooks(int authorId);
+        List<Book> GetImportListBookIdentities();
                 List<int> GetLibraryBookIds(IEnumerable<int> bookIds = null) => throw new NotImplementedException();
                 // Tolerant lookup for drifting snapshots; unlike Get, missing rows are expected.
                 IEnumerable<Book> FindExisting(IEnumerable<int> ids) => throw new NotImplementedException();
@@ -37,7 +38,8 @@ namespace NzbDrone.Core.Books
 		        Book FindByProviderIdAndMediaType(string provider, string providerId, BookMediaType mediaType);
 		        List<Book> FindAllByProviderIdAndMediaType(string provider, string providerId, BookMediaType mediaType);
         Dictionary<string, List<int>> FindIdsByProviderIds(string provider, IEnumerable<string> ids) => throw new NotImplementedException();
-		        Book FindBySlug(string titleSlug);
+		        List<Book> FindBySlug(string titleSlug);
+        List<Book> FindTitleSlugConflicts(IEnumerable<string> slugs, IDbConnection connection = null, IDbTransaction transaction = null);
 		        List<BookSearchTarget> GetMissingBookSearchTargets(BookMediaType? mediaType, int? authorId) => throw new NotImplementedException();
 		        List<BookSearchTarget> GetCutoffUnmetSearchTargets(List<QualitiesBelowCutoff> qualitiesBelowCutoff, BookMediaType? mediaType, int? authorId) => throw new NotImplementedException();
 		        PagingSpec<Book> BooksWithoutFiles(PagingSpec<Book> pagingSpec);
@@ -47,7 +49,7 @@ namespace NzbDrone.Core.Books
         void SetMonitored(IEnumerable<int> ids, bool monitored);
         void SetMonitoring(IList<Book> books) => throw new NotImplementedException();
         void UpdateManyAtomic(IList<Book> books, Action<IDbConnection, IDbTransaction> writeRelated);
-        void DeleteManyAtomic(IEnumerable<int> ids, bool deleteFiles);
+        void DeleteManyAtomic(IEnumerable<int> ids, IEnumerable<int> deletedFileIds = null);
         List<Book> GetAuthorBooksWithFiles(Author author);
         List<Book> GetBooksBySeries(int seriesId);
 	        void UpdateMonitoringByAuthorAndMediaType(int authorId, BookMediaType mediaType, bool monitored, IEnumerable<int> exceptBookIds = null);
@@ -90,23 +92,27 @@ namespace NzbDrone.Core.Books
             transaction.Commit();
         }
 
-        public void DeleteManyAtomic(IEnumerable<int> ids, bool deleteFiles)
+        public void DeleteManyAtomic(IEnumerable<int> ids, IEnumerable<int> deletedFileIds = null)
         {
             var bookIds = ids.Distinct().ToArray();
             if (bookIds.Length == 0) return;
 
             using var connection = _database.OpenConnection();
             using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            foreach (var deletedFiles in (deletedFileIds ?? Enumerable.Empty<int>()).Distinct().Chunk(SqliteVariableLimit.MaxParameters))
+            {
+                var filePredicate = _database.DatabaseType == DatabaseType.PostgreSQL ? "= ANY(@ids)" : "IN @ids";
+                connection.Execute($"DELETE FROM \"BookFiles\" WHERE \"Id\" {filePredicate}", new { ids = deletedFiles }, transaction);
+            }
             foreach (var chunk in bookIds.Chunk(_database.DatabaseType == DatabaseType.SQLite ? SqliteVariableLimit.MaxParameters : bookIds.Length))
             {
                 var predicate = _database.DatabaseType == DatabaseType.PostgreSQL ? "= ANY(@ids)" : "IN @ids";
                 var editions = $"SELECT \"Id\" FROM \"Editions\" WHERE \"BookId\" {predicate}";
                 var parameters = new { ids = chunk };
-                var fileAction = deleteFiles ? "DELETE FROM \"BookFiles\"" : "UPDATE \"BookFiles\" SET \"EditionId\" = 0";
-                connection.Execute($"{fileAction} WHERE \"EditionId\" IN ({editions})", parameters, transaction);
-                connection.Execute($"DELETE FROM \"ProviderAliasIndex\" WHERE \"EntityType\" = 'Edition' AND \"EntityId\" IN ({editions})", parameters, transaction);
+                // Only files confirmed by the deletion executor can lose their records.
+                // Anything left must remain visible even when its book is removed.
+                connection.Execute($"UPDATE \"BookFiles\" SET \"EditionId\" = 0 WHERE \"EditionId\" IN ({editions})", parameters, transaction);
                 connection.Execute($"DELETE FROM \"Editions\" WHERE \"BookId\" {predicate}", parameters, transaction);
-                connection.Execute($"DELETE FROM \"ProviderAliasIndex\" WHERE \"EntityType\" = 'Book' AND \"EntityId\" {predicate}", parameters, transaction);
                 base.DeleteMany(chunk, connection, transaction);
             }
 
@@ -120,7 +126,7 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
-            SetFields(book, b => b.AuthorId);
+            SetAuthorId(new List<Book> { book });
         }
 
         public void SetAuthorId(IList<Book> books)
@@ -131,12 +137,26 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
-            SetFields(safeBooks, b => b.AuthorId);
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
+            var writer = new LibraryIdentityWriter(connection, transaction, _database.DatabaseType, null);
+            foreach (var group in safeBooks.GroupBy(book => book.AuthorId))
+                writer.ReassignBooks(group.Select(book => book.Id).ToArray(), group.Key);
+            transaction.Commit();
         }
 
         public IEnumerable<Book> FindExisting(IEnumerable<int> ids)
         {
             return FindMany(ids);
+        }
+
+        public List<Book> GetImportListBookIdentities()
+        {
+            // This snapshot resolves ownership only. Import-list writes reload their selected rows.
+            return _database.Query<Book>(@"SELECT ""Id"", ""AuthorId"", ""MediaType"", ""Title"",
+                ""HardcoverBookId"", ""GoodreadsWorkId"", ""OpenLibraryWorkId"", ""ProviderIds"",
+                ""GoodreadsBookId"", ""OpenLibraryEditionId"", ""GoogleBooksId"", ""ASIN"", ""AudibleASIN"", ""ISBN10"", ""ISBN13""
+                FROM ""Books""").ToList();
         }
 
         public List<Book> GetBooks(int authorId)
@@ -270,7 +290,7 @@ namespace NzbDrone.Core.Books
             var columns = provider switch
             {
                 "hc" => new[] { "HardcoverBookId" },
-                "gr" => new[] { "GoodreadsBookId", "GoodreadsWorkId" },
+                "gr" => new[] { "GoodreadsWorkId" },
                 "ol" => new[] { "OpenLibraryEditionId", "OpenLibraryWorkId" },
                 "gb" => new[] { "GoogleBooksId" },
                 "az" => new[] { "ASIN", "AudibleASIN" },
@@ -491,10 +511,42 @@ namespace NzbDrone.Core.Books
                     .FirstOrDefault();
 		        }
 
-	        public Book FindBySlug(string titleSlug)
-	        {
-	            return Query(s => s.TitleSlug == titleSlug).SingleOrDefault();
-	        }
+        private string SlugKey => _database.DatabaseType == DatabaseType.PostgreSQL
+            ? "lower(\"Books\".\"TitleSlug\") COLLATE \"C\"" : "lower(\"Books\".\"TitleSlug\")";
+
+        public List<Book> FindBySlug(string titleSlug)
+        {
+            // The leading index column is the media side; an unscoped link can return both.
+            return Query(Builder().Where($"\"Books\".\"MediaType\" IN ({(int)BookMediaType.Audiobook}, {(int)BookMediaType.Ebook}) AND {SlugKey} = @slug",
+                new { slug = titleSlug?.ToLowerInvariant() }));
+        }
+
+        public List<Book> FindTitleSlugConflicts(IEnumerable<string> slugs, IDbConnection connection = null, IDbTransaction transaction = null)
+        {
+            var matches = new Dictionary<int, Book>();
+            // Exact slug plus its numeric-suffix range; no whole-catalog materialization.
+            foreach (var chunk in slugs.Distinct(StringComparer.Ordinal).Chunk(SqliteVariableLimit.MaxParameters / 3))
+            {
+                var predicates = new List<string>();
+                var parameters = new DynamicParameters();
+                for (var i = 0; i < chunk.Length; i++)
+                {
+                    parameters.Add($"slug{i}", chunk[i]);
+                    parameters.Add($"start{i}", chunk[i] + "_0");
+                    parameters.Add($"end{i}", chunk[i] + "_:");
+                    // SQL LENGTH counts characters on both engines, unlike UTF-16 string.Length.
+                    var suffix = $"substr({SlugKey}, LENGTH(@slug{i}) + 2)";
+                    var numericSuffix = _database.DatabaseType == DatabaseType.PostgreSQL
+                        ? $"{suffix} ~ '^[0-9]+$'"
+                        : $"{suffix} <> '' AND {suffix} NOT GLOB '*[^0-9]*'";
+                    predicates.Add($"(\"MediaType\" IN ({(int)BookMediaType.Audiobook}, {(int)BookMediaType.Ebook}) AND {SlugKey} = @slug{i}) OR (\"MediaType\" IN ({(int)BookMediaType.Audiobook}, {(int)BookMediaType.Ebook}) AND {SlugKey} >= @start{i} AND {SlugKey} < @end{i} AND {numericSuffix})");
+                }
+                var sql = $"SELECT \"Id\", \"AuthorId\", \"MediaType\", \"TitleSlug\" FROM \"Books\" WHERE {string.Join(" OR ", predicates)}";
+                var rows = connection == null ? _database.Query<Book>(sql, parameters) : connection.Query<Book>(sql, parameters, transaction);
+                foreach (var book in rows) matches[book.Id] = book;
+            }
+            return matches.Values.ToList();
+        }
 
         //x.Id == null is converted to SQL, so warning incorrect
 #pragma warning disable CS0472
@@ -614,10 +666,16 @@ namespace NzbDrone.Core.Books
 
         public PagingSpec<Book> BooksWhereCutoffUnmet(PagingSpec<Book> pagingSpec, List<QualitiesBelowCutoff> qualitiesBelowCutoff)
         {
-            pagingSpec.Records = GetPagedRecords(BooksWhereCutoffUnmetBuilder(qualitiesBelowCutoff), pagingSpec, PagedQuery);
+            // Each result is one book. Child-table columns are not single-valued
+            // after grouping, so use the normal default for those sort requests.
+            var sortTable = TableMapping.Mapper.GetSortKey(pagingSpec.SortKey).Table;
+            if (sortTable != null && sortTable != "Books" && sortTable != "Authors")
+                pagingSpec.SortKey = null;
 
-            var countTemplate = $"SELECT COUNT(*) FROM (SELECT /**select**/ FROM \"{TableMapping.Mapper.TableNameMapping(typeof(Book))}\" /**join**/ /**innerjoin**/ /**leftjoin**/ /**where**/ /**groupby**/ /**having**/) AS \"Inner\"";
-            pagingSpec.TotalRecords = GetPagedRecordCount(BooksWhereCutoffUnmetBuilder(qualitiesBelowCutoff).Select(typeof(Book)), pagingSpec, countTemplate);
+            pagingSpec.Records = GetPagedRecords(BooksWhereCutoffUnmetBuilder(qualitiesBelowCutoff)
+                .GroupBy<Book>(book => book.Id).GroupBy<Author>(author => author.Id), pagingSpec, PagedQuery);
+            pagingSpec.TotalRecords = GetPagedRecordCount(BooksWhereCutoffUnmetBuilder(qualitiesBelowCutoff)
+                .SelectCountDistinct<Book>(book => book.Id), pagingSpec);
 
             return pagingSpec;
         }

@@ -221,7 +221,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var (profile, author, book, edition) = CreateAudiobookConversionGraph(312);
                     var ebook = rejectedKind.EndsWith("ebook", StringComparison.Ordinal);
                     var metadata = rejectedKind.StartsWith("metadata", StringComparison.Ordinal);
-                    var quality = new QualityModel(ebook ? Quality.EPUB : Quality.MP3);
+                    var quality = new QualityModel(ebook ? Quality.EPUB : Quality.MP3, new Revision(2));
                     profile.ConvertToQualityId = null;
                     profile.UpgradeAllowed = true;
                     author.Id = 0;
@@ -267,7 +267,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     {
                         File.WriteAllText(old, "old recording");
                         files.Insert(new BookFile { Path = old, EditionId = edition.Id, Edition = edition,
-                            Quality = quality, DateAdded = DateTime.UtcNow, Modified = DateTime.UtcNow, MediaInfo = new MediaInfoModel(),
+                            Quality = new QualityModel(quality.Quality), DateAdded = DateTime.UtcNow, Modified = DateTime.UtcNow, MediaInfo = new MediaInfoModel(),
                             MediaType = ebook ? "ebook" : "audiobook" });
                     }
                     var media = new MediaFileService(files, events, null, null, logger);

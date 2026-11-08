@@ -336,7 +336,7 @@ namespace Chaptarr.Core.Test.Books
                 var tags = ServiceProxy.Create<IMetadataTagService>((method, args) => null);
                 _refresh = new RefreshBookService(books, null, null, _editions, null, null,
                     new RefreshEditionService(_editions, tags, null, database, logger), media, null, events, null,
-                    new EditionSelector(logger), new EditionMetadataProfileFilter(new TestTermMatcherService()), null, logger);
+                    new EditionSelector(logger), new EditionMetadataProfileFilter(new TestTermMatcherService()), null, logger, mainDatabase: null);
             }
 
             private object Save(List<Book> books)

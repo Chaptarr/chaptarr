@@ -10,6 +10,51 @@ namespace Chaptarr.Core.Test.Parser
     [TestFixture]
     public class ReleaseTitleMatchScorerFixture
     {
+        [TestCase("Radio Theatre")]
+        [TestCase("Radio Theater")]
+        [TestCase("Dramatization")]
+        [TestCase("Dramatisation")]
+        [TestCase("Dramatic Reading")]
+        public void edition_classification_terms_do_not_make_title_qualifiers_optional(string qualifier)
+        {
+            var author = new Author { Name = "Fixture Author" };
+            var book = new Book
+            {
+                Id = 1, Author = author, Title = "Northern Lights",
+                Editions = new List<Edition> { new Edition { Title = $"Northern Lights ({qualifier})", Monitored = true } }
+            };
+            var result = ReleaseTitleMatchScorer.FindBestMatch("Fixture Author - Northern Lights", author.Name, new[] { book });
+            Assert.That(result, Is.Null, "Edition-only classification must not create a shorter matching title");
+            var complete = ReleaseTitleMatchScorer.FindBestMatch($"Fixture Author - Northern Lights ({qualifier})", author.Name, new[] { book });
+            Assert.That(complete?.IsMatch, Is.True);
+
+            book.Editions[0].Title = "Northern Lights";
+            var decoratedRelease = ReleaseTitleMatchScorer.FindBestMatch($"Fixture Author - Northern Lights ({qualifier})", author.Name, new[] { book });
+            Assert.That(decoratedRelease?.IsMatch, Is.True, "The existing author-backed title match may carry additional release text");
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase(" \t ")]
+        public void blank_searched_author_should_not_supply_author_evidence(string authorName)
+        {
+            var book = new Book
+            {
+                Id = 1,
+                Author = new Author { Name = authorName },
+                Title = "Dune",
+                Editions = new List<Edition> { new Edition { Title = "Dune", Monitored = true } }
+            };
+
+            foreach (var authorHint in new[] { null, "Frank Herbert" })
+            {
+                var result = ReleaseTitleMatchScorer.FindBestMatch("Dune M4B", authorName, new[] { book }, authorHint);
+
+                Assert.That(result, Is.Not.Null);
+                Assert.That(result.IsMatch, Is.False, "A title match cannot establish an unspecified author's identity.");
+            }
+        }
+
         [TestCase("Frank Herbert Dune (Unabridged) - Dune Messiah MP3")]
         [TestCase("Frank Herbert Dune (Unabridged) - Dune 4 MP3")]
         public void optional_qualifier_variants_should_not_hide_a_contradicted_base_title_occurrence(string release)

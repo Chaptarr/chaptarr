@@ -50,6 +50,8 @@ namespace Chaptarr.Core.Test.Extras
                     return stored.ToList();
                 if (method.Name == nameof(IExtraFileRepository<MetadataFile>.UpdateMany)) { upserts++; return null; }
                 if (method.Name == nameof(IExtraFileRepository<MetadataFile>.InsertMany)) return null;
+                if (method.Name == nameof(IExtraFileRepository<MetadataFile>.DeleteMany))
+                { stored.RemoveAll(file => ((IEnumerable<int>)args[0]).Contains(file.Id)); return null; }
                 if (method.Name == nameof(IExtraFileRepository<MetadataFile>.DeleteForBookFile))
                 { stored.RemoveAll(file => file.BookFileId == (int)args[0]); return null; }
                 throw new NotImplementedException(method.Name);
@@ -77,7 +79,7 @@ namespace Chaptarr.Core.Test.Extras
             Assert.That(upserts, Is.EqualTo(retainOwnership ? 1 : 0));
             Assert.That(stored, Has.Count.EqualTo(retainOwnership ? 1 : 0));
             if (retainOwnership) Assert.That(stored[0].BookFileId, Is.EqualTo(differentFolder ? (int?)null : successor.Id));
-            Assert.That(recycled, Is.EqualTo(differentFolder && !retainOwnership
+            Assert.That(recycled, Is.EqualTo(!retainOwnership
                 ? new[] { "/library/Author/Book/metadata.json" } : Array.Empty<string>()));
             if (retainOwnership)
             {
@@ -135,7 +137,7 @@ namespace Chaptarr.Core.Test.Extras
         }
 
         [Test]
-        public void replacement_observers_should_load_extras_and_list_a_folder_once_per_batch()
+        public void replacement_observers_load_extras_once_without_enumerating_unrelated_folder_contents()
         {
             var author = new Author { Id = 1, Path = "/library/Author" };
             var files = Enumerable.Range(1, 64).Select(id => new BookFile
@@ -144,10 +146,12 @@ namespace Chaptarr.Core.Test.Extras
                 BookId = 2, RelativePath = $"Book/{file.Id}.json" }).ToList();
             var reads = 0;
             var listings = 0;
+            var recycled = new List<string>();
             var repository = Proxy<IExtraFileRepository<MetadataFile>>((method, args) =>
             {
                 if (method.Name == nameof(IExtraFileRepository<MetadataFile>.GetFilesByBookFiles)) { reads++; return extras.ToList(); }
-                if (method.Name == nameof(IExtraFileRepository<MetadataFile>.DeleteForBookFile)) return null;
+                if (method.Name == nameof(IExtraFileRepository<MetadataFile>.DeleteForBookFile) ||
+                    method.Name == nameof(IExtraFileRepository<MetadataFile>.DeleteMany)) return null;
                 throw new NotImplementedException(method.Name);
             });
             var disk = Proxy<IDiskProvider>((method, args) =>
@@ -157,11 +161,12 @@ namespace Chaptarr.Core.Test.Extras
                 throw new NotImplementedException(method.Name);
             });
             var service = new MetadataFileService(repository, Proxy<IAuthorService>((m, a) => author), disk,
-                Proxy<IRecycleBinProvider>((m, a) => throw new AssertionException("shared sidecar must be kept")), LogManager.GetCurrentClassLogger());
+                Proxy<IRecycleBinProvider>((m, a) => { recycled.Add((string)a[0]); return null; }), LogManager.GetCurrentClassLogger());
             var context = new BookFileDeletionContext(files.Select(file => file.Id));
             foreach (var file in files) service.Handle(new BookFileDeletedEvent(file, DeleteMediaFileReason.Upgrade, context: context));
             Assert.That(reads, Is.EqualTo(1));
-            Assert.That(listings, Is.EqualTo(1));
+            Assert.That(listings, Is.Zero);
+            Assert.That(recycled, Has.Count.EqualTo(64));
         }
     }
 }

@@ -84,7 +84,7 @@ namespace Chaptarr.Core.Test.Books
                     Assert.That(method.Name, Is.EqualTo(nameof(ISynologyIndexerProxy.DeleteFile)));
                     indexedDeletions.Add((string)args[0]);
                     return null;
-                }), AuthorDeletionSafetyFixture.Proxy<IDiskProvider>((_, _) => false), new CacheManager())
+                }), AuthorDeletionSafetyFixture.Proxy<IDiskProvider>((_, _) => false), new CacheManager(), new Chaptarr.Core.Test.Common.MemoryPendingNotifications())
                 {
                     Definition = new NotificationDefinition { Settings = new SynologyIndexerSettings { UpdateLibrary = true } }
                 };

@@ -103,6 +103,7 @@ namespace Chaptarr.Core.Test.Download
             public void Fail(CommandModel command, string message, Exception e) => throw new NotImplementedException();
             public void Requeue() => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void Pause(int id) => throw new NotImplementedException();
             public void Resume(int id) => throw new NotImplementedException();
             public void CleanCommands() => throw new NotImplementedException();
@@ -188,7 +189,6 @@ namespace Chaptarr.Core.Test.Download
 
             public void MarkAsFailed(int historyId, bool skipRedownload = false) => throw new NotImplementedException();
             public void MarkAsFailed(string downloadId, bool skipRedownload = false) => throw new NotImplementedException();
-            public void MarkAsFailed(TrackedDownload trackedDownload, string reason, bool skipRedownload = false) => throw new NotImplementedException();
 
             public void Check(TrackedDownload trackedDownload)
             {
@@ -216,7 +216,7 @@ namespace Chaptarr.Core.Test.Download
                 ImportedDownloadIds.Add(trackedDownload.DownloadItem.DownloadId);
             }
 
-            public bool CanRemoveDownload(TrackedDownload trackedDownload) => throw new NotImplementedException();
+            public bool CanRemoveDownload(TrackedDownload trackedDownload, DownloadCleanupContext cleanup = null) => throw new NotImplementedException();
 
             public bool VerifyImport(TrackedDownload trackedDownload, List<ImportResult> importResults) => throw new NotImplementedException();
         }

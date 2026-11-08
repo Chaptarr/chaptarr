@@ -142,6 +142,18 @@ namespace Chaptarr.Core.Test.Jobs
             Assert.That(mamTask.Interval, Is.EqualTo(60));
         }
 
+        [Test]
+        public void should_schedule_author_refresh_retries_each_minute_at_low_priority()
+        {
+            var repository = DispatchProxy.Create<IScheduledTaskRepository, ScheduledTaskRepositoryProxy>();
+            var config = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
+            new TaskManager(repository, config, new CacheManager(), LogManager.GetCurrentClassLogger()).Handle(new ApplicationStartedEvent());
+            var task = ((ScheduledTaskRepositoryProxy)(object)repository).UpsertedTasks.Single(item =>
+                item.TypeName == typeof(NzbDrone.Core.Books.Commands.RetryAuthorRefreshCommand).FullName);
+            Assert.That(task.Interval, Is.EqualTo(1));
+            Assert.That(task.Priority, Is.EqualTo(NzbDrone.Core.Messaging.Commands.CommandPriority.Low));
+        }
+
         [TestCase(0, 0)]
         [TestCase(1, 1440)]
         [TestCase(7, 10080)]

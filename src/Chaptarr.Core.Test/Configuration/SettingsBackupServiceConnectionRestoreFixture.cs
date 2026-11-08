@@ -14,6 +14,23 @@ namespace Chaptarr.Core.Test.Configuration
     [TestFixture]
     public class SettingsBackupServiceConnectionRestoreFixture
     {
+        [TestCase(SettingsBackupRestoreMode.Merge)]
+        [TestCase(SettingsBackupRestoreMode.Overwrite)]
+        public void case_only_connection_name_change_keeps_its_identity(SettingsBackupRestoreMode mode)
+        {
+            var factory = CreateNotificationFactory(out var proxy);
+            proxy.Definitions.Add(new NotificationDefinition
+            {
+                Id = 42, Name = "AUDIOBOOKSHELF", Implementation = "AudioBookShelf",
+                Settings = new AudioBookShelfSettings { Host = "destination" }
+            });
+            InvokeRestoreConnections(CreateService(factory), BuildPackageWithAudioBookShelfConnection(), mode, new SettingsBackupRestoreResult());
+            var restored = proxy.Definitions.Single();
+            Assert.That(restored.Id, Is.EqualTo(42));
+            Assert.That(((AudioBookShelfSettings)restored.Settings).Host,
+                Is.EqualTo(mode == SettingsBackupRestoreMode.Merge ? "destination" : "audiobookshelf"));
+        }
+
         [Test]
         public void restore_connections_should_clear_audiobookshelf_library_mappings_and_warn()
         {
@@ -120,7 +137,7 @@ namespace Chaptarr.Core.Test.Configuration
                 null,
                 null,
                 null,
-                null);
+                null, delayProfileService: null, releaseProfileService: null, qualityDefinitionService: null, mediaPaths: null, filenameValidation: SettingsBackupCoverageFixture.CreateFilenameValidation());
         }
 
         private static SettingsBackupPackage BuildPackageWithAudioBookShelfConnection()

@@ -2,7 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Chaptarr.Api.V1.Indexers;
+using Chaptarr.Core.Test.Common;
 using NLog;
+using NzbDrone.Core.Configuration;
+using NzbDrone.Core.DecisionEngine.Specifications;
+using NzbDrone.Core.Indexers.MyAnonaMouse;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine;
@@ -18,6 +23,71 @@ namespace Chaptarr.Core.Test.Download
     [TestFixture]
     public class ProcessDownloadDecisionsFixture
     {
+        [TestCase(0, 1, false)]
+        [TestCase(2, 3, false)]
+        [TestCase(1, 1, true)]
+        [TestCase(0, 0, true)]
+        [TestCase(null, 1, true)]
+        public async Task seeder_rule_should_reject_without_pending_and_preserve_manual_grabs(int? seeders, int minimumSeeders, bool approved)
+        {
+            var factory = InterfaceProxy.Proxy<IIndexerFactory>((method, args) => new IndexerDefinition
+            {
+                Id = 12,
+                Settings = new MyAnonaMouseSettings { MinimumSeeders = minimumSeeders }
+            });
+            var specification = new TorrentSeedingSpecification(factory, LogManager.GetCurrentClassLogger());
+            var remote = BuildDecision(new Book { Id = 1, Title = "Red Country", MediaType = BookMediaType.Audiobook }, "Red Country M4B", Quality.M4B).RemoteBook;
+            remote.Release = new TorrentInfo { Title = "Joe Abercrombie Red Country M4B", IndexerId = 12, Seeders = seeders, DownloadProtocol = DownloadProtocol.Torrent };
+            var verdict = specification.IsSatisfiedBy(remote, null);
+            var decision = verdict.Accepted ? new DownloadDecision(remote) : new DownloadDecision(remote,
+                new Rejection(verdict.Reason, specification.Type, verdict.CanBypass, verdict.Category, verdict.Severity));
+            var pending = new RecordingPendingReleaseService();
+            var downloads = new RecordingDownloadService();
+            var processor = new ProcessDownloadDecisions(downloads, new ApprovedFirstPrioritizer(), pending,
+                new EmptyQueueSpecification(), LogManager.GetCurrentClassLogger());
+
+            var result = await processor.ProcessDecisions(new List<DownloadDecision> { decision });
+            var resource = decision.ToResource();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(decision.Approved, Is.EqualTo(approved));
+                Assert.That(decision.Rejected, Is.EqualTo(!approved));
+                Assert.That(decision.TemporarilyRejected, Is.False);
+                Assert.That(result.Pending, Is.Empty);
+                Assert.That(pending.AddManyCalls, Is.Zero);
+                Assert.That(downloads.Downloaded, Has.Count.EqualTo(approved ? 1 : 0));
+                Assert.That(result.Rejected, Has.Count.EqualTo(approved ? 0 : 1));
+                Assert.That(InteractiveSearchVisibility.IsHidden(decision), Is.False);
+                Assert.That(ReleaseController.ShouldBlockInteractiveDownload(decision), Is.False);
+                Assert.That(resource.CanBypassFilters, Is.EqualTo(!approved));
+                Assert.That(resource.HasHardFilters, Is.False);
+            });
+        }
+
+        [Test]
+        public async Task minimum_age_rejection_should_still_wait_in_pending_queue()
+        {
+            var config = InterfaceProxy.Proxy<IConfigService>((method, args) => 60);
+            var specification = new MinimumAgeSpecification(config, LogManager.GetCurrentClassLogger());
+            var remote = BuildDecision(new Book { Id = 1, Title = "Red Country" }, "Red Country M4B", Quality.M4B).RemoteBook;
+            remote.Release.DownloadProtocol = DownloadProtocol.Usenet;
+            var verdict = specification.IsSatisfiedBy(remote, null);
+            var decision = new DownloadDecision(remote, new Rejection(verdict.Reason, specification.Type,
+                verdict.CanBypass, verdict.Category, verdict.Severity));
+            var pending = new RecordingPendingReleaseService();
+            var downloads = new RecordingDownloadService();
+            var processor = new ProcessDownloadDecisions(downloads, new ApprovedFirstPrioritizer(), pending,
+                new EmptyQueueSpecification(), LogManager.GetCurrentClassLogger());
+
+            var result = await processor.ProcessDecisions(new List<DownloadDecision> { decision });
+
+            Assert.That(verdict.Accepted, Is.False);
+            Assert.That(result.Pending, Is.EqualTo(new[] { decision }));
+            Assert.That(pending.Added.Single().Reason, Is.EqualTo(PendingReleaseReason.Delay));
+            Assert.That(downloads.Downloaded, Is.Empty);
+        }
+
         [Test]
         public async Task should_only_grab_one_release_per_book_row_even_when_second_release_is_unknown_text()
         {
@@ -441,9 +511,11 @@ namespace Chaptarr.Core.Test.Download
         private sealed class RecordingPendingReleaseService : NoopPendingReleaseService
         {
             public List<(DownloadDecision Decision, PendingReleaseReason Reason)> Added { get; } = new();
+            public int AddManyCalls { get; private set; }
 
             public override void AddMany(List<Tuple<DownloadDecision, PendingReleaseReason>> decisions)
             {
+                AddManyCalls++;
                 Added.AddRange(decisions.Select(pair => (pair.Item1, pair.Item2)));
             }
 

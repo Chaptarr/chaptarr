@@ -39,12 +39,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     SortName = "testwriter", TitleSlug = "test-writer", Path = "/test-writer", Added = DateTime.UtcNow });
                 var books = new BookRepository(database, events);
                 var editions = new EditionRepository(database, events);
-                var aliases = new ProviderAliasService(new ProviderAliasRepository(database, events));
+                var aliases = new ProviderAliasSeed(database, events);
                 Book Seed(string slug, string asin, List<string> cast, string scalar)
                 {
                     var book = books.Insert(new Book { AuthorId = author.Id, Title = "Paper Lanterns", CleanTitle = "paperlanterns", TitleSlug = slug,
                         MediaType = BookMediaType.Audiobook, Added = DateTime.UtcNow, HardcoverBookId = "hc:7000", BaseBookId = "hc:7000", AnyEditionOk = false });
-                    aliases.ReplaceAliases("Book", book.Id, "work", new[] { "hc:7000" });
+                    aliases.SeedAliases("Book", book.Id, "work", new[] { "hc:7000" });
                     var edition = editions.Insert(new Edition { BookId = book.Id, Title = book.Title, ForeignEditionId = "am:" + asin, Asin = asin,
                         Narrator = scalar, NarratorNames = cast, Format = "audiobook", ReadingFormatId = 2, Monitored = true });
                     book.Editions = new List<Edition> { edition };
@@ -107,9 +107,10 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 var result = matcher.MatchFilesToLibraryAsync(files.ToArray(), author.Id, context).GetAwaiter().GetResult();
                 var candidate = projected.First(row => row.EditionId == a.Editions[0].Id);
                 var castCount = ReleaseNarratorEvidenceExtractor.SplitCredits(candidate.NarratorNames).Count();
-                var countMethod = typeof(FileMatchingService).GetMethod("CountNarratorMatchesInResidualTags", BindingFlags.NonPublic | BindingFlags.Instance);
-                var narratorCount = (int)countMethod.Invoke(matcher, new object[] { candidate.NarratorNames, candidate.AuthorName, tags });
-                TestContext.Progress.WriteLine($"REVIEW1845 database={database.DatabaseType} scenario={scenario} projected={candidate.NarratorNames} castCount={castCount} narratorCount={narratorCount} wantedBook={a.Id} matched={string.Join(',', result.MatchedFiles.Select(match => match.BookId))} unmatched={result.UnmatchedFiles.Length} recall={recallCalls} rank={rankCalls} readers={sql.Count(command => command == nameof(IDbCommand.ExecuteReader))} writes={sql.Count(command => command != nameof(IDbCommand.ExecuteReader))} hydrationBatches={batches}");
+                var evidenceMethod = typeof(FileMatchingService).GetMethod("GetNarratorEvidenceInResidualTags", BindingFlags.NonPublic | BindingFlags.Instance);
+                Assert.That(evidenceMethod, Is.Not.Null, "The narrator evidence method was renamed; update this test.");
+                var evidence = ((int Matched, int Independent, int Missing))evidenceMethod.Invoke(matcher, new object[] { candidate.NarratorNames, candidate.AuthorName, tags });
+                var narratorCount = evidence.Matched;
                 Assert.That(recallCalls, Is.EqualTo(1));
                 Assert.That(rankCalls, Is.EqualTo(1));
                 Assert.That(batches, Is.Zero);

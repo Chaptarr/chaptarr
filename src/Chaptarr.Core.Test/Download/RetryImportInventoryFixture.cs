@@ -252,6 +252,7 @@ namespace Chaptarr.Core.Test.Download
                 var completed = new CompletedDownloadService(events, history, new ProvideImportItemService(clients),
                     Proxy<IDownloadedBooksImportService>((method, args) =>
                     {
+                        if (method.Name == nameof(IDownloadedBooksImportService.ProcessIncludedMedia)) return new List<ImportResult>();
                         Assert.That(method.Name, Is.EqualTo(nameof(IDownloadedBooksImportService.ProcessPath)));
                         AttemptedPaths = ((DownloadClientItem)args[3]).FilePaths.ToList();
                         ImportedPaths = AttemptedPaths.Where(File.Exists).ToList();
@@ -260,7 +261,7 @@ namespace Chaptarr.Core.Test.Download
                             File.Exists(path) ? Array.Empty<string>() : new[] { "Required file missing" })).ToList();
                     }),
                     Proxy<IDownloadImportModeResolver>((_, _) => ImportMode.Copy),
-                    new TrackedDownloadAlreadyImported(logger), null, logger, snapshots);
+                    new TrackedDownloadAlreadyImported(logger), logger, snapshots);
                 _service = new RetryFailedImportService(tracking, clients, mappings, completed, snapshots, null,
                     Proxy<ICommandResultReporter>((_, _) => null), events, logger);
             }

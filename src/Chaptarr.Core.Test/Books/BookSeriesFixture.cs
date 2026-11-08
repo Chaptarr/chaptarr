@@ -177,6 +177,106 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(book.SeriesName, Is.Null);
         }
 
+        [Test]
+        public void header_series_should_use_provider_identity_and_keep_the_membership_position(
+            [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType,
+            [Values("49075", "gr:49075", " GR:49075 ")] string providerId)
+        {
+            var header = Link("The Stormlight Archive", providerId, "1", mediaType);
+            header.SeriesId = 23;
+            header.Series.Value.Id = 23;
+            header.IsPrimary = false;
+            var fallback = Link("The Cosmere", "gr:135117", "0.5", mediaType);
+            fallback.SeriesId = 49075;
+            fallback.Series.Value.Id = 49075;
+            var book = new Book
+            {
+                SeriesId = 49075, SeriesName = "Stale scalar", SeriesPosition = "99", MediaType = mediaType,
+                SeriesLinks = new List<SeriesBookLink> { fallback, header }
+            };
+
+            Assert.That(BookSeries.Select(book), Is.SameAs(header));
+            Assert.That(BookSeries.GetHeaderLink(book), Is.SameAs(header));
+            Assert.That(BookSeries.Label(BookSeries.Select(book)), Is.EqualTo("The Stormlight Archive #1"));
+            Assert.That(BookSeries.GetLinks(book), Is.EqualTo(new[] { fallback, header }), "All-membership presentation order is unchanged.");
+        }
+
+        [TestCase(BookMediaType.Audiobook)]
+        [TestCase(BookMediaType.Ebook)]
+        public void missing_or_unavailable_header_series_should_keep_the_existing_fallback(BookMediaType mediaType)
+        {
+            var otherMedia = mediaType == BookMediaType.Audiobook ? BookMediaType.Ebook : BookMediaType.Audiobook;
+            var primary = Link("Primary", "gr:20", "8", mediaType);
+            var unknown = Link("Unknown", "gr:30", "3", mediaType);
+            unknown.IsPrimary = null;
+            var secondary = Link("Secondary", "gr:40", "1", mediaType);
+            secondary.IsPrimary = false;
+            var otherSide = Link("Other side", "gr:10", "0", otherMedia);
+            var book = new Book
+            {
+                MediaType = mediaType,
+                SeriesLinks = new List<SeriesBookLink> { secondary, unknown, otherSide, primary }
+            };
+
+            foreach (var headerId in new int?[] { null, 0, 999, 10 })
+            {
+                book.SeriesId = headerId;
+                Assert.That(BookSeries.GetHeaderLink(book), Is.Null);
+                primary.IsPrimary = true;
+                unknown.IsPrimary = null;
+                Assert.That(BookSeries.Select(book), Is.SameAs(primary));
+                primary.IsPrimary = false;
+                Assert.That(BookSeries.Select(book), Is.SameAs(unknown));
+                unknown.IsPrimary = false;
+                Assert.That(BookSeries.Select(book), Is.SameAs(secondary));
+            }
+            book.SeriesLinks.Clear();
+            Assert.That(BookSeries.Select(book), Is.Null);
+            Assert.That(BookSeries.Select(null), Is.Null);
+            Assert.That(BookSeries.GetHeaderLink(null), Is.Null);
+        }
+
+        [Test]
+        public void api_should_show_only_a_valid_header_but_retain_all_labels_for_filtering_and_title_cleanup(
+            [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType,
+            [Values(null, 106221, 40650, 999)] int? headerId)
+        {
+            var opposite = mediaType == BookMediaType.Audiobook ? BookMediaType.Ebook : BookMediaType.Audiobook;
+            var book = new Book { Title = "Guards! Guards! (Discworld, #8)", MediaType = mediaType, SeriesId = headerId,
+                SeriesLinks = new List<SeriesBookLink>
+                {
+                    Link("Discworld", "40650", "8", mediaType),
+                    Link("City Watch", "gr:106221", "1", mediaType),
+                    Link("Other side", "gr:999", "0", opposite)
+                } };
+            var resource = book.ToResource();
+            Assert.Multiple(() =>
+            {
+                Assert.That(resource.SeriesTitle, Is.EqualTo(headerId switch
+                {
+                    106221 => "City Watch #1",
+                    40650 => "Discworld #8",
+                    _ => "City Watch #1; Discworld #8"
+                }));
+                Assert.That(resource.SeriesLabels, Is.EqualTo(new[] { "City Watch #1", "Discworld #8" }));
+                Assert.That(resource.Title, Is.EqualTo("Guards! Guards!"));
+            });
+            new BookResource { SeriesTitle = "Submitted title", SeriesLabels = new List<string> { "Submitted label" } }.ToModel(book);
+            Assert.That(book.ToResource().SeriesLabels, Is.EqualTo(new[] { "City Watch #1", "Discworld #8" }));
+        }
+
+        [TestCase("hc:49075")]
+        [TestCase("gr:[49075]")]
+        [TestCase("gr:49075:other")]
+        public void unusable_membership_identity_must_not_select_a_header_or_break_the_existing_fallback(string providerId)
+        {
+            var fallback = Link("Fallback", "gr:20", "1", BookMediaType.Audiobook);
+            var book = new Book { SeriesId = 49075, SeriesLinks = new List<SeriesBookLink>
+                { fallback, Link("Unusable header", providerId, "2", BookMediaType.Audiobook) } };
+            Assert.That(BookSeries.GetHeaderLink(book), Is.Null);
+            Assert.That(BookSeries.Select(book), Is.SameAs(fallback));
+        }
+
         private static SeriesBookLink Link(string title, string id, string position, BookMediaType mediaType) => new SeriesBookLink
         {
             Position = position,

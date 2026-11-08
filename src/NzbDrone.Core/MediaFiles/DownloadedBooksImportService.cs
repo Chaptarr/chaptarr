@@ -29,7 +29,7 @@ namespace NzbDrone.Core.MediaFiles
     /// Clean implementation of DownloadedBooksImportService that follows the import bible.
     /// This service handles the download folder workflow and passes everything to ImportOrchestrator.
     /// </summary>
-    public class DownloadedBooksImportService : IDownloadedBooksImportService
+    public partial class DownloadedBooksImportService : IDownloadedBooksImportService
     {
         internal const string MissingAuthoritativeMediaFilesRejectionCategory = "MissingAuthoritativeMediaFiles";
 
@@ -55,6 +55,8 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IRuntimeInfo _runtimeInfo;
         private readonly IMediaInfoExtractor _mediaInfoExtractor;
         private readonly Logger _logger;
+        private readonly NzbDrone.Core.Queue.IQueueService _queueService;
+        private readonly IConversionJobService _conversionJobService;
 
         public DownloadedBooksImportService(
             IDiskProvider diskProvider,
@@ -73,7 +75,9 @@ namespace NzbDrone.Core.MediaFiles
             IEventAggregator eventAggregator,
             IRuntimeInfo runtimeInfo,
             IMediaInfoExtractor mediaInfoExtractor,
-            Logger logger)
+            Logger logger,
+            NzbDrone.Core.Queue.IQueueService queueService,
+            IConversionJobService conversionJobService)
         {
             _diskProvider = diskProvider;
             _diskScanService = diskScanService;
@@ -92,6 +96,8 @@ namespace NzbDrone.Core.MediaFiles
             _runtimeInfo = runtimeInfo;
             _mediaInfoExtractor = mediaInfoExtractor;
             _logger = logger;
+            _queueService = queueService ?? throw new ArgumentNullException(nameof(queueService));
+            _conversionJobService = conversionJobService ?? throw new ArgumentNullException(nameof(conversionJobService));
         }
 
         public List<ImportResult> ProcessRootFolder(IDirectoryInfo directoryInfo)
@@ -123,13 +129,26 @@ namespace NzbDrone.Core.MediaFiles
                     return ProcessFile(fileInfo, importMode, author, downloadClientItem, remoteBook, parsedBookInfo, requireDefaultRootFolderForMissingAuthors);
                 }
 
+            var pending = PendingConversion(downloadClientItem, path);
+            if (pending != null) return pending;
             LogInaccessiblePathError(path);
             _eventAggregator.PublishEvent(new TrackImportFailedEvent(null, null, true, downloadClientItem));
             return new List<ImportResult> { InaccessiblePathResult(path) };
         }
 
+        private List<ImportResult> PendingConversion(DownloadClientItem item, string path)
+        {
+            var job = item?.DownloadId.IsNotNullOrWhiteSpace() == true ? _conversionJobService?.Get(item.DownloadId) : null;
+            if (job == null || !ConversionJobService.IsWaitingForOutput(job, _conversionJobService)) return null;
+            return new List<ImportResult> { new(new ImportDecision<LocalBook>(new LocalBook { Path = path }),
+                ImportResultType.Pending, "Waiting for conversion to finish.") };
+        }
+
         private List<ImportResult> ProcessFolder(IDirectoryInfo directoryInfo, ImportMode importMode, Author author, DownloadClientItem downloadClientItem, RemoteBook remoteBook, ParsedBookInfo parsedBookInfo = null, bool requireDefaultRootFolderForMissingAuthors = false)
         {
+            var pending = PendingConversion(downloadClientItem, directoryInfo.FullName);
+            if (pending != null) return pending;
+
             _logger.Debug("[DOWNLOAD-IMPORT] Processing folder: {0}", directoryInfo.FullName);
 
             // Unlike a TV season pack, the supported files in a book payload are not
@@ -159,6 +178,16 @@ namespace NzbDrone.Core.MediaFiles
                 visibleFiles = _diskProvider.GetFileInfos(directoryInfo.FullName, true);
             }
 
+            var arriving = visibleFiles.FirstOrDefault(file => DiskScanService.IsPartialFile(file.FullName) &&
+                QualityMediaTypeHelper.GetMediaTypeFromPath(file.FullName[..^DiskScanService.PartialFileSuffix.Length]) is BookMediaType pendingMedia &&
+                (!targetMedia.HasValue || pendingMedia == targetMedia));
+            if (arriving != null)
+            {
+                var reason = $"Waiting for the file transfer to finish: {arriving.FullName}";
+                return new List<ImportResult> { new ImportResult(new ImportDecision<LocalBook>(
+                    new LocalBook { Path = arriving.FullName }, new Rejection(reason, RejectionType.Temporary)), reason) };
+            }
+
             mediaFiles = visibleFiles
                 .Where(f => MediaFileExtensions.AllExtensions.Contains(f.Extension) &&
                     !DiskScanService.IsExcludedFile(f.FullName) &&
@@ -168,7 +197,8 @@ namespace NzbDrone.Core.MediaFiles
             if (!mediaFiles.Any())
             {
                 _logger.Debug("[DOWNLOAD-IMPORT] No media files found in: {0}", directoryInfo.FullName);
-                return new List<ImportResult> { NoSupportedMediaFilesResult(directoryInfo.FullName, visibleFiles, targetMedia) };
+                return new List<ImportResult> { NoSupportedMediaFilesResult(directoryInfo.FullName, visibleFiles, targetMedia,
+                    releaseTitle: downloadClientItem?.Title ?? directoryInfo.Name) };
             }
 
             if (downloadClientItem == null)
@@ -180,22 +210,7 @@ namespace NzbDrone.Core.MediaFiles
                 }
             }
 
-            var discovered = new List<DiscoveredFileWithMetadata>(mediaFiles.Count);
-            var tagsByPath = new Dictionary<string, Dictionary<string, List<string>>>(StringComparer.OrdinalIgnoreCase);
-            foreach (var fi in mediaFiles)
-            {
-                var (tags, durationSeconds) = _metadataTagService.ReadAllTagsAndDuration(fi);
-                tags ??= new Dictionary<string, List<string>>();
-                tagsByPath[fi.FullName] = tags;
-                discovered.Add(new DiscoveredFileWithMetadata
-                {
-                    Path = fi.FullName,
-                    Size = fi.Length,
-                    Modified = fi.LastWriteTimeUtc,
-                    AllTags = tags,
-                    DurationSeconds = durationSeconds
-                });
-            }
+            var discovered = ReadFiles(mediaFiles, out var tagsByPath);
 
             var targetBookIds = remoteBook?.Books?
                 .Select(b => b?.Id ?? 0)
@@ -365,26 +380,27 @@ namespace NzbDrone.Core.MediaFiles
             return importResults;
         }
 
-            private List<ImportResult> ProcessFile(IFileInfo fileInfo, ImportMode importMode, Author author, DownloadClientItem downloadClientItem, RemoteBook remoteBook, ParsedBookInfo parsedBookInfo = null, bool requireDefaultRootFolderForMissingAuthors = false)
-            {
-                _logger.Debug("[DOWNLOAD-IMPORT] Processing file: {0}", fileInfo.FullName);
+        private List<ImportResult> ProcessFile(IFileInfo fileInfo, ImportMode importMode, Author author, DownloadClientItem downloadClientItem, RemoteBook remoteBook, ParsedBookInfo parsedBookInfo = null, bool requireDefaultRootFolderForMissingAuthors = false)
+        {
+            var pending = PendingConversion(downloadClientItem, fileInfo.FullName);
+            if (pending != null) return pending;
+
+            _logger.Debug("[DOWNLOAD-IMPORT] Processing file: {0}", fileInfo.FullName);
 
             var targetMedia = remoteBook?.GetMediaType();
-            if (!MediaFileExtensions.AllExtensions.Contains(fileInfo.Extension) ||
-                (targetMedia.HasValue && QualityMediaTypeHelper.GetMediaTypeFromPath(fileInfo.FullName) != targetMedia))
+            if (DiskScanService.IsExcludedFile(fileInfo.FullName) && !DiskScanService.IsPartialFile(fileInfo.FullName))
             {
-                return new List<ImportResult> { NoSupportedMediaFilesResult(fileInfo.FullName, new[] { fileInfo }, targetMedia, singleFile: true) };
+                var reason = $"Invalid file, excluded from import: {fileInfo.FullName}";
+                return new List<ImportResult> { new ImportResult(new ImportDecision<LocalBook>(
+                    new LocalBook { Path = fileInfo.FullName }, new Rejection(reason)), reason) };
             }
 
-            if (DiskScanService.IsExcludedFile(fileInfo.FullName))
+            if (!MediaFileExtensions.AllExtensions.Contains(fileInfo.Extension) ||
+                DiskScanService.IsExcludedFile(fileInfo.FullName) ||
+                (targetMedia.HasValue && QualityMediaTypeHelper.GetMediaTypeFromPath(fileInfo.FullName) != targetMedia))
             {
-                _logger.Debug("[{0}] is excluded by the filename filter, skipping", fileInfo.FullName);
-                var localBook = new LocalBook { Path = fileInfo.FullName };
-                var rejection = new Rejection("Invalid file, filename is excluded");
-                return new List<ImportResult>
-                {
-                    new ImportResult(new ImportDecision<LocalBook>(localBook, rejection), "Invalid file")
-                };
+                return new List<ImportResult> { NoSupportedMediaFilesResult(fileInfo.FullName, new[] { fileInfo }, targetMedia,
+                    releaseTitle: downloadClientItem?.Title ?? fileInfo.Name, singleFile: true) };
             }
 
             if (downloadClientItem == null && _diskProvider.IsFileLocked(fileInfo.FullName))
@@ -551,16 +567,16 @@ namespace NzbDrone.Core.MediaFiles
                         if (isAudio)
                         {
                             // Audiobook: prefer audio (2) → ebook (3) → print (1) → anything
-                            edition = all.FirstOrDefault(e => e.ReadingFormatId == 2)
-                                ?? all.FirstOrDefault(e => e.ReadingFormatId == 3)
-                                ?? all.FirstOrDefault(e => e.ReadingFormatId == 1)
+                            edition = all.FirstOrDefault(e => EditionReadingFormat.IsAudiobook(e.ReadingFormatId))
+                                ?? all.FirstOrDefault(e => e.ReadingFormatId == EditionReadingFormat.Ebook)
+                                ?? all.FirstOrDefault(e => e.ReadingFormatId == EditionReadingFormat.Print)
                                 ?? all.FirstOrDefault();
                         }
                         else
                         {
                             // Ebook: prefer ebook (3) → print (1) → anything (audiobook as last resort)
-                            edition = all.FirstOrDefault(e => e.ReadingFormatId == 3)
-                                ?? all.FirstOrDefault(e => e.ReadingFormatId == 1)
+                            edition = all.FirstOrDefault(e => e.ReadingFormatId == EditionReadingFormat.Ebook)
+                                ?? all.FirstOrDefault(e => e.ReadingFormatId == EditionReadingFormat.Print)
                                 ?? all.FirstOrDefault();
                         }
                     }
@@ -609,10 +625,11 @@ namespace NzbDrone.Core.MediaFiles
             return new ImportDecision<LocalBook>(local);
         }
 
-        private static void ApplyTrackedReleaseEvidence(
+        internal static void ApplyTrackedReleaseEvidence(
             IEnumerable<ImportDecision<LocalBook>> decisions,
             RemoteBook remoteBook,
-            DownloadClientItem downloadClientItem)
+            DownloadClientItem downloadClientItem,
+            bool titleEvidenceOnly = false)
         {
             if (downloadClientItem == null || remoteBook == null)
             {
@@ -644,15 +661,23 @@ namespace NzbDrone.Core.MediaFiles
                     continue;
                 }
 
-                localBook.DownloadClientBookInfo = parsed;
+                if (!titleEvidenceOnly)
+                {
+                    localBook.ImportRoot = downloadClientItem.OutputPath.FullPath;
+                    localBook.DownloadClientBookInfo = parsed;
+                }
+
                 localBook.SceneSource = !string.IsNullOrWhiteSpace(sceneName);
                 localBook.SceneName = sceneName ?? localBook.SceneName;
                 if (!string.IsNullOrWhiteSpace(parsed?.ReleaseGroup))
                 {
-                    localBook.ReleaseGroup = parsed.ReleaseGroup;
+                    if (!localBook.IsManualImport) localBook.ReleaseGroup = parsed.ReleaseGroup;
                 }
 
-                localBook.IndexerFlags = release?.IndexerFlags ?? localBook.IndexerFlags;
+                // The other format shares the release title, not its indexer or recording metadata.
+                if (titleEvidenceOnly) continue;
+
+                if (!localBook.IsManualImport) localBook.IndexerFlags = release?.IndexerFlags ?? localBook.IndexerFlags;
                 localBook.IsGraphicAudio = release?.IsGraphicAudio == true || parsed?.IsGraphicAudio == true;
                 localBook.AudioProductionType = !string.IsNullOrWhiteSpace(parsed?.AudioProductionType)
                     ? parsed.AudioProductionType
@@ -1340,7 +1365,7 @@ namespace NzbDrone.Core.MediaFiles
             return new ImportResult(new ImportDecision<LocalBook>(localBook, rejection), reason);
         }
 
-        private ImportResult NoSupportedMediaFilesResult(string path, IReadOnlyCollection<IFileInfo> visibleFiles, BookMediaType? targetMedia = null, bool singleFile = false)
+        private ImportResult NoSupportedMediaFilesResult(string path, IReadOnlyCollection<IFileInfo> visibleFiles, BookMediaType? targetMedia = null, string releaseTitle = null, bool singleFile = false)
         {
             var unsupported = visibleFiles?.Where(file => file != null &&
                 !DiskScanService.IsExcludedFile(file.FullName) &&
@@ -1354,6 +1379,15 @@ namespace NzbDrone.Core.MediaFiles
                     ? $"Found archive file, might need to be extracted: {problem.FullName}"
                     : $"Caution: Found potentially dangerous or executable file: {problem.FullName}";
                 return new ImportResult(new ImportDecision<LocalBook>(new LocalBook { Path = path }, new Rejection(message)), message);
+            }
+
+            var bookFiles = visibleFiles?.Where(file => file != null && GrabbedFormatMismatch.IsBookFile(file.FullName))
+                .Select(file => file.FullName).ToList() ?? new List<string>();
+            if (bookFiles.Count > 0)
+            {
+                var message = GrabbedFormatMismatch.Message(releaseTitle ?? Path.GetFileName(path), bookFiles, targetMedia);
+                var mismatch = new Rejection(message) { Category = GrabbedFormatMismatch.RejectionCategory };
+                return new ImportResult(new ImportDecision<LocalBook>(new LocalBook { Path = path }, mismatch), message);
             }
 
             var observedFilesMessage = BuildObservedUnsupportedFilesMessage(path, visibleFiles);

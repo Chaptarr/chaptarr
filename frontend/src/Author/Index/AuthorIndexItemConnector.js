@@ -11,7 +11,7 @@ import createAuthorMetadataProfileSelector from 'Store/Selectors/createAuthorMet
 import createAuthorSelector from 'Store/Selectors/createAuthorSelector';
 import createExecutingCommandsSelector from 'Store/Selectors/createExecutingCommandsSelector';
 import { getAuthorMediaTypeMonitoringStatus, isAuthorMonitoredForSelection } from 'Utilities/Author/getAuthorMediaTypeMonitoringStatus';
-import { getAuthorSearchBookCount, getAuthorStatisticsForMediaType } from 'Utilities/Author/getAuthorStatisticsForMediaType';
+import { getAuthorSearchBookCount, getAuthorStatisticsForMediaType, shouldConfirmSearch } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import translate from 'Utilities/String/translate';
 
 function selectShowSearchAction() {
@@ -134,7 +134,7 @@ class AuthorIndexItemConnector extends Component {
 
   onSearchPress = () => {
     const count = getAuthorSearchBookCount(this.props);
-    if (count > 5) {
+    if (shouldConfirmSearch(count)) {
       this.setState({ pendingSearch: { authorId: this.props.id, count } });
       return;
     }

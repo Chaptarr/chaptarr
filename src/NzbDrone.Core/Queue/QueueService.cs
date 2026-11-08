@@ -226,6 +226,7 @@ namespace NzbDrone.Core.Queue
                 ConversionMessage = activeConversion?.Message ?? GetConversionMessage(quality, conversionTarget),
                 CanCancelConversion = IsCancellableConversion(activeConversion),
                 CanRetryImport = CanRetryImport(trackedDownload),
+                AwaitingImportConfirmation = trackedDownload.State == TrackedDownloadState.ImportBlocked && trackedDownload.AwaitingImportConfirmation,
                 Protocol = trackedDownload.Protocol,
                 DownloadClient = trackedDownload.DownloadItem.DownloadClientInfo.Name,
                 Indexer = trackedDownload.Indexer ?? GetHistoryData(history, EntityHistory.INDEXER),
@@ -278,6 +279,7 @@ namespace NzbDrone.Core.Queue
                 ConversionMessage = queue.ConversionMessage,
                 CanCancelConversion = queue.CanCancelConversion,
                 CanRetryImport = queue.CanRetryImport,
+                AwaitingImportConfirmation = queue.AwaitingImportConfirmation,
                 RemoteBook = queue.RemoteBook,
                 Protocol = queue.Protocol,
                 DownloadClient = queue.DownloadClient,
@@ -631,6 +633,7 @@ namespace NzbDrone.Core.Queue
         {
             return trackedDownload?.DownloadItem?.Status == DownloadItemStatus.Completed &&
                    trackedDownload.State == TrackedDownloadState.ImportBlocked &&
+                   !trackedDownload.AwaitingImportConfirmation &&
                    !string.IsNullOrWhiteSpace(trackedDownload.DownloadItem.DownloadId);
         }
 
@@ -741,8 +744,9 @@ namespace NzbDrone.Core.Queue
         private static bool ShouldIncludeTrackedDownload(TrackedDownload trackedDownload)
         {
             return trackedDownload?.IsTrackable == true &&
-                   trackedDownload.State != TrackedDownloadState.Imported &&
-                   trackedDownload.State != TrackedDownloadState.DownloadFailed &&
+                   (trackedDownload.CleanupDeletionRefused ||
+                    ((trackedDownload.State != TrackedDownloadState.Imported || trackedDownload.CleanupCheckFailed) &&
+                     trackedDownload.State != TrackedDownloadState.DownloadFailed)) &&
                    trackedDownload.State != TrackedDownloadState.Ignored;
         }
 

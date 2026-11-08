@@ -117,23 +117,26 @@ namespace Chaptarr.Core.Test.Books
             connection.Execute(@"
                 CREATE TABLE ""Authors"" (
                     ""Id"" INTEGER PRIMARY KEY,
+                    ""Name"" TEXT NULL,
                     ""Path"" TEXT NULL,
                     ""AudiobookPath"" TEXT NULL,
                     ""EbookPath"" TEXT NULL
                 );
-                INSERT INTO ""Authors"" (""Id"", ""Path"", ""AudiobookPath"", ""EbookPath"") VALUES
-                    (1189, 'C:\legacy\Pascale Lacelle', 'C:\audio\Pascale Lacelle', 'C:\ebooks\Pascale Lacelle'),
-                    (1190, NULL, 'C:\audio\Only', NULL);");
+                INSERT INTO ""Authors"" (""Id"", ""Name"", ""Path"", ""AudiobookPath"", ""EbookPath"") VALUES
+                    (1189, 'Pascale Lacelle', 'C:\legacy\Pascale Lacelle', 'C:\audio\Pascale Lacelle', 'C:\ebooks\Pascale Lacelle'),
+                    (1190, 'Audio Only', NULL, 'C:\audio\Only', NULL);");
         }
 
         private static void AssertProjection(List<Author> authors)
         {
             var pascale = authors.Single(author => author.Id == 1189);
+            Assert.That(pascale.Name, Is.EqualTo("Pascale Lacelle"));
             Assert.That(pascale.Path, Is.EqualTo(@"C:\legacy\Pascale Lacelle"));
             Assert.That(pascale.AudiobookPath, Is.EqualTo(@"C:\audio\Pascale Lacelle"));
             Assert.That(pascale.EbookPath, Is.EqualTo(@"C:\ebooks\Pascale Lacelle"));
 
             var audioOnly = authors.Single(author => author.Id == 1190);
+            Assert.That(audioOnly.Name, Is.EqualTo("Audio Only"));
             Assert.That(audioOnly.Path, Is.Null);
             Assert.That(audioOnly.AudiobookPath, Is.EqualTo(@"C:\audio\Only"));
             Assert.That(audioOnly.EbookPath, Is.Null);

@@ -79,7 +79,6 @@ namespace NzbDrone.Core.MetadataSource.Audible
                         return null;
                     }
 
-                    _logger.Trace("Audible catalog error response ({0} bytes): {1}", httpResponse.ResponseData?.Length ?? 0, httpResponse.Content);
                     throw new AudibleCatalogException(httpResponse.StatusCode, $"Audible catalog HTTP {httpResponse.StatusCode}");
                 }
 
@@ -132,7 +131,6 @@ namespace NzbDrone.Core.MetadataSource.Audible
 
                 if (httpResponse.HasHttpError)
                 {
-                    _logger.Trace("Audible catalog search error response ({0} bytes): {1}", httpResponse.ResponseData?.Length ?? 0, httpResponse.Content);
                     _logger.Warn("Audible catalog search failed with status {0}", httpResponse.StatusCode);
                     return new List<AudibleCatalogBookResource>();
                 }

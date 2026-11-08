@@ -114,7 +114,7 @@ namespace Chaptarr.Core.Test.Download
                 trackedDownload.State = _stateAfterImport;
             }
 
-            public bool CanRemoveDownload(TrackedDownload trackedDownload) => throw new NotImplementedException();
+            public bool CanRemoveDownload(TrackedDownload trackedDownload, DownloadCleanupContext cleanup = null) => throw new NotImplementedException();
 
             public bool VerifyImport(TrackedDownload trackedDownload, List<ImportResult> importResults) => throw new NotImplementedException();
         }
@@ -145,7 +145,7 @@ namespace Chaptarr.Core.Test.Download
             public List<string> DeletedDownloadIds { get; } = new();
 
             public void CaptureClientList(DownloadClientItem item) => throw new NotImplementedException();
-            public void CaptureCompletedOutput(DownloadClientItem item, bool throwOnError = false) => throw new NotImplementedException();
+            public void CaptureCompletedOutput(DownloadClientItem item, bool throwOnError = false, DownloadCleanupContext cleanup = null) => throw new NotImplementedException();
             public void ApplySnapshot(DownloadClientItem item) => throw new NotImplementedException();
 
             public void Delete(DownloadClientItem item)

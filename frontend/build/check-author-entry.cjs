@@ -88,6 +88,15 @@ for (const rule of config.module.rules) {
       if (pathname.startsWith('/api/')) {
         requests.push({ method: request.method(), path: url.pathname, query: Object.fromEntries(url.searchParams), body: request.postData() ? request.postDataJSON() : null });
       }
+      if (pathname === '/api/v1/book/monitor' && request.method() === 'PUT') {
+        const payload = request.postDataJSON();
+        const current = await page.evaluate(() => window.readSeriesMembershipBooks());
+        return route.fulfill({ json: current.filter((book) => payload.bookIds.includes(book.id)).map((book) => ({
+          id: book.id, monitored: payload.monitored,
+          audiobookMonitored: book.mediaType === 'audiobook' ? payload.monitored : book.audiobookMonitored,
+          ebookMonitored: book.mediaType === 'ebook' ? payload.monitored : book.ebookMonitored
+        })) });
+      }
       if ((/^\/api\/v1\/author\/\d+$/).test(pathname) && request.method() === 'PUT') {
         return route.fulfill({ json: { ...author, ...request.postDataJSON() } });
       }
@@ -125,6 +134,12 @@ for (const rule of config.module.rules) {
       if (pathname === '/api/v1/book' && request.method() === 'POST') {
         return route.fulfill({ status: 202, json: { pendingId: 1, message: 'Fixture queued' } });
       }
+      if (pathname === '/api/v1/release' && url.searchParams.get('existing') === 'true') {
+        return route.fulfill({ contentType: 'application/json', body: 'null' });
+      }
+      if (pathname === '/api/v1/filesystem') {
+        return route.fulfill({ json: { parent: null, directories: [], files: [] } });
+      }
       if (pathname === '/api/v1/book' || pathname === '/api/v1/series' || pathname === '/api/v1/bookfile' || pathname === '/api/v1/queue/details') {
         return route.fulfill({ json: [] });
       }
@@ -140,11 +155,14 @@ for (const rule of config.module.rules) {
       if (pathname === '/style.css') {
         return route.fulfill({ path: path.join(output, 'Content', css), contentType: 'text/css' });
       }
+      if (pathname === '/content/images/author-placeholder-muted.png') {
+        return route.fulfill({ path: path.join(root, 'frontend/src/Content/Images/author-placeholder-muted.png'), contentType: 'image/png' });
+      }
       if (pathname === '/content/images/chaptarr-logo.svg') {
         return route.fulfill({ path: path.join(root, 'frontend/src/Content/Images/chaptarr-logo.svg'), contentType: 'image/svg+xml' });
       }
       if (pathname === '/') {
-        return route.fulfill({ contentType: 'text/html', body: '<!doctype html><style>html,body,#root{height:100%;margin:0}</style><link rel="stylesheet" href="/style.css"><div id="root"></div><div id="portal-root"></div><script>window.Chaptarr={isProduction:true,instanceName:"Fixture",apiRoot:"/api/v1",apiKey:"fixture",urlBase:""};</script><script src="/fixture.js"></script>' });
+        return route.fulfill({ contentType: 'text/html', body: '<!doctype html><meta charset="utf-8"><style>html,body,#root{height:100%;margin:0}</style><link rel="stylesheet" href="/style.css"><div id="root"></div><div id="portal-root"></div><script>window.Chaptarr={isProduction:true,instanceName:"Fixture",apiRoot:"/api/v1",apiKey:"fixture",urlBase:""};</script><script src="/fixture.js"></script>' });
       }
       errors.push({ type: 'unmatched', method: request.method(), url: request.url() });
       return route.fulfill({ status: 404, body: '' });
@@ -321,6 +339,38 @@ for (const rule of config.module.rules) {
     assert.equal(bookGets().length - beforeFailure.books, 1);
     assert.deepEqual(await rememberedDefaults(), beforeFailure.remembered, 'Retry uses the draft without persisting existing-author choices');
     assert.deepEqual(expectedErrors, []);
+    for (const [mediaType, theme, width] of [['audiobook', 'light', 1440], ['ebook', 'dark', 390]]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.evaluate(({ side, selectedTheme }) => window.renderSeriesMembershipFixture(side, selectedTheme), { side: mediaType, selectedTheme: theme });
+      const firstGroup = page.locator('[data-series-fixture="first"]');
+      const secondGroup = page.locator('[data-series-fixture="second"]');
+      const rowTitles = () => firstGroup.locator('tbody tr').evaluateAll((rows) => rows.map((row) => row.querySelector('a').textContent));
+      const ascending = ['Position 0.25', 'Position 1', 'Shared membership title', 'Position 2.02', 'Position 2.2', 'Position 10', 'Position 序章'];
+      assert.deepEqual(await rowTitles(), ascending, 'Series ordering uses the numeric API value followed by the original provider text');
+      await firstGroup.getByRole('columnheader', { name: 'Number', exact: true }).click();
+      assert.deepEqual(await rowTitles(), [...ascending].reverse(), 'Descending reverses the same backend order and original-text tie break');
+      const before = await page.evaluate(() => window.readSeriesMembershipBooks());
+      const targetId = mediaType === 'audiobook' ? 501 : 601;
+      const otherId = mediaType === 'audiobook' ? 601 : 501;
+      const firstRow = firstGroup.locator('tbody tr').filter({ hasText: 'Shared membership title' });
+      const secondRow = secondGroup.locator('tbody tr').filter({ hasText: 'Shared membership title' });
+      const monitorWrites = () => requests.filter((request) => request.path === '/api/v1/book/monitor');
+      const count = monitorWrites().length;
+      await firstRow.getByTitle('Not monitored - Click to monitor', { exact: true }).click();
+      await secondRow.getByTitle('Monitored - Click to stop monitoring', { exact: true }).waitFor();
+      assert.equal(await firstRow.getByTitle('Monitored - Click to stop monitoring', { exact: true }).count(), 1);
+      assert.deepEqual(monitorWrites().slice(count).map(({ body }) => body), [{ bookIds: [targetId], monitored: true }]);
+      const after = await page.evaluate(() => window.readSeriesMembershipBooks());
+      assert.deepEqual(after.find(({ id }) => id === otherId), before.find(({ id }) => id === otherId), 'Monitoring a membership never changes the other media record');
+      await secondRow.getByTitle('Monitored - Click to stop monitoring', { exact: true }).click();
+      await firstRow.getByTitle('Not monitored - Click to monitor', { exact: true }).waitFor();
+      assert.deepEqual(monitorWrites().slice(count).map(({ body }) => body), [
+        { bookIds: [targetId], monitored: true }, { bookIds: [targetId], monitored: false }
+      ], 'Either series controls the same selected-format Book row');
+      const restored = await page.evaluate(() => window.readSeriesMembershipBooks());
+      assert.deepEqual(restored.find(({ id }) => id === otherId), before.find(({ id }) => id === otherId));
+      receipts.push({ case: 'Shared series membership monitoring and canonical position sort', mediaType, targetId, otherId, writes: monitorWrites().slice(count) });
+    }
     assert.deepEqual(errors, []);
     receipts.push({ case: 'held-failure-explicit-retry', beforeFailure, requests: requests.slice(-10) });
     for (const close of ['Cancel', 'X', 'Escape', 'Delete']) {
@@ -542,6 +592,77 @@ for (const rule of config.module.rules) {
       assert.equal(addedMissing.author[`${missing}QualityProfileId`], missing === 'ebook' ? 14 : 12);
       assert.deepEqual(addedMissing.author[`${missing}Tags`], [missing === 'ebook' ? 42 : 41]);
       receipts.push({ case: 'Both preserves configured side and permits new-side overrides', configured, sent });
+    }
+    assert.deepEqual(errors, []);
+    for (const media of ['audiobook', 'ebook']) {
+      for (const shared of [false, true]) {
+        for (const move of [false, true]) {
+          await page.setViewportSize({ width: shared ? 390 : 1280, height: 900 });
+          author = { ...author, id: 10, authorName: 'Walter Isaacson', syncMonitoredAcrossFormats: false,
+            path: '/fixture/audio/library/Walter Isaacson',
+            audiobookFolder: '/fixture/audio/library/Walter Isaacson',
+            ebookFolder: shared ? '/fixture/audio/library/Walter Isaacson' : '/fixture/ebook/library/Walter Isaacson',
+            audiobookRootFolderPath: '/fixture/audio', ebookRootFolderPath: shared ? '/fixture/audio' : '/fixture/ebook',
+            audiobookQualityProfileId: 11, ebookQualityProfileId: 13,
+            audiobookMetadataProfileId: 21, ebookMetadataProfileId: 23,
+            audiobookMonitorNewItems: 'none', ebookMonitorNewItems: 'none' };
+          const original = author[`${media}Folder`];
+          const target = original.replace('/library/', '/');
+          const before = mutations().length;
+          await page.evaluate((a) => window.openEditAuthorEntryFixture(a), author);
+          if (media === 'ebook') {
+            await page.getByRole('button', { name: /eBooks/ }).click();
+          }
+          const field = page.locator(`input[name="${media}Folder"]`);
+          assert.equal(await field.inputValue(), original, 'Edit displays the stored nested folder');
+          await field.fill(target);
+          await page.getByRole('button', { name: 'Save', exact: true }).click();
+          await page.getByText(strings.MoveAuthorFilesConfirm.replace('{originalPath}', original).replace('{destinationPath}', target), { exact: false }).waitFor();
+          assert.equal(mutations().length, before, 'Opening Move Files must not save');
+          assert.equal(await page.getByText(strings.MoveSharedAuthorFolderConfirm, { exact: true }).count(), shared ? 1 : 0);
+          if (artifacts && move) {
+            await page.screenshot({ path: path.join(artifacts, `edit-${media}-${shared ? 'shared-mobile' : 'separate-desktop'}.png`) });
+          }
+          await page.getByRole('button', { name: move ? strings.MoveAuthorYesMove : strings.MoveAuthorNoIllMoveMyself, exact: true }).click();
+          await page.waitForFunction(() => !window.readAuthorSyncState().isSaving);
+          const sent = mutations().slice(before);
+          assert.equal(sent.length, 1);
+          assert.equal(sent[0].body[`${media}Folder`], target);
+          assert.equal(Object.hasOwn(sent[0].body, `${media === 'ebook' ? 'audiobook' : 'ebook'}Folder`), false, 'Untouched path is omitted');
+          assert.equal(sent[0].query.moveFiles === 'true', move);
+          assert.equal(Object.hasOwn(sent[0].body, `${media}Path`), false);
+          receipts.push({ case: 'Stored author folder and explicit move choice', media, shared, move, sent });
+        }
+      }
+    }
+    author = { ...author, tags: [41], audiobookTags: [], ebookTags: [41] };
+    const beforeUnrelatedSave = mutations().length;
+    await page.evaluate((a) => window.openEditAuthorEntryFixture(a), author);
+    await page.locator('select[name="audiobookQualityProfileId"] option[value="12"]').waitFor({ state: 'attached' });
+    await page.locator('select[name="audiobookQualityProfileId"]').selectOption('12');
+    // Another client moved the author's folders after this dialog loaded its resource.
+    author = { ...author, path: '/fixture/audio/new/Walter Isaacson', audiobookFolder: '/fixture/audio/new/Walter Isaacson', ebookFolder: '/fixture/ebook/new/Walter Isaacson' };
+    await page.getByRole('button', { name: strings.Save, exact: true }).click();
+    await page.waitForFunction(() => !window.readAuthorSyncState().isSaving);
+    const unrelated = mutations().slice(beforeUnrelatedSave);
+    assert.equal(unrelated.length, 1);
+    assert.equal(Object.hasOwn(unrelated[0].body, 'tags'), false, 'A combined tag echo must not undo a cleared format');
+    assert.deepEqual(unrelated[0].body.audiobookTags, []);
+    assert.deepEqual(unrelated[0].body.ebookTags, [41]);
+    assert.equal(Object.hasOwn(unrelated[0].body, 'path'), true);
+    assert.equal(Object.hasOwn(unrelated[0].body, 'audiobookFolder'), false);
+    assert.equal(Object.hasOwn(unrelated[0].body, 'ebookFolder'), false);
+    const refreshed = await page.evaluate(() => window.readAuthorSyncState().items[0]);
+    assert.equal(refreshed.audiobookFolder, author.audiobookFolder);
+    assert.equal(refreshed.ebookFolder, author.ebookFolder);
+    receipts.push({ case: 'Unrelated full-resource save omits stale folders', sent: unrelated });
+    for (const shared of [false, true]) {
+      await page.evaluate((value) => window.openBulkMoveFixture(value), shared);
+      await page.locator('[class*="AuthorEditorFooter-inputContainer"]').filter({ hasText: strings.RootFolder }).getByRole('button').first().click();
+      await page.getByText('/fixture/audio-alt', { exact: false }).last().click();
+      await page.getByRole('button', { name: strings.MoveAuthorYesMove, exact: true }).waitFor();
+      assert.equal(await page.getByText(strings.MoveSharedAuthorFolderConfirm, { exact: true }).count(), shared ? 1 : 0);
+      await page.getByRole('button', { name: strings.MoveAuthorNoIllMoveMyself, exact: true }).click();
     }
     assert.deepEqual(errors, []);
     if (artifacts) {

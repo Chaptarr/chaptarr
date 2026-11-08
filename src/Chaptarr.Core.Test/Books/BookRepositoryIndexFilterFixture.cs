@@ -366,16 +366,61 @@ namespace Chaptarr.Core.Test.Books
             });
         }
 
+        [Test]
+        public void cutoff_pages_and_total_count_books_instead_of_parts(
+            [Values(DatabaseType.SQLite, DatabaseType.PostgreSQL)] DatabaseType databaseType,
+            [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType)
+        {
+            WithRepository(databaseType, repository =>
+            {
+                var profileId = mediaType == BookMediaType.Audiobook ? 601 : 501;
+                var profileType = mediaType == BookMediaType.Audiobook ? ProfileType.Audiobook : ProfileType.Ebook;
+                var qualities = new List<QualitiesBelowCutoff> { new(profileId, profileType, new[] { 1 }) };
+                var page = repository.BooksWhereCutoffUnmet(new PagingSpec<Book> { Page = 1, PageSize = 5 }, qualities);
+                Assert.That(page.TotalRecords, Is.EqualTo(1));
+                Assert.That(page.Records.Select(book => book.Id), Is.EqualTo(new[] { 3 }));
+                Assert.That(page.TotalRecords, Is.LessThanOrEqualTo(5));
+                qualities[0] = new QualitiesBelowCutoff(profileId, profileType, new[] { 1, 2 });
+                page = repository.BooksWhereCutoffUnmet(new PagingSpec<Book> { Page = 2, PageSize = 1 }, qualities);
+                Assert.That(page.TotalRecords, Is.EqualTo(2));
+                Assert.That(page.Records.Select(book => book.Id), Is.EqualTo(new[] { 4 }));
+            }, seed: connection =>
+            {
+                connection.Execute("UPDATE \"Books\" SET \"MediaType\" = @media WHERE \"Id\" IN (3, 4)", new { media = (int)mediaType });
+                for (var part = 1; part < 6; part++)
+                {
+                    connection.Execute(@"INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""MediaType"", ""Size"", ""Quality"")
+                        SELECT @id, ""EditionId"", ""MediaType"", ""Size"", ""Quality"" FROM ""BookFiles"" WHERE ""Id"" = 300", new { id = 300 + part });
+                }
+            });
+        }
+
+        [TestCase(DatabaseType.SQLite)]
+        [TestCase(DatabaseType.PostgreSQL)]
+        public void cutoff_sort_on_child_table_falls_back_to_book_id(DatabaseType databaseType)
+        {
+            WithRepository(databaseType, repository =>
+            {
+                var qualities = new List<QualitiesBelowCutoff> { new(501, ProfileType.Ebook, new[] { 1, 2 }) };
+                var page = repository.BooksWhereCutoffUnmet(new PagingSpec<Book>
+                {
+                    Page = 1, PageSize = 5, SortKey = "editions.title", SortDirection = SortDirection.Descending
+                }, qualities);
+                Assert.That(page.TotalRecords, Is.EqualTo(2));
+                Assert.That(page.Records.Select(book => book.Id), Is.EqualTo(new[] { 4, 3 }));
+            }, seed: connection => connection.Execute("UPDATE \"Editions\" SET \"Title\" = CASE WHEN \"BookId\" = 3 THEN 'Zulu' ELSE 'Alpha' END"));
+        }
+
         private static void WithRepository(Action<BookRepository> action)
         {
             WithRepository(DatabaseType.SQLite, action);
         }
 
-        private static void WithRepository(DatabaseType databaseType, Action<BookRepository> action, bool includeLibraryRows = false)
+        private static void WithRepository(DatabaseType databaseType, Action<BookRepository> action, bool includeLibraryRows = false, Action<IDbConnection> seed = null)
         {
             if (databaseType == DatabaseType.PostgreSQL)
             {
-                WithPostgresRepository(action, includeLibraryRows);
+                WithPostgresRepository(action, includeLibraryRows, seed);
                 return;
             }
 
@@ -396,6 +441,7 @@ namespace Chaptarr.Core.Test.Books
                     connection.Execute("PRAGMA synchronous = OFF;");
                     CreateSchema(connection, databaseType);
                     SeedBooks(connection, databaseType);
+                    seed?.Invoke(connection);
                     if (includeLibraryRows)
                     {
                         SeedLibraryFilterBooks(connection, databaseType);
@@ -420,7 +466,7 @@ namespace Chaptarr.Core.Test.Books
             }
         }
 
-        private static void WithPostgresRepository(Action<BookRepository> action, bool includeLibraryRows)
+        private static void WithPostgresRepository(Action<BookRepository> action, bool includeLibraryRows, Action<IDbConnection> seed)
         {
             var adminConnectionString = Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING");
             if (string.IsNullOrWhiteSpace(adminConnectionString))
@@ -448,6 +494,7 @@ namespace Chaptarr.Core.Test.Books
                     connection.Open();
                     CreateSchema(connection, DatabaseType.PostgreSQL);
                     SeedBooks(connection, DatabaseType.PostgreSQL);
+                    seed?.Invoke(connection);
                     if (includeLibraryRows)
                     {
                         SeedLibraryFilterBooks(connection, DatabaseType.PostgreSQL);
@@ -499,11 +546,12 @@ namespace Chaptarr.Core.Test.Books
                 );
             ");
 
-            connection.Execute(@"
+            connection.Execute($@"
                 CREATE TABLE ""Editions"" (
+                    ""Title"" TEXT NULL,
                     ""Id"" INTEGER PRIMARY KEY,
                     ""BookId"" INTEGER NOT NULL,
-                    ""Monitored"" INTEGER NOT NULL
+                    ""Monitored"" {booleanType} NOT NULL
                 );
             ");
 
@@ -554,19 +602,19 @@ namespace Chaptarr.Core.Test.Books
                 oldRelease
             });
 
-            connection.Execute(@"
+            connection.Execute($@"
                 INSERT INTO ""Editions"" (""Id"", ""BookId"", ""Monitored"")
                 VALUES
-                    (10, 1, 1),
-                    (11, 1, 1),
-                    (20, 2, 1),
-                    (30, 3, 1),
-                    (40, 4, 1),
-                    (50, 5, 1),
-                    (60, 6, 1),
-                    (70, 7, 1),
-                    (80, 8, 1),
-                    (81, 8, 1);
+                    (10, 1, {trueValue}),
+                    (11, 1, {trueValue}),
+                    (20, 2, {trueValue}),
+                    (30, 3, {trueValue}),
+                    (40, 4, {trueValue}),
+                    (50, 5, {trueValue}),
+                    (60, 6, {trueValue}),
+                    (70, 7, {trueValue}),
+                    (80, 8, {trueValue}),
+                    (81, 8, {trueValue});
             ");
 
             connection.Execute(@"
@@ -595,7 +643,7 @@ namespace Chaptarr.Core.Test.Books
                     (12, 40, 'Unmonitored Ebook Empty', 'unmonitored ebook empty', {(int)BookMediaType.Ebook}, {falseValue}, {falseValue}, NULL),
                     (13, 40, 'Wrong Side Audio Flag', 'wrong side audio flag', {(int)BookMediaType.Audiobook}, {falseValue}, {trueValue}, NULL),
                     (14, 40, 'Wrong Side Ebook Flag', 'wrong side ebook flag', {(int)BookMediaType.Ebook}, {trueValue}, {falseValue}, NULL);
-                INSERT INTO ""Editions"" (""Id"", ""BookId"", ""Monitored"") VALUES (90, 9, 1), (100, 10, 1), (110, 11, 1), (120, 12, 1);
+                INSERT INTO ""Editions"" (""Id"", ""BookId"", ""Monitored"") VALUES (90, 9, {trueValue}), (100, 10, {trueValue}), (110, 11, {trueValue}), (120, 12, {trueValue});
                 INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""MediaType"", ""Size"", ""Quality"")
                 VALUES
                     (900, 90, 'ebook', 900, NULL),

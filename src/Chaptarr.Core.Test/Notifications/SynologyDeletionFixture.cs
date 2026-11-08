@@ -31,7 +31,7 @@ namespace Chaptarr.Core.Test.Notifications
             {
                 calls.Add((method.Name, (string)args[0]));
                 return null;
-            }), AuthorDeletionSafetyFixture.Proxy<IDiskProvider>((_, _) => false), new CacheManager())
+            }), AuthorDeletionSafetyFixture.Proxy<IDiskProvider>((_, _) => false), new CacheManager(), new Chaptarr.Core.Test.Common.MemoryPendingNotifications())
             {
                 Definition = new NotificationDefinition { Settings = new SynologyIndexerSettings { UpdateLibrary = updateLibrary } }
             };

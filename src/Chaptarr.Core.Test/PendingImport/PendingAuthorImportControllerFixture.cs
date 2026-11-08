@@ -111,6 +111,7 @@ namespace Chaptarr.Core.Test.PendingImport
             public void ScheduleRetry(PendingAuthorImport item, string error) => throw new NotImplementedException();
             public bool IsActiveRequest(int id, long version) => true;
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void RetryNow(int id) => throw new NotImplementedException();
             public void CleanupOldCompleted() => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();

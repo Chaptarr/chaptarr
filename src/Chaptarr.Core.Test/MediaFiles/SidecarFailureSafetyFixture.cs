@@ -4,6 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using NLog;
+using NLog.Config;
+using NLog.Targets;
 using NUnit.Framework;
 using NzbDrone.Common;
 using NzbDrone.Common.Disk;
@@ -17,6 +19,7 @@ using NzbDrone.Core.Extras.Metadata;
 using NzbDrone.Core.Extras.Files;
 using NzbDrone.Core.Extras.Metadata.Consumers.AudioBookShelf;
 using NzbDrone.Core.Extras.Metadata.Files;
+using NzbDrone.Core.Extras.Others;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Events;
@@ -43,6 +46,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<MetadataFile> Rows { get; } = new();
             public List<string> PersistedPaths { get; } = new();
             public IDiskProvider Disk { get; }
+            private readonly LogFactory _logFactory = new();
+            public MemoryTarget Log { get; } = new() { Layout = "${level}|${message}" };
+            public Logger Logger { get; }
             public Action<string, string> BeforeMove { get; set; } = (_, _) => { };
             public Action<string> BeforeDelete { get; set; } = _ => { };
             public bool FailUpsert { get; set; }
@@ -55,8 +61,12 @@ namespace Chaptarr.Core.Test.MediaFiles
             public Sandbox()
             {
                 Directory.CreateDirectory(Temp);
+                var logging = new LoggingConfiguration();
+                logging.AddRule(LogLevel.Warn, LogLevel.Fatal, Log);
+                _logFactory.Configuration = logging;
+                Logger = _logFactory.GetLogger(nameof(SidecarFailureSafetyFixture));
                 Author = new Author { Id = 1, Name = "Synthetic Author", Path = P(@"ebooks\Author"), EbookPath = P(@"ebooks\Author"), AudiobookPath = P(@"audio\Author"), EbookRootFolderPath = P("ebooks"), AudiobookRootFolderPath = P("audio") };
-                var realDisk = new NzbDrone.Windows.Disk.DiskProvider();
+                var realDisk = Chaptarr.Core.Test.Common.RealDiskProvider.Create(Logger);
                 Disk = Proxy<IDiskProvider>((m, a) =>
                 {
                     foreach (var path in a.OfType<string>())
@@ -113,7 +123,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 });
                 var factory = Proxy<IMetadataFactory>((m, a) => m.Name == "GetAvailableProviders" ? new List<IMetadata> { new AudioBookShelfMetadata(null, null, null) } : throw new NotImplementedException(m.Name));
                 var config = Proxy<IConfigService>((m, a) => m.Name == "get_CopyUsingHardlinks" ? Hardlinks : throw new NotImplementedException(m.Name));
-                new MetadataService(config, Disk, null, null, null, factory, null, null, null, metadataFiles, null, LogManager.GetCurrentClassLogger()).MoveFilesAfterRename(Author, files.Select(item => new RenamedBookFile
+                new MetadataService(config, Disk, null, null, null, factory, null, null, null, metadataFiles, null, Logger).MoveFilesAfterRename(Author, files.Select(item => new RenamedBookFile
                 {
                     BookFile = item.File,
                     PreviousPath = P(item.Previous),
@@ -121,7 +131,77 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }).ToList());
             }
 
-            public void Dispose() => Directory.Delete(Temp, true);
+            public void Dispose()
+            {
+                _logFactory.Dispose();
+                Directory.Delete(Temp, true);
+            }
+        }
+
+        [TestCase("Dune.cue", "Dune - Frank Herbert.cue")]
+        [TestCase("Dune.en.srt", "Dune - Frank Herbert.en.srt")]
+        [TestCase("reading-notes.json", "reading-notes.json")]
+        [TestCase("Duneology.txt", "Duneology.txt")]
+        [TestCase("沙丘.cue", "沙丘 - 弗兰克.cue")]
+        public void organize_renames_only_extras_based_on_the_old_media_filename(string name, string expected)
+        {
+            using var s = new Sandbox();
+            var oldStem = name.StartsWith("沙丘", StringComparison.Ordinal) ? "沙丘" : "Dune";
+            var newStem = oldStem == "沙丘" ? "沙丘 - 弗兰克" : "Dune - Frank Herbert";
+            var file = s.FileAt(@"ebooks\Author\New\" + newStem + ".epub");
+            var source = s.Seed(@"ebooks\Author\Old\" + name, "owned sidecar sentinel");
+            var row = new OtherExtraFile { Id = 5, AuthorId = 1, BookId = 1, BookFileId = file.Id,
+                RelativePath = (@"Old\" + name).AsOsAgnostic(), Extension = Path.GetExtension(name) };
+            var writes = 0;
+            var service = Proxy<IOtherExtraFileService>((m, a) =>
+            {
+                if (m.Name == nameof(IOtherExtraFileService.GetFilesByAuthor)) return new List<OtherExtraFile> { row };
+                if (m.Name == nameof(IOtherExtraFileService.Upsert)) { writes++; return null; }
+                throw new NotImplementedException(m.Name);
+            });
+            var config = Proxy<IConfigService>((m, a) => m.Name == "get_CopyUsingHardlinks" ? false : throw new NotImplementedException(m.Name));
+            var moved = new OtherExtraService(config, s.Disk, null, service, null, null, s.Logger).MoveFilesAfterRename(s.Author,
+                new List<RenamedBookFile> { new() { BookFile = file, PreviousPath = s.P(@"ebooks\Author\Old\" + oldStem + ".epub"), PreviousAuthorPath = s.Author.EbookPath } });
+            Assert.That(moved.Count(), Is.EqualTo(1));
+            Assert.That(File.ReadAllText(s.P(@"ebooks\Author\New\" + expected)), Is.EqualTo("owned sidecar sentinel"));
+            Assert.That(File.Exists(source), Is.False);
+            Assert.That(row.RelativePath, Is.EqualTo((@"New\" + expected).AsOsAgnostic()));
+            Assert.That(writes, Is.EqualTo(1));
+        }
+
+        [TestCase("cover.jpg")]
+        [TestCase("metadata.json")]
+        public void unresolved_tracked_metadata_warns_once_per_row_not_per_part(string name)
+        {
+            using var s = new Sandbox();
+            var first = s.FileAt(@"ebooks\Author\New\01.epub");
+            var second = s.FileAt(@"ebooks\Author\New\02.epub", 2);
+            var sidecar = s.Seed(@"scattered\Old\" + name, "keep sidecar");
+            var row = s.Track(@"Old\" + name, name);
+            var original = row.RelativePath;
+            s.MoveSidecars((first, @"scattered\Old\01.epub"), (second, @"scattered\Old\02.epub"));
+            Assert.That(File.ReadAllText(sidecar), Is.EqualTo("keep sidecar"));
+            Assert.That(row.RelativePath, Is.EqualTo(original));
+            Assert.That(s.PersistedPaths, Is.Empty);
+            var warning = s.Log.Logs.Single(line => line.StartsWith("Warn|Could not locate tracked sidecar"));
+            Assert.That(warning, Does.Contain(name).And.Contain("row 1"));
+        }
+
+        [Test]
+        public void unresolved_tracked_other_extra_warns_and_keeps_its_record()
+        {
+            using var s = new Sandbox();
+            var file = s.FileAt(@"ebooks\Author\New\book.epub");
+            var source = s.Seed(@"scattered\Old\book.opf", "keep opf");
+            var row = new OtherExtraFile { Id = 5, AuthorId = 1, BookId = 1, BookFileId = file.Id, RelativePath = @"Old\book.opf".AsOsAgnostic(), Extension = ".opf" };
+            var service = Proxy<IOtherExtraFileService>((m, a) => m.Name == nameof(IOtherExtraFileService.GetFilesByAuthor)
+                ? new List<OtherExtraFile> { row } : throw new InvalidOperationException("Unexpected sidecar write"));
+            var moved = new OtherExtraService(null, s.Disk, null, service, null, null, s.Logger).MoveFilesAfterRename(s.Author,
+                new List<RenamedBookFile> { new() { BookFile = file, PreviousPath = s.P(@"scattered\Old\book.epub"), PreviousAuthorPath = s.Author.EbookPath } });
+            Assert.That(moved, Is.Empty);
+            Assert.That(File.ReadAllText(source), Is.EqualTo("keep opf"));
+            Assert.That(row.RelativePath, Is.EqualTo(@"Old\book.opf".AsOsAgnostic()));
+            Assert.That(s.Log.Logs.Count(line => line.StartsWith("Warn|Could not locate tracked sidecar")), Is.EqualTo(1));
         }
 
         [TestCase("cover.jpg")]
@@ -155,6 +235,42 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             Assert.That(Directory.GetFiles(s.P("recycle"), "cover.jpg", SearchOption.AllDirectories)
                 .Select(File.ReadAllText), Is.EquivalentTo(new[] { "audio cover", "ebook cover" }));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void importing_a_replacement_sidecar_recycles_the_old_bytes(bool transferFails)
+        {
+            using var s = new Sandbox();
+            var logger = LogManager.GetCurrentClassLogger();
+            var source = s.Seed(@"incoming\Dune.nfo", "new sidecar");
+            var bookPath = s.Seed(@"ebooks\Author\Dune\Dune.epub", "book");
+            var oldPath = s.Seed(@"ebooks\Author\Dune\Dune.nfo", "user edited notes");
+            var bin = s.P("bin");
+            var config = Proxy<IConfigService>((m, a) => m.Name == "get_RecycleBin" ? bin : false);
+            var transfer = new DiskTransferService(s.Disk, logger);
+            var recycle = new RecycleBinProvider(transfer, s.Disk, config, logger);
+            var importTransfer = Proxy<IDiskTransferService>((m, a) =>
+            {
+                Assert.That(a[3], Is.False, "No implicit overwrite after recycling");
+                if (transferFails) throw new IOException("Synthetic transfer failure");
+                return transfer.TransferFile((string)a[0], (string)a[1], (TransferMode)a[2], (bool)a[3]);
+            });
+            var stored = 0;
+            var service = new OtherExtraService(config, s.Disk, importTransfer,
+                Proxy<IOtherExtraFileService>((m, a) => { stored++; return null; }),
+                Proxy<IMediaFileAttributeService>((m, a) => null), recycle, logger);
+            var file = new BookFile { Id = 1, Path = bookPath, MediaType = "ebook", Edition = new Edition { BookId = 1 } };
+            void Import() => service.Import(s.Author, file, source, ".nfo", readOnly: false, replaceExisting: true);
+
+            if (transferFails) Assert.Throws<IOException>(Import);
+            else Import();
+
+            Assert.That(File.ReadAllText(Directory.GetFiles(bin, "*", SearchOption.AllDirectories).Single()), Is.EqualTo("user edited notes"));
+            Assert.That(File.ReadAllText(bookPath), Is.EqualTo("book"));
+            Assert.That(File.Exists(source), Is.EqualTo(transferFails));
+            Assert.That(stored, Is.EqualTo(transferFails ? 0 : 1));
+            if (!transferFails) Assert.That(File.ReadAllText(oldPath), Is.EqualTo("new sidecar"));
         }
 
         [TestCase(false)]
@@ -406,7 +522,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 if (path.PathEquals(source)) File.WriteAllText(sentinel, "concurrent arrival");
             };
-            var rename = new RenameBookFileService(null, null, null, null, s.Disk, LogManager.GetCurrentClassLogger());
+            var rename = new RenameBookFileService(null, null, null, null, s.Disk, LogManager.GetCurrentClassLogger(), null);
             typeof(RenameBookFileService).GetMethod("CleanupEmptySourceFolders", BindingFlags.Instance | BindingFlags.NonPublic)
                 .Invoke(rename, new object[] { new List<(string, string)> { (oldFile, s.Author.EbookPath) } });
             Assert.That(File.Exists(sentinel), Is.True, "The final empty-folder deletion must refuse newly nonempty folders");
@@ -467,7 +583,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var events = new Events();
             var roots = Proxy<IRootFolderService>((m, a) => new RootFolder { Path = s.P("ebooks"), FolderType = FolderType.Mixed, PlaceEbooksWithAudiobooks = true });
             var books = Proxy<IBookService>((m, a) => new List<Book> { first.Edition.Book });
-            var media = Proxy<IMediaFileService>((m, a) => m.Name == nameof(IMediaFileService.GetFilesByBook) ? files : null);
+            var media = Proxy<IMediaFileService>((m, a) => m.Name == nameof(IMediaFileService.GetFilesByBooks) ? files : null);
             var mover = Proxy<IMoveBookFiles>((m, a) =>
             {
                 if (m.Name == nameof(IMoveBookFiles.GetOrganizeDestination)) return new BookFileMovePlan { CanOrganize = true, SourceAuthorFolderPath = s.Author.EbookPath, DestinationPath = target, ReplicaPaths = new List<string>() };
@@ -480,7 +596,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var audio = new Book { Id = 3, AuthorId = 1, Author = s.Author, MediaType = BookMediaType.Audiobook, RemoteProviderIds = new HashSet<string> { "hc:123" } };
             var imported = new BookFile { Author = s.Author, MediaType = "audiobook", Quality = new QualityModel(Quality.M4B) };
             new EbookColocateOnAudiobookImportHandler(roots, books, media, mover, s.Disk, events, LogManager.GetCurrentClassLogger())
-                .Handle(new TrackImportedEvent(new LocalBook { Author = s.Author, Book = audio }, imported, new List<BookFile>(), true, null));
+                .Handle(new BookImportedEvent(s.Author, audio, new List<BookFile> { imported }, new List<BookFile>(), true, null));
             Assert.That(File.Exists(target), Is.True);
             Assert.That(File.Exists(second.Path), Is.True);
             Assert.That(events.Published.OfType<BookFileRenamedEvent>().Count(), Is.EqualTo(1));
@@ -518,7 +634,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 return null;
             });
             var service = new MetadataFileService(repo, null, s.Disk, recycle, LogManager.GetCurrentClassLogger());
-            service.DeleteBookFiles(colocated.Edition.Book, new[] { colocated.Path });
+            service.DeleteBookFiles(colocated.Edition.Book);
             service.Handle(new BookDeletedEvent(colocated.Edition.Book, true, false, filesAlreadyDeleted: true));
             Assert.Multiple(() =>
             {

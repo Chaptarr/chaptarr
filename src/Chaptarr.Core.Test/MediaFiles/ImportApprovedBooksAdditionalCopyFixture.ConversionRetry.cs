@@ -71,7 +71,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var tracking = new ConversionTrackingService(events);
                     var converter = new SuccessfulM4bConversionService();
                     var repository = new ConversionJobRepository(outage.Database, events);
-                    var jobs = new ConversionJobService(repository, converter, tracking, Proxy<IManageCommandQueue>(), CreateConfigService(), logger);
+                    var jobs = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(), repository, converter, tracking, Proxy<IManageCommandQueue>(), CreateConfigService(), logger);
                     var (profile, author, book, edition) = CreateAudiobookConversionGraph(299);
                     author.AudiobookRootFolderPath = Path.Combine(root, "library");
                     author.AudiobookPath = author.AudiobookRootFolderPath;
@@ -122,10 +122,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                                 fileRows.Insert(concurrent);
                                 files.FilesByPath[concurrent.Path] = concurrent;
                             }
-                            else if (refusal == "commit-retry" && commitAttempts == 2)
-                            {
-                                RejectFileInsert();
-                            }
+
 
                             if (refusal is "commit" or "commit-retry" or "committed-event" or "database-outage")
                             {
@@ -230,7 +227,11 @@ namespace Chaptarr.Core.Test.MediaFiles
                     {
                         var existing = new BookFile { Id = 123, EditionId = edition.Id, Edition = edition, Path = Path.Combine(root, "old.m4b"), Quality = new QualityModel(Quality.M4B) };
                         files.FilesByBook.Add(existing);
-                        if (refusal == "already-tracked") files.FilesByPath[request.OutputPath] = existing;
+                        if (refusal == "already-tracked")
+                        {
+                            existing.Path = request.OutputPath;
+                            files.FilesByPath[existing.Path] = existing;
+                        }
                         else events.QueueUpdated = () =>
                         {
                             if (tracking.Get(item.DownloadId)?.Message == "Using retained M4B") File.WriteAllText(destination, "occupied after conversion preflight");
@@ -280,9 +281,17 @@ namespace Chaptarr.Core.Test.MediaFiles
                     }
                     else if (refusal is "commit" or "commit-retry")
                     {
-                        var failure = Assert.Catch<DbException>(() => Import());
-                        Assert.That(failure.Message, Does.Contain("converted file save refused"));
-                        Assert.That(commitAttempts, Is.EqualTo(refusal == "commit" ? 1 : 2));
+                        if (refusal == "commit")
+                        {
+                            var failure = Assert.Catch<DbException>(() => Import());
+                            Assert.That(failure.Message, Does.Contain("converted file save refused"));
+                        }
+                        else
+                        {
+                            results = Import();
+                            Assert.That(results.Single().Errors.Single(), Does.Contain("Existing files changed"));
+                        }
+                        Assert.That(commitAttempts, Is.EqualTo(1));
                         Assert.That(File.Exists(destination), Is.False, "The failed transaction must return the M4B to its work folder");
                         var retainedHistory = history.FindByDownloadId(item.DownloadId).Single(row =>
                             row.EventType == EntityHistoryEventType.BookFileConverted && string.IsNullOrWhiteSpace(row.GetDataValue("ImportedPath")));
@@ -324,7 +333,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     if (refusal is "commit" or "commit-retry")
                     {
                         using var connection = database.OpenConnection();
-                        connection.Execute(postgres
+                        if (refusal == "commit") connection.Execute(postgres
                             ? "DROP TRIGGER reject_converted_file ON \"BookFiles\"; DROP FUNCTION reject_converted_file();"
                             : "DROP TRIGGER reject_converted_file;");
                         fileRows.DeleteMany(fileRows.All().Select(file => file.Id));

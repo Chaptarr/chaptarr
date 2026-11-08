@@ -94,7 +94,7 @@ namespace Chaptarr.Core.Test.Books
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
-                if (targetMethod?.Name == nameof(IAuthorService.GetAllAuthors))
+                if (targetMethod?.Name == nameof(IAuthorService.GetExistingAuthors))
                 {
                     return Authors;
                 }
@@ -128,7 +128,7 @@ namespace Chaptarr.Core.Test.Books
                 if (targetMethod?.Name == nameof(ISeriesService.GetByAuthorId))
                 {
                     RequestedAuthorIds.Add((int)args[0]);
-                    return Responses[RequestedAuthorIds.Count - 1];
+                    return Responses[Math.Min(RequestedAuthorIds.Count - 1, Responses.Count - 1)];
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement ISeriesService.{targetMethod?.Name}");
@@ -217,13 +217,64 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(_authorInfo.RequestedIds.Count, Is.EqualTo(includeSnapshot ? 0 : 1));
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task triggers_during_import_apply_the_newest_snapshot_even_after_a_failure(bool firstFails)
+        {
+            var subject = BuildSubject();
+            using var entered = new ManualResetEventSlim();
+            using var release = new ManualResetEventSlim();
+            var applied = new System.Collections.Concurrent.ConcurrentQueue<Author>();
+            var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var first = new Author { Name = "First", Series = new List<Series> { new Series { GoodreadsSeriesId = "gr:1" } } };
+            var middle = new Author { Name = "Middle", Series = first.Series };
+            var latest = new Author { Name = "Latest", Series = first.Series };
+            _refreshSeries.OnRefresh = snapshot =>
+            {
+                applied.Enqueue(snapshot);
+                if (ReferenceEquals(snapshot, first))
+                {
+                    entered.Set();
+                    if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Test did not release import.");
+                    if (firstFails) throw new InvalidOperationException("Fixture series failure");
+                }
+                else
+                {
+                    completed.TrySetResult();
+                }
+            };
+            try
+            {
+                // Events are synchronous during author refresh. Scheduling must return without
+                // trying to take this author lock on another thread and waiting for its worker.
+                lock (BookService.GetWantedEditionLock(_author.Id))
+                {
+                    subject.Handle(new AuthorRefreshCompleteEvent(_author, first));
+                }
+
+                Assert.That(entered.Wait(TimeSpan.FromSeconds(10)), Is.True);
+                subject.Handle(new AuthorRefreshCompleteEvent(_author, middle));
+                subject.Handle(new AuthorRefreshCompleteEvent(_author, latest));
+            }
+            finally
+            {
+                release.Set();
+            }
+
+            await completed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.That(applied, Is.EqualTo(new[] { first, latest }));
+            Assert.That(_authorInfo.RequestedIds, Is.Empty, "Snapshots avoid another metadata-server request.");
+        }
+
         public class RefreshSeriesProxy : DispatchProxy
         {
             public TaskCompletionSource<Author> Received { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            public Action<Author> OnRefresh { get; set; }
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IRefreshSeriesService.RefreshSeriesInfo))
                 {
+                    OnRefresh?.Invoke((Author)args[2]);
                     Received.TrySetResult((Author)args[2]);
                     return false;
                 }

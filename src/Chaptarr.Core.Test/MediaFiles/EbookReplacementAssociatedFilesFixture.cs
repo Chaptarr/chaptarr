@@ -119,7 +119,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                     InterfaceProxy.Proxy<IExtraFileRepository<MetadataFile>>((_, _) => new List<MetadataFile>()),
                     InterfaceProxy.Proxy<IExtraFileRepository<OtherExtraFile>>((_, _) => new List<OtherExtraFile>()),
                     InterfaceProxy.Proxy<IAuthorRepository>((_, _) => new List<Author>()),
-                    InterfaceProxy.Proxy<IBookRepository>((_, _) => new List<Book>()));
+                    InterfaceProxy.Proxy<IBookRepository>((_, _) => new List<Book>()),
+                    InterfaceProxy.Proxy<IConfigService>((_, _) => string.Empty));
                 Assert.That(preview.Describe(new[] { new BookFile
                 {
                     Id = 40, Path = destination, Edition = edition, ReplicaPaths = new List<string> { replica }
@@ -146,7 +147,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 if (!retainedRow)
                 {
                     var deleted = new BookFile { Id = 40, Path = destination, ReplicaPaths = new List<string> { replica } };
-                    var deletion = new MediaFileDeletionService(disk, recycle, null, null, null, null, null, null, LogManager.GetCurrentClassLogger());
+                    var deletion = new MediaFileDeletionService(disk, recycle, null, null, null, null, null, null, LogManager.GetCurrentClassLogger(), metadataFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Metadata.Files.MetadataFile>(), otherFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Others.OtherExtraFile>(), metadataFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Metadata(), otherFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Other());
                     deletion.Handle(new BookFileDeletedEvent(deleted, DeleteMediaFileReason.Upgrade, Array.Empty<string>()));
                     Assert.That(File.ReadAllText(replica), Is.EqualTo("old ebook copy"), "An unconfirmed copy must survive event cleanup");
                     deletion.Handle(new BookFileDeletedEvent(deleted, DeleteMediaFileReason.Upgrade, new[] { replica }));

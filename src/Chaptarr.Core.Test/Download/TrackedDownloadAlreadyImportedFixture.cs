@@ -48,7 +48,30 @@ namespace Chaptarr.Core.Test.Download
             }), "Transfer failed");
             var result = TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { failed }, history: history);
             Assert.That(result.Complete, Is.False);
-            Assert.That(result.Missing.Single().Title, Is.EqualTo(selected));
+            Assert.That(result.Missing.Single().Title, Is.EqualTo(System.IO.Path.GetFileName(selected)));
+            Assert.That(result.Missing.Single().SourcePath, Is.EqualTo(selected));
+        }
+
+        [Test]
+        public void missing_inventory_status_uses_distinct_relative_paths_without_host_directories()
+        {
+            var tracked = new TrackedDownload
+            {
+                DownloadItem = new DownloadClientItem
+                {
+                    DownloadId = "relative-inventory",
+                    OutputPath = new OsPath("/downloads/book"),
+                    FilePaths = new() { "/downloads/book/disc-1/01.mp3", "/downloads/book/disc-2/01.mp3", "/elsewhere/03.mp3" }
+                },
+                RemoteBook = new RemoteBook { Books = new() { new Book { Id = 1, MediaType = BookMediaType.Audiobook } } }
+            };
+            Assert.That(new TrackedDownloadAlreadyImported(LogManager.GetCurrentClassLogger()).IsImported(tracked, new()), Is.False);
+            Assert.That(tracked.StatusMessages.Select(message => message.Title),
+                Is.EquivalentTo(new[] { "disc-1/01.mp3", "disc-2/01.mp3", "03.mp3" }));
+            var json = System.Text.Json.JsonSerializer.Serialize(tracked.StatusMessages);
+            Assert.That(json, Does.Not.Contain("SourcePath"));
+            Assert.That(json, Does.Not.Contain("/downloads/"));
+            Assert.That(json, Does.Not.Contain("/elsewhere/"));
         }
 
         [TestCase(false, false, false)]
@@ -110,7 +133,7 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked, history: history).Complete, Is.True);
             var result = TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { failed }, history: history);
             Assert.That(result.Complete, Is.False);
-            Assert.That(result.Missing.Single().Title, Is.EqualTo(alternativePath));
+            Assert.That(result.Missing.Single().Title, Is.EqualTo(System.IO.Path.GetFileName(alternativePath)));
 
             var skipped = new ImportDecision<LocalBook>(local);
             skipped.Reject(new NzbDrone.Core.DecisionEngine.Rejection("Skipped duplicate ebook format")
@@ -156,7 +179,7 @@ namespace Chaptarr.Core.Test.Download
                     SourceTitle = "Parts", Data = new Dictionary<string, string> { ["DroppedPath"] = "/downloads/book/01.mp3" } });
                 var subject = new TrackedDownloadAlreadyImported(logger);
                 Assert.That(subject.IsImported(tracked, histories.FindByDownloadId(original.DownloadId)), Is.False);
-                Assert.That(tracked.StatusMessages.Any(message => message.Title == "/downloads/book/02.mp3"), Is.True);
+                Assert.That(tracked.StatusMessages.Any(message => message.Title == "02.mp3"), Is.True);
                 if (conversion)
                 {
                     imported.Data["DroppedPath"] = "/conversion/generated.m4b";
@@ -193,7 +216,8 @@ namespace Chaptarr.Core.Test.Download
             var missing = new ImportResult(new ImportDecision<LocalBook>(new LocalBook { Path = unresolved }), "Selected file no longer exists");
             var result = TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { missing }, history: history);
             Assert.That(result.Complete, Is.False);
-            Assert.That(result.Missing.Single().Title, Is.EqualTo(unresolved));
+            Assert.That(result.Missing.Single().Title, Is.EqualTo(System.IO.Path.GetFileName(unresolved)));
+            Assert.That(result.Missing.Single().SourcePath, Is.EqualTo(unresolved));
             Assert.That(result.Missing.Single().Messages, Has.Member("Selected file no longer exists"));
         }
 

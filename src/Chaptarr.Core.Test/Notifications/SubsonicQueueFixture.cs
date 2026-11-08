@@ -71,7 +71,7 @@ namespace Chaptarr.Core.Test.Notifications
             Assert.That(notification.HasPendingQueue, Is.False);
         }
 
-        private static Subsonic Create(ISubsonicService service, ICacheManager cache, int id) => new Subsonic(service, cache)
+        private static Subsonic Create(ISubsonicService service, ICacheManager cache, int id) => new Subsonic(service, cache, Chaptarr.Core.Test.Common.MemoryPendingNotifications.For(cache))
         {
             Definition = new NotificationDefinition { Id = id, Settings = new SubsonicSettings { Notify = false, UpdateLibrary = true } }
         };

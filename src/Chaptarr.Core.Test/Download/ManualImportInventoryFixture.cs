@@ -65,7 +65,8 @@ namespace Chaptarr.Core.Test.Download
                 context.Import("one");
 
                 Assert.That(context.Tracked.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
-                Assert.That(context.Tracked.StatusMessages.Select(message => message.Title), Does.Contain(context.Source("two")));
+                Assert.That(context.Tracked.StatusMessages.Select(message => message.Title), Does.Contain(Path.GetFileName(context.Source("two"))));
+                Assert.That(context.Tracked.StatusMessages.Select(message => message.SourcePath), Does.Contain(context.Source("two")));
                 Assert.That(context.Events.OfType<DownloadCompletedEvent>(), Is.Empty);
                 Assert.That(File.Exists(context.Source("one")), Is.False);
                 Assert.That(context.Snapshots.Find(1, "manual-download").FilePaths, Does.Contain(context.Source("one")));
@@ -96,7 +97,8 @@ namespace Chaptarr.Core.Test.Download
                 context.Import("one");
 
                 Assert.That(context.Tracked.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
-                Assert.That(context.Tracked.StatusMessages.Select(message => message.Title), Does.Contain(context.Source("two")));
+                Assert.That(context.Tracked.StatusMessages.Select(message => message.Title), Does.Contain(Path.GetFileName(context.Source("two"))));
+                Assert.That(context.Tracked.StatusMessages.Select(message => message.SourcePath), Does.Contain(context.Source("two")));
                 Assert.That(context.Events.OfType<DownloadCompletedEvent>(), Is.Empty);
             });
         }
@@ -137,7 +139,8 @@ namespace Chaptarr.Core.Test.Download
             var completion = TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { imported, failed });
 
             Assert.That(completion.Complete, Is.False);
-            Assert.That(completion.Missing.Single().Title, Is.EqualTo("/elsewhere/two.mp3"));
+            Assert.That(completion.Missing.Single().Title, Is.EqualTo("two.mp3"));
+            Assert.That(completion.Missing.Single().SourcePath, Is.EqualTo("/elsewhere/two.mp3"));
             Assert.That(completion.Missing.Single().Messages, Does.Contain("Transfer failed"));
         }
 
@@ -156,7 +159,8 @@ namespace Chaptarr.Core.Test.Download
             var completion = TrackedDownloadAlreadyImported.Evaluate(tracked, new[] { imported }, new[] { preview });
 
             Assert.That(completion.Complete, Is.False);
-            Assert.That(completion.Missing.Single().Title, Is.EqualTo(preview.Path));
+            Assert.That(completion.Missing.Single().Title, Is.EqualTo(Path.GetFileName(preview.Path)));
+            Assert.That(completion.Missing.Single().SourcePath, Is.EqualTo(preview.Path));
         }
 
         private sealed class ImportContext : IDisposable

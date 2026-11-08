@@ -232,8 +232,8 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                 }
                 else
                 {
-                    completion.Missing.Add(new TrackedDownloadStatusMessage(source.Key,
-                        (errors.TryGetValue(source.Key, out var reasons) && reasons.Length > 0 ? reasons : new[] { "Source file has not been imported" }).ToList()));
+                    completion.Missing.Add(new TrackedDownloadStatusMessage(CompletedDownloadService.GetImportFileTitle(tracked, source.Key),
+                        (errors.TryGetValue(source.Key, out var reasons) && reasons.Length > 0 ? reasons : new[] { "Source file has not been imported" }).ToList()) { SourcePath = source.Key });
                 }
             }
 
@@ -246,10 +246,10 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             }
 
             var missingTargets = alternatives ? coveredBooks.Count != 1 : targets.Any(id => !coveredBooks.Contains(id));
-            if (missingTargets || completion.RequiredCount == 0 || coveredBooks.Count == 0)
+            if (completion.Missing.Count == 0 && (missingTargets || completion.RequiredCount == 0 || coveredBooks.Count == 0))
             {
                 completion.Missing.Add(new TrackedDownloadStatusMessage(tracked?.DownloadItem?.Title ?? string.Empty,
-                    "Import completion could not be proven for the requested files and books"));
+                    "Import completion could not be proven for the requested files and books") { IsCompletionFallback = true });
             }
 
             completion.Complete = completion.Missing.Count == 0;

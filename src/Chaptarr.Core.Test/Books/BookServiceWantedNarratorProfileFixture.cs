@@ -29,7 +29,7 @@ namespace Chaptarr.Core.Test.Books
     {
         [TestCase(false)]
         [TestCase(true)]
-        public void pending_partial_search_failure_persists_only_unqueued_intent_and_retry_searches_it_once(bool postgres)
+        public void pending_list_batch_failure_preserves_all_intent_and_retry_searches_it_once(bool postgres)
         {
             DualDatabaseFixture.Run(postgres, database =>
             {
@@ -75,13 +75,13 @@ namespace Chaptarr.Core.Test.Books
                 }
                 var accepted = new List<BookSearchCommand>();
                 var pushes = 0;
-                var rejectSecond = true;
+                var rejectBatch = true;
                 var queue = InterfaceProxy.Proxy<IManageCommandQueue>((method, args) =>
                 {
                     if (method.Name == nameof(IManageCommandQueue.Push) && args[0] is BookSearchCommand search)
                     {
                         pushes++;
-                        if (rejectSecond && pushes == 2) throw new InvalidOperationException("Injected queue rejection");
+                        if (rejectBatch) throw new InvalidOperationException("Injected queue rejection");
                         if ((CommandTrigger)args[2] != CommandTrigger.Unspecified) search.Trigger = (CommandTrigger)args[2];
                         accepted.Add(search);
                     }
@@ -106,21 +106,21 @@ namespace Chaptarr.Core.Test.Books
                 var retry = pendingRepository.GetActiveByProviderId("hc:9001");
                 Assert.That(retry, Is.Not.Null, $"Status={pendingRepository.GetByProviderId("hc:9001")?.OverallStatus}; error={pendingRepository.GetByProviderId("hc:9001")?.LastError}; accepted={accepted.Count}");
                 Assert.That(retry.OverallStatus, Is.EqualTo(PendingImportStatus.Retrying));
-                Assert.That(accepted, Has.Count.EqualTo(1));
-                Assert.That(accepted.Single().BookIds, Is.EquivalentTo(targets.Take(2).Select(book => book.Id)));
-                Assert.That(accepted.Single().Trigger, Is.EqualTo(CommandTrigger.Unspecified));
-                Assert.That(retry.AudiobookBooksToSearch, Is.EqualTo("[]"));
+                Assert.That(pushes, Is.EqualTo(1));
+                Assert.That(accepted, Is.Empty);
+                Assert.That(retry.AudiobookBooksToSearch, Does.Contain("hc:1001").And.Contain("hc:1002"));
                 Assert.That(retry.EbookBooksToSearch, Does.Contain("hc:1003"));
                 Assert.That(bookRepository.Get(targets.Select(book => book.Id)).Where(book => book.AddOptions.SearchForNewBook).Select(book => book.Id),
-                    Is.EqualTo(new[] { targets[2].Id }));
+                    Is.EquivalentTo(targets.Select(book => book.Id)));
                 retry.NextAttemptAt = DateTime.UtcNow.AddMinutes(-1);
                 pendingRepository.Update(retry);
-                rejectSecond = false;
+                rejectBatch = false;
                 handler.Execute(new ProcessPendingImportsCommand());
                 Assert.That(pendingRepository.GetActiveByProviderId("hc:9001"), Is.Null);
-                Assert.That(accepted, Has.Count.EqualTo(2));
-                Assert.That(accepted.Last().BookIds, Is.EqualTo(new[] { targets[2].Id }));
-                Assert.That(accepted.Last().Trigger, Is.EqualTo(CommandTrigger.Manual));
+                Assert.That(pushes, Is.EqualTo(2));
+                Assert.That(accepted, Has.Count.EqualTo(1));
+                Assert.That(accepted.Single().BookIds, Is.EquivalentTo(targets.Select(book => book.Id)));
+                Assert.That(accepted.Single().Trigger, Is.EqualTo(CommandTrigger.Unspecified));
                 Assert.That(bookRepository.Get(targets.Select(book => book.Id)).All(book => !book.AddOptions.SearchForNewBook), Is.True);
                 Assert.That(authors.Get(author.Id).EbookMonitored, Is.False);
             });
@@ -187,6 +187,7 @@ namespace Chaptarr.Core.Test.Books
                         case nameof(IAuthorService.FindByProviderId): return authors.All().FirstOrDefault();
                         case nameof(IAuthorService.GetAuthor): return authors.Get((int)args[0]);
                         case nameof(IAuthorService.GetExistingAuthors): return authors.Get((IEnumerable<int>)args[0]).ToList();
+                        case nameof(IAuthorService.GetAllAuthors): return authors.All().ToList();
                         case nameof(IAuthorService.GetAuthors): return authors.Get((IEnumerable<int>)args[0]).ToList();
                         case nameof(IAuthorService.AddAuthor): return authors.Insert((Author)args[0]);
                         case nameof(IAuthorService.UpdateAuthor): return authors.Update((Author)args[0]);
@@ -315,12 +316,12 @@ namespace Chaptarr.Core.Test.Books
                 var selector = new EditionSelector(logger);
                 var refreshEditions = new RefreshEditionService(editionService, InterfaceProxy.Proxy<IMetadataTagService>((_, _) => null), null, database, logger);
                 var refreshBooks = new RefreshBookService(books, authorService, roots, editionService, authorInfo, null,
-                    refreshEditions, files, null, events, null, selector, filter, covers, logger);
+                    refreshEditions, files, null, events, null, selector, filter, covers, logger, mainDatabase: null);
                 var configService = InterfaceProxy.Proxy<IConfigService>((method, _) => method.ReturnType == typeof(bool) ? false :
                     method.ReturnType.IsValueType ? Activator.CreateInstance(method.ReturnType) : null);
                 var monitorNew = InterfaceProxy.Proxy<IMonitorNewBookService>((_, _) => false);
-                var refresh = new RefreshAuthorService(authorInfo, authorService, books, editionService, recordedProfileService, refreshBooks, null,
-                    events, queue, files, null, roots, null, monitorNew, configService, exclusions, null, null, null, logger, selector, database);
+                var refresh = new RefreshAuthorService(MetadataHealthGateStub.Ready(), authorInfo, authorService, books, editionService, recordedProfileService, refreshBooks, null,
+                    events, queue, files, new global::NzbDrone.Core.History.HistoryRepository(database, events), roots, null, monitorNew, configService, exclusions, null, null, null, logger, editionSelector: selector, mainDatabase: database, bookRepository: new BookRepository(database, events), authorRepository: new AuthorRepository(database, events, logger));
                 var pendingRepository = new PendingAuthorImportRepository(database, events);
                 var pendingService = new PendingAuthorImportService(pendingRepository, authorService, events, logger);
                 var paths = InterfaceProxy.Proxy<IBuildAuthorPaths>((method, _) => method.ReturnType == typeof(string) ? @"C:\Audio\Requested Author".AsOsAgnostic() : null);

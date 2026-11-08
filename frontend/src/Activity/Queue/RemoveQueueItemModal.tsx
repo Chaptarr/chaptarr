@@ -26,6 +26,7 @@ interface RemoveQueueItemModalProps {
   canIgnore: boolean;
   isPending: boolean;
   selectedCount?: number;
+  defaultRemoveFromClient?: boolean;
   onRemovePress(props: RemovePressProps): void;
   onModalClose: () => void;
 }
@@ -44,14 +45,18 @@ function RemoveQueueItemModal(props: RemoveQueueItemModalProps) {
     canChangeCategory,
     isPending,
     selectedCount,
+    defaultRemoveFromClient = true,
     onRemovePress,
     onModalClose,
   } = props;
 
   const multipleSelected = selectedCount && selectedCount > 1;
 
-  const [removalMethod, setRemovalMethod] =
-    useState<RemovalMethod>('removeFromClient');
+  const [selectedRemovalMethod, setRemovalMethod] =
+    useState<RemovalMethod | null>(null);
+  const removalMethod =
+    selectedRemovalMethod ??
+    (!defaultRemoveFromClient && canIgnore ? 'ignore' : 'removeFromClient');
   const [blocklistMethod, setBlocklistMethod] =
     useState<BlocklistMethod>('doNotBlocklist');
 
@@ -154,7 +159,7 @@ function RemoveQueueItemModal(props: RemoveQueueItemModalProps) {
       skipRedownload: blocklistMethod === 'blocklistOnly',
     });
 
-    setRemovalMethod('removeFromClient');
+    setRemovalMethod(null);
     setBlocklistMethod('doNotBlocklist');
   }, [
     removalMethod,
@@ -165,7 +170,7 @@ function RemoveQueueItemModal(props: RemoveQueueItemModalProps) {
   ]);
 
   const handleModalClose = useCallback(() => {
-    setRemovalMethod('removeFromClient');
+    setRemovalMethod(null);
     setBlocklistMethod('doNotBlocklist');
 
     onModalClose();

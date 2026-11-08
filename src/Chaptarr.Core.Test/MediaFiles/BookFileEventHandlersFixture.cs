@@ -36,6 +36,8 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         private sealed class StubBookService : IBookService
         {
+            public List<Book> GetImportListBookIdentities() => GetAllBooks();
+
             public Book GetBook(int bookId) => throw new System.NotImplementedException();
             public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new System.NotImplementedException();
             public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => throw new System.NotImplementedException();
@@ -45,7 +47,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds) => throw new System.NotImplementedException();
             public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds) => throw new System.NotImplementedException();
             public Book AddBook(Book newBook, bool doRefresh = true) => throw new System.NotImplementedException();
-            public Book FindBySlug(string titleSlug) => throw new System.NotImplementedException();
+            public List<Book> FindBySlug(string titleSlug) => throw new System.NotImplementedException();
             public Book FindByTitle(int authorId, string title) => throw new System.NotImplementedException();
             public Book FindByTitleInexact(int authorId, string title) => throw new System.NotImplementedException();
             public Book FindByGoodreadsId(string goodreadsId) => throw new System.NotImplementedException();
@@ -74,7 +76,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new System.NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new System.NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new System.NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new System.NotImplementedException();
+            public (Book Book, bool ExistingCopy) AddWantedEditionCopy(int bookId, int editionId) => throw new System.NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new System.NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new System.NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new System.NotImplementedException();

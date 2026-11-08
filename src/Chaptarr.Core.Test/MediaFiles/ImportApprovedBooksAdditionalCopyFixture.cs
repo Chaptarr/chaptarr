@@ -1,3 +1,4 @@
+using NzbDrone.Core.Profiles;
 using System;
 using System.Data;
 using NzbDrone.Common.Extensions;
@@ -24,6 +25,7 @@ using NzbDrone.Core.History;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport;
+using NzbDrone.Core.MediaFiles.BookImport.Manual;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser.Model;
@@ -55,6 +57,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public bool ThrowOnReplace { get; set; }
             public Action BeforeReplace { get; set; }
             public int ReplaceCalls { get; private set; }
+            public Action BeforeOwnershipRead { get; set; }
 
             public BookFile Add(BookFile bookFile)
             {
@@ -93,7 +96,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     FilesByBook[existingIndex] = bookFile;
                 }
             }
-            public int RelinkFilesByBook(int bookId, int editionId, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles)
             {
@@ -138,6 +141,11 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
             public void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public List<System.IO.Abstractions.IFileInfo> FilterUnchangedFiles(List<System.IO.Abstractions.IFileInfo> files, FilterFilesType filter) => throw new NotImplementedException();
+            public List<BookFile> GetFilePathOwnership(IReadOnlyCollection<int> authorIds, IReadOnlyCollection<string> folders)
+            {
+                BeforeOwnershipRead?.Invoke();
+                return FilesByBook.Where(file => folders.Any(folder => folder.IsParentPath(file.Path) || folder.PathEquals(file.Path))).ToList();
+            }
             public List<BookFile> GetFilesByAuthor(int authorId) => throw new NotImplementedException();
             public List<BookFile> GetFilesByBook(int bookId) => FilesByBook.Where(f => f.Edition?.BookId == bookId || f.Edition?.Book?.Id == bookId).ToList();
             public List<BookFile> GetFilesByBooks(List<int> bookIds) => throw new NotImplementedException();
@@ -583,6 +591,11 @@ namespace Chaptarr.Core.Test.MediaFiles
                     return SkipFreeSpaceCheckWhenImporting;
                 }
 
+                if (targetMethod?.Name == "get_DownloadPropersAndRepacks")
+                {
+                    return ProperDownloadTypes.PreferAndUpgrade;
+                }
+
                 if (targetMethod?.Name == "get_MinimumFreeSpaceWhenImporting")
                 {
                     return MinimumFreeSpaceWhenImporting;
@@ -631,10 +644,12 @@ namespace Chaptarr.Core.Test.MediaFiles
             public string FailedDownloadId { get; private set; }
 
             public ConversionJob Get(string downloadId) => Job;
-            public ConversionJobRequest GetCompletedConversion(string downloadId) => null;
+            public ConversionJobRequest GetCompletedConversion(string downloadId) =>
+                Job?.Status == ConversionJobStatus.ReadyToImport && Job.DownloadId == downloadId && Request?.DownloadId == downloadId
+                    ? Request : null;
             public List<ConversionJobRequest> GetCompletedConversions(IEnumerable<string> downloadIds) => new();
             public List<ConversionJob> Get(IEnumerable<string> downloadIds) => Job == null ? new() : new() { Job };
-            public Action PrepareArtifactRemoval(string downloadId) => () => RemoveArtifacts(downloadId);
+            public Action PrepareArtifactRemoval(string downloadId, ConversionRemovalOrigin origin) => () => throw new NotImplementedException();
 
             public ConversionJob Enqueue(ConversionJobRequest request)
             {
@@ -672,7 +687,13 @@ namespace Chaptarr.Core.Test.MediaFiles
                                                         Job.Status == ConversionJobStatus.ReadyToImport ||
                                                         Job.Status == ConversionJobStatus.Cancelling);
             public bool IsRunning(string downloadId) => false;
-            public bool Cancel(string downloadId) => false;
+            public bool Cancel(string downloadId, ConversionRemovalOrigin origin) => false;
+
+            public ConversionRetentionResult RetainCompletedOutput(string downloadId, IReadOnlyCollection<string> sourcePaths, string reason, bool discardOutput = false)
+            {
+                if (Job == null) return new(ConversionRetentionStatus.None, reason);
+                throw new NotSupportedException("Retained output tests must use the real conversion job service.");
+            }
 
             public void Complete(string downloadId)
             {
@@ -686,8 +707,11 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Job.Status = ConversionJobStatus.Failed;
                 Job.Error = error;
             }
-            public void Reset(string downloadId, ConversionJob expectedJob = null) => Job = null;
-            public void RemoveArtifacts(string downloadId) => throw new NotImplementedException();
+            public string Reset(string downloadId, ConversionJob expectedJob = null)
+            {
+                Job = null;
+                return null;
+            }
         }
 
         private static T Proxy<T>() where T : class
@@ -779,7 +803,11 @@ namespace Chaptarr.Core.Test.MediaFiles
         [TestCase(true, true, false, false)]
         [TestCase(false, true, true, false)]
         [TestCase(true, true, true, false)]
-        public void multipart_import_must_keep_old_recording_on_failed_replace_and_resume_new_downloads(bool postgres, bool retry, bool publishHistory, bool existingRecording)
+        [TestCase(false, true, true, true, 3)]
+        [TestCase(true, true, true, true, 3)]
+        [TestCase(false, true, true, false, 2, true)]
+        [TestCase(true, true, true, false, 2, true)]
+        public void multipart_import_must_keep_old_recording_on_failed_replace_and_resume_new_downloads(bool postgres, bool retry, bool publishHistory, bool existingRecording, int parts = 2, bool moveSources = false)
         {
             DualDatabaseFixture.Run(postgres, database =>
             {
@@ -825,7 +853,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var libraryDir = Path.Combine(root, "library");
                     Directory.CreateDirectory(sourceDir);
                     Directory.CreateDirectory(libraryDir);
-                    var sources = Enumerable.Range(1, 2).Select(part => Path.Combine(sourceDir, $"Book Part {part:00}.m4b")).ToList();
+                    var sources = Enumerable.Range(1, parts).Select(part => Path.Combine(sourceDir, $"Book Part {part:00}.m4b")).ToList();
                     var files = new MediaFileRepository(database, noEvents);
                     for (var i = 0; i < sources.Count; i++)
                     {
@@ -838,7 +866,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         var destination = Path.Combine(libraryDir, Path.GetFileName(sources[i]));
                         File.WriteAllText(destination, "old part " + (i + 1));
                         files.Insert(new BookFile { Path = destination, EditionId = edition.Id, Edition = edition,
-                            Quality = new QualityModel(Quality.M4B), Part = i + 1, PartCount = 2,
+                            Quality = new QualityModel(Quality.M4B), Part = i + 1, PartCount = parts,
                             MediaInfo = new MediaInfoModel(), DateAdded = DateTime.UtcNow.AddDays(-1), Modified = DateTime.UtcNow });
                     }
 
@@ -867,6 +895,23 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var mover = new StubMoveBookFiles { TransferFilesOnDisk = true,
                         DestinationForFile = local => Path.Combine(libraryDir, Path.GetFileName(local.Path)),
                         FailSourcePath = retry ? sources[1] : null };
+                    var checkedRecordingSizes = new List<long>();
+                    var sizeFormat = new CustomFormat("Multipart source size", new SizeSpecification
+                    {
+                        Min = 15d / (1024 * 1024 * 1024), Max = 1
+                    }) { Id = 95 };
+                    var calculator = RecordingFormats(sizeFormat);
+                    if (moveSources)
+                    {
+                        profile.MinFormatScore = 100;
+                        profile.FormatItems = new List<ProfileFormatItem> { new() { Format = sizeFormat, Score = 100 } };
+                    }
+                    var customFormats = moveSources ? InterfaceProxy.Proxy<ICustomFormatCalculationService>((_, args) =>
+                    {
+                        var input = (LocalBook)args[0];
+                        checkedRecordingSizes.Add(input.Size);
+                        return calculator.ParseCustomFormat(input);
+                    }) : null;
                     var recycle = new StubRecycleBinProvider();
                     var editionService = new EditionService(editions, events, logger);
                     var authorService = InterfaceProxy.Proxy<IAuthorService>((method, args) => method.Name == nameof(IAuthorService.GetAuthors) ? new List<Author> { author } : author);
@@ -877,29 +922,30 @@ namespace Chaptarr.Core.Test.MediaFiles
                         recycle, Proxy<IExtraService>(), mover, history,
                         Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events,
                         Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
-                        Proxy<IQualityProfileService>(), Proxy<IM4bConversionService>(), logger);
+                        Proxy<IQualityProfileService>(), Proxy<IM4bConversionService>(), logger, customFormatCalculationService: customFormats);
                     ImportDecision<LocalBook> Decision(string path, bool manual) => new(new LocalBook
                     {
                         Path = path, Author = author, Book = book, Edition = edition, IsManualImport = manual,
                         DisableReleaseSwitching = manual,
                         Quality = new QualityModel(Quality.M4B), Size = new FileInfo(path).Length, Modified = File.GetLastWriteTimeUtc(path)
                     });
-                    var download = new DownloadClientItem { DownloadId = "multipart", DownloadForced = true, Title = "Multipart download",
+                    var download = new DownloadClientItem { DownloadId = "multipart", DownloadForced = !moveSources, Title = "Multipart download",
                         FilePaths = sources.Append(Path.Combine(sourceDir, "cover.jpg")).ToList() };
-                    var results = CreateService().Import(sources.Select(path => Decision(path, true)).ToList(), true, download, ImportMode.Copy);
-                    Assert.That(results.Count(result => result.Result == ImportResultType.Imported), Is.EqualTo(retry ? (existingRecording ? 0 : 1) : 2));
+                    var results = CreateService().Import(sources.Select(path => Decision(path, !moveSources)).ToList(), true, download,
+                        moveSources ? ImportMode.Move : ImportMode.Copy);
+                    Assert.That(results.Count(result => result.Result == ImportResultType.Imported), Is.EqualTo(retry ? (existingRecording ? 0 : parts - 1) : parts));
                     Assert.That(reads, Is.EqualTo(1), "Load existing files once for the book group, not once for every part");
                     Assert.That(replaces, Is.EqualTo(retry && existingRecording ? 0 : 1));
                     var hasSuccessfulCommit = !retry || !existingRecording;
-                    Assert.That(books.Get(book.Id).AnyEditionOk, Is.EqualTo(!hasSuccessfulCommit),
-                        "Manual selection settings must change only with committed successful files");
+                    Assert.That(books.Get(book.Id).AnyEditionOk, Is.EqualTo(moveSources || !hasSuccessfulCommit),
+                        "Only a successful manual selection disables automatic edition selection");
                     Assert.That(editions.Get(edition.Id).Monitored, Is.EqualTo(hasSuccessfulCommit),
                         "A failed complete replacement must not select its edition");
                     var first = files.GetFilesByBook(book.Id).Single(file => file.Part == 1);
                     if (retry && existingRecording)
                     {
                         Assert.That(files.GetFilesByBook(book.Id).OrderBy(file => file.Part).Select(file => File.ReadAllText(file.Path)),
-                            Is.EqualTo(new[] { "old part 1", "old part 2" }));
+                            Is.EqualTo(Enumerable.Range(1, parts).Select(part => "old part " + part)));
                         Assert.That(histories.All(), Is.Empty);
                         Assert.That(Directory.EnumerateFiles(libraryDir, "*.chaptarr-upgrade~*"), Is.Empty);
                     }
@@ -918,13 +964,28 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Assert.That(completion.IsImported(tracked, history.FindByDownloadId(download.DownloadId)), Is.EqualTo(!retry));
                     if (retry)
                     {
-                        Assert.That(tracked.StatusMessages.Any(message => message.Title == sources[1]), Is.True, "Name the missing part");
+                        Assert.That(tracked.StatusMessages.Any(message => message.Title == Path.GetFileName(sources[1])), Is.True, "Name the missing part");
+                        Assert.That(tracked.StatusMessages.Any(message => message.SourcePath == sources[1]), Is.True, "Keep the missing source identity");
                         mover.FailSourcePath = null;
                         // Recreate the import service and read committed rows, with no in-memory first-pass results.
-                        var resumed = CreateService().Import(sources.Select(path => Decision(path, existingRecording)).ToList(), true, download, ImportMode.Copy);
-                        Assert.That(resumed.Count(result => result.Result == ImportResultType.Imported), Is.EqualTo(existingRecording ? 2 : 1));
-                        Assert.That(resumed.Count(result => result.Result == ImportResultType.Skipped), Is.EqualTo(existingRecording ? 0 : 1));
-                        Assert.That(mover.CopyCalls, Is.EqualTo(existingRecording ? 4 : 3));
+                        if (moveSources)
+                        {
+                            Assert.That(File.Exists(sources[0]), Is.False, "The first source was moved; retry must use its stored size");
+                            Assert.That(File.Exists(sources[1]), Is.True);
+                        }
+                        var resumed = CreateService().Import(sources.Where(path => !moveSources || File.Exists(path))
+                            .Select(path => Decision(path, existingRecording)).ToList(), true, download,
+                            moveSources ? ImportMode.Move : ImportMode.Copy);
+                        Assert.That(resumed.Count(result => result.Result == ImportResultType.Imported), Is.EqualTo(existingRecording ? parts : 1));
+                        Assert.That(resumed.Count(result => result.Result == ImportResultType.Skipped), Is.EqualTo(existingRecording || moveSources ? 0 : 1));
+                        if (moveSources)
+                        {
+                            Assert.That(mover.MoveCalls, Is.EqualTo(parts + 1));
+                            Assert.That(mover.CopyCalls, Is.Zero);
+                            Assert.That(checkedRecordingSizes, Is.EqualTo(new long[] { 20, 20 }),
+                                "Both first attempt and source-gone retry must evaluate the full recording, not remaining ten bytes");
+                        }
+                        else Assert.That(mover.CopyCalls, Is.EqualTo(existingRecording ? parts * 2 : parts + 1));
                         if (!existingRecording)
                         {
                             Assert.That(files.Get(first.Id).Path, Is.EqualTo(first.Path), "A retry must retain its own earlier file row");
@@ -933,12 +994,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     }
 
                     var saved = files.GetFilesByBook(book.Id).OrderBy(file => file.Part).ToList();
-                    Assert.That(saved.Select(file => file.Part), Is.EqualTo(new[] { 1, 2 }));
+                    Assert.That(saved.Select(file => file.Part), Is.EqualTo(Enumerable.Range(1, parts)));
                     PartAssignmentHelper.NormalizeBookFilesByEdition(saved);
-                    Assert.That(saved.Select(file => file.PartCount), Is.All.EqualTo(2));
-                    Assert.That(saved.Select(file => File.ReadAllText(file.Path)), Is.EqualTo(new[] { "new part 1", "new part 2" }));
+                    Assert.That(saved.Select(file => file.PartCount), Is.All.EqualTo(parts));
+                    Assert.That(saved.Select(file => File.ReadAllText(file.Path)), Is.EqualTo(Enumerable.Range(1, parts).Select(part => "new part " + part)));
                     Assert.That(books.All(), Has.Count.EqualTo(1), "Resuming the grab must not create an alternative book row");
-                    Assert.That(books.Get(book.Id).AnyEditionOk, Is.False);
+                    Assert.That(books.Get(book.Id).AnyEditionOk, Is.EqualTo(moveSources));
                     Assert.That(editions.Get(edition.Id).Monitored, Is.True);
                     Assert.That(saved.SelectMany(file => file.MatchProvenance.ImportSourcePaths), Is.EquivalentTo(sources));
                     if (!publishHistory)
@@ -1373,7 +1434,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         [TestCase(false, true, BookMediaType.Ebook)]
         [TestCase(true, false, BookMediaType.Ebook)]
         [TestCase(true, true, BookMediaType.Ebook)]
-        public void manual_grab_requires_confirmation_only_for_its_local_book_row(bool upgradeAllowed, bool targetHasFiles, BookMediaType siblingMedia)
+        public void hand_picked_grab_can_schedule_conversion_without_a_blanket_confirmation_hold(bool upgradeAllowed, bool targetHasFiles, BookMediaType siblingMedia)
         {
             var temp = Path.Combine(TestContext.CurrentContext.WorkDirectory, "grab-confirmation-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(temp);
@@ -1392,7 +1453,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 media.Add(new BookFile { Id = 21, EditionId = siblingEdition.Id, Edition = siblingEdition, Path = oldPath, Quality = new QualityModel(Quality.M4B) });
                 if (targetHasFiles)
                 {
-                    media.Add(new BookFile { Id = 22, EditionId = edition.Id, Edition = edition, Path = Path.Combine(temp, "target.m4b"), Quality = new QualityModel(Quality.M4B) });
+                    media.Add(new BookFile { Id = 22, EditionId = edition.Id, Edition = edition, Path = Path.Combine(temp, "target.m4b"), Quality = new QualityModel(Quality.MP3) });
                     File.WriteAllText(media.FilesByBook.Last().Path, "target recording");
                 }
 
@@ -1411,16 +1472,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var result = service.Import(new List<ImportDecision<LocalBook>> { new(local) }, true,
                     new DownloadClientItem { DownloadId = "manual-grab", DownloadForced = true }, ImportMode.Copy).Single();
 
-                Assert.That(result.Result, Is.EqualTo(targetHasFiles ? ImportResultType.Skipped : ImportResultType.Pending));
+                // Hand-picked grabs are automatic; conversion precedes the eventual same-edition swap.
+                Assert.That(result.Result, Is.EqualTo(ImportResultType.Pending));
+                Assert.That(jobs.Request, Is.Not.Null);
                 if (targetHasFiles)
                 {
-                    Assert.That(result.Errors.Single(), Does.Contain("Manual Import"));
-                    Assert.That(jobs.Request, Is.Null, "Waiting for confirmation must precede conversion scheduling");
                     Assert.That(File.ReadAllText(Path.Combine(temp, "target.m4b")), Is.EqualTo("target recording"));
-                }
-                else
-                {
-                    Assert.That(jobs.Request, Is.Not.Null, "Another local row's shared provider IDs cannot block an empty target");
                 }
 
                 Assert.That(media.DeletedFiles, Is.Empty);
@@ -1556,14 +1613,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     }
                     else
                     {
-                        if (collision == "concurrent")
-                        {
-                            Assert.That(Assert.Throws<InvalidOperationException>(() => Apply()).Message, Does.Contain("another book"));
-                        }
-                        else
-                        {
-                            Assert.That(Apply().Single().Errors.Single(), Does.Contain("another book"));
-                        }
+                        Assert.That(Apply().Single().Errors.Single(), Does.Contain("another book"));
 
                         Assert.That(files.GetFilesByBook(book.Id).Single().Id, Is.EqualTo(oldRow.Id));
                         Assert.That(File.ReadAllText(old), Is.EqualTo("old target recording"));
@@ -1583,10 +1633,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             });
         }
 
-        [TestCase(true, false, false, TestName = "manual_replace_should_commit_when_optional_tag_write_fails")]
-        [TestCase(false, true, false, TestName = "manual_replace_should_restore_old_files_and_rows_when_atomic_persistence_fails")]
-        [TestCase(false, false, true, TestName = "interactive_grab_should_wait_for_explicit_manual_replacement")]
-        public void explicit_user_replace_should_be_failure_safe_across_tagging_and_persistence(bool throwOnTagWrite, bool throwOnReplace, bool downloadForced)
+        [TestCase(true, false, TestName = "manual_replace_should_commit_when_optional_tag_write_fails")]
+        [TestCase(false, true, TestName = "manual_replace_should_restore_old_files_and_rows_when_atomic_persistence_fails")]
+        public void explicit_user_replace_should_be_failure_safe_across_tagging_and_persistence(bool throwOnTagWrite, bool throwOnReplace)
         {
             var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"manual-replace-{Guid.NewGuid():N}");
             var sourcePath = Path.Combine(tempDir, "incoming.epub");
@@ -1665,7 +1714,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         Path = oldEpub,
                         EditionId = existingEdition.Id,
                         Edition = existingEdition,
-                        Quality = new QualityModel { Quality = Quality.EPUB, Revision = downloadForced ? new Revision(2) : new Revision() }
+                        Quality = new QualityModel { Quality = Quality.EPUB, Revision = new Revision() }
                     },
                     new BookFile
                     {
@@ -1673,7 +1722,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         Path = oldMobi,
                         EditionId = existingEdition.Id,
                         Edition = existingEdition,
-                        Quality = new QualityModel { Quality = Quality.MOBI, Revision = downloadForced ? new Revision(2) : new Revision() }
+                        Quality = new QualityModel { Quality = Quality.MOBI, Revision = new Revision() }
                     }
                 });
 
@@ -1711,35 +1760,22 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Author = author,
                     Edition = incomingEdition,
                     Quality = new QualityModel { Quality = Quality.EPUB, Revision = new Revision() },
-                    IsManualImport = !downloadForced,
+                    IsManualImport = true,
                     Size = new FileInfo(sourcePath).Length,
                     Modified = File.GetLastWriteTimeUtc(sourcePath)
                 };
 
-                if (downloadForced)
+                localBook.ConfirmedReplacementFiles = mediaFileService.FilesByBook.Select(file => new ManualImportReplacementFile
                 {
-                    var waiting = service.Import(
-                        new List<ImportDecision<LocalBook>> { new(localBook) },
-                        replaceExisting: true,
-                        downloadClientItem: new DownloadClientItem { DownloadId = "interactive-grab", DownloadForced = true },
-                        importMode: ImportMode.Copy);
-
-                    Assert.That(waiting.Single().Result, Is.EqualTo(ImportResultType.Skipped));
-                    Assert.That(waiting.Single().Errors.Single(), Does.Contain("Manual Import"));
-                    Assert.That(mediaFileService.ReplaceCalls, Is.Zero);
-                    Assert.That(mover.CopyCalls, Is.Zero);
-                    Assert.That(File.ReadAllText(oldEpub), Is.EqualTo("old epub"));
-                    Assert.That(File.ReadAllText(oldMobi), Is.EqualTo("old mobi"));
-                    Assert.That(File.ReadAllText(sourcePath), Is.EqualTo("incoming"));
-                    localBook.IsManualImport = true;
-                }
+                    Id = file.Id, BookId = file.Edition.BookId, Path = file.Path
+                }).ToList();
 
                 if (throwOnReplace)
                 {
                     Assert.Throws<InvalidOperationException>(() => service.Import(
                         new List<ImportDecision<LocalBook>> { new(localBook) },
                         replaceExisting: true,
-                        downloadClientItem: downloadForced ? new DownloadClientItem { DownloadId = "interactive-grab", DownloadForced = true } : null,
+                        downloadClientItem: null,
                         importMode: ImportMode.Copy,
                         cancellationToken: CancellationToken.None));
 
@@ -1758,7 +1794,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var results = service.Import(
                         new List<ImportDecision<LocalBook>> { new(localBook) },
                         replaceExisting: true,
-                        downloadClientItem: downloadForced ? new DownloadClientItem { DownloadId = "interactive-grab", DownloadForced = true } : null,
+                        downloadClientItem: null,
                         importMode: ImportMode.Copy,
                         cancellationToken: CancellationToken.None);
 
@@ -3751,7 +3787,9 @@ namespace Chaptarr.Core.Test.MediaFiles
                     if (alternative) local.AlternativeCopyIncompatibleEditionIds = new Dictionary<int,int>();
                     var decision = new ImportDecision<LocalBook>(local);
                     var downloadImporter = typeof(DownloadedBooksImportService).GetConstructors().Single();
-                    var args = downloadImporter.GetParameters().Select(parameter => parameter.ParameterType == typeof(Logger) ? (object)logger : null).ToArray();
+                    var args = downloadImporter.GetParameters().Select(parameter => parameter.ParameterType == typeof(Logger) ? (object)logger :
+                        parameter.ParameterType == typeof(NzbDrone.Core.Queue.IQueueService) ? ImportLifecycleStubs.EmptyQueue() :
+                        parameter.ParameterType == typeof(IConversionJobService) ? ImportLifecycleStubs.NoConversionJobs() : null).ToArray();
                     var downloadService = (DownloadedBooksImportService)downloadImporter.Invoke(args);
                     typeof(DownloadedBooksImportService).GetMethod("EnforceTrackedDownloadTargetBooks", BindingFlags.NonPublic | BindingFlags.Instance)
                         .Invoke(downloadService, new object[] { new List<ImportDecision<LocalBook>> { decision }, tracked.RemoteBook, client });

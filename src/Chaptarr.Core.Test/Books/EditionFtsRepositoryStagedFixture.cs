@@ -17,8 +17,34 @@ using NzbDrone.Core.Parser;
 namespace Chaptarr.Core.Test.Books
 {
     [TestFixture]
-    public class EditionFtsRepositoryStagedFixture
+    public partial class EditionFtsRepositoryStagedFixture
     {
+        [TestCase(DatabaseType.SQLite)]
+        [TestCase(DatabaseType.PostgreSQL)]
+        public void possessive_author_release_should_recall_dune_messiah_and_prove_its_author(DatabaseType databaseType)
+        {
+            WithSeededFtsRepository(databaseType, (repository, connection) =>
+            {
+                connection.Execute("UPDATE \"Authors\" SET \"Name\" = 'Frank Herbert', \"AudiobookMonitored\" = @monitored; " +
+                    "UPDATE \"Books\" SET \"Title\" = CASE WHEN \"Id\" = 1 THEN 'Dune' ELSE 'Dune Messiah' END, \"MediaType\" = 0, \"AudiobookMonitored\" = @monitored WHERE \"Id\" IN (1, 2); " +
+                    "UPDATE \"Editions\" SET \"Title\" = CASE WHEN \"BookId\" = 1 THEN 'Dune' ELSE 'Dune Messiah' END, " +
+                    "\"MatchingTitle\" = CASE WHEN \"BookId\" = 1 THEN 'dune' ELSE 'dune messiah' END, \"Monitored\" = @monitored, \"ReadingFormatId\" = 2 WHERE \"BookId\" IN (1, 2)",
+                    new { monitored = true });
+                RefreshProjections(connection);
+                if (databaseType == DatabaseType.SQLite)
+                {
+                    repository.RebuildIndex();
+                }
+
+                const string release = "Frank Herberts Dune, Bk 2 - Dune Messiah (NMR";
+                var recalled = repository.RecallBooks(null, ReleaseTitleMatchScorer.Tokenize(release),
+                    BookMediaType.Audiobook, monitoredOnly: true);
+
+                Assert.That(recalled.Select(book => book.BookId), Does.Contain(2));
+                Assert.That(AuthorNameMatcher.ContainsAuthorName("Frank Herbert", release), Is.True);
+            });
+        }
+
         [TestCase(DatabaseType.SQLite, BookMediaType.Audiobook, true)]
         [TestCase(DatabaseType.SQLite, BookMediaType.Audiobook, false)]
         [TestCase(DatabaseType.PostgreSQL, BookMediaType.Audiobook, true)]
@@ -784,27 +810,51 @@ namespace Chaptarr.Core.Test.Books
 
         [TestCase(DatabaseType.SQLite)]
         [TestCase(DatabaseType.PostgreSQL)]
-        public void original_spelling_recall_should_use_one_indexed_query_among_five_thousand_unrelated_rows(DatabaseType databaseType)
+        public void original_spelling_recall_index_is_usable_among_five_thousand_unrelated_rows(DatabaseType databaseType)
         {
-            var sqlitePlans = new List<List<string>>();
+            // An older writer can keep a newly built index's indcheckxmin horizon open.
+            // Hold one deliberately: this must prove index usability under concurrent suite activity.
+            using var concurrentWriter = databaseType == DatabaseType.PostgreSQL
+                ? new NpgsqlConnection(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING"))
+                : null;
+            if (concurrentWriter != null && string.IsNullOrWhiteSpace(concurrentWriter.ConnectionString))
+            {
+                Assert.Ignore("Set CHAPTARR_TEST_POSTGRES_CONNECTION_STRING to exercise PostgreSQL edition FTS");
+            }
+            concurrentWriter?.Open();
+            using var concurrentTransaction = concurrentWriter?.BeginTransaction();
+            concurrentWriter?.Execute("SELECT txid_current();", transaction: concurrentTransaction);
+
+            var queryPlans = new List<List<string>>();
             void ObserveRecall(IDbCommand command)
             {
-                if (databaseType != DatabaseType.SQLite || !command.CommandText.Contains("WITH fts_matches AS MATERIALIZED", StringComparison.Ordinal))
+                var recallSql = databaseType == DatabaseType.SQLite ? "WITH fts_matches AS MATERIALIZED" : "WITH candidates AS";
+                if (!command.CommandText.Contains(recallSql, StringComparison.Ordinal)) return;
+
+                // Probe index usability without depending on the small fixture's cost estimates.
+                // This transaction ends before the real recall, which retains normal planner settings.
+                using var planTransaction = databaseType == DatabaseType.PostgreSQL ? command.Connection.BeginTransaction() : null;
+                if (planTransaction != null)
+                    command.Connection.Execute("SET LOCAL enable_seqscan = off", transaction: planTransaction);
+                using IDbCommand explain = databaseType == DatabaseType.SQLite
+                    ? new SqliteCommand("EXPLAIN QUERY PLAN " + command.CommandText, (SqliteConnection)command.Connection)
+                    : new NpgsqlCommand("EXPLAIN (COSTS false) " + command.CommandText, (NpgsqlConnection)command.Connection);
+                explain.Transaction = planTransaction;
+                foreach (IDbDataParameter parameter in command.Parameters)
                 {
-                    return;
-                }
-                using var explain = new SqliteCommand("EXPLAIN QUERY PLAN " + command.CommandText, (SqliteConnection)command.Connection);
-                foreach (SqliteParameter parameter in command.Parameters)
-                {
-                    explain.Parameters.AddWithValue(parameter.ParameterName, parameter.Value);
+                    if (parameter is NpgsqlParameter postgresParameter)
+                    {
+                        explain.Parameters.Add(postgresParameter.Clone());
+                    }
+                    else
+                    {
+                        explain.Parameters.Add(new SqliteParameter(parameter.ParameterName, parameter.Value));
+                    }
                 }
                 using var reader = explain.ExecuteReader();
                 var details = new List<string>();
-                while (reader.Read())
-                {
-                    details.Add(reader.GetString(3));
-                }
-                sqlitePlans.Add(details);
+                while (reader.Read()) details.Add(reader.GetString(databaseType == DatabaseType.SQLite ? 3 : 0));
+                queryPlans.Add(details);
             }
             void AssertIndexedRecall(List<string> plan)
             {
@@ -834,15 +884,9 @@ namespace Chaptarr.Core.Test.Books
                 else
                 {
                     connection.Execute(@"
-                        CREATE INDEX fixture_series_fts ON ""Books"" USING GIN (to_tsvector('simple', COALESCE(""SearchSeriesName"", '')));
-                        CREATE INDEX fixture_title_fts ON ""Editions"" USING GIN (to_tsvector('simple', COALESCE(""MatchingTitle"", '')));
-                        CREATE INDEX fixture_authors_fts ON ""Authors"" USING GIN (to_tsvector('simple', COALESCE(""SearchName"", '') || ' ' || COALESCE(""CleanName"", '') || ' ' || COALESCE(""TitleSlug"", '')));
                         ANALYZE ""Books""; ANALYZE ""Editions""; ANALYZE ""Authors"";");
-                    var plan = connection.Query<string>("EXPLAIN (COSTS false) SELECT \"Id\" FROM \"Books\" WHERE to_tsvector('simple', COALESCE(\"SearchSeriesName\", '')) @@ to_tsquery('simple', 'søren');");
-                    Assert.That(string.Join("\n", plan), Does.Contain("fixture_series_fts"));
                 }
 
-                RefreshProjections(connection);
                 var trace = new List<EditionFtsTraceEvent>();
                 var timer = System.Diagnostics.Stopwatch.StartNew();
                 var recalled = repository.RecallBooks(null, new[] { "Søren" }, BookMediaType.Ebook, trace.Add);
@@ -854,18 +898,24 @@ namespace Chaptarr.Core.Test.Books
                 });
                 if (databaseType == DatabaseType.SQLite)
                 {
-                    Assert.That(sqlitePlans, Has.Count.EqualTo(1));
-                    AssertIndexedRecall(sqlitePlans.Single());
-                    TestContext.Progress.WriteLine("SQLite unscoped production plan:\n" + string.Join("\n", sqlitePlans.Single()));
+                    Assert.That(queryPlans, Has.Count.EqualTo(1));
+                    AssertIndexedRecall(queryPlans.Single());
+                    TestContext.Progress.WriteLine("SQLite unscoped production plan:\n" + string.Join("\n", queryPlans.Single()));
                     var scopedTrace = new List<EditionFtsTraceEvent>();
                     var scoped = repository.RecallBooks(1, new[] { "Søren" }, BookMediaType.Ebook, scopedTrace.Add);
                     Assert.That(scoped.Select(book => book.BookId), Is.EqualTo(new[] { 1 }));
                     Assert.That(scopedTrace.Count(entry => entry.EventType == "query" && entry.Step == "stage1_book_recall"), Is.EqualTo(1));
-                    Assert.That(sqlitePlans, Has.Count.EqualTo(2));
-                    AssertIndexedRecall(sqlitePlans.Last());
-                    TestContext.Progress.WriteLine("SQLite scoped production plan:\n" + string.Join("\n", sqlitePlans.Last()));
+                    Assert.That(queryPlans, Has.Count.EqualTo(2));
+                    AssertIndexedRecall(queryPlans.Last());
+                    TestContext.Progress.WriteLine("SQLite scoped production plan:\n" + string.Join("\n", queryPlans.Last()));
                 }
-                TestContext.Progress.WriteLine($"{databaseType}: 5,000 unrelated rows, one FTS query per recall, instrumented elapsed (includes SQLite EXPLAIN): {timer.Elapsed.TotalMilliseconds:F3} ms.");
+                else
+                {
+                    Assert.That(queryPlans, Has.Count.EqualTo(1));
+                    Assert.That(string.Join("\n", queryPlans.Single()), Does.Contain("fixture_series_fts"));
+                    TestContext.Progress.WriteLine("PostgreSQL index-usability plan:\n" + string.Join("\n", queryPlans.Single()));
+                }
+                TestContext.Progress.WriteLine($"{databaseType}: 5,000 unrelated rows, one FTS query per recall, instrumented elapsed (includes EXPLAIN): {timer.Elapsed.TotalMilliseconds:F3} ms.");
             }, ObserveRecall);
         }
 
@@ -1432,7 +1482,11 @@ namespace Chaptarr.Core.Test.Books
                 });
                 using var connection = new NpgsqlConnection(connectionString);
                 connection.Open();
-                action(new EditionFtsRepository(new MainDatabase(database), LogManager.GetCurrentClassLogger()), connection);
+                var observedDatabase = observeCommand == null ? (IDatabase)database : InterfaceProxy.Proxy<IDatabase>((method, args) =>
+                    method.Name == nameof(IDatabase.OpenConnection)
+                        ? CommandObserver.Wrap<IDbConnection>(database.OpenConnection(), observeCommand)
+                        : method.Invoke(database, args));
+                action(new EditionFtsRepository(new MainDatabase(observedDatabase), LogManager.GetCurrentClassLogger()), connection);
             }
             finally
             {
@@ -1451,7 +1505,9 @@ namespace Chaptarr.Core.Test.Books
                     ""Id"" INTEGER PRIMARY KEY,
                     ""Name"" TEXT NOT NULL,
                     ""CleanName"" TEXT,
-                    ""TitleSlug"" TEXT
+                    ""TitleSlug"" TEXT,
+                    ""AudiobookMonitored"" BOOLEAN NOT NULL DEFAULT FALSE,
+                    ""EbookMonitored"" BOOLEAN NOT NULL DEFAULT FALSE
                 );
                 CREATE TABLE ""Books"" (
                     ""Id"" INTEGER PRIMARY KEY,
@@ -1459,7 +1515,9 @@ namespace Chaptarr.Core.Test.Books
                     ""Title"" TEXT NOT NULL,
                     ""SeriesName"" TEXT,
                     ""SeriesPosition"" TEXT,
-                    ""MediaType"" INTEGER NOT NULL
+                    ""MediaType"" INTEGER NOT NULL,
+                    ""AudiobookMonitored"" BOOLEAN NOT NULL DEFAULT FALSE,
+                    ""EbookMonitored"" BOOLEAN NOT NULL DEFAULT FALSE
                 );
                 CREATE TABLE ""Editions"" (
                     ""Id"" INTEGER PRIMARY KEY,
@@ -1498,6 +1556,13 @@ namespace Chaptarr.Core.Test.Books
                 ALTER TABLE ""Editions"" ADD COLUMN ""SearchNarrator"" TEXT;
                 ALTER TABLE ""Editions"" ADD COLUMN ""SearchNarratorNames"" TEXT;
                 ALTER TABLE ""Editions"" ADD COLUMN ""SearchPublisher"" TEXT;");
+            // Index before any projection updates: building after HOT updates can set indcheckxmin,
+            // making the index temporarily unusable while another test holds an older transaction.
+            connection.Execute(@"
+                CREATE INDEX fixture_series_fts ON ""Books"" USING GIN (to_tsvector('simple', COALESCE(""SearchSeriesName"", '')));
+                CREATE INDEX fixture_title_fts ON ""Editions"" USING GIN (to_tsvector('simple', COALESCE(""MatchingTitle"", '')));
+                CREATE INDEX fixture_authors_fts ON ""Authors"" USING GIN (to_tsvector('simple', COALESCE(""SearchName"", '') || ' ' || COALESCE(""CleanName"", '') || ' ' || COALESCE(""TitleSlug"", '')));
+            ");
             RefreshProjections(connection);
         }
 

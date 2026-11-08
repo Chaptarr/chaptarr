@@ -59,12 +59,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 var author = authorRepository.Insert(new Author { Name = "Test Writer", CleanName = "testwriter", SortName = "testwriter", TitleSlug = "test-writer", Path = "/test-writer", Added = DateTime.UtcNow });
                 var books = new BookRepository(database, events);
                 var editions = new EditionRepository(database, events);
-                var aliases = new ProviderAliasService(new ProviderAliasRepository(database, events));
+                var aliases = new ProviderAliasSeed(database, events);
                 Book Seed(string slug, string asin, string cast)
                 {
                     var book = books.Insert(new Book { AuthorId = author.Id, Title = "Paper Lanterns", CleanTitle = "paperlanterns", TitleSlug = slug,
                         MediaType = media, Added = DateTime.UtcNow, HardcoverBookId = "hc:7000", BaseBookId = "hc:7000", AnyEditionOk = false });
-                    aliases.ReplaceAliases("Book", book.Id, "work", new[] { "hc:7000" });
+                    aliases.SeedAliases("Book", book.Id, "work", new[] { "hc:7000" });
                     var edition = editions.Insert(new Edition { BookId = book.Id, Title = book.Title, ForeignEditionId = "am:" + asin, Asin = asin,
                         Narrator = cast, NarratorNames = string.IsNullOrWhiteSpace(cast) ? new List<string>() : cast.Split(';').Select(name => name.Trim()).ToList(),
                         Format = media == BookMediaType.Audiobook ? "audiobook" : "ebook", ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, Monitored = true });
@@ -211,7 +211,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     Assert.That(result.MatchedFiles.All(match => match.EditionId == captured[match.BookId]), Is.True);
                     var remote = new RemoteBook { Author = author, Books = new() { a,b }, AlternativeCopies = true, TargetEditionIds = captured, AlternativeCopyGrabDate = DateTime.UtcNow };
                     var disk = Proxy<IDiskProvider>((method,args) => method.Name == nameof(IDiskProvider.GetFileSize) ? 1L : (object)DateTime.UtcNow);
-                    var importer = new DownloadedBooksImportService(disk,null,matcher,null,null,bookService,authorService,editionService,null,null,null,null,null,events,null,null,logger);
+                    var importer = new DownloadedBooksImportService(disk,null,matcher,null,null,bookService,authorService,editionService,null,null,null,null,null,events,null,null,logger, queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
                     var decisionBuilder = typeof(DownloadedBooksImportService).GetMethod("CreateDecisionForMatch", BindingFlags.NonPublic|BindingFlags.Instance);
                     var tagsByPath = files.ToDictionary(file=>file.Path,file=>file.AllTags);
                     var bookCache = new Dictionary<int,Book>(); var authorCache = new Dictionary<int,Author>();
@@ -231,7 +231,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     Assert.That(editions.Get(captured[b.Id]).NarratorNames,Is.Empty);
                     Assert.That(editions.Get(captured[b.Id]).Narrator,Is.EqualTo("First Reader; Third Reader"));
                 }
-                Assert.That(sql.Count(command=>command == nameof(IDbCommand.ExecuteReader)), Is.EqualTo(6));
+                // Owner snapshots eliminate the two alias hydration queries.
+                Assert.That(sql.Count(command=>command == nameof(IDbCommand.ExecuteReader)), Is.EqualTo(4));
                 Assert.That(sql.Count(command=>command != nameof(IDbCommand.ExecuteReader)), Is.Zero);
                 if (scenario == "identifier-b")
                 {

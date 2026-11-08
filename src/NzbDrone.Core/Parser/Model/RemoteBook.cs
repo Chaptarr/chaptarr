@@ -69,7 +69,8 @@ namespace NzbDrone.Core.Parser.Model
 
         internal static List<EntityHistory> GetCapturedGrabHistory(IEnumerable<EntityHistory> history)
         {
-            var grabs = history.Where(row => row.EventType == EntityHistoryEventType.Grabbed).ToList();
+            // Included-media history links acquisition to the bonus row without changing the grabbed targets.
+            var grabs = history.Where(row => row.EventType == EntityHistoryEventType.Grabbed && row.GetDataValue("IncludedFromGrabId") == null).ToList();
             var latest = grabs.OrderByDescending(row => row.Id).FirstOrDefault();
             if (latest?.GetDataValue(EntityHistory.ALTERNATIVE_COPIES) != null)
             {

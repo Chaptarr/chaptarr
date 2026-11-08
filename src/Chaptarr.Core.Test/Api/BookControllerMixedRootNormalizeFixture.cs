@@ -65,9 +65,9 @@ namespace Chaptarr.Core.Test.Api
                 "NormalizeReadarrSingleFields",
                 BindingFlags.Instance | BindingFlags.NonPublic);
 
-            public TestableBookController(IRootFolderService rootFolderService)
+            public TestableBookController(IRootFolderService rootFolderService, IAuthorService authorService = null)
                 : base(
-                    authorService: DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
+                    authorService: authorService ?? DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
                     bookService: null,
                     addBookService: null,
                     editionService: null,
@@ -94,17 +94,27 @@ namespace Chaptarr.Core.Test.Api
             }
         }
 
-        [Test]
-        public async Task unscoped_single_profile_book_add_should_fail_before_any_lookup_or_write()
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task ambiguous_shared_fields_book_add_checks_available_scope_before_refusing_without_writes(bool hasMixedRoot)
         {
-            var controller = new TestableBookController(new StubRootFolderService(new List<RootFolder>()));
+            var lookups = 0;
+            var authors = Common.InterfaceProxy.Proxy<IAuthorService>((method, _) =>
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(IAuthorService.FindByProviderId)));
+                lookups++;
+                return null;
+            });
+            var roots = hasMixedRoot ? new List<RootFolder> { new RootFolder { Path = "/books", FolderType = FolderType.Mixed } } : new List<RootFolder>();
+            var controller = new TestableBookController(new StubRootFolderService(roots), authors);
             var result = await controller.AddBook(null, new BookResource
             {
                 ForeignBookId = "hc:42",
-                Author = new AuthorResource { ForeignAuthorId = "gr:130698", QualityProfileId = 1, MetadataProfileId = 2, RootFolderPath = "/books" }
+                Author = new AuthorResource { ForeignAuthorId = "gr:130698", MetadataProfileId = 2, RootFolderPath = "/books" }
             });
             Assert.That(result.Result, Is.TypeOf<BadRequestObjectResult>());
             Assert.That(((BadRequestObjectResult)result.Result).Value, Is.EqualTo(MediaTypeParameterParser.FormatRequiredMessage));
+            Assert.That(lookups, Is.EqualTo(1));
         }
 
         [TestCase(true)]

@@ -218,11 +218,11 @@ namespace NzbDrone.Core.History
         public PagingSpec<EntityHistory> GetPaged(PagingSpec<EntityHistory> pagingSpec, BookMediaType mediaType)
         {
             var recordsBuilder = PagedBuilder()
-                .Where<Book>(book => book.MediaType == mediaType);
+                .Where($"(\"Books\".\"MediaType\" = @mediaType OR \"History\".\"EventType\" IN ({(int)EntityHistoryEventType.AuthorsMerged}, {(int)EntityHistoryEventType.AuthorSplit}))", new { mediaType = (int)mediaType });
 
             var countBuilder = PagedBuilder()
                 .SelectCount()
-                .Where<Book>(book => book.MediaType == mediaType);
+                .Where($"(\"Books\".\"MediaType\" = @mediaType OR \"History\".\"EventType\" IN ({(int)EntityHistoryEventType.AuthorsMerged}, {(int)EntityHistoryEventType.AuthorSplit}))", new { mediaType = (int)mediaType });
 
             pagingSpec.Records = GetPagedRecords(recordsBuilder, pagingSpec, PagedQuery);
             pagingSpec.TotalRecords = GetPagedRecordCount(countBuilder, pagingSpec);

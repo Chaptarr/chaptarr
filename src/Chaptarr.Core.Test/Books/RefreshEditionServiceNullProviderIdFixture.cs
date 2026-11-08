@@ -82,7 +82,7 @@ namespace Chaptarr.Core.Test.Books
                 RefreshEditions = new RefreshEditionService(Editions, tags, null, database, logger);
                 RefreshBooks = new RefreshBookService(books, null, null, Editions, null, null,
                     RefreshEditions, media, null, events, null, new EditionSelector(logger),
-                    new EditionMetadataProfileFilter(new TestTermMatcherService()), null, logger);
+                    new EditionMetadataProfileFilter(new TestTermMatcherService()), null, logger, mainDatabase: null);
             }
 
             public Edition Seed(string foreignId)

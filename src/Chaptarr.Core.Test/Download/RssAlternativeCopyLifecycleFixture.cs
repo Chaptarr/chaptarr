@@ -41,7 +41,7 @@ namespace Chaptarr.Core.Test.Download
 {
     [TestFixture]
     [NonParallelizable]
-    public class RssAlternativeCopyLifecycleFixture
+    public partial class RssAlternativeCopyLifecycleFixture
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
@@ -208,6 +208,85 @@ namespace Chaptarr.Core.Test.Download
                     DownloadClientInfo = new DownloadClientItemClientInfo { Name = "Offline client" }
                 });
             }
+        }
+
+        [TestCase(false)] [TestCase(true)]
+        public void rss_category_evidence_scopes_dual_media_and_survives_pending_replay(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var scene = new Scene(database, BookMediaType.Audiobook);
+                var ebook = scene.Books[1];
+                ebook.MediaType = BookMediaType.Ebook;
+                ebook.EbookMonitored = true;
+                ebook.AudiobookMonitored = false;
+                scene.BookWriter.Update(ebook);
+                var profile = new QualityProfile
+                {
+                    Id = 2, Name = "Category fixture", ProfileType = ProfileType.Ebook, Cutoff = Quality.EPUB.Id,
+                    Items = new[] { Quality.Unknown, Quality.EPUB }
+                        .Select(quality => new QualityProfileQualityItem { Quality = quality, Allowed = true }).ToList()
+                };
+                scene.Author.AudiobookQualityProfile.Value.Items.Insert(0,
+                    new QualityProfileQualityItem { Quality = Quality.UnknownAudio, Allowed = true });
+                scene.Author.EbookQualityProfileId = profile.Id;
+                scene.Author.EbookQualityProfile = profile;
+                var maker = scene.Maker(new QualityAllowedByProfileSpecification(Logger), new MonitoredMediaTypeSpecification(Logger));
+                var cases = new (int[] Categories, string Format, BookMediaType? Expected)[]
+                {
+                    (new[] { 7000, 7020, 107020 }, "", BookMediaType.Ebook),
+                    (new[] { 3000, 3030 }, "", BookMediaType.Audiobook),
+                    (new[] { 7000 }, "", null),
+                    (Array.Empty<int>(), "", null),
+                    (new[] { 107020 }, "", null),
+                    (new[] { 3030, 7020 }, "", null),
+                    (new[] { 7000 }, " [EPUB]", BookMediaType.Ebook),
+                    (new[] { 7000 }, " [M4B]", BookMediaType.Audiobook)
+                };
+                foreach (var item in cases)
+                {
+                    var report = scene.Release(BookMediaType.Ebook);
+                    report.Title = "Test Writer - Paper Lanterns" + item.Format;
+                    report.Categories = item.Categories.ToList();
+                    var decisions = maker.GetRssDecision(new List<ReleaseInfo> { report });
+                    Assert.That(decisions.Count, Is.EqualTo(item.Expected.HasValue ? 1 : 0),
+                        $"{database.DatabaseType}: {report.Title}, categories={string.Join(',', item.Categories)}");
+                    if (!item.Expected.HasValue)
+                    {
+                        continue;
+                    }
+
+                    var decision = decisions.Single();
+                    Assert.That(decision.Approved, Is.True);
+                    Assert.That(decision.RemoteBook.Books.Single().MediaType, Is.EqualTo(item.Expected));
+                    var pending = scene.Pending();
+                    pending.AddMany(new List<Tuple<DownloadDecision, PendingReleaseReason>>
+                    {
+                        Tuple.Create(decision, PendingReleaseReason.Delay)
+                    });
+                    var replay = scene.Pending().GetPending(out var dates);
+                    var replayed = maker.GetRssDecision(replay, false, dates).Single();
+                    Assert.That(replayed.Approved, Is.True);
+                    Assert.That(replayed.RemoteBook.Books.Single().Id, Is.EqualTo(decision.RemoteBook.Books.Single().Id));
+                    new PendingReleaseRepository(database, scene.Events).Purge();
+                }
+
+                var unknownEbook = scene.Release(BookMediaType.Ebook);
+                unknownEbook.Title = "Test Writer - Paper Lanterns";
+                unknownEbook.Categories = new List<int> { 7020 };
+                profile.Items.Single(item => item.Quality == Quality.Unknown).Allowed = false;
+                var rejected = maker.GetRssDecision(new List<ReleaseInfo> { unknownEbook }).Single();
+                Assert.That(rejected.RemoteBook.Books.Single().Id, Is.EqualTo(ebook.Id));
+                Assert.That(rejected.Rejections.Select(reason => reason.Reason), Has.Some.Contains("not wanted in profile"));
+
+                profile.Items.Single(item => item.Quality == Quality.Unknown).Allowed = true;
+                scene.Books[0].AudiobookMonitored = false;
+                scene.BookWriter.Update(scene.Books[0]);
+                unknownEbook.Categories = new List<int> { 7000 };
+                var soleWantedSide = maker.GetRssDecision(new List<ReleaseInfo> { unknownEbook }).Single();
+                Assert.That(soleWantedSide.Approved, Is.True);
+                Assert.That(soleWantedSide.RemoteBook.Books.Single().Id, Is.EqualTo(ebook.Id));
+            });
         }
 
         [TestCase(false)] [TestCase(true)]

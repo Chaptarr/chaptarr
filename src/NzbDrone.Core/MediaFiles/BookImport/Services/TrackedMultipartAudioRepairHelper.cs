@@ -294,7 +294,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             var audiobookEditions = allEditions
-                .Where(edition => edition.ReadingFormatId == 0 || edition.ReadingFormatId == 2)
+                .Where(edition => edition.ReadingFormatId == EditionReadingFormat.Unknown || EditionReadingFormat.IsAudiobook(edition.ReadingFormatId))
                 .ToList();
 
             if (!audiobookEditions.Any())

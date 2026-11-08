@@ -20,6 +20,7 @@ namespace NzbDrone.Core.MediaCover
                                                 IHandleAsync<ImportStageProgressEvent>,
                                                 IHandle<CommandExecutedEvent>,
                                                 IHandle<BookDeletedEvent>,
+        IHandle<LibraryIdentityChangedEvent>,
                                                 IHandle<BookFileAddedEvent>,
                                                 IHandle<BookFilesAddedEvent>,
                                                 IHandle<ConfigSavedEvent>,
@@ -239,6 +240,11 @@ namespace NzbDrone.Core.MediaCover
             {
                 _completedImportCommands.Remove(_completedImportCommandOrder.Dequeue());
             }
+        }
+
+        public void Handle(LibraryIdentityChangedEvent message)
+        {
+            foreach (var bookId in message.RemovedBookIds) _deferredCoverService.RemovePendingBook(bookId);
         }
 
         public void Handle(BookDeletedEvent message)

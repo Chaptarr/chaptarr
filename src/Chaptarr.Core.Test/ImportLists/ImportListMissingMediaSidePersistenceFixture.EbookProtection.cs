@@ -54,11 +54,11 @@ namespace Chaptarr.Core.Test.ImportLists
             var filter = new EditionMetadataProfileFilter(new TestTermMatcherService());
             var refreshEditions = new RefreshEditionService(h.Editions, Proxy<IMetadataTagService>((_, _) => null), null, h.Database, h.Logger);
             var refreshBooks = new RefreshBookService(h.Books, h.AuthorService, h.Roots, h.Editions, authorInfo, null,
-                refreshEditions, h.Files, null, h.Events, null, selector, filter, Proxy<IMapCoversToLocal>((_, _) => null), h.Logger);
-            return new RefreshAuthorService(authorInfo, h.AuthorService, h.Books, h.Editions, profiles, refreshBooks, null,
-                h.Events, h.Queue, h.Files, null, h.Roots, null, new MonitorNewBookService(h.Logger),
+                refreshEditions, h.Files, null, h.Events, null, selector, filter, Proxy<IMapCoversToLocal>((_, _) => null), h.Logger, mainDatabase: null);
+            return new RefreshAuthorService(MetadataHealthGateStub.Ready(), authorInfo, h.AuthorService, h.Books, h.Editions, profiles, refreshBooks, null,
+                h.Events, h.Queue, h.Files, new global::NzbDrone.Core.History.HistoryRepository(h.Database, h.Events), h.Roots, null, new MonitorNewBookService(h.Logger),
                 Proxy<IConfigService>((method, _) => method.ReturnType.IsValueType ? Activator.CreateInstance(method.ReturnType) : null),
-                exclusions, null, null, null, h.Logger, selector, h.Database);
+                exclusions, null, null, null, h.Logger, editionSelector: selector, mainDatabase: h.Database, bookRepository: new BookRepository(h.Database, h.Events), authorRepository: new AuthorRepository(h.Database, h.Events, h.Logger));
         }
 
         private static MetadataProfile PinProtectionProfile(StoredListLibrary h)

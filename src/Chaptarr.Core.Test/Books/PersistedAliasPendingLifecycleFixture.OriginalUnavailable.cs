@@ -64,6 +64,7 @@ namespace Chaptarr.Core.Test.Books
                 item.EbookBooksToSearch = JsonConvert.SerializeObject(works);
                 item.AudiobookQualityProfileId = item.EbookQualityProfileId = 1;
                 item.AudiobookMetadataProfileId = item.EbookMetadataProfileId = 1;
+                Harness.MarkExplicitSearches(item);
                 h.Requests.Update(item);
                 var imports = new List<string>();
                 var catalogReads = 0;

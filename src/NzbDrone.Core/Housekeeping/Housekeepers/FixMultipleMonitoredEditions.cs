@@ -39,7 +39,7 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
             public bool AnyEditionOk { get; set; }
         }
 
-        internal static int Repair(IDbConnection connection, IDbTransaction transaction, DatabaseType databaseType, Logger logger, bool duplicatesOnly)
+        internal static int Repair(IDbConnection connection, IDbTransaction transaction, DatabaseType databaseType, Logger logger, bool duplicatesOnly, int? commandTimeout = null)
         {
             var afterId = 0;
             var repaired = 0;
@@ -50,16 +50,16 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
                     JOIN ""Books"" b ON b.""Id"" = e.""BookId""
                     WHERE e.""BookId"" > @afterId GROUP BY e.""BookId""
                     HAVING SUM(CASE WHEN e.""Monitored"" THEN 1 ELSE 0 END) {(duplicatesOnly ? ">" : "<>")} 1
-                    ORDER BY e.""BookId"" LIMIT {SqliteVariableLimit.MaxParameters}", new { afterId }, transaction).ToArray();
+                    ORDER BY e.""BookId"" LIMIT {SqliteVariableLimit.MaxParameters}", new { afterId }, transaction, commandTimeout: commandTimeout).ToArray();
                 if (bookIds.Length == 0) return repaired;
 
-                EditionRepository.LockSelectionBooks(bookIds, connection, transaction, databaseType);
+                EditionRepository.LockSelectionBooks(bookIds, connection, transaction, databaseType, commandTimeout);
                 var bookPredicate = databaseType == DatabaseType.PostgreSQL ? "= ANY(@bookIds)" : "IN @bookIds";
                 var rows = connection.Query<RepairRow>($@"SELECT e.""Id"", e.""BookId"", e.""Monitored"", e.""ManualAdd"",
                     e.""ReadingFormatId"", e.""Ratings"" AS ""RatingsJson"", b.""MediaType"", b.""AnyEditionOk"",
                     (SELECT COUNT(*) FROM ""BookFiles"" f WHERE f.""EditionId"" = e.""Id"") AS ""FileCount""
                     FROM ""Editions"" e JOIN ""Books"" b ON b.""Id"" = e.""BookId"" WHERE e.""BookId"" {bookPredicate}",
-                    new { bookIds }, transaction).ToList();
+                    new { bookIds }, transaction, commandTimeout: commandTimeout).ToList();
                 var changed = new List<Edition>();
                 foreach (var group in rows.GroupBy(row => row.BookId))
                 {
@@ -82,7 +82,7 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
                     logger.Info("Edition monitoring repair: BookId={0}, selected EditionId={1}", group.Key, selected.Id);
                 }
 
-                EditionRepository.PersistSelection(changed, connection, transaction, databaseType);
+                EditionRepository.PersistSelection(changed, connection, transaction, databaseType, commandTimeout);
                 afterId = bookIds[^1];
             }
         }

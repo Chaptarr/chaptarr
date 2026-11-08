@@ -8,8 +8,9 @@ function createExistingAuthorSelector() {
     (state, { foreignAuthorId }) => foreignAuthorId,
     createAllAuthorsSelector(),
     (authorId, foreignAuthorId, authors) => {
-      if (authorId > 0) {
-        return _.find(authors, (author) => author.id === authorId) || null;
+      const existing = authorId > 0 ? _.find(authors, (author) => author.id === authorId) : null;
+      if (existing) {
+        return existing;
       }
 
       return foreignAuthorId ? _.find(authors, (author) => author.foreignAuthorId === foreignAuthorId) || null : null;

@@ -10,6 +10,7 @@ using Chaptarr.Http.REST;
 using Chaptarr.Core.Test.Common;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Disk;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Download;
@@ -166,7 +167,7 @@ namespace Chaptarr.Core.Test.Queue
                     path = Path.Combine(link, Path.GetFileName(context.LibraryFile));
                 }
                 context.RecordOutput(path);
-                Assert.Throws<IOException>(() => context.Controller.RemoveAction(10));
+                Assert.Throws<ConversionCleanupRefusedException>(() => context.Controller.RemoveAction(10));
                 Assert.Multiple(() =>
                 {
                     Assert.That(File.ReadAllText(context.LibraryFile), Is.EqualTo("imported recording"));
@@ -316,8 +317,7 @@ namespace Chaptarr.Core.Test.Queue
                 };
                 try
                 {
-                    var error = Assert.Throws<BadRequestException>(() => context.Controller.RemoveAction(10));
-                    Assert.That(error.Message, Does.Contain("action succeeded"));
+                    Assert.DoesNotThrow(() => context.Controller.RemoveAction(10));
                     Assert.That(context.ClientRemoves, Is.EqualTo(1));
                     Assert.That(context.Stops, Is.EqualTo(1));
                     Assert.That(File.Exists(context.Output), Is.True);
@@ -336,6 +336,13 @@ namespace Chaptarr.Core.Test.Queue
                     };
                     Assert.That(Assert.Throws<InvalidOperationException>(() => context.Jobs.Enqueue(nextRequest)).Message, Does.Contain("waiting for cleanup"));
                     Directory.Delete(link);
+                    var retryOwner = context.Repository.FindByDownloadId(context.DownloadId);
+                    var retry = JsonSerializer.Deserialize<ConversionJobRequest>(retryOwner.RequestJson);
+                    Assert.That(retry.CleanupError, Is.Not.Empty);
+                    Assert.That(retry.CleanupNotBefore, Is.GreaterThan(DateTime.UtcNow), "Cleanup failure must retain its retry schedule");
+                    retry.CleanupNotBefore = DateTime.UtcNow.AddSeconds(-1);
+                    retryOwner.RequestJson = JsonSerializer.Serialize(retry);
+                    context.Repository.Update(retryOwner);
                     typeof(ConversionJobService).GetMethod("RetryDiscardCleanup", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(context.Jobs, null);
                     Assert.That(File.Exists(context.Output), Is.False);
                     Assert.That(context.Repository.FindByDownloadId(context.DownloadId), Is.Null);
@@ -346,6 +353,109 @@ namespace Chaptarr.Core.Test.Queue
                 {
                     if (Directory.Exists(link)) Directory.Delete(link);
                 }
+            });
+        }
+
+        [Test]
+        public void bulk_removal_continues_after_one_offline_conversion_workspace([Values(false, true)] bool postgres)
+        {
+            VerifyBulkRemovalAfterCleanupFailure(postgres, "offline");
+        }
+
+        [Test]
+        public void bulk_removal_continues_after_disk_cleanup_failure(
+            [Values(false, true)] bool postgres, [Values("availability", "io", "permission")] string failure)
+        {
+            VerifyBulkRemovalAfterCleanupFailure(postgres, failure);
+        }
+
+        private static void VerifyBulkRemovalAfterCleanupFailure(bool postgres, string failure)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                using var first = new RemovalContext(database);
+                using var second = new RemovalContext(database);
+                first.SaveJob(ConversionJobStatus.Completed);
+                second.SaveJob(ConversionJobStatus.Completed);
+                var root = Path.Combine(first.Root, "library");
+                var offline = Path.Combine(first.Root, "offline");
+                var removed = new List<string>();
+                var stopped = new List<string>();
+                var failedProbes = 0;
+                var disk = Proxy<IDiskProvider>((method, args) =>
+                {
+                    var path = (string)args[0];
+                    if (failure != "offline" && method.Name == nameof(IDiskProvider.FolderExists) && path == Path.GetDirectoryName(first.Output))
+                    {
+                        Assert.That(removed, Is.EqualTo(new[] { first.DownloadId }), "The client action must finish before cleanup fails");
+                        failedProbes++;
+                        if (failure == "io") throw new IOException("Host is down");
+                        if (failure == "permission") throw new UnauthorizedAccessException("Share access is denied");
+                        return false;
+                    }
+                    return method.Name switch
+                    {
+                        nameof(IDiskProvider.FolderExists) => Directory.Exists(path),
+                        nameof(IDiskProvider.FolderEmpty) => !Directory.EnumerateFileSystemEntries(path).Any(),
+                        _ => throw new NotImplementedException(method.Name)
+                    };
+                });
+                var jobs = Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.CreateService(first.Repository, null,
+                    roots: Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(root, Path.Combine(second.Root, "library")), disk: disk);
+                var items = new[] { first.DownloadId, second.DownloadId }.Select(id => new TrackedDownload
+                {
+                    DownloadItem = new DownloadClientItem { DownloadId = id, Title = id }, State = TrackedDownloadState.ImportBlocked
+                }).ToDictionary(item => item.DownloadItem.DownloadId);
+                var client = Proxy<IDownloadClient>((method, args) =>
+                {
+                    Assert.That(method.Name, Is.EqualTo(nameof(IDownloadClient.RemoveItem)));
+                    removed.Add(((DownloadClientItem)args[0]).DownloadId);
+                    return null;
+                });
+                var profiles = new QualityProfileService(Proxy<IProfileRepository>((_, _) => new List<QualityProfile> { new() { Id = 1, Items = new List<QualityProfileQualityItem> { new() { Quality = Quality.MP3, Allowed = true } } } }),
+                    null, null, null, null, null, LogManager.GetCurrentClassLogger());
+                var controller = new QueueController(Proxy<NzbDrone.Core.Books.ISeriesBookLinkService>((_, _) => throw new AssertionException("Unexpected series query")),
+                    Proxy<IDownloadImportModeResolver>((_, _) => false), null,
+                    Proxy<IQueueService>((_, args) => new NzbDrone.Core.Queue.Queue { Id = (int)args[0], DownloadId = (int)args[0] == 10 ? first.DownloadId : second.DownloadId }),
+                    Proxy<IPendingReleaseService>((method, _) => method.Name == nameof(IPendingReleaseService.GetPendingQueue) ? new List<NzbDrone.Core.Queue.Queue>() : null),
+                    profiles, Proxy<ITrackedDownloadService>((method, args) =>
+                    {
+                        if (method.Name == nameof(ITrackedDownloadService.Find)) return items[(string)args[0]];
+                        if (method.Name == nameof(ITrackedDownloadService.StopTracking)) { stopped.Add((string)args[0]); return null; }
+                        throw new AssertionException(method.Name);
+                    }), null, null, Proxy<IProvideDownloadClient>((_, _) => client), null, null, jobs);
+                if (failure == "offline")
+                {
+                    Directory.Move(root, offline);
+                    Directory.CreateDirectory(root);
+                }
+                Assert.DoesNotThrow(() => controller.RemoveMany(new QueueBulkResource { Ids = new List<int> { 10, 11 } }));
+                Assert.That(removed, Is.EqualTo(new[] { first.DownloadId, second.DownloadId }));
+                Assert.That(stopped, Is.EqualTo(removed));
+                var retained = first.Repository.FindByDownloadId(first.DownloadId);
+                Assert.That(retained, Is.Not.Null);
+                var retry = JsonSerializer.Deserialize<ConversionJobRequest>(retained.RequestJson);
+                var expectedError = failure switch
+                {
+                    "offline" => "missing or empty",
+                    "availability" => "Unable to verify conversion workspace availability",
+                    "io" => "Host is down",
+                    "permission" => "Share access is denied",
+                    _ => throw new AssertionException(failure)
+                };
+                Assert.That(retry.CleanupError, Does.Contain(expectedError));
+                Assert.That(retry.DiscardRequested, Is.True);
+                Assert.That(retry.DiscardCurrentAttemptOnly, Is.False);
+                Assert.That(retry.CleanupNotBefore, Is.GreaterThan(DateTime.UtcNow));
+                Assert.That(retained.CleanupPending, Is.True);
+                Assert.That(failedProbes, Is.EqualTo(failure == "offline" ? 0 : 1));
+                Assert.That(second.Repository.FindByDownloadId(second.DownloadId), Is.Null);
+                Assert.That(File.Exists(second.Output), Is.False);
+                Assert.That(File.Exists(failure == "offline" ? Path.Combine(offline, Path.GetRelativePath(root, first.Output)) : first.Output), Is.True);
+                Assert.That(File.ReadAllText(failure == "offline" ? Path.Combine(offline, Path.GetRelativePath(root, first.LibraryFile)) : first.LibraryFile), Is.EqualTo("imported recording"));
+                Assert.That(File.ReadAllText(second.LibraryFile), Is.EqualTo("imported recording"));
+                Assert.That(File.Exists(first.Source), Is.True);
+                Assert.That(File.Exists(second.Source), Is.True);
             });
         }
 
@@ -465,7 +575,7 @@ namespace Chaptarr.Core.Test.Queue
                 _tracking = new ConversionTrackingService(events);
                 Repository = new ConversionJobRepository(database, events);
                 var config = Proxy<IConfigService>((method, args) => method.Name == "get_AudiobookConversionMaxCpuThreads" ? 2 : 1);
-                Jobs = new ConversionJobService(Repository, converter, _tracking, Proxy<IManageCommandQueue>((method, args) => null), config, logger, _history);
+                Jobs = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(), Repository, converter, _tracking, Proxy<IManageCommandQueue>((method, args) => null), config, logger, _history);
                 var tracked = new TrackedDownload
                 {
                     DownloadItem = new DownloadClientItem
@@ -506,7 +616,7 @@ namespace Chaptarr.Core.Test.Queue
                 {
                     new() { Id = 1, Items = new List<QualityProfileQualityItem> { new() { Quality = Quality.MP3, Allowed = true } } }
                 }), null, null, null, null, null, logger);
-                Controller = new QueueController(Proxy<IDownloadImportModeResolver>((method, args) => Preserved), null, queue, pending, profiles, trackedService,
+                Controller = new QueueController(global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<global::NzbDrone.Core.Books.ISeriesBookLinkService>((_, _) => throw new global::System.InvalidOperationException("Series batch loading was not expected in this fixture")), Proxy<IDownloadImportModeResolver>((method, args) => Preserved), null, queue, pending, profiles, trackedService,
                     Proxy<IFailedDownloadService>((method, args) => { Blocklists++; return null; }), Proxy<IIgnoredDownloadService>((method, args) => !IgnoreFails),
                     providers, null, _tracking, Jobs);
             }

@@ -300,7 +300,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Author> GetCandidates(string title) => throw new System.NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new System.NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new System.NotImplementedException();
-            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new System.NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new System.NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new System.NotImplementedException();

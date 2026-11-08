@@ -37,7 +37,7 @@ export const filters = [
   },
   {
     key: 'library',
-    label: () => translate('Library'),
+    label: () => translate('InLibrary'),
     title: () => translate('LibraryFilterHelpText'),
     filters: [
       {

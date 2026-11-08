@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using Chaptarr.Api.V1;
 using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http;
@@ -10,6 +11,7 @@ using NLog;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MediaFiles;
 using Swashbuckle.AspNetCore.Annotations;
 
@@ -50,6 +52,7 @@ namespace Chaptarr.Api.V1.Books
         [HttpGet]
         [ProducesResponseType(typeof(List<BookResource>), 200)]
         [ProducesResponseType(typeof(ApiErrorResource), 400)]
+        [ProducesResponseType(typeof(ApiErrorResource), 503)]
         public ActionResult<List<BookResource>> Search(
             [FromQuery, SwaggerParameter("Title search or provider ID. hc: and gr: select works; hc-ed:, hc:edition: and gr-ed: select editions. Native edition:N retains legacy Goodreads edition lookup. Facade work:N and edition:N use the route's provider dialect.", Required = true)] string term,
             [FromQuery, SwaggerParameter("Optional audiobook or ebook scope. A Readarr facade's media scope takes precedence. Omitted native scope returns all eligible media rows and copies.")] string mediaType = null)
@@ -147,13 +150,14 @@ namespace Chaptarr.Api.V1.Books
                     return LookupLocalByProvider(provider, $"{prefix}:{id}", requestedMediaType, loadedLocalBooks);
                 }
 
+                var editionBookIds = new List<int>();
                 if (prefix is "hc" or "gr" or "ol" or "gb" or "az" or "isbn")
                 {
-                    var ids = (_editionService.GetEditionsByProviderAndId(prefix, id) ?? new List<Edition>())
+                    editionBookIds = (_editionService.GetEditionsByProviderAndId(prefix, id) ?? new List<Edition>())
                         .Where(edition => edition != null && edition.BookId > 0).Select(edition => edition.BookId).Distinct().ToList();
-                    if (ids.Any())
+                    if (editionBookIds.Any())
                     {
-                        var books = GetExistingLookupMatches(ids, requestedMediaType, requestedTerm, loadedLocalBooks);
+                        var books = GetExistingLookupMatches(editionBookIds, requestedMediaType, requestedTerm, loadedLocalBooks);
                         if (books?.Any() == true)
                         {
                             return books;
@@ -164,7 +168,7 @@ namespace Chaptarr.Api.V1.Books
                 if (explicitEdition)
                 {
                     var aliasIds = _providerAliasService?.FindBookIds("edition",
-                        BookEditionIdentity.GetEditionProviderIds(new Edition { ForeignEditionId = term }));
+                        BookEditionIdentity.GetEditionProviderIds(new Edition { ForeignEditionId = term }))?.Except(editionBookIds).ToList();
                     return aliasIds?.Count > 0
                         ? GetExistingLookupMatches(aliasIds, requestedMediaType, requestedTerm, loadedLocalBooks)
                         : null;
@@ -179,9 +183,15 @@ namespace Chaptarr.Api.V1.Books
                     }
                 }
             }
+            catch (NzbDroneClientException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
-                _logger.Warn(ex, "Local book lookup failed for '{0}'; falling back to metadata search", requestedTerm);
+                _logger.Warn(ex, "Local book lookup failed for '{0}'", requestedTerm);
+                throw new NzbDroneClientException(HttpStatusCode.ServiceUnavailable,
+                    "The local library lookup could not be completed. Please retry.");
             }
 
             return null;
@@ -192,7 +202,13 @@ namespace Chaptarr.Api.V1.Books
             if (provider is "hc" or "gr")
             {
                 var key = (Scope: "work", Provider: provider, Id: providerId);
-                var ids = _bookService.FindBookIdsByProviderIds(new[] { key })[key];
+                var incomplete = false;
+                var ids = _bookService.FindBookIdsByProviderIds(new[] { key }, _ => incomplete = true)[key];
+                if (incomplete)
+                {
+                    throw new NzbDroneClientException(HttpStatusCode.ServiceUnavailable,
+                        "The local library lookup could not be completed. Please retry.");
+                }
                 return GetExistingLookupMatches(ids, requestedMediaType, providerId, loadedLocalBooks)?.OrderBy(book => book.Id).ToList();
             }
 

@@ -42,7 +42,7 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(links.Reads, Is.EqualTo(1));
         }
 
-        private static void WithWantedWriter(bool postgres, Action<BookService, BookRepository, EditionRepository, AuthorRepository, StubMediaFileService> test, Func<IEditionService, IEditionService> wrap = null, Func<IProviderAliasService, IProviderAliasService> wrapAliases = null, Func<IAuthorService, IAuthorService> wrapAuthors = null, Func<IBookRepository, IBookRepository> wrapBooks = null)
+        private static void WithWantedWriter(bool postgres, Action<BookService, BookRepository, EditionRepository, AuthorRepository, StubMediaFileService> test, Func<IEditionService, IEditionService> wrap = null, Func<IProviderAliasService, IProviderAliasService> wrapAliases = null, Func<IAuthorService, IAuthorService> wrapAuthors = null, Func<IBookRepository, IBookRepository> wrapBooks = null, bool persistedFiles = false)
         {
             DualDatabaseFixture.Run(postgres, database =>
             {
@@ -68,6 +68,7 @@ namespace Chaptarr.Core.Test.Books
                 var books = new BookRepository(database, events);
                 var editions = new EditionRepository(database, events);
                 var files = new StubMediaFileService();
+                if (persistedFiles) files.Repository = new NzbDrone.Core.MediaFiles.MediaFileRepository(database, events);
                 IEditionService editionService = new EditionService(editions, events, logger);
                 var service = new BookService(wrapBooks?.Invoke(books) ?? books, wrap?.Invoke(editionService) ?? editionService, events, wrapAuthors?.Invoke(authorService) ?? authorService,
                     files, roots, new SeriesBookLinkRepository(database, events), new StubMultiCopySeriesService(), logger,
@@ -133,7 +134,7 @@ namespace Chaptarr.Core.Test.Books
                 var requested = source.Editions[1];
                 requested.RemoteProviderIds = new HashSet<string> { "gr:7701", "gb:recording-7701" };
                 editions.Update(requested);
-                var wanted = writer.AddWantedEdition(source.Id, requested.Id);
+                var wanted = writer.AddWantedEditionCopy(source.Id, requested.Id).Book;
                 var persisted = editions.FindByBook(new[] { wanted.Id }).Single(edition => edition.Monitored);
                 Assert.Multiple(() =>
                 {
@@ -148,7 +149,7 @@ namespace Chaptarr.Core.Test.Books
                     Assert.That(editions.FindAllByProviderIds("gb", new[] { "recording-7701" })["recording-7701"].Select(edition => edition.Id),
                         Is.EquivalentTo(new[] { requested.Id, persisted.Id }));
                 });
-                Assert.That(writer.AddWantedEdition(source.Id, requested.Id).Id, Is.EqualTo(wanted.Id));
+                Assert.That(writer.AddWantedEditionCopy(source.Id, requested.Id).Book.Id, Is.EqualTo(wanted.Id));
                 Assert.That(books.GetBooksByAuthorId(source.AuthorId), Has.Count.EqualTo(2));
                 TestContext.WriteLine($"{(postgres ? "PostgreSQL" : "SQLite")}: inserted wanted local book {wanted.Id}, edition {persisted.Id}; both secondary provider lookups return source and copy after reload.");
             }, wrapAliases: inner => aliases = inner);
@@ -218,8 +219,8 @@ namespace Chaptarr.Core.Test.Books
                 {
                     source.RemoteProviderIds = new HashSet<string> { "gr:7001" };
                     wanted.RemoteProviderIds = new HashSet<string> { "gr:7001" };
-                    writer.RefreshProviderAliases(source);
-                    writer.RefreshProviderAliases(wanted);
+                    books.SetFields(source, row => row.ProviderIds);
+                    books.SetFields(wanted, row => row.ProviderIds);
                 }
                 else
                 {
@@ -251,7 +252,7 @@ namespace Chaptarr.Core.Test.Books
                 var exclusions = InterfaceProxy.Proxy<IImportListExclusionService>((method, _) => method.Name == nameof(IImportListExclusionService.FindByForeignId)
                     ? new List<ImportListExclusion>() : throw new NotImplementedException(method.Name));
                 var authorLibrary = InterfaceProxy.Proxy<IAuthorLibraryService>((_, _) => throw new InvalidOperationException("Existing local narration must not trigger author import."));
-                var service = new AddBookService(new StubAuthorService(author), authorLibrary, writer, null, null, null, exclusions,
+                var service = new AddBookService(new StubAuthorService(author), authorLibrary, writer, null, null, exclusions,
                     null, null, null, null, null, new EditionService(editions, new StubEventAggregator(), LogManager.GetCurrentClassLogger()),
                     null, null, null, LogManager.GetCurrentClassLogger(), null);
                 var requestEdition = RefreshEntityCopy.CloneEdition(narration);
@@ -284,12 +285,12 @@ namespace Chaptarr.Core.Test.Books
                 foreach (var book in targets)
                 {
                     book.RemoteProviderIds = new HashSet<string> { "gr:" + (9000 + book.Id) };
-                    service.RefreshProviderAliases(book);
+                    books.SetFields(book, row => row.ProviderIds);
                     book.RemoteProviderIds = null;
                 }
                 reads = 0;
                 service.UpdateMany(targets);
-                Assert.That(reads, Is.EqualTo(1));
+                Assert.That(reads, Is.Zero, "the persisted snapshot eliminates alias hydration queries");
                 foreach (var book in targets)
                 {
                     Assert.That(aliasService.FindBookIds("work", new[] { "gr:" + (9000 + book.Id) }), Does.Contain(book.Id));
@@ -319,7 +320,7 @@ namespace Chaptarr.Core.Test.Books
                 var author = authors.All().Single();
                 var source = SeedWantedBook(books, editions, author.Id, "1001", "Jim Dale", false);
                 source.RemoteProviderIds = new HashSet<string> { "gr:7001" };
-                writer.RefreshProviderAliases(source);
+                books.SetFields(source, row => row.ProviderIds);
                 var local = books.Get(source.Id);
                 local.Author = author;
                 var remote = RefreshEntityCopy.CloneBook(local, includeEditions: false, includeSeriesLinks: false);
@@ -335,17 +336,22 @@ namespace Chaptarr.Core.Test.Books
                 };
                 if (changed) remote.Title = "Changed metadata title";
                 var refresh = new RefreshBookService(writer, null, null, null, null, null, null, null, null, null, null,
-                    null, null, null, LogManager.GetCurrentClassLogger());
+                    null, null, null, LogManager.GetCurrentClassLogger(), mainDatabase: null);
                 var result = typeof(RefreshBookService).GetMethod("UpdateEntity", BindingFlags.Instance | BindingFlags.NonPublic)
                     .Invoke(refresh, new object[] { local, remote });
                 Assert.That(result.ToString(), Is.EqualTo(changed ? "UpdateTags" : "None"));
                 var copiedIds = local.RemoteProviderIds?.ToList();
+                var acceptedFreshSnapshot = local.ProviderIdsChanged;
                 writer.UpdateMany(new List<Book> { local });
                 Assert.That(aliases.FindBookIds("work", new[] { "gr:7001" }).Contains(source.Id), Is.EqualTo(providerSet is "unknown" or "poison" or "blank"));
                 Assert.That(aliases.FindBookIds("work", new[] { "gr:8001" }).Contains(source.Id), Is.EqualTo(providerSet == "mixed"));
                 Assert.That(aliases.FindBookIds("work", new[] { "hc:1001" }), Does.Contain(source.Id));
                 Assert.That(books.Get(source.Id).Title, Is.EqualTo(remote.Title));
-                if (providerSet is "unknown" or "poison" or "blank") Assert.That(copiedIds, Is.Null);
+                if (providerSet is "unknown" or "poison" or "blank")
+                {
+                    Assert.That(acceptedFreshSnapshot, Is.False, "unavailable metadata must not become an empty snapshot");
+                    Assert.That(copiedIds, Is.EquivalentTo(new[] { "gr:7001", "hc:1001" }), "the last stored snapshot remains readable");
+                }
                 else if (providerSet == "empty") Assert.That(copiedIds, Is.Not.Null.And.Empty);
                 else Assert.That(copiedIds, Is.EquivalentTo(new[] { "gr:8001" }));
             }, wrapAliases: inner => aliases = inner);
@@ -390,6 +396,55 @@ namespace Chaptarr.Core.Test.Books
 
         [TestCase(false)]
         [TestCase(true)]
+        public void microphone_copies_the_requested_edition_without_crossing_captured_work_pockets(bool postgres)
+        {
+            WithWantedWriter(postgres, (service, books, editions, authors, _) =>
+            {
+                var author = authors.All().Single();
+                author.Name = "George R.R. Martin";
+                authors.Update(author);
+                var other = SeedWantedBook(books, editions, author.Id, "1001", "Jim Dale", false);
+                var source = SeedWantedBook(books, editions, author.Id, "1002", "Jim Dale", false);
+                other.Title = "Le Trône de Fer l'intégrale 2";
+                other.HardcoverBookId = null;
+                other.GoodreadsWorkId = "gr:178649170";
+                source.Title = "A Clash of Kings";
+                source.HardcoverBookId = "hc:427374";
+                source.GoodreadsWorkId = "gr:224297699";
+                books.UpdateMany(new[] { other, source });
+                var sharedAsins = new List<string> { "B0001MC01Y", "B002UZKIBO", "B004I0O0CW", "B0093CVJOC", "B01B5X59KG",
+                    "B071S45CFY", "B079TMW6NF", "B07F7Y2H2P", "B0CBL9YX8C" };
+                foreach (var selected in new[] { other.Editions[0], source.Editions[0] })
+                {
+                    selected.ForeignEditionId = "gr:13500182-audiobook";
+                    selected.HardcoverEditionId = null;
+                    selected.Narrator = "Roy Dotrice";
+                    selected.Asin = "B0001MC01Y";
+                    selected.AudibleASIN = "B002UZKIBO";
+                    selected.Asins = sharedAsins.ToList();
+                }
+                var requested = source.Editions[1];
+                requested.ForeignEditionId = "hc:edition:32053017-audiobook";
+                requested.HardcoverEditionId = "32053017";
+                requested.Narrator = "Roy Dotrice";
+                requested.Asin = "1415902003";
+                requested.AudibleASIN = "B002UZKIBO";
+                requested.Asins = sharedAsins.Concat(new[] { "1415902003", "B079TKXXH4", "B079TLH1GN" }).ToList();
+                editions.UpdateMany(other.Editions.Concat(source.Editions).ToList());
+                var result = service.AddWantedEditionCopy(source.Id, requested.Id).Book;
+                Assert.That(result.Id, Is.Not.EqualTo(source.Id).And.Not.EqualTo(other.Id));
+                Assert.That(result.GoodreadsWorkId, Is.EqualTo("gr:224297699"));
+                Assert.That(result.Editions.Single(edition => edition.Monitored).HardcoverEditionId, Is.EqualTo(requested.HardcoverEditionId));
+                Assert.That(books.GetBooksByAuthorId(author.Id), Has.Count.EqualTo(3));
+                Assert.That(books.Get(source.Id).AnyEditionOk, Is.True);
+                Assert.That(editions.FindByBook(new[] { source.Id }).Single(edition => edition.Monitored).Id, Is.EqualTo(source.Editions[0].Id));
+                Assert.That(books.Get(other.Id).AnyEditionOk, Is.True);
+                Assert.That(editions.FindByBook(new[] { other.Id }).Single(edition => edition.Monitored).ManualAdd, Is.False);
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
         public void captured_distinct_work_pockets_with_shared_asins_must_keep_the_requested_work(bool postgres)
         {
             WithWantedWriter(postgres, (service, books, editions, authors, _) =>
@@ -425,7 +480,7 @@ namespace Chaptarr.Core.Test.Books
                 requested.AudibleASIN = "B002UZKIBO";
                 requested.Asins = sharedAsins.Concat(new[] { "1415902003", "B079TKXXH4", "B079TLH1GN" }).ToList();
                 editions.UpdateMany(other.Editions.Concat(source.Editions).ToList());
-                var result = service.AddWantedEdition(source.Id, requested.Id);
+                var result = service.AddWantedEditions(new List<Edition> { requested })[requested.Id];
                 Assert.That(result.Id, Is.EqualTo(source.Id));
                 Assert.That(result.GoodreadsWorkId, Is.EqualTo("gr:224297699"));
                 Assert.That(books.Get(other.Id).AnyEditionOk, Is.True);
@@ -453,7 +508,7 @@ namespace Chaptarr.Core.Test.Books
                     requested.ForeignEditionId = selected.ForeignEditionId = "az:B002UZKIBO-audiobook";
                 }
                 editions.UpdateMany(new[] { requested, selected });
-                var result = service.AddWantedEdition(source.Id, requested.Id);
+                var result = service.AddWantedEditionCopy(source.Id, requested.Id).Book;
                 Assert.That(result.Id, Is.Not.EqualTo(other.Id));
                 Assert.That(result.HardcoverBookId, Is.EqualTo(source.HardcoverBookId));
                 Assert.That(editions.FindByBook(new[] { other.Id }).Single(edition => edition.Monitored).Id, Is.EqualTo(selected.Id));
@@ -502,9 +557,8 @@ namespace Chaptarr.Core.Test.Books
             });
         }
 
-        [TestCase(false)]
-        [TestCase(true)]
-        public void stale_unselected_manual_marker_must_not_switch_a_filed_selection(bool postgres)
+        [Test]
+        public void stale_unselected_manual_marker_must_not_switch_a_filed_selection([Values(false, true)] bool postgres, [Values(false, true)] bool copy)
         {
             WithWantedWriter(postgres, (service, books, editions, authors, files) =>
             {
@@ -512,7 +566,8 @@ namespace Chaptarr.Core.Test.Books
                 source.Editions[1].ManualAdd = true;
                 editions.Update(source.Editions[1]);
                 files.FilesByBookId[source.Id] = new List<NzbDrone.Core.MediaFiles.BookFile> { new() { Edition = source.Editions[0] } };
-                var result = service.AddWantedEdition(source.Id, source.Editions[1].Id);
+                var result = copy ? service.AddWantedEditionCopy(source.Id, source.Editions[1].Id).Book
+                    : service.AddWantedEditions(new List<Edition> { source.Editions[1] })[source.Editions[1].Id];
                 Assert.That(result.Id, Is.Not.EqualTo(source.Id));
                 Assert.That(editions.FindByBook(new[] { source.Id }).Single(edition => edition.Monitored).Id, Is.EqualTo(source.Editions[0].Id));
             });

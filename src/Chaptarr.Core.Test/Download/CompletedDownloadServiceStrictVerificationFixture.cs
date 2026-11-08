@@ -57,6 +57,9 @@ namespace Chaptarr.Core.Test.Download
             public int CallCount { get; private set; }
             public List<ImportResult> Results { get; set; } = new();
 
+            public List<ImportResult> ProcessIncludedMedia(DownloadClientItem item, NzbDrone.Core.Parser.Model.RemoteBook book,
+                List<NzbDrone.Core.History.EntityHistory> history) => new();
+
             public List<ImportResult> ProcessPath(string path, ImportMode importMode = ImportMode.Auto, Author author = null, DownloadClientItem downloadClientItem = null, RemoteBook remoteBook = null, bool requireDefaultRootFolderForMissingAuthors = false)
             {
                 CallCount++;
@@ -161,7 +164,6 @@ namespace Chaptarr.Core.Test.Download
                 importService,
                 new PassthroughDownloadImportModeResolver(),
                 new StubTrackedDownloadAlreadyImported(),
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
@@ -216,7 +218,6 @@ namespace Chaptarr.Core.Test.Download
                 importService,
                 new PassthroughDownloadImportModeResolver(),
                 new StubTrackedDownloadAlreadyImported(),
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
@@ -260,7 +261,6 @@ namespace Chaptarr.Core.Test.Download
                 importService,
                 new PassthroughDownloadImportModeResolver(),
                 new StubTrackedDownloadAlreadyImported(),
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
@@ -319,7 +319,6 @@ namespace Chaptarr.Core.Test.Download
                 importer,
                 new PassthroughDownloadImportModeResolver(),
                 imported,
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
@@ -397,7 +396,6 @@ namespace Chaptarr.Core.Test.Download
                 importService,
                 new PassthroughDownloadImportModeResolver(),
                 new StubTrackedDownloadAlreadyImported(),
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
@@ -476,7 +474,6 @@ namespace Chaptarr.Core.Test.Download
                 importService,
                 new PassthroughDownloadImportModeResolver(),
                 new StubTrackedDownloadAlreadyImported(),
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
@@ -540,7 +537,6 @@ namespace Chaptarr.Core.Test.Download
                 importService,
                 new PassthroughDownloadImportModeResolver(),
                 new StubTrackedDownloadAlreadyImported(),
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
@@ -615,7 +611,6 @@ namespace Chaptarr.Core.Test.Download
                 importService,
                 new PassthroughDownloadImportModeResolver(),
                 new StubTrackedDownloadAlreadyImported { Result = false },
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
@@ -668,7 +663,6 @@ namespace Chaptarr.Core.Test.Download
                 importService,
                 new PassthroughDownloadImportModeResolver(),
                 new StubTrackedDownloadAlreadyImported(),
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
@@ -719,7 +713,6 @@ namespace Chaptarr.Core.Test.Download
                 new RecordingDownloadedBooksImportService(),
                 new PassthroughDownloadImportModeResolver(),
                 new StubTrackedDownloadAlreadyImported { Result = false },
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
@@ -779,7 +772,6 @@ namespace Chaptarr.Core.Test.Download
                 new RecordingDownloadedBooksImportService(),
                 new PassthroughDownloadImportModeResolver(),
                 new StubTrackedDownloadAlreadyImported { Result = false },
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
@@ -856,7 +848,6 @@ namespace Chaptarr.Core.Test.Download
                 importService,
                 new PassthroughDownloadImportModeResolver(),
                 new StubTrackedDownloadAlreadyImported { Result = false },
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
@@ -925,7 +916,6 @@ namespace Chaptarr.Core.Test.Download
                 importService,
                 new PassthroughDownloadImportModeResolver(),
                 new StubTrackedDownloadAlreadyImported { Result = false },
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
@@ -1004,7 +994,6 @@ namespace Chaptarr.Core.Test.Download
                 importService,
                 new PassthroughDownloadImportModeResolver(),
                 new StubTrackedDownloadAlreadyImported { Result = false },
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
@@ -1075,7 +1064,6 @@ namespace Chaptarr.Core.Test.Download
                 importService,
                 new PassthroughDownloadImportModeResolver(),
                 new StubTrackedDownloadAlreadyImported { Result = false },
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
@@ -1095,7 +1083,7 @@ namespace Chaptarr.Core.Test.Download
             var events = new RecordingEventAggregator();
             var subject = new CompletedDownloadService(events, history, new StubProvideImportItemService("/downloads"),
                 new RecordingDownloadedBooksImportService(), new PassthroughDownloadImportModeResolver(),
-                new StubTrackedDownloadAlreadyImported { Result = false }, NoopFailedDownloadService.Instance,
+                new StubTrackedDownloadAlreadyImported { Result = false },
                 LogManager.GetCurrentClassLogger(), NoopDownloadClientFileSnapshotService.Instance);
             TrackedDownload Context() => new() { DownloadItem = new DownloadClientItem { DownloadId = "download-1", Title = "Captured alternatives" },
                 RemoteBook = new RemoteBook { AlternativeCopies = true, Author = new Author { Id = 7 },

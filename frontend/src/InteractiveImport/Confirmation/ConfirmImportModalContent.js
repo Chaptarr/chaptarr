@@ -18,10 +18,19 @@ function formatBookFiles(items, book) {
       <b> {book.title} </b>
       <ul>
         {
-          _.sortBy(_.uniq(items.flatMap((item) => [item.path, ...(item.associatedPaths || [])]))).map((path) => {
+          _.sortBy(items, 'path').map((item) => {
             return (
-              <li key={path}>
-                {path}
+              <li key={item.id}>
+                <div>
+                  {[item.editionTitle, item.narrator, item.quality, item.mediaType === 'audiobook' && translate(item.isGraphicAudio ? 'RecordingTypeDramatized' : 'RecordingTypeStandard')].filter(Boolean).join(' — ')}
+                </div>
+                <div>{item.path}</div>
+                {
+                  item.associatedPaths?.length > 0 &&
+                    <ul>
+                      {_.uniq(item.associatedPaths).map((path) => <li key={path}>{path}</li>)}
+                    </ul>
+                }
               </li>
             );
           })
@@ -99,6 +108,10 @@ class ConfirmImportModalContent extends Component {
               <div>
                 <Alert>
                   {translate('ConfirmImportExistingPrefix')} <b>{translate('ConfirmImportWillBeDeleted')}</b> {translate('ConfirmImportExistingSuffix')}
+                </Alert>
+
+                <Alert kind={items.some((item) => item.isPermanentDelete) ? kinds.WARNING : kinds.INFO}>
+                  {translate(items.some((item) => item.isPermanentDelete) ? 'ConfirmImportPermanentDeletion' : 'ConfirmImportRecyclingBin')}
                 </Alert>
 
                 { _.chain(items)

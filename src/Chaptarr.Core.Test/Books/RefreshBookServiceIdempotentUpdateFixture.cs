@@ -35,7 +35,7 @@ namespace Chaptarr.Core.Test.Books
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
             public void AddMany(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Update(BookFile bookFile) => throw new NotImplementedException();
-            public int RelinkFilesByBook(int bookId, int editionId, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
@@ -117,7 +117,7 @@ namespace Chaptarr.Core.Test.Books
                     editionSelector: new EditionSelector(logger),
                     editionMetadataProfileFilter: new NzbDrone.Core.Books.Services.EditionMetadataProfileFilter(new TestTermMatcherService()),
                     mediaCoverService: null,
-                    logger: logger)
+                    logger: logger, mainDatabase: null)
             {
             }
 
@@ -129,6 +129,25 @@ namespace Chaptarr.Core.Test.Books
             public UpdateResult UpdateEntityPublic(Book local, Book remote)
             {
                 return UpdateEntity(local, remote);
+            }
+        }
+
+        [TestCase("ready-player-one_2", "ready-player-one")]
+        [TestCase("ready-player-one-3", "ready-player-one")]
+        [TestCase("カスピアン王子_2", "カスピアン王子")]
+        [TestCase("dune_copy_9", "dune")]
+        public void refresh_preserves_stored_slug_before_applying_changed_metadata(string storedSlug, string servedSlug)
+        {
+            var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+            foreach (var media in new[] { BookMediaType.Audiobook, BookMediaType.Ebook })
+            {
+                var local = new Book { Id = 1, Title = "Same", TitleSlug = storedSlug, MediaType = media, Overview = "old" };
+                var remote = new Book { Title = "Same", TitleSlug = servedSlug, MediaType = media, Overview = "changed" };
+                var result = service.UpdateEntityPublic(local, remote);
+                Assert.That(result, Is.Not.EqualTo(RefreshEntityServiceBase<Book, Edition>.UpdateResult.None));
+                Assert.That(local.Overview, Is.EqualTo("changed"));
+                Assert.That(local.TitleSlug, Is.EqualTo(storedSlug));
+                Assert.That(remote.TitleSlug, Is.EqualTo(servedSlug), "The served metadata object remains untouched.");
             }
         }
 
@@ -165,6 +184,35 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(result, Is.EqualTo(RefreshEntityServiceBase<Book, Edition>.UpdateResult.Standard));
                 Assert.That(ReferenceEquals(local.ProviderUrls, localProviderUrls), Is.False);
                 Assert.That(local.ProviderUrls["goodreads"], Is.EqualTo("https://example.com/remote"));
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void primary_series_id_survives_refresh_and_persistence_without_repeated_updates(bool postgres)
+        {
+            Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                var events = Common.InterfaceProxy.Proxy<NzbDrone.Core.Messaging.Events.IEventAggregator>((_, _) => null);
+                var author = new AuthorRepository(database, events, LogManager.GetCurrentClassLogger()).Insert(new Author
+                {
+                    Name = "Brandon Sanderson", CleanName = "brandonsanderson", Path = "/series-fixture", Added = DateTime.UtcNow
+                });
+                var books = new NzbDrone.Core.Datastore.BasicRepository<Book>(database, events);
+                var local = books.Insert(new Book { AuthorId = author.Id, Title = "The Way of Kings", CleanTitle = "thewayofkings", Added = DateTime.UtcNow });
+                var remote = RefreshEntityCopy.CloneBook(local, includeEditions: false);
+                remote.SeriesId = 49075;
+                remote.SeriesName = "The Stormlight Archive";
+                remote.SeriesPosition = "1";
+                var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+
+                Assert.That(service.UpdateEntityPublic(local, remote), Is.EqualTo(RefreshEntityServiceBase<Book, Edition>.UpdateResult.Standard));
+                books.Update(local);
+                local = books.Get(local.Id);
+                Assert.That(local.SeriesId, Is.EqualTo(49075));
+                Assert.That(local.SeriesName, Is.EqualTo("The Stormlight Archive"));
+                Assert.That(local.SeriesPosition, Is.EqualTo("1"));
+                Assert.That(service.UpdateEntityPublic(local, remote), Is.EqualTo(RefreshEntityServiceBase<Book, Edition>.UpdateResult.None));
             });
         }
 

@@ -34,7 +34,7 @@ namespace Chaptarr.Core.Test.Api
                 AudiobookRootFolderPath = "/library/audiobooks"
             });
 
-            var controller = new AuthorEditorController(authorService, commandQueue, CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService());
+            var controller = new AuthorEditorController(authorService, commandQueue, CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService(), AuthorFolderUpdateFixture.CreateFileNames());
 
             controller.SaveAll(new AuthorEditorResource
             {
@@ -63,7 +63,7 @@ namespace Chaptarr.Core.Test.Api
                 EbookRootFolderPath = "/library/ebooks"
             });
 
-            var controller = new AuthorEditorController(authorService, commandQueue, CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService());
+            var controller = new AuthorEditorController(authorService, commandQueue, CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService(), AuthorFolderUpdateFixture.CreateFileNames());
 
             controller.SaveAll(new AuthorEditorResource
             {
@@ -88,7 +88,7 @@ namespace Chaptarr.Core.Test.Api
                 EbookMonitorNewItems = null
             };
             var authorService = CreateAuthorService(author);
-            var controller = new AuthorEditorController(authorService, new RecordingCommandQueue(), CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService());
+            var controller = new AuthorEditorController(authorService, new RecordingCommandQueue(), CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService(), AuthorFolderUpdateFixture.CreateFileNames());
 
             controller.SaveAll(new AuthorEditorResource
             {
@@ -115,7 +115,7 @@ namespace Chaptarr.Core.Test.Api
                 AudiobookRootFolderPath = "/library/audiobooks"
             };
             var authorService = CreateAuthorService(author);
-            var controller = new AuthorEditorController(authorService, new RecordingCommandQueue(), CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService());
+            var controller = new AuthorEditorController(authorService, new RecordingCommandQueue(), CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService(), AuthorFolderUpdateFixture.CreateFileNames());
 
             controller.SaveAll(new AuthorEditorResource
             {
@@ -132,7 +132,8 @@ namespace Chaptarr.Core.Test.Api
         [Test]
         public void bulk_tag_edits_should_persist_each_media_set_and_response_independently(
             [Values(false, true)] bool postgres,
-            [Values("add", "remove", "replace-empty", "replace-values", "no-change", "null-stored-add", "null-stored-replace-empty", "one-null-add")] string scenario)
+            [Values("add", "remove", "replace-empty", "replace-values", "no-change", "null-stored-add", "null-stored-replace-empty", "one-null-add")] string scenario,
+            [Values(null, "audiobook", "ebook")] string mediaType)
         {
             DualDatabaseFixture.Run(postgres, database =>
             {
@@ -179,12 +180,13 @@ namespace Chaptarr.Core.Test.Api
                     ? ApplyTags.Replace : scenario == "remove" ? ApplyTags.Remove : ApplyTags.Add;
                 var requested = scenario == "no-change" ? null : scenario.Contains("empty", StringComparison.Ordinal)
                     ? new List<int>() : scenario == "remove" ? new List<int> { 1 } : new List<int> { 9 };
-                var controller = new AuthorEditorController(authors, commands, roots, new TestQualityProfileService(), new TestMetadataProfileService());
+                var controller = new AuthorEditorController(authors, commands, roots, new TestQualityProfileService(), new TestMetadataProfileService(), AuthorFolderUpdateFixture.CreateFileNames());
                 var result = controller.SaveAll(new AuthorEditorResource
                 {
                     AuthorIds = originals.Select(author => author.Id).ToList(),
                     Tags = requested,
-                    ApplyTags = apply
+                    ApplyTags = apply,
+                    MediaType = mediaType
                 }) as AcceptedResult;
                 Assert.That(result, Is.Not.Null);
                 var response = ((IEnumerable<AuthorResource>)result.Value).ToDictionary(author => author.Id);
@@ -207,6 +209,8 @@ namespace Chaptarr.Core.Test.Api
                         "null-stored-add" => new[] { 9 },
                         _ => new[] { 2 + index * 2 }
                     };
+                    if (mediaType == "ebook") expectedAudio = scenario.StartsWith("null-stored-", StringComparison.Ordinal) ? Array.Empty<int>() : new[] { 1 + index * 2 };
+                    if (mediaType == "audiobook") expectedEbook = scenario.StartsWith("null-stored-", StringComparison.Ordinal) || scenario == "one-null-add" ? Array.Empty<int>() : new[] { 2 + index * 2 };
                     var stored = repository.Get(originals[index].Id);
                     var resource = response[stored.Id];
                     var readback = stored.ToResource();
@@ -244,7 +248,7 @@ namespace Chaptarr.Core.Test.Api
                 EbookTags = null
             };
             var controller = new AuthorEditorController(CreateAuthorService(author), new RecordingCommandQueue(),
-                CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService());
+                CreateRootFolderService(), new TestQualityProfileService(), new TestMetadataProfileService(), AuthorFolderUpdateFixture.CreateFileNames());
             var requested = operation == ApplyTags.Add ? 9 : 5;
             var expected = operation == ApplyTags.Add ? new[] { 5, 9 } : Array.Empty<int>();
             var result = controller.SaveAll(new AuthorEditorResource
@@ -351,6 +355,7 @@ namespace Chaptarr.Core.Test.Api
             public void Fail(CommandModel command, string message, Exception e) => throw new NotImplementedException();
             public void Requeue() => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void Pause(int id) => throw new NotImplementedException();
             public void Resume(int id) => throw new NotImplementedException();
             public void CleanCommands() => throw new NotImplementedException();

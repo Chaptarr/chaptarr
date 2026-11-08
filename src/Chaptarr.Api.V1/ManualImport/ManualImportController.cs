@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System;
 using System.IO;
+using System.Diagnostics;
 using System.Linq;
 using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http;
@@ -64,7 +65,7 @@ namespace Chaptarr.Api.V1.ManualImport
         }
 
         [HttpPost("replacementfiles")]
-        public List<ManualImportReplacementFile> GetReplacementFiles([FromBody] ManualImportCommand request)
+        public List<ManualImportReplacementFile> GetReplacementFiles([FromBody] ManualImportReplacementRequest request)
         {
             var files = request?.Files;
             if (files == null || files.Count == 0 || files.Any(file => file == null || string.IsNullOrWhiteSpace(file.Path)))
@@ -72,6 +73,7 @@ namespace Chaptarr.Api.V1.ManualImport
                 throw new BadRequestException("Selected files and their paths are required");
             }
 
+            var started = Stopwatch.GetTimestamp();
             var existingFiles = _mediaFileService.GetFilesByBooks(files.Select(file => file.BookId).Where(id => id > 0).Distinct().ToList());
             var storedSources = _mediaFileService.GetFileWithPath(files.Select(file => file.Path).Distinct(PathEqualityComparer.Instance).ToList());
             var rootFolders = _rootFolderService.All();
@@ -82,8 +84,11 @@ namespace Chaptarr.Api.V1.ManualImport
                 ExistingFile = _rootFolderService.GetBestRootFolder(file.Path, rootFolders) != null
             }).ToList();
 
-            return (_replacementFiles ?? throw new InvalidOperationException("Replacement preview service is unavailable"))
+            var preview = (_replacementFiles ?? throw new InvalidOperationException("Replacement preview service is unavailable"))
                 .Describe(ManualImportReplacementFiles.Get(existingFiles, selections, storedSources));
+            _logger.Debug("[REPLACEMENT-PREVIEW] {0} selected, {1} replacement files, {2} associated paths in {3}ms",
+                files.Count, preview.Count, preview.Sum(file => file.AssociatedPaths.Count), Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            return preview;
         }
 
         [HttpGet]
@@ -219,6 +224,7 @@ namespace Chaptarr.Api.V1.ManualImport
                     SuggestedEditionTitle = resource.SuggestedEditionTitle,
                     Quality = resource.Quality,
                     ReleaseGroup = resource.ReleaseGroup,
+                    AudioProductionOverride = resource.AudioProductionOverride,
                     IndexerFlags = resource.IndexerFlags,
                     DownloadId = resource.DownloadId,
                     AdditionalFile = resource.AdditionalFile,

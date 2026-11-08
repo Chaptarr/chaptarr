@@ -147,7 +147,7 @@ namespace NzbDrone.Core.Download.History
         {
             var ids = downloadIds?
                 .Where(id => !string.IsNullOrWhiteSpace(id))
-                .Select(id => id.Trim().ToUpperInvariant())
+                .Select(DownloadIdentity.Key)
                 .Distinct()
                 .ToList() ?? new List<string>();
 
@@ -193,7 +193,7 @@ namespace NzbDrone.Core.Download.History
             transaction.Commit();
         }
 
-        private static int[] SignificantEvents()
+        internal static int[] SignificantEvents()
         {
             return new[]
             {
@@ -205,7 +205,9 @@ namespace NzbDrone.Core.Download.History
             };
         }
 
-        internal static string BuildCurrentSignificantEventsCte(DatabaseType databaseType, bool scoped = false)
+        internal const string LatestEventOrder = "\"Date\" DESC, \"Id\" DESC";
+
+        internal static string BuildCurrentSignificantEventsCte(DatabaseType databaseType, bool scoped = false, bool perClient = false)
         {
             var eventPredicate = databaseType == DatabaseType.PostgreSQL ? @"= ANY(@significantEvents)" : @"IN @significantEvents";
             var idPredicate = databaseType == DatabaseType.PostgreSQL ? @"= ANY(@downloadIds)" : @"IN @downloadIds";
@@ -214,7 +216,7 @@ namespace NzbDrone.Core.Download.History
                 WITH significant AS (
                     SELECT
                         ""DownloadHistory"".*,
-                        ROW_NUMBER() OVER (PARTITION BY ""DownloadId"" ORDER BY ""Date"" DESC, ""Id"" DESC) AS ""RowNumber""
+                        ROW_NUMBER() OVER (PARTITION BY ""DownloadId""{(perClient ? ", \"DownloadClientId\"" : string.Empty)} ORDER BY {LatestEventOrder}) AS ""RowNumber""
                     FROM ""DownloadHistory""
                     WHERE ""DownloadId"" IS NOT NULL
                       AND ""DownloadId"" <> ''

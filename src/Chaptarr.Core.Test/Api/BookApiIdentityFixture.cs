@@ -1,6 +1,12 @@
 using System;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
+using NzbDrone.Common.Messaging;
+using NzbDrone.Core.Books.Events;
+using NzbDrone.Core.MediaCover.Commands;
 using System.Reflection;
 using System.Linq;
 using Chaptarr.Api.V1.Books;
@@ -42,8 +48,181 @@ namespace Chaptarr.Core.Test.Api
 {
     [TestFixture]
     [NonParallelizable]
-    public class BookApiIdentityFixture
+    public partial class BookApiIdentityFixture
     {
+        [TestCase(false)]
+        [TestCase(true)]
+        public void slug_writers_and_routes_are_global_per_format_and_preserve_provider_siblings(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database);
+                var audio = h.AddBook(BookMediaType.Audiobook);
+                audio.TitleSlug = "résumé";
+                h.Books.Update(audio);
+                var ebook = h.AddBook(BookMediaType.Ebook);
+                ebook.TitleSlug = "ebook-route";
+                h.Books.Update(ebook);
+                var other = h.AddBook(BookMediaType.Audiobook, "hc:9002");
+                var secondAuthor = h.Authors.Insert(new Author
+                {
+                    Name = "Other author", CleanName = "otherauthor", SortName = "otherauthor", SortNameLastFirst = "authorother",
+                    TitleSlug = "other-author", Path = "/library/other", Added = DateTime.UtcNow
+                });
+                using (var connection = database.OpenConnection())
+                    connection.Execute(@"UPDATE ""Books"" SET ""AuthorId""=@AuthorId WHERE ""Id""=@Id", new { other.Id, AuthorId = secondAuthor.Id });
+                other.AuthorId = secondAuthor.Id;
+                other.TitleSlug = "RÉSUMÉ";
+                h.BookService.UpdateMany(new List<Book> { other });
+                Assert.That(h.Books.Get(other.Id).TitleSlug, Is.EqualTo("résumé_2"));
+                var another = h.AddBook(BookMediaType.Audiobook, "hc:9003");
+                another.TitleSlug = "résumé";
+                h.BookService.UpdateBook(another);
+                Assert.That(h.Books.Get(another.Id).TitleSlug, Is.EqualTo("résumé_3"));
+                var opposite = h.AddBook(BookMediaType.Ebook, "hc:9004");
+                opposite.TitleSlug = "RÉSUMÉ";
+                h.BookService.UpdateBook(opposite);
+                Assert.That(h.Books.Get(opposite.Id).TitleSlug, Is.EqualTo("résumé"));
+                var controller = h.ImportController(rejectLibraryReads: true);
+                var route = typeof(BookController).GetMethod("ResolveBookRouteToken", BindingFlags.Instance | BindingFlags.NonPublic);
+                Assert.That(((Book)route.Invoke(controller, new object[] { "RÉSUMÉ", "audiobook" })).Id, Is.EqualTo(audio.Id));
+                Assert.That(((Book)route.Invoke(controller, new object[] { "ebook-route", "audiobook" })).Id, Is.EqualTo(audio.Id));
+                Assert.That(route.Invoke(controller, new object[] { "absent", "ebook" }), Is.Null);
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void thousand_book_mass_monitor_queues_one_cover_batch(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database);
+                var books = h.AddBooks(BookMediaType.Audiobook, Enumerable.Range(1, 1000)
+                    .Select(i => ("hc:" + (30000 + i), "hc:" + (40000 + i))));
+                string[] ReadAliases()
+                {
+                    using var connection = database.OpenConnection();
+                    return connection.Query("SELECT * FROM \"ProviderAliasIndex\" ORDER BY \"Id\"")
+                        .Select(row => string.Join("|", ((IDictionary<string, object>)row).Select(column => column.Value)))
+                        .ToArray();
+                }
+
+                var aliasesBefore = ReadAliases();
+                Assert.That(aliasesBefore, Is.Not.Empty);
+                var commands = new List<DownloadBookMediaCommand>();
+                var coverService = new DeferredCoverDownloadService(
+                    Proxy<IDeferredCoverService>((m, a) => m.Name == nameof(IDeferredCoverService.MarkBooksForCoverDownload)
+                        ? false : throw new AssertionException(m.Name)), h.BookService,
+                    Proxy<IManageCommandQueue>((m, a) =>
+                    {
+                        if (m.Name != nameof(IManageCommandQueue.Push)) throw new AssertionException(m.Name);
+                        commands.Add((DownloadBookMediaCommand)a[0]);
+                        return new CommandModel { Body = commands.Last() };
+                    }), null, LogManager.GetCurrentClassLogger());
+                var individualEvents = 0;
+                var aggregateEvents = 0;
+                h.OnEvent = message =>
+                {
+                    if (message is BookEditedEvent) individualEvents++;
+                    if (message is BooksEditedEvent batch) { aggregateEvents++; coverService.Handle(batch); }
+                };
+                var controller = new BookEditorController(h.BookService, h.Queue,
+                    Proxy<IMapCoversToLocal>((m, a) => null));
+                var timer = Stopwatch.StartNew();
+                controller.SaveAll(new BookEditorResource
+                {
+                    BookIds = books.Select(b => b.Id).ToList(), Monitored = true, MediaType = "audiobook"
+                });
+                timer.Stop();
+                Assert.That(ReadAliases(), Is.EqualTo(aliasesBefore), "Monitoring must not rewrite provider identities or their index rows");
+                TestContext.WriteLine($"MassEditor engine={(postgres ? "PostgreSQL" : "SQLite")} books=1000 elapsedMs={timer.Elapsed.TotalMilliseconds:F3} fileBatches={h.FileBatches.Count} coverCommands={commands.Count}");
+                Assert.Multiple(() =>
+                {
+                    Assert.That(h.Books.All().Count(b => b.AudiobookMonitored), Is.EqualTo(1000));
+                    Assert.That(commands, Has.Count.EqualTo(1));
+                    Assert.That(commands.Single().BookIds, Is.EquivalentTo(books.Select(b => b.Id)));
+                    Assert.That(h.FileBatches, Has.Count.EqualTo(1));
+                    Assert.That(aggregateEvents, Is.EqualTo(1));
+                    Assert.That(individualEvents, Is.EqualTo(1000), "Keep existing statistics/UI observers");
+                });
+            });
+        }
+
+        private sealed class ConcurrentSlugRepository : BookRepository
+        {
+            private readonly Barrier _writers;
+            public int WriteAttempts;
+
+            public ConcurrentSlugRepository(IMainDatabase database, IEventAggregator events, Barrier writers)
+                : base(database, events)
+            {
+                _writers = writers;
+            }
+
+            private void BeforeWrite()
+            {
+                if (Interlocked.Increment(ref WriteAttempts) == 1)
+                    Assert.That(_writers.SignalAndWait(TimeSpan.FromSeconds(20)), Is.True,
+                        "Both writers must finish their conflict lookup before either writes");
+            }
+
+            public override Book Insert(Book book)
+            {
+                BeforeWrite();
+                return base.Insert(book);
+            }
+
+            public override void InsertMany(IList<Book> books)
+            {
+                BeforeWrite();
+                base.InsertMany(books);
+            }
+        }
+
+        [Test]
+        public void concurrent_book_adds_retry_only_the_slug_conflict_outside_the_failed_transaction(
+            [Values(false, true)] bool postgres, [Values(1, 2, 1001)] int batchCount,
+            [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database);
+                using var writers = new Barrier(2);
+                var repos = Enumerable.Range(0, 2).Select(_ => new ConcurrentSlugRepository(database, h.Events, writers)).ToArray();
+                var inputs = Enumerable.Range(0, 2).Select(worker => Enumerable.Range(0, batchCount).Select(i => new Book
+                {
+                    AuthorId = h.Author.Id, Title = "Concurrent title", CleanTitle = "concurrenttitle", Overview = "",
+                    TitleSlug = batchCount > 2 && i < batchCount - 1 ? $"worker-{worker}-title-{i}" : "concurrent-title", MediaType = mediaType,
+                    HardcoverBookId = $"hc:{5000 + worker * 2000 + i}", Added = DateTime.UtcNow,
+                    Editions = new List<Edition> { new() { Title = "Concurrent edition", ForeignEditionId = $"hc:{15000 + worker * 2000 + i}",
+                        ReadingFormatId = EditionReadingFormat.NativeFor(mediaType), Monitored = true } }
+                }).ToList()).ToArray();
+                var expected = batchCount > 2
+                    ? inputs.SelectMany(books => books.Take(batchCount - 1)).Select(book => book.TitleSlug)
+                        .Concat(new[] { "concurrent-title", "concurrent-title_2" }).ToArray()
+                    : batchCount == 2 ? new[] { "concurrent-title", "concurrent-title_2", "concurrent-title_3", "concurrent-title_4" }
+                        : new[] { "concurrent-title", "concurrent-title_2" };
+                var tasks = Enumerable.Range(0, 2).Select(worker => Task.Run(() =>
+                {
+                    var service = new BookService(repos[worker], h.EditionService, h.Events, h.AuthorService, h.Files,
+                        null, new SeriesBookLinkRepository(database, h.Events), null, LogManager.GetCurrentClassLogger(), providerAliasService: h.Aliases);
+                    if (batchCount > 1) service.InsertMany(inputs[worker]);
+                    else service.AddBook(inputs[worker].Single(), doRefresh: false);
+                })).ToArray();
+                Assert.That(Task.WaitAll(tasks, TimeSpan.FromSeconds(40)), Is.True);
+                var stored = h.Books.All();
+                Assert.Multiple(() =>
+                {
+                    Assert.That(repos.Sum(repo => repo.WriteAttempts), Is.EqualTo(3), "Exactly one database conflict and one retry");
+                    Assert.That(stored.Select(book => book.TitleSlug), Is.EquivalentTo(expected));
+                    Assert.That(stored.Select(book => book.Id), Is.EquivalentTo(inputs.SelectMany(books => books).Select(book => book.Id)));
+                    Assert.That(stored.All(book => book.MediaType == mediaType && book.AuthorId == h.Author.Id), Is.True);
+                    Assert.That(h.Editions.Count(), Is.EqualTo(batchCount > 1 ? 0 : 2), "No duplicate or orphan edition writes on retry");
+                });
+            });
+        }
+
         private sealed class Harness
         {
             public readonly AuthorRepository Authors;
@@ -55,7 +234,7 @@ namespace Chaptarr.Core.Test.Api
             public readonly IAuthorService AuthorService;
             public readonly IMediaFileService Files;
             public readonly MediaFileRepository FileRepository;
-            public readonly ProviderAliasService Aliases;
+            public readonly ProviderAliasSeed Aliases;
             public readonly IEventAggregator Events;
             public readonly IManageCommandQueue Queue;
             public readonly List<Command> Commands = new();
@@ -63,12 +242,14 @@ namespace Chaptarr.Core.Test.Api
             public readonly Author Author;
             public int RemoteLookups;
             public bool FailSave;
+            public bool KeepExistingAuthorSettings;
             public bool RejectSingleFileLookups;
+            public Action<IEvent> OnEvent;
 
             public Harness(IMainDatabase database)
             {
                 var logger = LogManager.GetCurrentClassLogger();
-                Events = Proxy<IEventAggregator>((method, args) => null);
+                Events = Proxy<IEventAggregator>((method, args) => { OnEvent?.Invoke((IEvent)args[0]); return null; });
                 Authors = new AuthorRepository(database, Events, logger);
                 Books = new BookRepository(database, Events);
                 Editions = new EditionRepository(database, Events);
@@ -84,6 +265,7 @@ namespace Chaptarr.Core.Test.Api
                 });
                 AuthorService = Proxy<IAuthorService>((method, args) => method.Name switch
                 {
+                    nameof(IAuthorService.UpdateAuthorProgressiveSettings) when KeepExistingAuthorSettings => args[0],
                     nameof(IAuthorService.GetAuthor) => Authors.Get((int)args[0]),
                     nameof(IAuthorService.GetAuthors) => Authors.Get((IEnumerable<int>)args[0]).ToList(),
                     nameof(IAuthorService.GetExistingAuthors) => Authors.FindExisting((IEnumerable<int>)args[0]),
@@ -91,7 +273,7 @@ namespace Chaptarr.Core.Test.Api
                     _ => throw new AssertionException("Unexpected author change or fetch: " + method.Name)
                 });
                 FileRepository = new MediaFileRepository(database, Events);
-                Aliases = new ProviderAliasService(new ProviderAliasRepository(database, Events));
+                Aliases = new ProviderAliasSeed(database, Events);
                 Files = Proxy<IMediaFileService>((method, args) =>
                 {
                     if (method.Name == nameof(IMediaFileService.GetFilesByBooks))
@@ -129,28 +311,49 @@ namespace Chaptarr.Core.Test.Api
             public Book AddBook(BookMediaType mediaType, string workId = "hc:1001", string editionId = "hc:2001",
                 bool monitored = false, string narrator = "Fixture Narrator")
             {
-                var book = Books.Insert(new Book
+                var book = Books.Insert(NewBook(mediaType, workId, monitored));
+                Editions.Insert(NewEdition(book, editionId, narrator));
+                return book;
+            }
+
+            public List<Book> AddBooks(BookMediaType mediaType, IEnumerable<(string WorkId, string EditionId)> identities)
+            {
+                var inputs = identities.ToList();
+                var books = inputs.Select(input => NewBook(mediaType, input.WorkId, false)).ToList();
+                Books.InsertMany(books);
+                Editions.InsertMany(books.Select((book, index) => NewEdition(book, inputs[index].EditionId, "Fixture Narrator")).ToList());
+                return books;
+            }
+
+            private Book NewBook(BookMediaType mediaType, string workId, bool monitored) => new Book
                 {
                     AuthorId = Author.Id, Title = "Stored title", CleanTitle = "storedtitle", Overview = "Stored description",
                     TitleSlug = Guid.NewGuid().ToString("N"), HardcoverBookId = workId, MediaType = mediaType,
                     Added = DateTime.UtcNow, ReleaseDate = new DateTime(2020, 1, 2), AnyEditionOk = false,
                     AudiobookMonitored = mediaType == BookMediaType.Audiobook && monitored,
                     EbookMonitored = mediaType == BookMediaType.Ebook && monitored
-                });
-                Editions.Insert(new Edition
+                };
+
+            private static Edition NewEdition(Book book, string editionId, string narrator) => new Edition
                 {
                     BookId = book.Id, Title = "Stored edition", ForeignEditionId = editionId,
-                    Monitored = true, ManualAdd = true, ReadingFormatId = mediaType == BookMediaType.Audiobook ? 2 : 3,
+                    Monitored = true, ManualAdd = true, ReadingFormatId = book.MediaType == BookMediaType.Audiobook ? 2 : 3,
                     NarratorNames = new List<string> { narrator }, Language = "eng"
-                });
-                return book;
+                };
+
+            public void SeedEditionAliases(int bookId, params string[] ids)
+            {
+                Aliases.SeedAliases("Edition", Editions.FindByBook(new[] { bookId }).Single().Id, "edition", ids);
             }
 
-            public BookController ImportController(bool rejectSingleBookLookups = false)
+            public BookController ImportController(bool rejectSingleBookLookups = false, bool rejectLibraryReads = false,
+                NzbDrone.Core.RootFolders.IRootFolderService roots = null, NzbDrone.Core.Profiles.Qualities.IQualityProfileService profiles = null, Action<Book> captureAdd = null)
             {
                 var logger = LogManager.GetCurrentClassLogger();
-                IBookService service = FailSave || rejectSingleBookLookups ? Proxy<IBookService>((method, args) =>
+                IBookService service = FailSave || rejectSingleBookLookups || rejectLibraryReads ? Proxy<IBookService>((method, args) =>
                 {
+                    if (rejectLibraryReads && method.Name == nameof(IBookService.GetAllBooks))
+                        throw new AssertionException("Slug route must not load the whole library");
                     if (rejectSingleBookLookups && method.Name == nameof(IBookService.GetBook))
                     {
                         throw new AssertionException("Unexpected per-row book lookup");
@@ -161,7 +364,7 @@ namespace Chaptarr.Core.Test.Api
                     }
                     return method.Invoke(BookService, args);
                 }) : BookService;
-                var add = new AddBookService(AuthorService, null, service, null, null, null,
+                var add = new AddBookService(AuthorService, null, service, null, null,
                     new ImportListExclusionService(Exclusions, logger), null, null, null, null, null,
                     EditionService, new EditionSelector(logger), new EditionMetadataProfileFilter(new TestTermMatcherService()),
                     Proxy<IMetadataProfileService>((method, args) => method.Name switch
@@ -170,15 +373,20 @@ namespace Chaptarr.Core.Test.Api
                         nameof(IMetadataProfileService.Get) => new MetadataProfile { Id = (int)args[0] },
                         _ => throw new AssertionException(method.Name)
                     }), logger, Queue);
-                return new BookController(AuthorService, service, add, EditionService, new EditionSelector(logger),
+                IAddBookService addService = captureAdd == null ? add : Proxy<IAddBookService>((method, args) =>
+                {
+                    if (args.FirstOrDefault() is Book book) captureAdd(book);
+                    return method.Invoke(add, args);
+                });
+                return new BookController(AuthorService, service, addService, EditionService, new EditionSelector(logger),
                     Proxy<ISeriesBookLinkService>((m, a) => new List<SeriesBookLink>()),
                     Proxy<NzbDrone.Core.AuthorStats.IAuthorStatisticsService>((m, a) => a.Length == 0
                         ? new List<NzbDrone.Core.AuthorStats.AuthorStatistics>()
                         : new NzbDrone.Core.AuthorStats.AuthorStatistics()),
                     Files, Proxy<IMapCoversToLocal>((m, a) => null), null,
-                    Proxy<IBroadcastSignalRMessage>((m, a) => false), Queue, Events, null,
+                    Proxy<IBroadcastSignalRMessage>((m, a) => false), Queue, Events, roots,
                     new QualityProfileExistsValidator(new TestQualityProfileService()),
-                    new MetadataProfileExistsValidator(new TestMetadataProfileService()), logger)
+                    new MetadataProfileExistsValidator(new TestMetadataProfileService()), logger, qualityProfileService: profiles)
                 { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
             }
 
@@ -198,6 +406,31 @@ namespace Chaptarr.Core.Test.Api
                     Proxy<IMediaCoverProxy>((m, a) => null), providerAliasService: Aliases, logger: logger)
                 { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
             }
+        }
+
+        [Test]
+        public void compatibility_import_preserves_the_requested_monitoring_mode(
+            [Values(false, true)] bool postgres, [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType media,
+            [Values("none", "specificBook", "all")] string mode)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database);
+                var existing = h.AddBook(media);
+                Book incoming = null;
+                var controller = h.ImportController(captureAdd: book => incoming = book);
+                var result = controller.ImportBook(new BookImportResource
+                {
+                    ForeignAuthorId = h.Author.HardcoverAuthorId, ForeignBookId = existing.HardcoverBookId,
+                    MediaType = media == BookMediaType.Audiobook ? "audiobook" : "ebook",
+                    AuthorMonitoring = new BookImportAuthorMonitoring { Monitor = mode }
+                }).GetAwaiter().GetResult();
+                Assert.That(result, Is.TypeOf<CreatedResult>());
+                Assert.That(incoming, Is.Not.Null);
+                Assert.That(incoming.Monitored, Is.EqualTo(mode != "none"));
+                Assert.That(incoming.AudiobookMonitored, Is.EqualTo(mode != "none" && media == BookMediaType.Audiobook));
+                Assert.That(incoming.EbookMonitored, Is.EqualTo(mode != "none" && media == BookMediaType.Ebook));
+            });
         }
 
         [TestCase(false, BookMediaType.Audiobook)]
@@ -389,7 +622,7 @@ namespace Chaptarr.Core.Test.Api
                 collision.GoodreadsWorkId = "gr:100379381";
                 collision.Title = "Letters from Father Christmas";
                 h.Books.Update(collision);
-                h.Aliases.ReplaceAliases("Book", collision.Id, "edition", new[] { "gr:883963" });
+                h.Aliases.SeedAliases("Book", collision.Id, "edition", new[] { "gr:883963" });
                 var oppositeType = mediaType == BookMediaType.Audiobook ? BookMediaType.Ebook : BookMediaType.Audiobook;
                 var opposite = h.AddBook(oppositeType, "hc:1", "gr:898777");
                 opposite.GoodreadsWorkId = work.GoodreadsWorkId;
@@ -404,7 +637,7 @@ namespace Chaptarr.Core.Test.Api
                 var result = controller.ImportBook(request).GetAwaiter().GetResult();
                 Assert.That(result, Is.TypeOf<CreatedResult>());
                 Assert.That((int)((CreatedResult)result).Value.GetType().GetProperty("id").GetValue(((CreatedResult)result).Value), Is.EqualTo(work.Id));
-                h.Aliases.ReplaceAliases("Book", collision.Id, "work", new[] { "gr:898777" });
+                h.Aliases.SeedAliases("Book", collision.Id, "work", new[] { "gr:898777" });
                 var model = h.BookService.GetBook(work.Id);
                 model.GoodreadsBookId = "gr:898777";
                 Assert.That(ProviderAmbiguityHelper.GetBookAmbiguity(h.BookService, model, "book", null), Is.Null);
@@ -516,8 +749,8 @@ namespace Chaptarr.Core.Test.Api
                 var h = new Harness(database);
                 var work = h.AddBook(BookMediaType.Ebook, "hc:1", "gr:2");
                 var edition = h.AddBook(BookMediaType.Ebook, "hc:3", "gr:4-ebook");
-                h.Aliases.ReplaceAliases("Book", work.Id, "work", new[] { "gr:777" });
-                h.Aliases.ReplaceAliases("Book", edition.Id, "edition", new[] { "gr:777" });
+                h.Aliases.SeedAliases("Book", work.Id, "work", new[] { "gr:777" });
+                h.SeedEditionAliases(edition.Id, "gr:777");
                 var lookup = h.LookupController();
                 Assert.That(lookup.Search("gr:777", "ebook").Value.Select(book => book.Id), Is.EqualTo(new[] { work.Id }));
                 Assert.That(lookup.Search("gr-ed:777", "ebook").Value.Select(book => book.Id), Is.EqualTo(new[] { edition.Id }));
@@ -643,10 +876,10 @@ namespace Chaptarr.Core.Test.Api
                 var h = new Harness(database);
                 var book = h.AddBook(BookMediaType.Audiobook, "hc:1", "gr:404-audiobook");
                 var deleted = h.AddBook(BookMediaType.Audiobook, "hc:999999", "gr:404");
-                h.Aliases.ReplaceAliases("Book", book.Id, "edition", new[] { "gr:405" });
-                h.Aliases.ReplaceAliases("Book", 999999, "edition", new[] { "gr:405" });
-                h.Aliases.ReplaceAliases("Book", book.Id, "work", new[] { "gr:406" });
-                h.Aliases.ReplaceAliases("Book", 999999, "work", new[] { "gr:406" });
+                h.SeedEditionAliases(book.Id, "gr:405");
+                h.Aliases.SeedAliases("Edition", 999999, "edition", new[] { "gr:405" });
+                h.Aliases.SeedAliases("Book", book.Id, "work", new[] { "gr:406" });
+                h.Aliases.SeedAliases("Book", 999999, "work", new[] { "gr:406" });
                 var lookup = h.LookupController(deletedOwner: deleted.Id);
                 foreach (var term in new[] { "gr-ed:404", "gr-ed:405", "gr:406" })
                 {
@@ -669,14 +902,15 @@ namespace Chaptarr.Core.Test.Api
                     : method.Invoke(database, args));
                 var h = new Harness(observed);
                 var book = h.AddBook(BookMediaType.Ebook);
+                var ownerEditionId = h.Editions.FindByBook(new[] { book.Id }).Single().Id;
                 var aliases = Enumerable.Range(1, 2000).Select(i => new ProviderAlias
                 {
-                    EntityType = "Book", EntityId = book.Id, Scope = "edition",
+                    EntityType = "Edition", EntityId = ownerEditionId, Scope = "edition",
                     Provider = i % 3 == 0 ? "gr" : i % 3 == 1 ? "hc" : "az",
                     NormalizedProviderId = i % 3 == 2 ? "B" + i : i.ToString(),
                     CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
                 }).ToList();
-                var repository = new ProviderAliasRepository(observed, h.Events);
+                var repository = new BasicRepository<ProviderAlias>(observed, h.Events);
                 repository.InsertMany(aliases);
                 repository.Insert(new ProviderAlias { EntityType = "Author", EntityId = h.Author.Id,
                     Scope = "edition", Provider = "hc", NormalizedProviderId = "1" });
@@ -687,8 +921,8 @@ namespace Chaptarr.Core.Test.Api
                 var rows = h.Aliases.FindBookAliases("edition", ids.Concat(ids));
                 Assert.That(rows.Select(row => row.Id), Is.EquivalentTo(aliases.Select(row => row.Id)));
                 Assert.That(commands.Count, Is.LessThanOrEqualTo(postgres ? 1 : 3));
-                Assert.That(commands.All(sql => sql.Split("UNION ALL").Length <= 3), Is.True);
-                Assert.That(commands.All(sql => sql.Contains("\"EntityType\" = @entityType") &&
+                Assert.That(commands.All(sql => sql.Split("UNION ALL").Length <= 6), Is.True);
+                Assert.That(commands.All(sql => sql.Contains("\"EntityType\" = 'Edition'") &&
                     sql.Contains(postgres ? "= ANY(@providerIds" : "IN (")), Is.True);
             });
         }
@@ -748,9 +982,9 @@ namespace Chaptarr.Core.Test.Api
                 var ebook = h.Books.All().Single(b => b.MediaType == BookMediaType.Ebook);
                 var audiobook = h.Books.All().Single(b => b.MediaType == BookMediaType.Audiobook);
                 var collision = h.AddBook(BookMediaType.Ebook, "hc:44767458", "hc:edition:77777");
-                h.Aliases.ReplaceAliases("Book", ebook.Id, "edition", new[] { "gr:44767458", "hc:edition:44767458" });
-                h.Aliases.ReplaceAliases("Book", audiobook.Id, "edition", new[] { "gr:44767458", "hc:edition:44767458" });
-                h.Aliases.ReplaceAliases("Book", collision.Id, "work", new[] { "gr:44767458", "hc:44767458" });
+                h.SeedEditionAliases(ebook.Id, "gr:44767458", "hc:edition:44767458");
+                h.SeedEditionAliases(audiobook.Id, "gr:44767458", "hc:edition:44767458");
+                h.Aliases.SeedAliases("Book", collision.Id, "work", new[] { "gr:44767458", "hc:44767458" });
                 controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
                 var singleCopyReads = 0;
                 foreach (var term in new[] { "gr-ed:44767458", "hc-ed:44767458", "hc:edition:44767458" })
@@ -767,7 +1001,7 @@ namespace Chaptarr.Core.Test.Api
                 {
                     var copy = h.AddBook(BookMediaType.Ebook, "hc:312460", "hc:edition:12250068-ebook");
                     expectedCopies.Add(copy.Id);
-                    h.Aliases.ReplaceAliases("Book", copy.Id, "edition", new[] { "gr:44767458" });
+                    h.SeedEditionAliases(copy.Id, "gr:44767458");
                 }
                 commands.Clear();
                 Assert.That(controller.Search("gr-ed:44767458", "ebook").Value.Select(book => book.Id), Is.EqualTo(expectedCopies));
@@ -883,8 +1117,8 @@ namespace Chaptarr.Core.Test.Api
                 var ebook = h.AddBook(BookMediaType.Ebook, "hc:111", "gr:211-ebook");
                 var other = h.AddBook(BookMediaType.Audiobook, "hc:112", "hc:212", narrator: "Other Narrator");
                 var aliasOnly = h.AddBook(BookMediaType.Audiobook, "hc:113", "hc:213");
-                h.Aliases.ReplaceAliases("Book", aliasOnly.Id, "work", new[] { "hc:111" });
-                h.Aliases.ReplaceAliases("Author", h.Author.Id, "author", new[] { "hc:111" });
+                h.Aliases.SeedAliases("Book", aliasOnly.Id, "work", new[] { "hc:111" });
+                h.Aliases.SeedAliases("Author", h.Author.Id, "author", new[] { "hc:111" });
                 h.FileRepository.Insert(new BookFile
                 {
                     EditionId = h.EditionService.GetEditionsByBook(first.Id).Single().Id,
@@ -992,9 +1226,9 @@ namespace Chaptarr.Core.Test.Api
                 var wrongWork = h.AddBook(BookMediaType.Audiobook, "hc:2", "gr:3");
                 wrongWork.GoodreadsWorkId = "gr:898777";
                 h.Books.Update(wrongWork);
-                h.Aliases.ReplaceAliases("Book", wrongEdition.Id, "edition", new[] { "gr:883963" });
-                h.Aliases.ReplaceAliases("Book", wrongWork.Id, "work", new[] { "gr:898777" });
-                h.Aliases.ReplaceAliases("Author", h.Author.Id, "author", new[] { "gr:883963" });
+                h.Aliases.SeedAliases("Book", wrongEdition.Id, "edition", new[] { "gr:883963" });
+                h.Aliases.SeedAliases("Book", wrongWork.Id, "work", new[] { "gr:898777" });
+                h.Aliases.SeedAliases("Author", h.Author.Id, "author", new[] { "gr:883963" });
                 var response = h.LookupController().Search("gr-ed:898777", "audiobook").Value.Single();
                 Assert.That(response.Id, Is.EqualTo(requested.Id));
                 Assert.That(response.LocalAudiobookBooks.Select(book => book.Id), Is.EqualTo(new[] { requested.Id }));
@@ -1050,6 +1284,34 @@ namespace Chaptarr.Core.Test.Api
             });
         }
 
+        [Test]
+        public void incomplete_provider_lookup_does_not_claim_a_remote_book_is_missing_locally(
+            [Values(false, true)] bool postgres, [Values(false, true)] bool columnMatch)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database);
+                if (columnMatch) h.AddBook(BookMediaType.Audiobook, "hc:1", "hc:2");
+                var aliases = Proxy<IProviderAliasService>((method, args) =>
+                {
+                    if (method.Name == nameof(IProviderAliasService.FindBookAliases))
+                        throw new InvalidOperationException("Injected alias lookup outage");
+                    return method.Invoke(h.Aliases, args);
+                });
+                var service = new BookService(h.Books, h.EditionService, h.Events, h.AuthorService, h.Files,
+                    null, new SeriesBookLinkRepository(database, h.Events), null, LogManager.GetCurrentClassLogger(), providerAliasService: aliases);
+                var remoteCalls = 0;
+                var controller = new BookLookupController(Proxy<ISearchForNewBook>((_, _) =>
+                    { remoteCalls++; return new List<Book>(); }),
+                    Proxy<IMapCoversToLocal>((_, _) => null), service, h.EditionService, h.Files,
+                    Proxy<IMediaCoverProxy>((_, _) => null), providerAliasService: aliases)
+                    { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
+                var error = Assert.Throws<NzbDrone.Core.Exceptions.NzbDroneClientException>(() => controller.Search("hc:1", "audiobook"));
+                Assert.That(error.StatusCode, Is.EqualTo(System.Net.HttpStatusCode.ServiceUnavailable));
+                Assert.That(remoteCalls, Is.Zero);
+            });
+        }
+
         [TestCase(false)]
         [TestCase(true)]
         public void search_reuses_exact_author_evidence_without_losing_distinct_resources(bool postgres)
@@ -1066,8 +1328,8 @@ namespace Chaptarr.Core.Test.Api
                     Name = "Second Author", CleanName = "secondauthor", SortName = "secondauthor", SortNameLastFirst = "Author, Second",
                     TitleSlug = "second-author", Path = @"C:\Audio\Second Author", Added = DateTime.UtcNow
                 });
-                h.Aliases.ReplaceAliases("Author", h.Author.Id, "author", new[] { "hc:9001" });
-                h.Aliases.ReplaceAliases("Author", second.Id, "author", new[] { "hc:9002" });
+                h.Aliases.SeedAliases("Author", h.Author.Id, "author", new[] { "hc:9001" });
+                h.Aliases.SeedAliases("Author", second.Id, "author", new[] { "hc:9002" });
                 var controller = new Chaptarr.Api.V1.Search.SearchController(null,
                     Proxy<NzbDrone.Core.Organizer.IBuildFileNames>((m, a) => "Author folder"),
                     Proxy<IMapCoversToLocal>((m, a) => null), Proxy<IMediaCoverProxy>((m, a) => null),
@@ -1239,7 +1501,7 @@ namespace Chaptarr.Core.Test.Api
                 {
                     books.Add(h.AddBook(media, "hc:900", "hc:edition:901"));
                     var secondary = h.AddBook(media, "hc:902", "hc:edition:903");
-                    h.Aliases.ReplaceAliases("Book", secondary.Id, "work", new[] { "hc:900" });
+                    h.Aliases.SeedAliases("Book", secondary.Id, "work", new[] { "hc:900" });
                     books.Add(secondary);
                 }
                 var resources = h.LookupController().Search("hc:900", "audiobook").Value;

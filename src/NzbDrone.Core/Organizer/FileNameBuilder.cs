@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -29,6 +30,11 @@ namespace NzbDrone.Core.Organizer
         private readonly ICustomFormatCalculationService _formatCalculator;
         private readonly ICached<BookFormat[]> _trackFormatCache;
         private readonly Logger _logger;
+        private readonly ConcurrentDictionary<(string MediaType, string Field, string Pattern), byte> _warnedPatterns = new();
+        private static readonly HashSet<string> ProductionLabelTokens = new(FileNameBuilderTokenEqualityComparer.Instance)
+        {
+            "{Narrator}", "{Narrator CleanName}", "{FullCast}", "{AudioProductionType}", "{GraphicAudio}"
+        };
 
         private static readonly Regex TitleRegex = new Regex(SmartNarratorToken.Pattern + @"|\{(?<prefix>[- ._,\[(\{]*)(?<token>(?:[a-z0-9]+)(?:(?<separator>[- ._]+)(?:[a-z0-9]+))?)(?::(?<customFormat>[a-z0-9]+))?(?<suffix>[- ._,)\]\}]*)\}",
                                                              RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -96,6 +102,7 @@ namespace NzbDrone.Core.Organizer
             }
 
             var pattern = namingConfig.StandardBookFormat;
+            WarnOnUnmatchedBraces(pattern, mediaType, nameof(NamingConfig.StandardBookFormat));
             SmartNarratorToken.Validate(pattern);
 
             var tokenHandlers = new Dictionary<string, Func<TokenMatch, string>>(FileNameBuilderTokenEqualityComparer.Instance);
@@ -110,7 +117,7 @@ namespace NzbDrone.Core.Organizer
             // Add narrator tokens for audiobook organization
             AddNarratorTokens(tokenHandlers, edition);
 
-            AddGraphicAudioTokens(tokenHandlers, edition, bookFile, SmartNarratorToken.Pattern.IsMatch(pattern));
+            AddProductionTokens(tokenHandlers, edition, bookFile, pattern);
             tokenHandlers["{Smart Narrator}"] = m => mediaType == "ebook"
                 ? string.Empty
                 : SmartNarratorToken.Resolve(m.CustomFormat, tokenHandlers);
@@ -215,6 +222,7 @@ namespace NzbDrone.Core.Organizer
             namingConfig = namingConfig.GetForMediaType(mediaType);
 
             var pattern = namingConfig.AuthorFolderFormat;
+            WarnOnUnmatchedBraces(pattern, mediaType, nameof(NamingConfig.AuthorFolderFormat));
             var tokenHandlers = new Dictionary<string, Func<TokenMatch, string>>(FileNameBuilderTokenEqualityComparer.Instance);
 
             AddAuthorTokens(tokenHandlers, author);
@@ -236,6 +244,16 @@ namespace NzbDrone.Core.Organizer
             }
 
             return Path.Combine(components.ToArray());
+        }
+
+        private void WarnOnUnmatchedBraces(string pattern, string mediaType, string field)
+        {
+            var error = FileNameValidation.GetBraceError(pattern);
+            if (error != null && _warnedPatterns.TryAdd((mediaType ?? "audiobook", field, pattern), 0))
+            {
+                _logger.Warn("Saved {0} naming format {1}: {2} Fix the format in Settings > Media Management > Book Naming; literal braces may appear in file or folder names.",
+                    mediaType ?? "audiobook", field, error);
+            }
         }
 
         public static string CleanTitle(string title)
@@ -516,9 +534,9 @@ namespace NzbDrone.Core.Organizer
             }
 
             // Preserve the compact naming convention; narrator count does not establish production type.
-            var isFullCast = narratorList.Count > 2 ||
+            var threeOrMoreNarrators = AudioProductionDetector.HasFullCastNarrators(narratorList);
+            var isFullCast = threeOrMoreNarrators ||
                              primaryNarrator.Equals("Full Cast", StringComparison.OrdinalIgnoreCase);
-
             var displayNarrator = primaryNarrator;
             if (isFullCast)
             {
@@ -560,20 +578,10 @@ namespace NzbDrone.Core.Organizer
             // Narrator initials (e.g., "Ray Porter" -> "RP")
             tokenHandlers["{Narrator Initials}"] = m =>
             {
-                if (!string.IsNullOrWhiteSpace(primaryNarrator))
-                {
-                    var parts = primaryNarrator.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    var initials = string.Join("", parts.Select(p => p[0].ToString().ToUpper()));
-                    return initials;
-                }
-                else if (narratorList.Any())
-                {
-                    var parts = narratorList.First().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    var initials = string.Join("", parts.Select(p => p[0].ToString().ToUpper()));
-                    return initials;
-                }
-                else
-                    return m.DefaultValue("");
+                var name = !string.IsNullOrWhiteSpace(primaryNarrator) ? primaryNarrator : narratorList.FirstOrDefault();
+                return string.IsNullOrWhiteSpace(name) ? m.DefaultValue("") :
+                    string.Concat(name.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(part => StringInfo.GetNextTextElement(part).ToUpperInvariant()));
             };
             
             // First name only
@@ -622,7 +630,7 @@ namespace NzbDrone.Core.Organizer
             };
 
             tokenHandlers["{First Narrator}"] = m => narratorList.FirstOrDefault() ?? primaryNarrator;
-            tokenHandlers["{FullCast}"] = m => narratorList.Count >= 3 ? "Full Cast" : string.Empty;
+            tokenHandlers["{FullCast}"] = m => threeOrMoreNarrators ? "Full Cast" : string.Empty;
         }
 
         private void AddBookFileTokens(Dictionary<string, Func<TokenMatch, string>> tokenHandlers, BookFile bookFile)
@@ -712,37 +720,37 @@ namespace NzbDrone.Core.Organizer
             tokenHandlers["{MediaInfo AudioSampleRate}"] = m => MediaInfoFormatter.FormatAudioSampleRate(bookFile.MediaInfo);
         }
 
-        private void AddGraphicAudioTokens(Dictionary<string, Func<TokenMatch, string>> tokenHandlers, Edition edition, BookFile bookFile, bool hasSmartNarrator)
+        private void AddProductionTokens(Dictionary<string, Func<TokenMatch, string>> tokenHandlers, Edition edition, BookFile bookFile, string pattern)
         {
             var mediaType = bookFile?.Quality != null ? BookFile.DetermineMediaType(bookFile.Quality) : bookFile?.MediaType;
 
-            var productionType = bookFile?.AudioProductionType?.Trim();
-            if (string.IsNullOrWhiteSpace(productionType))
-            {
-                productionType = edition?.AudioProductionType?.Trim();
-            }
-
-            var isGraphicAudio = bookFile?.IsGraphicAudio == true || edition?.IsGraphicAudio == true;
+            var productionType = AudioProductionDetector.GetProductionLabel(bookFile, edition);
+            var isGraphicAudio = AudioProductionDetector.HasGraphicAudioBrand(bookFile, edition);
             tokenHandlers["{GraphicAudio}"] = m => mediaType == "audiobook" && isGraphicAudio ? "GraphicAudio" : string.Empty;
             tokenHandlers["{AudioProductionType}"] = m => mediaType == "audiobook"
-                ? (string.IsNullOrWhiteSpace(productionType) ? (isGraphicAudio ? "GraphicAudio" : string.Empty) : productionType)
+                ? productionType ?? string.Empty
                 : string.Empty;
 
-            // Retain legacy title decoration only for templates without an explicit fallback order.
-            if (!hasSmartNarrator && bookFile != null && bookFile.IsGraphicAudio && mediaType == "audiobook")
+            // Do not repeat a production label already supplied by the naming template.
+            var hasProductionToken = SmartNarratorToken.Pattern.IsMatch(pattern) ||
+                TitleRegex.Matches(pattern).Cast<Match>().Any(match =>
+                    ProductionLabelTokens.Contains(match.Groups["token"].Value) &&
+                    tokenHandlers.TryGetValue(match.Groups["token"].Value, out var handler) &&
+                    string.Equals(handler(new TokenMatch()), productionType, StringComparison.OrdinalIgnoreCase));
+            if (!hasProductionToken && bookFile != null && (isGraphicAudio || AudioProductionDetector.IsDramatized(bookFile, edition)) && mediaType == "audiobook")
             {
-                var graphicAudioSuffix = " - GraphicAudio";
+                var productionSuffix = " - " + productionType;
 
-                // Override the standard book title tokens to include GraphicAudio suffix
-                tokenHandlers["{Book Title}"] = m => edition.Title + graphicAudioSuffix;
-                tokenHandlers["{Book CleanTitle}"] = m => CleanTitle(edition.Title + graphicAudioSuffix);
-                tokenHandlers["{Book TitleThe}"] = m => TitleThe(edition.Title + graphicAudioSuffix);
+                // Keep the production suffix without assigning a publisher from generic cast evidence.
+                tokenHandlers["{Book Title}"] = m => edition.Title + productionSuffix;
+                tokenHandlers["{Book CleanTitle}"] = m => CleanTitle(edition.Title + productionSuffix);
+                tokenHandlers["{Book TitleThe}"] = m => TitleThe(edition.Title + productionSuffix);
 
                 var (titleNoSub, subtitle) = edition.Title.SplitBookTitle(edition.Book.Author?.Name ?? string.Empty);
 
-                tokenHandlers["{Book TitleNoSub}"] = m => titleNoSub + graphicAudioSuffix;
-                tokenHandlers["{Book CleanTitleNoSub}"] = m => CleanTitle(titleNoSub + graphicAudioSuffix);
-                tokenHandlers["{Book TitleTheNoSub}"] = m => TitleThe(titleNoSub + graphicAudioSuffix);
+                tokenHandlers["{Book TitleNoSub}"] = m => titleNoSub + productionSuffix;
+                tokenHandlers["{Book CleanTitleNoSub}"] = m => CleanTitle(titleNoSub + productionSuffix);
+                tokenHandlers["{Book TitleTheNoSub}"] = m => TitleThe(titleNoSub + productionSuffix);
             }
         }
 

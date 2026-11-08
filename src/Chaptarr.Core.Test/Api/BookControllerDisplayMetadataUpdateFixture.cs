@@ -30,7 +30,7 @@ using static Chaptarr.Core.Test.Common.InterfaceProxy;
 namespace Chaptarr.Core.Test.Api
 {
     [TestFixture]
-    public class BookControllerDisplayMetadataUpdateFixture
+    public partial class BookControllerDisplayMetadataUpdateFixture
     {
         private sealed class DisconnectedBroadcaster : IBroadcastSignalRMessage
         {
@@ -688,7 +688,7 @@ namespace Chaptarr.Core.Test.Api
 
         [TestCase(false)]
         [TestCase(true)]
-        public void alias_write_failure_rolls_back_book_edition_and_facade_sync_without_events(bool postgres)
+        public void edition_write_failure_rolls_back_book_and_facade_sync_without_events(bool postgres)
         {
             var injectFailure = false;
             var emitted = new List<object>();
@@ -723,9 +723,9 @@ namespace Chaptarr.Core.Test.Api
                 Assert.That(books.Get(sibling.Id).IsMonitored(), Is.True);
             }, observeCommand: sql =>
             {
-                if (injectFailure && sql.Contains("DELETE FROM \"ProviderAliasIndex\"", StringComparison.Ordinal))
+                if (injectFailure && sql.StartsWith("UPDATE \"Editions\"", StringComparison.Ordinal))
                 {
-                    throw new InvalidOperationException("Injected alias write failure");
+                    throw new InvalidOperationException("Injected edition write failure");
                 }
             }, observeEvent: emitted.Add, syncMonitoring: true);
         }
@@ -819,39 +819,51 @@ namespace Chaptarr.Core.Test.Api
             }, observeCommand: writes.Add);
         }
 
-        [TestCase(false)]
-        [TestCase(true)]
-        public void rejected_file_relink_rolls_back_selection_and_pin(bool postgres)
+        [Test]
+        public void file_relink_and_classification_commit_or_roll_back_together(
+            [Values(false, true)] bool postgres, [Values(false, true)] bool rejectRelink)
         {
+            var originalId = 0;
+            var targetId = 0;
+            var writes = new List<string>();
             WithEndpoint(postgres, false, false, (controller, books, editions, book, _) =>
             {
-                var originalId = book.Editions.Single(edition => edition.Monitored).Id;
+                originalId = book.Editions.Single(edition => edition.Monitored).Id;
+                targetId = book.Editions.Single(edition => !edition.Monitored).Id;
+                var target = editions.Get(targetId);
+                target.Title = "How to Sell a Haunted House [Dramatized Adaptation]";
+                target.Publisher = "Blackstone Publishing, Inc.";
+                editions.Update(target);
                 var request = controller.GetBookById(book.Id).Value;
                 request.AnyEditionOk = false;
-                request.Editions = book.Editions.ToResource();
-                request.Editions.ForEach(edition => edition.Monitored = edition.Id != originalId);
-                var failure = Assert.Catch<Exception>(() => controller.UpdateBook(request));
-                Assert.That(failure.ToString(), Does.Contain(postgres ? "test_relink_rejected" : "relink rejected"));
-                Assert.That(books.Get(book.Id).AnyEditionOk, Is.True);
-                Assert.That(editions.FindByBook(new[] { book.Id }).Single(edition => edition.Monitored).Id, Is.EqualTo(originalId));
-                Assert.That(controller.GetBookById(book.Id).Value.ForeignEditionId,
-                    Is.EqualTo(book.Editions.Single(edition => edition.Id == originalId).ForeignEditionId));
+                request.Editions = editions.FindByBook(new[] { book.Id }).ToResource();
+                request.Editions.ForEach(edition => edition.Monitored = edition.Id == targetId);
+                writes.Clear();
+                if (rejectRelink)
+                {
+                    var failure = Assert.Catch<Exception>(() => controller.UpdateBook(request));
+                    Assert.That(failure.ToString(), Does.Contain(postgres ? "test_relink_rejected" : "relink rejected"));
+                }
+                else controller.UpdateBook(request);
+                Assert.That(books.Get(book.Id).AnyEditionOk, Is.EqualTo(rejectRelink));
+                Assert.That(editions.FindByBook(new[] { book.Id }).Single(edition => edition.Monitored).Id,
+                    Is.EqualTo(rejectRelink ? originalId : targetId));
+                Assert.That(writes.Any(sql => sql.StartsWith("UPDATE \"BookFiles\" SET \"AudioProductionOverride\"", StringComparison.Ordinal)), Is.True,
+                    "The classification write executes before the rejected relink");
             }, fileTest: (_, _, files, book) =>
             {
-                Assert.That(files.GetFilesByBook(book.Id).Select(file => file.EditionId),
-                    Is.EqualTo(new[] { book.Editions.Single(edition => edition.Monitored).Id }));
+                var saved = files.GetFilesByBook(book.Id).Single();
+                Assert.That(saved.EditionId, Is.EqualTo(rejectRelink ? originalId : targetId));
+                Assert.That(saved.AudioProductionOverride, Is.EqualTo(rejectRelink ? (bool?)null : true));
             }, beforeTest: (database, book) =>
             {
+                if (!rejectRelink) return;
                 using var connection = database.OpenConnection();
                 if (postgres)
-                {
                     Dapper.SqlMapper.Execute(connection, $"ALTER TABLE \"BookFiles\" ADD CONSTRAINT test_relink_rejected CHECK (\"EditionId\" = {book.Editions.Single(edition => edition.Monitored).Id})");
-                }
                 else
-                {
                     Dapper.SqlMapper.Execute(connection, "CREATE TRIGGER test_relink_rejected BEFORE UPDATE OF EditionId ON BookFiles BEGIN SELECT RAISE(ABORT, 'relink rejected'); END");
-                }
-            });
+            }, observeCommand: writes.Add);
         }
 
         private static void WithEndpoint(bool postgres, bool facade, bool hiddenNarrator,
@@ -948,10 +960,10 @@ namespace Chaptarr.Core.Test.Api
                         return fileRepository.GetFilesByBook((int)args[0]);
                     }
 
-                    if (method.Name == nameof(IMediaFileService.RelinkFilesByBook))
+                    if (method.Name == nameof(IMediaFileService.RelinkAndClassifyFilesByBook))
                     {
-                        return fileRepository.RelinkFilesByBook((int)args[0], (int)args[1],
-                            (System.Data.IDbConnection)args[2], (System.Data.IDbTransaction)args[3]);
+                        return fileRepository.RelinkAndClassifyFilesByBook((int)args[0], (int?)args[1], (BookMediaType)args[2], (AudioProductionCorrection)args[3],
+                            (System.Data.IDbConnection)args[4], (System.Data.IDbTransaction)args[5]);
                     }
 
                     if (method.Name == nameof(IMediaFileService.Update) && args[0] is List<BookFile> updated)

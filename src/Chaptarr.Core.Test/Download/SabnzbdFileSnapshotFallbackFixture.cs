@@ -94,7 +94,7 @@ namespace Chaptarr.Core.Test.Download
                 remotePathMappingService: new PassthroughRemotePathMappingService(),
                 nzbValidationService: null,
                 fileSnapshots: NoopDownloadClientFileSnapshotService.Instance,
-                logger: LogManager.GetCurrentClassLogger())
+                logger: LogManager.GetCurrentClassLogger(), rootFolders: DownloadClientTestRoots.Empty)
             {
                 Definition = new DownloadClientDefinition
                 {

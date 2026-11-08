@@ -47,6 +47,7 @@ namespace NzbDrone.Core.MediaFiles.Events
         public DownloadClientItemClientInfo DownloadClientInfo { get; set; }
         public string DownloadId { get; private set; }
         public ImportHistoryContext HistoryContext { get; set; }
+        public string Message { get; set; }
 
         public TrackImportedEvent(LocalBook bookInfo, BookFile importedBook, List<BookFile> oldFiles, bool newDownload, DownloadClientItem downloadClientItem)
         {

@@ -230,7 +230,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             public int Saves { get; private set; }
             public int Deletes { get; private set; }
             public ObservedRefresh(IBookService books, BookInfoProxy metadata)
-                : base(books, null, null, null, null, metadata, null, null, null, null, null, null, null, null, LogManager.GetCurrentClassLogger()) { }
+                : base(books, null, null, null, null, metadata, null, null, null, null, null, null, null, null, LogManager.GetCurrentClassLogger(), mainDatabase: null) { }
             protected override void SaveEntity(Book book) => Saves++;
             protected override void DeleteEntity(Book book, bool deleteFiles) => Deletes++;
         }
@@ -370,7 +370,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 var service = new RefreshBookService(serviceBooks, authors, null, editions, authorInfo,
                     metadata,
                     new RefreshEditionService(editions, tags, null, database, logger), media, null, events, null,
-                    new EditionSelector(logger), null, null, logger);
+                    new EditionSelector(logger), null, null, logger, mainDatabase: null);
                 Assert.DoesNotThrow(() => service.Execute(new BulkRefreshBookCommand { BookIds = books.Select(book => book.Id).ToList() }));
                 Assert.That(saved, Is.EqualTo(new[] { books[2].Id }));
                 Assert.That(published.Select(updated => updated.Book.Id), Is.EqualTo(saved));

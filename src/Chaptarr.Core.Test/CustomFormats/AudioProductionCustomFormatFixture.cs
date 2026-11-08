@@ -1467,6 +1467,31 @@ namespace Chaptarr.Core.Test.CustomFormats
             Assert.That(matches.Select(match => match.Id), Does.Contain(format.Id));
         }
 
+        [TestCase(null, false)]
+        [TestCase(false, false)]
+        [TestCase(true, true)]
+        public void generated_full_cast_paths_are_not_production_evidence_and_corrections_agree(bool? correction, bool expected)
+        {
+            var format = CreateDramatizedFormat();
+            var service = CreateCalculationService(format);
+            var author = new Author { Name = "Pierce Brown" };
+            var book = new Book { MediaType = BookMediaType.Audiobook, Author = author };
+            var edition = new Edition { Book = book, NarratorNames = new List<string> { "Alice Reader", "Bob Reader", "Carol Reader" } };
+            const string path = "/library/Dark Age - Full Cast/Dark Age.m4b";
+            var local = new LocalBook { Path = path, Author = author, Book = book, Edition = edition,
+                Quality = new QualityModel(Quality.M4B), AudioProductionOverride = correction };
+            var stored = new BookFile { Path = path, OriginalFilePath = path, Author = author, Edition = edition,
+                Quality = local.Quality, AudioProductionOverride = correction };
+            Assert.That(service.ParseCustomFormat(local).Any(item => item.Id == format.Id), Is.EqualTo(expected));
+            Assert.That(service.ParseCustomFormat(stored).Any(item => item.Id == format.Id), Is.EqualTo(expected));
+            local.IsGraphicAudio = stored.IsGraphicAudio = true;
+            local.AudioProductionOverride = stored.AudioProductionOverride = false;
+            Assert.That(service.ParseCustomFormat(local), Is.Empty);
+            Assert.That(service.ParseCustomFormat(stored), Is.Empty);
+            stored.AudioProductionOverride = null;
+            Assert.That(service.ParseCustomFormat(stored).Any(item => item.Id == format.Id), Is.True);
+        }
+
         private static CustomFormatCalculationService CreateCalculationService(params CustomFormat[] formats)
         {
             return new CustomFormatCalculationService(

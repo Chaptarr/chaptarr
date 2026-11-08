@@ -46,7 +46,7 @@ namespace Chaptarr.Core.Test.Download
                     ? path.Replace("/local/", "/remote/") : path.Replace("/remote/", "/local/"));
             });
             return new Sabnzbd(new SabnzbdProxy(transport, Logger), null, null, null, mapping, null,
-                snapshots ?? NoopDownloadClientFileSnapshotService.Instance, Logger)
+                snapshots ?? NoopDownloadClientFileSnapshotService.Instance, Logger, DownloadClientTestRoots.Empty)
             {
                 Definition = new DownloadClientDefinition
                 {

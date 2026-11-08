@@ -325,6 +325,7 @@ class AuthorSearchInput extends Component {
             id: b.id,
             exactMatch: b.exactMatch === true,
             title: b.title,
+            matchedEditionTitle: b.matchedEditionTitle,
             name: b.title,
             authorId: b.authorId,
             authorName: b.authorName,

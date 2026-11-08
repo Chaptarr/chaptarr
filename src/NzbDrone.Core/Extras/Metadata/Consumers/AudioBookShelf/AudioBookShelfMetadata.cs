@@ -285,7 +285,8 @@ namespace NzbDrone.Core.Extras.Metadata.Consumers.AudioBookShelf
 
         private static List<string> GetSeries(Book book)
         {
-            return BookSeries.GetLinks(book).Select(BookSeries.Label).ToList();
+            var header = BookSeries.GetHeaderLink(book);
+            return BookSeries.GetLinks(book).OrderByDescending(link => ReferenceEquals(link, header)).Select(BookSeries.Label).ToList();
         }
 
         private static MediaCoverModel SelectCover(Edition edition)

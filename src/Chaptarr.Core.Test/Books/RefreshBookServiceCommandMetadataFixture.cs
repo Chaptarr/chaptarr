@@ -24,13 +24,13 @@ namespace Chaptarr.Core.Test.Books
                 : base(books, null, null, null, authors, metadata, null,
                     InterfaceProxy.Proxy<IMediaFileService>((_, _) => new List<BookFile>()),
                     null, null, null, new EditionSelector(LogManager.GetCurrentClassLogger()),
-                    null, null, LogManager.GetCurrentClassLogger())
+                    null, null, LogManager.GetCurrentClassLogger(), mainDatabase: null)
             {
             }
 
-            protected override RemoteData GetRemoteData(Book local, List<Book> remote, Author author)
+            protected override RemoteData GetRemoteData(Book local, List<Book> remote, Author author, RefreshContext context)
             {
-                var result = base.GetRemoteData(local, remote, author);
+                var result = base.GetRemoteData(local, remote, author, context);
                 SeenTitles.Add(result.Entity?.Title);
                 // Stop before persistence: this audit exercises actual command lookup and selection.
                 return new RemoteData();

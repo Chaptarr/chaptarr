@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http;
@@ -10,6 +11,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Messaging.Commands;
+using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Core.Profiles.Qualities;
 using NzbDrone.Core.RootFolders;
@@ -24,31 +26,34 @@ namespace Chaptarr.Api.V1.Author
         private readonly IRootFolderService _rootFolderService;
         private readonly IQualityProfileService _qualityProfileService;
         private readonly IMetadataProfileService _metadataProfileService;
+        private readonly IBuildFileNames _fileNames;
 
         public AuthorEditorController(
             IAuthorService authorService,
             IManageCommandQueue commandQueueManager,
             IRootFolderService rootFolderService,
             IQualityProfileService qualityProfileService,
-            IMetadataProfileService metadataProfileService)
+            IMetadataProfileService metadataProfileService,
+            IBuildFileNames fileNames)
         {
             _authorService = authorService;
             _commandQueueManager = commandQueueManager;
             _rootFolderService = rootFolderService;
             _qualityProfileService = qualityProfileService;
             _metadataProfileService = metadataProfileService;
+            _fileNames = fileNames;
         }
 
         [HttpPut]
         public IActionResult SaveAll([FromBody] AuthorEditorResource resource)
         {
+            var selectedMediaType = MediaTypeParameterParser.ResolveWriteScope(MediaTypeParameterParser.NormalizeOptional(resource.MediaType), HttpContext?.GetReadarrFacadeContext()?.MediaType);
             var authorsToUpdate = _authorService.GetAuthors(resource.AuthorIds);
             var previousSyncByAuthorId = authorsToUpdate.ToDictionary(author => author.Id, author => author.SyncMonitoredAcrossFormats == true);
             var previousRootFoldersByAuthorId = authorsToUpdate.ToDictionary(author => author.Id, author => (author.AudiobookRootFolderPath, author.EbookRootFolderPath));
-            var audiobookMoves = new List<BulkMoveAuthor>();
-            var ebookMoves = new List<BulkMoveAuthor>();
+            var moves = new List<MoveAuthorCommand>();
             var rootFolders = _rootFolderService.All();
-            var validationError = GetValidationError(resource, rootFolders);
+            var validationError = GetValidationError(resource, rootFolders, authorsToUpdate);
             if (validationError.IsNotNullOrWhiteSpace())
             {
                 return BadRequest(validationError);
@@ -113,63 +118,25 @@ namespace Chaptarr.Api.V1.Author
                     author.EbookMetadataProfileId = resource.EbookMetadataProfileId.Value;
                 }
 
-                if (resource.AudiobookRootFolderPath.IsNotNullOrWhiteSpace())
+                if (resource.MoveFiles)
                 {
-                    var sourcePath = author.AudiobookPath;
-                    if (sourcePath.IsNullOrWhiteSpace())
-                    {
-                        var currentAudiobookRoot = author.AudiobookRootFolderPath;
-
-                        // Safety: only fall back to legacy author.Path if it doesn't appear to be the ebook folder.
-                        // We also try to ensure it sits under the existing audiobook root (when configured), so we don't
-                        // accidentally move the wrong media-type folder.
-                        if (author.Path.IsNotNullOrWhiteSpace() &&
-                            (author.EbookPath.IsNullOrWhiteSpace() || !author.Path.PathEquals(author.EbookPath)) &&
-                            (currentAudiobookRoot.IsNullOrWhiteSpace() || currentAudiobookRoot.PathEquals(author.Path) || currentAudiobookRoot.IsParentPath(author.Path)))
-                        {
-                            sourcePath = author.Path;
-                        }
-                    }
-
-                    author.AudiobookRootFolderPath = resource.AudiobookRootFolderPath;
-
-                    if (sourcePath.IsNotNullOrWhiteSpace())
-                    {
-                        audiobookMoves.Add(new BulkMoveAuthor
-                        {
-                            AuthorId = author.Id,
-                            SourcePath = sourcePath,
-                            MediaType = "audiobook"
-                        });
-                    }
+                    var audioFolder = resource.AudiobookRootFolderPath.IsNullOrWhiteSpace() ? null :
+                        Path.Combine(resource.AudiobookRootFolderPath, _fileNames.GetAuthorFolder(author, mediaType: "audiobook"));
+                    var ebookFolder = resource.EbookRootFolderPath.IsNullOrWhiteSpace() ? null :
+                        Path.Combine(resource.EbookRootFolderPath, _fileNames.GetAuthorFolder(author, mediaType: "ebook"));
+                    moves.AddRange(AuthorPathBuilder.ChangeFolders(author, audioFolder, ebookFolder, rootFolders, true));
                 }
-
-                if (resource.EbookRootFolderPath.IsNotNullOrWhiteSpace())
+                else
                 {
-                    var currentEbookRoot = author.EbookRootFolderPath;
-                    author.EbookRootFolderPath = resource.EbookRootFolderPath;
-
-                    var sourcePath = author.EbookPath;
-                    if (sourcePath.IsNullOrWhiteSpace())
+                    // The shared path builder preserves the folder relative to its actual configured root.
+                    if (resource.AudiobookRootFolderPath.IsNotNullOrWhiteSpace())
                     {
-                        // Safety: only fall back to legacy author.Path if it doesn't appear to be the audiobook folder.
-                        // Also try to ensure it sits under the existing ebook root (when configured).
-                        if (author.Path.IsNotNullOrWhiteSpace() &&
-                            (author.AudiobookPath.IsNullOrWhiteSpace() || !author.Path.PathEquals(author.AudiobookPath)) &&
-                            (currentEbookRoot.IsNullOrWhiteSpace() || currentEbookRoot.PathEquals(author.Path) || currentEbookRoot.IsParentPath(author.Path)))
-                        {
-                            sourcePath = author.Path;
-                        }
+                        author.AudiobookRootFolderPath = resource.AudiobookRootFolderPath;
                     }
 
-                    if (sourcePath.IsNotNullOrWhiteSpace())
+                    if (resource.EbookRootFolderPath.IsNotNullOrWhiteSpace())
                     {
-                        ebookMoves.Add(new BulkMoveAuthor
-                        {
-                            AuthorId = author.Id,
-                            SourcePath = sourcePath,
-                            MediaType = "ebook"
-                        });
+                        author.EbookRootFolderPath = resource.EbookRootFolderPath;
                     }
                 }
 
@@ -198,7 +165,9 @@ namespace Chaptarr.Api.V1.Author
                     var audiobookTags = new HashSet<int>(author.GetTagsForMediaType(BookMediaType.Audiobook));
                     var ebookTags = new HashSet<int>(author.GetTagsForMediaType(BookMediaType.Ebook));
 
-                    foreach (var tags in new[] { audiobookTags, ebookTags })
+                    var targets = selectedMediaType == "audiobook" ? new[] { audiobookTags } :
+                        selectedMediaType == "ebook" ? new[] { ebookTags } : new[] { audiobookTags, ebookTags };
+                    foreach (var tags in targets)
                     {
                         switch (resource.ApplyTags)
                         {
@@ -221,28 +190,12 @@ namespace Chaptarr.Api.V1.Author
                 }
             }
 
-            if (resource.MoveFiles)
-            {
-                if (resource.AudiobookRootFolderPath.IsNotNullOrWhiteSpace() && audiobookMoves.Any())
-                {
-                    _commandQueueManager.Push(new BulkMoveAuthorCommand
-                    {
-                        DestinationRootFolder = resource.AudiobookRootFolderPath,
-                        Author = audiobookMoves
-                    });
-                }
-
-                if (resource.EbookRootFolderPath.IsNotNullOrWhiteSpace() && ebookMoves.Any())
-                {
-                    _commandQueueManager.Push(new BulkMoveAuthorCommand
-                    {
-                        DestinationRootFolder = resource.EbookRootFolderPath,
-                        Author = ebookMoves
-                    });
-                }
-            }
-
             var updatedAuthors = _authorService.UpdateAuthors(authorsToUpdate, !resource.MoveFiles);
+            if (moves.Count > 0)
+            {
+                moves.ForEach(move => move.Trigger = CommandTrigger.Manual);
+                _commandQueueManager.PushMany(moves);
+            }
 
             var authorIdsToHydrate = updatedAuthors
                 .Where(author => previousRootFoldersByAuthorId.TryGetValue(author.Id, out var previous) &&
@@ -281,14 +234,14 @@ namespace Chaptarr.Api.V1.Author
             return Accepted(updatedAuthors.ToResource());
         }
 
-        private string GetValidationError(AuthorEditorResource resource, List<RootFolder> rootFolders)
+        private string GetValidationError(AuthorEditorResource resource, List<RootFolder> rootFolders, List<NzbDrone.Core.Books.Author> authors)
         {
-            if (resource.AudiobookQualityProfileId.HasValue && !_qualityProfileService.Exists(resource.AudiobookQualityProfileId.Value, ProfileType.Audiobook))
+            if (resource.AudiobookQualityProfileId.HasValue && !_qualityProfileService.Exists(resource.AudiobookQualityProfileId.Value, authors.All(author => author.AudiobookQualityProfileId == resource.AudiobookQualityProfileId) ? null : ProfileType.Audiobook))
             {
                 return $"Audiobook quality profile {resource.AudiobookQualityProfileId.Value} does not exist or is incompatible with audiobook";
             }
 
-            if (resource.EbookQualityProfileId.HasValue && !_qualityProfileService.Exists(resource.EbookQualityProfileId.Value, ProfileType.Ebook))
+            if (resource.EbookQualityProfileId.HasValue && !_qualityProfileService.Exists(resource.EbookQualityProfileId.Value, authors.All(author => author.EbookQualityProfileId == resource.EbookQualityProfileId) ? null : ProfileType.Ebook))
             {
                 return $"Ebook quality profile {resource.EbookQualityProfileId.Value} does not exist or is incompatible with ebook";
             }
@@ -298,12 +251,12 @@ namespace Chaptarr.Api.V1.Author
                 return $"Metadata profile {resource.MetadataProfileId.Value} does not exist";
             }
 
-            if (resource.AudiobookMetadataProfileId.HasValue && !_metadataProfileService.Exists(resource.AudiobookMetadataProfileId.Value, MetadataProfileType.Audiobook))
+            if (resource.AudiobookMetadataProfileId.HasValue && !_metadataProfileService.Exists(resource.AudiobookMetadataProfileId.Value, authors.All(author => !NzbDrone.Core.Configuration.ConfigValueValidation.HasChanged(author.AudiobookMetadataProfileId, resource.AudiobookMetadataProfileId)) ? null : MetadataProfileType.Audiobook))
             {
                 return $"Audiobook metadata profile {resource.AudiobookMetadataProfileId.Value} does not exist or is incompatible with audiobook";
             }
 
-            if (resource.EbookMetadataProfileId.HasValue && !_metadataProfileService.Exists(resource.EbookMetadataProfileId.Value, MetadataProfileType.Ebook))
+            if (resource.EbookMetadataProfileId.HasValue && !_metadataProfileService.Exists(resource.EbookMetadataProfileId.Value, authors.All(author => !NzbDrone.Core.Configuration.ConfigValueValidation.HasChanged(author.EbookMetadataProfileId, resource.EbookMetadataProfileId)) ? null : MetadataProfileType.Ebook))
             {
                 return $"Ebook metadata profile {resource.EbookMetadataProfileId.Value} does not exist or is incompatible with ebook";
             }
@@ -339,7 +292,7 @@ namespace Chaptarr.Api.V1.Author
         public object DeleteAuthor([FromBody] AuthorEditorResource resource, string mediaType = null)
         {
             var scope = MediaTypeParameterParser.ParseDeletionScope(resource.ApplyToBothFormats, HttpContext.GetReadarrFacadeContext()?.MediaType, resource.MediaType, mediaType);
-            _authorService.DeleteAuthors(resource.AuthorIds, resource.DeleteFiles, resource.AddImportListExclusion, scope, resource.ApplyToBothFormats);
+            _authorService.DeleteAuthors(resource.AuthorIds, resource.DeleteFiles, resource.AddImportListExclusion, scope, resource.ApplyToBothFormats, resource.DeleteOtherAuthorsFiles);
 
             return new { };
         }

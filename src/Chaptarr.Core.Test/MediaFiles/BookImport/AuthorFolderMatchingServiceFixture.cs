@@ -14,6 +14,14 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
     [TestFixture]
     public class AuthorFolderMatchingServiceFixture
     {
+        [TestCase("Frank Herberts", "Frank Herbert")]
+        [TestCase("Nora Robert", "Nora Roberts")]
+        public void folder_lookup_should_use_the_same_surname_compatibility(string folder, string author)
+        {
+            Assert.That(new AuthorFolderMatchingService(null, LogManager.GetCurrentClassLogger())
+                .ValidateFolderMatchesAuthor(folder, author), Is.True);
+        }
+
         [TestCase("Stephen King", "Stephen King", true)]
         [TestCase("Stephen King", "StephenKing", true)]
         [TestCase("Stephen King", "Stephen Kingsley", false)]

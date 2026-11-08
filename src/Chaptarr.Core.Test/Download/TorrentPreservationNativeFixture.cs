@@ -158,7 +158,7 @@ namespace Chaptarr.Core.Test.Download
         private sealed class RTorrentClient : RTorrent
         {
             public RTorrentClient(IRTorrentProxy proxy, bool addStopped)
-                : base(proxy, null, null, null, null, null, null, null, null, null, Logger)
+                : base(proxy, null, null, null, null, null, null, null, null, null, Logger, DownloadClientTestRoots.Empty)
             {
                 Definition = new DownloadClientDefinition
                 {

@@ -15,11 +15,13 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
 using NzbDrone.Core.Validation;
+using NzbDrone.Core.RootFolders;
 
 namespace NzbDrone.Core.Download.Clients.Sabnzbd
 {
     public class Sabnzbd : UsenetClientBase<SabnzbdSettings>
     {
+        private readonly IRootFolderService _rootFolders;
         private readonly ISabnzbdProxy _proxy;
         private readonly IDownloadClientFileSnapshotService _fileSnapshots;
 
@@ -30,9 +32,11 @@ namespace NzbDrone.Core.Download.Clients.Sabnzbd
                        IRemotePathMappingService remotePathMappingService,
                        IValidateNzbs nzbValidationService,
                        IDownloadClientFileSnapshotService fileSnapshots,
-                       Logger logger)
+                       Logger logger,
+                       IRootFolderService rootFolders)
             : base(httpClient, configService, diskProvider, remotePathMappingService, nzbValidationService, logger)
         {
+            _rootFolders = rootFolders;
             _proxy = proxy;
             _fileSnapshots = fileSnapshots;
         }
@@ -268,6 +272,8 @@ namespace NzbDrone.Core.Download.Clients.Sabnzbd
 
         public override void RemoveItem(DownloadClientItem item, bool deleteData)
         {
+            if (deleteData) EnsureCanDeleteItemData(item, _rootFolders);
+
             var queueClientItem = GetQueue().SingleOrDefault(v => v.DownloadId == item.DownloadId);
 
             if (queueClientItem == null)

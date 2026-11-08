@@ -168,6 +168,14 @@ namespace Chaptarr.Core.Test.Books
                 return series;
             }
 
+            public Func<int, bool> HasLinks { get; set; }
+            public bool DeleteIfUnlinked(int seriesId)
+            {
+                if (HasLinks(seriesId)) return false;
+                Delete(seriesId);
+                return true;
+            }
+
             public void Delete(int seriesId)
             {
                 DeletedIds.Add(seriesId);
@@ -305,11 +313,12 @@ namespace Chaptarr.Core.Test.Books
         {
             public int DeleteCalls { get; private set; }
 
-            public List<SeriesBookLink> ReadLocalChildren(Series series) => GetLocalChildren(series, null);
+            public List<SeriesBookLink> ReadLocalChildren(Series series) => GetLocalChildren(series, null, CreateContext());
 
             public TestableRefreshSeriesService(IBookService bookService, ISeriesService seriesService, ISeriesBookLinkService linkService, IRefreshSeriesBookLinkService refreshLinkService, Logger logger)
                 : base(bookService, seriesService, linkService, refreshLinkService, logger)
             {
+                if (seriesService is StubSeriesService stub) stub.HasLinks = id => linkService.GetLinksBySeries(id).Any();
             }
 
             protected override void DeleteEntity(Series local, bool deleteFiles)

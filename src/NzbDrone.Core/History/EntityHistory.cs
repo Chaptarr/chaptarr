@@ -74,6 +74,8 @@ namespace NzbDrone.Core.History
         BookFileRetagged = 9,
         DownloadIgnored = 10,
         BookFileConverted = 11,
-        BookFileConversionFailed = 12
+        BookFileConversionFailed = 12,
+        AuthorsMerged = 13,
+        AuthorSplit = 14
     }
 }

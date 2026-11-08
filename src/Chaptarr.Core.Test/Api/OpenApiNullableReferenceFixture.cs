@@ -9,12 +9,16 @@ using Chaptarr.Api.V1.ImportLists;
 using Chaptarr.Api.V1.PendingImport;
 using Chaptarr.Api.V1.ProviderIds;
 using Chaptarr.Api.V1;
+using Chaptarr.Core.Test.Common;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using NUnit.Framework;
 using Newtonsoft.Json.Linq;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Configuration;
 using NzbDrone.Core.ImportLists;
 using NzbDrone.Host;
 using Swashbuckle.AspNetCore.SwaggerGen;
@@ -24,15 +28,62 @@ namespace Chaptarr.Core.Test.Api
     [TestFixture]
     public class OpenApiNullableReferenceFixture
     {
-        private static ServiceProvider CreateServices()
+        internal static ServiceProvider CreateServices()
         {
             var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string>
             {
                 ["dataProtectionFolder"] = Path.GetTempPath()
             }).Build();
             var services = new ServiceCollection();
+            services.AddSingleton<IWebHostEnvironment>(new ContractEnvironment());
+            services.AddSingleton(InterfaceProxy.Proxy<IConfigFileProvider>((method, _) =>
+                throw new InvalidOperationException("Contract generation must not read application settings: " + method.Name)));
             new Startup(configuration).ConfigureServices(services);
             return services.BuildServiceProvider();
+        }
+
+        private sealed class ContractEnvironment : IWebHostEnvironment
+        {
+            public string ApplicationName { get; set; } = typeof(Startup).Assembly.GetName().Name;
+            public string EnvironmentName { get; set; } = "Development";
+            public string ContentRootPath { get; set; } = TestContext.CurrentContext.TestDirectory;
+            public string WebRootPath { get; set; } = TestContext.CurrentContext.TestDirectory;
+            public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
+            public IFileProvider WebRootFileProvider { get; set; } = new NullFileProvider();
+        }
+
+        [TestCase(typeof(NzbDrone.Core.Books.Services.LibrarySearchAuthor), "exactMatch")]
+        [TestCase(typeof(NzbDrone.Core.Books.Services.LibrarySearchBook), "exactMatch")]
+        [TestCase(typeof(NzbDrone.Core.Books.Services.LibrarySearchBook), "matchedEditionTitle")]
+        public void header_search_fields_match_the_generated_snapshot(Type type, string name)
+        {
+            using var services = CreateServices();
+            var repository = new SchemaRepository();
+            services.GetRequiredService<ISchemaGenerator>().GenerateSchema(type, repository);
+            var schema = repository.Schemas[type.Name];
+            Assert.That(schema.Properties.ContainsKey(name), Is.True);
+            var snapshot = JObject.Parse(File.ReadAllText(Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "openapi.json")));
+            Assert.That(snapshot["components"]["schemas"][type.Name]["properties"][name]["type"].Value<string>(), Is.EqualTo(schema.Properties[name].Type));
+        }
+
+        [Test]
+        public void settings_backup_preview_schema_matches_published_contract()
+        {
+            using var services = CreateServices();
+            var document = services.GetRequiredService<Swashbuckle.AspNetCore.Swagger.ISwaggerProvider>().GetSwagger("v1");
+            using var text = new StringWriter();
+            document.SerializeAsV3(new Microsoft.OpenApi.Writers.OpenApiJsonWriter(text));
+            var output = Path.Combine(TestContext.CurrentContext.WorkDirectory, "restore-openapi.generated.json");
+            File.WriteAllText(output, text.ToString());
+            TestContext.AddTestAttachment(output);
+            var current = JObject.Parse(text.ToString());
+            var snapshot = JObject.Parse(File.ReadAllText(Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "openapi.json")));
+            foreach (var name in new[] { "SettingsBackupRestoreRequest", "SettingsBackupRestoreResult" })
+                Assert.That(JToken.DeepEquals(snapshot["components"]["schemas"][name], current["components"]["schemas"][name]), Is.True,
+                    "Regenerate the API snapshot; the settings-restore contract changed: " + name);
+            Assert.That(current["components"]["schemas"]["SettingsBackupRestoreRequest"]["properties"]["preview"]["type"].Value<string>(), Is.EqualTo("boolean"));
+            Assert.That(current["components"]["schemas"]["SettingsBackupRestoreResult"]["properties"]["wouldRemove"]["type"].Value<string>(), Is.EqualTo("array"));
+            Assert.That(current["components"]["schemas"]["SettingsBackupRestoreResult"]["properties"]["skippedRemotePathMappings"], Is.Null);
         }
 
         [TestCase(typeof(BookController), nameof(BookController.AddBook), "book", 409, typeof(ProviderAmbiguityResource))]

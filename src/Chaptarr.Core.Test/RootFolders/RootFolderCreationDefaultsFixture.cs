@@ -29,6 +29,7 @@ namespace Chaptarr.Core.Test.RootFolders
         }
 
         private IDiskProvider _disk;
+        private bool _writable;
         private RootFolder _stored;
         private RootFolderService _service;
 
@@ -44,6 +45,7 @@ namespace Chaptarr.Core.Test.RootFolders
         public void Setup()
         {
             _stored = null;
+            _writable = true;
             var repository = Proxy<IRootFolderRepository>((method, args) =>
             {
                 switch (method.Name)
@@ -73,7 +75,7 @@ namespace Chaptarr.Core.Test.RootFolders
             _disk = Proxy<IDiskProvider>((method, args) => method.Name switch
             {
                 nameof(IDiskProvider.FolderExists) => true,
-                nameof(IDiskProvider.FolderWritable) => true,
+                nameof(IDiskProvider.FolderWritable) => _writable,
                 nameof(IDiskProvider.GetAvailableSpace) => 1000L,
                 nameof(IDiskProvider.GetTotalSize) => 2000L,
                 _ => throw new NotImplementedException(method.Name)
@@ -93,6 +95,16 @@ namespace Chaptarr.Core.Test.RootFolders
             return JsonSerializer.Deserialize<RootFolderResource>(
                 $"{{\"name\":\"Library\",\"path\":{path},\"folderType\":{(int)type}{fields}}}",
                 STJson.GetSerializerSettings()).ToModel();
+        }
+
+        [Test]
+        public void inaccessible_root_has_a_typed_validation_error_and_is_not_saved()
+        {
+            _writable = false;
+            var error = Assert.Throws<FluentValidation.ValidationException>(() => _service.Add(DeserializeRoot(FolderType.Audiobook)));
+            Assert.That(error.Errors, Has.Some.Matches<FluentValidation.Results.ValidationFailure>(failure =>
+                failure.PropertyName == "Path" && failure.ErrorCode == "RootFolderNotWritable"));
+            Assert.That(_stored, Is.Null);
         }
 
         [Test]

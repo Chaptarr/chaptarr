@@ -128,7 +128,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 new RootFolder { Path = rootPath, FolderType = folderType },
                 null,
                 null,
-                FilterFilesType.Known
+                FilterFilesType.Known,
+                null
             });
             await task;
 

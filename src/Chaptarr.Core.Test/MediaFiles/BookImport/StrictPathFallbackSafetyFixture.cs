@@ -85,7 +85,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
-            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
@@ -653,7 +653,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         [Test]
         public async Task near_exact_title_ambiguity_should_stay_insufficient_and_allow_exact_path_title_retry()
         {
-            // Ruling 2026-07-13: near-exact (typo/plural tier) ambiguity across different works is shared
+            // Near-exact (typo/plural tier) ambiguity across different works is shared
             // weak evidence, NOT positive competing proof. The path retry must stay available so an exact
             // folder title can restore eligibility; ordinary deterministic ordering still chooses among
             // otherwise-identical duplicate works. Reachable shape: SAME-author works with the same title

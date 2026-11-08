@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
@@ -21,7 +20,14 @@ namespace NzbDrone.Core.Books
         private readonly IProvideAuthorInfo _authorInfo;
         private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
-        private readonly ConcurrentDictionary<int, byte> _scheduledOrRunningAuthors = new ConcurrentDictionary<int, byte>();
+        private readonly Dictionary<int, PendingImport> _pendingAuthors = new();
+
+        private sealed class PendingImport
+        {
+            public Author Snapshot { get; set; }
+            public bool HasPending { get; set; } = true;
+            public int Coalesced { get; set; }
+        }
 
         public SeriesImportService(
             IAuthorService authorService,
@@ -46,7 +52,7 @@ namespace NzbDrone.Core.Books
             _logger.Debug("[SERIES-IMPORT] Processing series for author metadata ID: {0}", authorMetadataId);
 
             // Get the author
-            var authors = _authorService.GetAllAuthors().Where(a => a.Id == authorMetadataId).ToList();
+            var authors = _authorService.GetExistingAuthors(new List<int> { authorMetadataId });
             if (!authors.Any())
             {
                 _logger.Warn("[SERIES-IMPORT] No author found with metadata ID: {0}", authorMetadataId);
@@ -159,25 +165,56 @@ namespace NzbDrone.Core.Books
 
         private void ScheduleSeriesImport(int authorId, string authorName, string source, Author remoteAuthorSnapshot = null)
         {
-            if (!_scheduledOrRunningAuthors.TryAdd(authorId, 0))
+            PendingImport pending;
+            lock (_pendingAuthors)
             {
-                _logger.Debug("[SERIES-IMPORT] Skipping duplicate series import trigger for author {0} from {1}; import already pending/running", authorName, source);
-                return;
+                if (_pendingAuthors.TryGetValue(authorId, out pending))
+                {
+                    pending.Snapshot = remoteAuthorSnapshot;
+                    pending.HasPending = true;
+                    pending.Coalesced++;
+                    _logger.Debug("[SERIES-IMPORT] Coalesced {0} newer trigger(s) for author {1} from {2}", pending.Coalesced, authorName, source);
+                    return;
+                }
+
+                pending = new PendingImport { Snapshot = remoteAuthorSnapshot };
+                _pendingAuthors.Add(authorId, pending);
             }
 
+            // Refresh events run synchronously under the author lock; the work must leave that stack.
             Task.Run(() =>
             {
-                try
+                while (true)
                 {
-                    ProcessSeriesForAuthor(authorId, remoteAuthorSnapshot);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Error(ex, "[SERIES-IMPORT] Error in async series processing from {0} for author {1}", source, authorName);
-                }
-                finally
-                {
-                    _scheduledOrRunningAuthors.TryRemove(authorId, out _);
+                    Author snapshot;
+                    lock (_pendingAuthors)
+                    {
+                        if (!pending.HasPending)
+                        {
+                            _pendingAuthors.Remove(authorId);
+                            return;
+                        }
+
+                        snapshot = pending.Snapshot;
+                        pending.Snapshot = null;
+                        pending.HasPending = false;
+                        _logger.Debug("[SERIES-IMPORT] Applying newest snapshot for author {0}; {1} trigger(s) coalesced", authorName, pending.Coalesced);
+                        pending.Coalesced = 0;
+                    }
+
+                    var timer = Stopwatch.StartNew();
+                    try
+                    {
+                        ProcessSeriesForAuthor(authorId, snapshot);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Error(ex, "[SERIES-IMPORT] Error in async series processing from {0} for author {1}", source, authorName);
+                    }
+                    finally
+                    {
+                        _logger.Debug("[SERIES-IMPORT] Finished processing author {0} ({1}) in {2} ms", authorName, authorId, timer.ElapsedMilliseconds);
+                    }
                 }
             });
         }

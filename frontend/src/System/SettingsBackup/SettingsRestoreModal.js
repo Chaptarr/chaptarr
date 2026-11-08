@@ -8,6 +8,7 @@ import FormLabel from 'Components/Form/FormLabel';
 import Button from 'Components/Link/Button';
 import SpinnerButton from 'Components/Link/SpinnerButton';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
+import ConfirmModal from 'Components/Modal/ConfirmModal';
 import Modal from 'Components/Modal/Modal';
 import ModalBody from 'Components/Modal/ModalBody';
 import ModalContent from 'Components/Modal/ModalContent';
@@ -49,7 +50,8 @@ class SettingsRestoreModal extends Component {
       isLoadingFiles: false,
       isRestoring: false,
       restoreError: null,
-      restoreResult: null
+      restoreResult: null,
+      restorePreview: null
     };
   }
 
@@ -167,38 +169,45 @@ class SettingsRestoreModal extends Component {
       return;
     }
 
-    this.setState({ isRestoring: true, restoreError: null, restoreResult: null });
+    this.pendingRestore = { filePath, passphrase, categories: selected, mode };
+    this.sendRestore(true);
+  };
 
-    const request = createAjaxRequest({
+  sendRestore = (preview) => {
+    this.setState({ isRestoring: true, restoreError: null, restorePreview: null });
+    createAjaxRequest({
       url: '/system/settingsbackup/restore',
       method: 'POST',
       dataType: 'json',
       contentType: 'application/json',
-      data: JSON.stringify({
-        filePath,
-        passphrase,
-        categories: selected,
-        mode
-      })
+      data: JSON.stringify({ ...this.pendingRestore, preview })
+    }).request.done((data) => {
+      if (preview) {
+        if (data?.wouldRemove?.length) {
+          this.setState({ isRestoring: false, restorePreview: data });
+        } else {
+          this.sendRestore(false);
+        }
+        return;
+      }
+      this.pendingRestore = null;
+      this.setState({ isRestoring: false, restoreResult: data || { applied: [translate('SettingsRestoreDefaultApplied')] } });
+    }).fail((xhr) => {
+      this.pendingRestore = null;
+      this.setState({ isRestoring: false, restoreError: getErrorMessage(xhr, translate('SettingsRestoreFailed')) });
     });
+  };
 
-    request.request.done((data) => {
-      this.setState({
-        isRestoring: false,
-        restoreResult: data || { applied: [translate('SettingsRestoreDefaultApplied')] }
-      });
-    });
-
-    request.request.fail((xhr) => {
-      const errorMessage = getErrorMessage(xhr, translate('SettingsRestoreFailed'));
-      this.setState({ isRestoring: false, restoreError: errorMessage });
-    });
+  onRestoreCancel = () => {
+    this.pendingRestore = null;
+    this.setState({ restorePreview: null });
   };
 
   onModalClose = () => {
     if (this.state.isRestoring) {
       return;
     }
+    this.pendingRestore = null;
     const restored = !!this.state.restoreResult;
     this.setState({
       rootFolder: '/config',
@@ -210,7 +219,8 @@ class SettingsRestoreModal extends Component {
       categories: getDefaultSettingsBackupCategories(),
       isRestoring: false,
       restoreError: null,
-      restoreResult: null
+      restoreResult: null,
+      restorePreview: null
     });
 
     this.props.onModalClose();
@@ -235,7 +245,8 @@ class SettingsRestoreModal extends Component {
       isLoadingFiles,
       isRestoring,
       restoreError,
-      restoreResult
+      restoreResult,
+      restorePreview
     } = this.state;
 
     const locationOptions = locations.map((l) => ({
@@ -252,149 +263,175 @@ class SettingsRestoreModal extends Component {
     const selectedWarning = selectedLocation?.warning;
 
     return (
-      <Modal
-        isOpen={isOpen}
-        size={sizes.LARGE}
-      >
-        <ModalContent onModalClose={this.onModalClose}>
-          <ModalHeader>
-            {translate('SettingsRestoreMySettings')}
-          </ModalHeader>
+      <>
+        <Modal
+          isOpen={isOpen}
+          size={sizes.LARGE}
+        >
+          <ModalContent onModalClose={this.onModalClose}>
+            <ModalHeader>
+              {translate('SettingsRestoreMySettings')}
+            </ModalHeader>
 
-          <ModalBody>
-            <Form>
-              <Alert
-                className={styles.intro}
-                kind={kinds.WARNING}
+            <ModalBody>
+              <Form>
+                <Alert
+                  className={styles.intro}
+                  kind={kinds.WARNING}
+                >
+                  {translate('SettingsRestoreScopeWarning')}
+                </Alert>
+
+                <FormGroup>
+                  <FormLabel>{translate('SettingsRestoreBackupLocation')}</FormLabel>
+                  <FormInputGroup
+                    type={inputTypes.SELECT}
+                    name="rootFolder"
+                    values={locationOptions}
+                    value={rootFolder}
+                    onChange={this.onInputChange}
+                    helpText={selectedWarning || translate('SettingsRestoreBackupLocationHelpText')}
+                  />
+                </FormGroup>
+
+                <FormGroup>
+                  <FormLabel>{translate('SettingsRestoreBackupFile')}</FormLabel>
+                  <FormInputGroup
+                    type={inputTypes.SELECT}
+                    name="selectedFilePath"
+                    values={fileOptions}
+                    value={selectedFilePath}
+                    onChange={this.onInputChange}
+                    helpText={translate('SettingsRestoreBackupFileHelpText')}
+                  />
+                </FormGroup>
+
+                <FormGroup>
+                  <FormLabel>{translate('SettingsRestoreManualFilePath')}</FormLabel>
+                  <FormInputGroup
+                    type={inputTypes.TEXT}
+                    name="manualFilePath"
+                    value={manualFilePath}
+                    placeholder="/downloads/chaptarr_settings_20260108_120000.chaptarr-settings-backup.json"
+                    onChange={this.onInputChange}
+                  />
+                </FormGroup>
+
+                <FormGroup>
+                  <FormLabel>{translate('SettingsRestoreRestoreMode')}</FormLabel>
+                  <FormInputGroup
+                    type={inputTypes.SELECT}
+                    name="mode"
+                    values={restoreModeOptions}
+                    value={mode}
+                    onChange={this.onInputChange}
+                    helpText={translate('SettingsRestoreModeHelpText')}
+                  />
+                </FormGroup>
+
+                <FormGroup>
+                  <FormLabel>{translate('SettingsBackupPassphrase')}</FormLabel>
+                  <FormInputGroup
+                    type={inputTypes.PASSWORD}
+                    name="passphrase"
+                    value={passphrase}
+                    onChange={this.onInputChange}
+                  />
+                </FormGroup>
+
+                <FormGroup>
+                  <FormLabel>{translate('Categories')}</FormLabel>
+                  <SettingsBackupCategoryPicker
+                    categories={categories}
+                    onToggleCategory={this.onToggleCategory}
+                    onSelectAll={this.onSelectAllCategories}
+                    onSelectNone={this.onSelectNoCategories}
+                  />
+                </FormGroup>
+
+                {(isLoadingLocations || isLoadingFiles) && (
+                  <FormGroup>
+                    <LoadingIndicator size={20} />
+                  </FormGroup>
+                )}
+
+                {restoreError && (
+                  <FormGroup>
+                    <Alert
+                      className={styles.statusAlert}
+                      kind={kinds.DANGER}
+                    >
+                      {restoreError}
+                    </Alert>
+                  </FormGroup>
+                )}
+
+                {restoreResult && (
+                  <FormGroup>
+                    <Alert
+                      className={styles.statusAlert}
+                      kind={kinds.SUCCESS}
+                    >
+                      <div><strong>{translate('SettingsRestoreAppliedLabel')}</strong> {(restoreResult.applied || []).join(', ')}</div>
+                      {(restoreResult.warnings || []).length ? (
+                        <div className={styles.restoreWarnings}>
+                          <strong>{translate('SettingsRestoreWarningsLabel')}</strong>
+                          <ul>
+                            {restoreResult.warnings.map((w) => <li key={w}>{w}</li>)}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </Alert>
+                  </FormGroup>
+                )}
+              </Form>
+            </ModalBody>
+
+            <ModalFooter>
+              <Button
+                onPress={this.onModalClose}
+                isDisabled={isRestoring}
+                kind={kinds.DEFAULT}
               >
-                {translate('SettingsRestoreScopeWarning')}
-              </Alert>
+                {translate('Close')}
+              </Button>
 
-              <FormGroup>
-                <FormLabel>{translate('SettingsRestoreBackupLocation')}</FormLabel>
-                <FormInputGroup
-                  type={inputTypes.SELECT}
-                  name="rootFolder"
-                  values={locationOptions}
-                  value={rootFolder}
-                  onChange={this.onInputChange}
-                  helpText={selectedWarning || translate('SettingsRestoreBackupLocationHelpText')}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>{translate('SettingsRestoreBackupFile')}</FormLabel>
-                <FormInputGroup
-                  type={inputTypes.SELECT}
-                  name="selectedFilePath"
-                  values={fileOptions}
-                  value={selectedFilePath}
-                  onChange={this.onInputChange}
-                  helpText={translate('SettingsRestoreBackupFileHelpText')}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>{translate('SettingsRestoreManualFilePath')}</FormLabel>
-                <FormInputGroup
-                  type={inputTypes.TEXT}
-                  name="manualFilePath"
-                  value={manualFilePath}
-                  placeholder="/downloads/chaptarr_settings_20260108_120000.chaptarr-settings-backup.json"
-                  onChange={this.onInputChange}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>{translate('SettingsRestoreRestoreMode')}</FormLabel>
-                <FormInputGroup
-                  type={inputTypes.SELECT}
-                  name="mode"
-                  values={restoreModeOptions}
-                  value={mode}
-                  onChange={this.onInputChange}
-                  helpText={translate('SettingsRestoreModeHelpText')}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>{translate('SettingsBackupPassphrase')}</FormLabel>
-                <FormInputGroup
-                  type={inputTypes.PASSWORD}
-                  name="passphrase"
-                  value={passphrase}
-                  onChange={this.onInputChange}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>{translate('Categories')}</FormLabel>
-                <SettingsBackupCategoryPicker
-                  categories={categories}
-                  onToggleCategory={this.onToggleCategory}
-                  onSelectAll={this.onSelectAllCategories}
-                  onSelectNone={this.onSelectNoCategories}
-                />
-              </FormGroup>
-
-              {(isLoadingLocations || isLoadingFiles) && (
-                <FormGroup>
-                  <LoadingIndicator size={20} />
-                </FormGroup>
+              <SpinnerButton
+                kind={kinds.PRIMARY}
+                onPress={this.onRestorePress}
+                isDisabled={isRestoring || !!restoreResult}
+                isSpinning={isRestoring}
+              >
+                {translate('Restore')}
+              </SpinnerButton>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+        <ConfirmModal
+          isOpen={!!restorePreview}
+          title={translate('SettingsRestorePreview')}
+          kind={restorePreview?.wouldRemove?.length ? kinds.DANGER : kinds.PRIMARY}
+          confirmLabel={translate('Restore')}
+          onConfirm={() => this.sendRestore(false)}
+          onCancel={this.onRestoreCancel}
+          message={
+            <div>
+              {!!restorePreview?.wouldRemove?.length && (
+                <div>
+                  <strong>{translate('SettingsRestoreWillRemove')}</strong>
+                  <ul>{restorePreview.wouldRemove.map((item) => <li key={item}>{item}</li>)}</ul>
+                </div>
               )}
-
-              {restoreError && (
-                <FormGroup>
-                  <Alert
-                    className={styles.statusAlert}
-                    kind={kinds.DANGER}
-                  >
-                    {restoreError}
-                  </Alert>
-                </FormGroup>
+              {!!restorePreview?.warnings?.length && (
+                <div>
+                  <strong>{translate('SettingsRestoreWarningsLabel')}</strong>
+                  <ul>{restorePreview.warnings.map((item) => <li key={item}>{item}</li>)}</ul>
+                </div>
               )}
-
-              {restoreResult && (
-                <FormGroup>
-                  <Alert
-                    className={styles.statusAlert}
-                    kind={kinds.SUCCESS}
-                  >
-                    <div><strong>{translate('SettingsRestoreAppliedLabel')}</strong> {(restoreResult.applied || []).join(', ')}</div>
-                    {(restoreResult.warnings || []).length ? (
-                      <div className={styles.restoreWarnings}>
-                        <strong>{translate('SettingsRestoreWarningsLabel')}</strong>
-                        <ul>
-                          {restoreResult.warnings.map((w) => <li key={w}>{w}</li>)}
-                        </ul>
-                      </div>
-                    ) : null}
-                  </Alert>
-                </FormGroup>
-              )}
-            </Form>
-          </ModalBody>
-
-          <ModalFooter>
-            <Button
-              onPress={this.onModalClose}
-              isDisabled={isRestoring}
-              kind={kinds.DEFAULT}
-            >
-              {translate('Close')}
-            </Button>
-
-            <SpinnerButton
-              kind={kinds.PRIMARY}
-              onPress={this.onRestorePress}
-              isDisabled={isRestoring || !!restoreResult}
-              isSpinning={isRestoring}
-            >
-              {translate('Restore')}
-            </SpinnerButton>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+            </div>
+          }
+        />
+      </>
     );
   }
 }

@@ -18,13 +18,15 @@ namespace Chaptarr.Core.Test.Datastore
     [NonParallelizable]
     public class EditionFtsDeletionMigrationFixture
     {
-        [Test]
-        public void repair_should_remove_historical_entries_without_changing_library_records()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void repair_should_remove_historical_entries_without_changing_library_records(bool missingIndex)
         {
             WithDatabase(false, (connection, connectionString) =>
             {
                 connection.Execute("INSERT INTO edition_fts(rowid, MatchingTitle) VALUES (99, 'ready player two');");
                 var before = Snapshot(connection);
+                if (missingIndex) connection.Execute("DROP TABLE edition_fts;");
                 Apply(connectionString, false, 110);
 
                 Assert.Multiple(() =>

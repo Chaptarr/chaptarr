@@ -103,7 +103,7 @@ namespace Chaptarr.Core.Test.Books
                 });
                 var authorMetadata = InterfaceProxy.Proxy<IProvideAuthorInfo>((method, _) => author);
                 var refresh = new RefreshBookService(books, authorService, roots, editions, authorMetadata, metadata,
-                    refreshEditions, files, null, events, null, new EditionSelector(logger), null, null, logger);
+                    refreshEditions, files, null, events, null, new EditionSelector(logger), null, null, logger, mainDatabase: null);
                 var writerLock = BookService.GetWantedEditionLock(author.Id);
                 Task refreshTask = null;
                 Monitor.Enter(writerLock);

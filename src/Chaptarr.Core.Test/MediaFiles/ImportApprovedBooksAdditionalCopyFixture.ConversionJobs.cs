@@ -27,9 +27,24 @@ namespace Chaptarr.Core.Test.MediaFiles
             var directory = Path.Combine(Path.GetTempPath(), "import-conversion-jobs-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
             if (NzbDrone.Core.Datastore.TableMapping.Mapper.TableMap.Count == 0) NzbDrone.Core.Datastore.TableMapping.Map();
-            var service = new ConversionJobService(database == null ? ConversionJobServiceFixture.CreateRepository(Path.Combine(directory, "jobs.db")) : new ConversionJobRepository(database, new NoOpEventAggregator()), converter,
+            if (media == null)
+            {
+                if (database == null) media = Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles();
+                else
+                {
+                    var files = new MediaFileRepository(database, new NoOpEventAggregator());
+                    media = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IMediaFileService>((method, args) => method.Name switch
+                    {
+                        nameof(IMediaFileService.GetFilePathOwnership) => files.GetFilePathOwnership((IReadOnlyCollection<int>)args[0], (IReadOnlyCollection<string>)args[1]),
+                        nameof(IMediaFileService.GetFilesByBook) => files.GetFilesByBook((int)args[0]),
+                        nameof(IMediaFileService.GetFileWithPath) => files.GetFileWithPath((string)args[0]),
+                        _ => throw new NotImplementedException(method.Name)
+                    });
+                }
+            }
+            var service = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), media, database == null ? ConversionJobServiceFixture.CreateRepository(Path.Combine(directory, "jobs.db")) : new ConversionJobRepository(database, new NoOpEventAggregator()), converter,
                 tracking ?? new ConversionTrackingService(new NoOpEventAggregator()), Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IManageCommandQueue>((method, args) => null),
-                config ?? CreateConfigService(), LogManager.GetCurrentClassLogger(), mediaFileService: media);
+                config ?? CreateConfigService(), LogManager.GetCurrentClassLogger());
             (WorkerJobFixtures.Value ??= new()).Add((directory, service));
             return service;
         }

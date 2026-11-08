@@ -219,6 +219,7 @@ export const actionHandlers = handleThunks({
       return {
         id,
         path: item.path,
+        audioProductionOverride: item.audioProductionOverride,
         authorId: item.author ? item.author.id : undefined,
         bookId: item.book ? item.book.id : undefined,
         editionId: item.editionId ? item.editionId : undefined,

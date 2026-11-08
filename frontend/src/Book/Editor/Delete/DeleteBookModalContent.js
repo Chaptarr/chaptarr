@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import BookFileDeletionPreview, { deletionSelection } from 'BookFile/Editor/BookFileDeletionPreview';
 import Alert from 'Components/Alert';
 import FormGroup from 'Components/Form/FormGroup';
 import FormInputGroup from 'Components/Form/FormInputGroup';
@@ -26,7 +27,8 @@ class DeleteBookModalContent extends Component {
     this.state = {
       deleteFiles: false,
       addImportListExclusion: true,
-      hasSubmitted: false
+      hasSubmitted: false,
+      readySelection: null
     };
   }
 
@@ -51,7 +53,13 @@ class DeleteBookModalContent extends Component {
     this.setState({ addImportListExclusion: value });
   };
 
+  onPreviewReady = (readySelection) => this.setState({ readySelection });
+
   onDeleteBookConfirmed = () => {
+    if (this.state.deleteFiles && this.state.readySelection !== deletionSelection([], this.props.bookIds)) {
+      return;
+    }
+
     const {
       deleteFiles,
       addImportListExclusion
@@ -67,7 +75,7 @@ class DeleteBookModalContent extends Component {
   render() {
     const {
       book,
-      files,
+      bookIds,
       selectedCount,
       isDeleting,
       deleteError,
@@ -160,17 +168,9 @@ class DeleteBookModalContent extends Component {
                 <div className={styles.deleteFilesMessage}>
                   {translate('TheFollowingFilesWillBeDeleted')}
                 </div>
-                <ul>
-                  {
-                    files.map((s) => {
-                      return (
-                        <li key={s.path}>
-                          <span>{s.path}</span>
-                        </li>
-                      );
-                    })
-                  }
-                </ul>
+                <BookFileDeletionPreview key={deletionSelection([], bookIds)} bookIds={bookIds}
+                  onReadyChange={this.onPreviewReady}
+                />
               </div>
           }
         </ModalBody>
@@ -184,7 +184,7 @@ class DeleteBookModalContent extends Component {
             kind={kinds.DANGER}
             aria-label={translate('Delete')}
             isSpinning={isDeleting}
-            isDisabled={selectedCount === 0}
+            isDisabled={selectedCount === 0 || (deleteFiles && this.state.readySelection !== deletionSelection([], bookIds))}
             onPress={this.onDeleteBookConfirmed}
           >
             {translate('Delete')}
@@ -197,7 +197,7 @@ class DeleteBookModalContent extends Component {
 
 DeleteBookModalContent.propTypes = {
   book: PropTypes.arrayOf(PropTypes.object).isRequired,
-  files: PropTypes.arrayOf(PropTypes.object).isRequired,
+  bookIds: PropTypes.arrayOf(PropTypes.number).isRequired,
   selectedCount: PropTypes.number.isRequired,
   isDeleting: PropTypes.bool,
   deleteError: PropTypes.object,

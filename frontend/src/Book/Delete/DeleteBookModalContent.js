@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import BookFileDeletionPreview, { deletionSelection } from 'BookFile/Editor/BookFileDeletionPreview';
 import Alert from 'Components/Alert';
 import FormGroup from 'Components/Form/FormGroup';
 import FormInputGroup from 'Components/Form/FormInputGroup';
@@ -82,7 +83,8 @@ class DeleteBookModalContent extends Component {
       deleteFiles: false,
       addImportListExclusion: true,
       applyToBothFormats: false,
-      hasSubmitted: false
+      hasSubmitted: false,
+      readySelection: null
     };
   }
 
@@ -111,7 +113,16 @@ class DeleteBookModalContent extends Component {
     this.setState({ applyToBothFormats: value });
   };
 
+  getDeletionBookIds = () => [this.props.bookId, ...(this.state.applyToBothFormats ?
+    (this.props.siblingBook?.siblings ?? []).map((book) => book.bookId) : [])];
+
+  onPreviewReady = (readySelection) => this.setState({ readySelection });
+
   onDeleteBookConfirmed = () => {
+    if (this.state.deleteFiles && this.state.readySelection !== deletionSelection([], this.getDeletionBookIds())) {
+      return;
+    }
+
     const deleteFiles = this.state.deleteFiles;
     const addImportListExclusion = this.state.addImportListExclusion;
     const applyToBothFormats = this.state.applyToBothFormats;
@@ -145,15 +156,12 @@ class DeleteBookModalContent extends Component {
     const applyToBothFormats = this.state.applyToBothFormats;
     const currentFormatLabel = formatMediaTypeLabel(mediaType);
     const currentBookDetail = currentBookDeleteInfo ?? siblingBook?.currentBook ?? {
-      bookId: 0,
+      bookId: this.props.bookId,
       title,
       mediaType,
       files: []
     };
     const siblingDetails = siblingBook?.siblings ?? [];
-    const visibleDeleteDetails = applyToBothFormats && siblingBook ?
-      [currentBookDetail, ...siblingDetails] :
-      [currentBookDetail];
     const siblingStatistics = siblingBook?.statistics ?? {};
     const currentFileCount = currentBookDetail.files?.length || bookFileCount;
     const currentSizeOnDisk = currentBookDetail.files?.length ? getFileSize([currentBookDetail]) : sizeOnDisk;
@@ -268,41 +276,9 @@ class DeleteBookModalContent extends Component {
                     <div>{translate('BookFilesTotalingSize', { count: totalBookFileCount, size: formatBytes(totalSizeOnDisk) })}</div>
                 }
 
-                {
-                  visibleDeleteDetails.some((detail) => (detail.files ?? []).length) &&
-                    <ul className={styles.fileList}>
-                      {
-                        visibleDeleteDetails.map((detail) => {
-                          const files = detail.files ?? [];
-
-                          return (
-                            <li key={detail.bookId || detail.title} className={styles.fileListItem}>
-                              <div>
-                                {detail.title} ({formatMediaTypeLabel(detail.mediaType)})
-                              </div>
-
-                              {
-                                files.length ?
-                                  <ul className={styles.filePathList}>
-                                    {
-                                      files.map((file) => {
-                                        return (
-                                          <li key={file.path}>
-                                            <span>{file.path}</span>
-                                            <span className={styles.fileSize}>{formatBytes(file.size ?? 0)}</span>
-                                          </li>
-                                        );
-                                      })
-                                    }
-                                  </ul> :
-                                  <div className={styles.noFiles}>{translate('DeleteBookNoTrackedFiles')}</div>
-                              }
-                            </li>
-                          );
-                        })
-                      }
-                    </ul>
-                }
+                <BookFileDeletionPreview key={deletionSelection([], this.getDeletionBookIds())}
+                  bookIds={this.getDeletionBookIds()} onReadyChange={this.onPreviewReady}
+                />
               </div>
           }
 
@@ -317,6 +293,7 @@ class DeleteBookModalContent extends Component {
             kind={kinds.DANGER}
             aria-label={translate('Delete')}
             isSpinning={isDeleting}
+            isDisabled={deleteFiles && this.state.readySelection !== deletionSelection([], this.getDeletionBookIds())}
             onPress={this.onDeleteBookConfirmed}
           >
             {translate('Delete')}
@@ -328,6 +305,7 @@ class DeleteBookModalContent extends Component {
 }
 
 DeleteBookModalContent.propTypes = {
+  bookId: PropTypes.number.isRequired,
   title: PropTypes.string.isRequired,
   mediaType: PropTypes.string,
   siblingBook: PropTypes.object,

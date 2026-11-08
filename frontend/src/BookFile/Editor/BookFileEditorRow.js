@@ -6,6 +6,7 @@ import TableRowCell from 'Components/Table/Cells/TableRowCell';
 import TableSelectCell from 'Components/Table/Cells/TableSelectCell';
 import TableRow from 'Components/Table/TableRow';
 import formatBytes from 'Utilities/Number/formatBytes';
+import translate from 'Utilities/String/translate';
 import BookFileActionsCell from './BookFileActionsCell';
 import styles from './BookFileEditorRow.css';
 
@@ -33,6 +34,11 @@ function BookFileEditorRow(props) {
         className={styles.path}
       >
         {path}
+        {props.mediaType === 'audiobook' &&
+          <div>
+            {translate(props.isGraphicAudio ? 'RecordingTypeDramatized' : 'RecordingTypeStandard')}
+          </div>
+        }
       </TableRowCell>
 
       <TableRowCell
@@ -66,6 +72,8 @@ function BookFileEditorRow(props) {
 
 BookFileEditorRow.propTypes = {
   id: PropTypes.number.isRequired,
+  mediaType: PropTypes.string,
+  isGraphicAudio: PropTypes.bool,
   path: PropTypes.string.isRequired,
   size: PropTypes.number.isRequired,
   quality: PropTypes.object.isRequired,

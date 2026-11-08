@@ -62,6 +62,7 @@ namespace Chaptarr.Core.Test.Books
                     nameof(IAuthorService.FindByProviderId) => authors.All().FirstOrDefault(),
                     nameof(IAuthorService.GetAuthor) => authors.Get((int)args[0]),
                     nameof(IAuthorService.GetExistingAuthors) => authors.Get((IEnumerable<int>)args[0]).ToList(),
+                    nameof(IAuthorService.GetAllAuthors) => authors.All().ToList(),
                     nameof(IAuthorService.GetAuthors) => authors.Get((IEnumerable<int>)args[0]).ToList(),
                     nameof(IAuthorService.AddAuthor) => authors.Insert((Author)args[0]),
                     nameof(IAuthorService.UpdateAuthor) => authors.Update((Author)args[0]),
@@ -152,12 +153,12 @@ namespace Chaptarr.Core.Test.Books
                 var selector = new EditionSelector(logger);
                 var refreshEditions = new RefreshEditionService(editions, InterfaceProxy.Proxy<IMetadataTagService>((_, _) => null), null, database, logger);
                 var refreshBooks = new RefreshBookService(books, authorService, roots, editions, authorInfo, null,
-                    refreshEditions, files, null, events, null, selector, filter, InterfaceProxy.Proxy<IMapCoversToLocal>((_, _) => null), logger);
+                    refreshEditions, files, null, events, null, selector, filter, InterfaceProxy.Proxy<IMapCoversToLocal>((_, _) => null), logger, mainDatabase: null);
                 var configService = InterfaceProxy.Proxy<IConfigService>((method, _) => method.ReturnType == typeof(bool) ? false :
                     method.ReturnType.IsValueType ? Activator.CreateInstance(method.ReturnType) : null);
-                var refresh = new RefreshAuthorService(authorInfo, authorService, books, editions, profileService, refreshBooks, null,
-                    events, queue, files, null, roots, null, InterfaceProxy.Proxy<IMonitorNewBookService>((_, _) => false),
-                    configService, exclusions, null, null, null, logger, selector, database);
+                var refresh = new RefreshAuthorService(MetadataHealthGateStub.Ready(), authorInfo, authorService, books, editions, profileService, refreshBooks, null,
+                    events, queue, files, new global::NzbDrone.Core.History.HistoryRepository(database, events), roots, null, InterfaceProxy.Proxy<IMonitorNewBookService>((_, _) => false),
+                    configService, exclusions, null, null, null, logger, editionSelector: selector, mainDatabase: database, bookRepository: new BookRepository(database, events), authorRepository: new AuthorRepository(database, events, logger));
                 var pending = new PendingAuthorImportService(new PendingAuthorImportRepository(database, events), authorService, events, logger);
                 var paths = InterfaceProxy.Proxy<IBuildAuthorPaths>((method, _) => method.ReturnType == typeof(string)
                     ? @"C:\Books\Requested Author".AsOsAgnostic() : null);
@@ -206,6 +207,7 @@ namespace Chaptarr.Core.Test.Books
                     if (!pinned && !missingRequested)
                     {
                         var duplicate = Pocket(side, "hc:1001");
+                        duplicate.TitleSlug += "-copy"; // Existing local copies have distinct route identities.
                         duplicate.AuthorId = author.Id;
                         duplicate.Author = author;
                         duplicate.Added = DateTime.UtcNow;

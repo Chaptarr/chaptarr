@@ -14,6 +14,7 @@ namespace Chaptarr.Api.V1.Profiles.Quality
         public string Name { get; set; }
         public ProfileType ProfileType { get; set; }
         public bool UpgradeAllowed { get; set; }
+        public bool ConfirmAutomaticUpgrades { get; set; }
         public bool PreferCustomFormatsOverQuality { get; set; }
         public bool ConvertMp3ToM4b { get; set; }
         public int? ConvertToQualityId { get; set; }
@@ -76,6 +77,7 @@ namespace Chaptarr.Api.V1.Profiles.Quality
                 Name = model.Name,
                 ProfileType = model.ProfileType,
                 UpgradeAllowed = model.UpgradeAllowed,
+                ConfirmAutomaticUpgrades = model.ConfirmAutomaticUpgrades,
                 PreferCustomFormatsOverQuality = model.ProfileType == ProfileType.Audiobook && model.PreferCustomFormatsOverQuality,
                 ConvertMp3ToM4b = model.ConvertMp3ToM4b,
                 ConvertToQualityId = convertToQualityId,
@@ -135,6 +137,7 @@ namespace Chaptarr.Api.V1.Profiles.Quality
                 Name = resource.Name,
                 ProfileType = resource.ProfileType,
                 UpgradeAllowed = resource.UpgradeAllowed,
+                ConfirmAutomaticUpgrades = resource.UpgradeAllowed && resource.ConfirmAutomaticUpgrades,
                 PreferCustomFormatsOverQuality = resource.ProfileType == ProfileType.Audiobook && resource.PreferCustomFormatsOverQuality,
                 // Legacy compatibility field: this is true only for the original MP3 -> M4B
                 // toggle. ConvertToQualityId is the canonical conversion target.

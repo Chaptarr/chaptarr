@@ -525,15 +525,21 @@ namespace Chaptarr.Core.Test.History
                 new AuthorRepository(Database, Events, Logger).Insert(Author);
                 BookRows = new BookRepository(Database, Events); _editions = new EditionRepository(Database, Events);
                 History = new HistoryRepository(Database, Events); Files = new MediaFileRepository(Database, Events);
-                for (var index = 0; index < copies; index++) AddBook(side);
+                var books = Enumerable.Range(0, copies).Select(index => NewBook(side, index)).ToList();
+                BookRows.InsertMany(books);
+                var editions = books.Select(NewEdition).ToList();
+                _editions.InsertMany(editions);
+                for (var index = 0; index < books.Count; index++) books[index].Editions = new List<Edition> { editions[index] };
+                Books.AddRange(books);
             }
             public Book AddBook(BookMediaType side)
             {
-                var book = new Book { AuthorId = Author.Id, Author = Author, Title = "Captured Copy Work", CleanTitle = "capturedcopywork", TitleSlug = "captured-copy-work", HardcoverBookId = "hc:7000", MediaType = side, AnyEditionOk = false, Added = DateTime.UtcNow };
-                BookRows.Insert(book);
-                var edition = _editions.Insert(new Edition { BookId = book.Id, Book = book, Title = book.Title, Monitored = true, ForeignEditionId = "hc:edition:" + (10000 + book.Id), ReadingFormatId = side == BookMediaType.Audiobook ? 2 : 3, Narrator = side == BookMediaType.Audiobook ? "Captured Cast " + book.Id : null, Language = "eng" });
+                var book = BookRows.Insert(NewBook(side, Books.Count));
+                var edition = _editions.Insert(NewEdition(book));
                 book.Editions = new List<Edition> { edition }; Books.Add(book); return book;
             }
+            private Book NewBook(BookMediaType side, int index) => new Book { AuthorId = Author.Id, Author = Author, Title = "Captured Copy Work", CleanTitle = "capturedcopywork", TitleSlug = "captured-copy-work-" + index, HardcoverBookId = "hc:7000", MediaType = side, AnyEditionOk = false, Added = DateTime.UtcNow };
+            private static Edition NewEdition(Book book) => new Edition { BookId = book.Id, Book = book, Title = book.Title, Monitored = true, ForeignEditionId = "hc:edition:" + (10000 + book.Id), ReadingFormatId = book.MediaType == BookMediaType.Audiobook ? 2 : 3, Narrator = book.MediaType == BookMediaType.Audiobook ? "Captured Cast " + book.Id : null, Language = "eng" };
             public RemoteBook Subject(params Book[] books) => Subject(books, "release-one");
             public RemoteBook Subject(Book book, string guid) => Subject(new[] { book }, guid);
             private RemoteBook Subject(Book[] books, string guid)

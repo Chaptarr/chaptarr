@@ -238,6 +238,12 @@ namespace NzbDrone.Core.Organizer.NamingPattern
 
         private string BuildSampleFileName(string pattern, SampleContext context, int partCount = 1, int partNumber = 1)
         {
+            var braceError = FileNameValidation.GetBraceError(pattern);
+            if (braceError != null)
+            {
+                throw new NamingFormatException(braceError);
+            }
+
             var (author, edition, bookFile) = CreateSampleEntities(context, partNumber);
             bookFile.PartCount = partCount;
 
@@ -293,6 +299,7 @@ namespace NzbDrone.Core.Organizer.NamingPattern
                 ReleaseDate = new DateTime(year, 1, 1),
                 Narrator = narratorName,
                 NarratorNames = context.NarratorNames ?? new List<string> { narratorName },
+                Publisher = context.Publisher,
                 AudioProductionType = context.AudioProductionType,
                 IsGraphicAudio = context.IsGraphicAudio
             };
@@ -382,6 +389,7 @@ namespace NzbDrone.Core.Organizer.NamingPattern
         public string NarratorName { get; set; }
         public List<string> NarratorNames { get; set; }
         public string AudioProductionType { get; set; }
+        public string Publisher { get; set; }
         public bool IsGraphicAudio { get; set; }
         public string Quality { get; set; }
         public string Year { get; set; }

@@ -41,13 +41,18 @@ namespace Chaptarr.Core.Test.Books
         private sealed class StubAuthorService : IAuthorService
         {
             private readonly Dictionary<int, Author> _authorsById;
+            public Action BeforeGet { get; set; }
 
             public StubAuthorService(params Author[] authors)
             {
                 _authorsById = (authors ?? Array.Empty<Author>()).Where(a => a != null).ToDictionary(a => a.Id);
             }
 
-            public Author GetAuthor(int authorId) => _authorsById.TryGetValue(authorId, out var a) ? a : null;
+            public Author GetAuthor(int authorId)
+            {
+                BeforeGet?.Invoke();
+                return _authorsById.TryGetValue(authorId, out var a) ? a : null;
+            }
 
             public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => GetAuthors(authorIds);
 
@@ -59,7 +64,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
-            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
@@ -90,13 +95,14 @@ namespace Chaptarr.Core.Test.Books
                 => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
 
             public Dictionary<int, List<BookFile>> FilesByBookId { get; } = new Dictionary<int, List<BookFile>>();
+            public MediaFileRepository Repository { get; set; }
 
             public List<BookFile> GetFilesByEdition(int editionId) => new List<BookFile>();
 
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
             public void AddMany(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Update(BookFile bookFile) => throw new NotImplementedException();
-            public int RelinkFilesByBook(int bookId, int editionId, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
@@ -110,6 +116,7 @@ namespace Chaptarr.Core.Test.Books
             {
                 BeforeBatchRead?.Invoke();
                 lock (BatchQueries) { BatchQueries.Add(bookIds.ToList()); }
+                if (Repository != null) return Repository.GetFilesByBooks(bookIds);
                 return bookIds.SelectMany(id => FilesByBookId.TryGetValue(id, out var files) ? files : new List<BookFile>()).ToList();
             }
             public List<BookFile> GetUnmappedFiles() => throw new NotImplementedException();
@@ -205,6 +212,8 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class InMemoryBookRepository : IBookRepository
         {
+            public List<Book> GetImportListBookIdentities() => All().ToList();
+
             private readonly Dictionary<int, Book> _booksById = new Dictionary<int, Book>();
             private int _nextId = 1000;
 
@@ -269,7 +278,7 @@ namespace Chaptarr.Core.Test.Books
                 foreach (var book in models) { Upsert(book); }
             }
             public void DeleteMany(List<Book> model) => throw new NotImplementedException();
-            public void DeleteManyAtomic(IEnumerable<int> ids, bool deleteFiles)
+            public void DeleteManyAtomic(IEnumerable<int> ids, IEnumerable<int> deletedFileIds = null)
             {
                 foreach (var id in ids) Delete(id);
             }
@@ -289,7 +298,8 @@ namespace Chaptarr.Core.Test.Books
             public Book FindByProviderIds(string hardcoverBookId = null, string goodreadsBookId = null, string openLibraryWorkId = null) => throw new NotImplementedException();
             public Book FindByProviderIdAndMediaType(string provider, string providerId, BookMediaType mediaType) => throw new NotImplementedException();
             public List<Book> FindAllByProviderIdAndMediaType(string provider, string providerId, BookMediaType mediaType) => throw new NotImplementedException();
-            public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
+            public List<Book> FindTitleSlugConflicts(IEnumerable<string> slugs, IDbConnection connection = null, IDbTransaction transaction = null) => new List<Book>();
+            public List<Book> FindBySlug(string titleSlug) => throw new NotImplementedException();
             public PagingSpec<Book> BooksWithoutFiles(PagingSpec<Book> pagingSpec) => throw new NotImplementedException();
             public PagingSpec<Book> BooksWhereCutoffUnmet(PagingSpec<Book> pagingSpec, List<QualitiesBelowCutoff> qualitiesBelowCutoff) => throw new NotImplementedException();
             public List<Book> BooksBetweenDates(DateTime startDate, DateTime endDate, bool includeUnmonitored) => throw new NotImplementedException();
@@ -469,7 +479,7 @@ namespace Chaptarr.Core.Test.Books
             var books = new List<Book> { original };
             var (service, repository, files) = BuildWantedService(books, original.Id);
 
-            var wanted = service.AddWantedEdition(original.Id, requested.Id);
+            var wanted = service.AddWantedEditionCopy(original.Id, requested.Id).Book;
             var persisted = service.GetBook(wanted.Id);
             var selected = persisted.Editions.Single(edition => edition.Monitored);
             Assert.Multiple(() =>
@@ -486,7 +496,7 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(BookEditionIdentity.GetMonitoredEdition(original).NarratorNames, Is.EqualTo(new[] { "Stephen Fry" }));
             });
 
-            Assert.That(service.AddWantedEdition(original.Id, requested.Id).Id, Is.EqualTo(persisted.Id));
+            Assert.That(service.AddWantedEditionCopy(original.Id, requested.Id).Book.Id, Is.EqualTo(persisted.Id));
             Assert.That(repository.GetBooksByAuthorId(original.AuthorId), Has.Count.EqualTo(2));
         }
 
@@ -536,9 +546,10 @@ namespace Chaptarr.Core.Test.Books
 
                 editions.InsertMany(source.Editions);
                 var files = new StubMediaFileService();
+                var authorService = new StubAuthorService(author);
                 BookService Service() => new BookService(new BookRepository(database, events),
                     new EditionService(new EditionRepository(database, events), events, logger), events,
-                    new StubAuthorService(author), files, null, null, new StubMultiCopySeriesService(), logger);
+                    authorService, files, null, null, new StubMultiCopySeriesService(), logger);
 
                 Book wanted;
                 if (concurrent)
@@ -548,7 +559,7 @@ namespace Chaptarr.Core.Test.Books
                     using var secondStarted = new ManualResetEventSlim();
                     using var secondRead = new ManualResetEventSlim();
                     var reads = 0;
-                    files.BeforeBatchRead = () =>
+                    authorService.BeforeGet = () =>
                     {
                         if (Interlocked.Increment(ref reads) == 1)
                         {
@@ -560,7 +571,7 @@ namespace Chaptarr.Core.Test.Books
                             secondRead.Set();
                         }
                     };
-                    var firstTask = Task.Run(() => Service().AddWantedEdition(source.Id, requested.Id));
+                    var firstTask = Task.Run(() => Service().AddWantedEditionCopy(source.Id, requested.Id).Book);
                     Task<Book> secondTask = null;
                     try
                     {
@@ -568,7 +579,7 @@ namespace Chaptarr.Core.Test.Books
                         secondTask = Task.Run(() =>
                         {
                             secondStarted.Set();
-                            return Service().AddWantedEdition(source.Id, requested.Id);
+                            return Service().AddWantedEditionCopy(source.Id, requested.Id).Book;
                         });
                         Assert.That(secondStarted.Wait(TimeSpan.FromSeconds(5)), Is.True);
                         Assert.That(secondRead.Wait(TimeSpan.FromMilliseconds(300)), Is.False,
@@ -579,7 +590,7 @@ namespace Chaptarr.Core.Test.Books
                         releaseRead.Set();
                         firstTask.GetAwaiter().GetResult();
                         secondTask?.GetAwaiter().GetResult();
-                        files.BeforeBatchRead = null;
+                        authorService.BeforeGet = null;
                     }
 
                     wanted = firstTask.Result;
@@ -587,11 +598,18 @@ namespace Chaptarr.Core.Test.Books
                 }
                 else
                 {
-                    wanted = Service().AddWantedEdition(source.Id, requested.Id);
+                    wanted = Service().AddWantedEditionCopy(source.Id, requested.Id).Book;
                 }
-                Assert.That(memory.Logs.Count(message => message.StartsWith("Info|Wanted edition writer")), Is.EqualTo(concurrent ? 1 : 0));
-                Assert.That(memory.Logs.Where(message => message.Contains("Wanted edition writer")),
-                    Has.All.Contains("waited ").And.All.Contains("held ").And.All.Contains("1 requests"));
+                Assert.That(memory.Logs.Count(message => message.StartsWith("Info|[AUTHOR-REFRESH-GATE] Waiting")), Is.EqualTo(concurrent ? 1 : 0));
+                Assert.That(memory.Logs, Has.None.Contains("('')"));
+                Assert.That(files.BatchQueries, Has.Count.EqualTo(concurrent ? 2 : 1), "file-linked editions are loaded once per request");
+                Assert.That(memory.Logs.Where(message => message.StartsWith("Info|Wanted edition writer")), Is.Not.Empty);
+                Assert.That(memory.Logs.Where(message => message.StartsWith("Info|Wanted edition writer")),
+                    Has.All.Contains("waited ").And.All.Contains("held ").And.All.Contains("1 copy request")
+                        .And.All.Contains("candidate rows").And.All.Contains("editions").And.All.Contains("author rows")
+                        .And.All.Contains("files; total "));
+                Assert.That(memory.Logs, Has.Some.Contains("1 candidate rows, 3 editions"));
+                if (concurrent) Assert.That(memory.Logs, Has.Some.Contains("2 candidate rows, 6 editions"));
                 var reloaded = Service().GetBook(wanted.Id);
                 var selected = reloaded.Editions.Single(edition => edition.Monitored);
                 Assert.Multiple(() =>
@@ -612,7 +630,7 @@ namespace Chaptarr.Core.Test.Books
                     Assert.That(authors.Get(author.Id).AudiobookMonitored, Is.False);
                 });
 
-                Assert.That(Service().AddWantedEdition(source.Id, requested.Id).Id, Is.EqualTo(wanted.Id));
+                Assert.That(Service().AddWantedEditionCopy(source.Id, requested.Id).Book.Id, Is.EqualTo(wanted.Id));
                 Assert.That(books.GetBooksByAuthorId(author.Id), Has.Count.EqualTo(2));
             });
         }
@@ -731,7 +749,7 @@ namespace Chaptarr.Core.Test.Books
                 multiCopySeriesService: new StubMultiCopySeriesService(),
                 logger: LogManager.GetCurrentClassLogger());
 
-            var wanted = sut.AddWantedEdition(baseBook.Id, selectedEdition.Id);
+            var wanted = sut.AddWantedEditionCopy(baseBook.Id, selectedEdition.Id).Book;
 
             Assert.Multiple(() =>
             {
@@ -740,11 +758,12 @@ namespace Chaptarr.Core.Test.Books
             });
         }
         [Test]
-        public void unpinned_row_with_files_must_never_be_retargeted()
+        public void unpinned_row_with_files_must_never_be_retargeted([Values(false, true)] bool copy)
         {
             var source = MakeBook(1, "Jim Dale", false);
             var (service, repository, _) = BuildWantedService(new List<Book> { source }, source.Id);
-            var wanted = service.AddWantedEdition(source.Id, source.Editions[1].Id);
+            var wanted = copy ? service.AddWantedEditionCopy(source.Id, source.Editions[1].Id).Book
+                : service.AddWantedEditions(new List<Edition> { source.Editions[1] })[source.Editions[1].Id];
             Assert.Multiple(() =>
             {
                 Assert.That(wanted.Id, Is.Not.EqualTo(source.Id));
@@ -767,18 +786,21 @@ namespace Chaptarr.Core.Test.Books
             selected.ForeignEditionId = requested.ForeignEditionId;
             selected.HardcoverEditionId = requested.HardcoverEditionId;
             var (service, repository, _) = BuildWantedService(new List<Book> { source, other });
-            Assert.That(service.AddWantedEdition(source.Id, requested.Id).Id, Is.EqualTo(other.Id));
+            Assert.That(service.AddWantedEditions(new List<Edition> { requested })[requested.Id].Id, Is.EqualTo(other.Id));
             Assert.That(repository.GetBooksByAuthorId(source.AuthorId), Has.Count.EqualTo(2));
         }
 
         [Test]
-        public void compatible_pinned_copy_is_preferred_over_lower_id_unpinned_copy()
+        public void microphone_returns_automatic_origin_unchanged_even_when_a_pinned_copy_exists()
         {
             var first = MakeBook(1, "Stephen Fry", false);
             var pinned = MakeBook(2, "Stephen Fry", true);
             var (service, repository, _) = BuildWantedService(new List<Book> { first, pinned });
-            Assert.That(service.AddWantedEdition(first.Id, first.Editions[1].Id).Id, Is.EqualTo(pinned.Id));
+            var result = service.AddWantedEditionCopy(first.Id, first.Editions[1].Id);
+            Assert.That(result.Book.Id, Is.EqualTo(first.Id));
+            Assert.That(result.ExistingCopy, Is.True);
             Assert.That(first.AnyEditionOk, Is.True);
+            Assert.That(pinned.AnyEditionOk, Is.False);
             Assert.That(repository.GetBooksByAuthorId(first.AuthorId), Has.Count.EqualTo(2));
         }
 
@@ -805,7 +827,7 @@ namespace Chaptarr.Core.Test.Books
             } };
             var service = new BookService(repository, editions, events, new StubAuthorService(author), new StubMediaFileService(),
                 null, null, new StubMultiCopySeriesService(), LogManager.GetCurrentClassLogger());
-            Assert.Throws<InvalidOperationException>(() => service.AddWantedEdition(source.Id, source.Editions[1].Id));
+            Assert.Throws<InvalidOperationException>(() => service.AddWantedEditionCopy(source.Id, source.Editions[1].Id));
             Assert.That(deleted, Has.Count.EqualTo(1));
             Assert.That(repository.GetBooksByAuthorId(author.Id).Single().Id, Is.EqualTo(source.Id));
             Assert.That(BookEditionIdentity.GetMonitoredEdition(source).ManualAdd, Is.True);

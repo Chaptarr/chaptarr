@@ -119,7 +119,7 @@ namespace Chaptarr.Core.Test.Queue
                 var queue = service.GetPendingQueue();
                 Assert.That(queue.Count(item => item.Id == HashConverter.GetHashInt31("pending-1-book15551")), Is.EqualTo(2));
                 var selected = queue.Single(item => item.Book.Id == books[2].Id);
-                var controller = new QueueController(Proxy<IDownloadImportModeResolver>((method, args) => false), null, null, service, Profiles(), Proxy<ITrackedDownloadService>((method, args) => null), null, null, null, null, null);
+                var controller = new QueueController(global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<global::NzbDrone.Core.Books.ISeriesBookLinkService>((_, _) => throw new global::System.InvalidOperationException("Series batch loading was not expected in this fixture")), Proxy<IDownloadImportModeResolver>((method, args) => false), null, null, service, Profiles(), Proxy<ITrackedDownloadService>((method, args) => null), null, null, null, null, null);
                 controller.RemoveMany(new QueueBulkResource { Ids = new List<int> { selected.Id } });
                 Assert.That(native.All().Select(row => row.Title), Is.EquivalentTo(new[] { "first-target", "second-target" }));
             });
@@ -135,7 +135,7 @@ namespace Chaptarr.Core.Test.Queue
                 var service = Service(database, author, books, new Observed());
                 var visible = service.GetPendingQueue().Single();
                 Assert.That(visible.Book.Id, Is.EqualTo(books[1].Id));
-                var controller = new QueueController(Proxy<IDownloadImportModeResolver>((method, args) => false), null, null, service, Profiles(), null, null, null, null, null, null);
+                var controller = new QueueController(global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<global::NzbDrone.Core.Books.ISeriesBookLinkService>((_, _) => throw new global::System.InvalidOperationException("Series batch loading was not expected in this fixture")), Proxy<IDownloadImportModeResolver>((method, args) => false), null, null, service, Profiles(), null, null, null, null, null, null);
                 controller.RemoveAction(visible.Id);
                 Assert.That(native.All().Select(row => row.Title), Is.EqualTo(new[] { "first-target" }));
             });
@@ -175,7 +175,7 @@ namespace Chaptarr.Core.Test.Queue
                 var service = Service(database, author, new List<Book>(), observed);
                 var visible = service.GetPendingQueue().Single();
                 Assert.That(visible.Book, Is.Null);
-                var controller = new QueueController(Proxy<IDownloadImportModeResolver>((method, args) => false), null, null, service, Profiles(), null, null, null, null, null, null);
+                var controller = new QueueController(global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<global::NzbDrone.Core.Books.ISeriesBookLinkService>((_, _) => throw new global::System.InvalidOperationException("Series batch loading was not expected in this fixture")), Proxy<IDownloadImportModeResolver>((method, args) => false), null, null, service, Profiles(), null, null, null, null, null, null);
                 controller.RemoveAction(visible.Id);
                 Assert.Multiple(() =>
                 {
@@ -241,7 +241,7 @@ namespace Chaptarr.Core.Test.Queue
                     if (calls == 2) throw new InvalidOperationException("Blocklist write unavailable");
                     return method.Invoke(nativeBlocklist, args);
                 });
-                var controller = new QueueController(Proxy<IDownloadImportModeResolver>((method, args) => false), null, null, service, Profiles(), null, null, null, null, failingBlocklist, null);
+                var controller = new QueueController(global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<global::NzbDrone.Core.Books.ISeriesBookLinkService>((_, _) => throw new global::System.InvalidOperationException("Series batch loading was not expected in this fixture")), Proxy<IDownloadImportModeResolver>((method, args) => false), null, null, service, Profiles(), null, null, null, null, failingBlocklist, null);
                 Assert.Throws<InvalidOperationException>(() => controller.RemoveMany(new QueueBulkResource { Ids = ids }, blocklist: true));
                 Assert.Multiple(() =>
                 {
@@ -282,7 +282,7 @@ namespace Chaptarr.Core.Test.Queue
                 var ids = service.GetPendingQueue().Where(row => row.Book != null && books.Take(count).Any(book => book.Id == row.Book.Id)).Select(row => row.Id).ToList();
                 observed.Reads = 0;
                 observed.Deletes = 0;
-                var controller = new QueueController(Proxy<IDownloadImportModeResolver>((method, args) => false), null, Proxy<IQueueService>((method, args) => null), service, Profiles(),
+                var controller = new QueueController(global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<global::NzbDrone.Core.Books.ISeriesBookLinkService>((_, _) => throw new global::System.InvalidOperationException("Series batch loading was not expected in this fixture")), Proxy<IDownloadImportModeResolver>((method, args) => false), null, Proxy<IQueueService>((method, args) => null), service, Profiles(),
                     Proxy<ITrackedDownloadService>((method, args) => null), null, null, null,
                     Proxy<IBlocklistService>((method, args) => throw new AssertionException("No blocklist was requested")), null);
                 var timer = Stopwatch.StartNew();
@@ -392,7 +392,7 @@ namespace Chaptarr.Core.Test.Queue
                 catch (Exception error) { failure = error; }
                 Assert.That(StatusFor(failure), Is.EqualTo(409));
                 Assert.That(downloads, Is.Zero);
-                var controller = new QueueController(Proxy<IDownloadImportModeResolver>((method, args) => false), null, null, service, Profiles(), null, null, null, null, null, null);
+                var controller = new QueueController(global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<global::NzbDrone.Core.Books.ISeriesBookLinkService>((_, _) => throw new global::System.InvalidOperationException("Series batch loading was not expected in this fixture")), Proxy<IDownloadImportModeResolver>((method, args) => false), null, null, service, Profiles(), null, null, null, null, null, null);
                 failure = null;
                 try
                 {

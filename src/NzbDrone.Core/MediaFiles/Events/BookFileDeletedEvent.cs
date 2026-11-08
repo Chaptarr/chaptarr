@@ -3,7 +3,6 @@ using System.Linq;
 using System.IO;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common;
-using NzbDrone.Common.Disk;
 using NzbDrone.Core.Extras.Files;
 using NzbDrone.Common.Messaging;
 
@@ -14,12 +13,15 @@ namespace NzbDrone.Core.MediaFiles.Events
     {
         private readonly List<int> _fileIds;
         private readonly Dictionary<System.Type, ILookup<int?, ExtraFile>> _extras = new();
-        private readonly Dictionary<string, string[]> _folders = new(PathEqualityComparer.Instance);
+        private readonly IReadOnlyCollection<BookFile> _deletedFiles;
+        private readonly Dictionary<System.Type, (ILookup<int?, ExtraFile> Files, ILookup<int?, ExtraFile> Books)> _deletionExtras = new();
+        private readonly HashSet<(System.Type Type, int Id)> _removedExtras = new();
         private readonly Dictionary<int, ILookup<string, BookFile>> _replacements;
 
-        public BookFileDeletionContext(IEnumerable<int> fileIds, IEnumerable<BookFile> replacements = null)
+        public BookFileDeletionContext(IEnumerable<int> fileIds, IEnumerable<BookFile> replacements = null, IReadOnlyCollection<BookFile> deletedFiles = null)
         {
             _fileIds = fileIds.Distinct().ToList();
+            _deletedFiles = deletedFiles;
             _replacements = (replacements ?? Enumerable.Empty<BookFile>())
                 .Where(file => file.Id > 0 && file.Edition?.BookId > 0 && file.Path.IsNotNullOrWhiteSpace())
                 .OrderBy(file => file.Part).ThenBy(file => file.Id)
@@ -48,16 +50,24 @@ namespace NzbDrone.Core.MediaFiles.Events
             return files[fileId].Cast<T>();
         }
 
-        public string[] GetFolderContents(IDiskProvider diskProvider, string folder)
+        public IEnumerable<T> GetExtrasForDeletion<T>(IExtraFileRepository<T> repository, BookFile file)
+            where T : ExtraFile, new()
         {
-            if (!_folders.TryGetValue(folder, out var files))
+            if (!_deletionExtras.TryGetValue(typeof(T), out var extras))
             {
-                files = diskProvider.GetFiles(folder, false).ToArray();
-                _folders.Add(folder, files);
+                var rows = repository.GetFilesForDeletion(_deletedFiles ?? new[] { file }).Cast<ExtraFile>().ToList();
+                extras = (rows.Where(extra => extra.BookFileId.HasValue).ToLookup(extra => extra.BookFileId),
+                    rows.Where(extra => !extra.BookFileId.HasValue).ToLookup(extra => extra.BookId));
+                _deletionExtras.Add(typeof(T), extras);
             }
 
-            return files;
+            return extras.Files[file.Id].Concat(extras.Books[file.Edition?.BookId])
+                .Where(extra => !_removedExtras.Contains((typeof(T), extra.Id))).Cast<T>();
         }
+
+        public void MarkExtraRemoved<T>(T extra) where T : ExtraFile => _removedExtras.Add((typeof(T), extra.Id));
+
+
     }
 
     public class BookFileDeletedEvent : IEvent

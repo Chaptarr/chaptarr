@@ -7,9 +7,13 @@ using System.Linq;
 using Chaptarr.Core.Test.Common;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Cache;
+using NzbDrone.Common.Messaging;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Clients.Nzbget;
 using NzbDrone.Core.Download.Clients.Sabnzbd;
@@ -20,14 +24,16 @@ using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Queue;
 using NzbDrone.Core.Qualities;
 using static Chaptarr.Core.Test.Common.InterfaceProxy;
 
 namespace Chaptarr.Core.Test.Download
 {
     [TestFixture]
-    public class CompletedDownloadWaitingFixture
+    public partial class CompletedDownloadWaitingFixture
     {
         [TestCase(false, 3, 0)]
         [TestCase(true, 3, 0)]
@@ -121,7 +127,7 @@ namespace Chaptarr.Core.Test.Download
                     Assert.That(args[1], Is.True);
                     calls.RemoteDelete++;
                     return null;
-                }), null, null, calls.Disk, null, null, null, LogManager.GetCurrentClassLogger())
+                }), null, null, calls.Disk, null, null, null, LogManager.GetCurrentClassLogger(), DownloadClientTestRoots.Empty)
             {
                 _calls = calls;
                 Definition = new DownloadClientDefinition { Id = 1, Name = "SAB fixture", Settings = new SabnzbdSettings(), RemoveCompletedDownloads = true };
@@ -150,7 +156,7 @@ namespace Chaptarr.Core.Test.Download
                     Assert.That(method.Name, Is.EqualTo(nameof(INzbgetProxy.RemoveItem)));
                     calls.RemoteDelete++;
                     return null;
-                }), null, null, calls.Disk, null, null, LogManager.GetCurrentClassLogger())
+                }), null, null, calls.Disk, null, null, LogManager.GetCurrentClassLogger(), DownloadClientTestRoots.Empty)
             {
                 _calls = calls;
                 Definition = new DownloadClientDefinition { Id = 1, Name = "NZBGet fixture", Settings = new NzbgetSettings(), RemoveCompletedDownloads = true };
@@ -189,6 +195,8 @@ namespace Chaptarr.Core.Test.Download
                 else
                 {
                     Assert.That(tracked.StatusMessages.Select(message => message.Title),
+                        Is.EquivalentTo(tracked.DownloadItem.FilePaths.Skip(imported).Select(Path.GetFileName)));
+                    Assert.That(tracked.StatusMessages.Select(message => message.SourcePath),
                         Is.EquivalentTo(tracked.DownloadItem.FilePaths.Skip(imported)));
                 }
                 Assert.That(calls.RemoveItem, Is.Zero);
@@ -231,9 +239,11 @@ namespace Chaptarr.Core.Test.Download
                 {
                     Assert.That(tracked.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
                     Assert.That(tracked.IsTrackable, Is.True);
-                    Assert.That(tracked.StatusMessages.Select(message => message.Title), Has.Member(Path.GetFileName(path)));
+                    Assert.That(tracked.StatusMessages, Has.Length.EqualTo(1));
+                    Assert.That(tracked.StatusMessages.Single().Messages, Has.Count.EqualTo(1));
+                    Assert.That(tracked.StatusMessages.First().Messages.First(), Does.Contain(Path.GetFileName(path)));
                     Assert.That(tracked.StatusMessages.SelectMany(message => message.Messages),
-                        Has.Some.Contains($"No supported {mediaType.ToString().ToLowerInvariant()} files"));
+                        Has.Some.Contains("Use Manual Import to import them anyway"));
                     Assert.That(counters.DownloadHistory.GetLatestDownloadHistoryItem("waiting").EventType,
                         Is.EqualTo(DownloadHistoryEventType.DownloadImportIncomplete));
                     Assert.That(counters.FailedDownloads, Is.Zero);
@@ -245,15 +255,81 @@ namespace Chaptarr.Core.Test.Download
             }, mediaType: mediaType);
         }
 
+        [Test]
+        public void profile_refused_payload_should_remain_for_manual_import(
+            [Values(false, true)] bool postgres, [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType mediaType)
+        {
+            Run(postgres, 2, 0, (subject, tracked, counters) =>
+            {
+                tracked.DownloadItem.CanBeRemoved = true;
+                tracked.IsTrackable = true;
+                var quality = mediaType == BookMediaType.Audiobook ? Quality.MP3 : Quality.EPUB;
+                var expected = mediaType == BookMediaType.Audiobook ? Quality.M4B : Quality.AZW3;
+                tracked.RemoteBook.ParsedBookInfo = new ParsedBookInfo { Quality = new QualityModel(expected) };
+                counters.SetGrabQuality(expected);
+                var reason = $"Quality '{quality.Name}' not allowed by profile 'Preferred format'";
+                counters.ImportResults = tracked.DownloadItem.FilePaths.Select(path =>
+                {
+                    File.WriteAllText(path, "fixture");
+                    var book = tracked.RemoteBook.Books.Single();
+                    var decision = new ImportDecision<LocalBook>(new LocalBook
+                    {
+                        Path = path, Book = book, Edition = book.Editions.Single(),
+                        Author = tracked.RemoteBook.Author, Quality = new QualityModel(quality)
+                    });
+                    decision.Reject(new Rejection(reason, RejectionType.Permanent, canBypass: false, category: "Quality", severity: 3));
+                    return new ImportResult(decision, reason);
+                }).ToList();
+
+                subject.Import(tracked);
+                // ApplyActualFileQuality mutates ParsedBookInfo on the first attempt.
+                Assert.That(tracked.RemoteBook.ParsedBookInfo.Quality.Quality, Is.EqualTo(quality));
+                subject.Import(tracked);
+
+                var calls = new RemovalCalls();
+                var hub = new DownloadEventHub(subject, Proxy<IProvideDownloadClient>((method, args) => new RecordingSabnzbd(calls)),
+                    Proxy<IDownloadImportModeResolver>((method, args) => false), LogManager.GetCurrentClassLogger());
+                hub.Handle(new DownloadCanBeRemovedEvent(tracked));
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(tracked.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
+                    Assert.That(tracked.IsTrackable, Is.True);
+                    Assert.That(tracked.StatusMessages.First().Messages.First(), Does.StartWith($"Grabbed Dune as {expected.Name}, but it only contains"));
+                    Assert.That(tracked.StatusMessages, Has.Length.EqualTo(3));
+                    Assert.That(tracked.StatusMessages.Skip(1).Select(message => message.Title),
+                        Is.EquivalentTo(tracked.DownloadItem.FilePaths.Select(Path.GetFileName)));
+                    Assert.That(tracked.StatusMessages.Skip(1).SelectMany(message => message.Messages),
+                        Is.EqualTo(new[] { reason, reason }));
+                    Assert.That(counters.DownloadHistory.GetLatestDownloadHistoryItem("waiting")?.EventType,
+                        Is.EqualTo(DownloadHistoryEventType.DownloadImportIncomplete));
+                    Assert.That(counters.FailedDownloads, Is.Zero);
+                    Assert.That(calls.RemoveItem, Is.Zero);
+                    Assert.That(calls.DeleteItemData, Is.Zero);
+                    Assert.That(tracked.DownloadItem.Removed, Is.False);
+                    Assert.That(tracked.DownloadItem.FilePaths.All(File.Exists), Is.True);
+                });
+            }, mediaType: mediaType);
+        }
+
         private sealed class Counters
         {
             public int HistoryReads;
             public int FileReads;
             public int InventoryRequests;
             public int FailedDownloads;
+            public List<ImportResult> ImportResults;
             public bool FailFileListing;
+            public bool FailDuringListing;
+            public bool FailHistoryReads;
+            public Exception HistoryReadError;
+            public int IncompleteEvents;
+            public Action<IEvent> OnEvent;
+            public Func<ITrackedDownloadService> NewTracker;
+            public QueueService Queue;
             public DownloadHistoryService DownloadHistory;
             public Action<string> ImportSource;
+            public Action<Quality> SetGrabQuality;
             public void Reset() { HistoryReads = 0; FileReads = 0; InventoryRequests = 0; }
         }
 
@@ -306,7 +382,7 @@ namespace Chaptarr.Core.Test.Download
                 counters.Reset();
                 hub.Handle(new DownloadCanBeRemovedEvent(tracked));
 
-                if (scenario is "late" or "unreadable")
+                if (scenario == "late")
                 {
                     Assert.That(removed, Is.Zero);
                     Assert.That(tracked.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
@@ -314,14 +390,12 @@ namespace Chaptarr.Core.Test.Download
                     Assert.That(tracked.StatusMessages.SelectMany(message => message.Messages), Has.Some.Contains("Manual Import"));
                     Assert.That(counters.DownloadHistory.GetLatestDownloadHistoryItem("waiting").EventType,
                         Is.EqualTo(DownloadHistoryEventType.DownloadImportIncomplete));
-                    if (scenario == "late")
-                    {
-                        Assert.That(File.Exists(latePath), Is.True);
-                        Assert.That(tracked.StatusMessages.Select(message => message.Title), Does.Contain(latePath));
-                        Assert.That(counters.HistoryReads, Is.EqualTo(1));
-                        Assert.That(counters.FileReads, Is.EqualTo(1));
-                        counters.ImportSource(latePath);
-                    }
+                    Assert.That(File.Exists(latePath), Is.True);
+                    Assert.That(tracked.StatusMessages.Select(message => message.Title), Does.Contain(Path.GetFileName(latePath)));
+                    Assert.That(tracked.StatusMessages.Select(message => message.SourcePath), Does.Contain(latePath));
+                    Assert.That(counters.HistoryReads, Is.EqualTo(1));
+                    Assert.That(counters.FileReads, Is.EqualTo(1));
+                    counters.ImportSource(latePath);
                     counters.FailFileListing = false;
                     hub.Handle(new DownloadCanBeRemovedEvent(tracked));
                     Assert.That(removed, Is.Zero, "A blocked download waits for an explicit import or Retry");
@@ -330,17 +404,60 @@ namespace Chaptarr.Core.Test.Download
                     hub.Handle(new DownloadCanBeRemovedEvent(tracked));
                     Assert.That(removed, Is.EqualTo(1));
                 }
+                else if (scenario == "unreadable")
+                {
+                    Assert.That(removed, Is.Zero);
+                    Assert.That(tracked.State, Is.EqualTo(TrackedDownloadState.Imported));
+                    Assert.That(counters.IncompleteEvents, Is.Zero);
+                    counters.FailFileListing = false;
+                    hub.Handle(new DownloadCanBeRemovedEvent(tracked));
+                    Assert.That(removed, Is.EqualTo(1));
+                    Assert.That(tracked.StatusMessages, Is.Empty);
+                }
                 else
                 {
                     Assert.That(removed, Is.EqualTo(1));
                     Assert.That(counters.InventoryRequests, Is.Zero);
-                    Assert.That(counters.HistoryReads, Is.Zero);
+                    Assert.That(counters.HistoryReads, Is.EqualTo(scenario == "authoritative" ? 0 : 1));
                 }
             }, diskInventory: scenario != "authoritative", mediaType: mediaType);
         }
 
+        [Test]
+        public void repeated_cleanup_keeps_one_late_file_warning([Values] bool postgres)
+        {
+            var logs = new NLog.Targets.MemoryTarget { Layout = "${level}|${message}" };
+            using var factory = new LogFactory();
+            var config = new NLog.Config.LoggingConfiguration();
+            config.AddRule(LogLevel.Debug, LogLevel.Fatal, logs);
+            factory.Configuration = config;
+            Run(postgres, 1, 1, (subject, tracked, counters) =>
+            {
+                Assert.That(subject.VerifyImport(tracked, new List<ImportResult>()), Is.True);
+                var late = Path.Combine(tracked.DownloadItem.OutputPath.FullPath, "Dune Part 002.mp3");
+                File.WriteAllText(late, "fixture");
+                for (var cycle = 0; cycle < 4; cycle++)
+                {
+                    tracked.State = TrackedDownloadState.Imported;
+                    Assert.That(subject.CanRemoveDownload(tracked), Is.False);
+                    Assert.That(tracked.StatusMessages.SelectMany(message => message.Messages)
+                        .Count(message => message.StartsWith("Additional book files")), Is.EqualTo(1));
+                }
+                Assert.That(File.Exists(late), Is.True);
+            }, diskInventory: true, loggerOverride: factory.GetLogger("download-cleanup"));
+            factory.Flush();
+            Assert.That(logs.Logs.Count(line => line.StartsWith("Warn|") && line.Contains("Additional book files")), Is.EqualTo(1));
+            Assert.That(logs.Logs.Count(line => line.StartsWith("Debug|") && line.Contains("Additional book files")), Is.EqualTo(3));
+        }
+
+        private static IEnumerable<IFileInfo> FailAfterFirstFile(IEnumerable<IFileInfo> files)
+        {
+            foreach (var file in files.Take(1)) yield return file;
+            throw new UnauthorizedAccessException("An output subfolder is not readable");
+        }
+
         private static void Run(bool postgres, int sources, int imported, Action<CompletedDownloadService, TrackedDownload, Counters> check,
-            bool diskInventory = false, BookMediaType mediaType = BookMediaType.Audiobook)
+            bool diskInventory = false, BookMediaType mediaType = BookMediaType.Audiobook, Logger loggerOverride = null)
         {
             DualDatabaseFixture.Run(postgres, database =>
             {
@@ -348,12 +465,18 @@ namespace Chaptarr.Core.Test.Download
                 Directory.CreateDirectory(directory);
                 try
                 {
-                    var logger = LogManager.GetCurrentClassLogger();
+                    var logger = loggerOverride ?? LogManager.GetCurrentClassLogger();
                     var counters = new Counters();
                     var events = Proxy<IEventAggregator>((method, args) =>
                     {
-                        if (args[0] is BookImportIncompleteEvent incomplete) counters.DownloadHistory?.Handle(incomplete);
+                        if (args[0] is DownloadFailedEvent) counters.FailedDownloads++;
+                        if (args[0] is BookImportIncompleteEvent incomplete)
+                        {
+                            counters.IncompleteEvents++;
+                            counters.DownloadHistory?.Handle(incomplete);
+                        }
                         if (args[0] is DownloadCompletedEvent completed) counters.DownloadHistory?.Handle(completed);
+                        counters.OnEvent?.Invoke((IEvent)args[0]);
                         return null;
                     });
                     var author = new AuthorRepository(database, events, logger).Insert(new Author
@@ -393,6 +516,12 @@ namespace Chaptarr.Core.Test.Download
                     }
                     histories.InsertMany(importedHistory);
                     files.InsertMany(importedFiles);
+                    counters.SetGrabQuality = quality =>
+                    {
+                        var grabbed = histories.FindByDownloadId("waiting").Single(row => row.EventType == EntityHistoryEventType.Grabbed);
+                        grabbed.Quality = new QualityModel(quality);
+                        histories.Update(grabbed);
+                    };
 
                     counters.ImportSource = path => histories.Insert(new EntityHistory
                     {
@@ -402,8 +531,13 @@ namespace Chaptarr.Core.Test.Download
                     });
                     var history = Proxy<IHistoryService>((method, args) =>
                     {
+                        if (method.Name == nameof(IHistoryService.FindByDownloadIds))
+                        {
+                            return histories.FindByDownloadId("waiting").Where(row => row.EventType == (EntityHistoryEventType)args[1]).ToList();
+                        }
                         Assert.That(method.Name, Is.EqualTo(nameof(IHistoryService.FindByDownloadId)));
                         counters.HistoryReads++;
+                        if (counters.FailHistoryReads) throw counters.HistoryReadError ?? new InvalidOperationException("History database unavailable");
                         return histories.FindByDownloadId((string)args[0]);
                     });
                     counters.DownloadHistory = new DownloadHistoryService(new DownloadHistoryRepository(database, events), history);
@@ -419,7 +553,15 @@ namespace Chaptarr.Core.Test.Download
                         nameof(IDiskProvider.FolderExists) => Directory.Exists((string)args[0]),
                         nameof(IDiskProvider.FileExists) => File.Exists((string)args[0]),
                         nameof(IDiskProvider.GetFileInfo) => fs.FileInfo.FromFileName((string)args[0]),
-                        nameof(IDiskProvider.GetDirectoryInfo) => fs.DirectoryInfo.FromDirectoryName((string)args[0]),
+                        nameof(IDiskProvider.GetDirectoryInfo) => Proxy<IDirectoryInfo>((member, parameters) =>
+                        {
+                            var info = fs.DirectoryInfo.FromDirectoryName((string)args[0]);
+                            if (member.Name != nameof(IDirectoryInfo.EnumerateFiles)) return member.Invoke(info, parameters);
+                            Assert.That(((EnumerationOptions)parameters[1]).IgnoreInaccessible, Is.False);
+                            if (counters.FailFileListing) throw new IOException("File listing unavailable");
+                            var entries = info.EnumerateFiles((string)parameters[0], (EnumerationOptions)parameters[1]);
+                            return counters.FailDuringListing ? FailAfterFirstFile(entries) : entries;
+                        }),
                         nameof(IDiskProvider.GetFileInfos) => counters.FailFileListing
                             ? throw new IOException("File listing unavailable")
                             : Directory.GetFiles((string)args[0], "*", SearchOption.AllDirectories).Select(fs.FileInfo.FromFileName).ToList(),
@@ -428,7 +570,7 @@ namespace Chaptarr.Core.Test.Download
                     var runtime = Proxy<IRuntimeInfo>((method, args) => method.Name == "get_IsWindowsService" ? false :
                         throw new InvalidOperationException("Missing-source check attempted " + method.Name));
                     var importer = new DownloadedBooksImportService(disk, null, null, null, null, null, null, null, null, null,
-                        null, null, history, events, runtime, null, logger);
+                        null, null, history, events, runtime, null, logger, queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
                     var snapshots = new DownloadClientFileSnapshotService(new DownloadClientFileSnapshotRepository(database, events), disk, logger);
                     var item = new DownloadClientItem { DownloadId = "waiting", Title = "Dune", Status = DownloadItemStatus.Completed,
                         OutputPath = new OsPath(directory), FilePaths = paths, FileListConfidence = DownloadClientFileListConfidence.Authoritative,
@@ -448,20 +590,27 @@ namespace Chaptarr.Core.Test.Download
                             OutputPath = item.OutputPath, DownloadClientInfo = item.DownloadClientInfo },
                         RemoteBook = new RemoteBook { Author = author, Books = new() { book } } };
                     snapshots.ApplySnapshot(tracked.DownloadItem);
+                    var formats = Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>());
+                    counters.NewTracker = () => new TrackedDownloadService(
+                        Proxy<IParsingService>((method, args) => tracked.RemoteBook), new CacheManager(), history,
+                        events, counters.DownloadHistory, formats, logger, snapshots);
+                    counters.Queue = new QueueService(events, history, formats);
+                    counters.Queue.Handle(new TrackedDownloadRefreshedEvent(new List<TrackedDownload>()));
                     var provider = Proxy<IProvideImportItemService>((method, args) =>
                     {
                         counters.InventoryRequests++;
                         return ((DownloadClientItem)args[0]).Clone();
                     });
                     var mode = Proxy<IDownloadImportModeResolver>((method, args) => ImportMode.Copy);
-                    var failed = Proxy<IFailedDownloadService>((method, args) =>
+                    var importService = Proxy<IDownloadedBooksImportService>((method, args) =>
                     {
-                        Assert.That(method.Name, Is.EqualTo(nameof(IFailedDownloadService.MarkAsFailed)));
-                        counters.FailedDownloads++;
-                        return null;
+                        if (method.Name == nameof(IDownloadedBooksImportService.ProcessIncludedMedia)) return new List<ImportResult>();
+                        Assert.That(method.Name, Is.EqualTo(nameof(IDownloadedBooksImportService.ProcessPath)));
+                        return counters.ImportResults ?? importer.ProcessPath((string)args[0], (ImportMode)args[1],
+                            (Author)args[2], (DownloadClientItem)args[3], (RemoteBook)args[4], (bool)args[5]);
                     });
-                    var subject = new CompletedDownloadService(events, history, provider, importer, mode,
-                        new TrackedDownloadAlreadyImported(logger, media), failed, logger, snapshots);
+                    var subject = new CompletedDownloadService(events, history, provider, importService, mode,
+                        new TrackedDownloadAlreadyImported(logger, media), logger, snapshots);
                     check(subject, tracked, counters);
                 }
                 finally

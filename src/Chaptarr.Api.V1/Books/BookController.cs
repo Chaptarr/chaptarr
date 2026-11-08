@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
@@ -47,6 +48,7 @@ namespace Chaptarr.Api.V1.Books
 	        IHandle<BookEditedEvent>,
 	        IHandle<BookUpdatedEvent>,
 	        IHandle<BookDeletedEvent>,
+            IHandle<LibraryIdentityChangedEvent>,
 	        IHandle<BookImportedEvent>,
 	        IHandle<ImportStageProgressEvent>,
 	        IHandle<CommandExecutedEvent>,
@@ -62,6 +64,7 @@ namespace Chaptarr.Api.V1.Books
 	        private readonly IMediaFileService _mediaFileService;
 	        private readonly IEventAggregator _eventAggregator;
             private readonly IProviderAliasService _providerAliasService;
+        private readonly IQualityProfileService _qualityProfileService;
 	        private readonly Logger _logger;
 	        private readonly object _importStateLock = new object();
 	        private readonly HashSet<int> _activeImportCommands = new HashSet<int>();
@@ -86,7 +89,8 @@ namespace Chaptarr.Api.V1.Books
                           QualityProfileExistsValidator qualityProfileExistsValidator,
                           MetadataProfileExistsValidator metadataProfileExistsValidator,
                           Logger logger,
-                          IProviderAliasService providerAliasService = null)
+                          IProviderAliasService providerAliasService = null,
+                            IQualityProfileService qualityProfileService = null)
 
         : base(bookService, seriesBookLinkService, authorStatisticsService, coverMapper, upgradableSpecification, signalRBroadcaster)
 	        {
@@ -100,6 +104,7 @@ namespace Chaptarr.Api.V1.Books
             _eventAggregator = eventAggregator;
             _logger = logger;
             _providerAliasService = providerAliasService;
+            _qualityProfileService = qualityProfileService;
             _bookEditBroadcastDebouncer = new Debouncer(FlushPendingBookEdits, TimeSpan.FromMilliseconds(500), executeRestartsTimer: true);
 
             PostValidator.RuleFor(s => s.Author).Must(author =>
@@ -417,6 +422,7 @@ namespace Chaptarr.Api.V1.Books
                     EbookMonitorExistingMode = authorMonitoring?.EbookMonitorExistingMode
                 }, bookMediaType, legacySelectTargetsSpecificBook: true);
                 var monitorMode = monitoring.MonitorExistingMode ?? MonitorTypes.SpecificBook;
+                var monitorCurrentBook = monitorMode != MonitorTypes.None;
                 var authorMonitored = monitoring.Monitored;
                 var monitorNewItems = monitoring.MonitorNewItems;
 
@@ -433,9 +439,9 @@ namespace Chaptarr.Api.V1.Books
                 {
                     Title = "Pending Import",
                     MediaType = bookMediaType,
-                    Monitored = true,
-                    AudiobookMonitored = bookMediaType == BookMediaType.Audiobook,
-                    EbookMonitored = bookMediaType == BookMediaType.Ebook,
+                    Monitored = monitorCurrentBook,
+                    AudiobookMonitored = bookMediaType == BookMediaType.Audiobook && monitorCurrentBook,
+                    EbookMonitored = bookMediaType == BookMediaType.Ebook && monitorCurrentBook,
                     // This compatibility/import endpoint is automation-facing. A supplied Edition is an
                     // initial preference, not the explicit human preservation pin used by the id-route editor.
                     AnyEditionOk = true,
@@ -842,11 +848,7 @@ namespace Chaptarr.Api.V1.Books
             // Readarr-compatible browser links use /book/{titleSlug}. Seerr builds those links
             // from the titleSlug returned by POST /api/v1/book, so resolve slugs here without
             // changing the canonical Chaptarr route shape.
-            var allBooks = _bookService.GetAllBooks();
-            var slugMatches = allBooks
-                .Where(book => book != null &&
-                               string.Equals(book.TitleSlug, routeToken, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            var slugMatches = _bookService.FindBySlug(routeToken);
 
             var matches = slugMatches;
             if (scopedMediaType.HasValue)
@@ -861,11 +863,13 @@ namespace Chaptarr.Api.V1.Books
                 // Seerr stores one titleSlug per Readarr instance, but Chaptarr stores separate
                 // audiobook/ebook rows. If the stored slug belongs to the sibling format, resolve
                 // through provider identity rather than inventing a string/title match.
-                matches = allBooks
-                    .Where(candidate => candidate != null &&
-                                        candidate.MediaType == scopedMediaType.Value &&
-                                        slugMatches.Any(slugMatch => WorkIdMatcher.WorkProviderIdMatches(slugMatch, candidate)))
-                    .ToList();
+                var workKeys = slugMatches.SelectMany(BookIdentity.GetStableWorkProviderIdentityTokens)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Select(token => (Scope: "work", Provider: token.Split(':', 2)[0], Id: token)).ToList();
+                var candidateIds = _bookService.FindBookIdsByProviderIds(workKeys).Values.SelectMany(ids => ids).Distinct().ToList();
+                matches = _bookService.GetBooks(candidateIds)
+                    .Where(candidate => candidate != null && candidate.MediaType == scopedMediaType.Value &&
+                        slugMatches.Any(slugMatch => WorkIdMatcher.WorkProviderIdMatches(slugMatch, candidate))).ToList();
 
                 if (matches.Any())
                 {
@@ -1197,7 +1201,13 @@ namespace Chaptarr.Api.V1.Books
                     var explicitEbook = AuthorResourceMapper.HasEbookSpecificSettings(bookResource?.Author);
                     if (!explicitAudio && !explicitEbook)
                     {
-                        return BadRequest(MediaTypeParameterParser.FormatRequiredMessage);
+                        var rootPath = bookResource?.Author?.RootFolderPath;
+                        var root = string.IsNullOrWhiteSpace(rootPath) ? null : _rootFolderService.GetBestRootFolder(rootPath);
+                        var profileId = bookResource?.Author?.QualityProfileId;
+                        var profileType = MediaTypeParameterParser.GetProfileType(profileId, _qualityProfileService);
+                        requestedMediaType = MediaTypeParameterParser.InferWriteScope(root, null, profileType)
+                            ?? MediaTypeParameterParser.InferWriteScope(null, TryGetExistingAuthor(bookResource?.Author));
+                        if (requestedMediaType == null) return BadRequest(MediaTypeParameterParser.FormatRequiredMessage);
                     }
                     if (explicitAudio != explicitEbook)
                     {
@@ -1215,11 +1225,11 @@ namespace Chaptarr.Api.V1.Books
 	                    NormalizeReadarrSingleFields(bookResource, wantAudiobook: true, wantEbook: true);
 	                    var existingAuthor = TryGetExistingAuthor(bookResource?.Author);
 
-	                    var canCreateAudiobook = HasConfiguredMediaSettings(bookResource?.Author, BookMediaType.Audiobook);
-	                    var canCreateEbook = HasConfiguredMediaSettings(bookResource?.Author, BookMediaType.Ebook);
+	                    var canCreateAudiobook = MediaTypeParameterParser.HasConfiguredMediaSettings(bookResource?.Author, BookMediaType.Audiobook);
+	                    var canCreateEbook = MediaTypeParameterParser.HasConfiguredMediaSettings(bookResource?.Author, BookMediaType.Ebook);
 
-	                    var hasExistingAudiobook = HasConfiguredMediaSettings(existingAuthor, BookMediaType.Audiobook);
-	                    var hasExistingEbook = HasConfiguredMediaSettings(existingAuthor, BookMediaType.Ebook);
+	                    var hasExistingAudiobook = MediaTypeParameterParser.HasConfiguredMediaSettings(existingAuthor, BookMediaType.Audiobook);
+	                    var hasExistingEbook = MediaTypeParameterParser.HasConfiguredMediaSettings(existingAuthor, BookMediaType.Ebook);
 
 	                    var shouldAddAudiobook = canCreateAudiobook || hasExistingAudiobook;
 	                    var shouldAddEbook = canCreateEbook || hasExistingEbook;
@@ -1526,7 +1536,7 @@ namespace Chaptarr.Api.V1.Books
         {
             // Book requests initialize only their selected work; established author
             // monitoring stays unchanged on subsequent requests.
-            var configured = HasConfiguredMediaSettings(existing, mediaType);
+            var configured = MediaTypeParameterParser.HasConfiguredMediaSettings(existing, mediaType);
             var audiobook = mediaType == BookMediaType.Audiobook;
             var monitored = configured
                 ? (audiobook ? existing.AudiobookMonitored : existing.EbookMonitored)
@@ -1554,30 +1564,6 @@ namespace Chaptarr.Api.V1.Books
                 requested.AddOptions.EbookMonitor = initial;
             }
         }
-
-	        private static bool HasConfiguredMediaSettings(NzbDrone.Core.Books.Author author, BookMediaType mediaType)
-		        {
-		            if (author == null)
-		            {
-		                return false;
-		            }
-
-		            return mediaType == BookMediaType.Audiobook
-		                ? author.AudiobookQualityProfileId.HasValue && !string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath)
-		                : author.EbookQualityProfileId.HasValue && !string.IsNullOrWhiteSpace(author.EbookRootFolderPath);
-		        }
-
-	        private static bool HasConfiguredMediaSettings(global::Chaptarr.Api.V1.Author.AuthorResource author, BookMediaType mediaType)
-	        {
-	            if (author == null)
-	            {
-	                return false;
-		            }
-
-	            return mediaType == BookMediaType.Audiobook
-	                ? author.AudiobookQualityProfileId.HasValue && !string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath)
-	                : author.EbookQualityProfileId.HasValue && !string.IsNullOrWhiteSpace(author.EbookRootFolderPath);
-	        }
 
         private List<BookResource> MapFilteredBooksToResource(List<Book> books, bool? monitored)
         {
@@ -1666,7 +1652,7 @@ namespace Chaptarr.Api.V1.Books
                 : !RootFolderDefaultResolver.IsCompatibleRootFolder(rootFolder, type)
                     ? $"Selected root folder '{path}' does not support {label} books"
                     : !RootFolderSettingsResolver.HasRequiredProfiles(GetMediaSettings(rootFolder, mediaType))
-                        ? $"Selected root folder '{path}' requires both a {label} quality profile and metadata profile"
+                        ? $"Selected root folder '{path}' requires both an {label} quality profile and metadata profile"
                         : null;
             if (error != null)
             {
@@ -1911,14 +1897,33 @@ namespace Chaptarr.Api.V1.Books
                 beforeSelection[edition.Id] != (edition.Monitored, edition.ManualAdd)).ToList();
             var relinkFiles = pinExplicitEditionChange && !model.AnyEditionOk && afterMonitoredEditionId is > 0 &&
                 (explicitEditionSelectionChange || beforeAnyEditionOk);
-            var relinkedCount = 0;
+            var selectedEdition = afterMonitoredEditionId.HasValue ? beforeEditions.GetValueOrDefault(afterMonitoredEditionId.Value) : null;
+            var classifyFiles = relinkFiles && model.MediaType == BookMediaType.Audiobook &&
+                EditionReadingFormat.IsAudiobook(selectedEdition?.ReadingFormatId);
+            var resetRecordingType = !beforeAnyEditionOk && model.AnyEditionOk && model.MediaType == BookMediaType.Audiobook;
+            var recordingCorrection = classifyFiles
+                ? AudioProductionDetector.IsDramatizedEdition(selectedEdition) ? AudioProductionCorrection.NonStandard : AudioProductionCorrection.Standard
+                : resetRecordingType ? AudioProductionCorrection.Automatic : AudioProductionCorrection.Unchanged;
+            var correctionElapsedMs = 0d;
+            (int Relinked, int Reclassified) correctedFiles = default;
             _bookService.UpdateBook(model, editionUpdates, applyFacadeMonitoring ? facadeContext.MediaType : null,
-                relinkFiles ? (connection, transaction) =>
-                    relinkedCount = _mediaFileService.RelinkFilesByBook(model.Id, afterMonitoredEditionId.Value, connection, transaction) : null);
-            if (relinkedCount > 0)
+                (relinkFiles || resetRecordingType) ? (connection, transaction) =>
+                {
+                    var correctionStarted = Stopwatch.GetTimestamp();
+                    correctedFiles = _mediaFileService.RelinkAndClassifyFilesByBook(model.Id, relinkFiles ? afterMonitoredEditionId : null,
+                        model.MediaType, recordingCorrection, connection, transaction);
+                    correctionElapsedMs = Stopwatch.GetElapsedTime(correctionStarted).TotalMilliseconds;
+                } : null);
+            if (correctedFiles.Relinked > 0 || correctedFiles.Reclassified > 0)
             {
-                _logger.Info("Reassigned {0} book files for BookId={1} to EditionId={2} after explicit edition correction",
-                    relinkedCount, model.Id, afterMonitoredEditionId.Value);
+                _logger.Info("Edition correction: BookId={0}, EditionId={1}, filesRelinked={2}, filesReclassified={3}, recordingClass={4}, elapsedMs={5:F1}",
+                    model.Id, afterMonitoredEditionId, correctedFiles.Relinked, correctedFiles.Reclassified,
+                    recordingCorrection, correctionElapsedMs);
+            }
+            else if (relinkFiles || resetRecordingType)
+            {
+                _logger.Debug("Edition correction unchanged: BookId={0}, EditionId={1}, recordingClass={2}, elapsedMs={3:F1}",
+                    model.Id, afterMonitoredEditionId, recordingCorrection, correctionElapsedMs);
             }
 
             if (beforeMonitoredEditionId != afterMonitoredEditionId)
@@ -2008,37 +2013,24 @@ namespace Chaptarr.Api.V1.Books
         {
             if (request == null || request.EditionId <= 0)
             {
-                return BadRequest("EditionId is required");
+                throw new ValidationException(new[] { new ValidationFailure("EditionId", "EditionId is required") });
             }
 
-	            try
-	            {
-	                var wantedBook = _bookService.AddWantedEdition(id, request.EditionId);
-	                EnsureBookCover(wantedBook.Id, "wantedEdition");
-
-	                if (request.SearchForNewBook)
-	                {
-	                    _commandQueueManager.Push(new BookSearchCommand(new List<int> { wantedBook.Id }));
-	                }
-
-	                // Ensure the UI updates immediately without requiring a full page refresh.
-	                // SignalR's book handler treats "updated" as upsert (adds if missing).
-	                BroadcastResourceChange(ModelAction.Updated, wantedBook.Id);
-
-	                return MapToResource(_bookService.GetBook(wantedBook.Id), true);
-	            }
-            catch (ValidationException ex)
+            var (wantedBook, existingCopy) = _bookService.AddWantedEditionCopy(id, request.EditionId);
+            if (!existingCopy)
             {
-                return BadRequest(string.Join(Environment.NewLine, ex.Errors.Select(error => error.ErrorMessage)));
+                EnsureBookCover(wantedBook.Id, "wantedEdition");
+                if (request.SearchForNewBook)
+                {
+                    _commandQueueManager.Push(new BookSearchCommand(new List<int> { wantedBook.Id }), trigger: CommandTrigger.Manual);
+                }
+
+                BroadcastResourceChange(ModelAction.Updated, wantedBook.Id);
             }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(ex.Message);
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(ex.Message);
-            }
+
+            var resource = MapToResource(_bookService.GetBook(wantedBook.Id), true);
+            resource.ExistingCopy = existingCopy;
+            return resource;
         }
 
         [NonAction]
@@ -2064,6 +2056,17 @@ namespace Chaptarr.Api.V1.Books
         {
             // See Handle(BookEditedEvent): broadcast a fully loaded resource.
             BroadcastResourceChange(ModelAction.Updated, message.Book.Id);
+        }
+
+        [NonAction]
+        public void Handle(LibraryIdentityChangedEvent message)
+        {
+            foreach (var id in message.RemovedBookIds)
+                BroadcastResourceChange(ModelAction.Deleted, new BookResource { Id = id });
+            var survivors = message.BookIds.Except(message.RemovedBookIds).ToList();
+            if (survivors.Count > 0)
+                foreach (var resource in MapFilteredBooksToResource(_bookService.GetBooks(survivors), null))
+                    BroadcastResourceChange(ModelAction.Updated, resource);
         }
 
         [NonAction]

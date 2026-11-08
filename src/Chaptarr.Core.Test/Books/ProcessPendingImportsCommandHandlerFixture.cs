@@ -84,6 +84,7 @@ namespace Chaptarr.Core.Test.Books
             public bool IsActiveRequest(int id, long version) => true;
             public bool SaveProgress(PendingAuthorImport item, PendingAuthorImport previous) => true;
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void RetryNow(int id) => throw new NotImplementedException();
             public void Delete(int id) => DeletedIds.Add(id);
             public bool TryDeleteIfUnchanged(PendingAuthorImport item)
@@ -599,6 +600,11 @@ namespace Chaptarr.Core.Test.Books
             pending.EbookBooksToSearch = searchEbook ? @"[""gr:2002""]" : null;
             pending.AudiobookBooksToMonitor = pending.AudiobookBooksToSearch;
             pending.EbookBooksToMonitor = pending.EbookBooksToSearch;
+            pending.ExplicitBookSearches = RequestedBookSearch.Write(new[]
+            {
+                searchAudiobook ? new RequestedBookSearch { MediaType = BookMediaType.Audiobook, WorkProviderId = "gr:1001" } : null,
+                searchEbook ? new RequestedBookSearch { MediaType = BookMediaType.Ebook, WorkProviderId = "gr:2002" } : null
+            }.Where(request => request != null));
             pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
 
             var author = new Author { Id = 42, Name = "Existing Author" };
@@ -653,6 +659,11 @@ namespace Chaptarr.Core.Test.Books
             pending.EbookBooksToSearch = "[\"gr:2002\"]";
             pending.AudiobookBooksToMonitor = pending.AudiobookBooksToSearch;
             pending.EbookBooksToMonitor = pending.EbookBooksToSearch;
+            pending.ExplicitBookSearches = RequestedBookSearch.Write(new[]
+            {
+                new RequestedBookSearch { MediaType = BookMediaType.Audiobook, WorkProviderId = "gr:1001" },
+                new RequestedBookSearch { MediaType = BookMediaType.Ebook, WorkProviderId = "gr:2002" }
+            });
             pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
 
             var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
@@ -675,13 +686,27 @@ namespace Chaptarr.Core.Test.Books
             };
             var commandQueue = new RecordingCommandQueue();
             var eventAggregator = new RecordingEventAggregator();
+            var identityVerified = false;
             var handler = BuildHandler(
                 pendingImportService,
                 commandQueue,
                 eventAggregator,
                 author: new Author { Id = 42, Name = "Now Available" },
-                bookService: bookService);
+                bookService: bookService,
+                configCaptured: _ =>
+                {
+                    if (!identityVerified) throw new AuthorIdentityUnverifiedException("Provider identity cannot be verified yet");
+                });
 
+            handler.Execute(new ProcessPendingImportsCommand());
+
+            Assert.That(pending.OverallStatus, Is.EqualTo(PendingImportStatus.Retrying));
+            Assert.That(pendingImportService.DeletedIds, Is.Empty);
+            Assert.That(commandQueue.Pushed, Is.Empty, "unverified ownership must not start a search or scan");
+            Assert.That(eventAggregator.Events.OfType<PendingAuthorImportSucceededEvent>(), Is.Empty);
+
+            identityVerified = true;
+            pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
             handler.Execute(new ProcessPendingImportsCommand());
 
             var searches = commandQueue.Pushed.OfType<BookSearchCommand>().ToList();
@@ -745,6 +770,8 @@ namespace Chaptarr.Core.Test.Books
             pending.EbookStatus = PendingImportStatus.NotRequested;
             pending.AudiobookMonitored = false;
             pending.AudiobookBooksToSearch = @"[""gr:1001""]";
+            pending.ExplicitBookSearches = RequestedBookSearch.Write(new[]
+                { new RequestedBookSearch { MediaType = BookMediaType.Audiobook, WorkProviderId = "gr:1001" } });
             pendingImportService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
 
             var author = new Author
@@ -803,6 +830,8 @@ namespace Chaptarr.Core.Test.Books
             pending.EbookBooksToMonitor = audio ? null : @"[""gr:1001""]";
             pending.AudiobookBooksToSearch = audio && searchNow ? @"[""gr:1001""]" : null;
             pending.EbookBooksToSearch = !audio && searchNow ? @"[""gr:1001""]" : null;
+            pending.ExplicitBookSearches = searchNow ? RequestedBookSearch.Write(new[]
+                { new RequestedBookSearch { MediaType = mediaType, WorkProviderId = "gr:1001" } }) : null;
             pendingService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
             var author = new Author
             {
@@ -1117,6 +1146,7 @@ namespace Chaptarr.Core.Test.Books
         [TestCase(false, "ImportList:Narrations")]
         [TestCase(true, "ImportList:Narrations")]
         [TestCase(true, "Seerr")]
+        [TestCase(false, "UserInterface")]
         public void queued_narration_should_use_the_shared_writer_and_search_its_selected_copy(bool authorMonitored, string requestedBy)
         {
             var pendingService = new StubPendingAuthorImportService();
@@ -1126,6 +1156,8 @@ namespace Chaptarr.Core.Test.Books
             pending.EbookStatus = PendingImportStatus.NotRequested;
             pending.AudiobookBooksToMonitor = @"[""hc:1001""]";
             pending.AudiobookNarrations = @"[{""WorkProviderId"":""hc:1001"",""EditionProviderId"":""hc-ed:202"",""Search"":true}]";
+            if (!requestedBy.StartsWith("ImportList:")) pending.ExplicitBookSearches = RequestedBookSearch.Write(new[]
+                { new RequestedBookSearch { MediaType = BookMediaType.Audiobook, WorkProviderId = "hc:1001", EditionProviderId = "hc-ed:202" } });
             pendingService.DueResponses.Enqueue(new List<PendingAuthorImport> { pending });
             var author = new Author { Id = 42, AudiobookMonitored = authorMonitored };
             var first = new Book { Id = 101, AuthorId = 42, HardcoverBookId = "hc:1001", MediaType = BookMediaType.Audiobook,
@@ -1152,7 +1184,7 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(first.IsMonitored(), Is.False);
             Assert.That(author.AudiobookMonitored, Is.EqualTo(authorMonitored));
             Assert.That(queue.Pushed.OfType<BookSearchCommand>().Single().Trigger,
-                Is.EqualTo(authorMonitored && requestedBy.StartsWith("ImportList:") ? CommandTrigger.Unspecified : CommandTrigger.Manual));
+                Is.EqualTo(authorMonitored || requestedBy.StartsWith("ImportList:") ? CommandTrigger.Unspecified : CommandTrigger.Manual));
         }
 
         [Test]

@@ -24,7 +24,7 @@ namespace NzbDrone.Core.Books
 
         public static bool HasNarration(Edition edition) => GetNarratorNames(edition).Count > 0;
 
-        public static bool IsNarratedAudiobookEdition(Edition edition) => edition?.ReadingFormatId == 2 && HasNarration(edition);
+        public static bool IsNarratedAudiobookEdition(Edition edition) => EditionReadingFormat.IsAudiobook(edition?.ReadingFormatId) && HasNarration(edition);
 
         public static bool HasSameNarration(Edition left, Edition right)
         {
@@ -379,6 +379,95 @@ namespace NzbDrone.Core.Books
             }
 
             return amazon.OrderBy(token => token, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        public static List<string> GetWantedEditionCopyTokens(Edition edition)
+        {
+            var stable = GetStableEditionRehomeTokens(edition);
+            if (stable.Count > 0)
+            {
+                return stable;
+            }
+
+            // A primary Amazon identity can identify an Amazon-only copy; secondary ASINs cannot.
+            var primary = GetPrimaryAmazonCopyToken(edition?.ForeignEditionId);
+            return primary == null ? stable : new List<string> { primary };
+        }
+
+        private static string GetPrimaryAmazonCopyToken(string value)
+        {
+            if (value?.Trim().StartsWith("az:", StringComparison.OrdinalIgnoreCase) != true) return null;
+            var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            AddAmazonRehomeToken(tokens, value);
+            return tokens.FirstOrDefault();
+        }
+
+        public static List<Book> GetWantedEditionCopyCandidates(Book source, IEnumerable<Book> candidates)
+        {
+            var result = new List<Book>();
+            if (source.MediaType != BookMediaType.Audiobook)
+            {
+                return result;
+            }
+
+            var sourceWorkIds = BookIdentity.GetStableWorkProviderIdentityTokens(source);
+            var sourceAmazonId = GetPrimaryAmazonCopyToken(source.BaseBookId);
+            foreach (var book in candidates.Where(book => book.AuthorId == source.AuthorId &&
+                         book.MediaType == BookMediaType.Audiobook)
+                         .OrderByDescending(book => book.Id == source.Id).ThenBy(book => book.Id))
+            {
+                var workIds = BookIdentity.GetStableWorkProviderIdentityTokens(book);
+                var sameWork = book.Id == source.Id || sourceWorkIds.Overlaps(workIds);
+                if (!sameWork && sourceWorkIds.Count == 0 && workIds.Count == 0 && sourceAmazonId != null)
+                {
+                    sameWork = string.Equals(sourceAmazonId, GetPrimaryAmazonCopyToken(book.BaseBookId), StringComparison.OrdinalIgnoreCase);
+                }
+
+                if (sameWork) result.Add(book);
+            }
+
+            return result;
+        }
+
+        public static Dictionary<int, Book> FindWantedEditionCopies(Book source, IEnumerable<Edition> requestedEditions, IEnumerable<Book> candidates, IReadOnlySet<int> filedEditionIds)
+        {
+            var result = new Dictionary<int, Book>();
+            var byEditionId = new Dictionary<int, Book>();
+            var byProviderId = new Dictionary<string, Book>(StringComparer.OrdinalIgnoreCase);
+            var order = new Dictionary<int, int>();
+            foreach (var book in GetWantedEditionCopyCandidates(source, candidates))
+            {
+
+                order.TryAdd(book.Id, order.Count);
+                foreach (var edition in book.Editions.Where(edition =>
+                             (edition.Monitored || filedEditionIds.Contains(edition.Id)) &&
+                             EditionReadingFormat.IsAudiobook(edition.ReadingFormatId)))
+                {
+                    if (edition.Id > 0) byEditionId.TryAdd(edition.Id, book);
+                    foreach (var token in GetWantedEditionCopyTokens(edition))
+                    {
+                        byProviderId.TryAdd(token, book);
+                    }
+                }
+            }
+
+            foreach (var edition in requestedEditions.Where(edition => edition.BookId == source.Id &&
+                         EditionReadingFormat.IsAudiobook(edition.ReadingFormatId)))
+            {
+                byEditionId.TryGetValue(edition.Id, out var existing);
+                foreach (var token in GetWantedEditionCopyTokens(edition))
+                {
+                    if (byProviderId.TryGetValue(token, out var candidate) &&
+                        (existing == null || order[candidate.Id] < order[existing.Id]))
+                    {
+                        existing = candidate;
+                    }
+                }
+
+                if (existing != null) result[edition.Id] = existing;
+            }
+
+            return result;
         }
 
         public static string GetTrustedForeignEditionId(Edition edition)

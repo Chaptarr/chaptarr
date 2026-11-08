@@ -42,7 +42,7 @@ namespace Chaptarr.Core.Test.Configuration
             _service = new SettingsBackupService(null, null, null, null,
                 Service<IIndexerFactory, IndexerDefinition>(_indexers), null, null, null, null, null, null, null, null, null,
                 Service<IDelayProfileService, DelayProfile>(_delays), Service<IReleaseProfileService, ReleaseProfile>(_releases),
-                Service<IQualityDefinitionService, QualityDefinition>(_qualities));
+                Service<IQualityDefinitionService, QualityDefinition>(_qualities), mediaPaths: null, filenameValidation: SettingsBackupCoverageFixture.CreateFilenameValidation());
         }
 
         private TService Service<TService, TModel>(List<TModel> rows) where TService : class where TModel : ModelBase
@@ -131,7 +131,7 @@ namespace Chaptarr.Core.Test.Configuration
                 throw new NotImplementedException(method.Name);
             });
             var service = new DelayProfileService(repository, new NzbDrone.Common.Cache.CacheManager());
-            _service = new SettingsBackupService(null, null, null, null, null, null, null, null, null, null, null, null, null, null, delayProfileService: service);
+            _service = new SettingsBackupService(null, null, null, null, null, null, null, null, null, null, null, null, null, null, delayProfileService: service, releaseProfileService: null, qualityDefinitionService: null, mediaPaths: null, filenameValidation: SettingsBackupCoverageFixture.CreateFilenameValidation());
             Restore(new SettingsBackupPackage { DelayProfiles = new() }, SettingsBackupRestoreMode.Overwrite);
             Assert.That(profiles.Single().Id, Is.EqualTo(1));
             Assert.That(calls, Is.EquivalentTo(new Dictionary<string, int> { ["DeleteMany"] = 1, ["All"] = 2, ["UpdateMany"] = 1 }));
@@ -171,6 +171,24 @@ namespace Chaptarr.Core.Test.Configuration
             });
             Assert.That(_delays, Has.Count.EqualTo(2));
             Assert.That(result.Warnings.Single(), Does.Contain("overlapping").And.Contain("overlap"));
+        }
+
+        [Test]
+        public void merge_should_not_let_a_skipped_profile_block_a_later_valid_profile()
+        {
+            _delays.Add(new DelayProfile { Id = 4, Tags = new() { 1002, 1003 }, EnableTorrent = true });
+            var result = Restore(new SettingsBackupPackage
+            {
+                Tags = Enumerable.Range(1, 4).Select(id => new TagBackup { Id = id, Label = $"tag-{id}" }).ToList(),
+                DelayProfiles = new()
+                {
+                    new DelayProfile { Id = 8, Order = 0, Tags = new() { 1, 2 }, EnableTorrent = true },
+                    new DelayProfile { Id = 9, Order = 1, Tags = new() { 1, 4 }, EnableTorrent = true }
+                }
+            });
+            Assert.That(result.Warnings.Single(), Does.Contain("Skipped delay profile 8"));
+            Assert.That(_delays, Has.Count.EqualTo(3));
+            Assert.That(_delays.Any(profile => profile.Tags.SetEquals(new[] { 1001, 1004 })), Is.True);
         }
 
         [TestCase(1, 2)]
@@ -241,9 +259,8 @@ namespace Chaptarr.Core.Test.Configuration
             Assert.That(_delays.Single().Id, Is.EqualTo(1));
         }
 
-        [TestCase(false)]
-        [TestCase(true)]
-        public void indexer_overwrite_should_delete_omitted_indexers_without_widening_unselected_release_profiles(bool replacingProfiles)
+        [Test]
+        public void indexer_overwrite_should_warn_about_profiles_that_may_be_kept_by_a_partial_restore()
         {
             _indexers.AddRange(new[]
             {
@@ -259,13 +276,96 @@ namespace Chaptarr.Core.Test.Configuration
             } };
             var result = new SettingsBackupRestoreResult();
             typeof(SettingsBackupService).GetMethod("RestoreIndexers", BindingFlags.Instance | BindingFlags.NonPublic)
-                .Invoke(_service, new object[] { package, new Dictionary<int, int>(), new Dictionary<int, int>(), new Dictionary<int, int>(), SettingsBackupRestoreMode.Overwrite, result, replacingProfiles });
+                .Invoke(_service, new object[] { package, new Dictionary<int, int>(), new Dictionary<int, int>(), new Dictionary<int, int>(), SettingsBackupRestoreMode.Overwrite, result });
             Assert.That(_indexers.Single(row => row.Name == "my indexer").Id, Is.EqualTo(23));
             Assert.That(_releases.Single(row => row.Id == 1).IndexerId, Is.EqualTo(23));
             Assert.That(_indexers.Any(row => row.Id == 24), Is.False);
             Assert.That(_releases.Single(row => row.Id == 2).IndexerId, Is.EqualTo(24));
             Assert.That(_indexers.Any(row => row.Id == 25), Is.False);
-            Assert.That(result.Warnings.Any(warning => warning.Contains("Referenced") && warning.Contains("no longer apply")), Is.EqualTo(!replacingProfiles));
+            Assert.That(result.Warnings.Any(warning => warning.Contains("Referenced") && warning.Contains("no longer apply")), Is.True);
+        }
+
+        [TestCase(false, "none")]
+        [TestCase(true, "none")]
+        [TestCase(false, "tag")]
+        [TestCase(true, "tag")]
+        [TestCase(false, "indexer")]
+        [TestCase(true, "indexer")]
+        [TestCase(false, "overlap")]
+        [TestCase(true, "overlap")]
+        public void overwrite_should_keep_only_the_affected_profile_section_and_apply_valid_entries(bool postgres, string unresolved)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var events = InterfaceProxy.Proxy<NzbDrone.Core.Messaging.Events.IEventAggregator>((_, _) => null);
+                var delays = new DelayProfileService(new DelayProfileRepository(database, events), new NzbDrone.Common.Cache.CacheManager());
+                var releases = new ReleaseProfileService(new ReleaseProfileRepository(database, events), LogManager.GetCurrentClassLogger());
+                if (!delays.All().Any(profile => profile.Id == 1))
+                    Assert.That(delays.Add(new DelayProfile { EnableTorrent = true }, int.MaxValue).Id, Is.EqualTo(1));
+                var keptDelay = delays.Add(new DelayProfile { Tags = new() { 1004 }, TorrentDelay = 17, EnableTorrent = true }, 5);
+                var updatedDelay = delays.Add(new DelayProfile { Tags = new() { 1001 }, TorrentDelay = 19, EnableTorrent = true }, 2);
+                var keptRelease = releases.Add(new ReleaseProfile { Required = new() { "keep" }, Tags = new() { 1004 }, IndexerId = 23 });
+                var updatedRelease = releases.Add(new ReleaseProfile { Required = new() { "update" }, Tags = new() { 1001 }, Enabled = false });
+                _indexers.Add(new IndexerDefinition { Id = 23, Name = "Existing indexer" });
+                _service = new SettingsBackupService(null, null, null, null,
+                    Service<IIndexerFactory, IndexerDefinition>(_indexers), null, null, null, null, null, null, null, null, null,
+                    delays, releases, Service<IQualityDefinitionService, QualityDefinition>(_qualities), mediaPaths: null, filenameValidation: SettingsBackupCoverageFixture.CreateFilenameValidation());
+                var package = new SettingsBackupPackage
+                {
+                    Tags = new() { new TagBackup { Id = 1, Label = "first" }, new TagBackup { Id = 2, Label = "second" }, new TagBackup { Id = 3, Label = "third" } },
+                    IndexerNames = new() { [8] = "Absent indexer" },
+                    DelayProfiles = new()
+                    {
+                        new DelayProfile { Id = 10, Order = 0, Tags = new() { 1 }, EnableTorrent = true, TorrentDelay = 60 },
+                        new DelayProfile { Id = 11, Order = 1, Tags = new() { 2 }, EnableTorrent = true, TorrentDelay = 90 },
+                        new DelayProfile { Id = 1, Order = int.MaxValue, EnableTorrent = true, TorrentDelay = 30 }
+                    },
+                    ReleaseProfiles = new()
+                    {
+                        new ReleaseProfile { Required = new() { "update" }, Tags = new() { 1 }, Enabled = true },
+                        new ReleaseProfile { Required = new() { "new" }, Tags = new() { 2 } }
+                    }
+                };
+                if (unresolved is "tag" or "overlap")
+                    package.DelayProfiles.Add(new DelayProfile { Id = 12, Order = 3, Tags = unresolved == "tag" ? new() { 99 } : new() { 1, 3 }, EnableTorrent = true });
+                if (unresolved is "tag" or "indexer")
+                    package.ReleaseProfiles.Add(new ReleaseProfile { Id = 13, Required = new() { "unavailable" }, Tags = unresolved == "tag" ? new() { 99 } : new(), IndexerId = unresolved == "indexer" ? 8 : 0 });
+                var keepDelays = unresolved is "tag" or "overlap";
+                var keepReleases = unresolved is "tag" or "indexer";
+                for (var attempt = 0; attempt < 2; attempt++)
+                {
+                    var result = Restore(package, SettingsBackupRestoreMode.Overwrite);
+                    var storedDelays = delays.All();
+                    var storedReleases = releases.All();
+                    Assert.That(storedDelays.Any(profile => profile.Id == keptDelay.Id), Is.EqualTo(keepDelays));
+                    Assert.That(storedReleases.Any(profile => profile.Id == keptRelease.Id), Is.EqualTo(keepReleases));
+                    Assert.That(storedDelays, Has.Count.EqualTo(keepDelays ? 4 : 3));
+                    Assert.That(storedReleases, Has.Count.EqualTo(keepReleases ? 3 : 2));
+                    Assert.That(storedDelays.Single(profile => profile.Id == 1).TorrentDelay, Is.EqualTo(30));
+                    var updated = storedDelays.Single(profile => profile.Tags.SetEquals(new[] { 1001 }));
+                    Assert.That(updated.TorrentDelay, Is.EqualTo(60));
+                    Assert.That(updated.Order, Is.EqualTo(keepDelays ? 2 : 0));
+                    Assert.That(storedDelays.Single(profile => profile.Tags.SetEquals(new[] { 1002 })).Order, Is.EqualTo(keepDelays ? 6 : 1));
+                    Assert.That(storedReleases.Single(profile => profile.Required.Contains("update")).Enabled, Is.True);
+                    Assert.That(storedReleases.Any(profile => profile.Required.Contains("unavailable")), Is.False);
+                    if (keepDelays)
+                    {
+                        Assert.That(updated.Id, Is.EqualTo(updatedDelay.Id));
+                        Assert.That(storedDelays.Single(profile => profile.Id == keptDelay.Id).TorrentDelay, Is.EqualTo(17));
+                        Assert.That(result.Warnings, Has.Some.Contains("Skipped delay profile 12"));
+                        Assert.That(result.Warnings, Has.Some.Contains("Kept existing delay profiles"));
+                    }
+                    if (keepReleases)
+                    {
+                        Assert.That(storedReleases.Single(profile => profile.Required.Contains("update")).Id, Is.EqualTo(updatedRelease.Id));
+                        Assert.That(storedReleases.Single(profile => profile.Id == keptRelease.Id).IndexerId, Is.EqualTo(23));
+                        Assert.That(result.Warnings, Has.Some.Contains("Skipped release profile 13"));
+                        Assert.That(result.Warnings, Has.Some.Contains("Kept existing release profiles"));
+                    }
+                    if (unresolved == "indexer") Assert.That(result.Warnings, Has.Some.Contains("Absent indexer"));
+                    if (unresolved == "none") Assert.That(result.Warnings, Is.Empty);
+                }
+            });
         }
 
         [Test]
@@ -290,7 +390,7 @@ namespace Chaptarr.Core.Test.Configuration
                 IDiskProvider disk = OsInfo.IsWindows ? new NzbDrone.Windows.Disk.DiskProvider()
                     : new NzbDrone.Mono.Disk.DiskProvider(null, null, null, LogManager.GetCurrentClassLogger());
                 var service = new SettingsBackupService(InterfaceProxy.Proxy<IAppFolderInfo>((_, _) => folder), disk, null, null,
-                    Service<IIndexerFactory, IndexerDefinition>(_indexers), null, null, null, null, null, null, null, null, null);
+                    Service<IIndexerFactory, IndexerDefinition>(_indexers), null, null, null, null, null, null, null, null, null, delayProfileService: null, releaseProfileService: null, qualityDefinitionService: null, mediaPaths: null, filenameValidation: SettingsBackupCoverageFixture.CreateFilenameValidation());
                 var result = service.RestoreBackup(new SettingsBackupRestoreRequest
                 {
                     FilePath = file, Passphrase = "synthetic passphrase", Categories = package.Categories.ToHashSet(), Mode = SettingsBackupRestoreMode.Merge

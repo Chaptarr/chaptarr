@@ -86,7 +86,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var authorService = InterfaceProxy.Proxy<IAuthorService>((method, args) => method.Name switch
                     {
                         nameof(IAuthorService.FindByProviderId) or nameof(IAuthorService.GetAuthor) => author,
-                        nameof(IAuthorService.GetExistingAuthors) or nameof(IAuthorService.GetAuthors) => new List<Author> { author },
+                        nameof(IAuthorService.GetExistingAuthors) or nameof(IAuthorService.GetAuthors) or nameof(IAuthorService.GetAllAuthors) => new List<Author> { author },
                         nameof(IAuthorService.UpdateAuthor) => authors.Update((Author)args[0]),
                         _ => throw new AssertionException(method.Name)
                     });
@@ -158,10 +158,10 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var exclusions = InterfaceProxy.Proxy<IImportListExclusionService>((_, _) => new List<ImportListExclusion>());
                     var refreshEditions = new RefreshEditionService(editions, Optional<IMetadataTagService>(), null, database, logger);
                     var refreshBooks = new RefreshBookService(books, authorService, roots, editions, authorInfo, null,
-                        refreshEditions, media, null, events, null, selector, filter, Optional<IMapCoversToLocal>(), logger);
-                    var refresh = new RefreshAuthorService(authorInfo, authorService, books, editions, profileService, refreshBooks, null,
-                        events, queue, media, null, roots, null, Optional<IMonitorNewBookService>(), configService,
-                        exclusions, null, null, null, logger, selector, database);
+                        refreshEditions, media, null, events, null, selector, filter, Optional<IMapCoversToLocal>(), logger, mainDatabase: null);
+                    var refresh = new RefreshAuthorService(MetadataHealthGateStub.Ready(), authorInfo, authorService, books, editions, profileService, refreshBooks, null,
+                        events, queue, media, new global::NzbDrone.Core.History.HistoryRepository(database, events), roots, null, Optional<IMonitorNewBookService>(), configService,
+                        exclusions, null, null, null, logger, editionSelector: selector, mainDatabase: database, bookRepository: new BookRepository(database, events), authorRepository: new AuthorRepository(database, events, logger));
                     var authorLibrary = new AuthorLibraryService(authorService, authorInfo, books, null, editions, null, profileService,
                         null, null, roots, queue, events, null, database, exclusions, filter, null, logger, selector, refresh);
                     var history = new HistoryService(new HistoryRepository(database, events), logger);
@@ -169,7 +169,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         authorService, books, editions, new StubRecycleBinProvider(), Proxy<IExtraService>(),
                         new StubMoveBookFiles { DestinationPath = destination, TransferFilesOnDisk = true },
                         history, Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, queue,
-                        Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(), null, Proxy<IM4bConversionService>(), logger);
+                        new SeriesBookLinkService(new SeriesBookLinkRepository(database, events)), Proxy<ISeriesService>(), null, Proxy<IM4bConversionService>(), logger);
                     var dependencies = new Dictionary<Type, object>
                     {
                         [typeof(Logger)] = logger,

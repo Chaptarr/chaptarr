@@ -13,12 +13,6 @@ namespace NzbDrone.Core.Extras
 {
     public static class ExtraFilePathHelper
     {
-        public static bool HasRemainingMedia(IEnumerable<string> selectedPaths, IEnumerable<string> folderFiles)
-        {
-            var selected = selectedPaths as HashSet<string> ?? selectedPaths.ToHashSet(NzbDrone.Common.PathEqualityComparer.Instance);
-            return folderFiles.Any(file => MediaFileExtensions.AllExtensions.Contains(Path.GetExtension(file)) && !selected.Contains(file));
-        }
-
         public static string ResolveOwnedSidecarPath(Author author, ExtraFile extra,
             IEnumerable<BookFile> files, IDiskProvider diskProvider)
         {

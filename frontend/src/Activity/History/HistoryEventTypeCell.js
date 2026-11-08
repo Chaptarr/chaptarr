@@ -3,6 +3,7 @@ import React from 'react';
 import Icon from 'Components/Icon';
 import TableRowCell from 'Components/Table/Cells/TableRowCell';
 import { icons, kinds } from 'Helpers/Props';
+import translate from 'Utilities/String/translate';
 import styles from './HistoryEventTypeCell.css';
 
 function getIconName(eventType) {
@@ -13,6 +14,8 @@ function getIconName(eventType) {
       return icons.DRIVE;
     case 'bookFileImported':
       return icons.DOWNLOADED;
+    case 'authorsMerged':
+    case 'authorSplit':
     case 'bookFileConverted':
       return icons.REFRESH;
     case 'bookFileConversionFailed':
@@ -51,6 +54,9 @@ function getIconKind(eventType) {
 
 function getTooltip(eventType, data) {
   switch (eventType) {
+    case 'authorsMerged':
+    case 'authorSplit':
+      return `${translate(eventType === 'authorSplit' ? 'AuthorSplitNotice' : 'AuthorsMergedNotice', { source: data.sourceAuthorName, target: data.targetAuthorName })} ${data.details || ''}`;
     case 'grabbed':
       return `Book grabbed from ${data.indexer} and sent to ${data.downloadClient}`;
     case 'authorFolderImported':
@@ -74,7 +80,7 @@ function getTooltip(eventType, data) {
     case 'bookFileRetagged':
       return 'Book file tags updated';
     case 'bookImportIncomplete':
-      return 'Files downloaded but not all could be imported';
+      return data?.awaitingImportConfirmation === 'True' ? translate('WaitingForImportConfirmation') : 'Files downloaded but not all could be imported';
     case 'downloadIgnored':
       return 'Book Download Ignored';
     default:

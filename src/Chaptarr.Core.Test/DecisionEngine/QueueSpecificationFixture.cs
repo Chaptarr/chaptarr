@@ -21,6 +21,19 @@ namespace Chaptarr.Core.Test.DecisionEngine
     [TestFixture]
     public class QueueSpecificationFixture
     {
+        [TestCase(false)]
+        [TestCase(true)]
+        public void imported_cleanup_warning_does_not_block_another_search(bool batch)
+        {
+            var author = BuildAuthor();
+            var book = BuildBook(author, 100, BookMediaType.Audiobook);
+            var subject = BuildRemoteBook(author, book, Quality.MP3);
+            var queueItem = BuildQueueItem(author, book, Quality.M4B, TrackedDownloadState.Imported);
+            var specification = BuildSubject(queueItem);
+            var decision = batch ? specification.PrepareCheck()(subject) : specification.IsSatisfiedBy(subject, null);
+            Assert.That(decision.Accepted, Is.True);
+        }
+
         [Test]
         public void batch_queue_check_reads_once_and_does_not_request_conversion_status_overlays()
         {

@@ -235,7 +235,11 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 _matchCalls++;
                 return Task.FromResult(new FileMatchResult());
             });
-            var decisionMaker = new SimpleImportDecisionMaker(tags, matcher, null, null, null, null, logger);
+            var mediaFiles = InterfaceProxy.Proxy<IMediaFileService>((method, _) =>
+                method.Name == nameof(IMediaFileService.GetFileWithPath)
+                    ? new List<BookFile>()
+                    : throw new AssertionException(method.Name));
+            var decisionMaker = new SimpleImportDecisionMaker(tags, matcher, null, null, null, mediaFiles, logger);
             var decisions = InterfaceProxy.Proxy<IMakeImportDecision>((method, args) =>
             {
                 Assert.That(method.Name, Is.EqualTo(nameof(IMakeImportDecision.GetImportDecisions)));

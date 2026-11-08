@@ -229,15 +229,15 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             }
 
             timer.Stop();
-            var preparation = target.Logs.Where(message => message.StartsWith("Author name catalog: prepared ", StringComparison.Ordinal)).ToList();
-            var prepared = preparation.Sum(message => int.Parse(message.Split(' ')[4]));
-            TestContext.WriteLine("Path author lookup: authors={0}, operations=100, prepared={1}, catalog_loads={2}, author_reads={3}, elapsed_ms={4:F2}",
-                authors.Count, prepared, harness.CatalogLoads, harness.AuthorReads, timer.Elapsed.TotalMilliseconds);
+            var preparation = target.Logs.Where(message => message.StartsWith("Author name catalog: indexed ", StringComparison.Ordinal)).ToList();
+            var indexed = preparation.Sum(message => int.Parse(message.Split(' ')[4]));
+            TestContext.WriteLine("Path author lookup: authors={0}, operations=100, indexed={1}, catalog_loads={2}, author_reads={3}, elapsed_ms={4:F2}",
+                authors.Count, indexed, harness.CatalogLoads, harness.AuthorReads, timer.Elapsed.TotalMilliseconds);
             Assert.That(results, Is.All.SameAs(authors[^1]));
             Assert.That(harness.CatalogLoads, Is.EqualTo(1));
             Assert.That(harness.AuthorReads, Is.Zero);
             Assert.That(preparation, Has.Count.EqualTo(1));
-            Assert.That(prepared, Is.EqualTo(authors.Count));
+            Assert.That(indexed, Is.EqualTo(authors.Count));
         }
 
         private static Author NewAuthor(int id, string name) => new Author { Id = id, Name = name };

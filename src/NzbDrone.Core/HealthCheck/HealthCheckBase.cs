@@ -12,13 +12,14 @@ namespace NzbDrone.Core.HealthCheck
             _localizationService = localizationService;
         }
 
-        protected string FormatFailures(IReadOnlyList<string> failures)
+        protected string FormatFailures(IReadOnlyList<string> failures, int? totalCount = null)
         {
             var details = string.Join("; ", failures.Take(5));
-            if (failures.Count > 5)
+            var remaining = (totalCount ?? failures.Count) - System.Math.Min(5, failures.Count);
+            if (remaining > 0)
             {
                 details += "; " + _localizationService.GetLocalizedString("CountMore",
-                    new Dictionary<string, object> { ["count"] = failures.Count - 5 });
+                    new Dictionary<string, object> { ["count"] = remaining });
             }
 
             return details;

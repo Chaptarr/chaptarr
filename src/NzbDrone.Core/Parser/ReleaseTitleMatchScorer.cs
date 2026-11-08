@@ -1,12 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.MediaFiles;
@@ -83,6 +85,11 @@ namespace NzbDrone.Core.Parser
     {
         internal sealed class CatalogPreparation
         {
+            internal int ScorePasses { get; set; }
+            internal long SiblingsCompared { get; set; }
+            internal int LargestSiblingScan { get; set; }
+            internal long NumberVariantChecks { get; set; }
+            internal TimeSpan SiblingScanTime { get; set; }
             private readonly Dictionary<Book, (BookTitleMatchContext Context, IReadOnlyList<ContradictoryVariant> Variants, HashSet<string> WorkIds)> _books = new(BookReferenceComparer.Instance);
             private readonly Dictionary<string, IReadOnlyList<string>> _tokens = new(StringComparer.Ordinal);
 
@@ -172,6 +179,7 @@ namespace NzbDrone.Core.Parser
                 Catalog = Tokens.Count == 0 ? Array.Empty<Book>() :
                     (catalog ?? Enumerable.Empty<Book>()).Where(book => book != null).ToList();
                 Preparation = preparation;
+                preparation.ScorePasses++;
             }
 
             public string Title { get; }
@@ -223,7 +231,6 @@ namespace NzbDrone.Core.Parser
         // Normalization already classifies characters; rechecking UTF-16 halves would discard supplementary letters.
         private static readonly Regex NumericTokenRegex = new Regex(@"^[0-9]+(?:\.[0-9]+)?$", RegexOptions.Compiled);
         private static readonly Regex TokenRegex = new Regex(@"\S+", RegexOptions.Compiled);
-        private static readonly Regex PossessiveRegex = new Regex(@"['\u2018\u2019]s\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex DecimalPointBetweenDigitsRegex = new Regex(@"(?<=\p{Nd})\.(?=\p{Nd})", RegexOptions.Compiled);
         private static readonly Regex OptionalQualifierSegmentRegex = new Regex(@"\s*(?:" + TitleBracketCatalog.PairedSegmentPattern + @")\s*", RegexOptions.Compiled);
         private static readonly Regex OptionalArticleSubtitleBoundaryRegex = new Regex(@"[:;\-\u2013\u2014]\s+(?<head>[\p{L}\p{Nd}])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -331,6 +338,8 @@ namespace NzbDrone.Core.Parser
                 return competitors;
             }
 
+            var started = Stopwatch.GetTimestamp();
+            var compared = 0;
             var catalogBooks = release.Catalog;
             foreach (var other in catalogBooks)
             {
@@ -338,6 +347,8 @@ namespace NzbDrone.Core.Parser
                 {
                     continue;
                 }
+
+                compared++;
 
                 // An edition titled as the author's own name is author evidence, never a rival title.
                 if (preparation.TitlesEqual(GetPrimaryBookTitle(other), other.Author?.Name))
@@ -359,6 +370,9 @@ namespace NzbDrone.Core.Parser
                 }
             }
 
+            preparation.SiblingsCompared += compared;
+            preparation.LargestSiblingScan = Math.Max(preparation.LargestSiblingScan, compared);
+            preparation.SiblingScanTime += Stopwatch.GetElapsedTime(started);
             return competitors;
         }
 
@@ -519,8 +533,7 @@ namespace NzbDrone.Core.Parser
 
             var expectedAuthor = GetExpectedAuthor(authorName, books);
             var hasAuthorHint = !string.IsNullOrWhiteSpace(releaseAuthorHint);
-            var hasAuthorEvidence = string.IsNullOrWhiteSpace(authorName) ||
-                                    (hasAuthorHint && ReleaseIdentityEvidence.StructuredAuthorMatches(expectedAuthor, releaseAuthorHint));
+            var hasAuthorEvidence = hasAuthorHint && ReleaseIdentityEvidence.StructuredAuthorMatches(expectedAuthor, releaseAuthorHint);
             var authorSpans = hasAuthorHint || hasAuthorEvidence
                 ? new List<(int Start, int End, bool Inverted)>()
                 : ReleaseIdentityEvidence.FindAuthorNameSpans(release.CleanedTitle, release.TokenSpans, expectedAuthor).ToList();
@@ -1241,6 +1254,7 @@ namespace NzbDrone.Core.Parser
                     continue;
                 }
 
+                preparation.NumberVariantChecks++;
                 var spans = FindNumberEquivalentTitleSpans(releaseTokens, variant.Tokens, language).ToList();
                 if (spans.Count == 0 || (authorCatalogBooks ?? Enumerable.Empty<Book>())
                     .Where(other => AreSameAuthor(book, other) && CanContradict(book, other, preparation))
@@ -1901,7 +1915,8 @@ namespace NzbDrone.Core.Parser
             {
                 var label = match.Groups["label"].Value;
                 return TokenizedEquals(label, book?.SeriesName) ||
-                       AudioProductionConstants.GraphicAudioIndicators.Concat(AudioProductionConstants.AudiobookIndicators)
+                       AudioProductionDetector.IsProductionLabel(label) ||
+                       AudioProductionConstants.AudiobookIndicators
                            .Any(indicator => TokenizedEquals(label, indicator))
                     ? " " : match.Value;
             });
@@ -1955,7 +1970,7 @@ namespace NzbDrone.Core.Parser
 
             var mappedText = CreateMappedText(text);
             mappedText = ReplaceAmpersands(mappedText);
-            mappedText = ApplyReplacement(mappedText, PossessiveRegex, "s");
+            mappedText = ApplyReplacement(mappedText, StringSuperNormalizer.PossessiveRegex, "s");
             mappedText = ApplyReplacement(mappedText, DecimalPointBetweenDigitsRegex, DecimalPointToken);
             mappedText = NormalizeWordsWithSpans(mappedText);
 

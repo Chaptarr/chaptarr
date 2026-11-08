@@ -11,7 +11,7 @@ namespace Chaptarr.Core.Test.Datastore
     public class ReleasedMigrationSourceFixture
     {
         // At each public release, advance this boundary and append hashes from that release.
-        private const int ReleasedThrough = 107;
+        private const int ReleasedThrough = 128;
         private const string ShippedMessage = "This migration has shipped. Never edit it; add a new migration.";
         private const string SourcePrefix = "Migrations.Source.";
 
@@ -78,10 +78,10 @@ namespace Chaptarr.Core.Test.Datastore
             var sources = new Dictionary<string, byte[]>
             {
                 ["107_shipped.cs"] = Encoding.UTF8.GetBytes("original\r\n"),
-                ["108_not_shipped.cs"] = Encoding.UTF8.GetBytes("unpublished changes")
+                ["129_not_shipped.cs"] = Encoding.UTF8.GetBytes("unpublished changes")
             };
             Assert.That(Changes(sources, expected), Is.Empty);
-            sources.Remove("108_not_shipped.cs");
+            sources.Remove("129_not_shipped.cs");
             Assert.That(Changes(sources, expected), Is.Empty);
         }
     }

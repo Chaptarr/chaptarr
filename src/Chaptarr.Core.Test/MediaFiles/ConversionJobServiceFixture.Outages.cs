@@ -123,7 +123,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Assert.That(SpinWait.SpinUntil(() => log.Logs.Any(message => message.Contains("Unable to save conversion outcome")),
                         TimeSpan.FromSeconds(5)), Is.True);
                     outage.Unavailable = false;
-                    service.RemoveArtifacts(request.DownloadId);
+                    service.PrepareArtifactRemoval(request.DownloadId, ConversionRemovalOrigin.UserAction)();
                     Assert.That(JsonSerializer.Deserialize<ConversionJobRequest>(observer.FindByDownloadId(request.DownloadId).RequestJson).DiscardRequested, Is.True);
                     Assert.That(worker.Wait(TimeSpan.FromSeconds(40)), Is.True);
                     var saved = observer.FindByDownloadId(request.DownloadId);
@@ -131,7 +131,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Assert.That(JsonSerializer.Deserialize<ConversionJobRequest>(saved.RequestJson).DiscardRequested, Is.True);
                     Assert.That(service.IsRunning(request.DownloadId), Is.False);
                     Assert.That(File.Exists(request.Sources.Single().Path), Is.True);
-                    service.RemoveArtifacts(request.DownloadId);
+                    service.PrepareArtifactRemoval(request.DownloadId, ConversionRemovalOrigin.UserAction)();
                     Assert.That(observer.FindByDownloadId(request.DownloadId), Is.Null);
                 }
                 finally
@@ -176,7 +176,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     try
                     {
                         var result = method.Invoke(repository, args);
-                        if ((outcome is "acknowledgement" or "cancel-acknowledgement") && method.Name == nameof(IConversionJobRepository.Update) &&
+                        if ((outcome is "acknowledgement" or "cancel-acknowledgement") && method.Name == nameof(IConversionJobRepository.SetFields) &&
                             args[0] is ConversionJob saved && saved.Status == ConversionJobStatus.ReadyToImport &&
                             Interlocked.Exchange(ref lostAcknowledgement, 1) == 0)
                         {
@@ -227,7 +227,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Assert.Catch<DbException>(() => service.Reset(request.DownloadId));
                     outage.Unavailable = false;
                     Assert.Throws<InvalidOperationException>(() => service.Reset(request.DownloadId), "An unpersisted outcome still belongs to its worker");
-                    if (outcome == "cancel-acknowledgement") Assert.That(service.Cancel(request.DownloadId), Is.True);
+                    if (outcome == "cancel-acknowledgement") Assert.That(service.Cancel(request.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
                     var expected = outcome == "cancel-acknowledgement" ? ConversionJobStatus.Cancelled :
                         outcome is "success" or "acknowledgement" ? ConversionJobStatus.ReadyToImport : ConversionJobStatus.Failed;
                     Assert.That(SpinWait.SpinUntil(() => observer.FindByDownloadId(request.DownloadId).Status == expected &&
@@ -352,7 +352,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     else
                     {
                         outage.Unavailable = false;
-                        Assert.That(service.Cancel(request.DownloadId), Is.True);
+                        Assert.That(service.Cancel(request.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
                     }
                     var tracking = new ConversionTrackingService(new StubEventAggregator());
                     Assert.That(SpinWait.SpinUntil(() => observer.FindByDownloadId(request.DownloadId).Status ==

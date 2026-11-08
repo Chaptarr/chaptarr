@@ -30,6 +30,7 @@ namespace NzbDrone.Core.MediaFiles
 
         // GraphicAudio classification fields
         public bool IsGraphicAudio { get; set; }
+        public bool? AudioProductionOverride { get; set; }
         public string AudioProductionType { get; set; }
 
         // Narrator information

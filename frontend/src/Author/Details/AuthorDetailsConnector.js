@@ -22,7 +22,7 @@ import createCommandsSelector from 'Store/Selectors/createCommandsSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createSortedSectionSelector from 'Store/Selectors/createSortedSectionSelector';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
-import { getAuthorSearchBookCount } from 'Utilities/Author/getAuthorStatisticsForMediaType';
+import { getAuthorSearchBookCount, shouldConfirmSearch } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import createBookSearchFilter from 'Utilities/Book/createBookSearchFilter';
 import isLibraryBook from 'Utilities/Book/isLibraryBook';
 import { findCommand, isCommandExecuting } from 'Utilities/Command';
@@ -615,7 +615,7 @@ class AuthorDetailsConnector extends Component {
 
   onSearchPress = () => {
     const count = getAuthorSearchBookCount(this.props);
-    if (count > 5) {
+    if (shouldConfirmSearch(count)) {
       this.setState({ pendingSearch: { authorId: this.props.id, count } });
       return;
     }

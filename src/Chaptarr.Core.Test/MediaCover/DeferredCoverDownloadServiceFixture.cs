@@ -22,6 +22,8 @@ namespace Chaptarr.Core.Test.MediaCover
     {
         private sealed class RecordingBookService : IBookService
         {
+            public List<Book> GetImportListBookIdentities() => GetAllBooks();
+
             private readonly Dictionary<int, Book> _booksById;
 
             public RecordingBookService(IEnumerable<Book> books)
@@ -75,7 +77,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 return _booksById.Values.ToList();
             }
             public Book AddBook(Book newBook, bool doRefresh = true) => throw new NotImplementedException();
-            public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
+            public List<Book> FindBySlug(string titleSlug) => throw new NotImplementedException();
             public Book FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Book FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public Book FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
@@ -104,7 +106,7 @@ namespace Chaptarr.Core.Test.MediaCover
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public (Book Book, bool ExistingCopy) AddWantedEditionCopy(int bookId, int editionId) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -171,6 +173,16 @@ namespace Chaptarr.Core.Test.MediaCover
             public string GetCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCoverTypes coverType, string extension, int? height = null) => throw new NotImplementedException();
             public void EnsureAuthorCovers(Author author) => throw new NotImplementedException();
             public System.Threading.Tasks.Task<EnsureImageResult> EnsureAuthorImage(Author author, NzbDrone.Core.MediaCover.MediaCover cover) => throw new NotImplementedException();
+        }
+
+        [Test]
+        public void absorbed_book_leaves_the_deferred_cover_queue_without_deleting_files()
+        {
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            deferred.RequeueBooksForCoverDownload(new[] { 1, 2 });
+            var service = new DeferredCoverDownloadService(deferred, null, null, null, LogManager.GetCurrentClassLogger());
+            service.Handle(new LibraryIdentityChangedEvent(new[] { 1 }, new[] { 1, 2 }, new[] { 2 }));
+            Assert.That(deferred.GetPendingBookIds(), Is.EqualTo(new[] { 1 }));
         }
 
         [Test]

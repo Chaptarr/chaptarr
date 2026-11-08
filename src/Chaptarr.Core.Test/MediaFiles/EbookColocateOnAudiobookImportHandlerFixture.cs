@@ -27,9 +27,16 @@ namespace Chaptarr.Core.Test.MediaFiles
     {
         private sealed class StubBookService : IBookService
         {
+            public List<Book> GetImportListBookIdentities() => GetAllBooks();
+
             public List<Book> Books { get; } = new();
 
-            public List<Book> GetBooksByAuthorId(int authorId) => Books.Where(b => b.AuthorId == authorId).ToList();
+            public int AuthorReads { get; private set; }
+            public List<Book> GetBooksByAuthorId(int authorId)
+            {
+                AuthorReads++;
+                return Books.Where(b => b.AuthorId == authorId).ToList();
+            }
             public Book GetBook(int bookId) => throw new NotImplementedException();
             public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new NotImplementedException();
             public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => throw new NotImplementedException();
@@ -38,7 +45,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds) => throw new NotImplementedException();
             public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds) => throw new NotImplementedException();
             public Book AddBook(Book newBook, bool doRefresh = true) => throw new NotImplementedException();
-            public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
+            public List<Book> FindBySlug(string titleSlug) => throw new NotImplementedException();
             public Book FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Book FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public Book FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
@@ -67,7 +74,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public (Book Book, bool ExistingCopy) AddWantedEditionCopy(int bookId, int editionId) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -88,18 +95,28 @@ namespace Chaptarr.Core.Test.MediaFiles
             public Dictionary<int, List<BookFile>> FilesByBook { get; } = new();
             public List<BookFile> Updated { get; } = new();
 
-            public List<BookFile> GetFilesByBook(int bookId) => FilesByBook.TryGetValue(bookId, out var files) ? files : new List<BookFile>();
+            public int SingleReads { get; private set; }
+            public int BulkReads { get; private set; }
+            public List<BookFile> GetFilesByBook(int bookId)
+            {
+                SingleReads++;
+                return FilesByBook.TryGetValue(bookId, out var files) ? files : new List<BookFile>();
+            }
             public void Update(BookFile bookFile) => Updated.Add(bookFile);
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
             public void AddMany(List<BookFile> bookFiles) => throw new NotImplementedException();
-            public int RelinkFilesByBook(int bookId, int editionId, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public List<IFileInfo> FilterUnchangedFiles(List<IFileInfo> files, FilterFilesType filter) => throw new NotImplementedException();
             public List<BookFile> GetFilesByAuthor(int authorId) => throw new NotImplementedException();
-            public List<BookFile> GetFilesByBooks(List<int> bookIds) => throw new NotImplementedException();
+            public List<BookFile> GetFilesByBooks(List<int> bookIds)
+            {
+                BulkReads++;
+                return bookIds.SelectMany(id => FilesByBook.GetValueOrDefault(id) ?? new List<BookFile>()).ToList();
+            }
             public List<BookFile> GetFilesByEdition(int editionId) => throw new NotImplementedException();
             public List<BookFile> GetUnmappedFiles() => throw new NotImplementedException();
             public BookFile Get(int id) => throw new NotImplementedException();
@@ -144,7 +161,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class StubBookFileMover : IMoveBookFiles
         {
             private readonly Func<BookFile, string> _destinationFactory;
-            public Func<BookFile, Author, BookFileMovePlan> PlanFactory { get; set; }
+            public Func<BookFile, Author, RenameBatchContext, BookFileMovePlan> PlanFactory { get; set; }
             public List<BookFileMovePlan> Plans { get; } = new();
             public List<BookFile> Moved { get; } = new();
 
@@ -155,7 +172,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             public BookFileMovePlan GetOrganizeDestination(BookFile bookFile, Author author, bool moveToCanonicalAuthorFolder, RenameBatchContext renameBatchContext = null)
             {
-                var plan = PlanFactory?.Invoke(bookFile, author) ?? new BookFileMovePlan
+                var plan = PlanFactory?.Invoke(bookFile, author, renameBatchContext) ?? new BookFileMovePlan
                 {
                     CanOrganize = true,
                     DestinationPath = _destinationFactory(bookFile),
@@ -286,7 +303,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 null, null, DispatchProxy.Create<IBuildFileNames, NamingProxy>(), null,
                 DispatchProxy.Create<INamingConfigService, NamingProxy>(), planner, null, context.Disk,
                 null, null, null, context.Events, null, null, LogManager.GetCurrentClassLogger());
-            context.Mover.PlanFactory = (file, author) => mover.GetOrganizeDestination(file, author, false);
+            context.Mover.PlanFactory = (file, author, batch) => mover.GetOrganizeDestination(file, author, false, batch);
 
             context.Handler.Handle(context.Event);
 
@@ -297,13 +314,13 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Assert.That(context.Mover.Plans.All(plan => plan.ReplicaPaths is { Count: 0 }), Is.True);
                 Assert.That(context.Mover.Moved, Is.EqualTo(context.EbookFiles));
                 Assert.That(context.MediaFileService.Updated, Is.EqualTo(context.EbookFiles));
-                Assert.That(context.EbookFiles.All(file => Path.GetDirectoryName(file.Path) == Path.GetDirectoryName(context.Event.ImportedBook.Path)), Is.True);
+                Assert.That(context.EbookFiles.All(file => Path.GetDirectoryName(file.Path) == Path.GetDirectoryName(context.Event.ImportedBooks.First().Path)), Is.True);
                 Assert.That(context.Events.Events.OfType<BookFileRenamedEvent>().Count(), Is.EqualTo(2));
                 Assert.That(context.Events.Events.OfType<AuthorRenamedEvent>().Count(), Is.EqualTo(1));
             }
             else
             {
-                Assert.That(context.Mover.Plans.All(plan => plan.ReplicaPaths == null && plan.ShouldCleanupReplicas), Is.True);
+                Assert.That(context.Mover.Plans.All(plan => plan.ReplicaPaths == null), Is.True);
                 Assert.That(context.Mover.Moved, Is.Empty);
                 Assert.That(context.MediaFileService.Updated, Is.Empty);
                 Assert.That(context.Events.Events, Is.Empty);
@@ -325,6 +342,68 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(context.Mover.Moved, Is.Empty);
             Assert.That(context.MediaFileService.Updated, Is.Empty);
             Assert.That(context.Events.Events, Is.Empty);
+        }
+
+        [TestCase(1)]
+        [TestCase(10)]
+        public void imported_book_batches_catalog_and_file_reads_through_the_real_planner(int parts)
+        {
+            var context = CreateContext(file => file.Path, includeMobi: true);
+            var first = context.Event.ImportedBooks.First();
+            context.Event.ImportedBooks.Clear();
+            for (var part = 0; part < parts; part++)
+            {
+                var file = new BookFile { Id = 100 + part, Edition = first.Edition, EditionId = first.EditionId,
+                    Quality = new QualityModel(Quality.MP3), MediaType = "audiobook", Path = first.Path + part + ".mp3" };
+                context.Event.ImportedBooks.Add(file);
+                ((DiskProviderProxy)(object)context.Disk).ExistingFiles.Add(file.Path);
+            }
+            context.MediaFileService.FilesByBook[context.Event.Book.Id] = context.Event.ImportedBooks;
+            var planner = new EbookColocationPlanner(context.Books, context.MediaFileService, context.Roots, context.Disk);
+            var mover = new BookFileMovingService(null, null, DispatchProxy.Create<IBuildFileNames, NamingProxy>(), null,
+                DispatchProxy.Create<INamingConfigService, NamingProxy>(), planner, null, context.Disk,
+                null, null, null, context.Events, null, null, LogManager.GetCurrentClassLogger());
+            context.Mover.PlanFactory = (file, author, batch) => mover.GetOrganizeDestination(file, author, false, batch);
+
+            context.Handler.Handle(context.Event);
+
+            Assert.That(context.Books.AuthorReads, Is.EqualTo(1));
+            Assert.That(context.MediaFileService.BulkReads, Is.EqualTo(1));
+            Assert.That(context.MediaFileService.SingleReads, Is.Zero);
+            Assert.That(context.Mover.Plans.Count, Is.EqualTo(2), "One plan for each existing ebook file, independent of audiobook part count");
+            Assert.That(context.Mover.Moved, Is.EqualTo(context.EbookFiles));
+            Assert.That(context.Handler, Is.Not.InstanceOf<IHandle<TrackImportedEvent>>());
+        }
+
+        [Test]
+        public void two_imported_books_each_colocate_their_own_ebook_once()
+        {
+            var context = CreateContext(file => file.Path + ".moved");
+            var author = context.Event.Author;
+            var audio = new Book { Id = 11, AuthorId = author.Id, Author = author,
+                MediaType = BookMediaType.Audiobook, GoodreadsWorkId = "gr:200" };
+            var ebook = new Book { Id = 21, AuthorId = author.Id, Author = author,
+                MediaType = BookMediaType.Ebook, GoodreadsWorkId = "gr:200" };
+            var edition = new Edition { Id = 32, BookId = ebook.Id, Book = ebook };
+            var file = new BookFile { Id = 42, Author = author, Edition = edition, EditionId = edition.Id,
+                MediaType = "ebook", Quality = new QualityModel(Quality.EPUB),
+                Path = Path.Combine(author.EbookRootFolderPath, "Author", "Second book", "Second.epub") };
+            context.Books.Books.AddRange(new[] { audio, ebook });
+            context.MediaFileService.FilesByBook[ebook.Id] = new List<BookFile> { file };
+            ((DiskProviderProxy)(object)context.Disk).ExistingFiles.Add(file.Path);
+            var secondEvent = new BookImportedEvent(author, audio, new List<BookFile>
+            {
+                new BookFile { MediaType = "audiobook", Quality = new QualityModel(Quality.M4B) }
+            }, new List<BookFile>(), true, null);
+
+            context.Handler.Handle(context.Event);
+            context.Handler.Handle(secondEvent);
+
+            Assert.That(context.Books.AuthorReads, Is.EqualTo(2));
+            Assert.That(context.MediaFileService.BulkReads, Is.EqualTo(2));
+            Assert.That(context.MediaFileService.SingleReads, Is.Zero);
+            Assert.That(context.Mover.Plans, Has.Count.EqualTo(2));
+            Assert.That(context.Mover.Moved, Is.EqualTo(new[] { context.EbookFile, file }));
         }
 
         private static TestContext CreateContext(Func<BookFile, string> destinationFactory, bool includeMobi = false, RootFolder ebookRoot = null)
@@ -410,9 +489,8 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             return new TestContext(
                 handler,
-                new TrackImportedEvent(
-                    new LocalBook { Author = author, Book = audiobookBook, Edition = audiobookEdition },
-                    imported,
+                new BookImportedEvent(
+                    author, audiobookBook, new List<BookFile> { imported },
                     new List<BookFile>(),
                     true,
                     null),
@@ -441,7 +519,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         private sealed record TestContext(
             EbookColocateOnAudiobookImportHandler Handler,
-            TrackImportedEvent Event,
+            BookImportedEvent Event,
             BookFile EbookFile,
             List<BookFile> EbookFiles,
             StubMediaFileService MediaFileService,

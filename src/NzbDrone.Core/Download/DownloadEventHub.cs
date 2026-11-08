@@ -1,5 +1,6 @@
 using System;
 using NLog;
+using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Messaging.Events;
 
@@ -29,7 +30,8 @@ namespace NzbDrone.Core.Download
         {
             var trackedDownload = message.TrackedDownload;
 
-            if (trackedDownload == null ||
+            if (message.SkipDownloadClientRemoval ||
+                trackedDownload == null ||
                 message.TrackedDownload.DownloadItem.Removed ||
                 !trackedDownload.DownloadItem.CanBeRemoved)
             {
@@ -82,7 +84,7 @@ namespace NzbDrone.Core.Download
                 return;
             }
 
-            if (_completedDownloadService.CanRemoveDownload(trackedDownload))
+            if (_completedDownloadService.CanRemoveDownload(trackedDownload, message.Cleanup))
             {
                 RemoveFromDownloadClient(trackedDownload, downloadClient);
             }
@@ -117,6 +119,21 @@ namespace NzbDrone.Core.Download
                 _logger.Debug("[{0}] Removing download from {1} history", trackedDownload.DownloadItem.Title, trackedDownload.DownloadItem.DownloadClientInfo.Name);
                 downloadClient.RemoveItem(trackedDownload.DownloadItem, true);
                 trackedDownload.DownloadItem.Removed = true;
+                if (trackedDownload.CleanupDeletionRefused)
+                {
+                    trackedDownload.CleanupDeletionRefused = false;
+                    trackedDownload.ClearStatus();
+                }
+            }
+            catch (DownloadDataDeletionRefusedException ex)
+            {
+                if (!trackedDownload.CleanupDeletionRefused)
+                {
+                    _logger.Warn(ex.Message);
+                }
+                trackedDownload.CleanupDeletionRefused = true;
+                trackedDownload.IsTrackable = true;
+                trackedDownload.Warn("{0} Correct the download path or remove the item without deleting data.", ex.Message);
             }
             catch (NotSupportedException)
             {

@@ -54,7 +54,7 @@ class Authors extends Component {
     const isDelete = confirmation?.name === 'delete';
 
     return (
-      <PageContent title={translate('Authors')}>
+      <PageContent title={translate('AuthorRequests')}>
         <PageToolbar>
           <PageToolbarSection>
             <PageToolbarButton

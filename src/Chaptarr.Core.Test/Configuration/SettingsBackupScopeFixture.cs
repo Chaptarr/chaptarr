@@ -55,6 +55,7 @@ namespace Chaptarr.Core.Test.Configuration
             [typeof(ScheduledTask)] = ("ScheduledTasks", null, "Excluded: runtime scheduling state is recreated by the task manager"),
             [typeof(IndexerDefinition)] = ("Indexers", SettingsBackupCategory.Indexers, "Carried by IndexerDefinitionBackup with provider settings and remapped references"),
             [typeof(ImportListDefinition)] = ("ImportLists", null, "Excluded: import-list definitions have no portable backup category"),
+            [typeof(PendingNotificationItem)] = ("PendingNotificationItems", null, "Excluded: pending notification deliveries reference installation-specific paths and connection IDs; portable settings carry connection configuration only"),
             [typeof(NotificationDefinition)] = ("Notifications", SettingsBackupCategory.Connections, "Carried by NotificationDefinitionBackup with provider settings and remapped tags"),
             [typeof(MetadataDefinition)] = ("Metadata", null, "Excluded: metadata-provider definitions have no portable backup category"),
             [typeof(DownloadClientDefinition)] = ("DownloadClients", SettingsBackupCategory.DownloadClients, "Carried by DownloadClientDefinitionBackup with provider settings and remapped tags"),

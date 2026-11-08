@@ -1,3 +1,4 @@
+using Chaptarr.Core.Test.Common;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -14,6 +15,8 @@ namespace Chaptarr.Core.Test.Books
     {
         private sealed class StubBookService : IBookService
         {
+            public List<Book> GetImportListBookIdentities() => GetAllBooks();
+
             public List<Book> InsertedBooks { get; } = new();
 
             public void InsertMany(List<Book> books)
@@ -33,7 +36,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds) => throw new NotImplementedException();
             public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds) => throw new NotImplementedException();
             public Book AddBook(Book newBook, bool doRefresh = true) => throw new NotImplementedException();
-            public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
+            public List<Book> FindBySlug(string titleSlug) => throw new NotImplementedException();
             public Book FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Book FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public Book FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
@@ -61,7 +64,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public (Book Book, bool ExistingCopy) AddWantedEditionCopy(int bookId, int editionId) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -115,7 +118,7 @@ namespace Chaptarr.Core.Test.Books
         private sealed class TestableRefreshAuthorService : RefreshAuthorService
         {
             public TestableRefreshAuthorService(IBookService bookService, IEditionService editionService, Logger logger)
-                : base(authorInfo: null,
+                : base(MetadataHealthGateStub.Ready(), authorInfo: null,
                     authorService: null,
                     bookService: bookService,
                     editionService: editionService,
@@ -125,7 +128,7 @@ namespace Chaptarr.Core.Test.Books
                     eventAggregator: null,
                     commandQueueManager: null,
                     mediaFileService: null,
-                    historyService: null,
+                    historyRepository: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoHistoryRepositoryCalls(),
                     rootFolderService: null,
                     checkIfAuthorShouldBeRefreshed: null,
                     monitorNewBookService: null,
@@ -135,7 +138,7 @@ namespace Chaptarr.Core.Test.Books
                     syncQueueService: null,
                     rootFolderSettingsResolver: null,
                     logger: logger,
-                    editionSelector: new EditionSelector(logger))
+                    editionSelector: new EditionSelector(logger), bookRepository: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoBookRepositoryCalls(), authorRepository: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoPendingAuthorSetup())
             {
             }
 

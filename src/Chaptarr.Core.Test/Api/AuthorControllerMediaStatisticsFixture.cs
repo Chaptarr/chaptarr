@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Reflection;
 using Chaptarr.Api.V1.Author;
 using Chaptarr.Http.Middleware;
@@ -193,6 +195,45 @@ namespace Chaptarr.Core.Test.Api
             });
         }
 
+        [Test]
+        public void explicit_folder_put_queues_only_the_chosen_format_and_honors_shared_moves(
+            [Values("audiobook", "ebook")] string media, [Values(false, true)] bool shared, [Values(false, true)] bool moveFiles)
+        {
+            var author = CreateAuthor(false, true, true);
+            author.AudiobookPath = Path.Combine(AudiobookRootPath, "library", author.Name);
+            author.EbookPath = shared ? author.AudiobookPath : Path.Combine(EbookRootPath, "library", author.Name);
+            author.Path = author.AudiobookPath;
+            if (shared) author.EbookRootFolderPath = AudiobookRootPath;
+            var previousAudio = author.AudiobookPath;
+            var previousEbook = author.EbookPath;
+            var service = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            ((AuthorServiceProxy)(object)service).Author = author;
+            var queue = DispatchProxy.Create<IManageCommandQueue, CommandQueueProxy>();
+            var roots = BuildRootFolderService();
+            if (shared) ((RootFolderServiceProxy)(object)roots).RootFolders[0].FolderType = FolderType.Mixed;
+            var controller = BuildController(service, BuildBookService(), queue, roots);
+            controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+            var resource = author.ToResource();
+            resource.AudiobookFolder = null;
+            resource.EbookFolder = null;
+            var target = Path.Combine(media == "audiobook" || shared ? AudiobookRootPath : EbookRootPath, author.Name);
+            if (media == "audiobook") resource.AudiobookFolder = target;
+            else resource.EbookFolder = target;
+            Assert.That(controller.UpdateAuthor(resource, moveFiles).Result, Is.TypeOf<AcceptedAtActionResult>());
+            var saved = ((AuthorServiceProxy)(object)service).UpdatedAuthor;
+            Assert.That(saved.AudiobookPath, Is.EqualTo(media == "audiobook" || (shared && moveFiles) ? target : previousAudio));
+            Assert.That(saved.EbookPath, Is.EqualTo(media == "ebook" || (shared && moveFiles) ? target : previousEbook));
+            var commands = ((CommandQueueProxy)(object)queue).Commands;
+            Assert.That(commands.Count, Is.EqualTo(moveFiles ? 1 : 0));
+            if (moveFiles)
+            {
+                var move = (MoveAuthorCommand)commands.Single();
+                Assert.That(move.DestinationPath, Is.EqualTo(target));
+                Assert.That(move.SharedFolder, Is.EqualTo(shared));
+                Assert.That(move.MediaType, Is.EqualTo(shared ? "audiobook" : media));
+            }
+        }
+
         private static Author CreateAuthor(bool syncAcrossFormats, bool audiobookMonitored, bool ebookMonitored)
         {
             return new Author
@@ -357,6 +398,12 @@ namespace Chaptarr.Core.Test.Api
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (targetMethod?.Name == nameof(IManageCommandQueue.PushMany))
+                {
+                    Commands.AddRange((IEnumerable<Command>)args[0]);
+                    return new List<CommandModel>();
+                }
+
                 if (targetMethod?.Name == nameof(IManageCommandQueue.Push) && args?[0] is Command command)
                 {
                     Commands.Add(command);

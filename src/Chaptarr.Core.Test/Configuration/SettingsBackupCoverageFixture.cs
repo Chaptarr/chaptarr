@@ -46,9 +46,6 @@ namespace Chaptarr.Core.Test.Configuration
             [nameof(IConfigService.AudioProductionCustomFormatsSeeded)] = "Internal seed state is not a portable setting",
             [nameof(IConfigService.SeededBuiltInCustomFormatKeys)] = "Internal seed state is not a portable setting",
             [nameof(IConfigService.MatchingLogsUploadToken)] = "Diagnostic-upload credentials have no backup category",
-            [nameof(IConfigService.UseGitHubUpdates)] = "Update-source settings have no backup category",
-            [nameof(IConfigService.GitHubOwner)] = "Update-source settings have no backup category",
-            [nameof(IConfigService.GitHubRepo)] = "Update-source settings have no backup category",
             [nameof(IConfigService.PlexClientIdentifier)] = "Generated installation identity; restored by full backup, not portable settings",
             [nameof(IConfigService.RijndaelPassphrase)] = "Generated installation encryption state; full backup only",
             [nameof(IConfigService.HmacPassphrase)] = "Generated installation encryption state; full backup only",
@@ -74,6 +71,35 @@ namespace Chaptarr.Core.Test.Configuration
         private static IEnumerable<PropertyInfo> Settings => typeof(IConfigService).GetProperties()
             .Where(p => p.CanRead && p.CanWrite && !Exclusions.ContainsKey(p.Name))
             .OrderBy(p => p.Name);
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void retired_update_source_keys_do_not_prevent_settings_restore(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database => WithBackupFolder(folder =>
+            {
+                var events = InterfaceProxy.Proxy<IEventAggregator>((_, _) => null);
+                var config = new ConfigService(new ConfigRepository(database, events), events, null, LogManager.GetCurrentClassLogger());
+                var host = CreateHostConfig(folder);
+                host.EnsureDefaultConfigFile();
+                var package = Export(config, host: host);
+                package.Categories = new() { SettingsBackupCategory.UiSettings };
+                package.UiSettings.Theme = "dark";
+                package.ExtensionData["useGitHubUpdates"] = JsonSerializer.SerializeToElement(true);
+                package.ExtensionData["gitHubOwner"] = JsonSerializer.SerializeToElement("old-owner");
+                package.ExtensionData["gitHubRepo"] = JsonSerializer.SerializeToElement("old-repo");
+                var path = Path.Combine(folder, "retired-update-source.chaptarr-settings-backup.json");
+                File.WriteAllText(path, JsonSerializer.Serialize(SettingsBackupCrypto.Encrypt(
+                    JsonSerializer.SerializeToUtf8Bytes(package, STJson.GetSerializerSettings()), "test passphrase"), STJson.GetSerializerSettings()));
+
+                FileBackupService(config, folder, host).RestoreBackup(new SettingsBackupRestoreRequest
+                {
+                    FilePath = path, Passphrase = "test passphrase", Categories = package.Categories.ToHashSet()
+                });
+
+                Assert.That(CreateHostConfig(folder).Theme, Is.EqualTo("dark"));
+            }));
+        }
 
         private static IEnumerable<TestCaseData> ConfigSettings()
         {
@@ -558,52 +584,58 @@ namespace Chaptarr.Core.Test.Configuration
                     package.MediaManagement.NamingConfig.AuthorFolderFormat = "no author token";
                     break;
             }
-            var error = Assert.Throws<NzbDroneClientException>(() => SettingsBackupService.ValidateRestore(package, new() { category }));
+            var error = Assert.Throws<NzbDroneClientException>(() => SettingsBackupService.ValidateRestore(package, new() { category }, filenameValidation: CreateFilenameValidation()));
             Assert.That(error.Message, Does.Contain(field).And.Contain("No settings were restored"));
-            Assert.DoesNotThrow(() => SettingsBackupService.ValidateRestore(package, new()));
+            Assert.DoesNotThrow(() => SettingsBackupService.ValidateRestore(package, new(), CreateFilenameValidation()));
         }
 
-        [TestCase(false)]
-        [TestCase(true)]
-        public void invalid_mapping_overwrite_must_preserve_mappings_and_earlier_settings(bool postgres)
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        public void restore_previews_and_skips_unusable_paths_but_applies_valid_settings(bool postgres, bool readOnly)
         {
             DualDatabaseFixture.Run(postgres, database => WithBackupFolder(folder =>
             {
                 var events = InterfaceProxy.Proxy<IEventAggregator>((_, _) => null);
                 var config = new ConfigService(new ConfigRepository(database, events), events, null, LogManager.GetCurrentClassLogger());
-                IDiskProvider disk = OsInfo.IsWindows ? new NzbDrone.Windows.Disk.DiskProvider()
-                    : new NzbDrone.Mono.Disk.DiskProvider(null, null, null, LogManager.GetCurrentClassLogger());
+                IDiskProvider realDisk = OsInfo.IsWindows ? new NzbDrone.Windows.Disk.DiskProvider() : new NzbDrone.Mono.Disk.DiskProvider(null, null, null, LogManager.GetCurrentClassLogger());
+                var bad = Path.Combine(folder, "unavailable");
+                if (readOnly) Directory.CreateDirectory(bad);
+                var disk = InterfaceProxy.Proxy<IDiskProvider>((method, args) => method.Name == "FolderWritable" && (string)args[0] == bad ? false : method.Invoke(realDisk, args));
                 var repository = new RemotePathMappingRepository(database, events);
                 var mappings = new RemotePathMappingService(null, repository, disk, new CacheManager(), LogManager.GetCurrentClassLogger());
                 var original = mappings.Add(new RemotePathMapping { Host = "existing-client", RemotePath = "/downloads/", LocalPath = folder });
+                config.RecycleBin = folder;
                 var host = CreateHostConfig(folder);
                 host.EnsureDefaultConfigFile();
                 var package = Export(config, host: host);
-                package.Categories = new() { SettingsBackupCategory.UiSettings, SettingsBackupCategory.RemotePathMappings };
+                package.Categories = new() { SettingsBackupCategory.UiSettings, SettingsBackupCategory.RemotePathMappings, SettingsBackupCategory.MediaManagement };
                 package.UiSettings.Theme = "dark";
-                package.RemotePathMappings = new() { new RemotePathMappingBackup { Host = "new-client", RemotePath = "/downloads/", LocalPath = Path.Combine(folder, "missing-folder") } };
-                var path = Path.Combine(folder, "invalid-mapping.chaptarr-settings-backup.json");
+                package.MediaManagement.RecycleBin = bad;
+                package.RemotePathMappings = new()
+                {
+                    new RemotePathMappingBackup { Host = "existing-client", RemotePath = "/downloads/", LocalPath = bad },
+                    new RemotePathMappingBackup { Host = "valid-client", RemotePath = "/downloads/", LocalPath = folder }
+                };
+                var path = Path.Combine(folder, "paths.chaptarr-settings-backup.json");
                 File.WriteAllText(path, JsonSerializer.Serialize(SettingsBackupCrypto.Encrypt(JsonSerializer.SerializeToUtf8Bytes(package, STJson.GetSerializerSettings()), "test passphrase"), STJson.GetSerializerSettings()));
                 var xml = File.ReadAllBytes(Path.Combine(folder, "config.xml"));
-                Exception error = null;
-                try
-                {
-                    FileBackupService(config, folder, host, mappings).RestoreBackup(new SettingsBackupRestoreRequest
-                    {
-                        FilePath = path, Passphrase = "test passphrase", Categories = package.Categories.ToHashSet(), Mode = SettingsBackupRestoreMode.Overwrite
-                    });
-                }
-                catch (Exception ex)
-                {
-                    error = ex;
-                }
-                Assert.Multiple(() =>
-                {
-                    Assert.That(error, Is.TypeOf<NzbDroneClientException>());
-                    Assert.That(error?.Message, Does.Contain("new-client").And.Contain("No settings were restored"));
-                    Assert.That(repository.All().Select(mapping => mapping.Id), Is.EqualTo(new[] { original.Id }));
-                    Assert.That(File.ReadAllBytes(Path.Combine(folder, "config.xml")), Is.EqualTo(xml));
-                });
+                var folders = InterfaceProxy.Proxy<IAppFolderInfo>((_, _) => folder);
+                var service = CreateBackupService(config, folders: folders, disk: disk, host: host, mappings: mappings);
+                var request = new SettingsBackupRestoreRequest { FilePath = path, Passphrase = "test passphrase", Categories = package.Categories.ToHashSet(), Preview = true };
+                var preview = service.RestoreBackup(request);
+                Assert.That(preview.Warnings, Has.Some.Contains("existing-client"));
+                Assert.That(preview.Warnings, Has.Some.Contains("Recycling Bin"));
+                Assert.That(preview.Applied, Is.Empty);
+                Assert.That(File.ReadAllBytes(Path.Combine(folder, "config.xml")), Is.EqualTo(xml));
+                Assert.That(repository.All().Select(mapping => mapping.Id), Is.EqualTo(new[] { original.Id }));
+                request.Preview = false;
+                var result = service.RestoreBackup(request);
+                Assert.That(result.Warnings, Is.EquivalentTo(preview.Warnings));
+                Assert.That(config.RecycleBin, Is.EqualTo(folder));
+                Assert.That(host.Theme, Is.EqualTo("dark"));
+                Assert.That(repository.All().Select(mapping => mapping.Host), Is.EquivalentTo(new[] { "existing-client", "valid-client" }));
             }));
         }
 
@@ -619,13 +651,10 @@ namespace Chaptarr.Core.Test.Configuration
                 var package = Export(CreateConfigService());
                 package.MediaManagement.RecycleBin = Path.Combine(folder, "missing");
                 package.MediaManagement.ChmodFolder = "not-octal";
-                var error = Assert.Throws<NzbDroneClientException>(() => SettingsBackupService.ValidateRestore(package,
-                    new() { SettingsBackupCategory.MediaManagement }, disk, validator));
-                Assert.That(error.Message, Does.Contain("RecycleBin").And.Contain("No settings were restored"));
-                if (!OsInfo.IsWindows) Assert.That(error.Message, Does.Contain("ChmodFolder"));
-                package.MediaManagement.RecycleBin = folder;
-                package.MediaManagement.ChmodFolder = "775";
-                Assert.DoesNotThrow(() => SettingsBackupService.ValidateRestore(package, new() { SettingsBackupCategory.MediaManagement }, disk, validator));
+                var validation = validator.Validate(new MediaManagementPathSettings { RecycleBin = package.MediaManagement.RecycleBin, ChmodFolder = package.MediaManagement.ChmodFolder });
+                Assert.That(validation.Errors.Select(error => error.PropertyName), Does.Contain("RecycleBin"));
+                if (!OsInfo.IsWindows) Assert.That(validation.Errors.Select(error => error.PropertyName), Does.Contain("ChmodFolder"));
+                Assert.That(validator.Validate(new MediaManagementPathSettings { RecycleBin = folder, ChmodFolder = "775" }).IsValid, Is.True);
             });
         }
 
@@ -670,7 +699,8 @@ namespace Chaptarr.Core.Test.Configuration
                     File.WriteAllText(file, JsonSerializer.Serialize(SettingsBackupCrypto.Encrypt(System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(package, STJson.GetSerializerSettings())), "synthetic passphrase"), STJson.GetSerializerSettings()));
                     IDiskProvider disk = OsInfo.IsWindows ? new NzbDrone.Windows.Disk.DiskProvider()
                         : new NzbDrone.Mono.Disk.DiskProvider(null, null, null, LogManager.GetCurrentClassLogger());
-                    var service = new SettingsBackupService(InterfaceProxy.Proxy<IAppFolderInfo>((_, _) => folder), disk, config, null, null, null,
+                    var service = new SettingsBackupService(InterfaceProxy.Proxy<IAppFolderInfo>((_, _) => folder), disk, config, null,
+                        InterfaceProxy.Proxy<NzbDrone.Core.Indexers.IIndexerFactory>((_, _) => new List<NzbDrone.Core.Indexers.IndexerDefinition>()), null,
                         InterfaceProxy.Proxy<NzbDrone.Core.Notifications.INotificationFactory>((method, _) => method.Name == "All" ? new List<NzbDrone.Core.Notifications.NotificationDefinition>() : throw new AssertionException("Connection writes must not be attempted")),
                         InterfaceProxy.Proxy<NzbDrone.Core.Profiles.Qualities.IQualityProfileService>((method, args) =>
                         {
@@ -684,11 +714,12 @@ namespace Chaptarr.Core.Test.Configuration
                             if (method.Name == "All") return formats;
                             Assert.That(messages.Logs.Any(line => line.StartsWith("Info|Settings restore started:")), Is.True, "Start must be logged before the first profile write");
                             var value = (NzbDrone.Core.CustomFormats.CustomFormat)args[0]; value.Id = 1; formats.Add(value); calls.Add("custom formats"); return value;
-                        }), null, null, null, host,
-                        InterfaceProxy.Proxy<NzbDrone.Core.Profiles.Delay.IDelayProfileService>((_, _) =>
+                        }), InterfaceProxy.Proxy<NzbDrone.Core.Tags.ITagService>((_, _) => new List<NzbDrone.Core.Tags.Tag>()), null, null, host,
+                        InterfaceProxy.Proxy<NzbDrone.Core.Profiles.Delay.IDelayProfileService>((method, _) =>
                         {
+                            if (method.Name == "All") return new List<NzbDrone.Core.Profiles.Delay.DelayProfile> { new() { Id = 1, EnableTorrent = true } };
                             calls.Add("delay profiles"); throw new IOException("synthetic secret must not be exposed");
-                        }));
+                        }), releaseProfileService: InterfaceProxy.Proxy<NzbDrone.Core.Profiles.Releases.IReleaseProfileService>((_, _) => new List<NzbDrone.Core.Profiles.Releases.ReleaseProfile>()), qualityDefinitionService: null, mediaPaths: null, filenameValidation: SettingsBackupCoverageFixture.CreateFilenameValidation());
                     var controller = new Chaptarr.Api.V1.System.SettingsBackup.SettingsBackupController(service);
                     var error = Assert.Throws<NzbDroneClientException>(() => controller.Restore(new SettingsBackupRestoreRequest
                     {
@@ -933,6 +964,42 @@ namespace Chaptarr.Core.Test.Configuration
             }));
         }
 
+        [Test]
+        public void unchanged_invalid_settings_allow_unrelated_save_and_remain_visible_in_health()
+        {
+            var config = CreateConfigService();
+            config.RssSyncInterval = 999;
+            var controller = new IndexerConfigController(config);
+            var resource = controller.GetConfig();
+            resource.MinimumAge = 2;
+            var validator = (FluentValidation.IValidator<IndexerConfigResource>)typeof(Chaptarr.Http.REST.RestController<IndexerConfigResource>)
+                .GetProperty("SharedValidator", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(controller);
+            Assert.That(validator.Validate(resource).IsValid, Is.True);
+            controller.SaveConfig(resource);
+            Assert.That(config.MinimumAge, Is.EqualTo(2));
+            Assert.That(config.RssSyncInterval, Is.EqualTo(999));
+            var check = new NzbDrone.Core.HealthCheck.Checks.ConfigValueCheck(config,
+                InterfaceProxy.Proxy<NzbDrone.Core.Localization.ILocalizationService>((_, _) => "Invalid: {0}"));
+            Assert.That(check.Check().Message, Does.Contain("RssSyncInterval"));
+            resource.RssSyncInterval = 998;
+            Assert.That(validator.Validate(resource).Errors.Single().PropertyName, Is.EqualTo("RssSyncInterval"));
+            resource.RssSyncInterval = 15;
+            Assert.That(validator.Validate(resource).IsValid, Is.True);
+            controller.SaveConfig(resource);
+            Assert.That(check.Check().Type, Is.EqualTo(NzbDrone.Core.HealthCheck.HealthCheckResult.Ok));
+        }
+
+        [Test]
+        public void changing_concurrency_still_checks_the_unchanged_cpu_thread_budget()
+        {
+            var config = CreateConfigService();
+            var controller = new ConversionConfigController(config);
+            var current = controller.GetConfig();
+            var requested = controller.GetConfig();
+            requested.AudiobookConversionConcurrentConversions = current.AudiobookConversionMaxCpuThreads + 1;
+            Assert.That(ConfigValueValidation.Validate(requested, current).Select(error => error.PropertyName), Does.Contain(nameof(IConfigService.AudiobookConversionMaxCpuThreads)));
+        }
+
         private static ConfigService CreateConfigService(IEventAggregator events = null)
         {
             var values = new Dictionary<string, Config>();
@@ -954,6 +1021,34 @@ namespace Chaptarr.Core.Test.Configuration
             return new ConfigService(repository, events ?? InterfaceProxy.Proxy<IEventAggregator>((_, _) => null), null, LogManager.GetCurrentClassLogger());
         }
 
+        [TestCase("/data", true)]
+        [TestCase("/data/settings-backups", true)]
+        [TestCase("/database", false)]
+        [TestCase("/data/../outside", false)]
+        public void settings_backup_accepts_shared_data_mount_without_escaping_it(string path, bool allowed)
+        {
+            var disk = InterfaceProxy.Proxy<IDiskProvider>((method, _) => method.Name == "FolderExists" ? false : throw new AssertionException(method.Name));
+            var folders = InterfaceProxy.Proxy<IAppFolderInfo>((_, _) => "/config");
+            var service = CreateBackupService(null, folders: folders, disk: disk);
+            if (allowed) Assert.That(service.GetFiles(path), Is.Empty);
+            else Assert.Throws<NzbDroneClientException>(() => service.GetFiles(path));
+        }
+
+        [Test]
+        public void settings_backup_locations_hide_absent_mounts_but_keep_read_only_mounts_visible()
+        {
+            var disk = InterfaceProxy.Proxy<IDiskProvider>((method, args) => method.Name switch
+            {
+                "FolderExists" => (string)args[0] == "/data",
+                "FolderWritable" => false,
+                _ => throw new AssertionException(method.Name)
+            });
+            var service = CreateBackupService(null, folders: InterfaceProxy.Proxy<IAppFolderInfo>((_, _) => "/config"), disk: disk);
+            var locations = service.GetLocations();
+            Assert.That(locations.Select(location => location.Path), Is.EqualTo(new[] { "/data" }));
+            Assert.That(locations.Single().Writable, Is.False);
+        }
+
         private static SettingsBackupService CreateBackupService(IConfigService config, INamingConfigService naming = null, IAppFolderInfo folders = null, IDiskProvider disk = null, IConfigFileProvider host = null, IRemotePathMappingService mappings = null)
         {
             host ??= InterfaceProxy.Proxy<IConfigFileProvider>((_, _) => "auto");
@@ -962,7 +1057,32 @@ namespace Chaptarr.Core.Test.Configuration
                 InterfaceProxy.Proxy<NzbDrone.Core.Indexers.IIndexerFactory>((_, _) => new List<NzbDrone.Core.Indexers.IndexerDefinition>()),
                 InterfaceProxy.Proxy<NzbDrone.Core.Download.IDownloadClientFactory>((_, _) => new List<NzbDrone.Core.Download.DownloadClientDefinition>()),
                 null, null, null, null, InterfaceProxy.Proxy<NzbDrone.Core.Tags.ITagService>((_, _) => new List<NzbDrone.Core.Tags.Tag>()),
-                InterfaceProxy.Proxy<NzbDrone.Core.Configuration.IProxyService>((_, _) => new List<NzbDrone.Core.Configuration.ProxyDefinition>()), mappings, host, mediaPaths: disk == null ? null : CreateMediaPathValidator(disk, folders));
+                InterfaceProxy.Proxy<NzbDrone.Core.Configuration.IProxyService>((_, _) => new List<NzbDrone.Core.Configuration.ProxyDefinition>()), mappings, host, mediaPaths: disk == null ? null : CreateMediaPathValidator(disk, folders), filenameValidation: CreateFilenameValidation(), delayProfileService: null, releaseProfileService: null, qualityDefinitionService: null);
+        }
+
+        internal static IFilenameValidationService CreateFilenameValidation() =>
+            new FileNameValidationService(new FileNameSampleService(Organizer.FileNameBuilderSeriesTokensFixture.CreateBuilder()));
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void restore_must_reject_a_pattern_that_only_breaks_the_multipart_sample(bool ebook)
+        {
+            var naming = NamingConfig.Default;
+            const string invalid = "{Book Title}{ (PartNumber:Q)}";
+            if (ebook) naming.EbookStandardBookFormat = invalid;
+            else naming.StandardBookFormat = invalid;
+            Assert.That(ConfigValueValidation.ValidateNaming(naming), Is.Empty, "The syntax-only check missed this valid token with an unusable part format");
+            var package = new SettingsBackupPackage
+            {
+                MediaManagement = new MediaManagementBackup { MinimumFreeSpaceWhenImporting = 100, NamingConfig = naming }
+            };
+            var error = Assert.Throws<NzbDroneClientException>(() => SettingsBackupService.ValidateRestore(package,
+                new() { SettingsBackupCategory.MediaManagement }, filenameValidation: CreateFilenameValidation()));
+            Assert.That(error.Message, Does.Contain(ebook ? "Naming.EbookStandardBookFormat" : "Naming.StandardBookFormat")
+                .And.Contain("Produces invalid file names").And.Contain("No settings were restored"));
+            naming.StandardBookFormat = naming.EbookStandardBookFormat = "{Book Title}{ (PartNumber:smart)}";
+            Assert.DoesNotThrow(() => SettingsBackupService.ValidateRestore(package,
+                new() { SettingsBackupCategory.MediaManagement }, filenameValidation: CreateFilenameValidation()));
         }
 
         private static MediaManagementPathValidator CreateMediaPathValidator(IDiskProvider disk, IAppFolderInfo folders)

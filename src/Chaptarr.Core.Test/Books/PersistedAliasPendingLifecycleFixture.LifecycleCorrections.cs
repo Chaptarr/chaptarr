@@ -52,6 +52,7 @@ namespace Chaptarr.Core.Test.Books
             item.AudiobookMonitorExistingMode = item.EbookMonitorExistingMode = null;
             item.AudiobookMonitorNewItems = item.EbookMonitorNewItems = null;
             SetCorrectionSide(item, media, ids, ids);
+            Harness.MarkExplicitSearches(item);
             h.Requests.Update(item);
             return item;
         }
@@ -678,11 +679,11 @@ namespace Chaptarr.Core.Test.ImportLists
                 var covers = Proxy<IMapCoversToLocal>((_, _) => null);
                 var refreshEditions = new RefreshEditionService(stored.Editions, Proxy<IMetadataTagService>((_, _) => null), null, database, stored.Logger);
                 var refreshBooks = new RefreshBookService(stored.Books, stored.AuthorService, stored.Roots, stored.Editions, authorInfo, null,
-                    refreshEditions, stored.Files, null, stored.Events, null, selector, filter, covers, stored.Logger);
+                    refreshEditions, stored.Files, null, stored.Events, null, selector, filter, covers, stored.Logger, mainDatabase: null);
                 var config = Proxy<IConfigService>((method, _) => method.ReturnType == typeof(bool) ? false : method.ReturnType.IsValueType ? Activator.CreateInstance(method.ReturnType) : null);
-                var refresh = new RefreshAuthorService(authorInfo, stored.AuthorService, stored.Books, stored.Editions, profile, refreshBooks, null,
-                    stored.Events, stored.Queue, stored.Files, null, stored.Roots, null, Proxy<IMonitorNewBookService>((_, _) => false), config,
-                    exclusions, null, null, null, stored.Logger, selector, database);
+                var refresh = new RefreshAuthorService(MetadataHealthGateStub.Ready(), authorInfo, stored.AuthorService, stored.Books, stored.Editions, profile, refreshBooks, null,
+                    stored.Events, stored.Queue, stored.Files, new global::NzbDrone.Core.History.HistoryRepository(database, stored.Events), stored.Roots, null, Proxy<IMonitorNewBookService>((_, _) => false), config,
+                    exclusions, null, null, null, stored.Logger, editionSelector: selector, mainDatabase: database, bookRepository: new BookRepository(database, stored.Events), authorRepository: new AuthorRepository(database, stored.Events, stored.Logger));
                 var library = new AuthorLibraryService(stored.AuthorService, authorInfo, stored.Books, null, stored.Editions, null, profile,
                     new global::Chaptarr.Core.Test.TestQualityProfileService(), stored.Paths, stored.Roots, stored.Queue, stored.Events, stored.Pending, database,
                     exclusions, filter, null, stored.Logger, selector, refresh);

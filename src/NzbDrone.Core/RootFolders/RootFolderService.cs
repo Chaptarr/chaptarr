@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using FluentValidation;
+using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common;
 using NzbDrone.Common.Disk;
@@ -104,10 +106,11 @@ namespace NzbDrone.Core.RootFolders
                 var dockerEnv = ProcessUserInfo.GetDockerUserEnvSummary();
                 var dockerHint = dockerEnv == null ? string.Empty : $" (env: {dockerEnv})";
 
-                throw new UnauthorizedAccessException(
+                throw new ValidationException(new[] { new ValidationFailure(nameof(RootFolder.Path),
                     $"Folder '{rootFolder.Path}' is not writable by user '{user}'. Permission denied - please ensure the Chaptarr process has write access to this directory and its subdirectories.{dockerHint} " +
                     "Chaptarr determines this by attempting to create and delete a temporary file in the folder. " +
-                    "If you're using Docker bind mounts, make sure the host folder exists (Docker may create missing folders as root:root) and that its ownership/permissions allow writes for this UID/GID.");
+                    "If you're using Docker bind mounts, make sure the host folder exists (Docker may create missing folders as root:root) and that its ownership/permissions allow writes for this UID/GID.")
+                    { ErrorCode = "RootFolderNotWritable" } });
             }
         }
 

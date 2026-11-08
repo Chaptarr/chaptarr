@@ -28,6 +28,37 @@ namespace Chaptarr.Core.Test.Download
     [TestFixture]
     public class TrackedDownloadCacheRefreshFixture
     {
+        [Test]
+        public void committed_identity_refresh_reloads_targets_without_search_and_retries_database_failure_on_next_poll([Values(false, true)] bool failRead)
+        {
+            var cache = new CacheManager();
+            var primary = new Author { Id = 626, Name = "Linda Kay Silva" };
+            var book = new Book { Id = 41994, AuthorId = primary.Id, Author = primary, MediaType = BookMediaType.Audiobook };
+            var history = new EntityHistory { AuthorId = primary.Id, Author = primary, BookId = book.Id, Book = book,
+                EditionId = 107188, DownloadId = "identity-grab", EventType = EntityHistoryEventType.Grabbed, Date = DateTime.UtcNow, Quality = new QualityModel(Quality.M4B), Data = new() };
+            var reads = 0;
+            var service = new TrackedDownloadService(Proxy<IParsingService>((method, args) => throw new AssertionException("Identity repair must not search by title")), cache,
+                Proxy<IHistoryService>((method, args) => { reads++; if (failRead) throw new InvalidOperationException("database unavailable"); return new List<EntityHistory> { history }; }),
+                Proxy<IEventAggregator>((method, args) => null), null,
+                Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()), LogManager.GetCurrentClassLogger(), null);
+            var item = new TrackedDownload { State = TrackedDownloadState.ImportBlocked, DownloadItem = new DownloadClientItem { DownloadId = "identity-grab" },
+                RemoteBook = new RemoteBook { Author = new Author { Id = 518 }, Books = new() { new() { Id = 33659, AuthorId = 518, MediaType = BookMediaType.Audiobook } },
+                    ParsedBookInfo = new ParsedBookInfo { Quality = new QualityModel(Quality.M4B) }, Release = new ReleaseInfo { Title = "The Horde", IndexerId = 7 } } };
+            var entries = cache.GetCache<TrackedDownload>(service.GetType());
+            entries.Set("identity-grab", item);
+            service.Handle(new LibraryIdentityChangedEvent(new[] { 518, 626 }, new[] { 33659, 41994 }, new[] { 33659 }));
+            Assert.That(reads, Is.EqualTo(1));
+            if (failRead) Assert.That(entries.Find("identity-grab"), Is.Null, "Next normal client poll rebuilds from durable history");
+            else
+            {
+                Assert.That(item.RemoteBook.Author.Id, Is.EqualTo(primary.Id));
+                Assert.That(item.RemoteBook.Books.Single().Id, Is.EqualTo(book.Id));
+                Assert.That(item.RemoteBook.TargetEditionIds[book.Id], Is.EqualTo(history.EditionId));
+                Assert.That(item.RemoteBook.Release.IndexerId, Is.EqualTo(7));
+                Assert.That(item.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
+            }
+        }
+
         [TestCase(false, 1, true, false)]
         [TestCase(false, 25, true, false)]
         [TestCase(true, 1, true, false)]

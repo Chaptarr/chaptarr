@@ -43,7 +43,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void explicit_book_search_flags_should_queue_each_exact_target_as_a_manual_search()
+        public void saved_book_search_flags_should_queue_each_exact_target_as_an_automatic_search()
         {
             var author = new Author
             {
@@ -62,7 +62,7 @@ namespace Chaptarr.Core.Test.Books
 
             var commands = queue.Pushed.OfType<BookSearchCommand>().ToList();
             Assert.That(commands.Select(command => command.BookIds.Single()), Is.EquivalentTo(new[] { audiobook.Id, ebook.Id }));
-            Assert.That(commands.All(command => command.Trigger == CommandTrigger.Manual), Is.True);
+            Assert.That(commands.All(command => command.Trigger != CommandTrigger.Manual), Is.True);
             Assert.That(author.AudiobookMonitored, Is.False);
             Assert.That(author.EbookMonitored, Is.True);
             Assert.That(bookService.AddOptionsUpdated, Is.EqualTo(books));
@@ -70,7 +70,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void paused_exact_request_should_search_manually_while_cached_new_rows_remain_author_gated()
+        public void saved_search_intent_and_cached_new_rows_should_remain_author_gated()
         {
             var author = new Author
             {
@@ -92,9 +92,10 @@ namespace Chaptarr.Core.Test.Books
             Assert.Multiple(() =>
             {
                 Assert.That(commands, Has.Count.EqualTo(2));
-                Assert.That(commands.Single(command => command.Trigger == CommandTrigger.Manual).BookIds,
+                Assert.That(commands.All(command => command.Trigger != CommandTrigger.Manual), Is.True);
+                Assert.That(commands.Single(command => command.BookIds.Contains(requestedAudiobook.Id)).BookIds,
                     Is.EqualTo(new[] { requestedAudiobook.Id }));
-                Assert.That(commands.Single(command => command.Trigger == CommandTrigger.Unspecified).BookIds,
+                Assert.That(commands.Single(command => command.BookIds.Contains(newlyAddedEbook.Id)).BookIds,
                     Is.EqualTo(new[] { newlyAddedEbook.Id }));
                 Assert.That(author.AudiobookMonitored, Is.False);
                 Assert.That(requestedAudiobook.IsMonitored(), Is.True);
@@ -218,7 +219,7 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(bookService.AddOptionsUpdated, Has.Count.EqualTo(199));
             Assert.That(requested.Single(book => book.Id == 101).AddOptions.SearchForNewBook, Is.True);
             Assert.That(queue.Pushed, Has.Count.EqualTo(200));
-            Assert.That(queue.Pushed.Count(command => command.Trigger == CommandTrigger.Manual), Is.EqualTo(199));
+            Assert.That(queue.Pushed.Count(command => command.Trigger == CommandTrigger.Manual), Is.Zero);
             Assert.That(queue.Pushed.OfType<BookSearchCommand>().Last().BookIds, Is.EqualTo(new[] { automatic.Id }));
         }
 
@@ -324,6 +325,7 @@ namespace Chaptarr.Core.Test.Books
             public void Fail(CommandModel command, string message, Exception e) => throw new NotImplementedException();
             public void Requeue() => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void Pause(int id) => throw new NotImplementedException();
             public void Resume(int id) => throw new NotImplementedException();
             public void CleanCommands() => throw new NotImplementedException();

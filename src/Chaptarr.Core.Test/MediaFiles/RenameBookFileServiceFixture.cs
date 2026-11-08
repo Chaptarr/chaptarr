@@ -48,7 +48,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
-            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
@@ -91,7 +91,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void Update(BookFile bookFile) => Updated.Add(bookFile);
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
             public void AddMany(List<BookFile> bookFiles) => throw new NotImplementedException();
-            public int RelinkFilesByBook(int bookId, int editionId, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
@@ -227,7 +227,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 mover,
                 eventAggregator,
                 diskProvider ?? DispatchProxy.Create<IDiskProvider, DiskProviderProxy>(),
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), null);
         }
 
         [Test]
@@ -399,6 +399,33 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(author.AudiobookPath, Is.EqualTo(canonicalAuthorFolder));
             Assert.That(author.Path, Is.EqualTo(canonicalAuthorFolder));
             Assert.That(author.EbookPath, Is.EqualTo("/ebooks/George R.R. Martin"));
+        }
+
+        [Test]
+        public void canonical_move_without_source_author_boundary_updates_file_but_does_not_clean_source_folders()
+        {
+            var author = new Author { Id = 1, Name = "Author", AudiobookPath = "/library/Author" };
+            var file = BookFile(1, "/old-share/loose.m4b", Quality.M4B, "audiobook");
+            var files = new StubMediaFileService { Files = new List<BookFile> { file } };
+            var disk = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var diskProxy = (DiskProviderProxy)(object)disk;
+            diskProxy.ExistingFolders.Add("/old-share");
+            var plan = new BookFileMovePlan
+            {
+                CanOrganize = true,
+                DestinationAuthorFolderPath = author.AudiobookPath,
+                DestinationPath = "/library/Author/Book/renamed.m4b",
+                ShouldUpdateStoredAuthorPath = true
+            };
+            var events = new RecordingEventAggregator();
+            var service = CreateService(author, files, new RecordingMoveBookFiles { PlanFactory = (_, _) => plan }, events, disk);
+
+            service.Execute(new RenameFilesCommand(author.Id, new List<int> { file.Id }, true));
+
+            Assert.That(files.Updated.Single().Path, Is.EqualTo(plan.DestinationPath));
+            Assert.That(events.Events.OfType<BookFileRenamedEvent>().Count(), Is.EqualTo(1));
+            Assert.That(diskProxy.RemovedEmptySubfolders, Is.Empty);
+            Assert.That(diskProxy.DeletedFolders, Is.Empty);
         }
 
         [Test]

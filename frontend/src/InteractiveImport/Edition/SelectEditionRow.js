@@ -5,23 +5,10 @@ import FormInputGroup from 'Components/Form/FormInputGroup';
 import TableRowCell from 'Components/Table/Cells/TableRowCell';
 import TableRow from 'Components/Table/TableRow';
 import { inputTypes } from 'Helpers/Props';
+import getNarratorDisplay from 'Utilities/Book/getNarratorDisplay';
 import formatDurationMinutes from 'Utilities/Date/formatDurationMinutes';
 import titleCase from 'Utilities/String/titleCase';
 import translate from 'Utilities/String/translate';
-
-function getNarratorDisplay(bookEdition) {
-  const narratorNames = bookEdition.narratorNames || [];
-
-  if (narratorNames.length > 1) {
-    return `${narratorNames[0]}, +${narratorNames.length - 1}`;
-  }
-
-  if (narratorNames.length === 1) {
-    return narratorNames[0];
-  }
-
-  return bookEdition.narrator;
-}
 
 function getReleaseYear(releaseDate) {
   if (!releaseDate) {

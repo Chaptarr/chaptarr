@@ -216,11 +216,12 @@ namespace NzbDrone.Core.Download.Pending
                 .ToDictionaryIgnoreDuplicates(row => row.Release.Title, row => row.RemoteBook);
             IncludeRemoteBooks(pending.Where(row => row.AdditionalInfo?.BookIds?.Any(id => id > 0) == true).ToList(), knownLegacy, savedBooks, prepareForDownload: false);
 
-            oldestPublishDates = pending.SelectMany(row => (row.AdditionalInfo?.BookIds ?? new List<int>())
-                    .Where(id => savedBooks.TryGetValue(id, out var book) && book.AuthorId == row.AuthorId &&
-                        (!QualityMediaTypeHelper.GetKnownMediaType(row.ParsedBookInfo?.Quality?.Quality).HasValue ||
-                         book.MediaType == QualityMediaTypeHelper.GetKnownMediaType(row.ParsedBookInfo?.Quality?.Quality).Value))
-                    .Select(id => (Key: (row.AuthorId, id), row.Release.PublishDate)))
+            oldestPublishDates = pending
+                .Select(row => (Row: row, Media: QualityMediaTypeHelper.DetectMediaType(row.ParsedBookInfo?.Quality?.Quality, row.Release)))
+                .SelectMany(item => (item.Row.AdditionalInfo?.BookIds ?? new List<int>())
+                    .Where(id => savedBooks.TryGetValue(id, out var book) && book.AuthorId == item.Row.AuthorId &&
+                        (!item.Media.HasValue || book.MediaType == item.Media.Value))
+                    .Select(id => (Key: (item.Row.AuthorId, id), item.Row.Release.PublishDate)))
                 .GroupBy(value => value.Key).ToDictionary(group => group.Key, group => group.Min(value => value.PublishDate));
 
             var releases = pending.Select(row =>
@@ -474,7 +475,7 @@ namespace NzbDrone.Core.Download.Pending
                 : new Dictionary<int, Book>();
             foreach (var release in releases)
             {
-                var mediaType = QualityMediaTypeHelper.GetKnownMediaType(release.ParsedBookInfo?.Quality?.Quality);
+                var mediaType = QualityMediaTypeHelper.DetectMediaType(release.ParsedBookInfo?.Quality?.Quality, release.Release);
                 var savedTargets = (release.AdditionalInfo?.BookIds ?? new List<int>()).Distinct()
                     .Where(savedBooks.ContainsKey).Select(id => savedBooks[id]).ToList();
                 if (release.AdditionalInfo?.BookIds?.Any(id => id > 0) == true)

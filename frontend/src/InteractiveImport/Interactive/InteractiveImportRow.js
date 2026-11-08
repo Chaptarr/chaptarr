@@ -4,6 +4,7 @@ import BookFormats from 'Book/BookFormats';
 import BookQuality from 'Book/BookQuality';
 import IndexerFlags from 'Book/IndexerFlags';
 import FileDetails from 'BookFile/FileDetails';
+import AudioProductionSelectInput from 'Components/Form/AudioProductionSelectInput';
 import Icon from 'Components/Icon';
 import Label from 'Components/Label';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
@@ -400,6 +401,12 @@ class InteractiveImportRow extends Component {
         <TableRowCell
           className={styles.quality}
         >
+          {this.getMediaTypeFromQuality(quality) === 'audiobook' &&
+            <div>
+              {translate((this.props.audioProductionOverride ?? this.props.isGraphicAudio) ? 'RecordingTypeDramatized' : 'RecordingTypeStandard')}
+              <AudioProductionSelectInput value={this.props.audioProductionOverride} onChange={({ value }) => this.props.onAudioProductionChange(value)} />
+            </div>
+          }
           {
             showQualityPlaceholder &&
               <InteractiveImportRowCellPlaceholder />
@@ -568,6 +575,9 @@ class InteractiveImportRow extends Component {
 
 InteractiveImportRow.propTypes = {
   id: PropTypes.number.isRequired,
+  audioProductionOverride: PropTypes.bool,
+  isGraphicAudio: PropTypes.bool,
+  onAudioProductionChange: PropTypes.func.isRequired,
   allowAuthorChange: PropTypes.bool.isRequired,
   path: PropTypes.string.isRequired,
   author: PropTypes.object,

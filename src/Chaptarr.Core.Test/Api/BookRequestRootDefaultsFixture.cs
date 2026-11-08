@@ -93,9 +93,9 @@ namespace Chaptarr.Core.Test.Api
                 new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true,
                     Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } });
             var book = resource.ToModel();
-            Assert.That(book.IsMonitored(), Is.EqualTo(selection == "" || selection.EndsWith("true")));
+            Assert.That(book.IsMonitored(), Is.EqualTo(selection.EndsWith("true")));
             Assert.That(book.Author.AddOptions.Monitor, Is.EqualTo(MonitorTypes.None));
-            Assert.That(book.AddOptions.MonitorBook, Is.EqualTo(selection == "" ? (bool?)null : selection.EndsWith("true")));
+            Assert.That(book.AddOptions.MonitorBook, Is.EqualTo(selection.EndsWith("true")));
         }
 
         [Test]

@@ -78,11 +78,6 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             new Regex(@"\b(\d+)\s*Hours?\b", RegexOptions.IgnoreCase | RegexOptions.Compiled)
         };
 
-        // GraphicAudio detection patterns - use comprehensive list from AudioProductionConstants
-        private static readonly Regex GraphicAudioPattern = new Regex(
-            $@"\b(?:{string.Join("|", AudioProductionConstants.GraphicAudioIndicators.Select(Regex.Escape))})\b",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
         public MyAnonaMouseJsonParser(MyAnonaMouseSettings settings)
         {
             _settings = settings;
@@ -121,6 +116,11 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
             if (data == null || !data.HasValues)
             {
+                if ((data == null || data.Type == JTokenType.Null) && string.IsNullOrWhiteSpace(apiError))
+                {
+                    logger.Warn("MyAnonaMouse returned neither torrent data nor an error; treating the response as empty.");
+                }
+
                 logger.Trace("MAM_API_RESPONSE: No torrent data found in response");
                 return torrentInfos;
             }
@@ -330,9 +330,9 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                     }
                 }
             }
-            catch (JsonException)
+            catch (JsonException ex)
             {
-                // Ignore malformed optional series metadata.
+                NLog.LogManager.GetCurrentClassLogger().Debug("Ignoring malformed series metadata for MyAnonaMouse torrent {0}: {1}", torrent?["id"], ex.Message);
             }
 
             return seriesInfo;
@@ -893,7 +893,6 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 // Check multiple fields for GraphicAudio indicators
                 var searchFields = new List<string>();
 
-                // Add all fields that the user requested for GA detection
                 var tags = torrent.Value<string>("tags");
                 if (!string.IsNullOrWhiteSpace(tags))
                 {
@@ -918,7 +917,6 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                     searchFields.Add(narratorInfo);
                 }
 
-                // Add author field to GA detection search scope as requested
                 var authorInfo = torrent.Value<string>("author_info");
                 if (!string.IsNullOrWhiteSpace(authorInfo))
                 {
@@ -927,13 +925,12 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
                 foreach (var field in searchFields)
                 {
-                    var match = GraphicAudioPattern.Match(field);
-                    if (match.Success)
+                    if (AudioProductionDetector.ContainsIndicator(new[] { field }))
                     {
                         // Log which term was matched for debugging
                         var logger = NLog.LogManager.GetCurrentClassLogger();
                         var id = torrent.Value<int?>("id")?.ToString();
-                        logger.Trace("MAM_GA_DETECTION: Found GraphicAudio indicator '{0}' for torrent {1}", match.Value, id);
+                        logger.Trace("MAM_GA_DETECTION: Found production evidence for torrent {0}", id);
                         return true;
                     }
                 }

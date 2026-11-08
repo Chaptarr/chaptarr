@@ -170,13 +170,13 @@ namespace Chaptarr.Core.Test.Notifications
                         nameof(IDiskProvider.FolderExists) => Directory.Exists((string)args[0]),
                         nameof(IDiskProvider.FileExists) => File.Exists((string)args[0]),
                         _ => throw new NotImplementedException(method.Name)
-                    }), _cache)
+                    }), _cache, Chaptarr.Core.Test.Common.MemoryPendingNotifications.For(_cache))
                 {
                     Definition = new NotificationDefinition { Id = id, Settings = new SynologyIndexerSettings { UpdateLibrary = enabled } }
                 };
             }
 
-            return new Kavita(Proxy<IKavitaService>((method, args) => Record(id, method.Name, (string)args[1])), _cache)
+            return new Kavita(Proxy<IKavitaService>((method, args) => Record(id, method.Name, (string)args[1])), _cache, Chaptarr.Core.Test.Common.MemoryPendingNotifications.For(_cache))
             {
                 Definition = new NotificationDefinition { Id = id, Settings = new KavitaSettings { Notify = enabled } }
             };

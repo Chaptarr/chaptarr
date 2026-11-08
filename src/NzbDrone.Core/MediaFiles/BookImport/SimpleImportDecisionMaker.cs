@@ -5,6 +5,7 @@ using System.IO.Abstractions;
 using System.Linq;
 using System.Threading;
 using NLog;
+using NzbDrone.Common;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.MediaFiles;
@@ -70,6 +71,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 cancellationToken.ThrowIfCancellationRequested();
             }
 
+            var storedFiles = musicFiles.Count == 0 ? new Dictionary<string, BookFile>(PathEqualityComparer.Instance) :
+                (_mediaFileService.GetFileWithPath(musicFiles.Select(file => file.FullName).ToList()) ?? new List<BookFile>())
+                .ToDictionary(file => file.Path, PathEqualityComparer.Instance);
             var bookCache = new Dictionary<int, Book>();
             var editionCache = new Dictionary<int, Edition>();
             var manualPreviewCandidates = new List<ManualPreviewCandidate>();
@@ -113,6 +117,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         DurationSeconds = durationSeconds,
                         RawTags = rawTags,
                         ExistingFile = !config.NewDownload,
+                        AudioProductionOverride = storedFiles.GetValueOrDefault(file.FullName)?.AudioProductionOverride,
                         Quality = new QualityModel(detectedQuality)
                     };
 
@@ -195,6 +200,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             foreach (var decision in decisions)
             {
                 var localBook = decision.Item;
+                if (localBook != null)
+                {
+                    localBook.ImportRoot = itemInfo?.DownloadClientItem?.OutputPath.FullPath ?? localBook.Author?.AudiobookPath ?? localBook.Author?.Path;
+                }
                 if (localBook?.Book != null && localBook.Edition == null)
                 {
                     localBook.Edition = localBook.Book.Editions?.FirstOrDefault(e => e.Monitored)

@@ -41,14 +41,14 @@ namespace Chaptarr.Core.Test.Download
                 });
                 var seedBooks = new BookRepository(database, noop);
                 var seedEditions = new EditionRepository(database, noop);
-                var seedAliases = new ProviderAliasService(new ProviderAliasRepository(database, noop));
+                var seedAliases = new ProviderAliasSeed(database, noop);
                 var pending = new PendingReleaseRepository(database, noop);
                 var targets = new List<Book>();
                 for (var index = 0; index < count; index++)
                 {
                     var book = seedBooks.Insert(new Book { AuthorId = author.Id, Title = "Paper Lanterns", CleanTitle = "paperlanterns", TitleSlug = "target-" + index,
                         Added = DateTime.UtcNow, MediaType = media, HardcoverBookId = "hc:7000", BaseBookId = "hc:7000" });
-                    seedAliases.ReplaceAliases("Book", book.Id, "work", new[] { "hc:7000" });
+                    seedAliases.SeedAliases("Book", book.Id, "work", new[] { "hc:7000" });
                     seedEditions.Insert(new Edition { BookId = book.Id, Title = book.Title, ForeignEditionId = "hc:edition:" + (8100 + index),
                         ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, Format = media == BookMediaType.Audiobook ? "audiobook" : "ebook", Monitored = true });
                     targets.Add(book);
@@ -101,8 +101,8 @@ namespace Chaptarr.Core.Test.Download
                 Assert.Multiple(() =>
                 {
                     Assert.That(reports, Is.Empty); Assert.That(pending.All(), Is.Empty);
-                    Assert.That(readers, Is.EqualTo(7)); Assert.That(scalars, Is.Zero); Assert.That(writes, Is.EqualTo(1)); Assert.That(events, Is.EqualTo(1));
-                    Assert.That(sql.Any(item => item.Text.Contains("\"ProviderAliasIndex\"")), Is.True);
+                    Assert.That(readers, Is.EqualTo(5)); Assert.That(scalars, Is.Zero); Assert.That(writes, Is.EqualTo(1)); Assert.That(events, Is.EqualTo(1));
+                    Assert.That(sql.Any(item => item.Text.Contains("\"ProviderAliasIndex\"")), Is.False, "snapshots hydrate with their owning rows");
                     Assert.That(sql.Any(item => item.Text.Contains("\"Authors\"")), Is.True);
                     Assert.That(sql.Any(item => item.Text.Contains("\"Editions\"")), Is.True);
                 });

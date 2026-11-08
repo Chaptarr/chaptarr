@@ -110,6 +110,7 @@ function SmartNarratorOrder({ initialOrder, onApply, onCancel }) {
           narratorName: 'Alice Reader',
           narratorNames: ['Alice Reader', 'Bob Reader', 'Carol Reader'],
           audioProductionType: 'GraphicAudio',
+          publisher: 'GraphicAudio',
           isGraphicAudio: true
         }
       })

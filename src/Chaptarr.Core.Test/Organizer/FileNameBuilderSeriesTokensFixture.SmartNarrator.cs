@@ -15,6 +15,41 @@ namespace Chaptarr.Core.Test.Organizer
 {
     public partial class FileNameBuilderSeriesTokensFixture
     {
+        [TestCase("Full Cast", "Full Cast")]
+        [TestCase("diverse Sprecher", "diverse Sprecher + Bob Reader")]
+        [TestCase("varios narradores", "varios narradores + Bob Reader")]
+        [TestCase("narratori vari", "narratori vari + Bob Reader")]
+        [TestCase("GraphicAudio", "GraphicAudio + Bob Reader")]
+        [TestCase("Full Castle", "Full Castle + Bob Reader")]
+        [TestCase("Alice Reader", "Alice Reader + Bob Reader")]
+        public void two_narrator_credits_keep_the_released_combined_name(string credit, string expected)
+        {
+            var author = new Author { Name = "Author" };
+            var edition = new Edition { Title = "Title", Book = new Book { Author = author },
+                Narrator = credit, NarratorNames = new List<string> { credit, "Bob Reader" } };
+            var file = new BookFile { Path = "/library/Title.m4b", Quality = new QualityModel(Quality.M4B) };
+            var config = NamingConfig.Default;
+            config.RenameBooks = true;
+            config.StandardBookFormat = "{Book Title} - {Narrator}";
+            Assert.That(CreateBuilder().BuildBookFileName(author, edition, file, config, new List<CustomFormat>()),
+                Is.EqualTo("Title - " + expected));
+        }
+
+        [TestCase(null, "Title - GraphicAudio")]
+        [TestCase(false, "Title - Alice Reader")]
+        [TestCase(true, "Title - GraphicAudio")]
+        public void recording_override_drives_smart_narrator_without_a_hidden_text_sentinel(bool? correction, string expected)
+        {
+            var author = new Author { Name = "Author" };
+            var edition = new Edition { Title = "Title", Book = new Book { Author = author },
+                Publisher = "GraphicAudio", IsGraphicAudio = true, AudioProductionType = "GraphicAudio", NarratorNames = new List<string> { "Alice Reader" } };
+            var file = new BookFile { Path = "/library/Title.m4b", Quality = new QualityModel(Quality.M4B), AudioProductionOverride = correction };
+            var config = NamingConfig.Default;
+            config.RenameBooks = true;
+            config.StandardBookFormat = "{Book Title}{ - Smart Narrator:AudioProductionType,FirstNarrator}";
+            Assert.That(CreateBuilder().BuildBookFileName(author, edition, file, config, new List<CustomFormat>()), Is.EqualTo(expected));
+        }
+
         [TestCase(null, "GraphicAudio", 3, "GraphicAudio")]
         [TestCase(null, "Booktrack", 1, "Booktrack")]
         [TestCase(null, "Dramatized", 1, "Dramatized")]
@@ -24,13 +59,15 @@ namespace Chaptarr.Core.Test.Organizer
         [TestCase(null, null, 1, "Alice Reader")]
         [TestCase(null, null, 0, "")]
         [TestCase("Narrators,AudioProductionType", "GraphicAudio", 2, "Alice Reader, Bob Reader")]
+        [TestCase("Narrators, AudioProductionType", "GraphicAudio", 2, "Alice Reader, Bob Reader")]
         [TestCase("Narrators,AudioProductionType", "Booktrack", 0, "Booktrack")]
         [TestCase("FullCast,Narrators", null, 1, "Alice Reader")]
         [TestCase("FullCast", null, 2, "")]
         [TestCase("FullCast", null, 3, "Full Cast")]
         [TestCase("NarratorInitials,Narrators", null, 1, "AR")]
         [TestCase("AudioProductionType,FirstNarrator", "GraphicAudio", 3, "GraphicAudio")]
-        [TestCase("AudioProductionType,FirstNarrator", null, 3, "Alice Reader")]
+        // Three credited narrators display Full Cast; saved fallback order still applies.
+        [TestCase("AudioProductionType,FirstNarrator", null, 3, "Full Cast")]
         [TestCase("AudioProductionType,FirstNarrator", null, 2, "Alice Reader")]
         [TestCase("AudioProductionType,FirstNarrator", null, 0, "")]
         [TestCase("FirstNarrator,AudioProductionType", "Booktrack", 3, "Alice Reader")]
@@ -42,7 +79,7 @@ namespace Chaptarr.Core.Test.Organizer
             var edition = new Edition
             {
                 Title = "Title", Book = new Book { Author = author },
-                NarratorNames = names, AudioProductionType = production
+                NarratorNames = names, AudioProductionType = production, Publisher = production == "GraphicAudio" ? production : null
             };
             var file = new BookFile { Path = "/downloads/source.m4b", Quality = new QualityModel(Quality.M4B) };
             var config = NamingConfig.Default;
@@ -55,7 +92,7 @@ namespace Chaptarr.Core.Test.Organizer
             var preview = controller.Preview(new PreviewRequest
             {
                 Pattern = config.StandardBookFormat,
-                Sample = new SampleContext { BookTitle = "Title", NarratorName = "", NarratorNames = names, AudioProductionType = production }
+                Sample = new SampleContext { BookTitle = "Title", NarratorName = "", NarratorNames = names, AudioProductionType = production, Publisher = edition.Publisher }
             });
             Assert.That(JsonSerializer.SerializeToElement(preview).GetProperty("path").GetString(), Is.EqualTo(expectedName));
             Assert.That(edition.NarratorNames, Is.EqualTo(originalNames));
@@ -91,6 +128,8 @@ namespace Chaptarr.Core.Test.Organizer
         [TestCase("Narrators,Narrators")]
         [TestCase("SmartNarrator")]
         [TestCase("Narrators,")]
+        [TestCase("Narrators, ")]
+        [TestCase("Narrators, Narrators")]
         [TestCase("")]
         [TestCase("Narrators|FullCast")]
         public void invalid_smart_order_is_rejected_by_preview_and_naming_save(string order)
@@ -103,7 +142,7 @@ namespace Chaptarr.Core.Test.Organizer
                 var patternService = new NamingPatternService(new PatternCompiler(), builder);
                 Assert.That(patternService.ValidatePattern(config.StandardBookFormat).IsValid, Is.False, token);
                 var namingService = new StubNamingConfigService();
-                var controller = new NamingConfigController(namingService, new FileNameSampleService(builder), new FileNameValidationService(), builder);
+                var controller = new NamingConfigController(namingService, new FileNameSampleService(builder), new FileNameValidationService(new FileNameSampleService(builder)), builder);
                 Assert.Throws<FluentValidation.ValidationException>(() => controller.UpdateNamingConfig(config.ToResource()));
                 Assert.That(namingService.SaveCount, Is.Zero);
             }
@@ -120,7 +159,7 @@ namespace Chaptarr.Core.Test.Organizer
         public void smart_order_controls_production_decoration_without_changing_legacy_templates(string media, string pattern, string expected)
         {
             var author = new Author { Name = "Author" };
-            var edition = new Edition { Title = "Title", Book = new Book { Author = author }, Narrator = "Alice Reader" };
+            var edition = new Edition { Title = "Title", Book = new Book { Author = author }, Narrator = "Alice Reader", Publisher = "GraphicAudio" };
             var file = new BookFile { Path = "/downloads/source.m4b", MediaType = media, IsGraphicAudio = true, Quality = new QualityModel(media == "ebook" ? Quality.EPUB : Quality.M4B) };
             var config = NamingConfig.Default;
             config.RenameBooks = config.EbookRenameBooks = true;
@@ -150,7 +189,8 @@ namespace Chaptarr.Core.Test.Organizer
             };
 
             Assert.That(service.PreviewPattern("{Book Title}{ - " + token.Trim('{', '}') + "}", sampleContext: sample).Path,
-                Is.EqualTo("Book Title - Emily Rankin"));
+                // ProductionType-first ordering uses the three-reader Full Cast label.
+                Is.EqualTo(token.Contains("AudioProductionType") ? "Book Title - Full Cast" : "Book Title - Emily Rankin"));
             sample.NarratorNames.Clear();
             Assert.That(service.PreviewPattern("{Book Title}{ - " + token.Trim('{', '}') + "}", sampleContext: sample).Path,
                 Is.EqualTo("Book Title - David de Vries"));

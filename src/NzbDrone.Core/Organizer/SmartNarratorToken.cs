@@ -27,7 +27,7 @@ namespace NzbDrone.Core.Organizer
 
         public static string[] ParseOrder(string order)
         {
-            var choices = (order ?? DefaultOrder).Split(',');
+            var choices = (order ?? DefaultOrder).Split(',').Select(choice => choice.Trim()).ToArray();
             if (choices.Any(choice => !Choices.ContainsKey(choice)) || choices.Distinct(StringComparer.OrdinalIgnoreCase).Count() != choices.Length)
             {
                 throw new NamingFormatException("Smart Narrator requires an ordered list of distinct narrator or production tokens.");

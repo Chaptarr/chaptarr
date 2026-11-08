@@ -7,6 +7,8 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 {
     public class CustomFormatAllowedbyProfileSpecification : IDecisionEngineSpecification
     {
+        internal const string RejectionCategory = "CustomFormat";
+
         public SpecificationPriority Priority => SpecificationPriority.Default;
         public RejectionType Type => RejectionType.Permanent;
 
@@ -23,7 +25,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             if (score < minScore)
             {
-                return Decision.Reject("Custom Formats {0} have score {1} below Author profile minimum {2}", subject.CustomFormats.ConcatToString(), score, minScore);
+                return Decision.RejectHardFilter("Custom Formats {0} have score {1} below Author profile minimum {2}", RejectionCategory, subject.CustomFormats.ConcatToString(), score, minScore);
             }
 
             return Decision.Accept();

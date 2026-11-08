@@ -264,7 +264,7 @@ namespace Chaptarr.Core.Test.Download
                     return (Action)(() => mutations.Add("cleanup"));
                 });
                 var failures = Proxy<IFailedDownloadService>((method, args) => { mutations.Add("blocklist"); return null; });
-                var controller = new QueueController(Resolver(history), null, queue, pending, profiles, tracking,
+                var controller = new QueueController(global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<global::NzbDrone.Core.Books.ISeriesBookLinkService>((_, _) => throw new global::System.InvalidOperationException("Series batch loading was not expected in this fixture")), Resolver(history), null, queue, pending, profiles, tracking,
                     failures, ignores, Proxy<IProvideDownloadClient>((method, args) => client), null, null, conversions);
 
                 var error = Assert.Throws<Chaptarr.Http.REST.BadRequestException>(() =>

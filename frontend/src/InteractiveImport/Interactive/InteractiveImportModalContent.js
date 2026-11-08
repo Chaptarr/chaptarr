@@ -2,6 +2,7 @@ import _ from 'lodash';
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
+import AudioProductionSelectInput from 'Components/Form/AudioProductionSelectInput';
 import FormInputGroup from 'Components/Form/FormInputGroup';
 import SelectInput from 'Components/Form/SelectInput';
 import Icon from 'Components/Icon';
@@ -27,6 +28,7 @@ import importModeOptions from 'InteractiveImport/importModeOptions';
 import SelectIndexerFlagsModal from 'InteractiveImport/IndexerFlags/SelectIndexerFlagsModal';
 import SelectQualityModal from 'InteractiveImport/Quality/SelectQualityModal';
 import SelectReleaseGroupModal from 'InteractiveImport/ReleaseGroup/SelectReleaseGroupModal';
+import { getMediaTypeFromExtension } from 'Utilities/MediaFile/getMediaTypeFromExtension';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import getRemovedItems from 'Utilities/Object/getRemovedItems';
 import translate from 'Utilities/String/translate';
@@ -305,6 +307,7 @@ class InteractiveImportModalContent extends Component {
       pathFallbackSaveError,
       onSortPress,
       onPathFallbackChange,
+      onRetrySettings,
       onModalClose
     } = this.props;
 
@@ -348,7 +351,7 @@ class InteractiveImportModalContent extends Component {
     const bookMatchingStrictness = matchingSettings.bookMatchingStrictness || { value: 'balanced' };
     const usePathAsTagsFallback = matchingSettings.usePathAsTagsFallback || { value: true };
     const isStrictMatching = bookMatchingStrictness.value === 'strict';
-    const isPathFallbackBusy = mediaManagementSettings.isFetching || mediaManagementSettings.isSaving;
+    const isPathFallbackBusy = !mediaManagementSettings.isPopulated || !!mediaManagementSettings.error || mediaManagementSettings.isFetching || mediaManagementSettings.isSaving;
 
     const bulkSelectOptions = [
       { key: SELECT, value: translate('SelectDropdown'), disabled: true },
@@ -379,6 +382,12 @@ class InteractiveImportModalContent extends Component {
                 {getErrorMessage(pathFallbackSaveError, translate('UnableToSaveMediaManagementSettings'))}
               </Alert>
           }
+          {mediaManagementSettings.error && (
+            <Alert kind={kinds.WARNING}>
+              {translate('UnableToLoadMediaManagementSettings')}
+              <Button onPress={onRetrySettings}>{translate('Retry')}</Button>
+            </Alert>
+          )}
           <div className={styles.filterContainer}>
             <div className={styles.filterMenus}>
               {
@@ -505,6 +514,7 @@ class InteractiveImportModalContent extends Component {
                           columns={columns}
                           onSelectedChange={this.onSelectedChange}
                           onValidRowChange={this.onValidRowChange}
+                          onAudioProductionChange={(value) => this.props.updateInteractiveImportItem({ id: item.id, audioProductionOverride: value, audioProductionOverrideChanged: true })}
                         />
                       );
                     })
@@ -544,6 +554,14 @@ class InteractiveImportModalContent extends Component {
               />
             </div>
 
+            {items.some((item) => getMediaTypeFromExtension(item.path) === 'audiobook') &&
+              <AudioProductionSelectInput
+                bulk={true}
+                isDisabled={!selectedIds.length}
+                onChange={({ value }) => items.filter((item) => selectedIds.includes(item.id) && getMediaTypeFromExtension(item.path) === 'audiobook')
+                  .forEach((item) => this.props.updateInteractiveImportItem({ id: item.id, audioProductionOverride: value, audioProductionOverrideChanged: true }))}
+              />
+            }
             <SelectInput
               className={styles.bulkSelect}
               name="select"
@@ -656,6 +674,7 @@ InteractiveImportModalContent.propTypes = {
   onReplaceExistingFilesChange: PropTypes.func.isRequired,
   onImportModeChange: PropTypes.func.isRequired,
   onPathFallbackChange: PropTypes.func.isRequired,
+  onRetrySettings: PropTypes.func.isRequired,
   onImportSelectedPress: PropTypes.func.isRequired,
   saveInteractiveImportItem: PropTypes.func.isRequired,
   updateInteractiveImportItem: PropTypes.func.isRequired,

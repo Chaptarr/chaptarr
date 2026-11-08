@@ -42,7 +42,7 @@ namespace NzbDrone.Core.Books
             _logger = logger;
         }
 
-        private bool MoveSingleAuthor(Author author, string sourcePath, string destinationPath, string mediaType = null, int? index = null, int? total = null)
+        private bool MoveSingleAuthor(Author author, string sourcePath, string destinationPath, string mediaType = null, int? index = null, int? total = null, MoveAuthorCommand change = null)
         {
             if (!_diskProvider.FolderExists(sourcePath))
             {
@@ -70,7 +70,7 @@ namespace NzbDrone.Core.Books
                 _rootFolderWatchingService.ReportFileSystemChangeBeginning(sourcePath, destinationPath);
 
                 var movedPaths = new HashSet<string>(PathEqualityComparer.Instance);
-                _diskTransferService.TransferFolder(sourcePath, destinationPath, TransferMode.Move, false, path => movedPaths.Add(path));
+                _diskTransferService.TransferFolder(sourcePath, destinationPath, TransferMode.Move, false, path => movedPaths.Add(path), overwrite: false);
 
                 _logger.ProgressInfo("{0} moved successfully to {1}", author.Name, destinationPath);
 
@@ -81,12 +81,12 @@ namespace NzbDrone.Core.Books
             {
                 _logger.Error(ex, "Unable to move author from '{0}' to '{1}'. Try moving files manually", sourcePath, destinationPath);
 
-                RevertPathIfNeeded(author.Id, sourcePath, destinationPath, mediaType);
+                RevertPathIfNeeded(author.Id, sourcePath, destinationPath, mediaType, change);
                 return false;
             }
         }
 
-        private void RevertPathIfNeeded(int authorId, string sourcePath, string destinationPath, string mediaType)
+        private void RevertPathIfNeeded(int authorId, string sourcePath, string destinationPath, string mediaType, MoveAuthorCommand change)
         {
             var author = _authorService.GetAuthor(authorId);
             var updated = false;
@@ -100,19 +100,21 @@ namespace NzbDrone.Core.Books
                 updated = true;
             }
 
-            if (string.Equals(mediaType, "ebook", StringComparison.OrdinalIgnoreCase))
+            if (change?.SharedFolder == true || string.Equals(mediaType, "ebook", StringComparison.OrdinalIgnoreCase))
             {
                 if (!string.IsNullOrWhiteSpace(author.EbookPath) && author.EbookPath.PathEquals(destinationPath))
                 {
                     author.EbookPath = sourcePath;
+                    if (change?.SourceRootFolder != null) author.EbookRootFolderPath = change.SourceRootFolder;
                     updated = true;
                 }
             }
-            else if (string.Equals(mediaType, "audiobook", StringComparison.OrdinalIgnoreCase))
+            if (change?.SharedFolder == true || string.Equals(mediaType, "audiobook", StringComparison.OrdinalIgnoreCase))
             {
                 if (!string.IsNullOrWhiteSpace(author.AudiobookPath) && author.AudiobookPath.PathEquals(destinationPath))
                 {
                     author.AudiobookPath = sourcePath;
+                    if (change?.SourceRootFolder != null) author.AudiobookRootFolderPath = change.SourceRootFolder;
                     updated = true;
                 }
             }
@@ -126,7 +128,10 @@ namespace NzbDrone.Core.Books
         public void Execute(MoveAuthorCommand message)
         {
             var author = _authorService.GetAuthor(message.AuthorId);
-            MoveSingleAuthor(author, message.SourcePath, message.DestinationPath);
+            if (MoveSingleAuthor(author, message.SourcePath, message.DestinationPath, message.MediaType, change: message))
+            {
+                UpdateAuthorPathsAfterMove(author, message.SourcePath, message.DestinationPath, message.MediaType);
+            }
         }
 
         public void Execute(BulkMoveAuthorCommand message)
@@ -162,7 +167,8 @@ namespace NzbDrone.Core.Books
 
             var updated = false;
 
-            if (string.Equals(mediaType, "ebook", StringComparison.OrdinalIgnoreCase))
+            var shared = author.AudiobookPath.IsNotNullOrWhiteSpace() && author.AudiobookPath.PathEquals(author.EbookPath);
+            if (shared || string.Equals(mediaType, "ebook", StringComparison.OrdinalIgnoreCase))
             {
                 if (!destinationPath.PathEquals(author.EbookPath))
                 {
@@ -170,7 +176,7 @@ namespace NzbDrone.Core.Books
                     updated = true;
                 }
             }
-            else
+            if (shared || !string.Equals(mediaType, "ebook", StringComparison.OrdinalIgnoreCase))
             {
                 if (!destinationPath.PathEquals(author.AudiobookPath))
                 {

@@ -60,6 +60,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
         private readonly IReleaseProfileService _releaseProfileService;
         private readonly IQualityDefinitionService _qualityDefinitionService;
         private readonly MediaManagementPathValidator _mediaPaths;
+        private readonly IFilenameValidationService _filenameValidation;
 
         public SettingsBackupService(IAppFolderInfo appFolderInfo,
                                      IDiskProvider diskProvider,
@@ -75,10 +76,11 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                                      IProxyService proxyService,
                                      IRemotePathMappingService remotePathMappingService,
                                      IConfigFileProvider configFileProvider,
-                                     IDelayProfileService delayProfileService = null,
-                                     IReleaseProfileService releaseProfileService = null,
-                                     IQualityDefinitionService qualityDefinitionService = null,
-                                     MediaManagementPathValidator mediaPaths = null)
+                                     IDelayProfileService delayProfileService,
+                                     IReleaseProfileService releaseProfileService,
+                                     IQualityDefinitionService qualityDefinitionService,
+                                     MediaManagementPathValidator mediaPaths,
+                                     IFilenameValidationService filenameValidation)
         {
             _appFolderInfo = appFolderInfo;
             _diskProvider = diskProvider;
@@ -98,6 +100,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             _releaseProfileService = releaseProfileService;
             _qualityDefinitionService = qualityDefinitionService;
             _mediaPaths = mediaPaths;
+            _filenameValidation = filenameValidation;
         }
 
         public List<SettingsBackupLocation> GetLocations()
@@ -123,7 +126,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                     Writable = writable,
                     Warning = warning
                 };
-            }).ToList();
+            }).Where(location => location.Exists).ToList();
         }
 
         public List<SettingsBackupFileInfo> GetFiles(string rootFolder)
@@ -252,15 +255,25 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             }
 
             var result = new SettingsBackupRestoreResult();
-            var existingProviders = ValidateRestoreProviderNames(package, categoriesToApply, request.Mode);
+            var existingProviders = ValidateRestoreProviderNames(package, categoriesToApply, request.Mode, result);
             if (request.Mode == SettingsBackupRestoreMode.Merge)
             {
                 MergeGeneralSettings(package, categoriesToApply);
             }
-            result.Warnings.AddRange(ValidateRestore(package, categoriesToApply, _diskProvider, _mediaPaths,
+            result.Warnings.AddRange(ValidateRestore(package, categoriesToApply, _filenameValidation,
                 definition => ApplyRestoreMode(definition, existingProviders.SingleOrDefault(existing =>
-                    existing.GetType() == definition.GetType() && existing.Name == definition.Name && existing.Implementation == definition.Implementation), request.Mode)));
+                    existing.GetType() == definition.GetType() && ProviderNameComparer.Equals(existing.Name, definition.Name) && existing.Implementation == definition.Implementation), request.Mode)));
+            PrepareRestorePaths(package, categoriesToApply, result);
             AddLegacySectionWarnings(package, categoriesToApply, result);
+            if (request.Mode == SettingsBackupRestoreMode.Overwrite)
+            {
+                PreviewOverwriteRemovals(package, categoriesToApply, existingProviders, result);
+            }
+            if (categoriesToApply.Contains(SettingsBackupCategory.Profiles) && request.Mode == SettingsBackupRestoreMode.Overwrite)
+            {
+                result.Warnings.Add("Quality and metadata profiles are merged by name. Overwrite replaces custom formats, delay and release profiles; existing custom-format scores are removed. Quality size limits are updated.");
+            }
+            if (request.Preview) return result;
 
             var steps = new List<(string Category, string Name, Action Apply)>();
             void Add(SettingsBackupCategory category, string name, Action apply)
@@ -301,17 +314,13 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 Add(category, "download client references", () => downloadClientIdMap = BuildDownloadClientIdMapFromExisting(package));
             }
             Add(SettingsBackupCategory.Indexers, "indexer definitions", () => RestoreIndexers(package, tagIdMap, downloadClientIdMap, proxyIdMap,
-                request.Mode, result, categoriesToApply.Contains(SettingsBackupCategory.Profiles) && package.ReleaseProfiles != null && request.Mode == SettingsBackupRestoreMode.Overwrite));
+                request.Mode, result));
             Add(SettingsBackupCategory.Profiles, "delay profiles", () => RestoreDelayProfiles(package, tagIdMap, request.Mode, result));
             Add(SettingsBackupCategory.Profiles, "release profiles", () => RestoreReleaseProfiles(package, tagIdMap, request.Mode, result));
             Add(SettingsBackupCategory.Profiles, "quality sizes", () => RestoreQualitySizes(package, result, request.Mode));
             Add(SettingsBackupCategory.Connections, "connections", () => RestoreConnections(package, tagIdMap, request.Mode, result));
             Add(SettingsBackupCategory.RemotePathMappings, "remote path mappings", () => RestoreRemotePathMappings(package, downloadClientIdMap, request.Mode, result));
 
-            if (categoriesToApply.Contains(SettingsBackupCategory.Profiles) && request.Mode == SettingsBackupRestoreMode.Overwrite)
-            {
-                result.Warnings.Add("Quality and metadata profiles are merged by name. Overwrite replaces custom formats, delay and release profiles; existing custom-format scores are removed. Quality size limits are updated.");
-            }
             Logger.Info("Settings restore started: {0}, mode {1}", string.Join(", ", categoriesToApply.OrderBy(category => category).Select(CategoryName)), request.Mode);
             for (var index = 0; index < steps.Count; index++)
             {
@@ -347,12 +356,126 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 }
             }
             result.Applied = result.Applied.Concat(steps.Select(step => step.Category)).Distinct().ToList();
+            result.Warnings = result.Warnings.Distinct().ToList();
 
             Logger.Info("Settings restore completed: {0} categories, {1} warnings, {2} bytes in {3} ms", categoriesToApply.Count, result.Warnings.Count, fileSize, timer.ElapsedMilliseconds);
             return result;
         }
 
-        private List<ProviderDefinition> ValidateRestoreProviderNames(SettingsBackupPackage package, HashSet<SettingsBackupCategory> categories, SettingsBackupRestoreMode mode)
+        private void PreviewOverwriteRemovals(SettingsBackupPackage package, HashSet<SettingsBackupCategory> categories,
+            List<ProviderDefinition> existingProviders, SettingsBackupRestoreResult result)
+        {
+            var removedClients = GetRemovedClients(existingProviders.OfType<DownloadClientDefinition>(), package).ToList();
+            foreach (var client in removedClients) result.WouldRemove.Add($"Download client: {client.Name}");
+            if (removedClients.Count > 0 || categories.Contains(SettingsBackupCategory.RemotePathMappings))
+            {
+                var mappings = _remotePathMappingService.All();
+                var clientIds = removedClients.Select(client => client.Id).ToHashSet();
+                var removedMappings = mappings.Where(mapping => clientIds.Contains(mapping.DownloadClientId));
+                if (categories.Contains(SettingsBackupCategory.RemotePathMappings))
+                    removedMappings = removedMappings.Concat(GetRemovedMappings(mappings, result));
+                foreach (var mapping in removedMappings.DistinctBy(mapping => mapping.Id))
+                    result.WouldRemove.Add($"Remote path mapping: {mapping.Host}:{mapping.RemotePath} → {mapping.LocalPath}");
+            }
+            foreach (var indexer in GetRemovedIndexers(existingProviders.OfType<IndexerDefinition>(), package))
+                result.WouldRemove.Add($"Indexer: {indexer.Name}");
+            foreach (var connection in GetRemovedConnections(existingProviders.OfType<NotificationDefinition>(), package))
+                result.WouldRemove.Add($"Connection: {connection.Name}");
+            if (categories.Contains(SettingsBackupCategory.Proxies))
+                foreach (var proxy in GetRemovedProxies(_proxyService.All(), package))
+                    result.WouldRemove.Add($"Proxy: {proxy.Name}");
+            if (!categories.Contains(SettingsBackupCategory.Profiles)) return;
+            if (package.CustomFormats?.Count > 0)
+                foreach (var format in _customFormatService.All()) result.WouldRemove.Add($"Custom format: {format.Name}");
+
+            if (package.DelayProfiles == null && package.ReleaseProfiles == null) return;
+
+            // Preview allocates no real tags. Reproduce TagService.Add's exact lookup/lowercase-insert
+            // behavior so duplicate backup labels map to the same identity they will get on restore.
+            var currentTags = _tagService.All();
+            var labelsById = currentTags.ToDictionary(tag => tag.Id, tag => tag.Label);
+            string TagsLabel(IEnumerable<int> ids) => string.Join(", ", (ids ?? Enumerable.Empty<int>()).OrderBy(id => id)
+                .Select(id => labelsById.TryGetValue(id, out var label) ? label : $"#{id}"));
+            var tagsByLabel = package.Tags?.Count > 0
+                ? currentTags.ToDictionary(tag => tag.Label, tag => tag.Id, StringComparer.Ordinal)
+                : new Dictionary<string, int>(StringComparer.Ordinal);
+            var nextTagId = tagsByLabel.Values.DefaultIfEmpty(0).Max();
+            var tagIdMap = new Dictionary<int, int>();
+            foreach (var tag in package.Tags ?? new())
+            {
+                if (tag?.Label.IsNullOrWhiteSpace() != false) continue;
+                if (!tagsByLabel.TryGetValue(tag.Label, out var id))
+                    tagsByLabel[tag.Label.ToLowerInvariant()] = id = ++nextTagId;
+                tagIdMap[tag.Id] = id;
+            }
+            if (package.DelayProfiles != null && ReplacesAllDelayProfiles(package, PrepareDelayProfiles(package, tagIdMap, result)))
+                foreach (var profile in _delayProfileService.All().Where(profile => profile.Id != 1))
+                    result.WouldRemove.Add($"Delay profile: {TagsLabel(profile.Tags)} (#{profile.Id})");
+            if (package.ReleaseProfiles == null) return;
+
+            var indexers = _indexerFactory.All();
+            if (categories.Contains(SettingsBackupCategory.Indexers))
+            {
+                var removed = GetRemovedIndexers(indexers, package).Select(indexer => indexer.Id).ToHashSet();
+                indexers = indexers.Where(indexer => !removed.Contains(indexer.Id)).ToList();
+                indexers.AddRange((package.Indexers ?? new()).Select(saved => FromBackup(saved, null, null, null)).Where(indexer => indexer != null));
+            }
+            var indexerIds = indexers.GroupBy(indexer => indexer.Name, ProviderNameComparer)
+                .ToDictionary(group => group.Key, group => group.Min(indexer => indexer.Id), ProviderNameComparer);
+            if (PrepareReleaseProfiles(package, tagIdMap, indexerIds, result).Count == package.ReleaseProfiles.Count)
+            {
+                foreach (var profile in _releaseProfileService.All())
+                {
+                    var labels = new[] { TagsLabel(profile.Tags) }
+                        .Concat((profile.Required ?? new List<string>()).Select(term => "+" + term))
+                        .Concat((profile.Ignored ?? new List<string>()).Select(term => "−" + term));
+                    result.WouldRemove.Add($"Release profile: {string.Join(" / ", labels.Where(label => !string.IsNullOrWhiteSpace(label)))} (#{profile.Id})");
+                }
+            }
+        }
+
+        private static IEnumerable<RemotePathMapping> GetRemovedMappings(IEnumerable<RemotePathMapping> current, SettingsBackupRestoreResult result) =>
+            current.Where(mapping => !result.SkippedRemotePathMappings.Any(saved =>
+                string.Equals(saved.Host, mapping.Host, StringComparison.OrdinalIgnoreCase) && saved.RemotePath == mapping.RemotePath));
+
+        private static IEnumerable<ProxyDefinition> GetRemovedProxies(IEnumerable<ProxyDefinition> current, SettingsBackupPackage package)
+        {
+            var names = (package.Proxies ?? new()).Select(proxy => proxy.Name?.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return names.Count == 0 ? Enumerable.Empty<ProxyDefinition>() : current.Where(proxy => !names.Contains(proxy.Name?.Trim()));
+        }
+
+        private void PrepareRestorePaths(SettingsBackupPackage package, HashSet<SettingsBackupCategory> categories, SettingsBackupRestoreResult result)
+        {
+            if (categories.Contains(SettingsBackupCategory.MediaManagement) && package.MediaManagement != null)
+            {
+                var path = package.MediaManagement.RecycleBin;
+                var errors = _mediaPaths.Validate(new MediaManagementPathSettings
+                {
+                    RecycleBin = ConfigValueValidation.HasChanged(path, _configService.RecycleBin) ? path : null,
+                    ChmodFolder = package.MediaManagement.ChmodFolder
+                }).Errors;
+                if (errors.Any(error => error.PropertyName != nameof(MediaManagementPathSettings.RecycleBin)))
+                    throw new NzbDroneClientException(HttpStatusCode.BadRequest, "No settings were restored. " + string.Join("; ", errors.Select(error => $"{error.PropertyName}: {error.ErrorMessage}")));
+                if (errors.Count > 0)
+                {
+                    result.Warnings.Add($"Kept your Recycling Bin setting. Cannot use '{path}': {string.Join("; ", errors.Select(error => error.ErrorMessage))}");
+                    package.MediaManagement.RecycleBin = _configService.RecycleBin;
+                }
+            }
+            if (categories.Contains(SettingsBackupCategory.RemotePathMappings))
+            {
+                foreach (var mapping in package.RemotePathMappings)
+                {
+                    var issue = !_diskProvider.FolderExists(mapping.LocalPath) ? "folder doesn't exist here" :
+                        !_diskProvider.FolderWritable(mapping.LocalPath) ? "folder isn't writable here" : null;
+                    if (issue == null) continue;
+                    result.SkippedRemotePathMappings.Add(mapping);
+                    result.Warnings.Add($"Skipped remote path mapping {mapping.Host}:{mapping.RemotePath} → {mapping.LocalPath}: {issue}.");
+                }
+            }
+        }
+
+        private List<ProviderDefinition> ValidateRestoreProviderNames(SettingsBackupPackage package, HashSet<SettingsBackupCategory> categories, SettingsBackupRestoreMode mode, SettingsBackupRestoreResult result)
         {
             void Check(IEnumerable<string> names, string source, StringComparer comparer)
             {
@@ -360,7 +483,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 if (duplicates.Count > 0)
                 {
                     throw new NzbDroneClientException(HttpStatusCode.BadRequest,
-                        $"No settings were restored. {source} contain duplicate names: {string.Join(", ", duplicates)}.");
+                        $"{source} contain duplicate names: {string.Join(", ", duplicates)}.");
                 }
             }
 
@@ -377,27 +500,37 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                     foreach (var item in names)
                     {
                         var collision = current.SingleOrDefault(value => ProviderNameComparer.Equals(value.Name, item.Name));
-                        if (collision != null && (collision.Implementation != item.Implementation || collision.Name != item.Name))
+                        if (collision != null && collision.Implementation != item.Implementation)
                         {
                             throw new NzbDroneClientException(HttpStatusCode.BadRequest,
-                                $"No settings were restored. {section} name '{item.Name}' conflicts with existing '{collision.Name}' ({collision.Implementation}). Rename one connection before merging.");
+                                $"{section} name '{item.Name}' conflicts with existing '{collision.Name}' ({collision.Implementation}). Rename one connection before merging.");
                         }
                     }
                 }
                 providers.AddRange(current);
             }
-            if (categories.Contains(SettingsBackupCategory.DownloadClients))
-                CheckProviders((package.DownloadClients ?? new()).Select(item => (item.Name, item.Implementation)), _downloadClientFactory.All(), "download clients");
-            if (categories.Contains(SettingsBackupCategory.Indexers))
-                CheckProviders((package.Indexers ?? new()).Select(item => (item.Name, item.Implementation)), _indexerFactory.All(), "indexers");
-            if (categories.Contains(SettingsBackupCategory.Connections))
-                CheckProviders((package.Connections ?? new()).Select(item => (item.Name, item.Implementation)), _notificationFactory.All(), "connections");
-            if (categories.Contains(SettingsBackupCategory.Proxies))
+            void CheckCategory(SettingsBackupCategory category, Action check)
+            {
+                if (!categories.Contains(category)) return;
+                try { check(); }
+                catch (NzbDroneClientException ex) when (ex.StatusCode == HttpStatusCode.BadRequest)
+                {
+                    categories.Remove(category);
+                    result.Warnings.Add($"Skipped {CategoryName(category)}: {ex.Message}");
+                }
+            }
+            CheckCategory(SettingsBackupCategory.DownloadClients, () =>
+                CheckProviders((package.DownloadClients ?? new()).Select(item => (item.Name, item.Implementation)), _downloadClientFactory.All(), "download clients"));
+            CheckCategory(SettingsBackupCategory.Indexers, () =>
+                CheckProviders((package.Indexers ?? new()).Select(item => (item.Name, item.Implementation)), _indexerFactory.All(), "indexers"));
+            CheckCategory(SettingsBackupCategory.Connections, () =>
+                CheckProviders((package.Connections ?? new()).Select(item => (item.Name, item.Implementation)), _notificationFactory.All(), "connections"));
+            CheckCategory(SettingsBackupCategory.Proxies, () =>
             {
                 var names = (package.Proxies ?? new()).Select(proxy => proxy.Name?.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 Check((package.Proxies ?? new()).Select(proxy => proxy.Name?.Trim()), "Backup proxies", StringComparer.OrdinalIgnoreCase);
                 Check(_proxyService.All().Where(proxy => names.Contains(proxy.Name?.Trim())).Select(proxy => proxy.Name?.Trim()), "Existing proxies", StringComparer.OrdinalIgnoreCase);
-            }
+            });
             return providers;
         }
 
@@ -469,8 +602,9 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             _ => category.ToString()
         };
 
-        internal static List<string> ValidateRestore(SettingsBackupPackage package, HashSet<SettingsBackupCategory> categories, IDiskProvider diskProvider = null, MediaManagementPathValidator mediaPaths = null, Func<ProviderDefinition, ProviderDefinition> prepareProvider = null)
+        internal static List<string> ValidateRestore(SettingsBackupPackage package, HashSet<SettingsBackupCategory> categories, IFilenameValidationService filenameValidation, Func<ProviderDefinition, ProviderDefinition> prepareProvider = null)
         {
+            ArgumentNullException.ThrowIfNull(filenameValidation);
             var errors = new List<string>();
             var warnings = new List<string>();
             void Check(string section, object settings)
@@ -508,16 +642,9 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             {
                 NormalizeLegacyConversionSettings(package.MediaManagement);
                 Check("Media management", package.MediaManagement);
-                if (package.MediaManagement != null && mediaPaths != null)
-                {
-                    errors.AddRange(mediaPaths.Validate(new MediaManagementPathSettings
-                    {
-                        RecycleBin = package.MediaManagement.RecycleBin, ChmodFolder = package.MediaManagement.ChmodFolder
-                    }).Errors.Select(error => $"Media management.{error.PropertyName}: {error.ErrorMessage}"));
-                }
                 if (package.MediaManagement?.NamingConfig != null)
                 {
-                    errors.AddRange(ConfigValueValidation.ValidateNaming(package.MediaManagement.NamingConfig).Select(error => $"Naming.{error.PropertyName}: {error.ErrorMessage}"));
+                    errors.AddRange(filenameValidation.ValidateNamingConfig(package.MediaManagement.NamingConfig).Select(error => $"Naming.{error.PropertyName}: {error.ErrorMessage}"));
                 }
             }
             if (categories.Contains(SettingsBackupCategory.Indexers))
@@ -590,7 +717,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                         {
                             DownloadClientId = mapping.DownloadClientId, Host = mapping.Host,
                             RemotePath = mapping.RemotePath, LocalPath = mapping.LocalPath
-                        }, diskProvider, checkDuplicates: false);
+                        }, null, requireLocalPathExists: false, checkDuplicates: false);
                     }
                     catch (FluentValidation.ValidationException ex)
                     {
@@ -972,6 +1099,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 ConvertMp3ToM4b = profile.ConvertMp3ToM4b,
                 ConvertToQualityId = profile.ConvertToQualityId,
                 UpgradeAllowed = profile.UpgradeAllowed,
+                ConfirmAutomaticUpgrades = profile.ConfirmAutomaticUpgrades,
                 PreferCustomFormatsOverQuality = profile.ProfileType == ProfileType.Audiobook && profile.PreferCustomFormatsOverQuality,
                 FormatItems = (profile.FormatItems ?? new List<NzbDrone.Core.Profiles.ProfileFormatItem>())
                     .Where(item => item?.Format != null)
@@ -1225,92 +1353,135 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 .ToDictionary(t => t.Name, t => t, StringComparer.OrdinalIgnoreCase);
         }
 
+        private static List<(DelayProfile Profile, HashSet<int> Tags)> PrepareDelayProfiles(
+            SettingsBackupPackage package, Dictionary<int, int> tagIdMap, SettingsBackupRestoreResult result)
+        {
+            var ready = new List<(DelayProfile Profile, HashSet<int> Tags)>();
+            foreach (var saved in package.DelayProfiles.OrderBy(profile => profile.Order))
+            {
+                var tags = saved.Tags.Select(tag => tagIdMap.GetValueOrDefault(tag)).Where(tag => tag > 0).ToHashSet();
+                if (tags.Count != saved.Tags.Count || (saved.Id != 1 && tags.Count == 0))
+                {
+                    result.Warnings.Add($"Skipped delay profile {saved.Id}: one or more tags were not restored.");
+                    continue;
+                }
+                ready.Add((saved, tags));
+            }
+
+            return ready;
+        }
+
+        private static bool ReplacesAllDelayProfiles(SettingsBackupPackage package, List<(DelayProfile Profile, HashSet<int> Tags)> ready) =>
+            ready.Count == package.DelayProfiles.Count && !ready.Any(left =>
+                ready.Any(right => left.Tags.Overlaps(right.Tags) && !left.Tags.SetEquals(right.Tags)));
+
         private void RestoreDelayProfiles(SettingsBackupPackage package, Dictionary<int, int> tagIdMap, SettingsBackupRestoreMode mode, SettingsBackupRestoreResult result)
         {
-            if (package.DelayProfiles != null)
+            if (package.DelayProfiles == null) return;
+            var current = _delayProfileService.All();
+            var ready = PrepareDelayProfiles(package, tagIdMap, result);
+
+            // Backup IDs belong to another installation. Unresolved references cannot identify a safe deletion target.
+            var replaceAll = mode == SettingsBackupRestoreMode.Overwrite && ReplacesAllDelayProfiles(package, ready);
+            if (replaceAll)
             {
-                var current = _delayProfileService.All();
-                if (mode == SettingsBackupRestoreMode.Overwrite)
+                _delayProfileService.Delete(current.Where(profile => profile.Id != 1).Select(profile => profile.Id).ToList());
+                current.RemoveAll(profile => profile.Id != 1);
+            }
+            else if (mode == SettingsBackupRestoreMode.Overwrite)
+            {
+                result.Warnings.Add($"Kept existing delay profiles ({string.Join(", ", current.Select(profile => profile.Id))}): the backup contains unresolved or overlapping tags. Valid profiles update matching entries or are appended; existing priority order is kept.");
+            }
+
+            foreach (var entry in ready)
+            {
+                var saved = entry.Profile;
+                saved.Tags = entry.Tags;
+                var existing = current.FirstOrDefault(profile => profile.Tags.SetEquals(saved.Tags));
+                if (existing == null && current.Any(profile => profile.Tags.Overlaps(saved.Tags)))
                 {
-                    _delayProfileService.Delete(current.Where(profile => profile.Id != 1).Select(profile => profile.Id).ToList());
-                    current.RemoveAll(profile => profile.Id != 1);
+                    var labels = package.Tags.Where(tag => saved.Tags.Contains(tagIdMap.GetValueOrDefault(tag.Id))).Select(tag => tag.Label);
+                    result.Warnings.Add($"Skipped delay profile {saved.Id} for tags {string.Join(", ", labels)}: its tags overlap an existing delay profile.");
+                    continue;
                 }
-                foreach (var saved in package.DelayProfiles.OrderBy(profile => profile.Order))
+                if (existing != null)
                 {
-                    var tags = saved.Tags.Select(tag => tagIdMap.GetValueOrDefault(tag)).Where(tag => tag > 0).ToHashSet();
-                    if (tags.Count != saved.Tags.Count || (saved.Id != 1 && tags.Count == 0))
-                    {
-                        result.Warnings.Add($"Skipped delay profile {saved.Id}: one or more tags were not restored.");
-                        continue;
-                    }
-                    var existing = current.FirstOrDefault(profile => profile.Tags.SetEquals(tags));
-                    if (existing == null && current.Any(profile => profile.Tags.Overlaps(tags)))
-                    {
-                        var labels = package.Tags.Where(tag => saved.Tags.Contains(tag.Id)).Select(tag => tag.Label);
-                        result.Warnings.Add($"Skipped delay profile for tags {string.Join(", ", labels)}: its tags overlap an existing delay profile.");
-                        continue;
-                    }
-                    saved.Tags = tags;
-                    if (existing != null)
-                    {
-                        ApplyRestoreMode(saved, existing, mode);
-                        saved.Id = existing.Id;
-                        _delayProfileService.Update(saved);
-                        current.Remove(existing);
-                        current.Add(saved);
-                    }
-                    else
-                    {
-                        saved.Id = 0;
-                        var restored = _delayProfileService.Add(saved, mode == SettingsBackupRestoreMode.Overwrite ? saved.Order : current.Where(profile => profile.Id != 1).Select(profile => profile.Order).DefaultIfEmpty(-1).Max() + 1);
-                        current.Add(restored);
-                    }
+                    ApplyRestoreMode(saved, existing, mode);
+                    saved.Id = existing.Id;
+                    if (!replaceAll) saved.Order = existing.Order;
+                    _delayProfileService.Update(saved);
+                    current.Remove(existing);
+                    current.Add(saved);
                 }
-                if (mode == SettingsBackupRestoreMode.Merge && package.DelayProfiles.Count > 0)
+                else
                 {
-                    result.Applied.Add("Delay profiles: existing priority order kept; new profiles appended in backup order");
+                    saved.Id = 0;
+                    var restored = _delayProfileService.Add(saved, replaceAll ? saved.Order : current.Where(profile => profile.Id != 1).Select(profile => profile.Order).DefaultIfEmpty(-1).Max() + 1);
+                    current.Add(restored);
                 }
             }
+            if (mode == SettingsBackupRestoreMode.Merge && package.DelayProfiles.Count > 0)
+            {
+                result.Applied.Add("Delay profiles: existing priority order kept; new profiles appended in backup order");
+            }
+        }
+
+        private static List<(ReleaseProfile Profile, HashSet<int> Tags, int IndexerId)> PrepareReleaseProfiles(
+            SettingsBackupPackage package, Dictionary<int, int> tagIdMap, Dictionary<string, int> indexers, SettingsBackupRestoreResult result)
+        {
+            var ready = new List<(ReleaseProfile Profile, HashSet<int> Tags, int IndexerId)>();
+            foreach (var saved in package.ReleaseProfiles)
+            {
+                var tags = saved.Tags.Select(tag => tagIdMap.GetValueOrDefault(tag)).Where(tag => tag > 0).ToHashSet();
+                var indexerId = 0;
+                if (tags.Count != saved.Tags.Count || (saved.IndexerId != 0 &&
+                    (!package.IndexerNames.TryGetValue(saved.IndexerId, out var name) || !indexers.TryGetValue(name, out indexerId))))
+                {
+                    result.Warnings.Add($"Skipped release profile {saved.Id}: its tags or indexer '{package.IndexerNames.GetValueOrDefault(saved.IndexerId)}' were not restored.");
+                    continue;
+                }
+                ready.Add((saved, tags, indexerId));
+            }
+            return ready;
         }
 
         private void RestoreReleaseProfiles(SettingsBackupPackage package, Dictionary<int, int> tagIdMap, SettingsBackupRestoreMode mode, SettingsBackupRestoreResult result)
         {
-            if (package.ReleaseProfiles != null)
+            if (package.ReleaseProfiles == null) return;
+            var current = _releaseProfileService.All();
+            var indexers = _indexerFactory.All().GroupBy(indexer => indexer.Name, ProviderNameComparer)
+                .ToDictionary(group => group.Key, group => group.Min(indexer => indexer.Id), ProviderNameComparer);
+            var ready = PrepareReleaseProfiles(package, tagIdMap, indexers, result);
+            if (mode == SettingsBackupRestoreMode.Overwrite)
             {
-                var current = _releaseProfileService.All();
-                var indexers = _indexerFactory.All().GroupBy(indexer => indexer.Name, ProviderNameComparer)
-                    .ToDictionary(group => group.Key, group => group.Min(indexer => indexer.Id), ProviderNameComparer);
-                if (mode == SettingsBackupRestoreMode.Overwrite)
+                if (ready.Count == package.ReleaseProfiles.Count)
                 {
                     _releaseProfileService.Delete(current.Select(profile => profile.Id).ToList());
                     current.Clear();
                 }
-                foreach (var saved in package.ReleaseProfiles)
+                else if (current.Count > 0)
                 {
-                    var tags = saved.Tags.Select(tag => tagIdMap.GetValueOrDefault(tag)).Where(tag => tag > 0).ToHashSet();
-                    var indexerId = 0;
-                    if (tags.Count != saved.Tags.Count || (saved.IndexerId != 0 &&
-                        (!package.IndexerNames.TryGetValue(saved.IndexerId, out var name) || !indexers.TryGetValue(name, out indexerId))))
-                    {
-                        result.Warnings.Add($"Skipped release profile {saved.Id}: its tags or indexer '{package.IndexerNames.GetValueOrDefault(saved.IndexerId)}' were not restored.");
-                        continue;
-                    }
-                    var existing = current.FirstOrDefault(profile => profile.IndexerId == indexerId && profile.Tags.SetEquals(tags) &&
-                        profile.Required.ToHashSet(StringComparer.InvariantCultureIgnoreCase).SetEquals(saved.Required) && profile.Ignored.ToHashSet(StringComparer.InvariantCultureIgnoreCase).SetEquals(saved.Ignored));
-                    saved.Tags = tags;
-                    saved.IndexerId = indexerId;
-                    saved.Id = existing?.Id ?? 0;
-                    if (existing != null)
-                    {
-                        ApplyRestoreMode(saved, existing, mode);
-                        _releaseProfileService.Update(saved);
-                        current.Remove(existing);
-                        current.Add(saved);
-                    }
-                    else
-                    {
-                        current.Add(_releaseProfileService.Add(saved));
-                    }
+                    result.Warnings.Add($"Kept existing release profiles ({string.Join(", ", current.Select(profile => profile.Id))}): some backup profiles could not be restored. Valid profiles update matching entries or are added.");
+                }
+            }
+            foreach (var entry in ready)
+            {
+                var saved = entry.Profile;
+                saved.Tags = entry.Tags;
+                saved.IndexerId = entry.IndexerId;
+                var existing = current.FirstOrDefault(profile => profile.IndexerId == saved.IndexerId && profile.Tags.SetEquals(saved.Tags) &&
+                    profile.Required.ToHashSet(StringComparer.InvariantCultureIgnoreCase).SetEquals(saved.Required) && profile.Ignored.ToHashSet(StringComparer.InvariantCultureIgnoreCase).SetEquals(saved.Ignored));
+                saved.Id = existing?.Id ?? 0;
+                if (existing != null)
+                {
+                    ApplyRestoreMode(saved, existing, mode);
+                    _releaseProfileService.Update(saved);
+                    current.Remove(existing);
+                    current.Add(saved);
+                }
+                else
+                {
+                    current.Add(_releaseProfileService.Add(saved));
                 }
             }
         }
@@ -1573,8 +1744,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             var existingProxies = _proxyService.All();
             if (mode == SettingsBackupRestoreMode.Overwrite)
             {
-                var restoredNames = proxies.Select(proxy => proxy.Name?.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                foreach (var proxy in existingProxies.Where(proxy => !restoredNames.Contains(proxy.Name?.Trim())))
+                foreach (var proxy in GetRemovedProxies(existingProxies, package))
                 {
                     try
                     {
@@ -1734,7 +1904,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             var backups = package.DownloadClients ?? new List<DownloadClientDefinitionBackup>();
             if (mode == SettingsBackupRestoreMode.Overwrite)
             {
-                var removed = existingClients.Where(client => !backups.Any(backup => SameDownloadClient(client, backup))).ToList();
+                var removed = GetRemovedClients(existingClients, package).ToList();
                 if (removed.Count > 0)
                 {
                     _downloadClientFactory.Delete(removed.Select(client => client.Id).ToList());
@@ -1778,8 +1948,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
 
             if (mode == SettingsBackupRestoreMode.Overwrite)
             {
-                var existing = _remotePathMappingService.All();
-                foreach (var mapping in existing)
+                foreach (var mapping in GetRemovedMappings(_remotePathMappingService.All(), result))
                 {
                     _remotePathMappingService.Remove(mapping.Id);
                 }
@@ -1792,7 +1961,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
 
             foreach (var backup in backups)
             {
-                if (backup == null || backup.Host.IsNullOrWhiteSpace() ||
+                if (result.SkippedRemotePathMappings.Contains(backup) || backup == null || backup.Host.IsNullOrWhiteSpace() ||
                     backup.RemotePath.IsNullOrWhiteSpace() || backup.LocalPath.IsNullOrWhiteSpace())
                 {
                     continue;
@@ -1850,7 +2019,8 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
 
             if (backup.DownloadClientName.IsNotNullOrWhiteSpace())
             {
-                var existing = clientsByName[backup.DownloadClientName].FirstOrDefault();
+                var candidates = clientsByName[backup.DownloadClientName].Take(2).ToList();
+                var existing = candidates.Count == 1 ? candidates[0] : null;
 
                 if (existing != null)
                 {
@@ -1893,7 +2063,8 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                     continue;
                 }
 
-                var existingClient = existing.FirstOrDefault(client => SameDownloadClient(client, backup));
+                var candidates = existing.Where(client => SameDownloadClient(client, backup)).Take(2).ToList();
+                var existingClient = candidates.Count == 1 ? candidates[0] : null;
 
                 if (existingClient != null)
                 {
@@ -1905,7 +2076,20 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
         }
 
         private static bool SameDownloadClient(DownloadClientDefinition client, DownloadClientDefinitionBackup backup) =>
-            client != null && backup != null && client.Implementation == backup.Implementation && client.Name == (backup.Name ?? string.Empty);
+            client != null && backup != null && client.Implementation == backup.Implementation && ProviderNameComparer.Equals(client.Name, backup.Name ?? string.Empty);
+
+        private static IEnumerable<DownloadClientDefinition> GetRemovedClients(IEnumerable<DownloadClientDefinition> current, SettingsBackupPackage package) =>
+            current.Where(client => !(package.DownloadClients ?? new()).Any(backup => SameDownloadClient(client, backup)));
+
+        private static IEnumerable<IndexerDefinition> GetRemovedIndexers(IEnumerable<IndexerDefinition> current, SettingsBackupPackage package)
+        {
+            var names = (package.Indexers ?? new()).Select(indexer => indexer.Name).ToHashSet(ProviderNameComparer);
+            return current.Where(indexer => !names.Contains(indexer.Name));
+        }
+
+        private static IEnumerable<NotificationDefinition> GetRemovedConnections(IEnumerable<NotificationDefinition> current, SettingsBackupPackage package) =>
+            current.Where(connection => !(package.Connections ?? new()).Any(backup =>
+                backup.Implementation == connection.Implementation && ProviderNameComparer.Equals(backup.Name, connection.Name)));
 
         private Dictionary<int, int> BuildProxyIdMapFromExisting(SettingsBackupPackage package)
         {
@@ -1920,6 +2104,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             var existingByName = _proxyService.All()
                 .Where(p => p?.Name.IsNotNullOrWhiteSpace() == true)
                 .GroupBy(p => p.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+                .Where(group => group.Count() == 1)
                 .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
             foreach (var backup in backups)
@@ -1938,7 +2123,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             return map;
         }
 
-        private void RestoreIndexers(SettingsBackupPackage package, Dictionary<int, int> tagIdMap, Dictionary<int, int> downloadClientIdMap, Dictionary<int, int> proxyIdMap, SettingsBackupRestoreMode mode, SettingsBackupRestoreResult result, bool replaceReleaseProfiles = false)
+        private void RestoreIndexers(SettingsBackupPackage package, Dictionary<int, int> tagIdMap, Dictionary<int, int> downloadClientIdMap, Dictionary<int, int> proxyIdMap, SettingsBackupRestoreMode mode, SettingsBackupRestoreResult result)
         {
             var clearedDownloadClientRefs = 0;
             var clearedProxyRefs = 0;
@@ -1947,18 +2132,17 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
 
             if (mode == SettingsBackupRestoreMode.Overwrite)
             {
-                var restoredNames = (package.Indexers ?? new()).Select(indexer => indexer.Name).ToHashSet(ProviderNameComparer);
-                var references = replaceReleaseProfiles || existingIndexers.Count == 0
+                var references = existingIndexers.Count == 0
                     ? new Dictionary<int, List<int>>()
                     : _releaseProfileService.All().GroupBy(profile => profile.IndexerId)
                         .ToDictionary(group => group.Key, group => group.Select(profile => profile.Id).ToList());
-                var removedIndexers = existingIndexers.Where(indexer => !restoredNames.Contains(indexer.Name)).ToList();
+                var removedIndexers = GetRemovedIndexers(existingIndexers, package).ToList();
                 var removed = removedIndexers.Select(indexer => indexer.Id).ToHashSet();
                 foreach (var indexer in removedIndexers)
                 {
                     if (references.TryGetValue(indexer.Id, out var profiles))
                     {
-                        result.Warnings.Add($"Deleted indexer '{indexer.Name}': release profile(s) {string.Join(", ", profiles)} still reference it and will no longer apply to any indexer.");
+                        result.Warnings.Add($"Deleted indexer '{indexer.Name}': current release profile(s) {string.Join(", ", profiles)} reference it. Any kept by this restore will no longer apply to an indexer.");
                     }
                 }
                 if (removed.Count > 0)
@@ -2040,7 +2224,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
 
             if (mode == SettingsBackupRestoreMode.Overwrite)
             {
-                var existing = existingConnections.Select(n => n.Id).ToList();
+                var existing = GetRemovedConnections(existingConnections, package).Select(n => n.Id).ToList();
                 if (existing.Count > 0)
                 {
                     _notificationFactory.Delete(existing);
@@ -2060,16 +2244,13 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                     clearedAudioBookShelfLibraryMappings++;
                 }
 
-                if (mode == SettingsBackupRestoreMode.Merge)
+                var existing = existingConnections.SingleOrDefault(d => d.Implementation == restored.Implementation && ProviderNameComparer.Equals(d.Name, restored.Name));
+                if (existing != null)
                 {
-                    var existing = existingConnections.FirstOrDefault(d => d.Implementation == restored.Implementation && d.Name == restored.Name);
-                    if (existing != null)
-                    {
-                        restored = ApplyRestoreMode(restored, existing, mode);
-                        restored.Id = existing.Id;
-                        _notificationFactory.Update(restored);
-                        continue;
-                    }
+                    restored = ApplyRestoreMode(restored, existing, mode);
+                    restored.Id = existing.Id;
+                    _notificationFactory.Update(restored);
+                    continue;
                 }
 
                 restored.Id = 0;
@@ -2271,6 +2452,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                 ConvertMp3ToM4b = profile.ConvertMp3ToM4b,
                 ConvertToQualityId = profile.ConvertToQualityId,
                 UpgradeAllowed = profile.UpgradeAllowed,
+                ConfirmAutomaticUpgrades = profile.ConfirmAutomaticUpgrades,
                 PreferCustomFormatsOverQuality = profile.ProfileType == ProfileType.Audiobook && profile.PreferCustomFormatsOverQuality,
                 FormatItems = new List<NzbDrone.Core.Profiles.ProfileFormatItem>()
             };
@@ -2301,6 +2483,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
             var defaults = new List<string>
             {
                 "/config",
+                "/data",
                 "/downloads",
                 "/audiobooks",
                 "/ebooks",

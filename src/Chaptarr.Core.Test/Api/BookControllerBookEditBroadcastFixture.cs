@@ -40,10 +40,10 @@ namespace Chaptarr.Core.Test.Api
             public TestableBookController(IBroadcastSignalRMessage broadcaster,
                                           ISeriesBookLinkService seriesBookLinkService = null,
                                           IAuthorStatisticsService authorStatisticsService = null,
-                                          IMapCoversToLocal coverMapper = null)
+                                          IMapCoversToLocal coverMapper = null, IBookService bookService = null)
                 : base(
                     authorService: null,
-                    bookService: null,
+                    bookService: bookService,
                     addBookService: null,
                     editionService: null,
                     editionSelector: null,
@@ -74,6 +74,31 @@ namespace Chaptarr.Core.Test.Api
             {
                 FlushPendingBookEdits();
             }
+        }
+
+        [Test]
+        public void identity_merge_removes_absorbed_rows_without_loading_deleted_books()
+        {
+            var broadcaster = new RecordingSignalRBroadcaster();
+            var loads = 0;
+            var books = Proxy<IBookService>((method, args) =>
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(IBookService.GetBooks)));
+                Assert.That((IEnumerable<int>)args[0], Is.EquivalentTo(new[] { 10, 12 }));
+                loads++;
+                return new List<Book> { new() { Id = 10, AuthorId = 1, Title = "Dune" }, new() { Id = 12, AuthorId = 1, Title = "Dune Messiah" } };
+            });
+            var stats = Proxy<IAuthorStatisticsService>((_, _) => new AuthorStatistics { BookStatistics = new() });
+            var links = Proxy<ISeriesBookLinkService>((_, _) => new List<SeriesBookLink>());
+            var covers = Proxy<IMapCoversToLocal>((_, _) => null);
+            var controller = new TestableBookController(broadcaster, links, stats, covers, books);
+            controller.Handle(new LibraryIdentityChangedEvent(new[] { 1 }, new[] { 10, 11, 12 }, new[] { 11 }));
+            Assert.That(broadcaster.Messages, Has.Count.EqualTo(3));
+            Assert.That(((ResourceChangeMessage<BookResource>)broadcaster.Messages.Single(message => message.Action == ModelAction.Deleted).Body).Resource.Id, Is.EqualTo(11));
+            Assert.That(broadcaster.Messages.Where(message => message.Action == ModelAction.Updated)
+                .Select(message => ((ResourceChangeMessage<BookResource>)message.Body).Resource.Id), Is.EquivalentTo(new[] { 10, 12 }));
+            Assert.That(loads, Is.EqualTo(1));
+            Assert.That(controller.LoadedBookIds, Is.Empty, "survivors load in one batch and deleted rows are never loaded");
         }
 
         [Test]

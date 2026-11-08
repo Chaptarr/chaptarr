@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using FluentValidation.Results;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
@@ -10,12 +11,14 @@ namespace NzbDrone.Core.Notifications.Subsonic
     public class Subsonic : NotificationBase<SubsonicSettings>
     {
         private readonly ISubsonicService _subsonicService;
-        private readonly ICached<bool> _pendingUpdates;
+        private readonly ICached<object> _queueLocks;
+        private readonly IPendingNotificationRepository _pending;
 
-        public Subsonic(ISubsonicService subsonicService, ICacheManager cacheManager)
+        public Subsonic(ISubsonicService subsonicService, ICacheManager cacheManager, IPendingNotificationRepository pending)
         {
             _subsonicService = subsonicService;
-            _pendingUpdates = cacheManager.GetCache<bool>(GetType(), "pendingUpdates");
+            _queueLocks = cacheManager.GetCache<object>(GetType(), "queueLocks");
+            _pending = pending;
         }
 
         public override string Link => "http://subsonic.org/";
@@ -113,23 +116,19 @@ namespace NzbDrone.Core.Notifications.Subsonic
             }
         }
 
-        public override bool HasPendingQueue => _pendingUpdates.Find(Definition.Id.ToString());
+        public override bool HasPendingQueue => _pending.HasPending(Definition.Id);
 
         public override void ProcessQueue()
         {
-            lock (_pendingUpdates)
+            lock (_queueLocks.Get(Definition.Id.ToString(), () => new object()))
             {
-                if (!HasPendingQueue)
+                var updated = false;
+                foreach (var batch in _pending.GetPending(Definition.Id).Chunk(PendingNotificationRepository.BatchSize))
                 {
-                    return;
+                    if (!updated && Settings.UpdateLibrary) _subsonicService.Update(Settings);
+                    updated = true;
+                    _pending.Complete(batch);
                 }
-
-                if (Settings.UpdateLibrary)
-                {
-                    _subsonicService.Update(Settings);
-                }
-
-                _pendingUpdates.Remove(Definition.Id.ToString());
             }
         }
 
@@ -137,9 +136,9 @@ namespace NzbDrone.Core.Notifications.Subsonic
         {
             if (Settings.UpdateLibrary)
             {
-                lock (_pendingUpdates)
+                lock (_queueLocks.Get(Definition.Id.ToString(), () => new object()))
                 {
-                    _pendingUpdates.Set(Definition.Id.ToString(), true);
+                    _pending.Enqueue(Definition.Id, string.Empty);
                 }
             }
         }

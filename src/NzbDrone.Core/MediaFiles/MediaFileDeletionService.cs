@@ -12,6 +12,7 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.Datastore.Events;
 using NzbDrone.Core.Extras;
 using NzbDrone.Core.Extras.Files;
 using NzbDrone.Core.Extras.Metadata.Files;
@@ -27,8 +28,9 @@ namespace NzbDrone.Core.MediaFiles
     {
         void DeleteTrackFile(Author author, BookFile bookFile);
         void DeleteTrackFile(BookFile bookFile, string subfolder = "");
-        List<BookFile> DeleteAuthorFiles(List<Author> authors, BookMediaType? mediaType = null);
-        void DeleteBookFiles(List<Book> books);
+        List<BookFile> DeleteAuthorFiles(List<Author> authors, BookMediaType? mediaType = null, bool deleteOtherAuthorsFiles = false);
+        AuthorDeletionPreview PreviewAuthorFiles(List<Author> authors, BookMediaType? mediaType = null);
+        List<BookFile> DeleteBookFiles(List<Book> books);
     }
 
     public class MediaFileDeletionService : IDeleteMediaFiles,
@@ -57,10 +59,10 @@ namespace NzbDrone.Core.MediaFiles
                                         IRootFolderService rootFolderService,
                                         ICalibreProxy calibre,
                                         Logger logger,
-                                        IExtraFileRepository<MetadataFile> metadataFiles = null,
-                                        IExtraFileRepository<OtherExtraFile> otherFiles = null,
-                                        IMetadataFileService metadataFileService = null,
-                                        IOtherExtraFileService otherFileService = null)
+                                        IExtraFileRepository<MetadataFile> metadataFiles,
+                                        IExtraFileRepository<OtherExtraFile> otherFiles,
+                                        IMetadataFileService metadataFileService,
+                                        IOtherExtraFileService otherFileService)
         {
             _diskProvider = diskProvider;
             _recycleBinProvider = recycleBinProvider;
@@ -124,6 +126,7 @@ namespace NzbDrone.Core.MediaFiles
         private void DeleteTrackFile(BookFile bookFile, string subfolder, RootFolder rootFolder)
         {
             var fullPath = bookFile.Path;
+            if (RetainUnresolvedFile(bookFile)) return;
 
             if (_diskProvider.FileExistsCanonical(fullPath))
             {
@@ -131,10 +134,26 @@ namespace NzbDrone.Core.MediaFiles
                 DeleteFile(bookFile, subfolder, rootFolder);
             }
 
+            // Unmapped files do not publish a BookFileDeletedEvent. Finish the explicitly
+            // selected row's replica cleanup before removing its inventory in either case.
+            DeleteManagedEbookReplicas(bookFile, bookFile.ReplicaPaths ?? new List<string>(), failOnError: true);
+
             // Delete the track file from the database to clean it up even if the file was already deleted
             _mediaFileService.Delete(bookFile, DeleteMediaFileReason.Manual);
 
             _eventAggregator.PublishEvent(new DeleteCompletedEvent());
+        }
+
+        private bool RetainUnresolvedFile(BookFile file, string reason = null)
+        {
+            reason ??= TrackedFileDeletionCheck.GetRetentionReason(_diskProvider, file.Path);
+            if (reason == null) return false;
+            file.EditionId = 0;
+            file.MatchDetails = reason;
+            _mediaFileService.Update(file);
+            _eventAggregator.PublishEvent(new BookFileUpdatedEvent(file));
+            _logger.Warn("Kept file and unmapped record for '{0}': {1}", file.Path, reason);
+            return true;
         }
 
         private void DeleteFile(BookFile bookFile, string subfolder = "", RootFolder rootFolder = null)
@@ -163,7 +182,7 @@ namespace NzbDrone.Core.MediaFiles
                 }
                 else
                 {
-                    _calibre.DeleteBook(bookFile, rootFolder.CalibreSettings);
+                    DeleteCalibreFormats(GetCalibreFormats(new[] { bookFile }), rootFolder.CalibreSettings);
                 }
             }
             catch (Exception e)
@@ -173,18 +192,70 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        public List<BookFile> DeleteAuthorFiles(List<Author> authors, BookMediaType? mediaType = null)
+        private static (int BookId, string[] Formats)[] GetCalibreFormats(IEnumerable<BookFile> files)
         {
-            if (authors.Count == 0)
+            return files.GroupBy(file => file.CalibreId).Select(book =>
             {
-                return new List<BookFile>();
-            }
+                if (book.Key <= 0)
+                {
+                    throw new InvalidOperationException("Cannot remove a Calibre format without its Calibre book ID. The tracked file was kept.");
+                }
 
+                var formats = book.Select(file => Path.GetExtension(file.Path).TrimStart('.').ToUpperInvariant())
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                if (formats.Any(string.IsNullOrWhiteSpace))
+                {
+                    throw new InvalidOperationException("Cannot determine which Calibre format to remove. The tracked file was kept.");
+                }
+
+                return (book.Key, formats);
+            }).ToArray();
+        }
+
+        private void DeleteCalibreFormats(IEnumerable<(int BookId, string[] Formats)> books, CalibreSettings settings)
+        {
+            foreach (var book in books)
+            {
+                _calibre.RemoveFormats(book.BookId, book.Formats, settings);
+            }
+        }
+
+        private sealed class PreparedAuthorDeletion
+        {
+            public AuthorDeletionPreview Preview;
+            public List<RootFolder> Roots;
+            public List<BookFile> Files;
+            public Dictionary<int, List<BookFile>> FilesByAuthor;
+            public List<BookFile> Ownership;
+            public List<string> Folders;
+            public List<(string Path, RootFolder Root)> StandalonePaths;
+            public List<(BookFile File, RootFolder Root)> CalibreFiles;
+            public Dictionary<BookFile, string> KeptFiles;
+            public List<BookFile> OtherFiles;
+        }
+
+        public AuthorDeletionPreview PreviewAuthorFiles(List<Author> authors, BookMediaType? mediaType = null)
+        {
+            return PrepareAuthorDeletion(authors, mediaType).Preview;
+        }
+
+        private PreparedAuthorDeletion PrepareAuthorDeletion(List<Author> authors, BookMediaType? mediaType)
+        {
+            var preview = new AuthorDeletionPreview();
+            var keptFiles = new Dictionary<BookFile, string>();
             var rootFolders = _rootFolderService.All();
+            var rootWarnings = new Dictionary<int, string>();
+            string RootProblem(RootFolder root, string path)
+            {
+                if (root == null) return GetUnavailableRootReason(root, path);
+                if (!rootWarnings.TryGetValue(root.Id, out var reason))
+                    rootWarnings[root.Id] = reason = GetUnavailableRootReason(root, path);
+                return reason;
+            }
             var selectedIds = authors.Select(author => author.Id).ToHashSet();
             var inventoryWatch = Stopwatch.StartNew();
             var filesByAuthor = authors.ToDictionary(author => author.Id, author => _mediaFileService.GetFilesByAuthor(author.Id)
-                .Where(file => !mediaType.HasValue || file.MediaType.EqualsIgnoreCase(mediaType.Value.ToString())).ToList());
+                .Where(file => !mediaType.HasValue || (file.MediaType ?? file.Edition?.Book?.MediaType.ToString()).EqualsIgnoreCase(mediaType.Value.ToString())).ToList());
             var files = filesByAuthor.Values.SelectMany(items => items)
                 .DistinctBy(file => file.Id).ToList();
             var selectedFileIds = files.Select(file => file.Id).ToHashSet();
@@ -193,19 +264,35 @@ namespace NzbDrone.Core.MediaFiles
             var deletionDirectories = authors.SelectMany(ExtraFilePathHelper.GetAuthorBasePaths)
                 .Concat(files.SelectMany(file => (file.ReplicaPaths ?? new List<string>()).Append(file.Path))
                     .Where(path => path.IsNotNullOrWhiteSpace()).Select(Path.GetDirectoryName))
-                .Select(Path.GetFullPath).Distinct(PathEqualityComparer.Instance).ToList();
+                .TopmostFolders();
             var sidecarChecks = 0;
-            var ownership = _mediaFileService.GetFilePathOwnership();
-            var retainedAuthors = _authorRepository.All().Where(author => mediaType.HasValue || !selectedIds.Contains(author.Id)).ToList();
+            // Calibre IDs are library-local; include the selected libraries so another
+            // owner of the same Calibre format remains protected even outside these folders.
+            var ownershipFolders = deletionDirectories.Concat(files.Select(file =>
+                    _rootFolderService.GetBestRootFolder(file.Path, rootFolders))
+                .Where(root => root?.IsCalibreLibrary == true).Select(root => root.Path))
+                .Distinct(PathEqualityComparer.Instance).ToList();
+            var ownership = _mediaFileService.GetFilePathOwnership(selectedIds, ownershipFolders);
+            var authorPaths = _authorRepository.AllAuthorPaths();
+            var retainedAuthors = authorPaths.Where(author => mediaType.HasValue || !selectedIds.Contains(author.Id)).ToList();
             var retainedPaths = ownership.Where(file => file.Author != null && !selectedFileIds.Contains(file.Id))
                 .SelectMany(file => (file.ReplicaPaths ?? new List<string>()).Append(file.Path))
                 .Where(path => path.IsNotNullOrWhiteSpace()).Select(Path.GetFullPath)
                 .ToHashSet(PathEqualityComparer.Instance);
-            var retainedBases = retainedAuthors.SelectMany(ExtraFilePathHelper.GetAuthorBasePaths)
-                .Select(Path.GetFullPath).ToList();
-            var retainedExtras = (_metadataFiles?.All().Cast<ExtraFile>() ?? Enumerable.Empty<ExtraFile>())
-                .Concat(_otherFiles?.All().Cast<ExtraFile>() ?? Enumerable.Empty<ExtraFile>())
-                .Where(extra => !selectedIds.Contains(extra.AuthorId) || (mediaType.HasValue &&
+
+            // Relative sidecar paths can escape an author's base via '..'. Inspect their
+            // ownership once before filtering physical probes to the selected directories.
+            var overlapWatch = Stopwatch.StartNew();
+            var extraAuthorIds = authorPaths.Where(author => selectedIds.Contains(author.Id) ||
+                    ExtraFilePathHelper.GetAuthorBasePaths(author).Any(path => deletionDirectories.Any(folder =>
+                        folder.PathEquals(path) || folder.IsParentPath(path) || path.IsParentPath(folder))))
+                .Select(author => author.Id).Concat(selectedIds).Distinct().ToArray();
+            _logger.Debug("Author deletion overlap: authors={0}, folders={1}, overlapping={2}, elapsedMs={3}",
+                authorPaths.Count, deletionDirectories.Count, extraAuthorIds.Length, overlapWatch.ElapsedMilliseconds);
+            var allExtras = _metadataFiles.GetFilesForAuthorDeletion(extraAuthorIds).Cast<ExtraFile>()
+                .Concat(_otherFiles.GetFilesForAuthorDeletion(extraAuthorIds)).ToList();
+            var retainedSidecarOwners = new Dictionary<string, int>(PathEqualityComparer.Instance);
+            var retainedExtras = allExtras.Where(extra => !selectedIds.Contains(extra.AuthorId) || (mediaType.HasValue &&
                     !(extra.BookFileId.HasValue ? selectedFileIds.Contains(extra.BookFileId.Value) :
                         extra.BookId.HasValue && selectedBookIds.Contains(extra.BookId.Value))))
                 .ToLookup(extra => extra.AuthorId);
@@ -231,18 +318,24 @@ namespace NzbDrone.Core.MediaFiles
                         if (_diskProvider.FileExistsCanonical(path))
                         {
                             retainedPaths.Add(path);
+                            retainedSidecarOwners[path] = author.Id;
                         }
                     }
                 }
             }
 
-            _logger.Info("Author deletion inventory: {0} selected authors, {1} selected files, {2} library file rows, {3} retained physical paths, {4} retained sidecar checks in {5}ms",
-                selectedIds.Count, files.Count, ownership.Count, retainedPaths.Count, sidecarChecks, inventoryWatch.ElapsedMilliseconds);
+            _logger.Info("Author deletion inventory: {0} selected authors, {1} selected files, {2} library file rows, {3} retained physical paths, {4} retained sidecar checks in {5}ms; {6} author paths, {7} scoped authors, {8} sidecar rows",
+                selectedIds.Count, files.Count, ownership.Count, retainedPaths.Count, sidecarChecks, inventoryWatch.ElapsedMilliseconds,
+                authorPaths.Count, extraAuthorIds.Length, allExtras.Count);
 
             // Explicit folder deletion includes untracked and unmapped contents. A real ownership
             // or boundary conflict must refuse the request, not silently turn it into file-only deletion.
             var folders = new List<string>();
-            foreach (var folder in authors.Where(_ => !mediaType.HasValue).SelectMany(ExtraFilePathHelper.GetAuthorBasePaths)
+            foreach (var folder in authors.SelectMany(author => !mediaType.HasValue
+                    ? ExtraFilePathHelper.GetAuthorBasePaths(author)
+                    : new[] { (mediaType == BookMediaType.Audiobook ? author.AudiobookPath : author.EbookPath) ??
+                        (author.AudiobookPath.IsNullOrWhiteSpace() && author.EbookPath.IsNullOrWhiteSpace() ? author.Path : null) }
+                        .Where(path => path.IsNotNullOrWhiteSpace()))
                 .Select(Path.GetFullPath).Distinct(PathEqualityComparer.Instance))
             {
                 if (IsPathUnsafeToDelete(folder, rootFolders))
@@ -251,31 +344,66 @@ namespace NzbDrone.Core.MediaFiles
                 }
 
                 var root = _rootFolderService.GetBestRootFolder(folder, rootFolders);
-                EnsureDeletionRootAvailable(root, folder);
-
-                if (root.IsCalibreLibrary)
+                var folderPreview = new AuthorDeletionFolder { Path = folder };
+                preview.Folders.Add(folderPreview);
+                var unavailable = RootProblem(root, folder);
+                if (unavailable != null)
                 {
+                    folderPreview.Reason = unavailable;
+                    preview.Warnings.Add(unavailable);
+                    foreach (var file in files.Where(file => folder.IsParentPath(file.Path))) keptFiles[file] = unavailable;
                     continue;
                 }
 
-                var blockingPath = retainedBases.FirstOrDefault(other => other.PathEquals(folder) ||
-                    folder.IsParentPath(other) || other.IsParentPath(folder)) ??
-                    retainedPaths.FirstOrDefault(other => folder.PathEquals(other) || folder.IsParentPath(other));
-                if (blockingPath != null)
+                try
                 {
-                    throw RefuseAuthorDeletion(folder, "another retained author uses " + blockingPath);
+                    if (HasDirectoryLink(folder, root.Path) ||
+                        (_diskProvider.FolderExists(folder) && ContainsDirectoryLink(folder)))
+                        throw RefuseAuthorDeletion(folder, "the folder contains or traverses a directory link");
+                    if (_diskProvider.FolderExists(folder)) folderPreview.OtherFiles = _diskProvider.GetFiles(folder, true).ToList();
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    var reason = $"Chaptarr cannot access {folder}. Removing this author may leave files there: {error.Message}";
+                    folderPreview.Reason = reason;
+                    preview.Warnings.Add(reason);
+                    foreach (var file in files.Where(file => folder.IsParentPath(file.Path))) keptFiles[file] = reason;
+                    continue;
                 }
 
-                if (HasDirectoryLink(folder, root.Path) ||
-                    (_diskProvider.FolderExists(folder) && ContainsDirectoryLink(folder)))
+                var shared = mediaType.HasValue && (retainedSidecarOwners.Any(item => selectedIds.Contains(item.Value) && folder.IsParentPath(item.Key)) || authors.Any(author =>
                 {
-                    throw RefuseAuthorDeletion(folder, "the folder contains or traverses a directory link");
+                    var other = mediaType == BookMediaType.Audiobook ? author.EbookPath : author.AudiobookPath;
+                    return other.IsNotNullOrWhiteSpace() && (folder.PathEquals(other) || folder.IsParentPath(other) || other.IsParentPath(folder));
+                }) || ownership.Any(file => !selectedFileIds.Contains(file.Id) &&
+                    (file.MediaType ?? file.Edition?.Book?.MediaType.ToString()).IsNotNullOrWhiteSpace() &&
+                    !(file.MediaType ?? file.Edition?.Book?.MediaType.ToString()).EqualsIgnoreCase(mediaType.Value.ToString()) &&
+                    (file.ReplicaPaths ?? new List<string>()).Append(file.Path).Any(path => path.IsNotNullOrWhiteSpace() && folder.IsParentPath(path))));
+                if (shared || root.IsCalibreLibrary)
+                {
+                    folderPreview.Reason = shared ? "Shared with the other format; only selected files will be removed." : "Managed by Calibre; only known Calibre entries will be removed.";
+                    continue;
                 }
 
+                folderPreview.DeleteContents = true;
                 folders.Add(folder);
             }
 
             folders = folders.Where(folder => !folders.Any(parent => parent.PathNotEquals(folder) && parent.IsParentPath(folder))).ToList();
+
+            foreach (var file in files.Where(file => !keptFiles.ContainsKey(file) && !folders.Any(folder => folder.IsParentPath(file.Path))))
+            {
+                var reason = TrackedFileDeletionCheck.GetRetentionReason(_diskProvider, file.Path);
+                var root = _rootFolderService.GetBestRootFolder(file.Path, rootFolders);
+                reason ??= RootProblem(root, file.Path);
+                if (root?.IsCalibreLibrary == true && file.CalibreId <= 0)
+                    reason = "Kept in Calibre because its Calibre book ID is unknown.";
+                if (reason != null) keptFiles[file] = reason;
+            }
+            var kept = keptFiles.Keys.Select(file => file.Id).ToHashSet();
+            files.RemoveAll(file => kept.Contains(file.Id));
+            foreach (var owned in filesByAuthor.Values) owned.RemoveAll(file => kept.Contains(file.Id));
+            selectedFileIds.ExceptWith(kept);
 
             var exactPaths = new HashSet<string>(PathEqualityComparer.Instance);
             foreach (var file in files)
@@ -294,8 +422,7 @@ namespace NzbDrone.Core.MediaFiles
             foreach (var author in authors)
             {
                 var ownedFiles = filesByAuthor[author.Id];
-                var extras = (_metadataFiles?.GetFilesByAuthor(author.Id).Cast<ExtraFile>() ?? Enumerable.Empty<ExtraFile>())
-                    .Concat(_otherFiles?.GetFilesByAuthor(author.Id).Cast<ExtraFile>() ?? Enumerable.Empty<ExtraFile>());
+                var extras = allExtras.Where(extra => extra.AuthorId == author.Id);
                 foreach (var extra in extras)
                 {
                     if (mediaType.HasValue && !(extra.BookFileId.HasValue ? selectedFileIds.Contains(extra.BookFileId.Value) :
@@ -305,9 +432,7 @@ namespace NzbDrone.Core.MediaFiles
                     }
 
                     var path = ExtraFilePathHelper.ResolveOwnedSidecarPath(author, extra, ownedFiles, _diskProvider);
-                    if (path != null && !retainedPaths.Contains(path) &&
-                        !_diskProvider.GetFiles(Path.GetDirectoryName(path), false).Any(other =>
-                            MediaFileExtensions.AllExtensions.Contains(Path.GetExtension(other)) && !exactPaths.Contains(other)))
+                    if (path != null && !retainedPaths.Contains(path))
                     {
                         exactPaths.Add(path);
                     }
@@ -320,7 +445,12 @@ namespace NzbDrone.Core.MediaFiles
                 .Select(path => (Path: path, Root: _rootFolderService.GetBestRootFolder(path, rootFolders))).ToList();
             foreach (var item in standalonePaths)
             {
-                EnsureDeletionRootAvailable(item.Root, item.Path);
+                if (item.Root == null) throw RefuseAuthorDeletion(item.Path, "the file is outside configured roots");
+                if (RootProblem(item.Root, item.Path) is string unavailable)
+                {
+                    preview.Warnings.Add(unavailable);
+                    continue;
+                }
 
                 if (HasDirectoryLink(item.Path, item.Root.Path))
                 {
@@ -328,15 +458,11 @@ namespace NzbDrone.Core.MediaFiles
                 }
             }
 
+            standalonePaths.RemoveAll(item => RootProblem(item.Root, item.Path) != null);
+
             // Calibre IDs are library-local; never send one library's IDs to another.
             var calibreFiles = files.Select(file => (File: file, Root: _rootFolderService.GetBestRootFolder(file.Path, rootFolders)))
                 .Where(item => item.Root?.IsCalibreLibrary == true && !retainedPaths.Contains(Path.GetFullPath(item.File.Path))).ToList();
-            var unidentifiedCalibreFile = calibreFiles.Select(item => item.File).FirstOrDefault(file => file.CalibreId == 0);
-            if (unidentifiedCalibreFile != null)
-            {
-                throw RefuseAuthorDeletion(unidentifiedCalibreFile.Path, "the file has no Calibre book identity");
-            }
-
             var unidentifiedCalibreReplica = files.SelectMany(file => file.ReplicaPaths ?? new List<string>())
                 .FirstOrDefault(path => path.IsNotNullOrWhiteSpace() &&
                     _rootFolderService.GetBestRootFolder(path, rootFolders)?.IsCalibreLibrary == true &&
@@ -360,6 +486,54 @@ namespace NzbDrone.Core.MediaFiles
                 }
             }
 
+            var otherFiles = ownership.Where(file => file.Author != null && !selectedIds.Contains(file.Author.Id) &&
+                (file.ReplicaPaths ?? new List<string>()).Append(file.Path).Any(path => path.IsNotNullOrWhiteSpace() &&
+                    folders.Any(folder => folder.IsParentPath(path)))).ToList();
+            foreach (var other in retainedAuthors.Where(author => !selectedIds.Contains(author.Id) &&
+                (otherFiles.Any(file => file.Author.Id == author.Id) || retainedSidecarOwners.Any(item => item.Value == author.Id && folders.Any(folder => folder.IsParentPath(item.Key))) || ExtraFilePathHelper.GetAuthorBasePaths(author).Any(path =>
+                    folders.Any(folder => folder.PathEquals(path) || folder.IsParentPath(path) || path.IsParentPath(folder))))))
+                preview.OtherAuthors.Add(new AuthorDeletionOtherAuthor { AuthorId = other.Id, Name = other.Name, FileCount = otherFiles.Count(file => file.Author.Id == other.Id) });
+
+            foreach (var folder in preview.Folders)
+            {
+                var folderFiles = ownership.Where(file => file.Path.IsNotNullOrWhiteSpace() && folder.Path.IsParentPath(file.Path) &&
+                    (folder.DeleteContents || selectedFileIds.Contains(file.Id))).ToList();
+                folder.BookFileCount = folderFiles.Count;
+                folder.Size = folderFiles.Sum(file => file.Size);
+                var tracked = ownership.SelectMany(file => (file.ReplicaPaths ?? new List<string>()).Append(file.Path))
+                    .Where(path => path.IsNotNullOrWhiteSpace()).ToHashSet(PathEqualityComparer.Instance);
+                folder.OtherFiles = folder.DeleteContents ? folder.OtherFiles.Where(path => !tracked.Contains(path)).ToList() : new List<string>();
+            }
+            preview.Files = exactPaths.Concat(ownership.SelectMany(file => (file.ReplicaPaths ?? new List<string>()).Append(file.Path))
+                    .Where(path => path.IsNotNullOrWhiteSpace() && folders.Any(folder => folder.IsParentPath(path))))
+                .Where(path => path.IsNotNullOrWhiteSpace() && !keptFiles.Keys.Any(file => file.Path.PathEquals(path)))
+                .Distinct(PathEqualityComparer.Instance).Select(path => new AuthorDeletionFile { Path = path }).ToList();
+            preview.Files.AddRange(keptFiles.Select(item => new AuthorDeletionFile { Path = item.Key.Path, Reason = item.Value }));
+            preview.Warnings = preview.Warnings.Concat(rootWarnings.Values.Where(reason => reason != null)).Distinct().ToList();
+            preview.RecycleBin = _configService.RecycleBin;
+            return new PreparedAuthorDeletion
+            {
+                Preview = preview, Roots = rootFolders, Files = files, FilesByAuthor = filesByAuthor,
+                Ownership = ownership, Folders = folders, StandalonePaths = standalonePaths,
+                CalibreFiles = calibreFiles, KeptFiles = keptFiles, OtherFiles = otherFiles
+            };
+        }
+
+        public List<BookFile> DeleteAuthorFiles(List<Author> authors, BookMediaType? mediaType = null, bool deleteOtherAuthorsFiles = false)
+        {
+            if (authors.Count == 0) return new List<BookFile>();
+            var plan = PrepareAuthorDeletion(authors, mediaType);
+            if (plan.Preview.OtherAuthors.Count > 0 && !deleteOtherAuthorsFiles)
+                throw RefuseAuthorDeletion(plan.Folders.First(), "other authors have files here; preview the deletion and set deleteOtherAuthorsFiles=true to include them");
+            foreach (var item in plan.KeptFiles) RetainUnresolvedFile(item.Key, item.Value);
+            foreach (var warning in plan.Preview.Warnings.Distinct()) _logger.Warn(warning);
+            var files = plan.Files;
+            var filesByAuthor = plan.FilesByAuthor;
+            var rootFolders = plan.Roots;
+            var folders = plan.Folders;
+            var standalonePaths = plan.StandalonePaths;
+            var calibreFiles = plan.CalibreFiles;
+            var ownership = plan.Ownership;
             foreach (var group in calibreFiles.GroupBy(item => item.Root.Path, PathEqualityComparer.Instance))
             {
                 if (mediaType.HasValue)
@@ -380,7 +554,9 @@ namespace NzbDrone.Core.MediaFiles
             {
                 if (_diskProvider.FileExistsCanonical(item.Path))
                 {
-                    _recycleBinProvider.DeleteFile(item.Path);
+                    var author = authors.FirstOrDefault(author => filesByAuthor[author.Id].Any(file =>
+                        file.Path.PathEquals(item.Path) || (file.ReplicaPaths ?? new List<string>()).Any(path => path.PathEquals(item.Path)))) ?? authors.First();
+                    _recycleBinProvider.DeleteFile(item.Path, Path.GetFileName(author.Path));
                 }
                 else
                 {
@@ -412,10 +588,50 @@ namespace NzbDrone.Core.MediaFiles
 
             // Folder contents need no book identity to be deleted. Remove their unmapped inventory
             // only after physical success, without following those rows to paths outside the folders.
-            var unmappedFiles = ownership.Where(file => file.Author == null && file.Path.IsNotNullOrWhiteSpace() &&
-                folders.Any(folder => folder.IsParentPath(Path.GetFullPath(file.Path)))).ToList();
-            _mediaFileService.DeleteRecordsForAuthorDeletion(files.Concat(unmappedFiles).DistinctBy(file => file.Id).ToList());
+            var unmappedFiles = ownership.Where(file => file.Author == null &&
+                (file.ReplicaPaths ?? new List<string>()).Append(file.Path).Any(path => path.IsNotNullOrWhiteSpace() &&
+                    folders.Any(folder => folder.IsParentPath(path)))).ToList();
+            var affectedOtherFiles = plan.OtherFiles.Concat(unmappedFiles).DistinctBy(file => file.Id).ToList();
+            var removedOthers = new List<BookFile>();
+            if (affectedOtherFiles.Count > 0)
+            {
+                foreach (var file in _mediaFileService.Get(affectedOtherFiles.Select(file => file.Id)))
+                {
+                    var primaryRemoved = folders.Any(folder => folder.IsParentPath(file.Path));
+                    file.ReplicaPaths = (file.ReplicaPaths ?? new List<string>()).Where(path => !folders.Any(folder => folder.IsParentPath(path))).ToList();
+                    if (primaryRemoved) removedOthers.Add(file);
+                    else
+                    {
+                        _mediaFileService.Update(file);
+                        _eventAggregator.PublishEvent(new BookFileUpdatedEvent(file));
+                    }
+                }
+            }
+            _mediaFileService.DeleteRecordsForAuthorDeletion(files.Concat(removedOthers).DistinctBy(file => file.Id).ToList());
+            foreach (var file in removedOthers) _eventAggregator.PublishEvent(new ModelEvent<BookFile>(file, ModelAction.Deleted));
+            foreach (var bookId in removedOthers.Where(file => file.Edition != null).Select(file => file.Edition.BookId).Distinct())
+                _eventAggregator.PublishEvent(new ModelEvent<Book>(bookId, ModelAction.Updated));
+            foreach (var author in plan.Preview.OtherAuthors)
+            {
+                _eventAggregator.PublishEvent(new ModelEvent<Author>(author.AuthorId, ModelAction.Updated));
+                _logger.Info("Deleted {0} files belonging to {1} from the explicitly selected author folders", author.FileCount, author.Name);
+            }
             return files;
+        }
+
+        private string GetUnavailableRootReason(RootFolder root, string path)
+        {
+            if (root == null) throw RefuseAuthorDeletion(path, "the path is outside configured roots");
+            try
+            {
+                if (_diskProvider.FolderExists(root.Path) && !_diskProvider.FolderEmpty(root.Path) &&
+                    (!root.IsCalibreLibrary || root.CalibreSettings != null)) return null;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                _logger.Debug(error, "Cannot inspect deletion root {0}", root.Path);
+            }
+            return $"Chaptarr cannot access {root.Path}. Removing this author may leave files there.";
         }
 
         private void EnsureDeletionRootAvailable(RootFolder root, string path)
@@ -513,10 +729,14 @@ namespace NzbDrone.Core.MediaFiles
             return false;
         }
 
-        public void DeleteBookFiles(List<Book> books)
+        public List<BookFile> DeleteBookFiles(List<Book> books)
         {
             var watch = Stopwatch.StartNew();
-            var files = books.SelectMany(book => book.BookFiles ?? new List<BookFile>()).DistinctBy(file => file.Id).ToList();
+            var files = books.SelectMany(book => (book.BookFiles ?? new List<BookFile>()).Where(file =>
+                !RetainUnresolvedFile(file, file.MediaType.IsNotNullOrWhiteSpace() &&
+                    !file.MediaType.EqualsIgnoreCase(book.MediaType.ToString())
+                        ? "The file's media type differs from the book being removed." : null)))
+                .DistinctBy(file => file.Id).ToList();
             var selectedPaths = files.SelectMany(file => (file.ReplicaPaths ?? new List<string>()).Append(file.Path))
                 .Where(path => path.IsNotNullOrWhiteSpace()).ToHashSet(PathEqualityComparer.Instance);
             var roots = _rootFolderService.All();
@@ -527,23 +747,41 @@ namespace NzbDrone.Core.MediaFiles
                 EnsureDeletionRootAvailable(group.First().Value, group.First().Key);
             }
 
+            // Validate every Calibre group before deleting any selected media or sidecars.
+            var groups = files.GroupBy(file => rootsByPath[file.Path]).Select(group => (
+                Root: group.Key,
+                Files: group.ToList(),
+                Formats: group.Key.IsCalibreLibrary && group.Key.CalibreSettings != null
+                    ? GetCalibreFormats(group) : null)).ToList();
+
             // Mandatory disk work runs while its inventory still exists. Events only announce
             // the committed deletion; they cannot swallow a disk failure and erase ownership.
             foreach (var book in books)
             {
-                _metadataFileService?.DeleteBookFiles(book, selectedPaths);
-                _otherFileService?.DeleteBookFiles(book, selectedPaths);
+                _metadataFileService.DeleteBookFiles(book);
+                _otherFileService.DeleteBookFiles(book);
             }
 
-            foreach (var file in files)
+            foreach (var group in groups)
             {
-                DeleteManagedEbookReplicas(file, failOnError: true);
-                DeleteFile(file, rootFolder: rootsByPath[file.Path]);
+                if (group.Formats != null)
+                {
+                    DeleteCalibreFormats(group.Formats, group.Root.CalibreSettings);
+                }
+
+                foreach (var file in group.Files)
+                {
+                    DeleteManagedEbookReplicas(file, file.ReplicaPaths ?? new List<string>(), failOnError: true);
+                    if (group.Formats == null)
+                    {
+                        DeleteFile(file, rootFolder: group.Root);
+                    }
+                }
             }
 
             foreach (var book in books)
             {
-                foreach (var folder in (book.BookFiles ?? new List<BookFile>())
+                foreach (var folder in (book.BookFiles ?? new List<BookFile>()).Where(file => files.Contains(file))
                     .SelectMany(file => (file.ReplicaPaths ?? new List<string>()).Append(file.Path))
                     .Where(path => path.IsNotNullOrWhiteSpace()).Select(Path.GetDirectoryName).Distinct(PathEqualityComparer.Instance))
                 {
@@ -553,12 +791,19 @@ namespace NzbDrone.Core.MediaFiles
 
             _logger.Info("Deleted files for {0} book rows: {1} media files, {2} owned paths in {3}ms",
                 books.Count, files.Count, selectedPaths.Count, watch.ElapsedMilliseconds);
+            return files;
         }
 
         [EventHandleOrder(EventHandleOrder.Last)]
         public void Handle(BookFileDeletedEvent message)
         {
-            DeleteManagedEbookReplicas(message.BookFile, message.ConfirmedAssociatedPaths);
+            if (!message.Reason.RemovesFiles())
+            {
+                return;
+            }
+
+            DeleteManagedEbookReplicas(message.BookFile, message.ConfirmedAssociatedPaths ??
+                message.BookFile.ReplicaPaths ?? new List<string>());
 
             if (message.Reason == DeleteMediaFileReason.Upgrade)
             {
@@ -592,7 +837,7 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        private void DeleteManagedEbookReplicas(BookFile bookFile, IReadOnlyCollection<string> confirmedPaths = null, bool failOnError = false)
+        private void DeleteManagedEbookReplicas(BookFile bookFile, IReadOnlyCollection<string> confirmedPaths, bool failOnError = false)
         {
             if (bookFile?.ReplicaPaths == null || bookFile.ReplicaPaths.Count == 0)
             {
@@ -604,7 +849,7 @@ namespace NzbDrone.Core.MediaFiles
                          .Distinct(PathEqualityComparer.Instance)
                          .Where(p => p.PathNotEquals(bookFile.Path)))
             {
-                if (confirmedPaths != null && !confirmedPaths.Any(confirmed => confirmed.PathEquals(replicaPath)))
+                if (!confirmedPaths.Any(confirmed => confirmed.PathEquals(replicaPath)))
                 {
                     _logger.Warn("Keeping ebook replica not included in replacement confirmation: {0}", replicaPath);
                     continue;

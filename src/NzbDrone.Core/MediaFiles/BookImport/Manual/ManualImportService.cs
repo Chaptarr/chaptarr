@@ -140,6 +140,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 
 	            IdentificationOverrides downloadOverrides = null;
 	            ImportDecisionMakerInfo downloadItemInfo = null;
+	            var previewContext = new RecordingPreviewContext();
 
 	            if (downloadId.IsNotNullOrWhiteSpace())
 	            {
@@ -154,6 +155,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                 {
                     trackedDownload.ImportItem = _provideImportItemService.ProvideImportItem(trackedDownload.DownloadItem, trackedDownload.ImportItem);
                 }
+
+                previewContext.Downloads[downloadId] = trackedDownload;
 
 	                path = trackedDownload.ImportItem.OutputPath.FullPath;
 
@@ -231,7 +234,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                 if (completedConversion != null)
                 {
                     return ProcessFolder(Path.GetDirectoryName(path), downloadId, author, filter, replaceExistingFiles,
-                        cancellationToken, new[] { path }, downloadOverrides, downloadItemInfo, completedConversion);
+                        cancellationToken, new[] { path }, downloadOverrides, downloadItemInfo, completedConversion, previewContext);
                 }
 
                 if (DiskScanService.IsExcludedFile(path) || !_diskProvider.FileExists(path))
@@ -274,15 +277,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 	                };
 
 	                var decision = _importDecisionMaker.GetImportDecisions(files, idOverrides, itemInfo, config, cancellationToken);
-	                var result = MapItem(decision.First(), downloadId, replaceExistingFiles, false);
+	                var result = MapItem(decision.First(), downloadId, replaceExistingFiles, false,
+                        GetRecordingCustomFormats(decision.Select(item => item.Item), _ => downloadId, previewContext, replaceExistingFiles: replaceExistingFiles, importDecisions: decision));
 
 	                return new List<ManualImportItem> { result };
 	            }
 
-	            return ProcessFolder(path, downloadId, author, filter, replaceExistingFiles, cancellationToken, exactPaths, downloadOverrides, downloadItemInfo, completedConversion);
+	            return ProcessFolder(path, downloadId, author, filter, replaceExistingFiles, cancellationToken, exactPaths, downloadOverrides, downloadItemInfo, completedConversion, previewContext);
         }
 
-	        private List<ManualImportItem> ProcessFolder(string folder, string downloadId, Author author, FilterFilesType filter, bool replaceExistingFiles, CancellationToken cancellationToken, IReadOnlyCollection<string> exactPaths, IdentificationOverrides downloadOverrides, ImportDecisionMakerInfo downloadItemInfo, ConversionJobRequest completedConversion)
+	        private List<ManualImportItem> ProcessFolder(string folder, string downloadId, Author author, FilterFilesType filter, bool replaceExistingFiles, CancellationToken cancellationToken, IReadOnlyCollection<string> exactPaths, IdentificationOverrides downloadOverrides, ImportDecisionMakerInfo downloadItemInfo, ConversionJobRequest completedConversion, RecordingPreviewContext previewContext)
 	        {
 		            cancellationToken.ThrowIfCancellationRequested();
                 if (_logger.IsDebugEnabled)
@@ -317,6 +321,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
             {
                 var started = Stopwatch.GetTimestamp();
                 var trackedDownloads = GetTrackedDownloadsForAssociation();
+                previewContext.AssociationDownloads = trackedDownloads;
                 var tracked = ResolveUniqueTrackedDownload(authorFiles.Select(file => file.FullName), out var reason, trackedDownloads);
                 downloadId = tracked?.DownloadItem.DownloadId;
                 var requests = _conversionJobService.GetCompletedConversions(trackedDownloads.Where(IsAssociationCandidate)
@@ -376,10 +381,18 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                                             (f, d) => new { File = f, Decision = d },
                                             PathEqualityComparer.Instance);
 
+            var completedOutputs = completedConversions.Select(request => request.OutputPath).ToHashSet(PathEqualityComparer.Instance);
+            foreach (var decision in decisions)
+            {
+                if (completedOutputs.Contains(decision.Item.Path)) decision.Item.IsGeneratedConversion = true;
+            }
+
+            var recordingFormats = GetRecordingCustomFormats(decisions.Select(decision => decision.Item),
+                file => conversionDownloads.GetValueOrDefault(file.Path) ?? downloadId, previewContext, replaceExistingFiles: replaceExistingFiles, importDecisions: decisions);
             var newItems = newFiles.Select(x => MapItem(x.Decision,
-                conversionDownloads.GetValueOrDefault(x.File.FullName) ?? downloadId, replaceExistingFiles, false));
+                conversionDownloads.GetValueOrDefault(x.File.FullName) ?? downloadId, replaceExistingFiles, false, recordingFormats));
             var existingDecisions = decisions.Except(newFiles.Select(x => x.Decision));
-            var existingItems = existingDecisions.Select(x => MapItem(x, null, replaceExistingFiles, false));
+            var existingItems = existingDecisions.Select(x => MapItem(x, null, replaceExistingFiles, false, recordingFormats));
 
             var result = newItems.Concat(existingItems).ToList();
             if (completedConversions.Count > 0)
@@ -401,14 +414,52 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
         public List<ManualImportItem> UpdateItems(List<ManualImportItem> items)
         {
             var replaceExistingFiles = items.All(x => x.ReplaceExistingFiles);
-            var groupedItems = items.Where(x => !x.AdditionalFile).GroupBy(x => x.Book?.Id);
+            var downloadIds = items.Select(item => item.DownloadId).Where(id => id.IsNotNullOrWhiteSpace())
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var completedOutputs = downloadIds.Count == 0 ? new HashSet<string>(PathEqualityComparer.Instance)
+                : (_conversionJobService?.GetCompletedConversions(downloadIds) ?? new List<ConversionJobRequest>())
+                    .Select(request => request.OutputPath).ToHashSet(PathEqualityComparer.Instance);
+            var recordingItems = items.Where(item => !item.AdditionalFile).ToDictionary(
+                item => new LocalBook { Path = item.Path, Book = item.Book, Edition = item.Edition,
+                    IsGeneratedConversion = completedOutputs.Contains(item.Path) }, item => item);
+            var groupedItems = RecordingCustomFormatHelper.GroupByRecording(recordingItems.Keys)
+                .Select(group => group.Select(file => recordingItems[file]).ToList()).ToList();
             _logger.Debug($"UpdateItems, {groupedItems.Count()} groups, replaceExisting {replaceExistingFiles}");
 
             var result = new List<ManualImportItem>();
+            var evidenceStarted = Stopwatch.GetTimestamp();
+            var previewContext = new RecordingPreviewContext();
+            if (_trackedDownloadService != null)
+            {
+                foreach (var id in downloadIds) previewContext.Downloads[id] = _trackedDownloadService.Find(id);
+                var blankPaths = items.Where(item => item.DownloadId.IsNullOrWhiteSpace()).Select(item => item.Path).ToList();
+                if (blankPaths.Count > 0)
+                {
+                    previewContext.AssociationDownloads = GetTrackedDownloadsForAssociation();
+                    previewContext.Downloads[string.Empty] = ResolveUniqueTrackedDownload(blankPaths, out _, previewContext.AssociationDownloads);
+                }
+                var historyIds = previewContext.Downloads.Values.Where(download => download != null).Select(download => download.DownloadItem.DownloadId)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                if (historyIds.Count > 0)
+                {
+                    var history = _historyService.FindByDownloadIds(historyIds, EntityHistoryEventType.BookFileImported)
+                        .ToLookup(row => row.DownloadId, StringComparer.OrdinalIgnoreCase);
+                    foreach (var id in historyIds) previewContext.Sources[id] = TrackedDownloadAlreadyImported.GetImportedFileSources(history[id]);
+                }
+            }
+            var linkedBookIds = items.Where(item => item.DownloadId.IsNotNullOrWhiteSpace() && item.Book?.Id > 0)
+                .Select(item => item.Book.Id).Distinct().ToList();
+            if (linkedBookIds.Count > 0 && _bookService != null)
+            {
+                foreach (var id in linkedBookIds) previewContext.Books[id] = null;
+                foreach (var book in _bookService.GetBooksForLookup(linkedBookIds)) previewContext.Books[book.Id] = book;
+            }
 
+            _logger.Debug("[MANUAL-IMPORT][PREVIEW-EVIDENCE] files={0}, downloads={1}, books={2}, elapsedMs={3}",
+                items.Count, previewContext.Sources.Count, previewContext.Books.Count, Stopwatch.GetElapsedTime(evidenceStarted).TotalMilliseconds);
             foreach (var group in groupedItems)
             {
-                _logger.Debug("UpdateItems, group key: {0}", group.Key);
+                _logger.Debug("UpdateItems, recording edition: {0}", group.First().Edition?.Id);
 
                 var disableReleaseSwitching = group.First().DisableReleaseSwitching;
 
@@ -428,17 +479,25 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                     AddNewAuthors = false
                 };
                 var decisions = _importDecisionMaker.GetImportDecisions(files, idOverride, null, config);
+                foreach (var decision in decisions)
+                {
+                    if (completedOutputs.Contains(decision.Item.Path)) decision.Item.IsGeneratedConversion = true;
+                }
 
                 var existingItems = group.Join(decisions,
                                                i => i.Path,
                                                d => d.Item.Path,
                                                (i, d) => new { Item = i, Decision = d },
-                                               PathEqualityComparer.Instance);
+                                               PathEqualityComparer.Instance).ToList();
 
                 foreach (var pair in existingItems)
                 {
                     var item = pair.Item;
                     var decision = pair.Decision;
+                    decision.Item.IsManualImport = true;
+                    decision.Item.IndexerFlags = (IndexerFlags)item.IndexerFlags;
+                    decision.Item.AudioProductionOverride = item.AudioProductionOverride;
+                    item.IsGraphicAudio = AudioProductionDetector.IsDramatized(decision.Item);
 
                     if (decision.Item.Author != null)
                     {
@@ -461,20 +520,136 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                         item.ReleaseGroup = decision.Item.ReleaseGroup;
                     }
 
+                    decision.Item.Quality = item.Quality ?? decision.Item.Quality;
+                    decision.Item.ReleaseGroup = item.ReleaseGroup;
                     item.Rejections = decision.Rejections;
                     item.Size = decision.Item.Size;
 
                     result.Add(item);
                 }
 
+                var selectedIds = group.ToDictionary(item => item.Path, item => item.DownloadId, PathEqualityComparer.Instance);
+                var recordingFormats = GetRecordingCustomFormats(decisions.Select(decision => decision.Item),
+                    file => selectedIds.GetValueOrDefault(file.Path), previewContext, replaceExistingFiles, decisions);
+                foreach (var pair in existingItems)
+                {
+                    pair.Item.Rejections = pair.Decision.Rejections;
+                    pair.Item.CustomFormats = recordingFormats.GetValueOrDefault(pair.Decision.Item) ?? new List<CustomFormat>();
+                    if (pair.Item.ReleaseGroup.IsNullOrWhiteSpace()) pair.Item.ReleaseGroup = pair.Decision.Item.ReleaseGroup;
+                }
+
                 var newDecisions = decisions.Except(existingItems.Select(x => x.Decision));
-                result.AddRange(newDecisions.Select(x => MapItem(x, null, replaceExistingFiles, disableReleaseSwitching)));
+                result.AddRange(newDecisions.Select(x => MapItem(x, null, replaceExistingFiles, disableReleaseSwitching, recordingFormats)));
             }
 
             return result;
         }
 
-        private ManualImportItem MapItem(ImportDecision<LocalBook> decision, string downloadId, bool replaceExistingFiles, bool disableReleaseSwitching)
+        private sealed class RecordingPreviewContext
+        {
+            public Dictionary<string, TrackedDownload> Downloads { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, Dictionary<int, List<string>>> Sources { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<int, Book> Books { get; } = new();
+            public List<TrackedDownload> AssociationDownloads { get; set; }
+        }
+
+        private Dictionary<LocalBook, List<CustomFormat>> GetRecordingCustomFormats(IEnumerable<LocalBook> files,
+            Func<LocalBook, string> getDownloadId, RecordingPreviewContext context = null, bool replaceExistingFiles = false, IEnumerable<ImportDecision<LocalBook>> importDecisions = null)
+        {
+            context ??= new RecordingPreviewContext();
+            var started = Stopwatch.GetTimestamp();
+            var parts = files.ToList();
+            var originalDecisions = (importDecisions ?? Enumerable.Empty<ImportDecision<LocalBook>>()).ToDictionary(decision => decision.Item);
+            var associations = parts.GroupBy(file => getDownloadId(file) ?? string.Empty, StringComparer.OrdinalIgnoreCase).ToList();
+            foreach (var association in associations)
+            {
+                if (context.Downloads.ContainsKey(association.Key)) continue;
+                if (association.Key.IsNotNullOrWhiteSpace()) context.Downloads[association.Key] = _trackedDownloadService?.Find(association.Key);
+                else
+                {
+                    if (_trackedDownloadService == null) context.Downloads[association.Key] = null;
+                    else
+                    {
+                        context.AssociationDownloads ??= GetTrackedDownloadsForAssociation();
+                        context.Downloads[association.Key] = ResolveUniqueTrackedDownload(association.Select(file => file.Path), out _, context.AssociationDownloads);
+                    }
+                }
+            }
+            var historyIds = associations.Select(group => context.Downloads[group.Key]?.DownloadItem.DownloadId)
+                .Where(id => id.IsNotNullOrWhiteSpace() && !context.Sources.ContainsKey(id)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (historyIds.Count > 0)
+            {
+                var history = _historyService.FindByDownloadIds(historyIds, EntityHistoryEventType.BookFileImported)
+                    .ToLookup(row => row.DownloadId, StringComparer.OrdinalIgnoreCase);
+                foreach (var id in historyIds) context.Sources[id] = TrackedDownloadAlreadyImported.GetImportedFileSources(history[id]);
+            }
+            var result = new Dictionary<LocalBook, List<CustomFormat>>();
+            foreach (var association in associations)
+            {
+                var associated = association.ToList();
+                var tracked = context.Downloads[association.Key];
+                PrepareManualAssociation(associated.Select(file => originalDecisions.GetValueOrDefault(file) ?? new ImportDecision<LocalBook>(file)).ToList(), tracked);
+                if (tracked != null)
+                {
+                    var missingIds = associated.Where(file => file.Book?.Id > 0).Select(file => file.Book.Id).Distinct()
+                        .Where(id => !context.Books.ContainsKey(id)).ToList();
+                    if (missingIds.Count > 0)
+                    {
+                        foreach (var id in missingIds) context.Books[id] = null;
+                        foreach (var book in _bookService.GetBooksForLookup(missingIds)) context.Books[book.Id] = book;
+                    }
+                }
+                foreach (var recording in RecordingCustomFormatHelper.GroupByRecording(associated))
+                {
+                    var stored = context.Books.GetValueOrDefault(recording[0].Book?.Id ?? 0)?.BookFiles ?? new List<BookFile>();
+                    var excluded = replaceExistingFiles ? ManualImportReplacementFiles.Get(stored, recording, stored).Select(file => file.Id).ToHashSet() : null;
+                    var completed = tracked == null ? new List<LocalBook>() : RecordingCustomFormatHelper.GetCompletedParts(recording,
+                        stored, tracked.DownloadItem.DownloadId, context.Sources[tracked.DownloadItem.DownloadId], excludedFileIds: excluded);
+                    var evidence = recording.Concat(completed).ToList();
+                    PartAssignmentHelper.NormalizeLocalBooksByEdition(evidence);
+                    foreach (var scoringGroup in RecordingCustomFormatHelper.GroupForScoring(evidence))
+                    {
+                        var selectedParts = scoringGroup.Where(recording.Contains).ToList();
+                        if (selectedParts.Count == 0) continue;
+                        var input = RecordingCustomFormatHelper.CreateInput(scoringGroup);
+                        var formats = input.Author == null ? new List<CustomFormat>() : _formatCalculator.ParseCustomFormat(input);
+                        foreach (var part in selectedParts) result[part] = formats;
+                    }
+                }
+            }
+            _logger.Debug("[MANUAL-IMPORT][POLICY-PREVIEW] files={0}, associations={1}, historyDownloads={2}, books={3}, elapsedMs={4}",
+                parts.Count, associations.Count, historyIds.Count, context.Books.Count, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            return result;
+        }
+
+        private static void PrepareManualAssociation(List<ImportDecision<LocalBook>> decisions, TrackedDownload tracked)
+        {
+            var expected = tracked?.RemoteBook?.AlternativeCopies == true
+                ? TrackedDownloadAlreadyImported.GetExpectedBooks(tracked).Select(book => book.Id).ToHashSet() : null;
+            foreach (var decision in decisions)
+            {
+                var local = decision.Item;
+                var wasManual = local.IsManualImport;
+                var otherFormat = tracked?.RemoteBook?.GetMediaType() is BookMediaType grabbed && local.Book?.MediaType != grabbed;
+                if (!wasManual && local.ReleaseGroup.IsNullOrWhiteSpace()) local.ReleaseGroup = tracked?.RemoteBook?.ParsedBookInfo?.ReleaseGroup;
+                local.IsManualImport = true;
+                if (!wasManual && otherFormat) local.IndexerFlags = default;
+                if (expected != null && decision.Approved)
+                {
+                    if (!expected.Contains(local.Book?.Id ?? 0))
+                    {
+                        decision.Reject(new Rejection("Manual import must select an original alternative-copy target."));
+                        continue;
+                    }
+                    local.AlternativeCopyGrabDate = tracked.RemoteBook.AlternativeCopyGrabDate;
+                }
+                if (tracked != null)
+                    DownloadedBooksImportService.ApplyTrackedReleaseEvidence(new[] { decision }, tracked.RemoteBook, tracked.DownloadItem, titleEvidenceOnly: otherFormat);
+            }
+        }
+
+        private ManualImportItem MapItem(ImportDecision<LocalBook> decision, string downloadId, bool replaceExistingFiles, bool disableReleaseSwitching,
+            IReadOnlyDictionary<LocalBook, List<CustomFormat>> recordingFormats)
         {
             var item = new ManualImportItem();
             var requestedPath = decision.Item.Path;
@@ -505,7 +680,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
             {
                 item.Author = decision.Item.Author;
 
-                item.CustomFormats = _formatCalculator.ParseCustomFormat(decision.Item);
+                item.CustomFormats = recordingFormats.GetValueOrDefault(decision.Item) ?? new List<CustomFormat>();
             }
 
             if (decision.Item.Book != null)
@@ -516,6 +691,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 
             item.Quality = decision.Item.Quality;
             item.ReleaseGroup = decision.Item.ReleaseGroup;
+            item.AudioProductionOverride = decision.Item.AudioProductionOverride;
+            item.IsGraphicAudio = AudioProductionDetector.IsDramatized(decision.Item);
             item.IndexerFlags = (int)decision.Item.IndexerFlags;
             item.Size = decision.Item.Size;
             item.Rejections = decision.Rejections;
@@ -529,6 +706,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 
         public void Execute(ManualImportCommand message)
         {
+            if (message.ReplaceExistingFiles && message.ConfirmedReplacementFiles == null)
+            {
+                throw new CommandFailedException(ManualImportReplacementFiles.ConfirmationRequiredMessage);
+            }
+
             _logger.ProgressTrace("Manually importing {0} files using mode {1}", message.Files.Count, message.ImportMode);
 
             var imported = new List<ImportResult>();
@@ -955,6 +1137,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                 var localTrack = new LocalBook
                 {
                     IsManualImport = true,
+                    AudioProductionOverride = file.AudioProductionOverride,
+                    AudioProductionOverrideSpecified = file.AudioProductionOverrideSpecified,
                     ConfirmedReplacementFiles = message.ConfirmedReplacementFiles,
                     Book = file.BookId > 0 ? new Book { Id = file.BookId } : null,
                     Path = actualPath,
@@ -984,6 +1168,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                 var fileRootFolder = _rootFolderService.GetBestRootFolder(actualPath);
                 var mediaType = GetMediaTypeFromPath(actualPath);
                 localTrack.ExistingFile = fileRootFolder != null;
+                localTrack.ImportRoot = fileRootFolder?.Path;
 
                 Author author = null;
                 Book book = null;
@@ -1150,6 +1335,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                 localTrack.Author = author;
                 localTrack.Book = book;
                 localTrack.Edition = edition;
+                localTrack.ImportRoot = mediaType == BookMediaType.Audiobook ? author.AudiobookPath ?? author.Path : author.EbookPath ?? author.Path;
                 PopulateTagsAndDuration(localTrack, fileInfo);
 
                 localTrack.DisableReleaseSwitching = file.DisableReleaseSwitching;
@@ -1183,21 +1369,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
             {
                 var groupDecisions = group.ToList();
                 var associatedDownload = downloads[selectedDownloadIds[groupDecisions[0]]];
-                if (associatedDownload?.RemoteBook?.AlternativeCopies == true)
-                {
-                    var allowed = TrackedDownloadAlreadyImported.GetExpectedBooks(associatedDownload).Select(book => book.Id).ToHashSet();
-                    foreach (var decision in groupDecisions.Where(decision => decision.Approved))
-                    {
-                        if (!allowed.Contains(decision.Item?.Book?.Id ?? 0))
-                        {
-                            decision.Reject(new Rejection("Manual import must select an original alternative-copy target."));
-                        }
-                        else
-                        {
-                            decision.Item.AlternativeCopyGrabDate = associatedDownload.RemoteBook.AlternativeCopyGrabDate;
-                        }
-                    }
-                }
+                PrepareManualAssociation(groupDecisions, associatedDownload);
 
                 // Only audiobook files should be treated as multipart. Alternate ebook formats
                 // (epub/mobi/kepub) remain single-part files even when they map to the same book.

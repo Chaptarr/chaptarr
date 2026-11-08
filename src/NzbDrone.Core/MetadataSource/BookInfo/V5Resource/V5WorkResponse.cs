@@ -97,7 +97,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo.V5Resource
             Dictionary<string, List<string>> providerIdsAll,
             Dictionary<string, object> legacyProviderIds)
         {
-            if (HasAnyValue(providerIdsAll))
+            if (providerIdsAll != null)
             {
                 return providerIdsAll;
             }

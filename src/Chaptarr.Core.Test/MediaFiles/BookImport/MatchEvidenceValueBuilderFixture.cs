@@ -8,6 +8,18 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
     [TestFixture]
     public class MatchEvidenceValueBuilderFixture
     {
+        [TestCase("'")]
+        [TestCase("‘")]
+        [TestCase("’")]
+        [TestCase("ʼ")]
+        public void possessive_highlights_use_the_same_apostrophes_as_matching(string apostrophe)
+        {
+            var raw = "Frank Herbert" + apostrophe + "s Dune";
+            var builder = new MatchEvidenceValueBuilder();
+            builder.AddPhrase("embedded_tag", "TITLE", raw, "Frank Herberts Dune", "supporting", "title", "book", "Title proof");
+            Assert.That(Slice(builder.Build().Single()), Is.EqualTo(raw));
+        }
+
         [Test]
         public void supplementary_letters_should_distinguish_proof_and_preserve_highlights()
         {

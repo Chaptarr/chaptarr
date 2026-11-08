@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using NLog;
 using NzbDrone.Common.Disk;
@@ -20,8 +22,9 @@ namespace NzbDrone.Core.Extras.Others
                                  IDiskTransferService diskTransferService,
                                  IOtherExtraFileService otherExtraFileService,
                                  IMediaFileAttributeService mediaFileAttributeService,
+                                 IRecycleBinProvider recycleBinProvider,
                                  Logger logger)
-            : base(configService, diskProvider, diskTransferService, logger)
+            : base(configService, diskProvider, diskTransferService, recycleBinProvider, logger)
         {
             _otherExtraFileService = otherExtraFileService;
             _mediaFileAttributeService = mediaFileAttributeService;
@@ -48,6 +51,7 @@ namespace NzbDrone.Core.Extras.Others
         {
             var extraFiles = _otherExtraFileService.GetFilesByAuthor(author.Id);
             var movedFiles = new List<OtherExtraFile>();
+            var resolvedIds = new HashSet<int>();
             foreach (var move in bookFiles)
             {
                 foreach (var extra in extraFiles.Where(extra => extra.BookFileId == move.BookFile.Id))
@@ -58,11 +62,22 @@ namespace NzbDrone.Core.Extras.Others
                         continue;
                     }
 
-                    var destination = System.IO.Path.ChangeExtension(move.BookFile.Path, extra.Extension);
+                    resolvedIds.Add(extra.Id);
+                    var name = Path.GetFileName(source);
+                    var oldStem = Path.GetFileNameWithoutExtension(move.PreviousPath);
+                    // Preserve independently named notes/artwork; only replace the old media stem.
+                    if (!string.IsNullOrEmpty(oldStem) && name.StartsWith(oldStem, StringComparison.OrdinalIgnoreCase) &&
+                        (name.Length == oldStem.Length || !char.IsLetterOrDigit(name[oldStem.Length])))
+                    {
+                        name = Path.GetFileNameWithoutExtension(move.BookFile.Path) + name.Substring(oldStem.Length);
+                    }
+
+                    var destination = Path.Combine(Path.GetDirectoryName(move.BookFile.Path), name);
                     movedFiles.AddIfNotNull(RelocateFile(author, move, extra, source, destination, _otherExtraFileService.Upsert));
                 }
             }
 
+            WarnUnresolvedRenameSources(extraFiles, bookFiles, resolvedIds);
             return movedFiles;
         }
 

@@ -541,6 +541,27 @@ namespace Chaptarr.Core.Test.Books
 
             Assert.That(id, Is.EqualTo(58));
             Assert.That(repositoryProxy.Active.RequestedBy, Is.EqualTo("UserInterface"));
+            Assert.That(repositoryProxy.Active.AudiobookRequestedBy, Is.EqualTo("UserInterface"));
+            Assert.That(repositoryProxy.Active.EbookRequestedBy, Is.EqualTo("ImportList:Favorites"));
+        }
+
+        [Test]
+        public async Task manual_request_for_previously_list_only_side_is_not_reused_as_a_failed_excluded_request()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var proxy = (RepositoryProxy)repository;
+            proxy.Active = new PendingAuthorImport
+            {
+                Id = 58, ProviderId = "gr:58", RequestedBy = "UserInterface",
+                AudiobookRequestedBy = "UserInterface", EbookRequestedBy = "ImportList:Favorites",
+                OverallStatus = PendingImportStatus.Failed, AudiobookStatus = PendingImportStatus.Failed,
+                EbookStatus = PendingImportStatus.Failed
+            };
+            var service = new PendingAuthorImportService(repository, DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(),
+                new RecordingEventAggregator(), LogManager.GetCurrentClassLogger());
+            var id = await service.EnqueueAsync("gr:58", new MonitoringConfig { CreateAudiobook = true, CreateEbook = true }, "UserInterface");
+            Assert.That(id, Is.Not.EqualTo(58));
+            Assert.That(proxy.Inserted.EbookRequestedBy, Is.EqualTo("UserInterface"));
         }
 
         [Test]

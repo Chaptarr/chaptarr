@@ -42,6 +42,7 @@ namespace Chaptarr.Api.V1.Queue
         public string ConversionMessage { get; set; }
         public bool CanCancelConversion { get; set; }
         public bool CanRetryImport { get; set; }
+        public bool AwaitingImportConfirmation { get; set; }
         public DownloadProtocol Protocol { get; set; }
         public string DownloadClient { get; set; }
         public bool DownloadClientHasPostImportCategory { get; set; }
@@ -99,6 +100,7 @@ namespace Chaptarr.Api.V1.Queue
                 ConversionMessage = model.ConversionMessage,
                 CanCancelConversion = model.CanCancelConversion,
                 CanRetryImport = model.CanRetryImport,
+                AwaitingImportConfirmation = model.AwaitingImportConfirmation,
                 Protocol = model.Protocol,
                 DownloadClient = model.DownloadClient,
                 DownloadClientHasPostImportCategory = model.DownloadClientHasPostImportCategory,

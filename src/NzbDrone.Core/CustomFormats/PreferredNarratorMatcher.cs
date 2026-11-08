@@ -78,7 +78,7 @@ namespace NzbDrone.Core.CustomFormats
         public static PreferredNarratorTarget BuildTarget(Book book, Edition explicitEdition = null)
         {
             var edition = GetPreferredNarratorEdition(book, explicitEdition);
-            if (!IsAudiobookEdition(edition))
+            if (!EditionReadingFormat.IsAudiobook(edition?.ReadingFormatId))
             {
                 return null;
             }
@@ -96,11 +96,6 @@ namespace NzbDrone.Core.CustomFormats
             };
         }
 
-        public static bool IsAudiobookEdition(Edition edition)
-        {
-            return edition != null && edition.ReadingFormatId == 2;
-        }
-
         internal static bool IsNarratorNameMatch(string releaseName, string targetName)
         {
             return NarratorNameMatcher.IsMatch(releaseName, targetName);
@@ -108,13 +103,13 @@ namespace NzbDrone.Core.CustomFormats
 
         private static Edition GetPreferredNarratorEdition(Book book, Edition explicitEdition = null)
         {
-            if (explicitEdition?.ManualAdd == true && IsAudiobookEdition(explicitEdition))
+            if (explicitEdition?.ManualAdd == true && EditionReadingFormat.IsAudiobook(explicitEdition?.ReadingFormatId))
             {
                 return explicitEdition;
             }
 
             var editions = book?.Editions?
-                .Where(IsAudiobookEdition)
+                .Where(edition => EditionReadingFormat.IsAudiobook(edition?.ReadingFormatId))
                 .ToList() ?? new List<Edition>();
 
             var manualEdition = editions
@@ -135,7 +130,7 @@ namespace NzbDrone.Core.CustomFormats
                     .OrderBy(edition => edition.Id)
                     .FirstOrDefault();
 
-                return monitoredEdition ?? (IsAudiobookEdition(explicitEdition) ? explicitEdition : null);
+                return monitoredEdition ?? (EditionReadingFormat.IsAudiobook(explicitEdition?.ReadingFormatId) ? explicitEdition : null);
             }
 
             return null;

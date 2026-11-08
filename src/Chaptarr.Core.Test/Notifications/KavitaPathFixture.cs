@@ -109,7 +109,7 @@ namespace Chaptarr.Core.Test.Notifications
         private static Kavita Create(IHttpClient http)
         {
             var logger = LogManager.GetCurrentClassLogger();
-            return new Kavita(new KavitaService(new KavitaServiceProxy(http, logger), logger), new CacheManager())
+            return new Kavita(new KavitaService(new KavitaServiceProxy(http, logger), logger), new CacheManager(), new Chaptarr.Core.Test.Common.MemoryPendingNotifications())
             {
                 Definition = new NotificationDefinition { Settings = new KavitaSettings { Host = "fixture.invalid", Port = 5000, ApiKey = "fixture", Notify = true } }
             };

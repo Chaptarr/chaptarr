@@ -131,7 +131,7 @@ namespace Chaptarr.Core.Test.Download
                     rTorrentDirectoryValidator: null,
                     blocklistService: null,
                     localizationService: null,
-                    logger: LogManager.GetCurrentClassLogger())
+                    logger: LogManager.GetCurrentClassLogger(), rootFolders: DownloadClientTestRoots.Empty)
             {
             }
         }

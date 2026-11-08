@@ -32,6 +32,8 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class StubAuthorRepository : IAuthorRepository
         {
+            public List<int> GetDueInitialFormatSync(DateTime now) => throw new NotSupportedException();
+
             private readonly Dictionary<int, Author> _authors;
 
             public Author LastUpdatedAuthor { get; private set; }
@@ -177,7 +179,7 @@ namespace Chaptarr.Core.Test.Books
             };
             var service = BuildService(repository, eventAggregator: events);
 
-            service.DeleteAuthors(new List<int> { first.Id, second.Id, second.Id }, deleteFiles: false);
+            service.DeleteAuthors(new List<int> { first.Id, second.Id, second.Id }, deleteFiles: false, applyToBothFormats: true);
 
             Assert.That(repository.Get(first.Id), Is.Null);
             Assert.That(repository.Get(second.Id), Is.Null);

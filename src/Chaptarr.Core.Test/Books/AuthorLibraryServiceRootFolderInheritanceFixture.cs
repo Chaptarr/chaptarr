@@ -89,6 +89,7 @@ namespace Chaptarr.Core.Test.Books
             public void ScheduleRetry(PendingAuthorImport item, string error) => throw new NotImplementedException();
             public bool IsActiveRequest(int id, long version) => true;
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void RetryNow(int id) => throw new NotImplementedException();
             public void CleanupOldCompleted() => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
@@ -155,7 +156,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
-            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
@@ -173,6 +174,8 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class StubBookService : IBookService
         {
+            public List<Book> GetImportListBookIdentities() => GetAllBooks();
+
             private readonly Func<int, List<Book>> _getBooksByAuthor;
 
             public StubBookService(Func<int, List<Book>> getBooksByAuthor = null)
@@ -190,7 +193,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds) => throw new NotImplementedException();
             public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds) => throw new NotImplementedException();
             public Book AddBook(Book newBook, bool doRefresh = true) => throw new NotImplementedException();
-            public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
+            public List<Book> FindBySlug(string titleSlug) => throw new NotImplementedException();
             public Book FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Book FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public Book FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
@@ -217,7 +220,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public (Book Book, bool ExistingCopy) AddWantedEditionCopy(int bookId, int editionId) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -275,7 +278,7 @@ namespace Chaptarr.Core.Test.Books
                 return $"{root?.TrimEnd('/', '\\')}/{author.Name}";
             }
 
-            public void EnsureAuthorPaths(Author author, bool useExistingRelativeFolder)
+            public void EnsureAuthorPaths(Author author, bool useExistingRelativeFolder, Author previous = null)
             {
             }
         }
@@ -312,7 +315,7 @@ namespace Chaptarr.Core.Test.Books
                 };
             }
 
-            public void UpdateSyncResult(int authorId, bool success, string etag = null, string error = null, int httpStatus = 0, TimeSpan? duration = null)
+            public void UpdateSyncResult(int authorId, bool success, string etag = null, string error = null, int httpStatus = 0, TimeSpan? duration = null, bool retryAllowed = true, bool localFailure = false)
             {
                 UpdateSyncResultCalled = true;
                 LastAuthorId = authorId;
@@ -323,6 +326,7 @@ namespace Chaptarr.Core.Test.Books
             public AuthorSyncMetadata GetSyncMetadataByExternalId(string externalAuthorId) => throw new NotImplementedException();
             public List<AuthorSyncMetadata> GetSyncMetadataForAuthors(List<int> authorIds) => throw new NotImplementedException();
             public void UpdateSyncMetadata(AuthorSyncMetadata syncMetadata) => throw new NotImplementedException();
+            public void DeferRetry(AuthorSyncMetadata metadata) => throw new NotImplementedException();
             public List<AuthorSyncMetadata> GetDueForSync(int limit = 100) => throw new NotImplementedException();
             public void BulkUpdateSyncMetadata(List<AuthorSyncMetadata> syncMetadata) => throw new NotImplementedException();
         }
@@ -537,8 +541,7 @@ namespace Chaptarr.Core.Test.Books
                     return result;
                 });
                 var add = new AddBookService(authors, library, books,
-                    Proxy<IBookMonitoredService>((method, args) => throw new AssertionException(method.Name)),
-                    Proxy<IBookAddedService>((method, args) => throw new AssertionException(method.Name)), bookInfo,
+                    Proxy<IBookMonitoredService>((method, args) => throw new AssertionException(method.Name)), bookInfo,
                     Proxy<NzbDrone.Core.ImportLists.Exclusions.IImportListExclusionService>((method, args) =>
                         method.Name == "FindByForeignId" ? new List<NzbDrone.Core.ImportLists.Exclusions.ImportListExclusion>() : throw new AssertionException(method.Name)),
                     null, null, null, null, null, editions, new EditionSelector(logger),

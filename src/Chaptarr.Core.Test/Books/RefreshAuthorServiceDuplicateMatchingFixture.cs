@@ -1,3 +1,4 @@
+using Chaptarr.Core.Test.Common;
 using System;
 using System.Collections.Generic;
 using System.IO.Abstractions;
@@ -15,6 +16,8 @@ namespace Chaptarr.Core.Test.Books
     {
         private sealed class StubBookService : IBookService
         {
+            public List<Book> GetImportListBookIdentities() => GetAllBooks();
+
             public List<(int bookId, bool deleteFiles, bool addImportListExclusion, bool applyToBothFormats)> DeleteBookCalls { get; } = new();
 
             public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false)
@@ -31,7 +34,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds) => throw new NotImplementedException();
             public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds) => throw new NotImplementedException();
             public Book AddBook(Book newBook, bool doRefresh = true) => throw new NotImplementedException();
-            public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
+            public List<Book> FindBySlug(string titleSlug) => throw new NotImplementedException();
             public Book FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Book FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public Book FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
@@ -59,7 +62,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public (Book Book, bool ExistingCopy) AddWantedEditionCopy(int bookId, int editionId) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -92,7 +95,7 @@ namespace Chaptarr.Core.Test.Books
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
             public void AddMany(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Update(BookFile bookFile) => throw new NotImplementedException();
-            public int RelinkFilesByBook(int bookId, int editionId, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
@@ -136,18 +139,18 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class TestableRefreshAuthorService : RefreshAuthorService
         {
-            public TestableRefreshAuthorService(IBookService bookService, IMediaFileService mediaFileService, IRefreshBookService refreshBookService, Logger logger)
-                : base(authorInfo: null,
+            public TestableRefreshAuthorService(IBookService bookService, IMediaFileService mediaFileService, IRefreshBookService refreshBookService, Logger logger, IMainDatabase database = null, IEditionService editions = null)
+                : base(MetadataHealthGateStub.Ready(), authorInfo: null,
                     authorService: null,
                     bookService: bookService,
-                    editionService: null,
+                    editionService: editions,
                     metadataProfileService: null,
                     refreshBookService: refreshBookService,
                     refreshSeriesService: null,
                     eventAggregator: null,
                     commandQueueManager: null,
                     mediaFileService: mediaFileService,
-                    historyService: null,
+                    historyRepository: database == null ? ImportLifecycleStubs.NoHistoryRepositoryCalls() : new global::NzbDrone.Core.History.HistoryRepository(database, null),
                     rootFolderService: null,
                     checkIfAuthorShouldBeRefreshed: null,
                     monitorNewBookService: null,
@@ -156,20 +159,23 @@ namespace Chaptarr.Core.Test.Books
                     syncMetadataService: null,
                     syncQueueService: null,
                     rootFolderSettingsResolver: null,
-                    logger: logger)
+                    logger: logger, mainDatabase: database, bookRepository: database == null ? ImportLifecycleStubs.NoBookRepositoryCalls() : new BookRepository(database, null), authorRepository: database == null ? ImportLifecycleStubs.NoPendingAuthorSetup() : new AuthorRepository(database, null, logger))
             {
             }
+
+            private RefreshContext _context;
 
             public Tuple<Book, List<Book>> MatchExisting(List<Book> existingChildren, Book remote)
             {
                 // This fixture bypasses GetLocalChildren; the getter requires its complete snapshot.
-                InitializeBookRefreshMatchingIndex(existingChildren, new List<Book> { remote });
-                return GetMatchingExistingChildren(existingChildren, remote);
+                _context = CreateContext();
+                InitializeBookRefreshMatchingIndex(existingChildren, new List<Book> { remote }, _context);
+                return GetMatchingExistingChildren(existingChildren, remote, _context);
             }
 
             public bool RefreshBooks(RefreshEntityServiceBase<Author, Book>.SortedChildren localChildren, List<Book> remoteChildren)
             {
-                return RefreshChildren(localChildren, remoteChildren, remoteData: null, forceChildRefresh: false, forceUpdateFileTags: false, lastUpdate: null);
+                return RefreshChildren(localChildren, remoteChildren, remoteData: null, forceChildRefresh: false, forceUpdateFileTags: false, lastUpdate: null, context: _context ?? CreateContext());
             }
         }
 
@@ -575,28 +581,31 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void refresh_children_should_delete_merged_duplicates_and_not_send_them_to_refresh_book_service()
+        public void refresh_children_transfers_history_before_removing_fileless_duplicate([Values(false, true)] bool postgres)
         {
-            var bookService = new StubBookService();
-            var mediaFileService = new StubMediaFileService();
-            var refreshBookService = new StubRefreshBookService();
-            var service = new TestableRefreshAuthorService(bookService, mediaFileService, refreshBookService, LogManager.GetCurrentClassLogger());
-
-            var target = new Book { Id = 2, AuthorId = 5, Title = "Mere Christianity", TitleSlug = "mere-christianity", MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
-            var duplicate = new Book { Id = 1, AuthorId = 5, Title = "Mere Christianity", TitleSlug = "old-duplicate", MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
-
-            var children = new RefreshEntityServiceBase<Author, Book>.SortedChildren();
-            children.UpToDate.Add(target);
-            children.Merged.Add(Tuple.Create(duplicate, target));
-
-            service.RefreshBooks(children, new List<Book>());
-
-            Assert.That(bookService.DeleteBookCalls.Select(c => c.bookId).ToList(), Is.EqualTo(new List<int> { duplicate.Id }));
-            Assert.That(refreshBookService.RefreshCallsBooks.Select(b => b.Id).Contains(duplicate.Id), Is.False);
-            Assert.That(refreshBookService.RefreshCallsBooks.Select(b => b.Id).Contains(target.Id), Is.True);
-            Assert.That(refreshBookService.TitleSlugs, Is.Not.Null);
-            Assert.That(refreshBookService.TitleSlugs.Contains(target.TitleSlug), Is.True);
-            Assert.That(refreshBookService.TitleSlugs.Contains(duplicate.TitleSlug), Is.False);
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                var bookService = new StubBookService();
+                var refreshBookService = new StubRefreshBookService();
+                var author = new AuthorRepository(database, null, LogManager.GetCurrentClassLogger()).Insert(new Author { Name = "C. S. Lewis", CleanName = "cslewis", TitleSlug = "cs-lewis", Path = "/library/lewis", Added = DateTime.UtcNow });
+                var repository = new BookRepository(database, null);
+                var target = repository.Insert(new Book { AuthorId = author.Id, Title = "Mere Christianity", CleanTitle = "merechristianity", TitleSlug = "mere-christianity", MediaType = BookMediaType.Audiobook, AnyEditionOk = true, Added = DateTime.UtcNow });
+                var duplicate = repository.Insert(new Book { AuthorId = author.Id, Title = "Mere Christianity", CleanTitle = "merechristianity", TitleSlug = "old-duplicate", MediaType = BookMediaType.Audiobook, AnyEditionOk = true, Added = DateTime.UtcNow });
+                var history = new NzbDrone.Core.History.HistoryRepository(database, null);
+                history.Insert(new NzbDrone.Core.History.EntityHistory { AuthorId = author.Id, BookId = duplicate.Id, SourceTitle = "Mere Christianity", EventType = NzbDrone.Core.History.EntityHistoryEventType.Grabbed, Date = DateTime.UtcNow, Quality = new() });
+                var editions = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IEditionService>((method, args) => new List<Edition>());
+                var service = new TestableRefreshAuthorService(bookService, new StubMediaFileService(), refreshBookService, LogManager.GetCurrentClassLogger(), database, editions);
+                var children = new RefreshEntityServiceBase<Author, Book>.SortedChildren();
+                children.UpToDate.Add(target);
+                children.Merged.Add(Tuple.Create(duplicate, target));
+                service.RefreshBooks(children, new List<Book>());
+                Assert.That(repository.Find(duplicate.Id), Is.Null);
+                Assert.That(history.All().Single().BookId, Is.EqualTo(target.Id));
+                Assert.That(bookService.DeleteBookCalls, Is.Empty, "Ordinary deletion would discard the acquisition history");
+                Assert.That(refreshBookService.RefreshCallsBooks.Select(book => book.Id), Does.Not.Contain(duplicate.Id));
+                Assert.That(refreshBookService.TitleSlugs.Contains(target.MediaType, target.TitleSlug), Is.True);
+                Assert.That(refreshBookService.TitleSlugs.Contains(duplicate.MediaType, duplicate.TitleSlug), Is.False);
+            });
         }
     }
 }

@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using NLog;
 using NzbDrone.Common;
+using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
@@ -25,11 +27,13 @@ namespace NzbDrone.Core.Download
         void Check(TrackedDownload trackedDownload);
         void Import(TrackedDownload trackedDownload);
         bool VerifyImport(TrackedDownload trackedDownload, List<ImportResult> importResults);
-        bool CanRemoveDownload(TrackedDownload trackedDownload);
+        bool CanRemoveDownload(TrackedDownload trackedDownload, DownloadCleanupContext cleanup = null);
     }
 
 	    public class CompletedDownloadService : ICompletedDownloadService
 	    {
+            private static readonly TimeSpan SlowCleanupProbeThreshold = TimeSpan.FromSeconds(5);
+
 	        private readonly IEventAggregator _eventAggregator;
 	        private readonly IHistoryService _historyService;
 	        private readonly IProvideImportItemService _provideImportItemService;
@@ -37,7 +41,6 @@ namespace NzbDrone.Core.Download
 	        private readonly IDownloadImportModeResolver _downloadImportModeResolver;
 	        private readonly ITrackedDownloadAlreadyImported _trackedDownloadAlreadyImported;
 	        private readonly IDownloadClientFileSnapshotService _downloadClientFileSnapshotService;
-	        private readonly IFailedDownloadService _failedDownloadService;
 	        private readonly Logger _logger;
 
 	        public CompletedDownloadService(IEventAggregator eventAggregator,
@@ -46,7 +49,6 @@ namespace NzbDrone.Core.Download
 	                                        IDownloadedBooksImportService downloadedTracksImportService,
 	                                        IDownloadImportModeResolver downloadImportModeResolver,
 	                                        ITrackedDownloadAlreadyImported trackedDownloadAlreadyImported,
-	                                        IFailedDownloadService failedDownloadService,
 	                                        Logger logger,
 	                                        IDownloadClientFileSnapshotService downloadClientFileSnapshotService)
 	        {
@@ -57,7 +59,6 @@ namespace NzbDrone.Core.Download
 	            _downloadImportModeResolver = downloadImportModeResolver;
 	            _trackedDownloadAlreadyImported = trackedDownloadAlreadyImported;
 	            _downloadClientFileSnapshotService = downloadClientFileSnapshotService;
-	            _failedDownloadService = failedDownloadService;
 	            _logger = logger;
 	        }
 
@@ -97,6 +98,7 @@ namespace NzbDrone.Core.Download
         {
             SetImportItem(trackedDownload);
             trackedDownload.ClearStatus();
+            trackedDownload.AwaitingImportConfirmation = false;
 
             if (!ValidatePath(trackedDownload))
             {
@@ -118,10 +120,20 @@ namespace NzbDrone.Core.Download
                 var importResults = _downloadedTracksImportService.ProcessPath(outputPath, importMode, trackedDownload.RemoteBook?.Author, trackedDownload.DownloadItem, trackedDownload.RemoteBook);
                 ApplyActualFileQuality(trackedDownload, importResults);
 
+                var awaitingConfirmation = importResults.Where(result => result.Result == ImportResultType.WaitingForConfirmation).ToList();
+                if (awaitingConfirmation.Count > 0)
+                {
+                    trackedDownload.AwaitingImportConfirmation = true;
+                    BlockImport(trackedDownload, awaitingConfirmation.Select(result =>
+                        new TrackedDownloadStatusMessage(GetImportFileTitle(trackedDownload, result.ImportDecision.Item.Path), result.Errors)).ToArray());
+                    return;
+                }
+
                 if (importResults.Any(result => result.Result == ImportResultType.Pending))
                 {
                     trackedDownload.State = TrackedDownloadState.ImportPending;
-                    trackedDownload.ClearStatus();
+                    trackedDownload.Wait(BuildImportStatusMessages(trackedDownload,
+                        importResults.Where(result => result.Result == ImportResultType.Pending).ToList()));
                     PublishTrackedDownloadUpdated(trackedDownload);
                     _logger.Debug("Import deferred while detached conversion runs for {0}.", trackedDownload.DownloadItem.Title);
                     return;
@@ -141,8 +153,20 @@ namespace NzbDrone.Core.Download
                         trackedDownload.DownloadItem.Title);
                 }
 
-                if (VerifyImport(trackedDownload, importResults, history))
+                if (_trackedDownloadAlreadyImported.IsImported(trackedDownload, history, importResults))
                 {
+                    var included = _downloadedTracksImportService.ProcessIncludedMedia(
+                        trackedDownload.ImportItem ?? trackedDownload.DownloadItem, trackedDownload.RemoteBook, history);
+                    if (included.Any(result => result.Result == ImportResultType.Pending))
+                    {
+                        trackedDownload.State = TrackedDownloadState.ImportPending;
+                        trackedDownload.Wait(BuildImportStatusMessages(trackedDownload, included.Where(result => result.Result == ImportResultType.Pending).ToList()));
+                        PublishTrackedDownloadUpdated(trackedDownload);
+                    }
+                    else
+                    {
+                        CompleteImport(trackedDownload, importResults.Concat(included).ToList(), history);
+                    }
                     return;
                 }
 
@@ -154,20 +178,37 @@ namespace NzbDrone.Core.Download
                         new TrackedDownloadStatusMessage(trackedDownload.DownloadItem.Title, string.Format("No files found are eligible for import in {0}", outputPath))
                     };
 
-                    trackedDownload.Warn(trackedDownload.StatusMessages.Concat(statusMessages).ToArray());
+                    trackedDownload.Warn(BuildImportStatusMessages(trackedDownload, importResults, statusMessages));
                     trackedDownload.State = TrackedDownloadState.ImportPending;
                     PublishTrackedDownloadUpdated(trackedDownload);
                     return;
                 }
 
+                var mismatch = importResults.FirstOrDefault(result => result.ImportDecision.Rejections
+                    .Any(rejection => rejection.Category == GrabbedFormatMismatch.RejectionCategory))?.Errors.FirstOrDefault();
+                if (mismatch == null && importResults.All(result => result.Result == ImportResultType.Rejected &&
+                    result.ImportDecision.Rejections.Any(rejection => rejection.IsQualityFilter)))
+                {
+                    var grabbedQuality = history?.Where(row => row.EventType == EntityHistoryEventType.Grabbed)
+                        .OrderByDescending(row => row.Date).FirstOrDefault()?.Quality?.Quality;
+                    var media = trackedDownload.RemoteBook?.GetMediaType();
+                    var profile = media.HasValue ? trackedDownload.RemoteBook?.Author?.GetQualityProfileForMediaType(media.Value) : null;
+                    mismatch = GrabbedFormatMismatch.Message(trackedDownload.DownloadItem.Title,
+                        importResults.Select(result => result.ImportDecision.Item.Path), media, grabbedQuality, profile);
+                }
+
+                if (mismatch != null)
+                {
+                    _logger.Warn("Download {0} ({1}) requires Manual Import: {2}",
+                        trackedDownload.DownloadItem.Title, trackedDownload.DownloadItem.DownloadId, mismatch);
+                    BlockImport(trackedDownload, BuildImportStatusMessages(trackedDownload, importResults,
+                        new TrackedDownloadStatusMessage(trackedDownload.DownloadItem.Title, mismatch)));
+                    return;
+                }
+
                 if (AreAllImportRejectionsTemporary(importResults))
                 {
-                    var statusMessages = importResults
-                        .Where(result => result.ImportDecision.Item != null)
-                        .Select(result => new TrackedDownloadStatusMessage(Path.GetFileName(result.ImportDecision.Item.Path), result.Errors))
-                        .ToArray();
-
-                    trackedDownload.Warn(statusMessages);
+                    trackedDownload.Warn(BuildImportStatusMessages(trackedDownload, importResults));
                     trackedDownload.State = TrackedDownloadState.ImportPending;
                     PublishTrackedDownloadUpdated(trackedDownload);
                     return;
@@ -182,7 +223,7 @@ namespace NzbDrone.Core.Download
                         new TrackedDownloadStatusMessage(trackedDownload.DownloadItem.Title, strictVerificationFailure)
                     };
 
-                    BlockImport(trackedDownload, trackedDownload.StatusMessages.Concat(statusMessages).ToArray());
+                    BlockImport(trackedDownload, BuildImportStatusMessages(trackedDownload, importResults, statusMessages));
                     return;
                 }
 
@@ -203,28 +244,7 @@ namespace NzbDrone.Core.Download
 
                 if (importResults.Any(c => c.Result != ImportResultType.Imported))
                 {
-                    // Nothing importable in the payload because every file is a format the profile
-                    // does not allow: the release simply is not what its title advertised. That is
-                    // deterministic — retrying imports the same files and gets the same answer — so
-                    // fail it like any other bad grab (blocklist + configured replacement search)
-                    // instead of parking it in the queue forever. Explicit user grabs are exempt.
-                    if (IsProfileDisallowedPayload(importResults) && !IsUserForced(trackedDownload))
-                    {
-                        var reason = string.Format("No file in this download is in a format allowed by the quality profile ({0})",
-                            string.Join(", ", GetDisallowedFormatSummary(importResults)));
-
-                        _logger.Warn("{0} for {1}; marking failed so it can be replaced.", reason, trackedDownload.DownloadItem.Title);
-
-                        _failedDownloadService.MarkAsFailed(trackedDownload, reason);
-                        return;
-                    }
-
-                    var statusMessages = importResults
-                        .Where(v => v.Result != ImportResultType.Imported && v.ImportDecision.Item != null)
-                        .Select(v => new TrackedDownloadStatusMessage(Path.GetFileName(v.ImportDecision.Item.Path), v.Errors))
-                        .ToArray();
-
-                    BlockImport(trackedDownload, trackedDownload.StatusMessages.Concat(statusMessages).ToArray());
+                    BlockImport(trackedDownload, BuildImportStatusMessages(trackedDownload, importResults));
                     return;
                 }
 
@@ -244,68 +264,116 @@ namespace NzbDrone.Core.Download
             }
         }
 
-        /// <summary>
-        /// True when the import produced nothing and every file it did consider was refused by the
-        /// quality-profile gate. Categorised rejections (Rejection.IsQualityFilter) are the signal —
-        /// never the message text — so a transient or unknown failure can never be mistaken for a
-        /// payload mismatch and blocklisted.
-        /// </summary>
-        internal static bool IsProfileDisallowedPayload(List<ImportResult> importResults)
+        private static TrackedDownloadStatusMessage[] BuildImportStatusMessages(TrackedDownload trackedDownload,
+            IEnumerable<ImportResult> results, params TrackedDownloadStatusMessage[] headlines)
         {
-            if (importResults == null || importResults.Any(result => result.Result == ImportResultType.Imported))
+            var messages = headlines.Concat(trackedDownload.StatusMessages
+                .Where(message => headlines.Length == 0 || !message.IsCompletionFallback)).ToList();
+            var reportedPaths = messages.Select(message => message.SourcePath ?? message.Title)
+                .Where(title => title.IsPathValid(PathValidationType.CurrentOs)).ToHashSet(PathEqualityComparer.Instance);
+            var headlineReasons = headlines.SelectMany(message => message.Messages).ToHashSet();
+            foreach (var result in results.Where(result => result.Result != ImportResultType.Imported))
             {
-                return false;
+                var reasons = result.Errors.Where(reason => !headlineReasons.Contains(reason)).ToList();
+                if (reasons.Count == 0) continue;
+                foreach (var path in TrackedDownloadAlreadyImported.GetSourcePaths(result.ImportDecision?.Item))
+                {
+                    if (reportedPaths.Add(path)) messages.Add(new TrackedDownloadStatusMessage(path, reasons) { SourcePath = path });
+                }
             }
-
-            var consideredFiles = importResults
-                .Where(result => result.ImportDecision?.Item != null)
-                .ToList();
-
-            if (!consideredFiles.Any())
+            foreach (var message in messages)
             {
-                return false;
+                if (message.Title.IsPathValid(PathValidationType.CurrentOs) && Path.IsPathRooted(message.Title))
+                    message.Title = GetImportFileTitle(trackedDownload, message.Title);
             }
-
-            return consideredFiles.All(result =>
-                result.ImportDecision.Rejections?.Any(rejection => rejection.IsQualityFilter) == true);
+            return messages.ToArray();
         }
 
-        public bool CanRemoveDownload(TrackedDownload trackedDownload)
+        internal static string GetImportFileTitle(TrackedDownload trackedDownload, string path)
+        {
+            var outputFolder = (trackedDownload.ImportItem ?? trackedDownload.DownloadItem).OutputPath.FullPath;
+            return !string.IsNullOrWhiteSpace(outputFolder) && outputFolder.IsParentPath(path)
+                ? outputFolder.GetRelativePath(path)
+                : Path.GetFileName(path);
+        }
+
+        public bool CanRemoveDownload(TrackedDownload trackedDownload, DownloadCleanupContext cleanup = null)
         {
             if (trackedDownload.State != TrackedDownloadState.Imported)
             {
                 return false;
             }
 
+            const string additionalFilesMessage = "Additional book files have not been imported. Use Manual Import to review them and Combine with the existing files.";
+            var alreadyReported = trackedDownload.StatusMessages.Any(message => message.Messages.Contains(additionalFilesMessage));
             var item = trackedDownload.ImportItem ?? trackedDownload.DownloadItem;
-            var knownPaths = new HashSet<string>(item.FilePaths ?? new List<string>(), PathEqualityComparer.Instance);
+            bool complete;
             try
             {
-                _downloadClientFileSnapshotService.CaptureCompletedOutput(item, throwOnError: true);
-                if (!(item.FilePaths ?? new List<string>()).Except(knownPaths, PathEqualityComparer.Instance)
-                    .Any(path => TrackedDownloadAlreadyImported.IsTargetMediaFile(path, trackedDownload.RemoteBook?.GetMediaType())))
+                var stopwatch = Stopwatch.StartNew();
+                try
                 {
-                    return true;
+                    _downloadClientFileSnapshotService.CaptureCompletedOutput(item, throwOnError: true, cleanup: cleanup);
                 }
-
+                finally
+                {
+                    if (stopwatch.Elapsed > SlowCleanupProbeThreshold && !trackedDownload.SlowCleanupProbeReported)
+                    {
+                        trackedDownload.SlowCleanupProbeReported = true;
+                        _logger.Warn("Download cleanup file check for {0} at {1} took {2:F1}s (warning threshold {3:F0}s). Check the storage or remote mount if cleanup is slow.",
+                            item.DownloadId, item.OutputPath, stopwatch.Elapsed.TotalSeconds, SlowCleanupProbeThreshold.TotalSeconds);
+                    }
+                }
                 trackedDownload.DownloadItem.FilePaths = item.FilePaths;
                 trackedDownload.DownloadItem.FileListConfidence = item.FileListConfidence;
-                if (_trackedDownloadAlreadyImported.IsImported(trackedDownload,
-                    _historyService.FindByDownloadId(item.DownloadId)))
-                {
-                    return true;
-                }
 
-                trackedDownload.Warn(trackedDownload.StatusMessages.Append(new TrackedDownloadStatusMessage(item.Title,
-                    "Additional book files have not been imported. Use Manual Import to review them and Combine with the existing files.")).ToArray());
+                // A disk snapshot may have been saved before a failed check or restart.
+                // Verify its contents, not just paths added during this attempt.
+                complete = item.FileListConfidence != DownloadClientFileListConfidence.Disk ||
+                    _trackedDownloadAlreadyImported.IsImported(trackedDownload,
+                        _historyService.FindByDownloadId(item.DownloadId));
             }
             catch (Exception ex)
             {
-                _logger.Debug(ex, "Unable to verify files before cleaning up download {0}", item.DownloadId);
-                trackedDownload.Warn("Unable to check download files before cleanup: {0}. Review the files using Manual Import.", ex.Message);
+                var reason = ex is DownloadOutputReadException
+                    ? "Unable to read download files before cleanup"
+                    : "Unable to verify download import evidence before cleanup";
+                _logger.Log(trackedDownload.CleanupCheckFailed ? LogLevel.Debug : LogLevel.Warn, ex,
+                    "{0} for {1}: {2}. Keeping files and retrying on the next cleanup pass.", reason, item.DownloadId, item.OutputPath);
+                var firstFailure = !trackedDownload.CleanupCheckFailed;
+                trackedDownload.CleanupCheckFailed = true;
+                trackedDownload.IsTrackable = true;
+                trackedDownload.Warn("{0}: {1}. Files are kept; Chaptarr will retry automatically.", reason, ex.Message);
+                if (firstFailure)
+                {
+                    _eventAggregator.PublishEvent(new DownloadCleanupStatusChangedEvent());
+                    PublishTrackedDownloadUpdated(trackedDownload);
+                }
+                return false;
             }
 
-            _logger.Warn("Keeping download {0} for Manual Import: {1}", item.DownloadId,
+            if (trackedDownload.CleanupCheckFailed)
+            {
+                _logger.Info("Cleanup verification recovered for download {0}: {1}", item.DownloadId, item.OutputPath);
+                trackedDownload.CleanupCheckFailed = false;
+                _eventAggregator.PublishEvent(new DownloadCleanupStatusChangedEvent());
+                if (complete)
+                {
+                    trackedDownload.ClearStatus();
+                    PublishTrackedDownloadUpdated(trackedDownload);
+                }
+            }
+
+            if (complete)
+            {
+                return true;
+            }
+
+            if (!trackedDownload.StatusMessages.Any(message => message.Messages.Contains(additionalFilesMessage)))
+            {
+                trackedDownload.Warn(trackedDownload.StatusMessages.Append(new TrackedDownloadStatusMessage(item.Title, additionalFilesMessage)).ToArray());
+            }
+            _logger.Log(alreadyReported ? LogLevel.Debug : LogLevel.Warn, "Keeping download {0} for Manual Import: {1}", item.DownloadId,
                 string.Join("; ", trackedDownload.StatusMessages.SelectMany(message => message.Messages.Prepend(message.Title))));
             trackedDownload.IsTrackable = true;
             BlockImportWithCurrentStatus(trackedDownload);
@@ -318,21 +386,6 @@ namespace NzbDrone.Core.Download
                 result.Result != ImportResultType.Imported &&
                 result.ImportDecision?.Rejections?.Any() == true &&
                 result.ImportDecision.Rejections.All(rejection => rejection.Type == RejectionType.Temporary));
-        }
-
-        private static IEnumerable<string> GetDisallowedFormatSummary(List<ImportResult> importResults)
-        {
-            return importResults
-                .Where(result => result.ImportDecision?.Item != null)
-                .Select(result => result.ImportDecision.Item.Quality?.Quality?.Name)
-                .Where(name => !name.IsNullOrWhiteSpace())
-                .Distinct()
-                .DefaultIfEmpty("unknown format");
-        }
-
-        private static bool IsUserForced(TrackedDownload trackedDownload)
-        {
-            return trackedDownload?.DownloadItem?.DownloadForced == true;
         }
 
         private void BlockImport(TrackedDownload trackedDownload, params TrackedDownloadStatusMessage[] statusMessages)
@@ -386,16 +439,54 @@ namespace NzbDrone.Core.Download
                 return false;
             }
 
+            CompleteImport(trackedDownload, importResults, history);
+            return true;
+        }
+
+        private void CompleteImport(TrackedDownload trackedDownload, List<ImportResult> importResults, List<EntityHistory> history)
+        {
             _logger.Debug("All required source files were imported for {0}", trackedDownload.DownloadItem.Title);
             trackedDownload.State = TrackedDownloadState.Imported;
             trackedDownload.ClearStatus();
+            var skipped = importResults.Where(result => result.IsIncludedMediaSkip).ToList();
+            if (skipped.Count > 0)
+            {
+                trackedDownload.Warn(skipped.Select(result => new TrackedDownloadStatusMessage(
+                    GetImportFileTitle(trackedDownload, result.ImportDecision.Item.Path), result.Errors)).ToArray());
+                var message = string.Join(Environment.NewLine, skipped.Select(result =>
+                    $"Skipped included file '{GetImportFileTitle(trackedDownload, result.ImportDecision.Item.Path)}': {string.Join("; ", result.Errors)}").Distinct());
+                var importedHistory = (history ?? new List<EntityHistory>())
+                    .Where(row => row.EventType == EntityHistoryEventType.BookFileImported).ToList();
+                foreach (var row in importedHistory)
+                {
+                    var previous = row.GetDataValue("Message");
+                    row.Data ??= new Dictionary<string, string>();
+                    var key = row.Data.Keys.FirstOrDefault(key => string.Equals(key, "Message", StringComparison.OrdinalIgnoreCase)) ?? "Message";
+                    var lines = (previous ?? string.Empty).Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries).ToList();
+                    foreach (var line in message.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries))
+                        if (!lines.Contains(line, StringComparer.Ordinal)) lines.Add(line);
+                    row.Data[key] = string.Join(Environment.NewLine, lines);
+                }
+
+                if (importedHistory.Count > 0)
+                {
+                    try
+                    {
+                        _historyService.UpdateMany(importedHistory);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warn(ex, "Could not save the included-file skip note for download {0}; the requested import is complete", trackedDownload.DownloadItem.DownloadId);
+                    }
+                }
+            }
+
             PublishTrackedDownloadUpdated(trackedDownload);
             var authorIds = importResults.Where(result => result.Result == ImportResultType.Imported)
                 .Select(result => result.ImportDecision.Item?.Author?.Id ?? result.ImportDecision.Item?.Book?.AuthorId ?? 0);
             _eventAggregator.PublishEvent(new DownloadCompletedEvent(trackedDownload,
                 ResolveCompletedAuthorId(trackedDownload, authorIds,
                     (history ?? new List<EntityHistory>()).Where(row => row.EventType == EntityHistoryEventType.BookFileImported).Select(row => row.AuthorId))));
-            return true;
         }
 
         private string GetStrictVerificationFailure(TrackedDownload trackedDownload, List<ImportResult> importResults, bool hasGrabHistory)

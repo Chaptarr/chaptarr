@@ -31,6 +31,7 @@ namespace Chaptarr.Core.Test.Datastore
             public void PublishEvent<TEvent>(TEvent value) where TEvent : class, IEvent { }
         }
 
+        // Runtime repositories require the current schema; historical migration tests below keep explicit versions.
         private sealed class Writer<T> : BasicRepository<T> where T : ModelBase, new()
         {
             public Writer(IDatabase database) : base(database, new StubEvents()) { }
@@ -47,7 +48,7 @@ namespace Chaptarr.Core.Test.Datastore
         [TestCase(DatabaseType.PostgreSQL)]
         public void canonical_writers_should_keep_folded_index_and_raw_metadata_coherent(DatabaseType type)
         {
-            WithDatabase(type, 115, (connection, database, migrate) =>
+            WithDatabase(type, int.MaxValue, (connection, database, migrate) =>
             {
                 var authors = new Writer<Author>(database);
                 var books = new Writer<Book>(database);
@@ -165,7 +166,7 @@ namespace Chaptarr.Core.Test.Datastore
         [TestCase(DatabaseType.PostgreSQL)]
         public void bulk_writers_should_preserve_batching_and_transaction_rollback(DatabaseType type)
         {
-            WithDatabase(type, 115, (connection, database, migrate) =>
+            WithDatabase(type, int.MaxValue, (connection, database, migrate) =>
             {
                 var authors = new Writer<Author>(database);
                 var rows = Enumerable.Range(1, 1200).Select(index => new Author { Name = "Søren Reader " + index, CleanName = "reader" + index, Path = "/fixture/" + index, Added = DateTime.UtcNow }).ToList();
@@ -304,7 +305,7 @@ namespace Chaptarr.Core.Test.Datastore
         [Test]
         public void actual_postgres_recall_vectors_should_match_upgraded_indexes_and_remain_eligible()
         {
-            WithDatabase(DatabaseType.PostgreSQL, 115, (connection, database, _) =>
+            WithDatabase(DatabaseType.PostgreSQL, int.MaxValue, (connection, database, _) =>
             {
                 var author = new Writer<Author>(database).Insert(new Author { Name = "Søren Reader", CleanName = "sorenreader", Path = "/vectors", Added = DateTime.UtcNow });
                 var books = new Writer<Book>(database);
@@ -368,7 +369,7 @@ namespace Chaptarr.Core.Test.Datastore
         [TestCase(true)]
         public void sqlite_migration_and_runtime_triggers_should_skip_irrelevant_or_equal_updates(bool runtimeRebuild)
         {
-            WithDatabase(DatabaseType.SQLite, 115, (connection, database, _) =>
+            WithDatabase(DatabaseType.SQLite, int.MaxValue, (connection, database, _) =>
             {
                 var authors = new Writer<Author>(database);
                 var books = new Writer<Book>(database);

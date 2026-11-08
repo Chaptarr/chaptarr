@@ -227,8 +227,8 @@ class AddNewBookModalContentConnector extends Component {
     const ebookMonitorValue = ebookMonitor?.value || monitor?.value;
     const audiobookMonitorNewItemsValue = audiobookMonitorNewItems?.value || monitorNewItems?.value;
     const ebookMonitorNewItemsValue = ebookMonitorNewItems?.value || monitorNewItems?.value;
-    const audiobookMetaId = audiobookMetadataProfileId?.value || metadataProfileId?.value || 1;
-    const ebookMetaId = ebookMetadataProfileId?.value || metadataProfileId?.value || 2;
+    const audiobookMetaId = audiobookMetadataProfileId?.value ?? metadataProfileId?.value;
+    const ebookMetaId = ebookMetadataProfileId?.value ?? metadataProfileId?.value;
     const audiobookTagsValue = audiobookTags?.value || tags?.value;
     const ebookTagsValue = ebookTags?.value || tags?.value;
     const selectedMonitor = selectedMediaType === 'ebook' ? ebookMonitorValue : audiobookMonitorValue;

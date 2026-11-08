@@ -1,4 +1,5 @@
 import { createSelector } from 'reselect';
+import { isBookSearchEligible } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import createBooksClientSideCollectionSelector from './createBooksClientSideCollectionSelector';
 
 function createBookClientSideCollectionItemsSelector(uiSection) {
@@ -15,7 +16,8 @@ function createBookClientSideCollectionItemsSelector(uiSection) {
         return {
           id,
           title,
-          authorTitle
+          authorTitle,
+          isSearchEligible: isBookSearchEligible(s)
         };
       });
 

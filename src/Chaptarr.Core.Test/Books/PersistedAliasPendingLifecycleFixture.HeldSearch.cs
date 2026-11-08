@@ -128,7 +128,11 @@ namespace Chaptarr.Core.Test.Books
                     request.EbookStatus = PendingImportStatus.Pending;
                     request.EbookBooksToMonitor = request.EbookBooksToSearch = JsonConvert.SerializeObject(new[] { "hc:7000" });
                 }
-                if (native) request.RequestedBy = "UserInterface";
+                if (native)
+                {
+                    request.RequestedBy = "UserInterface";
+                    Harness.MarkExplicitSearches(request);
+                }
                 h.Requests.Update(request);
                 h.RejectedBookId = requested.Id;
                 h.Run();

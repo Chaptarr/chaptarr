@@ -148,6 +148,13 @@ namespace NzbDrone.Core.Jobs
 
                     new ScheduledTask
                     {
+                        Interval = 1,
+                        TypeName = typeof(RetryAuthorRefreshCommand).FullName,
+                        Priority = CommandPriority.Low
+                    },
+
+                    new ScheduledTask
+                    {
                         Interval = 24 * 60,
                         TypeName = typeof(RescanFoldersCommand).FullName
                     },

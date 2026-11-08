@@ -45,7 +45,7 @@ namespace NzbDrone.Core.Download.History
 
         private static string NormalizeDownloadId(string downloadId)
         {
-            return downloadId.IsNullOrWhiteSpace() ? null : downloadId.ToUpperInvariant();
+            return DownloadIdentity.Key(downloadId);
         }
 
         public DownloadHistory GetLatestDownloadHistoryItem(string downloadId)
@@ -223,6 +223,7 @@ namespace NzbDrone.Core.Download.History
             history.Data.Add("DownloadClient", clientInfo?.Type);
             history.Data.Add("DownloadClientName", clientInfo?.Name);
             history.Data.Add(StatusMessagesKey, statusMessages);
+            history.Data.Add("awaitingImportConfirmation", message.TrackedDownload.AwaitingImportConfirmation.ToString());
 
             if (IsDuplicateImportIncomplete(history, statusMessages))
             {

@@ -19,6 +19,7 @@ namespace NzbDrone.Core.Books
 
         public void Handle(AuthorEditedEvent message)
         {
+            if (message.IdentityReconciliation) return;
             _logger.Debug("[FLOW-DEBUG] ========== AuthorEditedService.Handle START ==========");
             _logger.Debug("[FLOW-DEBUG] Author: '{0}' (ID: {1})", message.Author.Name, message.Author.Id);
             _logger.Debug("[FLOW-DEBUG] Old MetadataProfileId: {0}, New MetadataProfileId: {1}", message.OldAuthor.MetadataProfileId, message.Author.MetadataProfileId);

@@ -70,7 +70,7 @@ namespace Chaptarr.Api.V1.RootFolders
                 .SetValidator(pathExistsValidator)
                 .SetValidator(systemFolderValidator)
                 .SetValidator(folderReadableValidator)
-                .SetValidator(folderWritableValidator);
+                .SetValidator(folderWritableValidator).WithErrorCode("RootFolderNotWritable");
 
             PostValidator.RuleFor(c => c.Path)
                 .SetValidator(rootFolderValidator);
@@ -96,6 +96,15 @@ namespace Chaptarr.Api.V1.RootFolders
             SharedValidator.RuleFor(c => c.OutputProfile).IsEnumName(typeof(CalibreProfile));
         }
 
+        private RootFolder _storedRootForValidation;
+
+        private RootFolder GetStoredRoot(RootFolderResource resource)
+        {
+            if (HttpContext?.Request.Method != "PUT" || resource.Id <= 0) return null;
+            if (_storedRootForValidation?.Id != resource.Id) _storedRootForValidation = _rootFolderService.Get(resource.Id);
+            return _storedRootForValidation;
+        }
+
         private void AddMediaSettingsValidation(
             BookMediaType mediaType,
             QualityProfileExistsValidator qualityProfileExistsValidator,
@@ -107,10 +116,13 @@ namespace Chaptarr.Api.V1.RootFolders
             SharedValidator.RuleFor(resource => RootFolderResourceMapper.GetQualityProfileId(resource, mediaType))
                 .Cascade(CascadeMode.Stop)
                 .NotNull()
-                .WithMessage($"A {mediaLabel} quality profile is required")
+                .WithMessage($"An {mediaLabel} quality profile is required")
                 .GreaterThan(0)
                 .WithMessage($"A valid {mediaLabel} quality profile is required")
-                .SetValidator(qualityProfileExistsValidator.ForType(mediaType == BookMediaType.Audiobook ? ProfileType.Audiobook : ProfileType.Ebook))
+                .SetValidator(qualityProfileExistsValidator.ForType(mediaType == BookMediaType.Audiobook ? ProfileType.Audiobook : ProfileType.Ebook,
+                    value => mediaType == BookMediaType.Audiobook
+                        ? GetStoredRoot((RootFolderResource)value)?.GetAudiobookSettings()?.QualityProfileId
+                        : GetStoredRoot((RootFolderResource)value)?.GetEbookSettings()?.QualityProfileId))
                 .When(resource => RequiresMediaSettings(resource, mediaType))
                 .WithName($"{mediaLabel}QualityProfileId");
 
@@ -120,7 +132,10 @@ namespace Chaptarr.Api.V1.RootFolders
                 .WithMessage($"An {mediaLabel} metadata profile is required")
                 .GreaterThan(0)
                 .WithMessage($"A valid {mediaLabel} metadata profile is required")
-                .SetValidator(metadataProfileExistsValidator.ForType(mediaType == BookMediaType.Audiobook ? MetadataProfileType.Audiobook : MetadataProfileType.Ebook))
+                .SetValidator(metadataProfileExistsValidator.ForType(mediaType == BookMediaType.Audiobook ? MetadataProfileType.Audiobook : MetadataProfileType.Ebook,
+                    value => mediaType == BookMediaType.Audiobook
+                        ? GetStoredRoot((RootFolderResource)value)?.GetAudiobookSettings()?.MetadataProfileId
+                        : GetStoredRoot((RootFolderResource)value)?.GetEbookSettings()?.MetadataProfileId))
                 .When(resource => RequiresMediaSettings(resource, mediaType))
                 .WithName($"{mediaLabel}MetadataProfileId");
         }

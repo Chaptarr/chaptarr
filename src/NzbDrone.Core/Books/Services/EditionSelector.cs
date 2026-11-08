@@ -46,7 +46,7 @@ namespace NzbDrone.Core.Books
                 return null;
             }
 
-            var nativeFormat = mediaType == BookMediaType.Audiobook ? 2 : 3;
+            var nativeFormat = EditionReadingFormat.NativeFor(mediaType);
             var nativeFormatCandidates = candidates
                 .Where(e => e.ReadingFormatId == nativeFormat)
                 .ToList();
@@ -67,7 +67,7 @@ namespace NzbDrone.Core.Books
             }
 
             var candidates = editions.Where(e => e != null).ToList();
-            var nativeFormat = mediaType == BookMediaType.Audiobook ? 2 : 3;
+            var nativeFormat = EditionReadingFormat.NativeFor(mediaType);
             var nativeCandidates = candidates.Where(e => e.ReadingFormatId == nativeFormat).ToList();
 
             candidates = nativeCandidates.Any()
@@ -141,7 +141,7 @@ namespace NzbDrone.Core.Books
 
             var retained = new List<Edition>();
             var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var nativeFormat = instanceMediaType == BookMediaType.Audiobook ? 2 : 3;
+            var nativeFormat = EditionReadingFormat.NativeFor(instanceMediaType);
 
             foreach (var languageGroup in candidates.GroupBy(e => EditionMetadataProfileFilter.NormalizeLanguageBucket(e.Language) ?? "null"))
             {
@@ -279,7 +279,7 @@ namespace NzbDrone.Core.Books
 
             var normalizedTitle = edition?.Title?.Trim().ToLowerInvariant() ?? string.Empty;
             var normalizedLanguage = edition?.Language?.CanonicalizeLanguage()?.Trim().ToLowerInvariant() ?? "null";
-            var readingFormat = edition?.ReadingFormatId ?? 0;
+            var readingFormat = edition?.ReadingFormatId ?? EditionReadingFormat.Unknown;
             var releaseDate = edition?.ReleaseDate?.ToString("yyyyMMdd") ?? "null";
 
             return $"fallback:{normalizedTitle}|{normalizedLanguage}|{readingFormat}|{releaseDate}";
@@ -301,34 +301,14 @@ namespace NzbDrone.Core.Books
 
         private static bool IsRepresentativeFallback(Edition edition, BookMediaType mediaType)
         {
-            return GetRepresentativeFallbackRank(edition, mediaType) > 0;
-        }
-
-        private static int GetRepresentativeFallbackRank(Edition edition, BookMediaType mediaType)
-        {
-            if (edition == null)
-            {
-                return 0;
-            }
-
-            if (mediaType == BookMediaType.Audiobook)
-            {
-                return edition.ReadingFormatId switch
-                {
-                    3 => 2,
-                    1 => 1,
-                    _ => 0
-                };
-            }
-
-            return edition.ReadingFormatId == 1 ? 1 : 0;
+            return EditionReadingFormat.RepresentativeRank(edition?.ReadingFormatId, mediaType) > 0;
         }
 
         private static Edition SelectRepresentativeFallback(IEnumerable<Edition> editions, BookMediaType mediaType)
         {
             return (editions ?? Enumerable.Empty<Edition>())
                 .Where(e => IsRepresentativeFallback(e, mediaType))
-                .OrderByDescending(e => GetRepresentativeFallbackRank(e, mediaType))
+                .OrderByDescending(e => EditionReadingFormat.RepresentativeRank(e?.ReadingFormatId, mediaType))
                 .ThenByDescending(e => e.Ratings?.Votes ?? 0)
                 .ThenByDescending(e => e.Ratings?.Value ?? 0m)
                 .ThenBy(e => e.Id)

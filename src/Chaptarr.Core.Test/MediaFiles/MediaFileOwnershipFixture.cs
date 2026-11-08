@@ -43,16 +43,21 @@ namespace Chaptarr.Core.Test.MediaFiles
                 try
                 {
                     // Session-local tables shadow application names; no library data is modified.
-                    connection.Execute(@"CREATE TEMP TABLE ""Books"" (""Id"" INTEGER PRIMARY KEY, ""AuthorId"" INTEGER);
-                        CREATE TEMP TABLE ""Editions"" (""Id"" INTEGER PRIMARY KEY, ""BookId"" INTEGER);
-                        CREATE TEMP TABLE ""BookFiles"" (""Id"" INTEGER PRIMARY KEY, ""EditionId"" INTEGER, ""Path"" TEXT, ""ReplicaPaths"" TEXT, ""CalibreId"" INTEGER DEFAULT 0);
-                        INSERT INTO ""Books"" VALUES (1, 10), (2, 20);
-                        INSERT INTO ""Editions"" VALUES (11, 1), (12, 1), (21, 2);
+                    CreateSchema<Author>(connection);
+                    CreateSchema<Book>(connection);
+                    CreateSchema<Edition>(connection);
+                    CreateSchema<BookFile>(connection);
+                    connection.Execute(@"INSERT INTO ""Authors"" (""Id"", ""Name"") VALUES (10, 'Selected Author'), (20, 'Other Author');
+                        INSERT INTO ""Books"" (""Id"", ""AuthorId"") VALUES (1, 10), (2, 20);
+                        INSERT INTO ""Editions"" (""Id"", ""BookId"") VALUES (11, 1), (12, 1), (21, 2);
                         INSERT INTO ""BookFiles"" (""Id"", ""EditionId"", ""Path"", ""ReplicaPaths"") VALUES
                             (1, 11, '/audio/A/book.m4b', '[]'),
                             (2, 12, '/ebooks/A/book.epub', '[""/audio/A/copy.epub""]'),
                             (3, 21, '/audio/A/other-author.epub', NULL),
-                            (4, 0, '/audio/A/unmapped.m4b', '[]');
+                            (4, 0, '/audio/A/unmapped.m4b', '[]'),
+                            (5, 21, '/audio/B/unrelated.m4b', '[]'),
+                            (6, 21, '/audio/B/replica-owner.epub', '[""/audio/A/managed.epub""]'),
+                            (7, 21, '/audio/AB/prefix-lookalike.epub', '[]');
                         UPDATE ""BookFiles"" SET ""CalibreId"" = 7 WHERE ""Id"" = 2;");
                     return connection;
                 }
@@ -73,14 +78,26 @@ namespace Chaptarr.Core.Test.MediaFiles
                 _ => throw new NotImplementedException(method.Name)
             });
             var repository = new MediaFileRepository(database, null);
-            var files = repository.GetFilePathOwnership();
-            Assert.That(files, Has.Count.EqualTo(4));
+            if (System.IO.Path.DirectorySeparatorChar != '/')
+            {
+                connection.Execute(@"UPDATE ""BookFiles"" SET ""Path"" = replace(""Path"", '/', @separator),
+                    ""ReplicaPaths"" = replace(""ReplicaPaths"", '/', @jsonSeparator)",
+                    new { separator = System.IO.Path.DirectorySeparatorChar.ToString(), jsonSeparator = "\\\\" });
+            }
+            var files = repository.GetFilePathOwnership(new[] { 10 }, new[] { "/audio/A".AsOsAgnostic() });
+            Assert.That(files, Has.Count.EqualTo(5));
             Assert.That(files.Single(file => file.Id == 2).CalibreId, Is.EqualTo(7));
             Assert.That(files.Single(file => file.Id == 1).Author.Id, Is.EqualTo(10));
+            Assert.That(files.Single(file => file.Id == 1).Author.Name, Is.EqualTo("Selected Author"));
             Assert.That(files.Single(file => file.Id == 2).Author.Id, Is.EqualTo(10));
-            Assert.That(files.Single(file => file.Id == 2).ReplicaPaths, Is.EqualTo(new[] { "/audio/A/copy.epub" }));
+            Assert.That(files.Single(file => file.Id == 2).ReplicaPaths, Is.EqualTo(new[] { "/audio/A/copy.epub".AsOsAgnostic() }));
             Assert.That(files.Single(file => file.Id == 3).Author.Id, Is.EqualTo(20));
+            Assert.That(files.Single(file => file.Id == 3).Author.Name, Is.EqualTo("Other Author"));
             Assert.That(files.Single(file => file.Id == 4).Author, Is.Null);
+
+            Assert.That(files.Select(file => file.Id), Does.Contain(6), "Replicas must pull their outside owner into the scoped inventory");
+            Assert.That(files.Select(file => file.Id), Does.Not.Contain(5).And.Not.Contain(7), "Unrelated folders and partial prefixes are not inventory");
+            Assert.That(repository.GetFilePathOwnership(Array.Empty<int>(), Array.Empty<string>()), Is.Empty);
 
             var purgedPaths = new List<string>();
             var ingest = AuthorDeletionSafetyFixture.Proxy<IIngestQueueRepository>((method, args) =>
@@ -93,8 +110,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 throw new InvalidOperationException("Record-only cleanup must not publish physical deletion events"));
             var service = new MediaFileService(repository, events, ingest, null, LogManager.GetCurrentClassLogger());
             service.DeleteRecordsForAuthorDeletion(files.Where(file => file.Author == null).ToList());
-            Assert.That(connection.Query<int>(@"SELECT ""Id"" FROM ""BookFiles"" ORDER BY ""Id"""), Is.EqualTo(new[] { 1, 2, 3 }));
-            Assert.That(purgedPaths, Is.EqualTo(new[] { "/audio/A/unmapped.m4b" }));
+            Assert.That(connection.Query<int>(@"SELECT ""Id"" FROM ""BookFiles"" ORDER BY ""Id"""), Is.EqualTo(new[] { 1, 2, 3, 5, 6, 7 }));
+            Assert.That(purgedPaths, Is.EqualTo(new[] { "/audio/A/unmapped.m4b".AsOsAgnostic() }));
         }
 
         [TestCase(false)]

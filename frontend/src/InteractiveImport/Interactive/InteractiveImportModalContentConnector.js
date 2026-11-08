@@ -173,7 +173,8 @@ class InteractiveImportModalContentConnector extends Component {
   onPathFallbackChange = ({ value }) => {
     const { mediaManagementSettings } = this.props;
 
-    if (mediaManagementSettings.settings?.bookMatchingStrictness?.value === 'strict' && value) {
+    if (!mediaManagementSettings.isPopulated || mediaManagementSettings.error || mediaManagementSettings.isFetching || mediaManagementSettings.isSaving ||
+        (mediaManagementSettings.settings?.bookMatchingStrictness?.value === 'strict' && value)) {
       return;
     }
 
@@ -272,6 +273,7 @@ class InteractiveImportModalContentConnector extends Component {
           quality,
           releaseGroup,
           indexerFlags,
+          ...(item.audioProductionOverrideChanged ? { audioProductionOverride: item.audioProductionOverride } : {}),
           downloadId: item.downloadId || this.props.downloadId,
           disableReleaseSwitching
         });
@@ -324,6 +326,7 @@ class InteractiveImportModalContentConnector extends Component {
         onReplaceExistingFilesChange={this.onReplaceExistingFilesChange}
         onImportModeChange={this.onImportModeChange}
         onPathFallbackChange={this.onPathFallbackChange}
+        onRetrySettings={() => this.props.fetchMediaManagementSettings()}
         onImportSelectedPress={this.onImportSelectedPress}
       />
     );

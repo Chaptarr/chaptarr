@@ -43,15 +43,15 @@ namespace Chaptarr.Core.Test.Books
             var filter = new EditionMetadataProfileFilter(new TestTermMatcherService());
             var editions = new RefreshEditionService(h.Editions, Proxy<IMetadataTagService>((_, _) => null), null, database, h.Logger);
             var books = new RefreshBookService(h.Books, h.Authors, h.Roots, h.Editions, info, null,
-                editions, files, null, h.Events, null, selector, filter, Proxy<IMapCoversToLocal>((_, _) => null), h.Logger);
+                editions, files, null, h.Events, null, selector, filter, Proxy<IMapCoversToLocal>((_, _) => null), h.Logger, mainDatabase: null);
             var config = Proxy<IConfigService>((method, _) => method.Name == "get_RescanAfterRefresh"
                 ? rescanPolicy
                 : method.ReturnType.IsValueType ? Activator.CreateInstance(method.ReturnType) : null);
-            return new RefreshAuthorService(info, h.Authors, h.Books, h.Editions, h.Profiles, books, null,
-                h.Events, h.Queue, files, null, h.Roots, null, Proxy<IMonitorNewBookService>((_, _) => false), config,
+            return new RefreshAuthorService(MetadataHealthGateStub.Ready(), info, h.Authors, h.Books, h.Editions, h.Profiles, books, null,
+                h.Events, h.Queue, files, new global::NzbDrone.Core.History.HistoryRepository(database, h.Events), h.Roots, null, Proxy<IMonitorNewBookService>((_, _) => false), config,
                 Proxy<IImportListExclusionService>((_, _) => new List<ImportListExclusion>()),
                 new AuthorSyncMetadataService(new AuthorSyncMetadataRepository(database, h.Events), h.Logger),
-                null, null, h.Logger, selector, database);
+                null, null, h.Logger, editionSelector: selector, mainDatabase: database, bookRepository: new BookRepository(database, h.Events), authorRepository: new AuthorRepository(database, h.Events, h.Logger));
         }
 
         [Test]
@@ -83,7 +83,8 @@ namespace Chaptarr.Core.Test.Books
                     if (method.Name == nameof(IProvideAuthorInfo.GetAuthorInfo))
                         return h.Info.GetAuthorInfo((string)args[0]);
                     Assert.That(method.Name, Is.EqualTo(nameof(IProvideAuthorInfo.RefreshAuthorInfo)));
-                    Assert.That(args[1], Is.EqualTo("existing-etag"));
+                    Assert.That(args[1], Is.EqualTo(unavailable == "write" && calls == 2 ? null : "existing-etag"),
+                        "A failed catalog write clears the ETag so the next refresh requests the complete payload.");
                     Assert.That(args[4], Is.True, "An unchanged server catalog still needs to populate the missing local format.");
                     calls++;
                     if (ready) return RefreshResult.Updated(h.Info.GetAuthorInfo("hc:123456"), "existing-etag");

@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using NLog;
+using NzbDrone.Common;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
@@ -16,7 +18,7 @@ namespace NzbDrone.Core.Download
     public interface IDownloadClientFileSnapshotService
     {
         void CaptureClientList(DownloadClientItem item);
-        void CaptureCompletedOutput(DownloadClientItem item, bool throwOnError = false);
+        void CaptureCompletedOutput(DownloadClientItem item, bool throwOnError = false, DownloadCleanupContext cleanup = null);
         void ApplySnapshot(DownloadClientItem item);
         void Delete(DownloadClientItem item);
     }
@@ -53,7 +55,7 @@ namespace NzbDrone.Core.Download
             Upsert(item, item.FilePaths, ClientSource, item.FileListConfidence ?? DownloadClientFileListConfidence.Degraded);
         }
 
-        public void CaptureCompletedOutput(DownloadClientItem item, bool throwOnError = false)
+        public void CaptureCompletedOutput(DownloadClientItem item, bool throwOnError = false, DownloadCleanupContext cleanup = null)
         {
             if (!CanSnapshot(item) || item.OutputPath.IsEmpty)
             {
@@ -70,12 +72,33 @@ namespace NzbDrone.Core.Download
             // Completion still needs import evidence for previously seen media, even after
             // it disappears from disk. Import itself can only process files still present.
             var filePaths = new List<string>(item.FilePaths ?? new List<string>());
+            var stopwatch = Stopwatch.StartNew();
 
             try
             {
                 if (_diskProvider.FileExists(outputPath))
                 {
                     filePaths.Add(outputPath);
+                }
+                else if (throwOnError)
+                {
+                    try
+                    {
+                        filePaths.AddRange(_diskProvider.GetDirectoryInfo(outputPath).EnumerateFiles("*", new EnumerationOptions
+                        {
+                            RecurseSubdirectories = true,
+                            IgnoreInaccessible = false
+                        }).Select(file => file.FullName));
+                    }
+                    catch (DirectoryNotFoundException)
+                    {
+                        // Move-mode imports can remove the output folder. Only accept that
+                        // absence when its parent is readable and confirms it is gone.
+                        if ((cleanup ?? new DownloadCleanupContext()).ParentContainsPath(outputPath, _diskProvider))
+                        {
+                            throw;
+                        }
+                    }
                 }
                 else if (_diskProvider.FolderExists(outputPath))
                 {
@@ -86,11 +109,18 @@ namespace NzbDrone.Core.Download
             {
                 if (throwOnError)
                 {
-                    throw;
+                    // Only this filesystem operation can produce a read-error marker.
+                    // Snapshot persistence and import-history failures retain their own cause.
+                    throw new DownloadOutputReadException(outputPath, ex);
                 }
 
                 _logger.Debug(ex, "Unable to snapshot completed output file list for download '{0}' at '{1}'", item.Title, outputPath);
                 return;
+            }
+            finally
+            {
+                _logger.Debug("Download output check {0}: observedPaths={1}, elapsedMs={2}",
+                    item.DownloadId, filePaths.Count, stopwatch.ElapsedMilliseconds);
             }
 
             if (filePaths.Count == 0)
@@ -157,12 +187,11 @@ namespace NzbDrone.Core.Download
                 return;
             }
 
-            var tracked = message.TrackedDownloads.ToLookup(item => item.DownloadClient, item => item.DownloadItem.DownloadId);
-            foreach (var client in message.ReportedDownloadIds)
+            foreach (var client in message.RetainedDownloadIds)
             {
                 // Only a successful client poll can prove removal. Importing downloads can
                 // remain tracked after disappearing from the client.
-                _repository.RemoveMissingDownloads(client.Key, client.Value.Concat(tracked[client.Key]));
+                _repository.RemoveMissingDownloads(client.Key, client.Value);
             }
         }
 

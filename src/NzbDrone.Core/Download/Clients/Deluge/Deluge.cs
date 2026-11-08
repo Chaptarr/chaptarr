@@ -104,9 +104,17 @@ namespace NzbDrone.Core.Download.Clients.Deluge
         private sealed class LabelChangeState
         {
             public bool RecoveryRequired = true;
+            public Dictionary<string, (string Name, string Reason)> Failures = new(StringComparer.OrdinalIgnoreCase);
         }
 
         private LabelChangeState GetLabelChangeState() => _labelChanges.Get(Definition.Id.ToString(), () => new LabelChangeState());
+
+        public IReadOnlyList<(string Name, string Reason)> GetLabelChangeFailures()
+        {
+            var state = _labelChanges.Find(Definition.Id.ToString());
+            if (state == null) return Array.Empty<(string Name, string Reason)>();
+            lock (state) return state.Failures.Values.ToList();
+        }
 
         private void ChangePreservedLabel(string downloadId, string label)
         {
@@ -150,55 +158,89 @@ namespace NzbDrone.Core.Download.Clients.Deluge
 
         private void FinishLabelChange(DownloadHistory grab, LabelChange change)
         {
-            var hash = grab.DownloadId.ToLowerInvariant();
-            var torrent = _proxy.GetTorrent(hash, Settings);
-            if (string.IsNullOrEmpty(torrent?.Hash))
+            var step = "reading the torrent status";
+            try
             {
-                SaveLabelChange(grab, null);
-                return;
-            }
-
-            if (!change.ResumeAttempted)
-            {
-                if (!change.PauseConfirmed || torrent.Label != change.Label)
+                var hash = grab.DownloadId.ToLowerInvariant();
+                var torrent = _proxy.GetTorrent(hash, Settings);
+                if (string.IsNullOrEmpty(torrent?.Hash))
                 {
-                    // A pending label write still needs the guard, even if it was
-                    // manually resumed meanwhile. Never apply ratio rules while running.
-                    if (change.PauseConfirmed && ResumeComplete(torrent)) change.Resume = true;
-                    SaveLabelChange(grab, change);
-                    _proxy.SetTorrentPaused(hash, true, Settings);
-                    torrent = WaitForPauseState(hash, true);
-                    if (!PauseConfirmed(torrent))
+                    step = "saving label-change completion";
+                    SaveLabelChange(grab, null);
+                    GetLabelChangeState().Failures.Remove(grab.DownloadId);
+                    return;
+                }
+
+                if (!change.ResumeAttempted)
+                {
+                    if (!change.PauseConfirmed || torrent.Label != change.Label)
                     {
-                        throw new DownloadClientException("Deluge has not confirmed the pause; the preserved torrent label was not changed");
+                        // A pending label write still needs the guard, even if it was
+                        // manually resumed meanwhile. Never apply ratio rules while running.
+                        if (change.PauseConfirmed && ResumeComplete(torrent)) change.Resume = true;
+                        SaveLabelChange(grab, change);
+                        step = "pausing the torrent";
+                        _proxy.SetTorrentPaused(hash, true, Settings);
+                        torrent = WaitForPauseState(hash, true);
+                        if (!PauseConfirmed(torrent))
+                        {
+                            throw UnconfirmedLabelStep("the pause");
+                        }
+
+                        change.PauseConfirmed = true;
+                        SaveLabelChange(grab, change);
                     }
 
-                    change.PauseConfirmed = true;
+                    step = "setting the label";
+                    if (torrent.Label != change.Label) _proxy.SetTorrentLabel(hash, change.Label, Settings);
+                    step = "setting unlimited seeding";
+                    _proxy.SetTorrentSeedingConfiguration(hash, new TorrentSeedConfiguration { KeepSeeding = true }, Settings);
+                    step = "restoring auto-management";
+                    _proxy.SetTorrentConfiguration(hash, "auto_managed", change.AutoManaged, Settings);
+                    step = "checking the seeding settings";
+                    torrent = _proxy.GetTorrent(hash, Settings);
+                    if (torrent.Label != change.Label || torrent.StopAtRatio || torrent.RemoveAtRatio || torrent.IsAutoManaged != change.AutoManaged)
+                    {
+                        throw UnconfirmedLabelStep(torrent.Label != change.Label ? "the label" :
+                            torrent.StopAtRatio || torrent.RemoveAtRatio ? "unlimited seeding" : "auto-management");
+                    }
+                }
+
+                if (change.Resume && !ResumeComplete(torrent))
+                {
+                    change.ResumeAttempted = true;
                     SaveLabelChange(grab, change);
+                    step = "resuming the torrent";
+                    _proxy.SetTorrentPaused(hash, false, Settings);
+                    if (!ResumeComplete(WaitForPauseState(hash, false)))
+                    {
+                        throw UnconfirmedLabelStep("the resume");
+                    }
                 }
 
-                if (torrent.Label != change.Label) _proxy.SetTorrentLabel(hash, change.Label, Settings);
-                _proxy.SetTorrentSeedingConfiguration(hash, new TorrentSeedConfiguration { KeepSeeding = true }, Settings);
-                _proxy.SetTorrentConfiguration(hash, "auto_managed", change.AutoManaged, Settings);
-                torrent = _proxy.GetTorrent(hash, Settings);
-                if (torrent.Label != change.Label || torrent.StopAtRatio || torrent.RemoveAtRatio || torrent.IsAutoManaged != change.AutoManaged)
-                {
-                    throw new DownloadClientException("Deluge has not confirmed preserved seeding settings; the label change will retry on the next download check");
-                }
+                step = "saving label-change completion";
+                SaveLabelChange(grab, null);
+                GetLabelChangeState().Failures.Remove(grab.DownloadId);
             }
-
-            if (change.Resume && !ResumeComplete(torrent))
+            catch (Exception ex)
             {
-                change.ResumeAttempted = true;
-                SaveLabelChange(grab, change);
-                _proxy.SetTorrentPaused(hash, false, Settings);
-                if (!ResumeComplete(WaitForPauseState(hash, false)))
-                {
-                    throw new DownloadClientException("Deluge has not confirmed the resume; Chaptarr will finish its pending label change on the next download check");
-                }
+                var reason = ex is DownloadClientUnavailableException || ex is HttpRequestException || ex is WebException || ex is TimeoutException || ex is System.Threading.Tasks.TaskCanceledException
+                    ? "Deluge is not reachable"
+                    : ex.Data["delugeUnconfirmedStep"] is string unconfirmed
+                        ? $"Deluge did not confirm {unconfirmed}"
+                        : ex is DownloadClientException
+                            ? $"Deluge rejected {step}: {ex.Message}"
+                            : $"Unable to finish {step}: {ex.Message}";
+                GetLabelChangeState().Failures[grab.DownloadId] = (grab.SourceTitle ?? grab.DownloadId, reason);
+                throw;
             }
+        }
 
-            SaveLabelChange(grab, null);
+        private static DownloadClientException UnconfirmedLabelStep(string step)
+        {
+            var error = new DownloadClientException($"Deluge did not confirm {step}; the label change will retry on the next download check");
+            error.Data["delugeUnconfirmedStep"] = step;
+            return error;
         }
 
         private static bool ResumeComplete(DelugeTorrent torrent) => !torrent.Paused || torrent.State == "Queued";
@@ -313,6 +355,8 @@ namespace NzbDrone.Core.Download.Clients.Deluge
                 var timer = Stopwatch.StartNew();
                 var pending = _downloadHistory.GetPendingLabelChanges(Definition.Id);
                 _logger.Debug("[DelugeLabelRecovery] client={0} pending={1} queryElapsed={2}ms", Definition.Id, pending.Count, timer.ElapsedMilliseconds);
+                var pendingIds = pending.Select(grab => grab.DownloadId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var id in state.Failures.Keys.Where(id => !pendingIds.Contains(id)).ToList()) state.Failures.Remove(id);
                 var recovered = true;
                 foreach (var grab in pending)
                 {

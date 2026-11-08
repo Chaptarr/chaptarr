@@ -19,7 +19,7 @@ namespace NzbDrone.Core.Books
     }
 
     [DebuggerDisplay("{GetType().FullName} ID = {Id}[{Title}]")]
-    public class Book : Entity<Book>
+    public class Book : ProviderIdentityEntity<Book>
     {
         public Book()
         {
@@ -167,11 +167,6 @@ namespace NzbDrone.Core.Books
         [MemberwiseEqualityIgnore]
         public Narrator WantedNarrator { get; set; }
 
-        // Optional in-memory provider ID sets from upstream metadata payloads (not persisted).
-        // Used for identity matching (provider ID intersection) without relying on local row IDs or titles.
-        [MemberwiseEqualityIgnore]
-        [JsonIgnore]
-        public HashSet<string> RemoteProviderIds { get; set; }
 
         //compatibility properties with old version of Book
         [MemberwiseEqualityIgnore]
@@ -229,8 +224,12 @@ namespace NzbDrone.Core.Books
         [JsonIgnore]
         public string SearchSeriesName { get; set; }
 
+        protected override string IdentityScope => "work";
+        protected override IEnumerable<string> GetIdentityIds() => BookIdentity.GetStableWorkProviderIdentityTokens(this);
+
         public override IEnumerable<string> PrepareForPersistence(IReadOnlyCollection<string> fields)
         {
+            foreach (var field in base.PrepareForPersistence(fields)) yield return field;
             if (fields == null || fields.Contains(nameof(SeriesName)) || fields.Contains(nameof(SearchSeriesName)))
             {
                 SearchSeriesName = StringSuperNormalizer.NormalizeForFts(SeriesName);

@@ -2,15 +2,20 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using Chaptarr.Core.Test;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
+using NzbDrone.Core.Books.Commands;
+using NzbDrone.Core.Messaging.Events;
+using Chaptarr.Core.Test.Common;
 using FluentValidation;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.ImportLists.Exclusions;
+using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
 
@@ -41,25 +46,27 @@ namespace Chaptarr.Core.Test.Books
                 quality == NzbDrone.Core.Qualities.Quality.EPUB
                     ? Path.Combine(author.EbookRootFolderPath, author.Name)
                     : Path.Combine(author.AudiobookRootFolderPath, author.Name);
-            public void EnsureAuthorPaths(Author author, bool useExistingRelativeFolder) { }
+            public void EnsureAuthorPaths(Author author, bool useExistingRelativeFolder, Author previous = null) { }
         }
 
         private sealed class StubImportListExclusionService : IImportListExclusionService
         {
             public List<ImportListExclusion> Exclusions { get; } = new List<ImportListExclusion>();
-            public int AllCalls { get; private set; }
+            public int LookupCalls { get; private set; }
             public void ValidateAuthorExclusions(IEnumerable<Author> authors) => throw new NotImplementedException();
             public void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
             public void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType = null) => throw new NotImplementedException();
             public ImportListExclusion Add(ImportListExclusion exclusion) => throw new NotImplementedException();
-            public List<ImportListExclusion> All() { AllCalls++; return Exclusions.ToList(); }
+            public List<ImportListExclusion> All() => throw new AssertionException("The add gate must not load every exclusion");
             public void Delete(int id) => throw new NotImplementedException();
             public void Delete(List<int> ids) => throw new NotImplementedException();
-            public void Delete(string foreignId) => throw new NotImplementedException();
             public ImportListExclusion Get(int id) => throw new NotImplementedException();
-            public ImportListExclusion FindByForeignId(string foreignId) => throw new NotImplementedException();
             public List<ImportListExclusion> FindByForeignId(List<string> foreignIds, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
-            public List<ImportListExclusion> FindByForeignId(List<string> foreignIds) => throw new NotImplementedException();
+            public List<ImportListExclusion> FindByForeignId(List<string> foreignIds)
+            {
+                LookupCalls++;
+                return Exclusions.Where(row => foreignIds.Contains(row.ForeignId.Trim(), StringComparer.OrdinalIgnoreCase)).ToList();
+            }
             public ImportListExclusion Update(ImportListExclusion exclusion) => throw new NotImplementedException();
         }
 
@@ -78,7 +85,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
-            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
@@ -126,6 +133,7 @@ namespace Chaptarr.Core.Test.Books
             public bool SaveProgress(PendingAuthorImport item, PendingAuthorImport previous) => throw new NotImplementedException();
             public void ScheduleRetry(PendingAuthorImport item, string error) => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void RetryNow(int id) => throw new NotImplementedException();
             public void CleanupOldCompleted() => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
@@ -171,7 +179,12 @@ namespace Chaptarr.Core.Test.Books
             exclusions.Exclusions.Add(new ImportListExclusion { ForeignId = "gr:58", Name = "Frank Herbert", MediaType = BookMediaType.Ebook });
             var pending = new StubPendingAuthorImportService(1, null);
             var info = new StubAuthorInfoNotFound();
-            var service = BuildSubject(info, pending, exclusions);
+            using var factory = new LogFactory();
+            var warnings = new NLog.Targets.MemoryTarget { Layout = "${message}" };
+            var logging = new NLog.Config.LoggingConfiguration(factory);
+            logging.AddRule(LogLevel.Warn, LogLevel.Fatal, warnings);
+            factory.Configuration = logging;
+            var service = BuildSubject(info, pending, exclusions, logger: factory.GetLogger("exclusion-test"));
             var config = new MonitoringConfig
             {
                 QueueIfUnavailable = true,
@@ -196,6 +209,7 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(config.EbookBooksToSearch, Is.EqualTo(new[] { "gr:3634639" }));
             }
             Assert.That(pending.EnqueueCalls, Is.EqualTo(1));
+            Assert.That(warnings.Logs.Count(line => line.Contains("[IMPORT-LIST-EXCLUSION]")), Is.EqualTo(appliesExclusion ? 1 : 0));
         }
 
         [Test]
@@ -217,11 +231,67 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(pending.EnqueueCalls, Is.Zero);
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void merged_manual_audio_request_does_not_bypass_list_only_ebook_exclusion_after_reopen(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var authors = new StubAuthorService();
+                var events = InterfaceProxy.Proxy<IEventAggregator>((_, _) => null);
+                var repository = new PendingAuthorImportRepository(database, events);
+                var pending = new PendingAuthorImportService(repository, authors, events, LogManager.GetCurrentClassLogger());
+                pending.EnqueueAsync("gr:58", new MonitoringConfig
+                {
+                    AuthorName = "Frank Herbert", CreateAudiobook = true, CreateEbook = true,
+                    RequestedBy = "ImportList:Favorites"
+                }, "ImportList:Favorites").GetAwaiter().GetResult();
+                pending.EnqueueAsync("gr:58", new MonitoringConfig { CreateAudiobook = true, CreateEbook = false }, "UserInterface").GetAwaiter().GetResult();
+                var saved = new PendingAuthorImportRepository(database, events).GetActiveByProviderId("gr:58");
+                Assert.That(saved.RequestedBy, Is.EqualTo("UserInterface"));
+                Assert.That(saved.AudiobookRequestedBy, Is.EqualTo("UserInterface"));
+                Assert.That(saved.EbookRequestedBy, Is.EqualTo("ImportList:Favorites"));
+                var handler = new ProcessPendingImportsCommandHandler(pending, null, null, null, null, events, LogManager.GetCurrentClassLogger());
+                var config = (MonitoringConfig)typeof(ProcessPendingImportsCommandHandler).GetMethod("BuildMonitoringConfig", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(handler, new object[] { saved });
+                config.QueueIfUnavailable = true;
+                var exclusions = new StubImportListExclusionService();
+                exclusions.Exclusions.Add(new ImportListExclusion { ForeignId = "58", Name = "Frank Herbert", MediaType = BookMediaType.Ebook });
+                var queue = new StubPendingAuthorImportService(1, null);
+                BuildSubject(new StubAuthorInfoNotFound(), queue, exclusions).AddAuthorAsync("gr:58", config).GetAwaiter().GetResult();
+                Assert.That(config.CreateAudiobook, Is.True);
+                Assert.That(config.CreateEbook, Is.False);
+                Assert.That(exclusions.LookupCalls, Is.EqualTo(1));
+            });
+        }
+
+        [Test]
+        public void persisted_exclusion_with_case_and_whitespace_blocks_the_list_add(
+            [Values(false, true)] bool postgres, [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType media)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var exclusions = new ImportListExclusionService(new ImportListExclusionRepository(database, null), LogManager.GetCurrentClassLogger());
+                exclusions.Add(new ImportListExclusion { ForeignId = "  GR:58  ", Name = "Frank Herbert", MediaType = media });
+                var pending = new StubPendingAuthorImportService(1, null);
+                var info = new StubAuthorInfoNotFound();
+                var service = BuildSubject(info, pending, exclusions);
+                var error = Assert.ThrowsAsync<ValidationException>(async () => await service.AddAuthorAsync("gr:58", new MonitoringConfig
+                {
+                    QueueIfUnavailable = true, RequestedBy = "ImportList:Favorites",
+                    CreateAudiobook = media == BookMediaType.Audiobook, CreateEbook = media == BookMediaType.Ebook
+                }));
+                Assert.That(error.Errors.Single().ErrorCode, Is.EqualTo(AuthorLibraryService.ImportListAuthorExcludedErrorCode));
+                Assert.That(info.Calls, Is.Zero);
+                Assert.That(pending.EnqueueCalls, Is.Zero);
+            });
+        }
+
         private static AuthorLibraryService BuildSubject(
             StubAuthorInfoNotFound authorInfo,
             StubPendingAuthorImportService pending,
-            StubImportListExclusionService exclusions,
-            StubAuthorService authorService = null)
+            IImportListExclusionService exclusions,
+            StubAuthorService authorService = null,
+            Logger logger = null)
         {
             return new AuthorLibraryService(
                 authorService: authorService ?? new StubAuthorService(),
@@ -241,7 +311,7 @@ namespace Chaptarr.Core.Test.Books
                 importListExclusionService: exclusions,
                 editionMetadataProfileFilter: new EditionMetadataProfileFilter(new TestTermMatcherService()),
                 syncMetadataService: null,
-                logger: LogManager.GetCurrentClassLogger());
+                logger: logger ?? LogManager.GetCurrentClassLogger());
         }
 
         [Test]
@@ -297,7 +367,7 @@ namespace Chaptarr.Core.Test.Books
 
             Assert.That(error.Errors.Single().ErrorCode, Is.EqualTo(AuthorLibraryService.ImportListAuthorExcludedErrorCode));
             Assert.That(authorInfo.Calls, Is.EqualTo(1));
-            Assert.That(exclusions.AllCalls, Is.EqualTo(2));
+            Assert.That(exclusions.LookupCalls, Is.EqualTo(2));
         }
 
         [Test]

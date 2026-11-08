@@ -15,6 +15,9 @@ using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.IndexerSearch;
+using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.Indexers;
+using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Events;
@@ -255,8 +258,7 @@ namespace Chaptarr.Core.Test.ImportLists
                         Is.EqualTo(selectedCoveredByHeldSearch ? Array.Empty<int>() : new[] { selected.Id }));
                     if (!selectedCoveredByHeldSearch)
                     {
-                        Assert.That(directSearches.Single().Trigger,
-                            monitored ? Is.Not.EqualTo(CommandTrigger.Manual) : Is.EqualTo(CommandTrigger.Manual));
+                        Assert.That(directSearches.Single().Trigger, Is.Not.EqualTo(CommandTrigger.Manual));
                     }
                 });
                 if (existingSearch)
@@ -266,12 +268,24 @@ namespace Chaptarr.Core.Test.ImportLists
                         Is.EquivalentTo(new[] { selected.Id, unchanged.Id }));
                 }
                 var searchedBooks = new List<Book>();
-                var releaseSearch = Proxy<ISearchForReleases>((method, args) =>
+                var indexer = Proxy<IIndexer>((method, args) =>
                 {
-                    Assert.That(method.Name, Is.EqualTo(nameof(ISearchForReleases.BookSearch)));
-                    searchedBooks.Add(args[0] is Book book ? book : savedBooks.Single(row => row.Id == (int)args[0]));
-                    return Task.FromResult(new List<DownloadDecision>());
+                    if (method.Name == "get_Definition") return new IndexerDefinition { Name = "Fixture", Tags = new HashSet<int>() };
+                    Assert.That(method.Name, Is.EqualTo(nameof(IIndexer.Fetch)));
+                    searchedBooks.AddRange(((SearchCriteriaBase)args[0]).Books);
+                    return Task.FromResult<IList<ReleaseInfo>>(new List<ReleaseInfo>());
                 });
+                var releaseSearch = new ReleaseSearchService(
+                    Proxy<IIndexerFactory>((method, args) =>
+                    {
+                        Assert.That(method.Name, Is.EqualTo(nameof(IIndexerFactory.AutomaticSearchEnabled)));
+                        return new List<IIndexer> { indexer };
+                    }), books, authorService, null,
+                    Proxy<IMakeDownloadDecision>((method, args) =>
+                    {
+                        Assert.That(method.Name, Is.EqualTo(nameof(IMakeDownloadDecision.GetSearchDecision)));
+                        return new List<DownloadDecision>();
+                    }), logger);
                 var searchService = new BookSearchService(releaseSearch, books, null,
                     Proxy<IQueueService>((method, args) =>
                     {
@@ -296,12 +310,13 @@ namespace Chaptarr.Core.Test.ImportLists
                 }
                 Assert.Multiple(() =>
                 {
-                    Assert.That(searchedBooks.Count(book => book.Id == selected.Id), Is.EqualTo(1));
+                    Assert.That(searchedBooks.Count(book => book.Id == selected.Id), Is.EqualTo(monitored ? 1 : 0));
                     Assert.That(searchedBooks.Count(book => book.Id == unchanged.Id), Is.EqualTo(existingSearch ? 1 : 0));
                     Assert.That(searchedBooks.Count(book => book.Id == unselected.Id), Is.Zero);
                     Assert.That(searchedBooks.Select(book => book.Id),
-                        Is.EquivalentTo(existingSearch ? new[] { selected.Id, unchanged.Id } : new[] { selected.Id }));
-                    Assert.That(searchedBooks.Single(book => book.Id == selected.Id).MediaType, Is.EqualTo(side));
+                        Is.EquivalentTo((monitored ? new[] { selected.Id } : Array.Empty<int>())
+                            .Concat(existingSearch ? new[] { unchanged.Id } : Array.Empty<int>())));
+                    if (monitored) Assert.That(searchedBooks.Single(book => book.Id == selected.Id).MediaType, Is.EqualTo(side));
                     if (existingSearch)
                     {
                         Assert.That(searchedBooks.Single(book => book.Id == unchanged.Id).MediaType, Is.EqualTo(otherSide));
@@ -329,7 +344,11 @@ namespace Chaptarr.Core.Test.ImportLists
         [TestCase(true, BookMediaType.Audiobook, true)]
         [TestCase(false, BookMediaType.Audiobook, false, true)]
         [TestCase(true, BookMediaType.Audiobook, false, true)]
-        public void saved_list_aggregate_should_become_exact_searches_and_retry_only_rejected_work(bool postgres, BookMediaType side, bool heldAuthorSearch = false, bool alreadyFulfilled = false)
+        [TestCase(false, BookMediaType.Audiobook, false, false, true)]
+        [TestCase(false, BookMediaType.Ebook, false, false, true)]
+        [TestCase(true, BookMediaType.Audiobook, false, false, true)]
+        [TestCase(true, BookMediaType.Ebook, false, false, true)]
+        public void saved_list_aggregate_should_batch_searches_and_retry_a_rejected_batch(bool postgres, BookMediaType side, bool heldAuthorSearch = false, bool alreadyFulfilled = false, bool scanBeforeRetry = false)
         {
             const bool monitored = true;
             var existingSearch = heldAuthorSearch;
@@ -345,7 +364,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     if (args[0] is BookSearchCommand search)
                     {
                         attemptedSearches.Add(search);
-                        if (attemptedSearches.Count == 2) throw new InvalidOperationException("Simulated queue rejection");
+                        if (attemptedSearches.Count == 1) throw new InvalidOperationException("Simulated queue rejection");
                     }
                     commands.Add((Command)args[0]);
                     return new CommandModel { Id = commands.Count, Body = (Command)args[0] };
@@ -481,18 +500,32 @@ namespace Chaptarr.Core.Test.ImportLists
                 {
                     Assert.That(retry.SearchForMissingBooks, Is.False);
                     Assert.That(JsonConvert.DeserializeObject<List<string>>(side == BookMediaType.Audiobook ? retry.AudiobookBooksToSearch : retry.EbookBooksToSearch),
-                        Is.EqualTo(new[] { "gr:125" }));
-                    Assert.That(attemptedSearches.SelectMany(search => search.BookIds), Is.EqualTo(new[] { first.Id, second.Id }));
-                    Assert.That(commands.OfType<BookSearchCommand>().SelectMany(search => search.BookIds), Is.EqualTo(new[] { first.Id }));
-                    Assert.That(attemptedSearches.Select(search => search.Trigger), Is.All.EqualTo(CommandTrigger.Manual));
+                        Is.EqualTo(new[] { "gr:123", "gr:125" }));
+                    Assert.That(attemptedSearches.Single().BookIds, Is.EqualTo(new[] { first.Id, second.Id }));
+                    Assert.That(commands.OfType<BookSearchCommand>(), Is.Empty);
+                    Assert.That(attemptedSearches.Single().Trigger, Is.Not.EqualTo(CommandTrigger.Manual));
                     Assert.That(first.IsMonitored() && second.IsMonitored(), Is.True);
                 });
                 if (side == BookMediaType.Audiobook)
                 {
                     var narrations = JsonConvert.DeserializeObject<List<RequestedNarration>>(retry.AudiobookNarrations);
-                    Assert.That(narrations.Any(narration => narration.WorkProviderId == "gr:123"), Is.False);
-                    Assert.That(narrations.Single(narration => narration.WorkProviderId == "gr:125").Search, Is.True);
+                    Assert.That(narrations.Select(narration => narration.WorkProviderId), Is.EquivalentTo(new[] { "gr:123", "gr:125" }));
+                    Assert.That(narrations.All(narration => narration.Search), Is.True);
                     Assert.That(narrations.All(narration => narration.NarratorNames.SequenceEqual(new[] { "Fixture Narrator" })), Is.True);
+                }
+
+                if (scanBeforeRetry)
+                {
+                    new AuthorScannedHandler(new BookMonitoredService(authorService, books, logger), authorService, queue,
+                        new BookAddedService(new CacheManager(), queue, books, logger), events, logger, books)
+                        .Handle(new AuthorScannedEvent(authors.Get(author.Id)));
+                    Assert.That(commands.OfType<BookSearchCommand>().Count(), Is.EqualTo(2));
+                    Assert.That(commands.OfType<BookSearchCommand>().All(search => search.Trigger != CommandTrigger.Manual), Is.True);
+                    var fetched = new List<int>();
+                    var runner = RecordingBookSearch.Create(books, authorService, logger,
+                        criteria => fetched.AddRange(criteria.Books.Select(book => book.Id)));
+                    foreach (var search in commands.OfType<BookSearchCommand>()) runner.Execute(search);
+                    Assert.That(fetched, Is.Empty);
                 }
 
                 retry.NextAttemptAt = DateTime.UtcNow.AddMinutes(-1);
@@ -507,8 +540,8 @@ namespace Chaptarr.Core.Test.ImportLists
                     .Handle(new AuthorScannedEvent(persistedAuthor));
                 Assert.Multiple(() =>
                 {
-                    Assert.That(attemptedSearches.SelectMany(search => search.BookIds), Is.EqualTo(new[] { first.Id, second.Id, second.Id }));
-                    Assert.That(commands.OfType<BookSearchCommand>().SelectMany(search => search.BookIds), Is.EqualTo(new[] { first.Id, second.Id }));
+                    Assert.That(attemptedSearches.SelectMany(search => search.BookIds), Is.EquivalentTo(Enumerable.Repeat(new[] { first.Id, second.Id }, scanBeforeRetry ? 3 : 2).SelectMany(ids => ids)));
+                    Assert.That(commands.OfType<BookSearchCommand>().SelectMany(search => search.BookIds), Is.EquivalentTo(Enumerable.Repeat(new[] { first.Id, second.Id }, scanBeforeRetry ? 2 : 1).SelectMany(ids => ids)));
                     Assert.That(commands.OfType<MissingBookSearchCommand>().ToList(), Has.Count.EqualTo(heldAuthorSearch ? 1 : 0));
                     Assert.That(books.GetBooksByAuthor(author.Id), Has.Count.EqualTo(4));
                     Assert.That(books.GetBooksByAuthor(author.Id).Single(book => book.MediaType == otherSide).Id, Is.EqualTo(other.Id));
@@ -518,7 +551,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 {
                     Assert.That(bookRows.GetMissingBookSearchTargets(null, author.Id).Select(target => target.BookId), Is.EqualTo(new[] { other.Id }));
                 }
-                TestContext.WriteLine($"{database.DatabaseType}/{side}: saved aggregate normalized, 2 exact searches accepted in 3 attempts; restart repeated only the rejected local book {second.Id}");
+                TestContext.WriteLine($"{database.DatabaseType}/{side}: saved aggregate normalized, one two-book search batch accepted after retry");
             });
         }
 
@@ -572,7 +605,7 @@ namespace Chaptarr.Core.Test.ImportLists
                         Assert.That(untouched.IsMonitored(), Is.False);
                         Assert.That(library.AddOptionsBatches, Has.Count.EqualTo(1));
                         Assert.That(library.AddOptionsBatches.SingleOrDefault() ?? new List<int>(), Is.EquivalentTo(selected.Select(book => book.Id)));
-                        Assert.That(library.Calls.GetValueOrDefault(nameof(IBookService.GetAllBooks)), Is.EqualTo(3));
+                        Assert.That(library.Calls.GetValueOrDefault(nameof(IBookService.GetImportListBookIdentities)), Is.EqualTo(3));
                         Assert.That(library.Calls.GetValueOrDefault(nameof(IBookService.GetExistingBooks)), Is.EqualTo(3));
                         Assert.That(library.Calls.GetValueOrDefault(nameof(IBookService.FindBookIdsByProviderIds)), Is.EqualTo(3));
                         Assert.That(library.Calls.GetValueOrDefault(nameof(IBookService.MonitorRequestedBooks)), Is.EqualTo(1));
@@ -646,7 +679,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     Assert.That(author.AudiobookMetadataProfileId, Is.EqualTo(8));
                     Assert.That(author.EbookMetadataProfileId, Is.EqualTo(8));
                     Assert.That(library.Commands.OfType<BookSearchCommand>().SelectMany(command => command.BookIds), Is.EquivalentTo(requested.Select(book => book.Id)));
-                    Assert.That(library.Commands.OfType<BookSearchCommand>().All(command => command.Trigger == CommandTrigger.Manual), Is.True);
+                    Assert.That(library.Commands.OfType<BookSearchCommand>().Single().Trigger, Is.Not.EqualTo(CommandTrigger.Manual));
                     Assert.That(library.Commands.OfType<MissingBookSearchCommand>(), Is.Empty);
                 });
                 var writes = library.AddOptionsBatches.Count;
@@ -657,7 +690,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 Assert.That(library.Commands.Count, Is.EqualTo(commands));
                 Assert.That(library.MetadataReads, Is.EqualTo(2), "Stored work ownership must not repeat metadata proof.");
                 Assert.That(library.Pending.GetByProviderId(library.Author.GoodreadsAuthorId), Is.Null);
-                TestContext.WriteLine($"{database.DatabaseType}/{side}: 2 missing generic works, 1 grouped queue; exact paused searches {requested.Count}; two repeated syncs add no writes or searches.");
+                TestContext.WriteLine($"{database.DatabaseType}/{side}: 2 missing generic works, 1 grouped queue; automatic paused targets {requested.Count}; two repeated syncs add no writes or searches.");
             });
         }
 
@@ -839,6 +872,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 first.Editions.Single().Monitored = true;
                 library.Save(first);
                 var second = CatalogBook(side, "Requested Work", "123");
+                second.TitleSlug += "-2";
                 second.Editions.Single().ForeignEditionId = "gr:224";
                 second.Editions.Single().Monitored = true;
                 second.Editions.Single().ManualAdd = pinned;
@@ -1160,6 +1194,7 @@ namespace Chaptarr.Core.Test.ImportLists
             public readonly List<int> SyncReaderCounts = new();
             public readonly List<long> SyncElapsedMilliseconds = new();
             public int MetadataReads;
+            public bool RejectBookSearches;
             public readonly IManageCommandQueue Queue;
             public readonly AuthorRepository Authors;
             public readonly BookRepository BookRows;
@@ -1192,6 +1227,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 Queue = Proxy<IManageCommandQueue>((method, args) =>
                 {
                     ((Command)args[0]).Trigger = (CommandTrigger)args[2];
+                    if (RejectBookSearches && args[0] is BookSearchCommand) throw new InvalidOperationException("Simulated search queue rejection");
                     Commands.Add((Command)args[0]);
                     return new CommandModel { Id = Commands.Count, Body = (Command)args[0] };
                 });
@@ -1277,12 +1313,12 @@ namespace Chaptarr.Core.Test.ImportLists
                     Proxy<IMetadataTagService>((method, args) => null), null, Database, Logger);
                 var refreshBooks = new RefreshBookService(Books, AuthorService, Roots, Editions, authorInfo, null,
                     refreshEditions, Files, null, Events, null, selector, filter,
-                    Proxy<NzbDrone.Core.MediaCover.IMapCoversToLocal>((method, args) => null), Logger);
+                    Proxy<NzbDrone.Core.MediaCover.IMapCoversToLocal>((method, args) => null), Logger, mainDatabase: null);
                 var settings = Proxy<NzbDrone.Core.Configuration.IConfigService>((method, args) =>
                     method.ReturnType.IsValueType ? Activator.CreateInstance(method.ReturnType) : null);
-                var refreshAuthor = new RefreshAuthorService(authorInfo, AuthorService, Books, Editions, profiles, refreshBooks, null,
-                    Events, Queue, Files, null, Roots, null, new MonitorNewBookService(Logger), settings,
-                    exclusions, null, null, null, Logger, selector, Database);
+                var refreshAuthor = new RefreshAuthorService(MetadataHealthGateStub.Ready(), authorInfo, AuthorService, Books, Editions, profiles, refreshBooks, null,
+                    Events, Queue, Files, new global::NzbDrone.Core.History.HistoryRepository(Database, Events), Roots, null, new MonitorNewBookService(Logger), settings,
+                    exclusions, null, null, null, Logger, editionSelector: selector, mainDatabase: Database, bookRepository: new BookRepository(Database, Events), authorRepository: new AuthorRepository(Database, Events, Logger));
                 var library = new AuthorLibraryService(AuthorService, authorInfo, Books, null, Editions, null,
                     profiles, new TestQualityProfileService(), Paths, Roots, Queue, Events, Pending, Database,
                     exclusions, filter, null, Logger, selector, refreshAuthor);

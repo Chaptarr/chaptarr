@@ -37,7 +37,6 @@ namespace NzbDrone.Core.MediaFiles
         public string DestinationAuthorFolderPath { get; set; }
         public string DestinationPath { get; set; }
         public List<string> ReplicaPaths { get; set; }
-        public bool ShouldCleanupReplicas { get; set; }
         public bool ShouldUpdateStoredAuthorPath { get; set; }
 
         public static BookFileMovePlan Skipped(string reason)
@@ -108,6 +107,11 @@ namespace NzbDrone.Core.MediaFiles
                 return BookFileMovePlan.Skipped("The file or author is unavailable.");
             }
 
+            if (bookFile.Path.IsNullOrWhiteSpace())
+            {
+                return BookFileMovePlan.Skipped("The tracked file has no source path.");
+            }
+
             var edition = GetEditionWithBookContext(bookFile);
             if (edition?.Book == null)
             {
@@ -125,7 +129,10 @@ namespace NzbDrone.Core.MediaFiles
                 return BookFileMovePlan.Skipped("No root folder is configured for this media type.");
             }
 
-            if (!TryGetPhysicalAuthorFolder(rootFolderPath, bookFile.Path, out var sourceAuthorFolderPath))
+            // The configured root chooses the destination; a tracked source may live elsewhere.
+            // Without a known source author folder, leave its empty-folder cleanup alone.
+            if (!TryGetPhysicalAuthorFolder(rootFolderPath, bookFile.Path, out var sourceAuthorFolderPath) &&
+                !moveToCanonicalAuthorFolder)
             {
                 return BookFileMovePlan.Skipped("The file's current author folder cannot be determined from its configured root.");
             }
@@ -166,7 +173,6 @@ namespace NzbDrone.Core.MediaFiles
                 DestinationAuthorFolderPath = destinationAuthorFolderPath,
                 DestinationPath = destinationPath,
                 ReplicaPaths = colocationPlan.Applies ? colocationPlan.ReplicaPaths : null,
-                ShouldCleanupReplicas = colocationPlan.ShouldCleanupReplicas,
                 ShouldUpdateStoredAuthorPath = moveToCanonicalAuthorFolder && !colocationPlan.Applies
             };
         }
@@ -185,30 +191,38 @@ namespace NzbDrone.Core.MediaFiles
                 throw new InvalidOperationException(plan.SkipReason);
             }
 
-            if (plan.ReplicaPaths != null)
-            {
-                EnsureBookFolder(bookFile, author, edition.Book, plan.DestinationPath, plan.DestinationAuthorFolderPath);
-                _logger.Debug("Colocating ebook file: {0} to {1}", bookFile, plan.DestinationPath);
-
-                if (bookFile.Path.PathNotEquals(plan.DestinationPath))
-                {
-                    TransferFile(bookFile, author, edition.Book, plan.DestinationPath, TransferMode.Move, plan.DestinationAuthorFolderPath);
-                }
-
-                ReconcileReplicaFiles(bookFile, plan.ReplicaPaths, preferHardlinks: _configService.CopyUsingHardlinks);
-                return bookFile;
-            }
-
-            if (plan.ShouldCleanupReplicas)
-            {
-                CleanupReplicaFilesIfAny(bookFile);
-            }
-
             EnsureBookFolder(bookFile, author, edition.Book, plan.DestinationPath, plan.DestinationAuthorFolderPath);
-
             _logger.Debug("Organizing book file: {0} to {1}", bookFile, plan.DestinationPath);
 
-            return TransferFile(bookFile, author, edition.Book, plan.DestinationPath, TransferMode.Move, plan.DestinationAuthorFolderPath);
+            var ownCopy = bookFile.Path.PathNotEquals(plan.DestinationPath) &&
+                bookFile.ReplicaPaths?.Contains(plan.DestinationPath, PathEqualityComparer.Instance) == true &&
+                _diskProvider.FileExists(plan.DestinationPath);
+            if (ownCopy)
+            {
+                // Organize may choose a managed copy as the primary. Verify it without
+                // deleting either file; the former primary becomes a tracked copy.
+                if (!_diskProvider.FilesEqual(bookFile.Path, plan.DestinationPath))
+                {
+                    throw new FileAlreadyExistsException("The destination is this ebook's managed copy, but its contents differ from the primary. Both files were kept.", plan.DestinationPath);
+                }
+                bookFile.ReplicaPaths = bookFile.ReplicaPaths.Where(path => path.PathNotEquals(plan.DestinationPath))
+                    .Append(bookFile.Path).Distinct(PathEqualityComparer.Instance).ToList();
+                bookFile.Path = plan.DestinationPath;
+            }
+            else if (plan.ReplicaPaths == null || bookFile.Path.PathNotEquals(plan.DestinationPath))
+            {
+                TransferFile(bookFile, author, edition.Book, plan.DestinationPath, TransferMode.Move, plan.DestinationAuthorFolderPath);
+            }
+
+            if (plan.ReplicaPaths != null)
+            {
+                // Organize preserves existing managed copies, including
+                // after colocation is disabled; only create missing desired copies.
+                var retained = plan.ReplicaPaths.Concat(bookFile.ReplicaPaths ?? new List<string>()).ToList();
+                ReconcileReplicaFiles(bookFile, retained, Array.Empty<string>(), preferHardlinks: _configService.CopyUsingHardlinks, refreshExisting: false);
+            }
+
+            return bookFile;
         }
 
         public BookFile MoveBookFile(BookFile bookFile, LocalBook localBook)
@@ -324,30 +338,22 @@ namespace NzbDrone.Core.MediaFiles
             var confirmedPaths = localBook.ConfirmedReplacementFiles?
                 .Where(file => file.BookId == localBook.Book?.Id)
                 .SelectMany(file => file.AssociatedPaths ?? new List<string>())
-                .ToHashSet(PathEqualityComparer.Instance);
+                .ToHashSet(PathEqualityComparer.Instance)
+                ?? (bookFile.ReplicaPaths ?? new List<string>()).ToHashSet(PathEqualityComparer.Instance);
             ReconcileReplicaFiles(bookFile, localBook.PendingReplicaPaths,
-                _configService.CopyUsingHardlinks, confirmedPaths);
+                confirmedPaths, _configService.CopyUsingHardlinks);
             localBook.PendingReplicaPaths = null;
             return true;
         }
 
-        private void CleanupReplicaFilesIfAny(BookFile bookFile)
+        private void ReconcileReplicaFiles(BookFile bookFile, List<string> desiredReplicaPaths, IReadOnlyCollection<string> confirmedPaths, bool preferHardlinks = true, bool refreshExisting = true)
         {
-            if (bookFile?.ReplicaPaths == null || bookFile.ReplicaPaths.Count == 0)
+            if (bookFile.Path.IsNullOrWhiteSpace() || !_diskProvider.FileExists(bookFile.Path))
             {
-                return;
+                _logger.Warn("Keeping all ebook replicas for file {0}: primary file is missing or inaccessible: {1}", bookFile.Id, bookFile.Path);
+                throw new FileNotFoundException("Cannot reconcile ebook replicas without the primary file", bookFile.Path);
             }
 
-            foreach (var replicaPath in bookFile.ReplicaPaths.Distinct(PathEqualityComparer.Instance))
-            {
-                TryDeleteReplica(replicaPath);
-            }
-
-            bookFile.ReplicaPaths = new List<string>();
-        }
-
-        private void ReconcileReplicaFiles(BookFile bookFile, List<string> desiredReplicaPaths, bool preferHardlinks = true, IReadOnlyCollection<string> confirmedPaths = null)
-        {
             desiredReplicaPaths ??= new List<string>();
 
             var desired = desiredReplicaPaths
@@ -360,7 +366,7 @@ namespace NzbDrone.Core.MediaFiles
                 .Distinct(PathEqualityComparer.Instance)
                 .ToList();
             var existingSet = new HashSet<string>(existing, PathEqualityComparer.Instance);
-            bool CanDelete(string path) => confirmedPaths == null || confirmedPaths.Contains(path, PathEqualityComparer.Instance);
+            bool CanDelete(string path) => confirmedPaths.Contains(path, PathEqualityComparer.Instance);
             var kept = existing.Where(path => !CanDelete(path)).ToList();
 
             // Remove stale managed replicas.
@@ -368,7 +374,10 @@ namespace NzbDrone.Core.MediaFiles
             {
                 if (CanDelete(oldReplica) && !desired.Any(p => p.PathEquals(oldReplica)))
                 {
-                    TryDeleteReplica(oldReplica);
+                    if (!TryDeleteReplica(oldReplica))
+                    {
+                        kept.Add(oldReplica);
+                    }
                 }
             }
 
@@ -389,13 +398,22 @@ namespace NzbDrone.Core.MediaFiles
                     // (e.g., after an upgrade/reimport that replaces the ebook).
                     if (isManagedReplica)
                     {
+                        if (!refreshExisting)
+                        {
+                            kept.Add(replicaPath);
+                            continue;
+                        }
                         if (!CanDelete(replicaPath))
                         {
                             _logger.Warn("Keeping ebook replica not included in replacement confirmation: {0}", replicaPath);
                             continue;
                         }
 
-                        TryDeleteReplica(replicaPath);
+                        if (!TryDeleteReplica(replicaPath))
+                        {
+                            kept.Add(replicaPath);
+                            continue;
+                        }
                     }
                     else
                     {
@@ -439,11 +457,11 @@ namespace NzbDrone.Core.MediaFiles
             bookFile.ReplicaPaths = kept;
         }
 
-        private void TryDeleteReplica(string replicaPath)
+        private bool TryDeleteReplica(string replicaPath)
         {
             if (replicaPath.IsNullOrWhiteSpace())
             {
-                return;
+                return true;
             }
 
             try
@@ -452,10 +470,13 @@ namespace NzbDrone.Core.MediaFiles
                 {
                     _recycleBinProvider.DeleteFile(replicaPath);
                 }
+
+                return true;
             }
             catch (Exception ex)
             {
-                _logger.Debug(ex, "Failed to delete managed ebook replica: {0}", replicaPath);
+                _logger.Warn(ex, "Failed to delete managed ebook replica; keeping it tracked: {0}", replicaPath);
+                return false;
             }
         }
 

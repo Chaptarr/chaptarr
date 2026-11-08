@@ -259,6 +259,10 @@ namespace NzbDrone.Core.Books.Commands
                 {
                     throw;
                 }
+                catch (AuthorIdentityUnverifiedException)
+                {
+                    throw;
+                }
                 catch (Exception ex) when (requestedWorks.Count > 0)
                 {
                     originalAuthorFailure = ex;
@@ -557,6 +561,11 @@ namespace NzbDrone.Core.Books.Commands
                     _eventAggregator.PublishEvent(new PendingAuthorImportFailedEvent(item));
             }
 
+            catch (AuthorIdentityUnverifiedException ex)
+            {
+                _logger.Warn(ex, "Author identity for {0} is not yet verified; retaining the request for retry", item.ProviderId);
+                _pendingImportService.ScheduleRetry(item, ex.Message);
+            }
             catch (AuthorNotFoundException)
             {
                 // Author still not available, schedule retry
@@ -615,6 +624,9 @@ namespace NzbDrone.Core.Books.Commands
                 EbookRootFolderPath = item.EbookRootFolderPath,
                 DiscoveredAuthorFolderPath = item.DiscoveredAuthorFolderPath,
                 RequestedBy = item.RequestedBy,
+                ExplicitBookSearches = RequestedBookSearch.Read(item.ExplicitBookSearches),
+                AudiobookRequestedBy = item.AudiobookRequestedBy,
+                EbookRequestedBy = item.EbookRequestedBy,
                 AuthorName = item.AuthorName,
                 PendingImportId = item.Id,
                 PendingImportVersion = item.Version,
@@ -676,6 +688,8 @@ namespace NzbDrone.Core.Books.Commands
             config.AudiobookBooksToSearch = targets.Where(target => target.MediaType == BookMediaType.Audiobook && target.Search).Select(target => target.ProviderId).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             config.EbookBooksToSearch = targets.Where(target => target.MediaType == BookMediaType.Ebook && target.Search).Select(target => target.ProviderId).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             config.AudiobookNarrations = targets.Where(target => target.Narration != null).Select(target => target.Narration).ToList();
+            config.ExplicitBookSearches = config.ExplicitBookSearches.Where(request => targets.Any(target =>
+                request.Matches(target.MediaType, target.ProviderId, target.EditionProviderId))).ToList();
             return config;
         }
 
@@ -806,23 +820,26 @@ namespace NzbDrone.Core.Books.Commands
 
             if (!books.Any()) return failures;
 
-            var isList = MonitoringConfig.IsImportListRequestOrigin(item.RequestedBy);
-            // A still-held initial author search owns rows on its monitored media sides.
+            var explicitSearches = RequestedBookSearch.Read(item.ExplicitBookSearches);
+            var explicitIds = requestedWorks.Where(target => target.Search && explicitSearches.Any(request =>
+                request.Matches(target.MediaType, target.ProviderId, target.EditionProviderId)))
+                .Select(target => target.Book?.Id ?? 0).ToHashSet();
+            // A still-held initial author search owns automatic rows on its monitored media sides.
             // Acknowledge that durable delegation so later retries and row markers cannot repeat it.
-            var delegated = books.Where(book => isList && book.Author.AddOptions?.SearchForMissingBooks == true && book.IsMonitoredWithAuthor()).ToList();
+            var delegated = books.Where(book => !explicitIds.Contains(book.Id) && book.Author.AddOptions?.SearchForMissingBooks == true && book.IsMonitoredWithAuthor()).ToList();
             var queueTargets = books.Except(delegated).ToList();
-            var automatic = queueTargets.Where(book => isList && book.IsMonitoredWithAuthor()).ToList();
+            var automatic = queueTargets.Where(book => !explicitIds.Contains(book.Id)).ToList();
             var immediate = queueTargets.Except(automatic).ToList();
-            if (isList && queueTargets.Any())
+            if (automatic.Any())
             {
                 // Keep search intent on the selected rows until the queue accepts it. Repeated
                 // list entries can then skip unchanged narrations without losing a failed push.
-                foreach (var book in queueTargets)
+                foreach (var book in automatic)
                 {
                     book.AddOptions ??= new AddBookOptions();
                     book.AddOptions.SearchForNewBook = true;
                 }
-                _bookService.SetAddOptions(queueTargets);
+                _bookService.SetAddOptions(automatic);
             }
 
             void AcknowledgeSearches(List<Book> acknowledged)
@@ -873,7 +890,7 @@ namespace NzbDrone.Core.Books.Commands
                 {
                     try
                     {
-                        _commandQueueManager.Push(new BookSearchCommand(new List<int> { book.Id }), trigger: CommandTrigger.Manual);
+                        _commandQueueManager.Push(new BookSearchCommand(new List<int> { book.Id }), trigger: BookSearchCommand.SearchOnAddTrigger(book.Author, book.MediaType));
                         queued.Add(book);
                         AcknowledgeSearches(new List<Book> { book });
                     }
@@ -945,7 +962,8 @@ namespace NzbDrone.Core.Books.Commands
             // An edition request replaces that work's generic target, otherwise the generic
             // target could select and search a different narration as well.
             var narratedWorks = narrations.Select(request => (request.MediaType, request.WorkProviderId.ToLowerInvariant())).ToHashSet();
-            requested.RemoveAll(request => request.EditionProviderId == null && narratedWorks.Contains((request.MediaType, request.ProviderId.ToLowerInvariant())));
+            requested.RemoveAll(request => request.EditionProviderId == null && narratedWorks.Contains((request.MediaType, request.ProviderId.ToLowerInvariant())) &&
+                config.ExplicitBookSearches?.Any(search => search.Matches(request.MediaType, request.ProviderId, null)) != true);
             return requested;
         }
 
@@ -1140,7 +1158,8 @@ namespace NzbDrone.Core.Books.Commands
         {
             AudiobookBooksToAdd = item.AudiobookBooksToAdd, AudiobookBooksToMonitor = item.AudiobookBooksToMonitor, EbookBooksToAdd = item.EbookBooksToAdd, EbookBooksToMonitor = item.EbookBooksToMonitor,
             AudiobookBooksToSearch = item.AudiobookBooksToSearch, EbookBooksToSearch = item.EbookBooksToSearch,
-            AudiobookNarrations = item.AudiobookNarrations, SearchForMissingBooks = item.SearchForMissingBooks
+            AudiobookNarrations = item.AudiobookNarrations, SearchForMissingBooks = item.SearchForMissingBooks,
+            ExplicitBookSearches = item.ExplicitBookSearches
         };
 
         private static bool HasIndependentAuthorDemand(MonitoringConfig config, List<RequestedWork> works) =>
@@ -1191,6 +1210,9 @@ namespace NzbDrone.Core.Books.Commands
                     }
                 }
             }
+            if (searches || !monitoring)
+                item.ExplicitBookSearches = RequestedBookSearch.Write(RequestedBookSearch.Read(item.ExplicitBookSearches)
+                    .Where(request => !targets.Any(target => request.Matches(target.MediaType, target.ProviderId, target.EditionProviderId))));
             if (!monitoring && item.AudiobookNarrations != null)
                 item.AudiobookNarrations = JsonConvert.SerializeObject((JsonConvert.DeserializeObject<List<RequestedNarration>>(item.AudiobookNarrations) ?? new())
                     .Where(request => request != null && !targets.Any(target => target.Narration == request ||

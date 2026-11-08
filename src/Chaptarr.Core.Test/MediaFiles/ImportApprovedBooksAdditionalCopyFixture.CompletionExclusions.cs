@@ -133,7 +133,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var importer = new ImportApprovedBooks(media, new StubMetadataTagService(), new StubMediaInfoExtractor(),
                         authorService, bookService, editionService, new StubRecycleBinProvider(), Proxy<IExtraService>(), mover,
                         history, Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, Proxy<IManageCommandQueue>(),
-                        Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(), Proxy<IQualityProfileService>(), Proxy<IM4bConversionService>(), logger);
+                        new SeriesBookLinkService(new SeriesBookLinkRepository(database, events)), Proxy<ISeriesService>(), Proxy<IQualityProfileService>(), Proxy<IM4bConversionService>(), logger);
                     var tracked = new TrackedDownload
                     {
                         State = TrackedDownloadState.ImportBlocked,
@@ -207,7 +207,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Assert.That(files.GetFilesByBook(second.Id).Count, Is.EqualTo(1), failed.Message);
                     Assert.That(failed.Message, Does.Contain(paths[1]));
                     Assert.That(tracked.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
-                    Assert.That(tracked.StatusMessages.Select(message => message.Title), Does.Contain(paths[1]));
+                    Assert.That(tracked.StatusMessages.Select(message => message.Title), Does.Contain(Path.GetFileName(paths[1])));
+                    Assert.That(tracked.StatusMessages.Select(message => message.SourcePath), Does.Contain(paths[1]));
                     Assert.That(completed, Is.Zero);
                     Assert.That(incomplete, Is.EqualTo(1));
                     Assert.That(files.All().Count, Is.EqualTo(2));

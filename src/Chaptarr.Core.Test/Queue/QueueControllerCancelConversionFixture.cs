@@ -240,7 +240,7 @@ namespace Chaptarr.Core.Test.Queue
                 qualityDefinitionService: null,
                 logger: LogManager.GetCurrentClassLogger());
 
-            var controller = new QueueController(Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IDownloadImportModeResolver>((method, args) => false),
+            var controller = new QueueController(global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<global::NzbDrone.Core.Books.ISeriesBookLinkService>((_, _) => throw new global::System.InvalidOperationException("Series batch loading was not expected in this fixture")), Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IDownloadImportModeResolver>((method, args) => false),
                 broadcastSignalRMessage: null,
                 queueService: queueService,
                 pendingReleaseService: null,

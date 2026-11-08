@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Indexers;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser.Model;
 
@@ -42,14 +43,25 @@ namespace NzbDrone.Core.Qualities
             }
 
             var fileTypes = (release as TorrentInfo)?.FileType?.Split(new[] { ' ', ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
-            if (fileTypes == null)
+            var hasAudio = fileTypes?.Any(AudioExtensions.Contains) == true;
+            var hasEbooks = fileTypes?.Any(EbookExtensions.Contains) == true;
+            if (hasAudio || hasEbooks)
             {
-                return null;
+                return hasAudio == hasEbooks ? null : hasAudio ? BookMediaType.Audiobook : BookMediaType.Ebook;
             }
 
-            var hasAudio = fileTypes.Any(AudioExtensions.Contains);
-            var hasEbooks = fileTypes.Any(EbookExtensions.Contains);
-            return hasAudio == hasEbooks ? null : hasAudio ? BookMediaType.Audiobook : BookMediaType.Ebook;
+            return GetCategoryMediaType(release);
+        }
+
+        public static BookMediaType? GetCategoryMediaType(ReleaseInfo release)
+        {
+            // Native MAM parent categories are separate from its genre IDs and Newznab categories.
+            return (release as TorrentInfo)?.MainCategory switch
+            {
+                13 => BookMediaType.Audiobook,
+                14 => BookMediaType.Ebook,
+                _ => SearchMediaTypeHelper.GetMediaTypeFromCategories(release?.Categories)
+            };
         }
 
         public static BookMediaType? GetMediaTypeFromPath(string path)

@@ -73,7 +73,7 @@ namespace NzbDrone.Core.History
 
         private static string NormalizeDownloadId(string downloadId)
         {
-            return downloadId.IsNullOrWhiteSpace() ? null : downloadId.ToUpperInvariant();
+            return DownloadIdentity.Key(downloadId);
         }
 
         public PagingSpec<EntityHistory> Paged(PagingSpec<EntityHistory> pagingSpec)
@@ -366,6 +366,7 @@ namespace NzbDrone.Core.History
                 };
 
                 history.Data.Add(StatusMessagesKey, statusMessages);
+                history.Data.Add("awaitingImportConfirmation", message.TrackedDownload.AwaitingImportConfirmation.ToString());
                 history.Data.Add("ReleaseGroup", message.TrackedDownload?.RemoteBook?.ParsedBookInfo?.ReleaseGroup);
                 history.Data.Add("IndexerFlags", message.TrackedDownload?.RemoteBook?.Release?.IndexerFlags.ToString());
 
@@ -498,6 +499,11 @@ namespace NzbDrone.Core.History
             history.Data.Add("CustomFormatScore", FindGrabbedCustomFormatScore(grabbedHistory, history.BookId, history.AuthorId, message.BookInfo?.AlternativeCopyGrabDate));
             history.Data.Add("Size", (message.BookInfo?.Size ?? message.ImportedBook?.Size ?? 0).ToString());
             history.Data.Add("IndexerFlags", message.BookInfo?.IndexerFlags.ToString());
+            if (!message.Message.IsNullOrWhiteSpace())
+            {
+                history.Data.Add("Message", message.Message);
+            }
+
             if (message.BookInfo?.GeneratedConversionSourcePaths?.Count > 0)
             {
                 history.Data.Add("SourcePaths", message.BookInfo.GeneratedConversionSourcePaths.ToJson());
@@ -506,6 +512,38 @@ namespace NzbDrone.Core.History
             if (message.ImportedBook?.MatchProvenance?.ImportExcludedSourcePaths?.Count > 0)
             {
                 history.Data.Add("ExcludedSourcePaths", message.ImportedBook.MatchProvenance.ImportExcludedSourcePaths.ToJson());
+            }
+
+            if (message.BookInfo?.IsIncludedMedia == true)
+            {
+                var grab = RemoteBook.GetCapturedGrabHistory(grabbedHistory).FirstOrDefault(row => row.AuthorId == history.AuthorId);
+                if (grab != null)
+                {
+                    // Share acquisition provenance without granting the bonus format
+                    // the original target's score, narrator or forced selection.
+                    history.Data["IncludedFromGrabId"] = grab.Id.ToString();
+                    history.Data["GrabbedReleaseTitle"] = grab.SourceTitle;
+                    foreach (var key in new[] { "Indexer", "NzbInfoUrl", "DownloadUrl", "Guid", "Protocol", "ReleaseSource", "PublishedDate", EntityHistory.INDEXER_ID })
+                    {
+                        if (EntityHistory.TryGetDataValue(grab.Data, key, out var value)) history.Data[key] = value;
+                    }
+                    if (!grabbedHistory.Any(row => row.EventType == EntityHistoryEventType.Grabbed && row.BookId == history.BookId))
+                    {
+                        var includedGrab = new EntityHistory
+                        {
+                            EventType = EntityHistoryEventType.Grabbed, Date = grab.Date,
+                            AuthorId = history.AuthorId, BookId = history.BookId, EditionId = history.EditionId,
+                            SourceTitle = grab.SourceTitle, DownloadId = downloadId, Quality = history.Quality,
+                            Data = history.Data.Where(pair => pair.Key is "IncludedFromGrabId" or "GrabbedReleaseTitle" or
+                                "Indexer" or "NzbInfoUrl" or "DownloadUrl" or "Guid" or "Protocol" or "ReleaseSource" or
+                                "PublishedDate" or EntityHistory.INDEXER_ID or "DownloadClient" or "DownloadClientName")
+                                .ToDictionary(pair => pair.Key, pair => pair.Value)
+                        };
+                        _historyRepository.Insert(includedGrab);
+                        grabbedHistory.Add(includedGrab);
+                    }
+                }
+                history.Data.Remove("CustomFormatScore");
             }
 
             _historyRepository.Insert(history);

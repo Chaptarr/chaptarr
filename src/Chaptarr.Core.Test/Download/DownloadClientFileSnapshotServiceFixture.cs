@@ -241,7 +241,8 @@ namespace Chaptarr.Core.Test.Download
             var completion = TrackedDownloadAlreadyImported.Evaluate(tracked, history: history);
             Assert.That(completion.Complete, Is.False, "A vanished, never-imported part must not disappear from completion evidence");
             Assert.That(completion.RequiredCount, Is.EqualTo(2));
-            Assert.That(completion.Missing.Select(message => message.Title), Does.Contain("/downloads/book/Dune 01.mp3"));
+            Assert.That(completion.Missing.Select(message => message.Title), Does.Contain("Dune 01.mp3"));
+            Assert.That(completion.Missing.Select(message => message.SourcePath), Does.Contain("/downloads/book/Dune 01.mp3"));
 
             history.Add(new EntityHistory
             {

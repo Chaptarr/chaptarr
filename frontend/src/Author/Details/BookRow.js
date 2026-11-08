@@ -75,6 +75,8 @@ class BookRow extends Component {
       authorName,
       narrator,
       narratorNames,
+      narrators,
+      availableNarratorCredits,
       availableNarrators,
       position,
       pageCount,
@@ -168,6 +170,8 @@ class BookRow extends Component {
                       bookId={id}
                       narrator={narrator}
                       narratorNames={narratorNames}
+                      narrators={narrators}
+                      availableNarratorCredits={availableNarratorCredits}
                       availableNarrators={availableNarrators}
                       hasFiles={hasFilesForDisplay}
                       hasPinnedEdition={hasPinnedEdition}
@@ -323,6 +327,8 @@ BookRow.propTypes = {
   authorName: PropTypes.string.isRequired,
   narrator: PropTypes.string,
   narratorNames: PropTypes.arrayOf(PropTypes.string),
+  narrators: PropTypes.arrayOf(PropTypes.object),
+  availableNarratorCredits: PropTypes.arrayOf(PropTypes.object),
   availableNarrators: PropTypes.arrayOf(PropTypes.string),
   position: PropTypes.string,
   pageCount: PropTypes.number,

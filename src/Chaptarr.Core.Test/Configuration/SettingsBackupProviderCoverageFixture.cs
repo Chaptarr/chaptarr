@@ -175,12 +175,12 @@ namespace Chaptarr.Core.Test.Configuration
             package = JsonSerializer.Deserialize<SettingsBackupPackage>(JsonSerializer.Serialize(package, STJson.GetSerializerSettings()), STJson.GetSerializerSettings());
             if (source.Enable || malformed)
             {
-                var error = Assert.Throws<NzbDroneClientException>(() => SettingsBackupService.ValidateRestore(package, new() { category }));
+                var error = Assert.Throws<NzbDroneClientException>(() => SettingsBackupService.ValidateRestore(package, new() { category }, SettingsBackupCoverageFixture.CreateFilenameValidation()));
                 Assert.That(error.Message, Does.Contain(source.Name).And.Contain("No settings were restored"));
             }
             else
             {
-                Assert.That(SettingsBackupService.ValidateRestore(package, new() { category }), Is.Empty);
+                Assert.That(SettingsBackupService.ValidateRestore(package, new() { category }, SettingsBackupCoverageFixture.CreateFilenameValidation()), Is.Empty);
                 Assert.That(RoundTrip(source).Enable, Is.False);
             }
         }

@@ -1,8 +1,11 @@
+using System.Collections.Generic;
+using System.Linq;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine.Specifications;
 using NzbDrone.Core.IndexerSearch.Definitions;
+using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
 
@@ -254,6 +257,45 @@ namespace Chaptarr.Core.Test.DecisionEngine
         {
             Assert.That(QualityMediaTypeHelper.DetectMediaType(Quality.M4B,
                 new TorrentInfo { Title = "The Ebook Handbook", FileType = "epub" }), Is.EqualTo(BookMediaType.Audiobook));
+        }
+
+        [TestCase(null, null)]
+        [TestCase(new int[0], null)]
+        [TestCase(new[] { 7000 }, null)]
+        [TestCase(new[] { 7010, 7030, 7040 }, null)]
+        [TestCase(new[] { 39, 108, 107020 }, null)]
+        [TestCase(new[] { 7000, 7020, 107020 }, BookMediaType.Ebook)]
+        [TestCase(new[] { 3000, 3030, 7000 }, BookMediaType.Audiobook)]
+        [TestCase(new[] { 3030, 7020 }, null)]
+        public void category_fallback_requires_unambiguous_media_evidence(int[] categories, BookMediaType? expected)
+        {
+            var report = new ReleaseInfo { Title = "Frank Herbert - Dune", Categories = categories?.ToList() };
+            var quality = QualityParser.ParseQuality(report.Title, null, report.Categories);
+
+            Assert.That(QualityMediaTypeHelper.DetectMediaType(quality.Quality, report), Is.EqualTo(expected));
+            Assert.That(quality.Quality, Is.EqualTo(expected == BookMediaType.Audiobook ? Quality.UnknownAudio : Quality.Unknown));
+        }
+
+        [TestCase("EPUB", 3030, BookMediaType.Ebook)]
+        [TestCase("M4B", 7020, BookMediaType.Audiobook)]
+        [TestCase("EPUB", 7000, BookMediaType.Ebook)]
+        [TestCase("M4B", 7000, BookMediaType.Audiobook)]
+        public void explicit_title_format_takes_precedence_over_category(string format, int category, BookMediaType expected)
+        {
+            var report = new ReleaseInfo { Title = $"Frank Herbert - Dune [{format}]", Categories = new List<int> { category } };
+            var quality = QualityParser.ParseQuality(report.Title, null, report.Categories);
+
+            Assert.That(QualityMediaTypeHelper.DetectMediaType(quality.Quality, report), Is.EqualTo(expected));
+        }
+
+        [TestCase("epub", 3030, BookMediaType.Ebook)]
+        [TestCase("m4b", 7020, BookMediaType.Audiobook)]
+        [TestCase("epub m4b", 7020, null)]
+        [TestCase("unknown", 7020, BookMediaType.Ebook)]
+        public void structured_media_evidence_precedes_category_fallback(string fileType, int category, BookMediaType? expected)
+        {
+            var report = new TorrentInfo { FileType = fileType, Categories = new List<int> { category } };
+            Assert.That(QualityMediaTypeHelper.DetectMediaType(Quality.Unknown, report), Is.EqualTo(expected));
         }
 
         private static RemoteBook BuildRemoteBook(string fileType, string title = "Example Release")

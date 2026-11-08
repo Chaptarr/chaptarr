@@ -58,6 +58,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 ["src/NzbDrone.Core/Books/Services/NarratorCoverageService.cs"] = 3,
                 ["src/NzbDrone.Core/Books/Services/PendingImportService.cs"] = 1,
                 ["src/NzbDrone.Core/Books/Services/RefreshAuthorService.cs"] = 2,
+                ["src/NzbDrone.Core/Books/Services/RefreshAuthorService.Identity.cs"] = 1,
                 ["src/NzbDrone.Core/Books/Services/RefreshBookService.cs"] = 4,
                 ["src/NzbDrone.Core/Books/Services/SeriesImportService.cs"] = 1,
                 ["src/NzbDrone.Core/ImportLists/ImportListSyncService.cs"] = 2,
@@ -68,6 +69,8 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             };
             var expectedRefusals = new Dictionary<string, int>
             {
+                // The broad refusal inventory also sees category-local restore validation; no metadata call is made.
+                ["src/NzbDrone.Core/Configuration/SettingsBackups/SettingsBackupService.cs"] = 1,
                 ["src/NzbDrone.Core/Books/Commands/ProcessPendingImportsCommandHandler.cs"] = 7,
                 ["src/NzbDrone.Core/Books/Events/PendingAuthorImportEvents.cs"] = 2,
                 ["src/NzbDrone.Core/Books/Services/PendingAuthorImportService.cs"] = 1,
@@ -79,6 +82,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 ["src/NzbDrone.Core/MetadataSource/BookInfo/BookInfoProxy.cs"] = 14,
                 ["src/NzbDrone.Core/MetadataSource/BookInfo/RefreshResult.cs"] = 1,
                 ["src/NzbDrone.Core/MetadataSource/Hardcover/HardcoverSearchClient.cs"] = 1,
+                ["src/Chaptarr.Api.V1/Books/BookLookupController.cs"] = 1,
                 ["src/Chaptarr.Http/Authentication/PlexAuthenticationController.cs"] = 1,
                 ["src/Chaptarr.Http/ErrorManagement/ChaptarrErrorPipeline.cs"] = 1,
             };

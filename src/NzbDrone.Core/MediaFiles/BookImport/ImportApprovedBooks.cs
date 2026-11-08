@@ -57,6 +57,22 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         private static readonly string[] SourceCoverBaseNames = { "cover", "front", "folder", "album", "albumart" };
         private static readonly string[] SourceCoverExtensions = { ".jpg", ".jpeg", ".png" };
 
+        private sealed class ReplacementRefusedException : Exception
+        {
+            public ReplacementRefusedException(string message) : base(message) { }
+        }
+
+        public sealed class IncludedImportException : Exception
+        {
+            public IReadOnlyList<ImportResult> Results { get; }
+
+            public IncludedImportException(Exception innerException, IReadOnlyList<ImportResult> results)
+                : base(innerException.Message, innerException)
+            {
+                Results = results;
+            }
+        }
+
         private sealed class PendingFileCommit
         {
             public BookFile BookFile { get; init; }
@@ -173,6 +189,31 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             var replacedBookFilesByBook = new Dictionary<int, List<BookFile>>();
             var bookFileConvertedEvents = new List<BookFileConvertedEvent>();
             var importHistory = new ImportHistoryContext(downloadClientItem?.DownloadId);
+            var recordingSourcePaths = new Dictionary<LocalBook, IReadOnlyCollection<string>>();
+            var conversionJob = downloadClientItem?.DownloadId.IsNotNullOrWhiteSpace() == true
+                ? _conversionJobService?.Get(downloadClientItem.DownloadId) : null;
+            if (conversionJob != null && decisions.All(decision => decision.Item?.IsManualImport != true) &&
+                ConversionJobService.IsWaitingForOutput(conversionJob, _conversionJobService))
+                return decisions.Select(decision => new ImportResult(decision, ImportResultType.Pending, "Waiting for conversion to finish.")).ToList();
+
+            if (conversionJob?.CleanupPending == true && decisions.All(decision => decision.Item?.IsManualImport != true))
+                return decisions.Select(decision => new ImportResult(decision, ImportResultType.Pending,
+                    "Waiting for conversion cleanup to finish before retrying import. Cleanup failures are shown in System > Status.")).ToList();
+
+            var acceptedRequest = conversionJob?.GetAcceptedRequest();
+            var acceptedConversionParts = new HashSet<LocalBook>();
+            foreach (var recording in RecordingCustomFormatHelper.GroupByRecording(decisions.Select(decision => decision.Item)))
+            {
+                var paths = recording.SelectMany(TrackedDownloadAlreadyImported.GetSourcePaths)
+                    .Distinct(PathEqualityComparer.Instance).ToArray();
+                foreach (var part in recording) recordingSourcePaths[part] = paths;
+                if (recording.All(part => !part.IsManualImport) &&
+                    acceptedRequest?.MatchesSources(recording.First().Book?.Id ?? 0, paths) == true &&
+                    recording.All(part => part.Edition?.Id == acceptedRequest.EditionId))
+                {
+                    acceptedConversionParts.UnionWith(recording);
+                }
+            }
 
             var selectedManualPaths = decisions.Where(decision => decision.Item?.IsManualImport == true)
                 .Select(decision => decision.Item.Path).ToHashSet(PathEqualityComparer.Instance);
@@ -200,6 +241,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             // Separate matched and unmatched files
             var matchedDecisions = approvedDecisions.Where(d => d.Item?.Book?.Id > 0).ToList();
+            BookSeries.LoadLinks(matchedDecisions.Select(decision => decision.Item.Book), ids => _seriesBookLinkService.GetLinksByBook(ids));
             var unmatchedDecisions = approvedDecisions.Where(d => d.Item?.Book?.Id == 0 || d.Item?.Book == null).ToList();
 
                 // Enforce QualityProfile gating before any moves: if not allowed, reject and do not import.
@@ -209,6 +251,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 foreach (var md in matchedDecisions)
                 {
                     var local = md.Item;
+                    // Included files are checked together before any part is imported.
+                    if (local?.IsIncludedMedia == true || acceptedConversionParts.Contains(local))
+                    {
+                        gatedMatched.Add(md);
+                        continue;
+                    }
+
                     if (local?.IsManualImport == true || downloadForced)
                     {
                         _logger.Debug("[QUALITY-GATE] Skipping quality gating for explicit user import/grab: '{0}'", local.Path);
@@ -247,17 +296,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             continue;
                         }
 
-                        var allowed = profile.Items.Any(item => item.Allowed && item.GetQualities().Any(x => x.Id == quality.Id));
+                        var allowed = profile.IsQualityAllowed(quality.Id);
                         if (!allowed)
                         {
                             var reason = $"Quality '{quality.Name}' not allowed by profile '{profile.Name}'";
 
-                            // Categorised so completed-download handling can tell "the payload is a
-                            // format this profile never wanted" (a deterministic, re-grabbable
-                            // mismatch) apart from transient or unknown import failures. Read back
-                            // via Rejection.IsQualityFilter — never by matching this message.
+                            // Retain the category for ebook alternative selection and the refusal for manual review.
+                            // Read back via Rejection.IsQualityFilter — never by matching this message.
                             md.Reject(new Rejection(reason, RejectionType.Permanent, canBypass: false, category: "Quality", severity: 3));
-                            importResults.Add(new ImportResult(md, reason));
+                            importResults.AddRange(PolicyRefusals(new List<ImportDecision<LocalBook>> { md }, downloadClientItem,
+                                reason, recordingSourcePaths.GetValueOrDefault(local)));
                             _logger.Debug("[QUALITY-GATE] Rejecting '{0}' — {1}", local?.Path, reason);
                         }
                         else
@@ -285,10 +333,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     }
                 }
 
-                // Group matched files by book
-                var bookGroups = matchedDecisions
-                .GroupBy(d => d.Item.Book.Id)
-                .ToList();
+                var matchedByItem = matchedDecisions.ToLookup(decision => decision.Item);
+                var bookGroups = matchedDecisions.GroupBy(decision => decision.Item.Book.Id)
+                    .SelectMany(group => group.First().Item.Book.MediaType == BookMediaType.Audiobook &&
+                        !(replaceExisting && group.Any(decision => decision.Item.IsManualImport))
+                        ? RecordingCustomFormatHelper.GroupByRecording(group.Select(decision => decision.Item))
+                            .Select(recording => recording.SelectMany(part => matchedByItem[part]).ToList())
+                        : new[] { group.ToList() })
+                    .ToList();
 
             if (!bookGroups.Any())
             {
@@ -404,6 +456,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             foreach (var bookGroup in bookGroups)
             {
+                var pendingFileCommits = new List<PendingFileCommit>();
+                var groupRolledBack = false;
+                try
+                {
                 var __bookGroupSw = Stopwatch.StartNew();
                 var __route = "existing";
                 if (cancellationToken.IsCancellationRequested)
@@ -447,6 +503,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 var qualityProfile = author.GetQualityProfileForQuality(localBook.Quality.Quality);
                 var manualImport = bookDecisions.All(d => d.Item.IsManualImport);
                 var manualReplaceExisting = replaceExisting && manualImport;
+                var acceptedConversion = bookDecisions.All(decision => acceptedConversionParts.Contains(decision.Item))
+                    ? acceptedRequest : null;
+                var recordingPaths = bookDecisions.Select(decision => recordingSourcePaths.GetValueOrDefault(decision.Item)
+                        ?? TrackedDownloadAlreadyImported.GetSourcePaths(decision.Item).ToArray())
+                    .Distinct().SelectMany(paths => paths).Distinct(PathEqualityComparer.Instance).ToArray();
+                var failedRecordingFiles = failedReplacementFiles[book.Id].Where(result => manualReplaceExisting ||
+                    book.MediaType != BookMediaType.Audiobook || result.ImportDecision.Item?.Edition?.Id is not > 0 ||
+                    result.ImportDecision.Item.Edition.Id == localBook.Edition?.Id).ToList();
 
                 // Check if any existing files would be replaced
                 var existingFiles = _mediaFileService.GetFilesByBook(book.Id);
@@ -458,16 +522,29 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                 var sameGrabFiles = existingFiles.Where(file => TrackedDownloadAlreadyImported.IsFileFromDownload(
                     file, downloadClientItem?.DownloadId, previouslyImportedFileSources, localBook.AlternativeCopyGrabDate)).ToList();
+                recordingPaths = recordingPaths.Concat(sameGrabFiles.Where(file => file.EditionId == localBook.Edition?.Id)
+                        .SelectMany(file => file.MatchProvenance?.ImportSourcePaths?.Count > 0
+                            ? file.MatchProvenance.ImportSourcePaths
+                            : previouslyImportedFileSources?.GetValueOrDefault(file.Id) ?? new List<string>()))
+                    .Distinct(PathEqualityComparer.Instance).ToArray();
                 var replacementCandidates = manualReplaceExisting
                     ? ManualImportReplacementFiles.Get(existingFiles, bookDecisions.Select(decision => decision.Item).ToList(), manualSources)
                     : existingFiles.Except(sameGrabFiles).ToList();
+                if (localBook.IsIncludedMedia && (replacementCandidates.Count > 0 ||
+                    EditionPinPolicy.FindConflictingProtectedEdition(book, book.Editions, localBook.Edition.Id) != null))
+                {
+                    importResults.AddRange(PolicyRefusals(bookDecisions, downloadClientItem,
+                        "The book is no longer missing or conflicts with the selected edition. Existing files and selection were kept.", recordingPaths));
+                    continue;
+                }
+
                 var replacesRecording = replaceExisting && replacementCandidates.Count > 0;
                 var atomicBookImport = replacesRecording || manualReplaceExisting;
                 // Fresh imports can retain successful parts. Replacing an old recording or
                 // changing selected tracked rows still requires the complete selected set.
                 var requiresCompleteReplacement = replacesRecording || (manualReplaceExisting &&
                     bookDecisions.Any(decision => manualSourcePaths.Contains(decision.Item.Path)));
-                if (requiresCompleteReplacement && failedReplacementFiles.Contains(book.Id))
+                if (requiresCompleteReplacement && failedRecordingFiles.Count > 0)
                 {
                     const string reason = "Replacement cancelled because a selected file was rejected. Existing files were kept.";
                     importResults.AddRange(bookDecisions.Select(decision => new ImportResult(decision, reason)));
@@ -540,25 +617,87 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     continue;
                 }
 
-                var currentPaths = bookDecisions.SelectMany(decision => TrackedDownloadAlreadyImported.GetSourcePaths(decision.Item))
-                    .ToHashSet(PathEqualityComparer.Instance);
-                var replacementIds = replacementCandidates.Select(file => file.Id).ToHashSet();
-                var completedParts = sameGrabFiles.Where(file => !replacementIds.Contains(file.Id) && sameGrabSources[file.Id].Count == 1 &&
-                        !currentPaths.Contains(sameGrabSources[file.Id][0]))
-                    .Select(file => new LocalBook
-                    {
-                        Path = sameGrabSources[file.Id][0], Edition = file.Edition,
-                        Quality = file.Quality, Part = file.Part, PartCount = file.PartCount
-                    });
+                var completedPartsStarted = Stopwatch.GetTimestamp();
+                var completedParts = RecordingCustomFormatHelper.GetCompletedParts(
+                    bookDecisions.Select(decision => decision.Item).ToList(), sameGrabFiles,
+                    downloadClientItem?.DownloadId, previouslyImportedFileSources,
+                    completedDecisions.Select(decision => decision.Item), replacementCandidates.Select(file => file.Id).ToHashSet());
+                _logger.Debug("[IMPORT][COMPLETED-PARTS] selected={0}, stored={1}, completed={2}, elapsedMs={3}",
+                    bookDecisions.Count, sameGrabFiles.Count, completedParts.Count, Stopwatch.GetElapsedTime(completedPartsStarted).TotalMilliseconds);
                 PartAssignmentHelper.NormalizeLocalBooksByEdition(bookDecisions.Select(decision => decision.Item).Concat(completedParts).ToList());
 
-                // Choosing a download does not authorize replacement of an existing recording.
-                if (downloadForced && replacementCandidates.Any() && !manualImport)
+                var sourcePolicyInputs = bookDecisions.Select(decision =>
                 {
-                    const string reason = "Book already has files. Use Manual Import to choose Combine or Replace existing files.";
-                    _logger.Info("[IMPORT-CONFIRMATION] BookId={0}, DownloadId={1}: {2}", book.Id, downloadClientItem.DownloadId, reason);
-                    importResults.AddRange(bookDecisions.Select(d => new ImportResult(d, reason)));
+                    var input = decision.Item.ShallowClone();
+                    input.Author ??= author;
+                    if (downloadClientItem != null && !manualImport)
+                    {
+                        input.Quality = acceptedConversion != null
+                            ? new QualityModel((Qualities.Quality)acceptedConversion.TargetQualityId)
+                            : QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(author, input.Quality);
+                    }
+
+                    return input;
+                }).ToList();
+                var policyRejection = acceptedConversion == null
+                    ? GetBookGroupQualityRejection(sourcePolicyInputs, author, downloadForced) : null;
+                if (policyRejection != null)
+                {
+                    importResults.AddRange(PolicyRefusals(bookDecisions, downloadClientItem, policyRejection, recordingPaths));
                     continue;
+                }
+
+                var currentItems = sourcePolicyInputs.ToHashSet();
+                var policyInputs = RecordingCustomFormatHelper.GroupForScoring(sourcePolicyInputs.Concat(completedParts))
+                    .Where(recording => recording.Any(currentItems.Contains))
+                    .Select(recording => RecordingCustomFormatHelper.CreateInput(recording)).ToList();
+                var incomingFormats = new Dictionary<LocalBook, List<CustomFormat>>();
+                policyRejection = acceptedConversion == null
+                    ? policyInputs.Select(input => GetCustomFormatImportRejectionReason(input, author,
+                            author.GetQualityProfileForQuality(input.Quality.Quality), downloadForced, incomingFormats))
+                        .FirstOrDefault(reason => reason != null)
+                    : null;
+                if (policyRejection != null)
+                {
+                    importResults.AddRange(PolicyRefusals(bookDecisions, downloadClientItem, policyRejection, recordingPaths));
+                    continue;
+                }
+
+                if (!manualImport && replaceExisting)
+                {
+                    var replacementDecision = CheckReplacement(policyInputs,
+                        replacementCandidates, qualityProfile, downloadForced, incomingFormats, existingFiles);
+                    if (replacementDecision.Reason != null)
+                    {
+                        _logger.Info("[IMPORT-REPLACEMENT] BookId={0}, DownloadId={1}: {2}",
+                            book.Id, downloadClientItem?.DownloadId, replacementDecision.Reason);
+                        importResults.AddRange(PolicyRefusals(bookDecisions, downloadClientItem,
+                            replacementDecision.Reason, recordingPaths, replacementDecision.Result));
+                        continue;
+                    }
+                }
+
+                // Check before conversion or pin protection can create another physical copy.
+                var additionalCopy = qualityProfile?.UpgradeAllowed == false && replaceExisting && replacementCandidates.Count > 0 && !manualReplaceExisting;
+                if (additionalCopy)
+                {
+                    var (duplicateReason, retryComparison) = GetAdditionalCopyDuplicateReason(bookDecisions, existingFiles, downloadClientItem?.DownloadId);
+                    if (duplicateReason != null)
+                    {
+                        importResults.AddRange(retryComparison
+                            ? bookDecisions.Select(decision => new ImportResult(decision, ImportResultType.Pending, duplicateReason))
+                            : PolicyRefusals(bookDecisions, downloadClientItem, duplicateReason, recordingPaths));
+                        continue;
+                    }
+                }
+
+                var approvedReplacementIds = !manualImport && replaceExisting && qualityProfile?.UpgradeAllowed == true
+                    ? replacementCandidates.Where(file => bookDecisions.Any(decision => decision.Item.Edition.Id == file.EditionId))
+                        .Select(file => file.Id).ToHashSet()
+                    : new HashSet<int>();
+                foreach (var decision in bookDecisions)
+                {
+                    decision.Item.ApprovedReplacementFileIds = approvedReplacementIds;
                 }
 
                 // Log the existing files situation
@@ -581,14 +720,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     replaceExisting, existingFiles.Any(), filesToReplace, qualityProfile?.UpgradeAllowed ?? true);
 
                     var conversionFailures = downloadClientItem == null ? new List<ImportResult>()
-                        : failedReplacementFiles[0].Concat(failedReplacementFiles[book.Id]).ToList();
-                    var conversionResult = ConvertBookGroupIfNeeded(bookDecisions, book, author, downloadClientItem, replaceExisting, conversionFailures, manualReplaceExisting);
+                        : failedReplacementFiles[0].Concat(failedRecordingFiles).ToList();
+                    var conversionResult = ConvertBookGroupIfNeeded(bookDecisions, book, author, downloadClientItem, replaceExisting, conversionFailures, conversionJob, acceptedConversion);
                     conversionWorkFolder = conversionResult.WorkFolder;
                     if (!conversionResult.Failed && conversionResult.Decisions == null)
                     {
                         foreach (var decision in bookDecisions)
                         {
-                            importResults.Add(new ImportResult(decision, ImportResultType.Pending));
+                            importResults.Add(new ImportResult(decision, ImportResultType.Pending, conversionResult.Error ?? "Waiting for conversion to finish."));
                         }
 
                         __bookGroupSw.Stop();
@@ -617,6 +756,23 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     bookDecisions = conversionResult.Decisions;
                     var bypassedConversionJob = conversionResult.BypassedJob;
                     var conversionDownloadId = bookDecisions.Any(d => d.Item?.IsGeneratedConversion == true) ? downloadClientItem?.DownloadId : null;
+                    // A successful conversion supplies different bytes/paths from its source set.
+                    if (additionalCopy && conversionDownloadId != null)
+                    {
+                        var (duplicateReason, retryComparison) = GetAdditionalCopyDuplicateReason(bookDecisions, existingFiles, downloadClientItem?.DownloadId);
+                        if (duplicateReason != null)
+                        {
+                            if (retryComparison)
+                            {
+                                importResults.AddRange(bookDecisions.Select(decision => new ImportResult(decision, ImportResultType.Pending, duplicateReason)));
+                                continue;
+                            }
+                            importResults.AddRange(bookDecisions.Select(decision => new ImportResult(decision, duplicateReason)));
+                            FailConvertedImport(bookFileConvertedEvents, bookDecisions, author, book, downloadClientItem, duplicateReason);
+                            CleanupOrRetainConversionWorkFolder(conversionWorkFolder, bookDecisions, duplicateReason);
+                            continue;
+                        }
+                    }
 
                     Book newBookInstance = null;
                     Edition newEdition = null;
@@ -668,64 +824,37 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     }
                 }
 
-                if (qualityProfile != null && filesToReplace && !qualityProfile.UpgradeAllowed && !manualReplaceExisting)
+                if (additionalCopy)
                 {
-                    // Check if any of the files in this batch already exist at their exact paths
-                    var anyFilesAlreadyImported = false;
-                    foreach (var decision in bookDecisions)
+                    var additionalCopyCollisionReason = GetAdditionalCopyPathCollisionReason(bookDecisions, book, author);
+                    if (!string.IsNullOrWhiteSpace(additionalCopyCollisionReason))
                     {
-                        var existingFileAtPath = _mediaFileService.GetFileWithPath(decision.Item.Path);
-                        if (existingFileAtPath != null && existingFileAtPath.EditionId > 0)
-                        {
-                            anyFilesAlreadyImported = true;
-                            break;
-                        }
-                    }
-                    
-                    if (anyFilesAlreadyImported)
-                    {
-                        // These exact files are already imported - skip the batch
-                        _logger.Debug("[ALREADY-IMPORTED] Files already imported for book {0}, skipping re-import of {1} files",
-                            book.Id, bookDecisions.Count);
-                        var skipReason = $"Files already imported for book {book.Id}; converted M4B was not imported.";
-                        FailConvertedImport(bookFileConvertedEvents, bookDecisions, author, book, downloadClientItem, skipReason);
-                        CleanupOrRetainConversionWorkFolder(conversionWorkFolder, bookDecisions, skipReason);
+                        _logger.Warn("[ADDITIONAL-COPY] {0}", additionalCopyCollisionReason);
+                        FailConvertedImport(bookFileConvertedEvents, bookDecisions, author, book, downloadClientItem, additionalCopyCollisionReason);
+                        CleanupOrRetainConversionWorkFolder(conversionWorkFolder, bookDecisions, additionalCopyCollisionReason);
                         __bookGroupSw.Stop();
-                        _logger.Debug("[BOOK-TIMING] BookGroup skipped route=already-imported title='{0}' elapsed={1}ms", book.Title, __bookGroupSw.ElapsedMilliseconds);
-                        continue; // Skip to next batch
-                    }
-                    else
-                    {
-                        var additionalCopyCollisionReason = GetAdditionalCopyPathCollisionReason(bookDecisions, book, author);
-                        if (!string.IsNullOrWhiteSpace(additionalCopyCollisionReason))
+                        _logger.Debug("[BOOK-TIMING] BookGroup skipped route=additional-copy-collision title='{0}' elapsed={1}ms", book.Title, __bookGroupSw.ElapsedMilliseconds);
+
+                        foreach (var decision in bookDecisions)
                         {
-                            _logger.Warn("[ADDITIONAL-COPY] {0}", additionalCopyCollisionReason);
-                            FailConvertedImport(bookFileConvertedEvents, bookDecisions, author, book, downloadClientItem, additionalCopyCollisionReason);
-                            CleanupOrRetainConversionWorkFolder(conversionWorkFolder, bookDecisions, additionalCopyCollisionReason);
-                            __bookGroupSw.Stop();
-                            _logger.Debug("[BOOK-TIMING] BookGroup skipped route=additional-copy-collision title='{0}' elapsed={1}ms", book.Title, __bookGroupSw.ElapsedMilliseconds);
-
-                            foreach (var decision in bookDecisions)
-                            {
-                                importResults.Add(new ImportResult(decision, additionalCopyCollisionReason));
-                            }
-
-                            continue;
+                            importResults.Add(new ImportResult(decision, additionalCopyCollisionReason));
                         }
 
-                        // These are NEW files for the same book - create a new book instance for multiple copies
-                        _logger.Debug("[ADDITIONAL-COPY] Creating new book instance for additional physical copy of '{0}'",
-                            book.Title);
-                        var createResult = CreateNewBookInstanceForBatch(bookDecisions.First(), book, author, anyEditionOk: true);
-                            if (createResult.NewBook != null)
-                            {
-                                newBookInstance = createResult.NewBook;
-                                newEdition = createResult.NewEdition;
-                                createdNewBookInstance = true;
-                                _logger.Debug("[ADDITIONAL-COPY] Created new book instance with ID: {0} for additional copy",
-                                    newBookInstance.Id);
-                                __route = "additional-copy";
-                        }
+                        continue;
+                    }
+
+                    // These are NEW files for the same book - create a new book instance for multiple copies
+                    _logger.Debug("[ADDITIONAL-COPY] Creating new book instance for additional physical copy of '{0}'",
+                        book.Title);
+                    var createResult = CreateNewBookInstanceForBatch(bookDecisions.First(), book, author, anyEditionOk: true);
+                    if (createResult.NewBook != null)
+                    {
+                        newBookInstance = createResult.NewBook;
+                        newEdition = createResult.NewEdition;
+                        createdNewBookInstance = true;
+                        _logger.Debug("[ADDITIONAL-COPY] Created new book instance with ID: {0} for additional copy",
+                            newBookInstance.Id);
+                        __route = "additional-copy";
                     }
                 }
 
@@ -736,7 +865,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                     // Collect all BookFile objects for this book to batch insert them
                     var bookFilesToAdd = new List<BookFile>();
-                    var pendingFileCommits = new List<PendingFileCommit>();
                     var stagedReplacementIds = new HashSet<int>();
                     var bookImportResults = new List<ImportResult>();
                     // Track all successfully imported book files (including ones already present in the DB)
@@ -882,11 +1010,31 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         {
                             CommitPreparedBookFiles(bookFilesToAdd, pendingFileCommits, book, atomicBookImport && newBookInstance == null);
                         }
+                        catch (ReplacementRefusedException ex)
+                        {
+                            _logger.Warn("[IMPORT-CONFIRMATION] BookId={0}: {1}", book.Id, ex.Message);
+                            RollbackPendingFileCommits(pendingFileCommits);
+                            var refusedFiles = bookFilesToAdd.ToHashSet();
+                            trackImportedEvents.RemoveAll(message => refusedFiles.Contains(message.ImportedBook));
+                            importedBookEventContexts.RemoveAll(context => refusedFiles.Contains(context.File));
+                            var refusedPaths = refusedFiles.Select(file => file.Path).ToHashSet(PathEqualityComparer.Instance);
+                            bookFileConvertedEvents.RemoveAll(message => message.ImportedPath != null && refusedPaths.Contains(message.ImportedPath));
+                            foreach (var result in bookImportResults)
+                            {
+                                importResults.Remove(result);
+                            }
+
+                            importResults.AddRange(bookDecisions.Select(decision => new ImportResult(decision, ex.Message)));
+                            FailConvertedImport(bookFileConvertedEvents, bookDecisions, author, book, downloadClientItem, ex.Message);
+                            CleanupOrRetainConversionWorkFolder(conversionWorkFolder, bookDecisions, ex.Message);
+                            continue;
+                        }
                         catch (Exception ex)
                         {
                             _logger.Warn(ex, "[IMPORT-ROLLBACK] Primary commit failed for BookId={0}, DownloadId={1}, preparedFiles={2}",
                                 book.Id, downloadClientItem?.DownloadId, pendingFileCommits.Count);
                             RollbackPendingFileCommits(pendingFileCommits);
+                            groupRolledBack = true;
                             try
                             {
                                 FailConvertedImport(bookFileConvertedEvents, bookDecisions, author, book, downloadClientItem, ex.Message, publishImmediately: true);
@@ -1013,7 +1161,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         {
                             // Originals are durable; retire only the captured inactive conversion
                             // attempt, without claiming a successful M4B encode.
-                            _conversionJobService.Reset(downloadClientItem.DownloadId, bypassedConversionJob);
+                            var discardedPath = _conversionJobService.Reset(downloadClientItem.DownloadId, bypassedConversionJob);
+                            if (discardedPath.IsNotNullOrWhiteSpace())
+                            {
+                                var message = $"Original files imported. Discarded retained conversion workspace: {discardedPath}";
+                                var originalItems = bookDecisions.Select(decision => decision.Item).ToHashSet();
+                                foreach (var imported in trackImportedEvents.Where(imported => originalItems.Contains(imported.BookInfo)))
+                                {
+                                    imported.Message = imported.Message.IsNullOrWhiteSpace() ? message : $"{imported.Message} {message}";
+                                }
+                            }
                         }
                         catch (Exception ex)
                         {
@@ -1022,6 +1179,26 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     }
 
                     PublishCommittedImportEvents();
+                }
+                catch (Exception ex) when (decisions.All(decision => decision.Item?.IsIncludedMedia == true))
+                {
+                    if (!groupRolledBack) RollbackPendingFileCommits(pendingFileCommits);
+                    var uncommittedFiles = pendingFileCommits.Where(commit => !commit.DatabaseCommitted)
+                        .Select(commit => commit.BookFile).ToHashSet();
+                    var uncommittedInputs = pendingFileCommits.Where(commit => !commit.DatabaseCommitted)
+                        .Select(commit => commit.LocalBook).ToHashSet();
+                    trackImportedEvents.RemoveAll(message => uncommittedFiles.Contains(message.ImportedBook));
+                    importedBookEventContexts.RemoveAll(context => uncommittedFiles.Contains(context.File));
+                    var uncommittedPaths = uncommittedFiles.Select(file => file.Path).ToHashSet(PathEqualityComparer.Instance);
+                    bookFileConvertedEvents.RemoveAll(message => message.ImportedPath != null && uncommittedPaths.Contains(message.ImportedPath));
+                    importResults.RemoveAll(result => result.Result == ImportResultType.Imported && uncommittedInputs.Contains(result.ImportDecision.Item));
+                    var reported = importResults.Select(result => result.ImportDecision.Item).ToHashSet();
+                    importResults.AddRange(decisions.Where(decision => !reported.Contains(decision.Item))
+                        .Select(decision => new ImportResult(decision, "Import interrupted: " + ex.Message)));
+                    _logger.Warn(ex, "[INCLUDED-MEDIA] Import interrupted for download {0}; preserving {1} committed results without discarding conversion work",
+                        downloadClientItem?.DownloadId, importResults.Count(result => result.Result == ImportResultType.Imported));
+                    throw new IncludedImportException(ex, importResults.ToArray());
+                }
             }
 
             // Unmapped files are now handled at the beginning through ImportOrchestratorV2
@@ -1030,7 +1207,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             _logger.Debug("[CLEAN-IMPORT] Import complete. Imported: {0}, Failed: {1}",
                 importResults.Count(r => r.Result == ImportResultType.Imported),
-                importResults.Count(r => r.Result != ImportResultType.Imported));
+                importResults.Count(r => r.Result != ImportResultType.Imported && !r.IsIncludedMediaSkip));
             if (_logger.IsDebugEnabled)
             {
                 _logger.Debug("[MEMORY] Clean import complete ({0} decisions): {1}", decisions.Count, MemorySnapshot.CaptureDetailed());
@@ -1072,11 +1249,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 CompareEbookImportCandidate(candidate, best, author) > 0 ? candidate : best);
 
             var skipped = ebookCandidates.Where(d => !ReferenceEquals(d, winner)).ToList();
-            var selectedQuality = winner.Item?.Quality?.Quality?.Name ?? "Unknown Text";
+            var selectedQuality = winner.Item?.Quality?.Quality?.Name ?? Quality.Unknown.Name;
 
             foreach (var decision in skipped)
             {
-                var skippedQuality = decision.Item?.Quality?.Quality?.Name ?? "Unknown Text";
+                var skippedQuality = decision.Item?.Quality?.Quality?.Name ?? Quality.Unknown.Name;
                 var reason = $"Skipped duplicate ebook format from the same download; selected {selectedQuality} over {skippedQuality}";
                 decision.Reject(new Rejection(reason) { Category = EbookAlternativeRejectionCategory });
                 importResults.Add(new ImportResult(decision, reason));
@@ -1123,8 +1300,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             var profile = author?.GetQualityProfileForQuality(quality);
             return profile == null ||
-                   profile.Items.Any(item =>
-                       item.Allowed && item.GetQualities().Any(candidate => candidate.Id == quality.Id));
+                   profile.IsQualityAllowed(quality.Id);
         }
 
         private static int CompareEbookImportCandidate(
@@ -1288,12 +1464,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                 // Get the quality profile for this file type
                 var qualityProfile = author.GetQualityProfileForQuality(localBook.Quality.Quality);
-                if (qualityProfile == null && !downloadForced)
-                {
-                    _logger.Error("[CLEAN-IMPORT] No quality profile found for quality: {0}", localBook.Quality.Quality.Name);
-                    return (new ImportResult(decision, "No quality profile configured for this file type"), null);
-                }
-
                     if (qualityProfile != null)
                     {
                         _logger.Debug("[QUALITY-PROFILE] Using quality profile '{0}' (ID: {1}) for file. UpgradeAllowed: {2}",
@@ -1302,13 +1472,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     else
                     {
                         _logger.Debug("[QUALITY-PROFILE] Explicit manual grab has no profile for this media type; profile gates are bypassed");
-                    }
-
-                    var customFormatRejection = GetCustomFormatImportRejectionReason(localBook, author, qualityProfile, downloadForced);
-                    if (customFormatRejection.IsNotNullOrWhiteSpace())
-                    {
-                        _logger.Debug("[CUSTOM-FORMAT-IMPORT] Rejecting '{0}' — {1}", localBook.Path, customFormatRejection);
-                        return (new ImportResult(decision, customFormatRejection), null);
                     }
 
                     // Check if this file already exists ANYWHERE in the database (not just for this book)
@@ -1370,9 +1533,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     var manualReplaceExisting = replaceExisting && localBook.IsManualImport;
                     var filesToReplace = localBook.IsManualImport && !replaceExisting
                         ? new List<BookFile>()
-                        : existingFiles.Where(f =>
-                            !f.Path.Equals(localBook.Path, StringComparison.OrdinalIgnoreCase) &&
-                            (f.EditionId == edition.Id || manualReplaceExisting)).ToList();
+                        : GetReplacementFiles(existingFiles, localBook, edition.Id, manualReplaceExisting);
 
                     // Relocation is not an "upgrade/replacement"; do not block or stage/delete other files.
                     if (relocateExistingFile != null)
@@ -1396,20 +1557,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return (new ImportResult(decision, "Edition already has files"), null);
                     }
 
-                // Note: Quality profile upgrade checks are now handled at the batch level in Import()
-
-                // Check quality upgrade
-                var worstExistingQuality = filesToReplace.Any() ?
-                    filesToReplace.Min(f => f.Quality.Revision) :
-                    new Revision();
-
-                var qualityCompare = localBook.Quality.Revision.CompareTo(worstExistingQuality);
-                if (filesToReplace.Any() && qualityCompare < 0 && !downloadForced)
-                {
-                    _logger.Debug("[CLEAN-IMPORT] This file is a lower quality revision: {0}", localBook.Path);
-                    return (new ImportResult(decision, "Lower quality revision"), null);
-                }
-
                     // Create the book file
                     // Narrator is derived from the matched edition (metadata server is canonical).
                     var isAudioMedia = BookFile.DetermineMediaType(localBook.Quality) == "audiobook";
@@ -1432,10 +1579,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                 var durationSeconds = GetDurationSeconds(localBook);
                     var hasTrackedReleaseEvidence = localBook.DownloadClientBookInfo != null || localBook.SceneSource;
-                    var isGraphicAudio = localBook.IsGraphicAudio || DetectGraphicAudioFromLocalTags(localBook);
-                    var audioProductionType = localBook.AudioProductionType.IsNotNullOrWhiteSpace()
-                        ? localBook.AudioProductionType
-                        : isGraphicAudio ? AudioProductionConstants.DetectedDramatizedFullCastType : null;
+                    // Store observed evidence separately from the nullable correction, so Auto can restore it.
+                    var isGraphicAudio = isAudioMedia && AudioProductionDetector.DetectRecording(localBook);
+                    var audioProductionType = isAudioMedia ? AudioProductionDetector.GetRecordingProductionType(localBook) : null;
                     var persistedNarrator = localBook.Narrator.IsNotNullOrWhiteSpace() ? localBook.Narrator : narratorName;
 
                     BookFile bookFile;
@@ -1467,7 +1613,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             bookFile.ReleaseGroup = localBook.ReleaseGroup;
                         }
 
-                        bookFile.IsGraphicAudio = isGraphicAudio;
+                        if (localBook.AudioProductionOverrideSpecified)
+                        {
+                            bookFile.AudioProductionOverride = localBook.AudioProductionOverride;
+                        }
+                        bookFile.IsGraphicAudio = isGraphicAudio || relocateExistingFile.IsGraphicAudio;
                         if (audioProductionType.IsNotNullOrWhiteSpace())
                         {
                             bookFile.AudioProductionType = audioProductionType;
@@ -1503,6 +1653,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             Edition = edition,
                             MediaType = BookFile.DetermineMediaType(localBook.Quality),
                             IsGraphicAudio = isGraphicAudio,
+                            AudioProductionOverride = localBook.AudioProductionOverride,
                             AudioProductionType = audioProductionType,
                             Narrator = persistedNarrator,
                             Author = author,
@@ -1523,12 +1674,19 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         bookFile.MatchProvenance = finalizedProvenance;
                     }
 
-                    if (downloadClientItem?.DownloadId.IsNotNullOrWhiteSpace() == true)
+                    // A manually selected conversion can outlive its tracked download. Its
+                    // verified receipt preserves the same durable source proof as an automatic import.
+                    var receipt = downloadClientItem?.DownloadId.IsNotNullOrWhiteSpace() == true
+                        ? null : ConversionWorkPath.GetSuccessfulArtifact(localBook.Path);
+                    var importedDownloadId = downloadClientItem?.DownloadId.IsNotNullOrWhiteSpace() == true
+                        ? downloadClientItem.DownloadId : receipt?.DownloadId;
+                    if (importedDownloadId.IsNotNullOrWhiteSpace())
                     {
                         // Commit source coverage with the file so recovery does not depend on later history events.
                         bookFile.MatchProvenance ??= new MatchProvenance();
-                        bookFile.MatchProvenance.ImportDownloadId = downloadClientItem.DownloadId;
-                        bookFile.MatchProvenance.ImportSourcePaths = TrackedDownloadAlreadyImported.GetSourcePaths(localBook).ToList();
+                        bookFile.MatchProvenance.ImportDownloadId = importedDownloadId;
+                        bookFile.MatchProvenance.ImportSourcePaths = receipt?.Sources?.Select(source => source.Path).ToList()
+                            ?? TrackedDownloadAlreadyImported.GetSourcePaths(localBook).ToList();
                         bookFile.MatchProvenance.ImportExcludedSourcePaths = excludedSources.GetValueOrDefault(localBook.Edition.Id) ?? new List<string>();
                     }
 
@@ -1599,7 +1757,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         copyOnly = false;
                     }
 
-                    if (relocateExistingFile != null)
+                    // A destination created after the group decision cannot acquire replacement permission.
                     {
                         var destinationPath = _bookFileMover.GetImportDestinationPath(bookFile, localBook);
                         if (destinationPath.IsNotNullOrWhiteSpace())
@@ -1713,6 +1871,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     pendingFileCommit = null;
                 }
 
+                if (ex is ReplacementRefusedException)
+                {
+                    _logger.Warn("[IMPORT-CONFIRMATION] {0}: {1}", localBook.Path, ex.Message);
+                    return (new ImportResult(decision, ex.Message), null);
+                }
+
                 _logger.Error(ex, "[CLEAN-IMPORT] Failed to import file: {0}", localBook.Path);
                 return (new ImportResult(decision, "Import failed: " + ex.Message), null);
             }
@@ -1799,7 +1963,79 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             return null;
         }
 
-        private string GetCustomFormatImportRejectionReason(LocalBook localBook, Author author, QualityProfile qualityProfile, bool downloadForced)
+        private IEnumerable<ImportResult> PolicyRefusals(List<ImportDecision<LocalBook>> decisions, DownloadClientItem downloadClientItem,
+            string reason, IReadOnlyCollection<string> sourcePaths = null, ImportResultType? requestedResult = null)
+        {
+            // Optional outcomes are cleaned up together after all recording results are known.
+            if (decisions.All(decision => decision.Item.IsIncludedMedia))
+                return decisions.Select(decision => PolicyRefusal(decision, reason));
+
+            var retention = downloadClientItem?.DownloadId.IsNotNullOrWhiteSpace() == true
+                ? _conversionJobService?.RetainCompletedOutput(downloadClientItem.DownloadId,
+                    sourcePaths ?? decisions.SelectMany(decision => TrackedDownloadAlreadyImported.GetSourcePaths(decision.Item)).ToArray(), reason)
+                : null;
+            retention ??= new ConversionRetentionResult(ConversionRetentionStatus.None, reason);
+            if (retention.Status == ConversionRetentionStatus.Pending)
+            {
+                return decisions.Select(decision => new ImportResult(decision, ImportResultType.Pending, retention.Message));
+            }
+
+            if (retention.Status == ConversionRetentionStatus.Blocked)
+            {
+                return decisions.Select(decision => new ImportResult(decision, retention.Message));
+            }
+
+            return decisions.Select(decision => decision.Item.IsIncludedMedia || !requestedResult.HasValue
+                ? PolicyRefusal(decision, retention.Message)
+                : new ImportResult(decision, requestedResult.Value, retention.Message));
+        }
+
+        private ImportResult PolicyRefusal(ImportDecision<LocalBook> decision, string reason)
+        {
+            if (decision.Item.IsIncludedMedia)
+            {
+                _logger.Info("[INCLUDED-MEDIA] Skipping optional file '{0}': {1}", decision.Item.Path, reason);
+                return ImportResult.SkipIncludedMedia(decision, reason);
+            }
+
+            return new ImportResult(decision, reason);
+        }
+
+        private string GetBookGroupQualityRejection(List<LocalBook> policyInputs, Author author, bool downloadForced)
+        {
+            foreach (var input in policyInputs)
+            {
+                var quality = input.Quality;
+                var profile = author.GetQualityProfileForQuality(quality.Quality);
+                if (profile == null && !downloadForced)
+                {
+                    return "No quality profile configured for this file type";
+                }
+
+                if (input.IsIncludedMedia && profile != null && !profile.IsQualityAllowed(quality.Quality.Id))
+                {
+                    return $"The quality is not allowed by profile '{profile.Name}': {quality.Quality.Name}";
+                }
+
+            }
+
+            return null;
+        }
+
+        private List<CustomFormat> GetRecordingCustomFormats(LocalBook recording,
+            IDictionary<LocalBook, List<CustomFormat>> cache)
+        {
+            if (!cache.TryGetValue(recording, out var formats))
+            {
+                formats = _customFormatCalculationService?.ParseCustomFormat(recording) ?? new List<CustomFormat>();
+                cache[recording] = formats;
+            }
+
+            return formats;
+        }
+
+        private string GetCustomFormatImportRejectionReason(LocalBook localBook, Author author, QualityProfile qualityProfile, bool downloadForced,
+            IDictionary<LocalBook, List<CustomFormat>> incomingFormats)
         {
             if (_customFormatCalculationService == null || localBook?.ExistingFile == true || qualityProfile == null || downloadForced)
             {
@@ -1811,7 +2047,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 localBook.Author = author;
             }
 
-            var formats = _customFormatCalculationService.ParseCustomFormat(localBook) ?? new List<CustomFormat>();
+            var formats = GetRecordingCustomFormats(localBook, incomingFormats);
             var score = qualityProfile.CalculateCustomFormatScore(formats);
 
             if (score >= qualityProfile.MinFormatScore)
@@ -1840,7 +2076,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 DownloadClientItem downloadClientItem,
                 bool replaceExisting,
                 IReadOnlyCollection<ImportResult> rejectedTrackedDownloadFiles,
-                bool manualReplaceExisting)
+                ConversionJob conversionJob,
+                ConversionJobRequest acceptedRequest)
             {
                 if (downloadClientItem == null || bookDecisions == null || bookDecisions.Count == 0)
                 {
@@ -1848,9 +2085,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
 
                 var first = bookDecisions.First().Item;
-                var sourceQuality = first?.Quality?.Quality ?? Qualities.Quality.Unknown;
-                var qualityProfile = author.GetQualityProfileForQuality(sourceQuality);
-                var targetQuality = QualityConversionHelper.GetPlannedConversionTarget(author, first?.Quality);
                 var inputFiles = bookDecisions
                     .Select(d => d.Item?.Path)
                     .Where(p => !string.IsNullOrWhiteSpace(p))
@@ -1864,10 +2098,36 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
 
                 var manualImport = bookDecisions.All(decision => decision.Item?.IsManualImport == true);
+                if (!manualImport && acceptedRequest != null)
+                {
+                    if (conversionJob.Status is ConversionJobStatus.Queued or ConversionJobStatus.Converting ||
+                        _conversionJobService.IsRunning(downloadClientItem.DownloadId))
+                    {
+                        return (null, conversionJob.WorkFolder, false, null, null);
+                    }
+
+                    var completedRequest = _conversionJobService.GetCompletedConversion(downloadClientItem.DownloadId);
+                    if (completedRequest != null)
+                    {
+                        var converted = ReuseConversionOutput(first, bookDecisions, completedRequest.OutputPath,
+                            completedRequest.Sources.Select(source => source.Path).ToArray(),
+                            new QualityModel((Qualities.Quality)completedRequest.TargetQualityId),
+                            completedRequest.TagOptions ?? new ConversionTagOptions(), downloadClientItem.DownloadId);
+                        return (new List<ImportDecision<LocalBook>> { new(converted) }, completedRequest.WorkFolder, false, null, null);
+                    }
+
+                    const string error = "The completed conversion artifact could not be verified. Retry conversion or use Manual Import.";
+                    _conversionJobService.Fail(downloadClientItem.DownloadId, error);
+                    PublishConversionFailed(first, inputFiles, book, author,
+                        new QualityModel((Qualities.Quality)acceptedRequest.TargetQualityId), acceptedRequest.OutputPath, error, downloadClientItem);
+                    return (bookDecisions, null, true, error, null);
+                }
+
+                var targetQuality = QualityConversionHelper.GetPlannedConversionTarget(author, first?.Quality);
                 if (!manualImport && targetQuality != Qualities.Quality.M4B)
                     return (bookDecisions, null, false, null, null);
 
-                var existingJob = _conversionJobService?.Get(downloadClientItem.DownloadId);
+                var existingJob = conversionJob;
                 ConversionJobRequest existingRequest = null;
                 if (existingJob != null)
                 {
@@ -1882,7 +2142,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     catch (JsonException) { /* An unreadable ordinary job is handled by the worker. */ }
                 }
 
-                var sameGroup = ConversionJobMatchesSources(existingRequest, book.Id, inputFiles, requireBookIdentity: !manualImport);
+                var sameGroup = existingRequest?.MatchesSources(book.Id, inputFiles, requireBookIdentity: !manualImport) == true;
                 var sharesFiles = existingRequest == null || inputFiles.Any(path => path.PathEquals(existingRequest.OutputPath) ||
                     existingRequest.Sources?.Any(source => path.PathEquals(source.Path)) == true);
                 if (existingJob != null && (!manualImport || sharesFiles) &&
@@ -1915,7 +2175,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     return (bookDecisions, null, false, null, null);
                 }
 
-                if (!sameGroup) existingJob = null;
+                // Keep a ready attempt with changed source signatures visible to the invalid-artifact
+                // refusal below; otherwise Enqueue keeps returning the same ready job indefinitely.
+                if (!sameGroup && !(existingJob?.Status == ConversionJobStatus.ReadyToImport && sharesFiles)) existingJob = null;
 
                 if (rejectedTrackedDownloadFiles.Count > 0)
                 {
@@ -1954,7 +2216,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return (bookDecisions, null, true, error, null);
                     }
 
-                    var destinationConflict = GetConversionDestinationConflictReason(finalDestinationPath, book, qualityProfile, replaceExisting, manualReplaceExisting);
+                    var destinationConflict = GetConversionDestinationConflictReason(finalDestinationPath, first, replaceExisting);
                     if (destinationConflict.IsNotNullOrWhiteSpace())
                     {
                         _conversionTrackingService?.Fail(downloadClientItem.DownloadId, destinationConflict);
@@ -1990,10 +2252,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                     if (TryFindReusableConversionArtifact(downloadClientItem.DownloadId, workRoot, inputFiles, convertedQuality, tagOptions, audioBitrate, audioChannels, out var reusableOutputPath))
                     {
-                        _conversionTrackingService?.Start(downloadClientItem.DownloadId, Qualities.Quality.M4B.Id, Qualities.Quality.M4B.Name, "Using retained M4B");
-                        _conversionTrackingService?.Progress(downloadClientItem.DownloadId, 97m, "Using retained M4B");
-                        var reusableLocalBook = CreateGeneratedConversionLocalBook(first, bookDecisions, reusableOutputPath, inputFiles, convertedQuality, tagOptions);
-                        _logger.Info("[CONVERSION] Reusing retained converted M4B for '{0}': {1}", book.Title, reusableOutputPath);
+                        var reusableLocalBook = ReuseConversionOutput(first, bookDecisions, reusableOutputPath,
+                            inputFiles, convertedQuality, tagOptions, downloadClientItem.DownloadId);
                         return (new List<ImportDecision<LocalBook>> { new ImportDecision<LocalBook>(reusableLocalBook) }, Path.GetDirectoryName(reusableOutputPath), false, null, null);
                     }
 
@@ -2006,10 +2266,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                     if (existingJob?.Status == ConversionJobStatus.ReadyToImport)
                     {
-                        var error = "The completed conversion artifact is no longer valid for the current source files. Retry import to rebuild it.";
-                        _conversionJobService.Fail(downloadClientItem.DownloadId, error);
-                        PublishConversionFailed(first, inputFiles, book, author, convertedQuality, existingJob.OutputPath, error, downloadClientItem);
-                        return (bookDecisions, null, true, error, null);
+                        var error = "The completed conversion artifact cannot be reused because the sources or conversion settings changed. Waiting to evaluate the current files and rebuild the conversion.";
+                        _conversionJobService.Reset(downloadClientItem.DownloadId, existingJob);
+                        _logger.Warn("Download {0}: {1}", downloadClientItem.DownloadId, error);
+                        return (null, null, false, error, null);
                     }
 
                     var estimate = EstimateConversionWorkspace(inputFiles);
@@ -2036,7 +2296,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         var request = new ConversionJobRequest
                         {
                             DownloadId = downloadClientItem.DownloadId,
+                            DownloadClientId = downloadClientItem.DownloadClientInfo?.Id ?? 0,
                             BookId = book.Id,
+                            EditionId = first.Edition.Id,
                             BookTitle = book.Title,
                             WorkRoot = workRoot,
                             WorkFolder = workFolder,
@@ -2056,8 +2318,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             TagOptions = tagOptions
                         };
 
-                        _conversionJobService.Enqueue(request);
-                        return (null, request.WorkFolder, false, null, null);
+                        var queued = _conversionJobService.Enqueue(request);
+                        return (null, queued.WorkFolder, false, null, null);
                     }
 
                     throw new InvalidOperationException("The conversion job service is unavailable; conversion cannot start safely.");
@@ -2081,13 +2343,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
             }
 
-            private static bool ConversionJobMatchesSources(ConversionJobRequest request, int bookId, string[] inputFiles, bool requireBookIdentity = true)
+            private LocalBook ReuseConversionOutput(LocalBook first, List<ImportDecision<LocalBook>> decisions,
+                string outputPath, string[] sourcePaths, QualityModel quality, ConversionTagOptions tagOptions, string downloadId)
             {
-                return request != null && (!requireBookIdentity || request.BookId == 0 || request.BookId == bookId) &&
-                       request.Sources != null && request.Sources.All(source => source?.Path.IsNotNullOrWhiteSpace() == true) &&
-                       inputFiles.ToHashSet(PathEqualityComparer.Instance).SetEquals(request.Sources.Select(source => source.Path)) &&
-                       request.Sources.All(source => File.Exists(source.Path) && new FileInfo(source.Path).Length == source.Size &&
-                           File.GetLastWriteTimeUtc(source.Path).Ticks == source.ModifiedUtcTicks);
+                _conversionTrackingService?.Start(downloadId, quality.Quality.Id, quality.Quality.Name, "Using retained M4B");
+                _conversionTrackingService?.Progress(downloadId, 97m, "Using retained M4B");
+                var converted = CreateGeneratedConversionLocalBook(first, decisions, outputPath, sourcePaths, quality, tagOptions);
+                _logger.Info("[CONVERSION] Reusing retained converted M4B for '{0}': {1}", first.Book.Title, outputPath);
+                return converted;
             }
 
             private void TryApplyMatchedEditionChapters(ConversionTagOptions tagOptions, Edition edition, TimeSpan sourceDuration, Book book)
@@ -2590,13 +2853,18 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     SceneSource = first.SceneSource,
                     ReleaseGroup = first.ReleaseGroup,
                     IsGraphicAudio = first.IsGraphicAudio,
+                    AudioProductionOverride = first.AudioProductionOverride,
+                    AudioProductionOverrideSpecified = first.AudioProductionOverrideSpecified,
+                    ImportRoot = first.ImportRoot,
                     AudioProductionType = first.AudioProductionType,
                     SceneName = first.SceneName,
                     Narrator = first.Narrator,
                     IsInitialImport = first.IsInitialImport,
                     IsManualImport = first.IsManualImport,
+                    IsIncludedMedia = first.IsIncludedMedia,
                     DisableReleaseSwitching = first.DisableReleaseSwitching,
                     ConfirmedReplacementFiles = first.ConfirmedReplacementFiles,
+                    ApprovedReplacementFileIds = first.ApprovedReplacementFileIds,
                     MatchProvenance = first.MatchProvenance,
                     AlternativeCopyIncompatibleEditionIds = first.AlternativeCopyIncompatibleEditionIds,
                     AlternativeCopyGrabDate = first.AlternativeCopyGrabDate,
@@ -2631,13 +2899,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     Author = author,
                     Part = previewLocalBook.Part > 0 ? previewLocalBook.Part : 1,
                     PartCount = previewLocalBook.PartCount,
-                    MediaType = BookFile.DetermineMediaType(convertedQuality)
+                    MediaType = BookFile.DetermineMediaType(convertedQuality),
+                    IsGraphicAudio = AudioProductionDetector.DetectRecording(source),
+                    AudioProductionOverride = source.AudioProductionOverride,
+                    AudioProductionType = AudioProductionDetector.GetRecordingProductionType(source)
                 };
 
                 return _bookFileMover.GetImportDestinationPath(previewBookFile, previewLocalBook);
             }
 
-            private string GetConversionDestinationConflictReason(string finalDestinationPath, Book book, QualityProfile qualityProfile, bool replaceExisting, bool manualReplaceExisting)
+            private string GetConversionDestinationConflictReason(string finalDestinationPath, LocalBook conversionSource, bool replaceExisting)
             {
                 if (finalDestinationPath.IsNullOrWhiteSpace())
                 {
@@ -2658,7 +2929,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     return null;
                 }
 
-                if (CanReplaceExistingConversionDestination(existingTracked, book, qualityProfile, replaceExisting, manualReplaceExisting))
+                if (replaceExisting && existingTracked != null && CanReplaceDestination(existingTracked, conversionSource))
                 {
                     return null;
                 }
@@ -2674,22 +2945,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
 
                 return $"Conversion skipped because an untracked file already exists at the destination: {finalDestinationPath}. It will not appear in Chaptarr's Files tab. Remove or rename the file, or change naming settings, then retry.";
-            }
-
-            private bool CanReplaceExistingConversionDestination(BookFile existingTracked, Book book, QualityProfile qualityProfile, bool replaceExisting, bool manualReplaceExisting)
-            {
-                if (!replaceExisting || (!manualReplaceExisting && qualityProfile?.UpgradeAllowed != true) || existingTracked == null)
-                {
-                    return false;
-                }
-
-                var existingEdition = existingTracked.Edition;
-                if (existingEdition == null && existingTracked.EditionId > 0)
-                {
-                    existingEdition = _editionService.GetEdition(existingTracked.EditionId);
-                }
-
-                return existingEdition?.BookId == book.Id;
             }
 
             private bool TryFindReusableConversionArtifact(string downloadId, string workRoot, string[] inputFiles, QualityModel targetQuality, ConversionTagOptions tagOptions, int audioBitrate, int audioChannels, out string outputPath)
@@ -3017,13 +3272,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             private string AppendRetainedConversionPath(string message, LocalBook convertedLocalBook)
             {
-                if (TryGetRetainableGeneratedConversionPath(convertedLocalBook, out var retainedPath))
-                {
-                    var prefix = message.IsNullOrWhiteSpace() ? "Converted M4B was not imported." : message;
-                    return $"{prefix} Converted file retained at: {retainedPath}";
-                }
-
-                return message;
+                return TryGetRetainableGeneratedConversionPath(convertedLocalBook, out var retainedPath)
+                    ? ConversionRetentionResult.AppendRetainedConversionPath(message, retainedPath)
+                    : message;
             }
 
             private static bool TryGetRetainableGeneratedConversionPath(IEnumerable<ImportDecision<LocalBook>> bookDecisions, out string retainedPath)
@@ -3294,7 +3545,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             var edition = existingFile.Edition ?? _editionService.GetEdition(existingFile.EditionId);
             if (edition?.BookId != bookId)
             {
-                throw new InvalidOperationException($"Destination is tracked by another book. Import was not applied: {existingFile.Path}");
+                throw new ReplacementRefusedException($"Destination is tracked by another book. Import was not applied: {existingFile.Path}");
             }
         }
 
@@ -3321,11 +3572,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             return Path.Combine(directory, $"{fileName}.chaptarr-upgrade~{Guid.NewGuid():N}");
         }
 
+        private static bool CanReplaceDestination(BookFile existingFile, LocalBook selection) =>
+            selection?.IsManualImport == true
+                ? ManualImportReplacementFiles.IsConfirmed(existingFile, selection.ConfirmedReplacementFiles)
+                : selection?.ApprovedReplacementFileIds?.Contains(existingFile.Id) == true;
+
         private static void EnsureReplacementConfirmed(BookFile existingFile, LocalBook selection)
         {
-            if (!ManualImportReplacementFiles.IsConfirmed(existingFile, selection?.ConfirmedReplacementFiles))
+            if (!CanReplaceDestination(existingFile, selection))
             {
-                throw new InvalidOperationException("Existing files changed since confirmation. Review the replacement files again.");
+                throw new ReplacementRefusedException("Existing files changed since the replacement was checked. Review the replacement files in Manual Import.");
             }
         }
 
@@ -3589,27 +3845,201 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             return true;
         }
 
-        private bool DetectGraphicAudioFromLocalTags(LocalBook localBook)
+        private static List<BookFile> GetReplacementFiles(IEnumerable<BookFile> existingFiles, LocalBook incoming, int editionId, bool manualReplace) =>
+            existingFiles.Where(file => !file.Path.PathEquals(incoming.Path) &&
+                (file.EditionId == editionId || manualReplace)).ToList();
+
+        private (string Reason, bool Retry) GetAdditionalCopyDuplicateReason(List<ImportDecision<LocalBook>> incoming, List<BookFile> existing, string downloadId)
         {
-            if (localBook == null)
+            try
             {
-                return false;
+                if (!AllFilesAlreadyInLibrary(incoming, existing, downloadId)) return (null, false);
+                const string reason = "Already in your library: every selected file is identical to an existing file for this book. Nothing was imported.";
+                _logger.Info("[IMPORT-IDENTICAL] BookId={0}, DownloadId={1}: {2}", incoming[0].Item.Book.Id, downloadId, reason);
+                return (reason, false);
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                _logger.Warn(ex, "Unable to compare the additional copy for BookId={0}; existing files were kept", incoming[0].Item.Book.Id);
+                return ("Unable to compare this download with the existing library files: " + ex.Message, ex is IOException);
+            }
+        }
+
+        private bool AllFilesAlreadyInLibrary(List<ImportDecision<LocalBook>> incoming, List<BookFile> existing, string downloadId)
+        {
+            var timer = Stopwatch.StartNew();
+            var comparisons = 0;
+            // GetFilesByBook already scopes this inventory to the target book and media side.
+            var remaining = existing.Select(file => file.Path).Where(path => !string.IsNullOrWhiteSpace(path))
+                .Distinct(PathEqualityComparer.Instance).ToList();
+            try
+            {
+                if (incoming.Count > remaining.Count) return false;
+
+                // Preserve the in-place import check without re-querying the DB for each part.
+                var unmatched = new List<string>();
+                foreach (var decision in incoming)
+                {
+                    var index = remaining.FindIndex(path => path.PathEquals(decision.Item.Path));
+                    if (index >= 0) remaining.RemoveAt(index);
+                    else unmatched.Add(decision.Item.Path);
+                }
+
+                if (unmatched.Count == 0) return true;
+                if (_diskProvider == null) return false;
+
+                var bySize = remaining.Where(path => _diskProvider.FileExists(path))
+                    .GroupBy(path => _diskProvider.GetFileSize(path)).ToDictionary(group => group.Key, group => group.ToList());
+                var sourcesBySize = new Dictionary<long, List<string>>();
+                foreach (var source in unmatched)
+                {
+                    if (!_diskProvider.FileExists(source)) return false;
+                    var size = _diskProvider.GetFileSize(source);
+                    if (!bySize.TryGetValue(size, out var available)) return false;
+                    if (!sourcesBySize.TryGetValue(size, out var sources)) sourcesBySize[size] = sources = new List<string>();
+                    sources.Add(source);
+                    if (sources.Count > available.Count) return false;
+                }
+
+                foreach (var group in sourcesBySize)
+                foreach (var source in group.Value)
+                {
+                    var candidates = bySize[group.Key];
+                    var index = candidates.FindIndex(path =>
+                    {
+                        comparisons++;
+                        return _diskProvider.FilesEqual(source, path);
+                    });
+                    if (index < 0) return false;
+                    candidates.RemoveAt(index);
+                }
+
+                return true;
+            }
+            finally
+            {
+                _logger.Debug("[IDENTICAL-COPY] {0} incoming, {1} existing files, {2} byte comparisons in {3}ms",
+                    incoming.Count, existing.Count, comparisons, timer.ElapsedMilliseconds);
+                if (timer.ElapsedMilliseconds >= 1000)
+                {
+                    _logger.Warn("[IMPORT-IDENTICAL] BookId={0}, DownloadId={1}: comparison took {2}ms for {3} incoming and {4} existing files ({5} byte comparisons)",
+                        incoming[0].Item.Book.Id, downloadId, timer.ElapsedMilliseconds, incoming.Count, existing.Count, comparisons);
+                }
+            }
+        }
+
+        private (ImportResultType Result, string Reason) CheckReplacement(IReadOnlyCollection<LocalBook> incoming,
+            IReadOnlyCollection<BookFile> existing, QualityProfile profile, bool handPicked,
+            IDictionary<LocalBook, List<CustomFormat>> cachedFormats,
+            IReadOnlyCollection<BookFile> storedRowFiles = null)
+        {
+            var timer = Stopwatch.StartNew();
+            var comparisons = 0;
+            var candidates = existing.Where(file => incoming.Any(item => item.Edition?.Id == file.EditionId &&
+                !file.Path.PathEquals(item.Path))).ToList();
+
+            (ImportResultType Result, string Reason) Finish(ImportResultType result, string reason = null)
+            {
+                _logger.Debug("[REPLACEMENT-CHECK] {0} incoming, {1} existing files, {2} comparisons in {3}ms: {4}",
+                    incoming.Count, candidates.Count, comparisons, timer.ElapsedMilliseconds, result);
+                if (timer.ElapsedMilliseconds >= 1000)
+                {
+                    _logger.Warn("[REPLACEMENT-CHECK] Took {0}ms for {1} incoming and {2} existing files ({3} comparisons)",
+                        timer.ElapsedMilliseconds, incoming.Count, candidates.Count, comparisons);
+                }
+
+                return (result, reason);
             }
 
-            var mediaType = QualityMediaTypeHelper.GetKnownMediaType(localBook.Quality?.Quality ?? Quality.Unknown) ??
-                            QualityMediaTypeHelper.GetMediaTypeFromPath(localBook.Path);
+            if (candidates.Count == 0) return Finish(ImportResultType.Imported);
+            if (profile == null) return Finish(ImportResultType.Skipped, "No quality profile is configured. Existing files were kept.");
+            if (!profile.UpgradeAllowed) return Finish(ImportResultType.Imported); // Existing additional-copy path keeps both.
 
-            if (mediaType != BookMediaType.Audiobook)
+            var missing = candidates.Where(file => !DestinationFileExists(file.Path)).ToList();
+            if (missing.Count > 0)
             {
-                return false;
+                _logger.Warn("[REPLACEMENT-CHECK] {0} existing files are missing; omitted from replacement: {1}",
+                    missing.Count, string.Join(", ", missing.Select(file => file.Path)));
+                candidates = candidates.Except(missing).ToList();
             }
 
-            if (localBook.RawTags?.AllTags == null)
+            var editions = incoming.Where(item => item.Edition != null).GroupBy(item => item.Edition.Id)
+                .ToDictionary(group => group.Key, group => group.First());
+            var narrators = editions.ToDictionary(pair => pair.Key,
+                pair => ReleaseNarratorEvidenceExtractor.GetKnownNarratorNames(pair.Value.Edition).ToList());
+            bool HasNarratorEvidence(int editionId, IDictionary<string, List<string>> tags) =>
+                narrators.TryGetValue(editionId, out var names) && names.Count > 0 && names.All(name =>
+                    !AudioProductionDetector.IsCastLabel(name) &&
+                    ExactMatchEvidenceBuilder.FindNarratorEvidenceFields(name, editions[editionId].Author?.Name, tags).Count > 0);
+
+            var candidateIds = candidates.Select(file => file.Id).ToHashSet();
+            var scoringFiles = (storedRowFiles ?? existing).Where(file => candidateIds.Contains(file.Id) || DestinationFileExists(file.Path)).Select(file =>
             {
-                return false;
+                var clone = file.CloneForImport();
+                if (editions.TryGetValue(file.EditionId, out var target))
+                {
+                    clone.Edition ??= target.Edition;
+                    clone.Author ??= target.Author;
+                }
+                return clone;
+            }).ToList();
+            var storedUnits = RecordingCustomFormatHelper.GroupStoredForScoring(scoringFiles)
+                .Where(files => files.Any(file => candidateIds.Contains(file.Id)))
+                .Select(files => (Files: files, Input: RecordingCustomFormatHelper.CreateStoredInput(files))).ToList();
+            var storedScores = storedUnits.ToDictionary(unit => unit.Input, unit => profile.CalculateCustomFormatScore(
+                _customFormatCalculationService?.ParseCustomFormat(unit.Input) ?? new List<CustomFormat>()));
+            var details = new HashSet<string>();
+            var differentRecording = false;
+            string notAnUpgrade = null;
+            foreach (var files in RecordingCustomFormatHelper.GroupForScoring(incoming))
+            {
+                var item = files.Count == 1 ? files[0] : RecordingCustomFormatHelper.CreateInput(files);
+                var replaced = storedUnits.Where(unit => unit.Files.Any(previous => candidateIds.Contains(previous.Id) &&
+                    previous.EditionId == item.Edition.Id && !previous.Path.PathEquals(item.Path))).ToList();
+                if (replaced.Count == 0) continue;
+                var incomingFormats = GetRecordingCustomFormats(item, cachedFormats);
+                var incomingScore = profile.CalculateCustomFormatScore(incomingFormats);
+                var incomingProduction = AudioProductionDetector.IsDramatizedRecording(item);
+                var incomingNarrators = HasNarratorEvidence(item.Edition.Id, item.RawTags?.AllTags);
+                foreach (var unit in replaced)
+                {
+                    var previous = unit.Input;
+                    var score = storedScores[previous];
+                    foreach (var incomingQuality in files.Select(file => file.Quality).Distinct())
+                    foreach (var storedQuality in unit.Files.Select(file => file.Quality).Distinct())
+                    {
+                        comparisons++;
+                        var comparison = QualityProfilePreferenceComparer.CompareCandidateToStored(profile, incomingQuality,
+                            incomingScore, storedQuality, score,
+                            _configService?.DownloadPropersAndRepacks ?? ProperDownloadTypes.PreferAndUpgrade);
+                        if (comparison.Result < 0 || (comparison.Result == 0 && !handPicked))
+                        {
+                            notAnUpgrade ??= $"Not an upgrade. Existing: {storedQuality} (score {score}). New: {incomingQuality} (score {incomingScore}). Existing files were kept.";
+                        }
+
+                        details.Add($"{storedQuality} (score {score}) → {incomingQuality} (score {incomingScore})");
+                    }
+
+                    differentRecording |= item.Book?.MediaType == BookMediaType.Audiobook &&
+                        AudioProductionDetector.IsDramatizedRecording(previous) != incomingProduction &&
+                        !(incomingNarrators && HasNarratorEvidence(item.Edition.Id, previous.AllTags));
+                }
             }
 
-            return AudioProductionDetector.IsDramatizedOrFullCast(localBook.RawTags.AllTags);
+            if (differentRecording && !handPicked)
+            {
+                return Finish(ImportResultType.WaitingForConfirmation,
+                    "The recording type differs. Existing files were kept. Open Manual Import to review and confirm Replace.");
+            }
+
+            if (notAnUpgrade != null) return Finish(ImportResultType.Skipped, notAnUpgrade);
+            if (details.Count > 0 && !handPicked && profile.ConfirmAutomaticUpgrades)
+            {
+                return Finish(ImportResultType.WaitingForConfirmation,
+                    $"Waiting for you to confirm replacing {candidates.Count} file(s): {string.Join("; ", details)}. Open Manual Import to review and confirm Replace.");
+            }
+
+            return Finish(ImportResultType.Imported);
         }
 
         private int? GetDurationSeconds(LocalBook localBook)
@@ -3733,7 +4163,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 duplicateBook.MediaType = mediaType;
                 duplicateBook.AnyEditionOk = anyEditionOk;
                 duplicateBook.UnitKeyHash = unitKeyHash;
-                duplicateBook.IsGraphicAudio = DetectGraphicAudioFromLocalTags(localBook);
+                duplicateBook.IsGraphicAudio = AudioProductionDetector.DetectRecording(localBook);
                 duplicateBook.Added = DateTime.UtcNow;
                 duplicateBook.LastUpdated = DateTime.UtcNow;
                 duplicateBook.LastSearchTime = null;
@@ -3799,6 +4229,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 {
                     Path = localBook.Path.CleanFilePath(),
                     Quality = localBook.Quality,
+                    IsGraphicAudio = AudioProductionDetector.DetectRecording(localBook),
+                    AudioProductionOverride = localBook.AudioProductionOverride,
+                    AudioProductionType = AudioProductionDetector.GetRecordingProductionType(localBook),
                     EditionId = localBook.Edition.Id,
                     Edition = localBook.Edition,
                     Author = author,

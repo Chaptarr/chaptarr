@@ -93,6 +93,9 @@ namespace NzbDrone.Core.Books
 
         // Source tracking
         public string RequestedBy { get; set; }
+        public string AudiobookRequestedBy { get; set; }
+        public string EbookRequestedBy { get; set; }
+        public string ExplicitBookSearches { get; set; } // JSON serialized List<RequestedBookSearch>
         public string SourceApplication { get; set; }
         public string CorrelationId { get; set; }
 

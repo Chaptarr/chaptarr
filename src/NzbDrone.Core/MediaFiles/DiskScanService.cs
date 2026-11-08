@@ -37,7 +37,8 @@ namespace NzbDrone.Core.MediaFiles
     public class DiskScanService : IDiskScanService, IExecute<RescanFoldersCommand>
     {
         public static readonly Regex ExcludedSubFoldersRegex = new Regex(@"(?:\\|\/|^)(?:extras|@eadir|extrafanart|plex versions|\.[^\\/]+)(?:\\|\/)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        public static readonly Regex ExcludedFilesRegex = new Regex(@"^\._|^Thumbs\.db$|^\.DS_store$|\.partial~$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        internal const string PartialFileSuffix = ".partial~";
+        public static readonly Regex ExcludedFilesRegex = new Regex(@"^\._|^Thumbs\.db$|^\.DS_store$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private const int LargeScanCompactionFileThreshold = 10000;
         private const int SpecificScanFolderMemoryCheckpointInterval = 25;
         private static readonly TimeSpan LargeScanCompactionDurationThreshold = TimeSpan.FromMinutes(10);
@@ -163,11 +164,13 @@ namespace NzbDrone.Core.MediaFiles
                     // This follows the 12-step workflow from the import bible
                     // Get command ID from context for progress tracking
                     var commandId = ProgressMessageContext.CommandModel?.Id;
+                    var cleanupSucceeded = true;
                     var orchestratorTask = _importOrchestrator.ProcessFilesAsync(
                         folder,
                         rootFolder,
                         commandId,
-                        filter: filter);
+                        filter: filter,
+                        onFilesEnumerated: (paths, cleanupSafe) => cleanupSucceeded = CleanEnumeratedFiles(folder, paths, rootFolder, cleanupSafe));
                     orchestratorTask.Wait(cancellationToken);
                     var result = orchestratorTask.Result;
                     LogMemorySnapshot("Disk scan folder after orchestration {0}/{1}: {2}", processedFolders + 1, folders.Count, folder);
@@ -183,22 +186,7 @@ namespace NzbDrone.Core.MediaFiles
                         scannedAuthorIds.UnionWith(result.StagingResults.Where(item => item.AuthorId > 0).Select(item => item.AuthorId.Value));
                     LogMemorySnapshot("Disk scan folder after inventory reconciliation {0}/{1}: {2}", processedFolders + 1, folders.Count, folder);
 
-                    // Only clean after a complete enumeration. Import results are not a safe substitute for the full scan list.
-                    if (!result.CleanupSafe)
-                    {
-                        _logger.Warn("Skipping scan cleanup for {0} because file enumeration did not complete safely", folder);
-                    }
-                    else if (!result.ScannedFilePaths.Any())
-                    {
-                        _logger.Warn("Skipping scan cleanup for {0} because the scan found no media files. This avoids wiping tracked files when a mount is visible but empty.", folder);
-                    }
-                    else
-                    {
-                        CleanMediaFiles(folder, result.ScannedFilePaths, rootFolder);
-                    }
-
-                    LogMemorySnapshot("Disk scan folder after cleanup {0}/{1}: {2}", processedFolders + 1, folders.Count, folder);
-                    if (result.CleanupSafe) completedFolders.Add(folder);
+                    if (result.CleanupSafe && cleanupSucceeded) completedFolders.Add(folder);
                 }
                 catch (InventoryReconciliationException ex)
                 {
@@ -528,9 +516,11 @@ namespace NzbDrone.Core.MediaFiles
             return mediaFileList.ToArray();
         }
 
+        public static bool IsPartialFile(string path) => path?.EndsWith(PartialFileSuffix, StringComparison.OrdinalIgnoreCase) == true;
+
         public static bool IsExcludedFile(string path)
         {
-            return ExcludedFilesRegex.IsMatch(Path.GetFileName(path));
+            return IsPartialFile(path) || ExcludedFilesRegex.IsMatch(Path.GetFileName(path));
         }
 
         public List<IFileInfo> FilterFiles(string basePath, IEnumerable<IFileInfo> files)
@@ -545,6 +535,38 @@ namespace NzbDrone.Core.MediaFiles
             return paths.Where(file => !ExcludedSubFoldersRegex.IsMatch(basePath.GetRelativePath(file)))
                         .Where(file => !IsExcludedFile(file))
                         .ToList();
+        }
+
+        private bool CleanEnumeratedFiles(string folder, List<string> paths, RootFolder rootFolder, bool cleanupSafe)
+        {
+            if (!cleanupSafe)
+            {
+                _logger.Warn("Skipping scan cleanup for {0} because file enumeration did not complete safely", folder);
+            }
+            else if (paths.Count == 0)
+            {
+                _logger.Warn("Skipping scan cleanup for {0} because the scan found no media files. This avoids wiping tracked files when a mount is visible but empty.", folder);
+            }
+            else if (!_diskProvider.FolderExists(rootFolder.Path))
+            {
+                _logger.Warn("Skipping scan cleanup for {0} because its root folder {1} is not visible", folder, rootFolder.Path);
+            }
+            else
+            {
+                var timer = Stopwatch.StartNew();
+                try
+                {
+                    CleanMediaFiles(folder, paths, rootFolder);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warn(ex, "Scan cleanup failed for {0} after {1} ms; continuing to process {2} observed files. Missing-file cleanup will retry on the next scan.",
+                        folder, timer.ElapsedMilliseconds, paths.Count);
+                    return false;
+                }
+            }
+
+            return cleanupSafe;
         }
 
         private void CleanMediaFiles(string folder, List<string> currentFilePaths, RootFolder rootFolder = null)

@@ -62,7 +62,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
             public void AddMany(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Update(BookFile bookFile) => throw new NotImplementedException();
-            public int RelinkFilesByBook(int bookId, int editionId, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
@@ -93,6 +93,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
         private sealed class InMemoryBookService : IBookService
         {
+            public List<Book> GetImportListBookIdentities() => GetAllBooks();
+
             public int CatalogReads { get; private set; }
             private readonly Dictionary<int, Book> _booksById = new Dictionary<int, Book>();
             private readonly Dictionary<string, int> _idBySlug = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -127,11 +129,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 }
             }
 
-            public Book FindBySlug(string titleSlug)
-            {
-                if (string.IsNullOrWhiteSpace(titleSlug)) return null;
-                return _idBySlug.TryGetValue(titleSlug, out var id) ? GetBook(id) : null;
-            }
+            public List<Book> FindBySlug(string titleSlug) =>
+                !string.IsNullOrWhiteSpace(titleSlug) && _idBySlug.TryGetValue(titleSlug, out var id)
+                    ? new List<Book> { GetBook(id) } : new List<Book>();
 
             public Book FindByTitle(int authorId, string title)
             {
@@ -185,7 +185,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public (Book Book, bool ExistingCopy) AddWantedEditionCopy(int bookId, int editionId) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();

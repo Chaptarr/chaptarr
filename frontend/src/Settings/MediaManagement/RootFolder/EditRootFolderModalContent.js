@@ -236,6 +236,9 @@ class EditRootFolderModalContent extends Component {
             saveError &&
               <Alert kind={kinds.DANGER} role="alert">
                 {this.getSaveErrorMessage()}
+                {Array.isArray(saveError.responseJSON) && saveError.responseJSON.some((error) => error.errorCode === 'RootFolderNotWritable') && (
+                  <div>{translate('RootFolderDockerPermissionHelp')}</div>
+                )}
               </Alert>
           }
 

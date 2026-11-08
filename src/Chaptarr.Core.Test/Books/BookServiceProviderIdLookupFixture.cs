@@ -1,4 +1,5 @@
 using System;
+using System.Data;
 using System.Collections.Generic;
 using System.Linq;
 using NLog;
@@ -15,6 +16,8 @@ namespace Chaptarr.Core.Test.Books
     {
         private sealed class StubBookRepository : IBookRepository
         {
+            public List<Book> GetImportListBookIdentities() => All().ToList();
+
             private readonly Dictionary<(string provider, string providerId, BookMediaType mediaType), Book> _matches = new();
             private readonly Dictionary<int, Book> _books = new();
 
@@ -75,7 +78,7 @@ namespace Chaptarr.Core.Test.Books
             public void UpdateMany(IList<Book> model) => throw new NotImplementedException();
             public void SetFields(IList<Book> models, params System.Linq.Expressions.Expression<Func<Book, object>>[] properties) => throw new NotImplementedException();
             public void DeleteMany(List<Book> model) => throw new NotImplementedException();
-            public void DeleteManyAtomic(IEnumerable<int> ids, bool deleteFiles) => throw new NotImplementedException();
+            public void DeleteManyAtomic(IEnumerable<int> ids, IEnumerable<int> deletedFileIds = null) => throw new NotImplementedException();
             public void DeleteMany(IEnumerable<int> ids) => throw new NotImplementedException();
             public void Purge(bool vacuum = false) => throw new NotImplementedException();
             public bool HasItems() => throw new NotImplementedException();
@@ -93,7 +96,8 @@ namespace Chaptarr.Core.Test.Books
 	            public Book FindByIsbn(string isbn) => throw new NotImplementedException();
 	            public Book FindByAsin(string asin) => throw new NotImplementedException();
 	            public Book FindByProviderIds(string hardcoverBookId = null, string goodreadsBookId = null, string openLibraryWorkId = null) => throw new NotImplementedException();
-	            public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
+	            public List<Book> FindTitleSlugConflicts(IEnumerable<string> slugs, IDbConnection connection = null, IDbTransaction transaction = null) => new List<Book>();
+            public List<Book> FindBySlug(string titleSlug) => throw new NotImplementedException();
 	            public PagingSpec<Book> BooksWithoutFiles(PagingSpec<Book> pagingSpec) => throw new NotImplementedException();
 	            public PagingSpec<Book> BooksWhereCutoffUnmet(PagingSpec<Book> pagingSpec, List<QualitiesBelowCutoff> qualitiesBelowCutoff) => throw new NotImplementedException();
 	            public List<Book> BooksBetweenDates(DateTime startDate, DateTime endDate, bool includeUnmonitored) => throw new NotImplementedException();
@@ -167,6 +171,7 @@ namespace Chaptarr.Core.Test.Books
             }
 
             public List<ProviderAlias> GetAliases(string entityType, int entityId, string scope) => new();
+            public List<ProviderAlias> FindBookAliases(string scope, IEnumerable<string> providerIds) => throw new NotSupportedException();
             public List<ProviderAlias> GetAliases(string entityType, IEnumerable<int> entityIds, string scope) => new();
             public List<int> FindAuthorIds(IEnumerable<string> providerIds) => throw new NotImplementedException();
             public List<(string Provider, string NormalizedProviderId)> NormalizeProviderIds(IEnumerable<string> providerIds) => throw new NotImplementedException();

@@ -380,6 +380,9 @@ class Queue extends Component {
         <RemoveQueueItemModal
           isOpen={isConfirmRemoveModalOpen}
           selectedCount={selectedCount}
+          defaultRemoveFromClient={!items.some((item) =>
+            selectedIds.includes(item.id) && item.trackedDownloadState === 'imported'
+          )}
           canChangeCategory={isConfirmRemoveModalOpen && (
             selectedIds.every((id) => {
               const item = items.find((i) => i.id === id);
@@ -391,7 +394,7 @@ class Queue extends Component {
             selectedIds.every((id) => {
               const item = items.find((i) => i.id === id);
 
-              return !!(item && item.downloadId);
+              return !!(item && (item.downloadId || item.status === 'delay' || item.status === 'downloadClientUnavailable'));
             })
           )}
           isPending={isConfirmRemoveModalOpen && (

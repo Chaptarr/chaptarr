@@ -52,11 +52,17 @@ namespace NzbDrone.Core.Books
             // Metadata is now integrated into Author model
         }
 
+        public class RefreshContext
+        {
+        }
+
+        protected virtual RefreshContext CreateContext() => new RefreshContext();
+
         protected virtual void LogProgress(TEntity local)
         {
         }
 
-        protected abstract RemoteData GetRemoteData(TEntity local, List<TEntity> remote, Author data);
+        protected abstract RemoteData GetRemoteData(TEntity local, List<TEntity> remote, Author data, RefreshContext context);
 
         protected virtual void EnsureNewParent(TEntity local, TEntity remote)
         {
@@ -86,9 +92,9 @@ namespace NzbDrone.Core.Books
         protected abstract void SaveEntity(TEntity local);
         protected abstract void DeleteEntity(TEntity local, bool deleteFiles);
 
-        protected abstract List<TChild> GetRemoteChildren(TEntity local, TEntity remote);
-        protected abstract List<TChild> GetLocalChildren(TEntity entity, List<TChild> remoteChildren);
-        protected abstract Tuple<TChild, List<TChild>> GetMatchingExistingChildren(List<TChild> existingChildren, TChild remote);
+        protected abstract List<TChild> GetRemoteChildren(TEntity local, TEntity remote, RefreshContext context);
+        protected abstract List<TChild> GetLocalChildren(TEntity entity, List<TChild> remoteChildren, RefreshContext context);
+        protected abstract Tuple<TChild, List<TChild>> GetMatchingExistingChildren(List<TChild> existingChildren, TChild remote, RefreshContext context);
 
         protected abstract void PrepareNewChild(TChild child, TEntity entity);
         protected abstract void PrepareExistingChild(TChild local, TChild remote, TEntity entity);
@@ -112,7 +118,7 @@ namespace NzbDrone.Core.Books
         }
 
         protected abstract void AddChildren(List<TChild> children);
-        protected abstract bool RefreshChildren(SortedChildren localChildren, List<TChild> remoteChildren, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate);
+        protected abstract bool RefreshChildren(SortedChildren localChildren, List<TChild> remoteChildren, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, RefreshContext context);
 
         protected virtual void PublishEntityUpdatedEvent(TEntity entity)
         {
@@ -126,13 +132,14 @@ namespace NzbDrone.Core.Books
         {
         }
 
-        public bool RefreshEntityInfo(TEntity local, List<TEntity> remoteItems, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, Action<TEntity> saveEntity = null, Action<TEntity> entityDeleted = null)
+        public bool RefreshEntityInfo(TEntity local, List<TEntity> remoteItems, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, Action<TEntity> saveEntity = null, Action<TEntity> entityDeleted = null, RefreshContext context = null)
         {
+            context ??= CreateContext();
             var updated = false;
 
             LogProgress(local);
 
-            var data = GetRemoteData(local, remoteItems, remoteData);
+            var data = GetRemoteData(local, remoteItems, remoteData, context);
             var remote = data.Entity;
 
             if (remote == null)
@@ -194,8 +201,8 @@ namespace NzbDrone.Core.Books
 
             _logger.Trace($"updated: {updated} forceUpdateFileTags: {forceUpdateFileTags}");
 
-            var remoteChildren = GetRemoteChildren(local, remote);
-            updated |= SortChildren(local, remoteChildren, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate);
+            var remoteChildren = GetRemoteChildren(local, remote, context);
+            updated |= SortChildren(local, remoteChildren, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate, context);
 
             // Do this last so entity only marked as refreshed if refresh of children completed successfully
             _logger.Trace($"Saving {typeof(TEntity).Name} {local}");
@@ -225,16 +232,52 @@ namespace NzbDrone.Core.Books
         }
 
 
-        protected bool SortChildren(TEntity entity, List<TChild> remoteChildren, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
+        protected bool SortChildren(TEntity entity, List<TChild> remoteChildren, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, RefreshContext context = null)
         {
-            var localChildren = GetLocalChildren(entity, remoteChildren);
+            context ??= CreateContext();
+            var sortedChildren = ClassifyChildren(entity, remoteChildren, context);
+
+            ProcessChildren(entity, sortedChildren);
+
+            // Add in the new children (we have checked that foreign IDs don't clash)
+            AddChildren(sortedChildren.Added);
+
+            var completed = false;
+            try
+            {
+                PrepareChildrenForRefresh(entity, sortedChildren, remoteChildren, context);
+                var updated = RefreshChildren(sortedChildren, remoteChildren, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate, context);
+                completed = true;
+                ValidateChildrenRefresh(entity, context);
+                return updated;
+            }
+            finally
+            {
+                // AddChildren has committed these rows even when a later child fails. Publish
+                // their event; completion/ETag acknowledgement still requires full success.
+                PublishChildrenUpdatedEvent(entity, sortedChildren.Added,
+                    completed ? sortedChildren.Updated : new List<TChild>(),
+                    completed ? sortedChildren.Deleted : new List<TChild>());
+            }
+        }
+        protected virtual void PrepareChildrenForRefresh(TEntity entity, SortedChildren children, List<TChild> remote, RefreshContext context)
+        {
+        }
+
+        protected virtual void ValidateChildrenRefresh(TEntity entity, RefreshContext context)
+        {
+        }
+
+        protected SortedChildren ClassifyChildren(TEntity entity, List<TChild> remoteChildren, RefreshContext context)
+        {
+            var localChildren = GetLocalChildren(entity, remoteChildren, context);
 
             var sortedChildren = new SortedChildren();
             sortedChildren.Deleted.AddRange(localChildren);
 
             foreach (var remoteChild in remoteChildren)
             {
-                var tuple = GetMatchingExistingChildren(localChildren, remoteChild);
+                var tuple = GetMatchingExistingChildren(localChildren, remoteChild, context);
                 var existingChild = tuple.Item1;
                 var mergedChildren = tuple.Item2;
 
@@ -294,16 +337,7 @@ namespace NzbDrone.Core.Books
                               sortedChildren.Deleted.Count);
             }
 
-            ProcessChildren(entity, sortedChildren);
-
-            // Add in the new children (we have checked that foreign IDs don't clash)
-            AddChildren(sortedChildren.Added);
-
-            // now trigger updates
-            var updated = RefreshChildren(sortedChildren, remoteChildren, remoteData, forceChildRefresh, forceUpdateFileTags, lastUpdate);
-
-            PublishChildrenUpdatedEvent(entity, sortedChildren.Added, sortedChildren.Updated, sortedChildren.Deleted);
-            return updated;
+            return sortedChildren;
         }
     }
 }

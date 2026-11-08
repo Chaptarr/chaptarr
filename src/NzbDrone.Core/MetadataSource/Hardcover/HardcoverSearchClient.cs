@@ -329,7 +329,6 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
                 }
 
                 failureDetail = $"HTTP {(int)response.StatusCode} {response.StatusCode}: {GetErrorSummary(response.Content)}";
-                _logger.Trace("Hardcover API response: {0}", response.Content);
 
                 if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
                 {

@@ -16,6 +16,28 @@ namespace Chaptarr.Core.Test.Extras.Metadata
     public class AudioBookShelfMetadataFixture
     {
         [Test]
+        public void metadata_series_should_put_only_a_verified_header_first_and_preserve_other_memberships(
+            [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType side,
+            [Values(null, 1, 2, 999)] int? headerId)
+        {
+            var subject = CreateSubject(new List<RootFolder> { BuildRoot(audiobookMetadata: true, ebookMetadata: true) });
+            var media = side == BookMediaType.Ebook ? "ebook" : "audiobook";
+            var bookFile = BuildBookFile(media, "/library/Matt Dinniman/A Parade of Horribles/book." + (side == BookMediaType.Ebook ? "epub" : "m4b"));
+            var book = bookFile.Edition.Book;
+            book.SeriesId = headerId;
+            book.SeriesLinks = new List<SeriesBookLink>
+            {
+                new() { Position = "1", Series = new Series { Title = "Earlier", GoodreadsSeriesId = "gr:1", MediaType = side } },
+                new() { Position = "8", Series = new Series { Title = "Header", GoodreadsSeriesId = "2", MediaType = side } },
+                new() { Position = "0", Series = new Series { Title = "Other side", GoodreadsSeriesId = "gr:999",
+                    MediaType = side == BookMediaType.Audiobook ? BookMediaType.Ebook : BookMediaType.Audiobook } }
+            };
+            var metadata = JObject.Parse(subject.BookMetadata(BuildAuthor(), bookFile).Contents);
+            Assert.That(metadata["series"].Select(value => (string)value), Is.EqualTo(headerId == 2
+                ? new[] { "Header #8", "Earlier #1" } : new[] { "Earlier #1", "Header #8" }));
+        }
+
+        [Test]
         public void should_not_write_sidecars_by_default()
         {
             var subject = CreateSubject(new List<RootFolder>

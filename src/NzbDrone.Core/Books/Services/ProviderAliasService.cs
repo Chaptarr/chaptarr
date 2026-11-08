@@ -8,11 +8,8 @@ namespace NzbDrone.Core.Books
 {
     public interface IProviderAliasService
     {
-        void ReplaceAliases(string entityType, int entityId, string scope, IEnumerable<string> providerIds);
-        void ReplaceAliases(string entityType, int entityId, string scope, IEnumerable<string> providerIds, IDbConnection connection, IDbTransaction transaction);
-        void DeleteAliases(string entityType, int entityId);
         List<int> FindBookIds(string scope, IEnumerable<string> providerIds);
-        List<ProviderAlias> FindBookAliases(string scope, IEnumerable<string> providerIds) => throw new NotImplementedException();
+        List<ProviderAlias> FindBookAliases(string scope, IEnumerable<string> providerIds);
         List<ProviderAlias> GetAliases(string entityType, int entityId, string scope);
         List<ProviderAlias> GetAliases(string entityType, IEnumerable<int> entityIds, string scope);
         List<int> FindAuthorIds(IEnumerable<string> providerIds);
@@ -26,44 +23,6 @@ namespace NzbDrone.Core.Books
         public ProviderAliasService(IProviderAliasRepository repository)
         {
             _repository = repository;
-        }
-
-        public void ReplaceAliases(string entityType, int entityId, string scope, IEnumerable<string> providerIds) =>
-            ReplaceAliases(entityType, entityId, scope, providerIds, null, null);
-
-        public void ReplaceAliases(string entityType, int entityId, string scope, IEnumerable<string> providerIds, IDbConnection connection, IDbTransaction transaction)
-        {
-            if (entityId <= 0 || string.IsNullOrWhiteSpace(entityType) || string.IsNullOrWhiteSpace(scope))
-            {
-                return;
-            }
-
-            var now = DateTime.UtcNow;
-            var aliases = NormalizeProviderIds(providerIds)
-                .Select(alias => new ProviderAlias
-                {
-                    EntityType = entityType,
-                    EntityId = entityId,
-                    Scope = scope,
-                    Provider = alias.Provider,
-                    NormalizedProviderId = alias.NormalizedProviderId,
-                    CreatedAt = now,
-                    UpdatedAt = now
-                })
-                .ToList();
-
-            if (connection == null) _repository.ReplaceAliases(entityType, entityId, scope, aliases);
-            else _repository.ReplaceAliases(entityType, entityId, scope, aliases, connection, transaction);
-        }
-
-        public void DeleteAliases(string entityType, int entityId)
-        {
-            if (entityId <= 0 || string.IsNullOrWhiteSpace(entityType))
-            {
-                return;
-            }
-
-            _repository.DeleteAliases(entityType, entityId);
         }
 
         public List<int> FindBookIds(string scope, IEnumerable<string> providerIds)

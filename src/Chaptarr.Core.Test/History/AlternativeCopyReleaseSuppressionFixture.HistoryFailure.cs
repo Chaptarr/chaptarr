@@ -64,7 +64,7 @@ namespace Chaptarr.Core.Test.History
                     return null;
                 });
                 var service = new FailedDownloadService(history, null, events);
-                new HistoryController(history, null, null, service, null).MarkAsFailed(grabs[0].Id);
+                new HistoryController(global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<global::NzbDrone.Core.Books.ISeriesBookLinkService>((_, _) => throw new global::System.InvalidOperationException("Series batch loading was not expected in this fixture")), history, null, null, service, null).MarkAsFailed(grabs[0].Id);
 
                 Assert.That(failures, Has.Count.EqualTo(1));
                 Assert.That(failures[0].TrackedDownload, Is.Null);

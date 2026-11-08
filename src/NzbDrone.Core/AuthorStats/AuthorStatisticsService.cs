@@ -27,6 +27,7 @@ namespace NzbDrone.Core.AuthorStats
         IHandle<AuthorDeletedEvent>,
         IHandle<BookAddedEvent>,
         IHandle<BookDeletedEvent>,
+        IHandle<LibraryIdentityChangedEvent>,
         IHandle<BookImportedEvent>,
         IHandle<BookEditedEvent>,
         IHandle<BookUpdatedEvent>,
@@ -222,6 +223,12 @@ namespace NzbDrone.Core.AuthorStats
         public void Handle(BookAddedEvent message)
         {
             InvalidateAuthorCache(message.Book.AuthorId);
+        }
+
+        [EventHandleOrder(EventHandleOrder.First)]
+        public void Handle(LibraryIdentityChangedEvent message)
+        {
+            InvalidateGlobalAndAuthors(message.AuthorIds);
         }
 
         [EventHandleOrder(EventHandleOrder.First)]

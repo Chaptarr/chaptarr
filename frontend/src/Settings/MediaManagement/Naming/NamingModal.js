@@ -203,8 +203,8 @@ class NamingModal extends Component {
       const newValue = `${start}${tokenValue}${end}`;
 
       onInputChange({ name, value: newValue });
-      this._selectionStart = newValue.length - 1;
-      this._selectionEnd = newValue.length - 1;
+      this._selectionStart = start.length + tokenValue.length;
+      this._selectionEnd = this._selectionStart;
     }
   };
 

@@ -27,7 +27,7 @@ using NzbDrone.Core.Parser;
 namespace Chaptarr.Core.Test.Books
 {
     [TestFixture]
-    public class AuthorServiceLookupHydrationFixture
+    public partial class AuthorServiceLookupHydrationFixture
     {
         private sealed class StubEventAggregator : IEventAggregator
         {
@@ -42,6 +42,8 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class StubAuthorRepository : IAuthorRepository
         {
+            public List<int> GetDueInitialFormatSync(DateTime now) => throw new NotSupportedException();
+
             private readonly Author _lookupAuthor;
             private Author _byIdAuthor;
             public int GetCallCount { get; private set; }
@@ -174,10 +176,11 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class NoOpDeleteMediaFiles : IDeleteMediaFiles
         {
-            public void DeleteBookFiles(List<Book> books) { }
+            public List<BookFile> DeleteBookFiles(List<Book> books) => new();
             public void DeleteTrackFile(Author author, BookFile bookFile) { }
             public void DeleteTrackFile(BookFile bookFile, string subfolder = "") { }
-            public List<BookFile> DeleteAuthorFiles(List<Author> authors, BookMediaType? mediaType = null) => new();
+            public List<BookFile> DeleteAuthorFiles(List<Author> authors, BookMediaType? mediaType = null, bool deleteOtherAuthorsFiles = false) => new();
+            public AuthorDeletionPreview PreviewAuthorFiles(List<Author> authors, BookMediaType? mediaType = null) => new();
         }
 
         private static AuthorService CreateSubject(IAuthorRepository repository, Logger logger = null,
@@ -210,10 +213,41 @@ namespace Chaptarr.Core.Test.Books
 
         private static int PreparedCatalogCount(NLog.Targets.MemoryTarget target)
         {
-            return target.Logs.Count(message => message.StartsWith("Author name catalog: prepared ", StringComparison.Ordinal));
+            return target.Logs.Count(message => message.StartsWith("Author name catalog: indexed ", StringComparison.Ordinal));
+        }
+
+        [Test]
+        public void indexed_candidates_preserve_full_scan_results_for_compact_inverted_and_suffix_names()
+        {
+            var names = new[] { "Frank Herbert", "Frank Herberts", "Nora Robert", "Nora Roberts", "J. K. Rowling", "JKRowling",
+                "Isaac Asimov", "Asimov, Isaac", "Robert Louis Stevenson", "George R. R. Martin", "Jean-Paul Sartre",
+                "John and Jane Smith", "John Smith", "Jane Smiths", "Александр Пушкин", "王小明", "Émile Zola", "Mary-Jane Smith-Jones" };
+            var authors = names.Select((name, i) => new Author { Id = i + 1, Name = name }).ToList();
+            var repository = new StubAuthorRepository(authors[0]) { Authors = authors };
+            var service = CreateSubject(repository);
+            foreach (var query in names.Concat(new[] { "Frank Herbert’s", "Nora A Roberts", "I. Asimov", "IsaacAsimov", "Robert Stevenson",
+                "J K Rowling", "George RR Martin", "John Smith and Jane Smiths", "Emile Zola", "А. Пушкин", "No Such Author" }))
+            {
+                var tokens = ReleaseTitleMatchScorer.TokenizeWithSpans(query);
+                var prepared = AuthorNameMatcher.PrepareName(query, tokens);
+                var expected = authors.Where(a => AuthorNameMatcher.AuthorNamesExactlyMatch(AuthorNameMatcher.PrepareName(a.Name), prepared)).ToList();
+                for (var pass = 0; pass < 2 && expected.Count == 0; pass++)
+                {
+                    expected = authors.Where(a =>
+                    {
+                        var name = AuthorNameMatcher.PrepareName(a.Name);
+                        return (pass == 0 || AuthorNameMatcher.HasSurnameSuffixAnchor(name.Tokens, prepared.Tokens)) &&
+                            (AuthorNameMatcher.AuthorNamesMatch(name, prepared, pass > 0) || AuthorNameMatcher.ContainsAuthorName(name, query, tokens, pass > 0));
+                    }).ToList();
+                }
+                Assert.That(service.GetCandidates(query).Select(a => a.Id), Is.EqualTo(expected.Select(a => a.Id)), query);
+            }
+            Assert.That(repository.AllCallCount, Is.EqualTo(1));
         }
 
         [TestCase("Jennifer L. Armentrout", "Jennifer Armentrout", true)]
+        [TestCase("Frank Herbert", "Frank Herberts", true)]
+        [TestCase("Nora Roberts", "Nora Robert", true)]
         [TestCase("Jennifer L. Armentrout", "Jennifer Q. Armentrout", false)]
         [TestCase("Robert Louis Stevenson", "Robert Stevenson", true)]
         [TestCase("Robert Louis Stevenson", "Stevenson, Robert", true)]
@@ -253,9 +287,11 @@ namespace Chaptarr.Core.Test.Books
             foreach (var candidates in new[] { authors, authors.Reverse().ToArray() })
             {
                 var repository = new StubAuthorRepository(authors[0]) { Authors = candidates.ToList() };
-                var subject = CreateSubject(repository);
+                using var logs = CreateLookupLogs(out var messages);
+                var subject = CreateSubject(repository, logs.GetLogger("AuthorLookup"));
 
                 Assert.That(subject.FindByName(supplied), Is.Null);
+                Assert.That(messages.Logs.Any(message => message.Contains("is ambiguous: matches author IDs")), Is.True);
                 Assert.That(subject.GetCandidates(supplied), Is.EquivalentTo(authors));
                 Assert.That(repository.AllCallCount, Is.EqualTo(1));
                 Assert.That(repository.GetCallCount, Is.Zero);
@@ -263,13 +299,18 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [TestCase("Robert Heinlein", "Robert A. Heinlein", "Robert Heinlein")]
+        [TestCase("Nora Roberts", "Nora Robert", "Nora Roberts")]
+        [TestCase("Nora Roberts", "Nora Robert", "Nora A Roberts")]
+        [TestCase("Nora Robert", "Nora Roberts", "Nora A Robert")]
+        [TestCase("Nora Roberts", "Nora Robert", "Roberts, Nora A")]
+        [TestCase("Nora Robert", "Nora Roberts", "Nora Robert")]
         [TestCase("Robert A. Heinlein", "Robert Heinlein", "Robert A Heinlein")]
         [TestCase("Stevenson, Robert Louis", "Robert Stevenson", "Robert Louis Stevenson")]
         [TestCase("Renée Ballard", "Renée A Ballard", "Rene\u0301e Ballard")]
         [TestCase("CS Lewis", "CS A Lewis", "CS Lewis")]
         [TestCase("Ana Bell", "An Abell", "Ana Bell")]
         [TestCase("𐐀 Reader", "𐐀 A Reader", "𐐨 Reader")]
-        public void exact_prepared_name_should_precede_a_merely_compatible_name_in_either_order(
+        public void exact_name_or_family_should_precede_a_suffix_only_match_in_either_order(
             string exact, string compatible, string supplied)
         {
             var authors = new[]
@@ -343,24 +384,30 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [TestCase(2)]
-        [TestCase(1000)]
+        [TestCase(398)]
         [TestCase(10000)]
+        [TestCase(100000)]
         public void repeated_exact_lookup_should_reuse_the_catalog_without_per_author_reads(int count)
         {
             AssertRepeatedLookupUsesCatalog(count, missingMiddle: false);
         }
 
-        [Test]
-        public void repeated_warm_missing_middle_lookup_should_reuse_the_catalog_without_per_author_reads()
+        [TestCase(398, false)]
+        [TestCase(10000, false)]
+        [TestCase(100000, false)]
+        [TestCase(398, true)]
+        [TestCase(10000, true)]
+        [TestCase(100000, true)]
+        public void repeated_warm_compatible_lookup_should_reuse_the_catalog_without_per_author_reads(int count, bool surnameSuffix)
         {
-            AssertRepeatedLookupUsesCatalog(10000, missingMiddle: true);
+            AssertRepeatedLookupUsesCatalog(count, missingMiddle: true, surnameSuffix);
         }
 
-        private static void AssertRepeatedLookupUsesCatalog(int count, bool missingMiddle)
+        private static void AssertRepeatedLookupUsesCatalog(int count, bool missingMiddle, bool surnameSuffix = false)
         {
             using var logs = CreateLookupLogs(out var target);
             var exact = new Author { Id = 1, Name = missingMiddle ? "Robert Louis Stevenson" : "Robert Heinlein" };
-            var supplied = missingMiddle ? "Robert Stevenson" : exact.Name;
+            var supplied = missingMiddle ? (surnameSuffix ? "Robert Stevensons" : "Robert Stevenson") : exact.Name;
             var repository = new StubAuthorRepository(exact)
             {
                 Authors = new[] { exact }
@@ -374,26 +421,30 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(subject.GetCandidates(supplied), Is.EqualTo(new[] { exact }));
             }
 
+            var operations = count >= 100000 ? 10 : 100;
             var candidates = new List<List<Author>>();
+            var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
             var stopwatch = Stopwatch.StartNew();
-            for (var operation = 0; operation < 100; operation++)
+            for (var operation = 0; operation < operations; operation++)
             {
                 candidates.Add(subject.GetCandidates(supplied));
             }
 
+            stopwatch.Stop();
+            var allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
             var lookupLogs = target.Logs.Where(message => message.StartsWith("Author name lookup: examined ", StringComparison.Ordinal))
                 .Skip(missingMiddle ? 1 : 0).ToList();
             var examined = lookupLogs.Sum(message => int.Parse(message.Split(' ')[4].Split('/')[0]));
-            var prepared = target.Logs.Where(message => message.StartsWith("Author name catalog: prepared ", StringComparison.Ordinal))
+            var prepared = target.Logs.Where(message => message.StartsWith("Author name catalog: indexed ", StringComparison.Ordinal))
                 .Sum(message => int.Parse(message.Split(' ')[4]));
-            var cohort = missingMiddle ? "warm missing-middle" : "exact";
-            TestContext.Progress.WriteLine($"Author {cohort} lookup: catalog={count}, candidateOperations=100, examined={examined}, prepared={prepared}, repositoryAllCalls={repository.AllCallCount}, perAuthorReads={repository.GetCallCount}, elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F3}");
+            var cohort = missingMiddle ? (surnameSuffix ? "warm surname-suffix" : "warm missing-middle") : "exact including catalog preparation";
+            TestContext.Progress.WriteLine($"Author {cohort} lookup: catalog={count}, candidateOperations={operations}, maxMatches={candidates.Max(items => items.Count)}, allocatedBytes={allocatedBytes}, examined={examined}, prepared={prepared}, repositoryAllCalls={repository.AllCallCount}, perAuthorReads={repository.GetCallCount}, elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F3}");
             Assert.Multiple(() =>
             {
                 Assert.That(candidates.All(items => items.Count == 1 && ReferenceEquals(items[0], exact)), Is.True);
                 Assert.That(repository.AllCallCount, Is.EqualTo(1));
                 Assert.That(repository.GetCallCount, Is.Zero);
-                Assert.That(lookupLogs, Has.Count.EqualTo(100));
+                Assert.That(lookupLogs, Has.Count.EqualTo(operations));
                 Assert.That(PreparedCatalogCount(target), Is.EqualTo(1));
                 Assert.That(prepared, Is.EqualTo(count));
             });
@@ -433,6 +484,25 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(repository.AllCallCount, Is.EqualTo(2));
                 Assert.That(PreparedCatalogCount(target), Is.EqualTo(2));
             });
+        }
+
+        [TestCase(null)]
+        [TestCase("audiobook")]
+        [TestCase("ebook")]
+        public void author_updates_preserve_retry_state_at_the_service_boundary(string mediaType)
+        {
+            var due = DateTime.UtcNow.AddMinutes(3);
+            var author = new Author { Id = 1, Name = "Example Writer", AddOptions = new AddAuthorOptions
+                { InitialFormatSyncFailureCount = 4, InitialFormatSyncNotBefore = due } };
+            var repository = new StubAuthorRepository(author);
+            var resource = new Chaptarr.Api.V1.Author.AuthorResource { Id = author.Id, AuthorName = author.Name,
+                AddOptions = new AddAuthorOptions { InitialFormatSyncFailureCount = 999, InitialFormatSyncNotBefore = due.AddYears(1) } };
+            var requestAuthor = new Author { Id = author.Id, Name = author.Name };
+            var model = Chaptarr.Api.V1.Author.AuthorResourceMapper.ToModel(resource, requestAuthor, null, mediaType);
+            CreateSubject(repository).UpdateAuthor(model);
+            Assert.That(repository.Get(author.Id).AddOptions, Is.SameAs(author.AddOptions));
+            Assert.That(model.AddOptions.InitialFormatSyncFailureCount, Is.EqualTo(4));
+            Assert.That(model.AddOptions.InitialFormatSyncNotBefore, Is.EqualTo(due));
         }
 
         private static Author CacheAuthor(int id, string name) => new Author

@@ -76,6 +76,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
         [TestCase("John Smith", "John Smith The Book Title", true)]
         [TestCase("John Smith", "The Book Title John Smith", true)]
+        [TestCase("Frank Herbert", "Frank Herberts The Book Title", true)]
         [TestCase("John Smith", "John Smith - The Book Title", true)]
         [TestCase("Ann Smith", "Mary Ann Smith The Book Title", true)]
         public void known_book_conversion_should_preserve_complete_author_proof_in_a_combined_source_field(string authorName, string observedTitle, bool hasAuthorEvidence)
@@ -163,7 +164,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         [TestCase("Jennifer L. Armentrout", "Jennifer Q. Armentrout", false)]
         [TestCase("Jennifer L. Armentrout", "Armentrout, Jennifer Q.", false)]
         [TestCase("Jennifer L. Armentrout", "Jennifer Q. Armentrout; another contributor", false)]
-        [TestCase("Jennifer L. Armentrout", "Jennifer L. Armentrouts", false)]
+        // One trailing surname s is compatible in either direction.
+        [TestCase("Jennifer L. Armentrout", "Jennifer L. Armentrouts", true)]
         [TestCase("CS Lewis", "C S Lewis", true)]
         [TestCase("C. S. Lewis", "CS Lewis", true)]
         [TestCase("Clive Staples Lewis", "C S Lewis", true)]
@@ -188,7 +190,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         [TestCase("John Smith", "Pat Smith John Doe", false)]
         [TestCase("John Smith", "Smith, John; Pat Doe", true)]
         [TestCase("John Smith", "John Smith; Pat Doe", true)]
-        [TestCase("John Smith", "John Smiths", false)]
+        // One trailing surname s is compatible in either direction.
+        [TestCase("John Smith", "John Smiths", true)]
         [TestCase("John Smith", "JAMES SMITH", false)]
         [TestCase("JOHN SMITH", "James Smith", false)]
         [TestCase("Le Guin, Ursula K.", "Ursula K. Guin", false)]

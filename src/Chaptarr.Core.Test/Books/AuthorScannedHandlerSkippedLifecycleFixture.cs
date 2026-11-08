@@ -39,6 +39,11 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(events.PublishedEvents.OfType<AuthorScanCompletedEvent>().Count(), Is.EqualTo(1));
             queue.RejectSearch = false;
             subject.Handle(new AuthorScannedEvent(author));
+            Assert.That(author.AddOptions, Is.SameAs(options));
+            Assert.That(queue.Pushed.OfType<MissingBookSearchCommand>(), Is.Empty,
+                "An immediate duplicate scan event must respect the persisted setup retry delay");
+            options.InitialFormatSyncNotBefore = DateTime.UtcNow.AddSeconds(-1);
+            subject.Handle(new AuthorScannedEvent(author));
             Assert.That(author.AddOptions, Is.Null);
             Assert.That(queue.Pushed.OfType<MissingBookSearchCommand>().Count(), Is.EqualTo(1));
         }
@@ -228,6 +233,63 @@ namespace Chaptarr.Core.Test.Books
             });
         }
 
+        [TestCase("monitor")]
+        [TestCase("search")]
+        [TestCase("clear")]
+        public void one_failed_setup_backs_off_without_blocking_other_authors(string failingStep)
+        {
+            var authors = new List<Author>
+            {
+                new() { Id = 1, Name = "First", AddOptions = new AddAuthorOptions { Monitor = MonitorTypes.All, SearchForMissingBooks = true } },
+                new() { Id = 2, Name = "Second", AddOptions = new AddAuthorOptions { Monitor = MonitorTypes.All, SearchForMissingBooks = true } }
+            };
+            var saved = new Dictionary<int, AddAuthorOptions>();
+            var monitoring = new List<int>();
+            var fail = true;
+            var service = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IAuthorService>((method, args) =>
+            {
+                if (method.Name == nameof(IAuthorService.GetAuthors)) return authors;
+                Assert.That(method.Name, Is.EqualTo(nameof(IAuthorService.SetAddOptions)));
+                var author = (Author)args[0];
+                if (fail && failingStep == "clear" && author.Id == 1 && author.AddOptions == null)
+                    throw new InvalidOperationException("Setup persistence unavailable");
+                saved[author.Id] = author.AddOptions;
+                return null;
+            });
+            var queue = new StubCommandQueueManager { BeforePush = command =>
+            {
+                if (fail && failingStep == "search" && command is MissingBookSearchCommand search && search.AuthorId == 1)
+                    throw new InvalidOperationException("Search queue unavailable");
+            } };
+            var subject = new AuthorScannedHandler(
+                Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookMonitoredService>((_, args) =>
+                {
+                    var author = (Author)args[0];
+                    monitoring.Add(author.Id);
+                    if (fail && failingStep == "monitor" && author.Id == 1) throw new InvalidOperationException("Monitoring unavailable");
+                    return null;
+                }), service, queue, DispatchProxy.Create<IBookAddedService, BookAddedServiceProxy>(),
+                new StubEventAggregator(), LogManager.GetCurrentClassLogger(),
+                Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookService>((_, _) => null));
+            var command = new BulkSyncFormatMonitoringCommand(new List<int> { 1, 2 }) { InitialSetupAttempt = 1 };
+            subject.Execute(command);
+            Assert.That(authors[1].AddOptions, Is.Null);
+            Assert.That(saved[2], Is.Null);
+            Assert.That(saved[1].InitialFormatSyncFailureCount, Is.EqualTo(1));
+            Assert.That(saved[1].InitialFormatSyncNotBefore, Is.GreaterThan(DateTime.UtcNow));
+            var calls = monitoring.Count;
+            subject.Execute(command);
+            Assert.That(monitoring, Has.Count.EqualTo(calls));
+            Assert.That(saved[1].InitialFormatSyncFailureCount, Is.EqualTo(1));
+            fail = false;
+            authors[0].AddOptions = saved[1];
+            authors[0].AddOptions.InitialFormatSyncNotBefore = DateTime.UtcNow.AddSeconds(-1);
+            subject.Execute(command);
+            Assert.That(authors[0].AddOptions, Is.Null);
+            Assert.That(saved[1], Is.Null);
+            if (failingStep != "monitor") Assert.That(monitoring.Count(id => id == 1), Is.EqualTo(1));
+        }
+
         public class BookMonitoredServiceProxy : DispatchProxy
         {
             public Author Author { get; private set; }
@@ -294,11 +356,13 @@ namespace Chaptarr.Core.Test.Books
         private sealed class StubCommandQueueManager : IManageCommandQueue
         {
             public bool RejectSearch { get; set; }
+            public Action<Command> BeforePush { get; set; }
             public List<Command> Pushed { get; } = new();
 
             public CommandModel Push<TCommand>(TCommand command, CommandPriority priority = CommandPriority.Normal, CommandTrigger trigger = CommandTrigger.Unspecified)
                 where TCommand : Command
             {
+                BeforePush?.Invoke(command);
                 if (RejectSearch && command is MissingBookSearchCommand) return null;
                 Pushed.Add(command);
                 return new CommandModel { Name = command.Name, Body = command, Priority = priority, Trigger = trigger };
@@ -318,6 +382,7 @@ namespace Chaptarr.Core.Test.Books
             public void Fail(CommandModel command, string message, Exception e) => throw new NotImplementedException();
             public void Requeue() => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void Pause(int id) => throw new NotImplementedException();
             public void Resume(int id) => throw new NotImplementedException();
             public void CleanCommands() => throw new NotImplementedException();

@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom';
 import AuthorSearchInput from 'Components/Page/Header/AuthorSearchInput';
 import orderAuthorSearchResults from 'Search/orderAuthorSearchResults';
 import { getSearchResults } from 'Store/Actions/searchActions';
+import createExistingAuthorSelector from 'Store/Selectors/createExistingAuthorSelector';
 import themes from 'Styles/Themes';
 import createBookSearchFilter from 'Utilities/Book/createBookSearchFilter';
 import createTextSearch from 'Utilities/String/createTextSearch';
@@ -27,7 +28,7 @@ fetchTranslations().then(() => {
   window.fixtureReady = true;
 });
 
-window.searchSurface = { createTextSearch, createBookSearchFilter, orderAuthorSearchResults };
+window.searchSurface = { createTextSearch, createBookSearchFilter, createExistingAuthorSelector, orderAuthorSearchResults };
 window.searchActions = [];
 window.runAddNewSearch = (payload) => getSearchResults(payload)((action) => window.searchActions.push(action), () => ({}));
 window.readAddNewResults = () => window.searchActions.flatMap((action) => (action.meta?.batch ? action.payload : [action]))

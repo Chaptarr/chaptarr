@@ -132,7 +132,7 @@ namespace Chaptarr.Core.Test.Download
             object Stop(string hash) { stopped.Add(hash); return null; }
             var profiles = new QualityProfileService(Proxy<IProfileRepository>((method, args) => new List<QualityProfile>
                 { new() { Id = 1, Items = new() { new() { Quality = Quality.M4B, Allowed = true } } } }), null, null, null, null, null, logger);
-            var controller = new QueueController(Proxy<IDownloadImportModeResolver>((method, args) => true), null,
+            var controller = new QueueController(global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<global::NzbDrone.Core.Books.ISeriesBookLinkService>((_, _) => throw new global::System.InvalidOperationException("Series batch loading was not expected in this fixture")), Proxy<IDownloadImportModeResolver>((method, args) => true), null,
                 Proxy<IQueueService>((method, args) => new NzbDrone.Core.Queue.Queue { Id = (int)args[0], DownloadId = torrents[(int)args[0] - 1]["hash"] }),
                 Proxy<IPendingReleaseService>((method, args) => method.Name == nameof(IPendingReleaseService.GetPendingQueue) ? new List<NzbDrone.Core.Queue.Queue>() : null),
                 profiles, tracking, null, null, Proxy<IProvideDownloadClient>((method, args) => Client()), null, null);

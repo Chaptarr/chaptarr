@@ -31,6 +31,8 @@ namespace NzbDrone.Core.Download.TrackedDownloads
 
     public class TrackedDownloadService : ITrackedDownloadService,
                                           IHandle<BookInfoRefreshedEvent>,
+                                          IHandle<LibraryIdentityChangedEvent>,
+                                          IHandle<BookUpdatedEvent>,
                                           IHandle<AuthorDeletedEvent>
     {
         private readonly IParsingService _parsingService;
@@ -191,6 +193,8 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                     {
                         var messages = Json.Deserialize<List<TrackedDownloadStatusMessage>>(downloadHistory.Data["statusMessages"]).ToArray();
                         trackedDownload.Warn(messages);
+                        trackedDownload.AwaitingImportConfirmation = downloadHistory.Data.TryGetValue("awaitingImportConfirmation", out var awaiting) &&
+                            bool.TryParse(awaiting, out var wait) && wait;
                     }
                 }
 
@@ -561,7 +565,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             }
         }
 
-        private void UpdateCachedItems(List<TrackedDownload> trackedDownloads, HashSet<int> removedBookIds)
+        private void UpdateCachedItems(List<TrackedDownload> trackedDownloads, HashSet<int> removedBookIds, bool evictOnFailure = false)
         {
             if (trackedDownloads.Count == 0)
             {
@@ -623,6 +627,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                 catch (Exception e)
                 {
                     _logger.Warn(e, "Failed to refresh tracked download {0}", trackedDownload.DownloadItem?.DownloadId);
+                    if (evictOnFailure) _cache.Remove(trackedDownload.DownloadItem.DownloadId);
                 }
             }
         }
@@ -653,6 +658,27 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                 UpdateCachedItems(cachedItems, removedBookIds);
                 _eventAggregator.PublishEvent(new TrackedDownloadRefreshedEvent(GetTrackedDownloads()));
             }
+        }
+
+        public void Handle(LibraryIdentityChangedEvent message)
+        {
+            var items = _cache.Values.Where(item => message.AuthorIds.Contains(item.RemoteBook?.Author?.Id ?? 0) ||
+                item.RemoteBook?.Books?.Any(book => message.BookIds.Contains(book.Id)) == true).ToList();
+            if (items.Count == 0) return;
+            try { UpdateCachedItems(items, message.RemovedBookIds, evictOnFailure: true); }
+            catch (Exception ex)
+            {
+                // The committed history is authoritative. Normal polling reconstructs these
+                // targets and their terminal state; never retain a deleted in-memory identity.
+                foreach (var item in items) _cache.Remove(item.DownloadItem.DownloadId);
+                _logger.Warn(ex, "Failed to reload merged/split download targets; next poll will restore them from history");
+            }
+            _eventAggregator.PublishEvent(new TrackedDownloadRefreshedEvent(GetTrackedDownloads()));
+        }
+
+        public void Handle(BookUpdatedEvent message)
+        {
+            Handle(new LibraryIdentityChangedEvent(Array.Empty<int>(), new[] { message.Book.Id }));
         }
 
         public void Handle(AuthorDeletedEvent message)

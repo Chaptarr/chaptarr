@@ -21,11 +21,18 @@ using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Configuration.SettingsBackups;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.Profiles.Delay;
+using NzbDrone.Core.Profiles.Releases;
+using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.Profiles.Metadata;
+using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.Clients.Deluge;
 using NzbDrone.Core.Download.Clients.Sabnzbd;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Indexers;
+using NzbDrone.Core.Notifications;
 using NzbDrone.Core.Indexers.Newznab;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.RemotePathMappings;
@@ -37,7 +44,7 @@ namespace Chaptarr.Core.Test.Configuration
 {
     [TestFixture]
     [NonParallelizable]
-    public class SettingsBackupProviderIdentityRestoreFixture
+    public partial class SettingsBackupProviderIdentityRestoreFixture
     {
         [OneTimeSetUp]
         public void InitializeSchemaBuilder()
@@ -45,6 +52,54 @@ namespace Chaptarr.Core.Test.Configuration
             using var container = new Container();
             container.RegisterInstance<ILocalizationService>(Proxy<ILocalizationService>((_, args) => args[0]));
             SchemaBuilder.Initialize(container);
+        }
+
+        [TestCase(false, SettingsBackupRestoreMode.Overwrite)]
+        [TestCase(true, SettingsBackupRestoreMode.Overwrite)]
+        [TestCase(false, SettingsBackupRestoreMode.Merge)]
+        [TestCase(true, SettingsBackupRestoreMode.Merge)]
+        public void empty_indexer_backup_previews_every_deletion_before_applying(bool postgres, SettingsBackupRestoreMode mode)
+        {
+            DualDatabaseFixture.Run(postgres, db =>
+            {
+                using var context = new RestoreContext(db);
+                var first = context.AddIndexer();
+                var second = context.AddIndexer();
+                var package = new SettingsBackupPackage { Categories = new() { SettingsBackupCategory.Indexers }, Indexers = new() };
+                var preview = context.Restore(package, mode, preview: true);
+                Assert.That(preview.WouldRemove, Is.EquivalentTo(mode == SettingsBackupRestoreMode.Overwrite
+                    ? new[] { $"Indexer: {first.Name}", $"Indexer: {second.Name}" } : Array.Empty<string>()));
+                Assert.That(context.Indexers.All().Select(indexer => indexer.Id), Is.EquivalentTo(new[] { first.Id, second.Id }));
+                var restored = context.Restore(package, mode);
+                Assert.That(restored.WouldRemove, Is.EqualTo(preview.WouldRemove));
+                Assert.That(context.Indexers.All(), Has.Count.EqualTo(mode == SettingsBackupRestoreMode.Overwrite ? 0 : 2));
+            });
+        }
+
+        [TestCase(false, SettingsBackupRestoreMode.Overwrite)]
+        [TestCase(true, SettingsBackupRestoreMode.Overwrite)]
+        [TestCase(false, SettingsBackupRestoreMode.Merge)]
+        [TestCase(true, SettingsBackupRestoreMode.Merge)]
+        public void client_name_case_change_keeps_identity_and_mapping(bool postgres, SettingsBackupRestoreMode mode)
+        {
+            DualDatabaseFixture.Run(postgres, db =>
+            {
+                using var context = new RestoreContext(db);
+                var client = context.Clients.Insert(Client("Deluge Home"));
+                var mapping = context.AddMapping(client.Id);
+                var package = new SettingsBackupPackage
+                {
+                    Categories = new() { SettingsBackupCategory.DownloadClients },
+                    DownloadClients = new() { ClientBackup("DELUGE HOME") }
+                };
+                Assert.That(context.Restore(package, mode, preview: true).WouldRemove, Is.Empty);
+                var result = context.Restore(package, mode);
+                Assert.That(result.Warnings, Is.Empty);
+                Assert.That(context.Clients.All().Single().Id, Is.EqualTo(client.Id));
+                Assert.That(context.Mappings.Get(mapping.Id).DownloadClientId, Is.EqualTo(client.Id));
+                Assert.That(((DelugeSettings)context.Clients.Get(client.Id).Settings).Host,
+                    Is.EqualTo(mode == SettingsBackupRestoreMode.Merge ? "original.example" : "restored.example"));
+            });
         }
 
         [TestCase(false, SettingsBackupRestoreMode.Overwrite)]
@@ -67,6 +122,13 @@ namespace Chaptarr.Core.Test.Configuration
                     DownloadClients = new() { ClientBackup("Deluge Home"), ClientBackup("New client", 901) }
                 };
 
+                var preview = context.Restore(package, mode, preview: true);
+                Assert.That(preview.WouldRemove, Is.EqualTo(mode == SettingsBackupRestoreMode.Overwrite
+                    ? new[] { "Download client: Deluge Seedbox", "Remote path mapping: original.example:/remote → /local" } : Array.Empty<string>()));
+                Assert.That(preview.Applied, Is.Empty);
+                Assert.That(context.Clients.All().Select(client => client.Id), Is.EquivalentTo(new[] { kept.Id, omitted.Id }));
+                Assert.That(((DelugeSettings)context.Clients.Get(kept.Id).Settings).Host, Is.EqualTo("original.example"));
+                Assert.That(context.Mappings.Get(omittedMapping.Id).DownloadClientId, Is.EqualTo(omitted.Id));
                 var result = context.Restore(package, mode);
 
                 Assert.That(context.Clients.All().Single(c => c.Name == "Deluge Home").Id, Is.EqualTo(kept.Id));
@@ -122,8 +184,8 @@ namespace Chaptarr.Core.Test.Configuration
         }
 
         [TestCase(false, false)]
-        [TestCase(true, false)]
         [TestCase(false, true)]
+        [TestCase(true, false)]
         [TestCase(true, true)]
         public void overwrite_should_not_treat_a_renamed_or_different_client_type_as_the_same_client(bool postgres, bool differentType)
         {
@@ -174,13 +236,17 @@ namespace Chaptarr.Core.Test.Configuration
             });
         }
 
-        [TestCase(false, false)]
-        [TestCase(true, false)]
-        [TestCase(false, true)]
-        [TestCase(true, true)]
-        public void ambiguous_names_should_refuse_before_any_settings_are_written(bool proxies, bool existingDuplicates)
+        [TestCase(false, false, false)]
+        [TestCase(false, false, true)]
+        [TestCase(false, true, false)]
+        [TestCase(false, true, true)]
+        [TestCase(true, false, false)]
+        [TestCase(true, false, true)]
+        [TestCase(true, true, false)]
+        [TestCase(true, true, true)]
+        public void ambiguous_names_skip_only_the_affected_category(bool postgres, bool proxies, bool existingDuplicates)
         {
-            DualDatabaseFixture.Run(false, db =>
+            DualDatabaseFixture.Run(postgres, db =>
             {
                 using var context = new RestoreContext(db);
                 context.Clients.Insert(Client("Repeated"));
@@ -202,12 +268,20 @@ namespace Chaptarr.Core.Test.Configuration
 
                 var beforeClients = JsonSerializer.Serialize(context.Clients.All(), STJson.GetSerializerSettings());
                 var beforeProxies = JsonSerializer.Serialize(context.Proxies.All(), STJson.GetSerializerSettings());
-                var error = Assert.Throws<NzbDroneClientException>(() => context.Restore(package));
-                Assert.That(error.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
-                Assert.That(error.Message, Does.Contain("Repeated").IgnoreCase.And.Contain("duplicate").IgnoreCase);
-                Assert.That(JsonSerializer.Serialize(context.Clients.All(), STJson.GetSerializerSettings()), Is.EqualTo(beforeClients));
-                Assert.That(JsonSerializer.Serialize(context.Proxies.All(), STJson.GetSerializerSettings()), Is.EqualTo(beforeProxies));
-                Assert.That(context.Config, Is.Empty);
+                var result = context.Restore(package);
+                Assert.That(result.Warnings, Has.Some.Contains("Repeated").IgnoreCase.And.Contains("duplicate").IgnoreCase);
+                if (proxies)
+                {
+                    Assert.That(JsonSerializer.Serialize(context.Proxies.All(), STJson.GetSerializerSettings()), Is.EqualTo(beforeProxies));
+                    Assert.That(((DelugeSettings)context.Clients.All().Single().Settings).Host, Is.EqualTo("restored.example"));
+                    Assert.That(result.Applied, Does.Contain("Download Clients").And.Not.Contain("Proxy Settings"));
+                }
+                else
+                {
+                    Assert.That(JsonSerializer.Serialize(context.Clients.All(), STJson.GetSerializerSettings()), Is.EqualTo(beforeClients));
+                    Assert.That(context.Proxies.All().Single().Hostname, Is.EqualTo("restored.example"));
+                    Assert.That(result.Applied, Does.Contain("Proxy Settings").And.Not.Contain("Download Clients"));
+                }
             });
         }
 
@@ -308,7 +382,7 @@ namespace Chaptarr.Core.Test.Configuration
 
         [TestCase(false)]
         [TestCase(true)]
-        public void merge_should_reject_a_different_client_type_with_the_same_name_before_writing(bool postgres)
+        public void merge_should_skip_a_different_client_type_with_the_same_name_without_writing(bool postgres)
         {
             DualDatabaseFixture.Run(postgres, db =>
             {
@@ -319,13 +393,14 @@ namespace Chaptarr.Core.Test.Configuration
                     Name = "Home", Implementation = "Sabnzbd", ConfigContract = nameof(SabnzbdSettings), Enable = false,
                     Settings = JsonSerializer.SerializeToElement(new SabnzbdSettings(), STJson.GetSerializerSettings())
                 };
-                var error = Assert.Throws<NzbDroneClientException>(() => context.Restore(new SettingsBackupPackage
+                var result = context.Restore(new SettingsBackupPackage
                 {
                     Categories = new() { SettingsBackupCategory.DownloadClients },
                     DownloadClients = new() { incoming },
                     DownloadClientSettings = new() { DownloadClientHistoryLimit = 50 }
-                }, SettingsBackupRestoreMode.Merge));
-                Assert.That(error.Message, Does.Contain("Home").And.Contain("Deluge").And.Contain("No settings were restored"));
+                }, SettingsBackupRestoreMode.Merge);
+                Assert.That(result.Warnings, Has.Some.Contains("Home").And.Contains("Deluge").And.Contains("Skipped"));
+                Assert.That(result.Applied, Is.Empty);
                 Assert.That(context.Clients.All().Single().Id, Is.EqualTo(original.Id));
                 Assert.That(context.Config, Is.Empty);
             });
@@ -355,6 +430,12 @@ namespace Chaptarr.Core.Test.Configuration
             public RemotePathMappingRepository Mappings { get; }
             public ProxyRepository Proxies { get; }
             public IndexerRepository Indexers { get; }
+            public NotificationRepository Notifications { get; }
+            public CustomFormatRepository Formats { get; }
+            public DelayProfileService Delays { get; }
+            public ReleaseProfileService Releases { get; }
+            public TagService Tags { get; }
+            public string Folder => _folder;
             public Dictionary<string, object> Config { get; } = new();
 
             public RestoreContext(IMainDatabase database)
@@ -372,6 +453,15 @@ namespace Chaptarr.Core.Test.Configuration
                 Mappings = new RemotePathMappingRepository(database, events);
                 Proxies = new ProxyRepository(database, events);
                 Indexers = new IndexerRepository(database, events);
+                Notifications = new NotificationRepository(database, events);
+                var notifications = Proxy<INotificationFactory>((method, args) =>
+                {
+                    if (method.Name == "All") return Notifications.All().ToList();
+                    if (method.Name == "Delete") { Notifications.DeleteMany(((IEnumerable<int>)args[0]).ToList()); return null; }
+                    if (method.Name == "Create") return Notifications.Insert((NotificationDefinition)args[0]);
+                    if (method.Name == "Update") { Notifications.Update((NotificationDefinition)args[0]); return args[0]; }
+                    throw new NotImplementedException(method.Name);
+                });
                 var config = Proxy<IConfigService>((method, args) =>
                 {
                     if (method.Name == "SaveConfigDictionary")
@@ -383,9 +473,12 @@ namespace Chaptarr.Core.Test.Configuration
                 var indexers = Proxy<IIndexerFactory>((method, args) =>
                 {
                     if (method.Name == "All") return Indexers.All().ToList();
+                    if (method.Name == "Delete") { Indexers.DeleteMany(((IEnumerable<int>)args[0]).ToList()); return null; }
+                    if (method.Name == "Create") return Indexers.Insert((IndexerDefinition)args[0]);
                     if (method.Name == "Update")
                     {
-                        Indexers.UpdateMany(((IEnumerable<IndexerDefinition>)args[0]).ToList());
+                        if (args[0] is IndexerDefinition item) Indexers.Update(item);
+                        else Indexers.UpdateMany(((IEnumerable<IndexerDefinition>)args[0]).ToList());
                         return args[0];
                     }
                     throw new NotImplementedException(method.Name);
@@ -396,14 +489,36 @@ namespace Chaptarr.Core.Test.Configuration
                 var proxies = new ProxyService(Proxies, events, logger);
                 cleanup = new ProxyReferenceCleanupService(config, proxies, indexers, logger);
                 var deluge = new Deluge(null, null, null, config, disk, mappingService, null, null, null, new NzbDrone.Common.Cache.CacheManager(), logger);
-                var sab = new Sabnzbd(null, null, config, disk, mappingService, null, Chaptarr.Core.Test.Download.NoopDownloadClientFileSnapshotService.Instance, logger);
+                var sab = new Sabnzbd(null, null, config, disk, mappingService, null, Chaptarr.Core.Test.Download.NoopDownloadClientFileSnapshotService.Instance, logger, Chaptarr.Core.Test.Download.DownloadClientTestRoots.Empty);
                 var providers = new IDownloadClient[] { deluge, sab };
                 ClientFactory = new DownloadClientFactory(null, Clients, providers,
                     Proxy<IServiceProvider>((_, args) => providers.Single(provider => provider.GetType() == (Type)args[0])), events, logger);
-                var tags = Proxy<ITagService>((_, _) => new List<Tag>());
+                Formats = new CustomFormatRepository(database, events);
+                Delays = new DelayProfileService(new DelayProfileRepository(database, events), new CacheManager());
+                Releases = new ReleaseProfileService(new ReleaseProfileRepository(database, events), logger);
+                Tags = new TagService(new TagRepository(database, events), events, null, null, null, null, null, null, null, null);
+                var formats = Proxy<ICustomFormatService>((method, args) => method.Name switch
+                {
+                    "All" => Formats.All().ToList(),
+                    "Insert" => Formats.Insert((CustomFormat)args[0]),
+                    "Update" => Formats.Update((CustomFormat)args[0]),
+                    "Delete" => DeleteFormat((int)args[0]),
+                    _ => throw new NotImplementedException(method.Name)
+                });
                 _service = new SettingsBackupService(Proxy<IAppFolderInfo>((_, _) => _folder), disk, config, null,
-                    indexers, ClientFactory, null, null, null, null, tags, proxies, mappingService, null);
+                    indexers, ClientFactory, notifications,
+                    Proxy<IQualityProfileService>((_, _) => new List<QualityProfile>()),
+                    Proxy<IMetadataProfileService>((_, _) => new List<MetadataProfile>()),
+                    formats, Tags, proxies, mappingService, null, Delays, Releases,
+                    Proxy<IQualityDefinitionService>((method, _) => method.Name == "All" ? new List<QualityDefinition>() : null),
+                    mediaPaths: null, filenameValidation: SettingsBackupCoverageFixture.CreateFilenameValidation());
                 Directory.CreateDirectory(_folder);
+            }
+
+            private object DeleteFormat(int id)
+            {
+                Formats.Delete(id);
+                return null;
             }
 
             public RemotePathMapping AddMapping(int clientId) => Mappings.Insert(new RemotePathMapping
@@ -428,13 +543,13 @@ namespace Chaptarr.Core.Test.Configuration
                 return JsonSerializer.Deserialize<SettingsBackupPackage>(SettingsBackupCrypto.Decrypt(envelope, "synthetic passphrase"), STJson.GetSerializerSettings());
             }
 
-            public SettingsBackupRestoreResult Restore(SettingsBackupPackage package, SettingsBackupRestoreMode mode = SettingsBackupRestoreMode.Overwrite)
+            public SettingsBackupRestoreResult Restore(SettingsBackupPackage package, SettingsBackupRestoreMode mode = SettingsBackupRestoreMode.Overwrite, bool preview = false)
             {
                 var file = Path.Combine(_folder, "identity.chaptarr-settings-backup.json");
                 File.WriteAllText(file, JsonSerializer.Serialize(SettingsBackupCrypto.Encrypt(JsonSerializer.SerializeToUtf8Bytes(package, STJson.GetSerializerSettings()), "synthetic passphrase"), STJson.GetSerializerSettings()));
                 return _service.RestoreBackup(new SettingsBackupRestoreRequest
                 {
-                    FilePath = file, Passphrase = "synthetic passphrase", Categories = package.Categories.ToHashSet(), Mode = mode
+                    FilePath = file, Passphrase = "synthetic passphrase", Categories = package.Categories.ToHashSet(), Mode = mode, Preview = preview
                 });
             }
 

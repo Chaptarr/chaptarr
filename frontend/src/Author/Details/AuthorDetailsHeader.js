@@ -19,6 +19,7 @@ import formatBytes from 'Utilities/Number/formatBytes';
 import stripHtml from 'Utilities/String/stripHtml';
 import translate from 'Utilities/String/translate';
 import AuthorAlternateTitles from './AuthorAlternateTitles';
+import AuthorInitialScanStatus from './AuthorInitialScanStatus';
 import AuthorDetailsLinks from './AuthorDetailsLinks';
 import AuthorTagsConnector from './AuthorTagsConnector';
 import styles from './AuthorDetailsHeader.css';
@@ -344,6 +345,7 @@ class AuthorDetailsHeader extends Component {
 
               }
             </div>
+            {this.props.initialScanPaths?.length > 0 && <AuthorInitialScanStatus authorId={id} paths={this.props.initialScanPaths} />}
             <Measure
               onMeasure={this.onOverviewMeasure}
               className={styles.overview}
@@ -377,6 +379,7 @@ AuthorDetailsHeader.propTypes = {
   monitored: PropTypes.bool.isRequired,
   status: PropTypes.string.isRequired,
   overview: PropTypes.string,
+  initialScanPaths: PropTypes.arrayOf(PropTypes.string),
   links: PropTypes.arrayOf(PropTypes.object).isRequired,
   images: PropTypes.arrayOf(PropTypes.object).isRequired,
   alternateTitles: PropTypes.arrayOf(PropTypes.string).isRequired,

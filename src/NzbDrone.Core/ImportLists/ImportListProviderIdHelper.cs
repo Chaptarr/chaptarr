@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.MetadataSource;
 
@@ -6,6 +8,14 @@ namespace NzbDrone.Core.ImportLists
 {
     public static class ImportListProviderIdHelper
     {
+        public static List<string> GetExclusionLookupIds(IEnumerable<string> providerIds) =>
+            (providerIds ?? Enumerable.Empty<string>())
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id.Trim())
+                .SelectMany(id => id.StartsWith("gr:", StringComparison.OrdinalIgnoreCase) ? new[] { id, id.Substring(3) } : new[] { id })
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
         public static bool MatchesExclusionId(string providerId, string exclusionId)
         {
             if (providerId.IsNullOrWhiteSpace() || exclusionId.IsNullOrWhiteSpace())

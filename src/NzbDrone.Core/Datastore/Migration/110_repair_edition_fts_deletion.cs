@@ -50,7 +50,7 @@ namespace NzbDrone.Core.Datastore.Migration
                 }
 
                 connection.Execute(@"
-                    DROP TABLE edition_fts;
+                    DROP TABLE IF EXISTS edition_fts;
                     CREATE VIRTUAL TABLE edition_fts USING fts5(
                         MatchingTitle, SeriesName, AuthorName, Subtitle, Narrator, Publisher,
                         content='', content_rowid='rowid', contentless_delete=1,

@@ -16,6 +16,21 @@ namespace Chaptarr.Core.Test.Books
     public class AuthorResourceMapperFixture
     {
         [Test]
+        public void new_author_requests_cannot_supply_internal_retry_state()
+        {
+            var future = System.DateTime.UtcNow.AddYears(1);
+            var resource = new AuthorResource { AuthorName = "Example Writer", AddOptions = new AddAuthorOptions
+            {
+                SearchForMissingBooks = true, InitialFormatSyncFailureCount = 100, InitialFormatSyncNotBefore = future
+            } };
+            var model = resource.ToModel();
+            Assert.That(model.AddOptions.InitialFormatSyncFailureCount, Is.Zero);
+            Assert.That(model.AddOptions.InitialFormatSyncNotBefore, Is.Null);
+            Assert.That(model.AddOptions.SearchForMissingBooks, Is.True);
+            Assert.That(resource.AddOptions.InitialFormatSyncNotBefore, Is.EqualTo(future), "Mapping must not modify the submitted object");
+        }
+
+        [Test]
         public void should_map_legacy_single_fields_to_the_requested_side_idempotently()
         {
             var resource = new AuthorResource
@@ -667,6 +682,41 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(updated.AudiobookTags, Is.EquivalentTo(new[] { 5, 6 }));
             Assert.That(updated.EbookTags, Is.EquivalentTo(new[] { 5, 6 }));
             Assert.That(updated.Tags, Is.EquivalentTo(new[] { 5, 6 }));
+        }
+
+        [TestCase(null, false)]
+        [TestCase("audiobook", false)]
+        [TestCase("ebook", false)]
+        [TestCase("audiobook", true)]
+        [TestCase("ebook", true)]
+        public void classic_tags_fill_echoed_empty_arrays_only_in_the_requested_scope(string side, bool facade)
+        {
+            var resource = new AuthorResource
+            {
+                Tags = new HashSet<int> { 7 }, AudiobookTags = new HashSet<int>(), EbookTags = new HashSet<int>()
+            };
+            var context = facade ? new ReadarrFacadeContext("gr", side, "/readarr/gr/" + side) : null;
+            var model = resource.ToModel(context, side);
+            Assert.That(model.AudiobookTags, Is.EquivalentTo(side == "ebook" ? new int[0] : new[] { 7 }));
+            Assert.That(model.EbookTags, Is.EquivalentTo(side == "audiobook" ? new int[0] : new[] { 7 }));
+            Assert.That(resource.Tags, Is.EquivalentTo(new[] { 7 }));
+        }
+
+        [Test]
+        public void explicit_format_tags_win_and_can_be_cleared_without_legacy_tags()
+        {
+            var resource = new AuthorResource
+            {
+                Tags = new HashSet<int> { 7 }, AudiobookTags = new HashSet<int> { 1 }, EbookTags = new HashSet<int> { 2 }
+            };
+            var model = resource.ToModel();
+            Assert.That(model.AudiobookTags, Is.EquivalentTo(new[] { 1 }));
+            Assert.That(model.EbookTags, Is.EquivalentTo(new[] { 2 }));
+            resource.Tags = null;
+            resource.AudiobookTags.Clear();
+            model = resource.ToModel(model);
+            Assert.That(model.AudiobookTags, Is.Empty);
+            Assert.That(model.EbookTags, Is.EquivalentTo(new[] { 2 }));
         }
 
         [Test]

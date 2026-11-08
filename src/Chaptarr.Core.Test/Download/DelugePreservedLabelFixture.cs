@@ -22,7 +22,7 @@ using static Chaptarr.Core.Test.Common.InterfaceProxy;
 namespace Chaptarr.Core.Test.Download
 {
     [TestFixture]
-    public class DelugePreservedLabelFixture
+    public partial class DelugePreservedLabelFixture
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
@@ -41,6 +41,10 @@ namespace Chaptarr.Core.Test.Download
             public bool UnsettledState;
             private bool _pauseRequested;
             public bool IgnoreSeedSettings;
+            public bool IgnoreLabel;
+            public bool IgnoreAutoManaged;
+            public bool IgnoreResume;
+            public string RejectCall;
             public bool Missing;
             public string FailBefore;
             public string FailAfter;
@@ -60,6 +64,7 @@ namespace Chaptarr.Core.Test.Download
                         throw new WebException("Injected connection outage");
                     }
 
+                    if (RejectCall == name) throw new DelugeException("Label plugin refused the command", 4);
                     object result = null;
                     var parameters = rpc["params"];
                     switch (name)
@@ -84,7 +89,7 @@ namespace Chaptarr.Core.Test.Download
                         case "core.resume_torrent":
                             Assert.That(parameters[0].Values<string>(), Is.EqualTo(new[] { "abcdef" }));
                             if (name == "core.pause_torrent" && !IgnorePause) _pauseRequested = true;
-                            if (name == "core.resume_torrent") { _pauseRequested = false; Paused = false; State = AutoManaged ? "Queued" : "Seeding"; }
+                            if (name == "core.resume_torrent" && !IgnoreResume) { _pauseRequested = false; Paused = false; State = AutoManaged ? "Queued" : "Seeding"; }
                             break;
                         case "label.set_torrent":
                             Assert.That(parameters[0].Value<string>(), Is.EqualTo("abcdef"));
@@ -96,14 +101,14 @@ namespace Chaptarr.Core.Test.Download
                                 AutoManaged = !AutoManaged;
                             }
 
-                            Label = parameters[1].Value<string>();
+                            if (!IgnoreLabel) Label = parameters[1].Value<string>();
                             break;
                         case "core.set_torrent_options":
                             Assert.That(parameters[0].Values<string>(), Is.EqualTo(new[] { "abcdef" }));
                             var options = parameters[1];
                             if (options["stop_at_ratio"] != null && !IgnoreSeedSettings) Stop = options.Value<bool>("stop_at_ratio");
                             if (options["remove_at_ratio"] != null && !IgnoreSeedSettings) Remove = options.Value<bool>("remove_at_ratio");
-                            if (options["auto_managed"] != null) AutoManaged = options.Value<bool>("auto_managed");
+                            if (options["auto_managed"] != null && !IgnoreAutoManaged) AutoManaged = options.Value<bool>("auto_managed");
                             break;
                         case "web.update_ui":
                             result = new { torrents = new Dictionary<string, object>() };

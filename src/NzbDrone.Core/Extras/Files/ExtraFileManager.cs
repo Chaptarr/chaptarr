@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Extensions;
@@ -27,16 +28,19 @@ namespace NzbDrone.Core.Extras.Files
         private readonly IConfigService _configService;
         private readonly IDiskProvider _diskProvider;
         private readonly IDiskTransferService _diskTransferService;
+        private readonly IRecycleBinProvider _recycleBinProvider;
         private readonly Logger _logger;
 
         public ExtraFileManager(IConfigService configService,
                                 IDiskProvider diskProvider,
                                 IDiskTransferService diskTransferService,
+                                IRecycleBinProvider recycleBinProvider,
                                 Logger logger)
         {
             _configService = configService;
             _diskProvider = diskProvider;
             _diskTransferService = diskTransferService;
+            _recycleBinProvider = recycleBinProvider;
             _logger = logger;
         }
 
@@ -57,13 +61,20 @@ namespace NzbDrone.Core.Extras.Files
                 transferMode = _configService.CopyUsingHardlinks ? TransferMode.HardLinkOrCopy : TransferMode.Copy;
             }
 
-            _diskTransferService.TransferFile(path, newFileName, transferMode, replaceExisting);
-
             var preferredBase = ExtraFilePathHelper.GetPreferredBasePath(author, bookFile);
             if (!ExtraFilePathHelper.TryGetRelativePath(author, newFileName, out var relativePath, out _, preferredBase))
             {
                 throw new NotParentException("Unable to resolve extra file path '{0}' under any author base path", newFileName);
             }
+
+            if (replaceExisting && path.PathNotEquals(newFileName) && _diskProvider.FileExistsCanonical(newFileName))
+            {
+                _recycleBinProvider.DeleteFile(newFileName, author.Name);
+            }
+
+            // Recycling is explicit above. A new destination appearing after that check
+            // must not acquire overwrite permission from the old file.
+            _diskTransferService.TransferFile(path, newFileName, transferMode, false);
 
             return new TExtraFile
             {
@@ -94,6 +105,35 @@ namespace NzbDrone.Core.Extras.Files
             var source = Path.GetFullPath(Path.Combine(move.PreviousAuthorPath, extra.RelativePath));
             return Path.GetDirectoryName(source).PathEquals(Path.GetDirectoryName(move.PreviousPath)) &&
                 _diskProvider.FileExistsCanonical(source) ? source : null;
+        }
+
+        protected void WarnUnresolvedRenameSources(IEnumerable<TExtraFile> extras, List<RenamedBookFile> moves, ISet<int> resolvedIds)
+        {
+            var byFile = moves.Where(move => move.BookFile != null).ToLookup(move => move.BookFile.Id);
+            var byBook = moves.Where(move => move.BookFile?.Edition != null).ToLookup(move => move.BookFile.Edition.BookId);
+            foreach (var extra in extras.Where(extra => !resolvedIds.Contains(extra.Id)))
+            {
+                var owners = extra.BookFileId.HasValue ? byFile[extra.BookFileId.Value] :
+                    extra.BookId.HasValue ? byBook[extra.BookId.Value] : Enumerable.Empty<RenamedBookFile>();
+                var owner = owners.FirstOrDefault();
+                if (owner == null)
+                {
+                    continue;
+                }
+
+                // A book-level sidecar still at its recorded location may belong to
+                // an unselected copy. Do not report that as a stranded moved file.
+                if (!extra.BookFileId.HasValue && extra.RelativePath.IsNotNullOrWhiteSpace() &&
+                    !Path.IsPathRooted(extra.RelativePath) && owners.Any(move =>
+                        move.PreviousAuthorPath.IsNotNullOrWhiteSpace() &&
+                        _diskProvider.FileExistsCanonical(Path.GetFullPath(Path.Combine(move.PreviousAuthorPath, extra.RelativePath)))))
+                {
+                    continue;
+                }
+
+                _logger.Warn("Could not locate tracked sidecar {0} (row {1}) for renamed file {2}; leaving its bytes and record unchanged. Check the previous folder {3}.",
+                    extra.RelativePath, extra.Id, owner.BookFile.Id, Path.GetDirectoryName(owner.PreviousPath));
+            }
         }
 
         protected TExtraFile RelocateFile(Author author, RenamedBookFile move, TExtraFile extra,

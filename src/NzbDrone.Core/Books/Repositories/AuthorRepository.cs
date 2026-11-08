@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
 using System.Linq;
 using Dapper;
 using NLog;
@@ -14,6 +15,7 @@ namespace NzbDrone.Core.Books
     {
         Author Update(Author author, IDbConnection connection, IDbTransaction transaction);
         List<Author> FindExisting(IEnumerable<int> ids);
+        List<int> GetDueInitialFormatSync(DateTime now);
         bool AuthorPathExists(string path);
         Author FindByGoodreadsId(string goodreadsId);
         Author FindByHardcoverId(string hardcoverId);
@@ -59,6 +61,53 @@ namespace NzbDrone.Core.Books
         }
 
         public List<Author> FindExisting(IEnumerable<int> ids) => FindMany(ids);
+
+        private const int InitialSetupRetryBatchSize = 100;
+        private const int InitialSetupRetryTimeoutSeconds = 30;
+        private const int SlowInitialSetupRetryMilliseconds = 100;
+
+        private sealed class InitialSetupRetryRow
+        {
+            public int? Id { get; set; }
+            public int PendingCount { get; set; }
+        }
+
+        public List<int> GetDueInitialFormatSync(DateTime now)
+        {
+            var timer = Stopwatch.StartNew();
+            var postgres = _database.DatabaseType == DatabaseType.PostgreSQL;
+            var dueTime = postgres
+                ? "(\"AddOptions\"::jsonb ->> 'initialFormatSyncNotBefore')::timestamptz"
+                : "julianday(json_extract(\"AddOptions\", '$.initialFormatSyncNotBefore'))";
+            var eligible = postgres
+                ? "(\"AddOptions\"::jsonb ->> 'awaitingMetadata')::boolean IS NOT TRUE AND (\"AddOptions\"::jsonb ->> 'metadataUnavailable')::boolean IS NOT TRUE"
+                : "COALESCE(json_extract(\"AddOptions\", '$.awaitingMetadata'), 0) = 0 AND COALESCE(json_extract(\"AddOptions\", '$.metadataUnavailable'), 0) = 0";
+            var nowValue = postgres ? "@now" : "julianday(@now)";
+            // Filter persisted setup scalars in the database. Remaining due requests
+            // stay eligible for the next minute; no author or catalog objects hydrate.
+            var sql = $@"
+                WITH pending AS (
+                    SELECT ""Id"", ""AddOptions"" FROM ""Authors"" WHERE ""AddOptions"" IS NOT NULL
+                ), eligible AS (
+                    SELECT ""Id"", {dueTime} AS ""Due"" FROM pending WHERE {eligible}
+                ), due AS (
+                    SELECT ""Id"", ""Due"" FROM eligible WHERE ""Due"" <= {nowValue}
+                    ORDER BY ""Due"", ""Id"" LIMIT @limit
+                )
+                SELECT due.""Id"", summary.""PendingCount""
+                FROM (SELECT COUNT(*) AS ""PendingCount"" FROM pending) AS summary
+                LEFT JOIN due ON 1 = 1
+                ORDER BY due.""Due"", due.""Id""";
+            using var connection = _database.OpenConnection();
+            var rows = connection.Query<InitialSetupRetryRow>(sql, new { now, limit = InitialSetupRetryBatchSize },
+                commandTimeout: InitialSetupRetryTimeoutSeconds).ToList();
+            var ids = rows.Where(row => row.Id.HasValue).Select(row => row.Id.Value).ToList();
+            var pendingCount = rows.FirstOrDefault()?.PendingCount ?? 0;
+            if (pendingCount > 0)
+                _logger.Log(timer.ElapsedMilliseconds >= SlowInitialSetupRetryMilliseconds ? LogLevel.Info : LogLevel.Debug,
+                    "Initial format-sync retry: {0} due in this batch, {1} pending; elapsed {2} ms", ids.Count, pendingCount, timer.ElapsedMilliseconds);
+            return ids;
+        }
 
         public bool AuthorPathExists(string path)
         {
@@ -108,7 +157,7 @@ namespace NzbDrone.Core.Books
         {
             using (var conn = _database.OpenConnection())
             {
-                var strSql = "SELECT \"Id\", \"Path\", \"AudiobookPath\", \"EbookPath\" FROM \"Authors\"";
+                var strSql = "SELECT \"Id\", \"Name\", \"Path\", \"AudiobookPath\", \"EbookPath\" FROM \"Authors\"";
                 return conn.Query<Author>(strSql).ToList();
             }
         }

@@ -19,14 +19,14 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
             Cleanup(mapper);
         }
 
-        internal static int Cleanup(IDbConnection connection, IDbTransaction transaction = null)
+        internal static int Cleanup(IDbConnection connection, IDbTransaction transaction = null, int? commandTimeout = null)
         {
             return connection.Execute(@"DELETE FROM ""Editions""
                              WHERE ""Id"" IN (
                              SELECT ""Editions"".""Id"" FROM ""Editions""
                              LEFT OUTER JOIN ""Books""
                              ON ""Editions"".""BookId"" = ""Books"".""Id""
-                             WHERE ""Books"".""Id"" IS NULL)", transaction: transaction);
+                             WHERE ""Books"".""Id"" IS NULL)", transaction: transaction, commandTimeout: commandTimeout);
         }
     }
 }

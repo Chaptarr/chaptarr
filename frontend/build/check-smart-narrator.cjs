@@ -182,6 +182,20 @@ async function verify(browser, theme, width, css) {
   await page.getByRole('button', { name: 'Apply', exact: true }).click();
   assert.equal(await page.evaluate(() => window.namingPattern), '{Book Title}{ - SmartNarrator:Narrators}');
   assert.deepEqual(previews[0].sample.narratorNames, ['Alice Reader', 'Bob Reader', 'Carol Reader']);
+  await page.evaluate(() => window.setNamingPattern('{Book Title} - { (PartNumber:smart)}'));
+  const patternInput = page.locator('input[name="standardBookFormat"]');
+  await patternInput.focus();
+  await patternInput.press('Home');
+  for (let index = 0; index < '{Book Title}'.length; index++) {
+    await patternInput.press('ArrowRight');
+  }
+  await page.getByText('{Author Name}', { exact: true }).click();
+  await page.getByText('{Book Subtitle}', { exact: true }).click();
+  assert.equal(await page.evaluate(() => window.namingPattern), '{Book Title}{Author Name}{Book Subtitle} - { (PartNumber:smart)}');
+  await page.getByText('{Smart Narrator}', { exact: true }).click();
+  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+  await page.getByText('{Book CleanTitle}', { exact: true }).click();
+  assert.equal(await page.evaluate(() => window.namingPattern), '{Book Title}{Author Name}{Book Subtitle}{Smart Narrator:AudioProductionType,FullCast,Narrators}{Book CleanTitle} - { (PartNumber:smart)}');
   assert.deepEqual(errors, []);
   await page.close();
 }

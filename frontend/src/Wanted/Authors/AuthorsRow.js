@@ -3,6 +3,7 @@ import PropTypes from 'prop-types';
 import React from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
+import AuthorInitialScanStatus from 'Author/Details/AuthorInitialScanStatus';
 import SpinnerButton from 'Components/Link/SpinnerButton';
 import RelativeDateCellConnector from 'Components/Table/Cells/RelativeDateCellConnector';
 import TableRowCell from 'Components/Table/Cells/TableRowCell';
@@ -23,7 +24,7 @@ const statusKeys = {
   Failed: 'NotAvailable'
 };
 
-function AuthorsRow({ id, authorName, providerId, createdAt, nextAttemptAt, shortDateFormat, timeFormat, overallStatus, audiobookStatus, ebookStatus, columns, pendingAction, onRetryPress, onCancelPress, onDeletePress }) {
+function AuthorsRow({ initialScan, id, authorName, providerId, createdAt, nextAttemptAt, shortDateFormat, timeFormat, overallStatus, audiobookStatus, ebookStatus, columns, pendingAction, onRetryPress, onCancelPress, onDeletePress }) {
   const isActive = ['Pending', 'InProgress', 'Retrying'].includes(overallStatus);
   const canRetry = overallStatus !== 'Succeeded' && [audiobookStatus, ebookStatus].some((status) => status && status !== 'NotRequested');
 
@@ -80,6 +81,9 @@ function AuthorsRow({ id, authorName, providerId, createdAt, nextAttemptAt, shor
             );
           }
 
+          if (name === 'overallStatus' && initialScan) {
+            return <TableRowCell key={name}><AuthorInitialScanStatus {...initialScan} /></TableRowCell>;
+          }
           let value = translate(statusKeys[overallStatus] || 'Unknown');
           if (name === 'authorName') {
             value = authorName || '';
@@ -104,6 +108,7 @@ function AuthorsRow({ id, authorName, providerId, createdAt, nextAttemptAt, shor
 }
 
 AuthorsRow.propTypes = {
+  initialScan: PropTypes.object,
   id: PropTypes.number.isRequired,
   authorName: PropTypes.string,
   providerId: PropTypes.string.isRequired,

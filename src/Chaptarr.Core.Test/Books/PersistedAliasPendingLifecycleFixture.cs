@@ -39,7 +39,7 @@ namespace Chaptarr.Core.Test.Books
             public readonly AuthorRepository Authors;
             public readonly BookRepository Books;
             public readonly EditionRepository Editions;
-            public readonly ProviderAliasService Aliases;
+            public readonly ProviderAliasSeed Aliases;
             public readonly PendingAuthorImportRepository Requests;
             public readonly PendingAuthorImportService Pending;
             public readonly BookService BookService;
@@ -72,7 +72,7 @@ namespace Chaptarr.Core.Test.Books
                 Authors = new AuthorRepository(database, EventAggregator, logger);
                 Books = new BookRepository(database, EventAggregator);
                 Editions = new EditionRepository(database, EventAggregator);
-                Aliases = new ProviderAliasService(new ProviderAliasRepository(database, EventAggregator));
+                Aliases = new ProviderAliasSeed(database, EventAggregator);
                 Requests = new PendingAuthorImportRepository(database, EventAggregator);
                 Author = Authors.Insert(new Author
                 {
@@ -98,6 +98,7 @@ namespace Chaptarr.Core.Test.Books
                 Queue = Proxy<IManageCommandQueue>((method, args) =>
                 {
                     var command = (Command)args[0];
+                    command.Trigger = (CommandTrigger)args[2];
                     if (command is BookSearchCommand search && search.BookIds.Contains(RejectedBookId ?? 0))
                         throw new InvalidOperationException("Injected queue rejection");
                     if (command is DownloadBookMediaCommand && RejectCoverCommand || command is RefreshAuthorCommand && RejectRefreshCommand)
@@ -147,6 +148,19 @@ namespace Chaptarr.Core.Test.Books
                     EbookBooksToMonitor = ebook ? JsonConvert.SerializeObject(workIds) : null,
                     AudiobookRootFolderPath = @"C:\Audio", EbookRootFolderPath = @"C:\Ebooks"
                 });
+            }
+
+            public static void MarkExplicitSearches(PendingAuthorImport item)
+            {
+                var narrations = JsonConvert.DeserializeObject<List<RequestedNarration>>(item.AudiobookNarrations ?? "[]") ?? new();
+                var searches = narrations.Where(n => n.Search).Select(n => new RequestedBookSearch
+                    { MediaType = n.MediaType, WorkProviderId = n.WorkProviderId, EditionProviderId = n.EditionProviderId }).ToList();
+                foreach (var media in new[] { BookMediaType.Audiobook, BookMediaType.Ebook })
+                    searches.AddRange((JsonConvert.DeserializeObject<List<string>>((media == BookMediaType.Audiobook
+                        ? item.AudiobookBooksToSearch : item.EbookBooksToSearch) ?? "[]") ?? new())
+                        .Where(id => !narrations.Any(n => n.MediaType == media && n.WorkProviderId == id))
+                        .Select(id => new RequestedBookSearch { MediaType = media, WorkProviderId = id }));
+                item.ExplicitBookSearches = RequestedBookSearch.Write(searches);
             }
 
             public void Run()
@@ -295,8 +309,8 @@ namespace Chaptarr.Core.Test.Books
                 var h = new Harness(database);
                 var requested = h.AddBook();
                 var opposite = h.AddBook(BookMediaType.Ebook);
-                h.Aliases.ReplaceAliases("Book", requested.Id, "work", new[] { "hc:698880", "hc:1057591" });
-                h.Aliases.ReplaceAliases("Book", opposite.Id, "edition", new[] { "hc:1057591" });
+                h.Aliases.SeedAliases("Book", requested.Id, "work", new[] { "hc:698880", "hc:1057591" });
+                h.Aliases.SeedAliases("Book", opposite.Id, "edition", new[] { "hc:1057591" });
                 h.Request(new List<string> { "hc:1057591" });
                 h.Run();
                 Assert.Multiple(() =>
@@ -444,7 +458,7 @@ namespace Chaptarr.Core.Test.Books
             DualDatabaseFixture.Run(postgres, database =>
             {
                 var h = new Harness(database);
-                h.Aliases.ReplaceAliases("Author", h.Author.Id, "author", new[] { "hc:9001", "gr:5500" });
+                h.Aliases.SeedAliases("Author", h.Author.Id, "author", new[] { "hc:9001", "gr:5500" });
                 var item = h.Request(new() { "hc:698880" });
                 item.ProviderId = "gr:5500";
                 h.Requests.Update(item);
@@ -483,7 +497,7 @@ namespace Chaptarr.Core.Test.Books
 
         [TestCase(false)]
         [TestCase(true)]
-        public void rejected_search_preserves_held_intent_and_finishes_other_targets_before_retry(bool postgres)
+        public void rejected_list_batch_preserves_all_search_intent_before_retry(bool postgres)
         {
             DualDatabaseFixture.Run(postgres, database =>
             {
@@ -496,15 +510,17 @@ namespace Chaptarr.Core.Test.Books
                 h.Run();
                 Assert.Multiple(() =>
                 {
-                    Assert.That(h.Commands.OfType<BookSearchCommand>().SelectMany(command => command.BookIds), Is.EqualTo(new[] { second.Id }));
+                    Assert.That(h.Commands.OfType<BookSearchCommand>(), Is.Empty);
                     Assert.That(h.Commands.OfType<RefreshAuthorCommand>().Count(), Is.EqualTo(1));
-                    Assert.That(h.Requests.Get(pending.Id).AudiobookBooksToSearch, Does.Contain("698880").And.Not.Contain("7000"));
+                    Assert.That(h.Requests.Get(pending.Id).AudiobookBooksToSearch, Does.Contain("698880").And.Contain("7000"));
                     Assert.That(h.Books.Get(first.Id).AddOptions.SearchForNewBook, Is.True);
+                    Assert.That(h.Books.Get(second.Id).AddOptions.SearchForNewBook, Is.True);
                 });
                 h.RejectedBookId = null;
                 h.Pending.RetryNow(pending.Id);
                 h.Run();
-                Assert.That(h.Commands.OfType<BookSearchCommand>().SelectMany(command => command.BookIds), Is.EquivalentTo(new[] { first.Id, second.Id }));
+                Assert.That(h.Commands.OfType<BookSearchCommand>().Single().BookIds, Is.EquivalentTo(new[] { first.Id, second.Id }));
+                Assert.That(h.Commands.OfType<BookSearchCommand>().Single().Trigger, Is.EqualTo(CommandTrigger.Unspecified));
                 Assert.That(h.Requests.All(), Is.Empty);
             });
         }
@@ -569,9 +585,11 @@ namespace Chaptarr.Core.Test.Books
             });
         }
 
-        [TestCase(false)]
-        [TestCase(true)]
-        public void cover_and_refresh_rejections_preserve_accepted_and_rejected_search_progress(bool postgres)
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        public void cover_and_refresh_rejections_preserve_search_batch_progress(bool postgres, bool rejectSearch)
         {
             DualDatabaseFixture.Run(postgres, database =>
             {
@@ -583,23 +601,33 @@ namespace Chaptarr.Core.Test.Books
                     ReadingFormatId = 2, Narrator = "Another Narrator", Language = "eng", TitleSlug = Guid.NewGuid().ToString("N") } });
                 var pending = h.Request(new() { "hc:698880", "hc:7000" }, new()
                     { new() { WorkProviderId = "hc:698880", EditionProviderId = "gr:44767458", RequiresEdition = true, Search = true } });
-                h.RejectedBookId = first.Id;
+                h.RejectedBookId = rejectSearch ? first.Id : null;
                 h.RejectCoverCommand = true;
                 h.RejectRefreshCommand = true;
                 h.Run();
                 Assert.Multiple(() =>
                 {
                     Assert.That(h.Requests.Get(pending.Id).OverallStatus, Is.EqualTo(PendingImportStatus.Retrying));
-                    Assert.That(h.Requests.Get(pending.Id).AudiobookBooksToSearch, Does.Contain("698880").And.Not.Contain("7000"));
-                    Assert.That(h.Books.Get(first.Id).AddOptions.SearchForNewBook, Is.True);
-                    Assert.That(h.Commands.OfType<BookSearchCommand>().SelectMany(command => command.BookIds), Is.EqualTo(new[] { second.Id }));
+                    if (rejectSearch)
+                    {
+                        Assert.That(h.Requests.Get(pending.Id).AudiobookBooksToSearch, Does.Contain("698880").And.Contain("7000"));
+                        Assert.That(h.Commands.OfType<BookSearchCommand>(), Is.Empty);
+                    }
+                    else
+                    {
+                        Assert.That(h.Requests.Get(pending.Id).AudiobookBooksToSearch, Is.EqualTo("[]"));
+                        Assert.That(h.Commands.OfType<BookSearchCommand>().Single().BookIds, Is.EquivalentTo(new[] { first.Id, second.Id }));
+                    }
+                    Assert.That(h.Books.Get(first.Id).AddOptions.SearchForNewBook, Is.EqualTo(rejectSearch));
+                    Assert.That(h.Books.Get(second.Id).AddOptions.SearchForNewBook, Is.EqualTo(rejectSearch));
                 });
                 h.RejectedBookId = null;
                 h.RejectCoverCommand = false;
                 h.RejectRefreshCommand = false;
                 h.Pending.RetryNow(pending.Id);
                 h.Run();
-                Assert.That(h.Commands.OfType<BookSearchCommand>().SelectMany(command => command.BookIds), Is.EquivalentTo(new[] { first.Id, second.Id }));
+                Assert.That(h.Commands.OfType<BookSearchCommand>().Single().BookIds, Is.EquivalentTo(new[] { first.Id, second.Id }));
+                Assert.That(h.Commands.OfType<BookSearchCommand>().Single().Trigger, Is.EqualTo(CommandTrigger.Unspecified));
                 Assert.That(h.Requests.All(), Is.Empty);
             });
         }
@@ -628,7 +656,7 @@ namespace Chaptarr.Core.Test.Books
                 }
                 loaded.Title = "Must roll back";
                 loaded.RemoteProviderIds = new HashSet<string> { "gr:44767459" };
-                Assert.That(() => repository.UpdateMany(new List<Edition> { loaded }), Throws.Exception);
+                Assert.That(() => repository.UpdateMany(new List<Edition> { loaded }), Throws.Exception.With.Message.Contains(postgres ? "reject_secondary_alias" : "Injected alias failure"));
                 Assert.Multiple(() =>
                 {
                     Assert.That(repository.Get(edition.Id).Title, Is.EqualTo("Updated title"));
@@ -735,7 +763,7 @@ namespace Chaptarr.Core.Test.Books
             DualDatabaseFixture.Run(postgres, database =>
             {
                 var h = new Harness(database);
-                h.Aliases.ReplaceAliases("Author", h.Author.Id, "author", new[] { "hc:9001", "gr:5500" });
+                h.Aliases.SeedAliases("Author", h.Author.Id, "author", new[] { "hc:9001", "gr:5500" });
                 var pending = h.Request(new() { "hc:698880" }, ebook: true);
                 pending.ProviderId = "gr:5500";
                 h.Requests.Update(pending);
@@ -765,7 +793,7 @@ namespace Chaptarr.Core.Test.Books
 
         [TestCase(false)]
         [TestCase(true)]
-        public void author_alias_preservation_reuses_one_batch_read_for_bulk_author_updates(bool postgres)
+        public void author_snapshot_preservation_requires_no_alias_reads_for_bulk_author_updates(bool postgres)
         {
             DualDatabaseFixture.Run(postgres, database =>
             {
@@ -778,7 +806,7 @@ namespace Chaptarr.Core.Test.Books
                         TitleSlug = Guid.NewGuid().ToString("N"), Path = @"C:\Audio\Fixture Author", Added = DateTime.UtcNow,
                         HardcoverAuthorId = $"hc:{20000 + count * 100 + index}"
                     })).ToList();
-                    foreach (var author in authors) h.Aliases.ReplaceAliases("Author", author.Id, "author", new[] { author.HardcoverAuthorId, $"gr:{30000 + author.Id}" });
+                    foreach (var author in authors) h.Aliases.SeedAliases("Author", author.Id, "author", new[] { author.HardcoverAuthorId, $"gr:{30000 + author.Id}" });
                     var batchReads = 0;
                     var aliases = Proxy<IProviderAliasService>((method, args) =>
                     {
@@ -792,7 +820,7 @@ namespace Chaptarr.Core.Test.Books
                     var service = new AuthorService(h.Authors, h.EventAggregator, null, null, h.Queue, new CacheManager(), h.Books, null,
                         LogManager.GetCurrentClassLogger(), null, null, new Lazy<IBookService>(() => h.BookService), mainDatabase: h.Database, aliases);
                     service.UpdateAuthors(h.Authors.Get(authors.Select(author => author.Id)).ToList(), false);
-                    Assert.That(batchReads, Is.EqualTo(1));
+                    Assert.That(batchReads, Is.Zero);
                     Assert.That(h.Aliases.GetAliases("Author", authors.Select(author => author.Id), "author").Count(alias => alias.Provider == "gr"), Is.EqualTo(count));
                     TestContext.WriteLine($"{(postgres ? "PostgreSQL" : "SQLite")}: {count} author updates, {batchReads} batch alias read, zero scalar alias reads");
                 }
@@ -835,12 +863,16 @@ namespace Chaptarr.Core.Test.Books
         [TestCase(true, true)]
         public void automatic_bulk_merge_preserves_pending_demand_and_transfers_persisted_aliases(bool postgres, bool rollback)
         {
+            var sink = new NLog.Targets.MemoryTarget { Layout = "${message}|${exception:format=tostring}" };
+            var config = new NLog.Config.LoggingConfiguration();
+            config.AddRule(NLog.LogLevel.Debug, NLog.LogLevel.Fatal, sink);
+            using var logs = new LogFactory { Configuration = config };
             DualDatabaseFixture.Run(postgres, database =>
             {
                 var h = new Harness(database);
                 var source = h.Authors.Get(h.Author.Id);
                 var book = h.AddBook();
-                h.Aliases.ReplaceAliases("Author", source.Id, "author", new[] { "hc:9001", "gr:5500", "ol:OLSECONDARYA" });
+                h.Aliases.SeedAliases("Author", source.Id, "author", new[] { "hc:9001", "gr:5500", "ol:OLSECONDARYA" });
                 var target = h.Authors.Insert(new Author
                 {
                     Name = source.Name, CleanName = source.CleanName, SortName = source.SortName,
@@ -850,7 +882,7 @@ namespace Chaptarr.Core.Test.Books
                     AudiobookQualityProfileId = source.AudiobookQualityProfileId, EbookQualityProfileId = source.EbookQualityProfileId,
                     AudiobookMetadataProfileId = source.AudiobookMetadataProfileId, EbookMetadataProfileId = source.EbookMetadataProfileId
                 });
-                h.Aliases.ReplaceAliases("Author", target.Id, "author", new[] { "hc:9002", "gr:5500", "gb:SURVIVORSECONDARY" });
+                h.Aliases.SeedAliases("Author", target.Id, "author", new[] { "hc:9002", "gr:5500", "gb:SURVIVORSECONDARY" });
                 var pending = h.Request(new() { "hc:698880" });
                 pending.ProviderId = "gr:5500";
                 h.Requests.Update(pending);
@@ -863,12 +895,14 @@ namespace Chaptarr.Core.Test.Books
                     LogManager.GetCurrentClassLogger(), null, null, new Lazy<IBookService>(() => h.BookService), mainDatabase: h.Database, h.Aliases);
                 var exclusions = Proxy<NzbDrone.Core.ImportLists.Exclusions.IImportListExclusionService>((method, args) =>
                     new List<NzbDrone.Core.ImportLists.Exclusions.ImportListExclusion>());
-                var history = Proxy<NzbDrone.Core.History.IHistoryService>((method, args) =>
-                    method.Name == "GetByAuthor" ? new List<NzbDrone.Core.History.EntityHistory>() : null);
                 var sync = Proxy<IAuthorSyncMetadataService>((method, args) => null);
-                var refresh = new RefreshAuthorService(null, authors, h.BookService, h.EditionService, null, null, null,
-                    h.EventAggregator, h.Queue, null, history, null, null, null, null, exclusions, sync, null, null,
-                    LogManager.GetCurrentClassLogger(), mainDatabase: database);
+                var published = new Author { Name = target.Name, HardcoverAuthorId = "hc:9002", GoodreadsAuthorId = "gr:5500",
+                    RemoteProviderIds = new() { "hc:9001", "hc:9002", "gr:5500", "ol:OLSECONDARYA", "gb:SURVIVORSECONDARY" } };
+                var metadata = Proxy<NzbDrone.Core.MetadataSource.IProvideAuthorInfo>((method, args) =>
+                    method.Name == "RefreshAuthorInfo" ? NzbDrone.Core.MetadataSource.BookInfo.RefreshResult.Updated(published) : null);
+                var refresh = new RefreshAuthorService(MetadataHealthGateStub.Ready(), metadata, authors, h.BookService, h.EditionService, null, null, null,
+                    h.EventAggregator, h.Queue, null, new global::NzbDrone.Core.History.HistoryRepository(database, h.EventAggregator), null, null, null, null, exclusions, sync, null, null,
+                    logs.GetLogger("Merge"), mainDatabase: database, bookRepository: h.Books, authorRepository: h.Authors);
                 if (rollback)
                 {
                     using var connection = database.OpenConnection();
@@ -889,6 +923,8 @@ namespace Chaptarr.Core.Test.Books
                     var blocked = (HashSet<string>)typeof(RefreshAuthorService).GetMethod("ApplyServerMerges", flags)
                         .Invoke(refresh, new object[] { response, new List<Author> { source, target } });
                     Assert.That(blocked.Contains("hc:9001"), Is.EqualTo(rollback));
+                    if (rollback) Assert.That(sink.Logs, Has.Some.Contains("fixture merge abort"), "Rollback must reach the planted database failure");
+                    Assert.That(sink.Logs, Has.None.Contains("NotImplementedException"));
                 }
                 var stored = h.Requests.Get(pending.Id);
                 TestContext.WriteLine($"Q6 {(postgres ? "PostgreSQL" : "SQLite")} request active={stored.IsActive()}, status={stored.OverallStatus}, error={stored.LastError}, deleted events={h.Events.OfType<AuthorDeletedEvent>().Count()}");
@@ -925,7 +961,7 @@ namespace Chaptarr.Core.Test.Books
                 var h = new Harness(database);
                 var book = h.AddBook();
                 var stored = h.Editions.FindRowsByBook(new[] { book.Id }).Single();
-                h.Aliases.ReplaceAliases("Edition", stored.Id, "edition", new[] { "gr:8001" });
+                h.Aliases.SeedAliases("Edition", stored.Id, "edition", new[] { "gr:8001" });
                 var payload = new NzbDrone.Core.MetadataSource.BookInfo.V5.V5Edition
                 {
                     Id = "hc:edition:2001", Title = "Lovers", ProviderIdsAllCamel = null,
@@ -969,7 +1005,7 @@ namespace Chaptarr.Core.Test.Books
                 List<ProviderAlias> aliases;
                 if (authorBoundary)
                 {
-                    h.Aliases.ReplaceAliases("Author", h.Author.Id, "author", new[] { "hc:9001", "gr:7001" });
+                    h.Aliases.SeedAliases("Author", h.Author.Id, "author", new[] { "hc:9001", "gr:7001" });
                     var local = h.Authors.Get(h.Author.Id);
                     local.UseMetadataFrom(new Author
                         { Name = local.Name, HardcoverAuthorId = local.HardcoverAuthorId, RemoteProviderIds = ids });

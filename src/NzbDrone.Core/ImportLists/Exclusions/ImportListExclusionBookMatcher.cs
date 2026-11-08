@@ -34,15 +34,7 @@ namespace NzbDrone.Core.ImportLists.Exclusions
 
         public static List<string> GetLookupIds(Book book)
         {
-            var lookupIds = GetCanonicalProviderIds(book);
-
-            var rawIds = lookupIds
-                .Where(id => id.StartsWith("gr:", StringComparison.OrdinalIgnoreCase))
-                .Select(GetRawId)
-                .Where(id => id.IsNotNullOrWhiteSpace())
-                .ToList();
-
-            lookupIds.AddRange(rawIds);
+            var lookupIds = ImportListProviderIdHelper.GetExclusionLookupIds(GetCanonicalProviderIds(book));
 
             if (book != null)
             {
@@ -111,23 +103,6 @@ namespace NzbDrone.Core.ImportLists.Exclusions
             return ImportListProviderIdHelper.Normalize(value, defaultPrefix);
         }
 
-        private static string GetRawId(string providerId)
-        {
-            if (providerId.IsNullOrWhiteSpace())
-            {
-                return null;
-            }
-
-            providerId = providerId.Trim();
-            var idx = providerId.IndexOf(':');
-
-            if (idx <= 0 || idx == providerId.Length - 1)
-            {
-                return providerId;
-            }
-
-            return providerId.Substring(idx + 1);
-        }
 
     }
 }

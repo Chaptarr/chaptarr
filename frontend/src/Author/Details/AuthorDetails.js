@@ -70,8 +70,14 @@ class AuthorDetails extends Component {
       allUnselected: false,
       lastToggled: null,
       selectedState: {},
-      selectedTabIndex: 0
+      selectedTabIndex: new URLSearchParams(props.location?.search).get('tab') === 'search' ? 3 : 0
     };
+  }
+
+  componentDidUpdate(previous) {
+    if (previous.location !== this.props.location && new URLSearchParams(this.props.location?.search).get('tab') === 'search') {
+      this.setState({ selectedTabIndex: 3 });
+    }
   }
 
   //
@@ -706,6 +712,7 @@ class AuthorDetails extends Component {
 }
 
 AuthorDetails.propTypes = {
+  location: PropTypes.object,
   id: PropTypes.number.isRequired,
   foreignAuthorId: PropTypes.string.isRequired,
   authorName: PropTypes.string.isRequired,

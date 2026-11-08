@@ -1,3 +1,4 @@
+using Chaptarr.Core.Test.Common;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -31,13 +32,13 @@ namespace Chaptarr.Core.Test.Books
             public SortedChildren Result { get; private set; }
 
             public Refresh(List<Book> local, IEventAggregator events, IRefreshBookService refreshBooks = null)
-                : base(authorInfo: null, authorService: null, bookService: ReadService<IBookService>(local), editionService: ReadService<IEditionService>(local),
+                : base(MetadataHealthGateStub.Ready(), authorInfo: null, authorService: null, bookService: ReadService<IBookService>(local), editionService: ReadService<IEditionService>(local),
                     metadataProfileService: null, refreshBookService: refreshBooks, refreshSeriesService: null,
                     eventAggregator: events, commandQueueManager: null, mediaFileService: ReadService<IMediaFileService>(local),
-                    historyService: null, rootFolderService: null, checkIfAuthorShouldBeRefreshed: null,
+                    historyRepository: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoHistoryRepositoryCalls(), rootFolderService: null, checkIfAuthorShouldBeRefreshed: null,
                     monitorNewBookService: new MonitorNewBookService(LogManager.GetCurrentClassLogger()),
                     configService: null, importListExclusionService: null, syncMetadataService: null,
-                    syncQueueService: null, rootFolderSettingsResolver: null, logger: LogManager.GetCurrentClassLogger())
+                    syncQueueService: null, rootFolderSettingsResolver: null, logger: LogManager.GetCurrentClassLogger(), bookRepository: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoBookRepositoryCalls(), authorRepository: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoPendingAuthorSetup())
             {
                 _local = local;
                 _refreshBooks = refreshBooks != null;
@@ -45,7 +46,7 @@ namespace Chaptarr.Core.Test.Books
 
             public void Run(Author author, List<Book> remote) => SortChildren(author, remote, null, true, false, null);
 
-            public void MatchWithoutSnapshot(List<Book> local, Book remote) => GetMatchingExistingChildren(local, remote);
+            public void MatchWithoutSnapshot(List<Book> local, Book remote) => GetMatchingExistingChildren(local, remote, CreateContext());
 
             private static T ReadService<T>(List<Book> local)
                 where T : class
@@ -73,10 +74,10 @@ namespace Chaptarr.Core.Test.Books
             }
 
             protected override bool RefreshChildren(SortedChildren children, List<Book> remote, Author data,
-                bool force, bool tags, DateTime? last)
+                bool force, bool tags, DateTime? last, RefreshContext context)
             {
                 Result = children;
-                return _refreshBooks && base.RefreshChildren(children, remote, data, force, tags, last);
+                return _refreshBooks && base.RefreshChildren(children, remote, data, force, tags, last, context);
             }
         }
 

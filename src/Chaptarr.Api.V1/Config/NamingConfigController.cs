@@ -1,10 +1,8 @@
-using System.Collections.Generic;
 using System.Linq;
 using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http;
 using Chaptarr.Http.REST;
 using FluentValidation;
-using FluentValidation.Results;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Organizer;
@@ -112,6 +110,17 @@ namespace Chaptarr.Api.V1.Config
             }
 
             var nameSpec = config.ToModel();
+            var formatSpec = nameSpec.GetForMediaType(normalizedMediaType);
+            var errors = new[]
+            {
+                new FluentValidation.Results.ValidationFailure(nameof(config.StandardBookFormat), FileNameValidation.GetBraceError(formatSpec.StandardBookFormat)),
+                new FluentValidation.Results.ValidationFailure(nameof(config.AuthorFolderFormat), FileNameValidation.GetBraceError(formatSpec.AuthorFolderFormat))
+            }.Where(error => error.ErrorMessage != null).ToList();
+            if (errors.Any())
+            {
+                throw new ValidationException(errors);
+            }
+
             var sampleResource = new NamingExampleResource();
 
             var singleTrackSampleResult = _filenameSampleService.GetStandardTrackSample(nameSpec, normalizedMediaType);
@@ -134,35 +143,11 @@ namespace Chaptarr.Api.V1.Config
 
         private void ValidateFormatResult(NamingConfig nameSpec)
         {
-            var validationFailures = new List<ValidationFailure>();
-
-            ValidateFormatResultForMediaType(nameSpec, "audiobook", validationFailures);
-            ValidateFormatResultForMediaType(nameSpec, "ebook", validationFailures);
+            var validationFailures = _filenameValidationService.ValidateNamingConfig(nameSpec);
 
             if (validationFailures.Any())
             {
-                throw new ValidationException(validationFailures.DistinctBy(v => v.PropertyName).ToArray());
-            }
-        }
-
-        private void ValidateFormatResultForMediaType(NamingConfig nameSpec, string mediaType, List<ValidationFailure> validationFailures)
-        {
-            // Single-file samples omit part tokens; validate both shapes before accepting either media scheme.
-            var samples = new[]
-            {
-                _filenameSampleService.GetStandardTrackSample(nameSpec, mediaType),
-                _filenameSampleService.GetMultiDiscTrackSample(nameSpec, mediaType)
-            };
-            foreach (var sample in samples)
-            {
-                var failure = _filenameValidationService.ValidateTrackFilename(sample);
-                if (failure != null)
-                {
-                    failure.PropertyName = mediaType == "ebook"
-                        ? nameof(NamingConfigResource.EbookStandardBookFormat)
-                        : nameof(NamingConfigResource.StandardBookFormat);
-                    validationFailures.Add(failure);
-                }
+                throw new ValidationException(validationFailures);
             }
         }
     }

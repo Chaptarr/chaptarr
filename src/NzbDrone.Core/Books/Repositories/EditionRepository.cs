@@ -48,13 +48,13 @@ namespace NzbDrone.Core.Books
     public class EditionRepository : BasicRepository<Edition>, IEditionRepository
     {
         private readonly Logger _logger;
-        private readonly ProviderAliasRepository _aliasRepository;
+        private readonly IProviderAliasRepository _aliases;
 
         public EditionRepository(IMainDatabase database, IEventAggregator eventAggregator)
             : base(database, eventAggregator)
         {
             _logger = LogManager.GetCurrentClassLogger();
-            _aliasRepository = new ProviderAliasRepository(database, eventAggregator);
+            _aliases = new ProviderAliasRepository(database, eventAggregator);
         }
 
         public override Edition Insert(Edition edition)
@@ -77,7 +77,6 @@ namespace NzbDrone.Core.Books
         {
             PrepareSelection(editions, connection, transaction, _database.DatabaseType);
             base.InsertMany(editions, connection, transaction);
-            ReplaceEditionAliases(editions, connection, transaction, replaceExisting: false);
         }
 
         public override Edition Update(Edition edition)
@@ -102,78 +101,11 @@ namespace NzbDrone.Core.Books
             if (editions.Count == 0) return;
             var updated = base.UpdateMany(editions.OrderBy(edition => edition.Monitored).ToList(), connection, transaction);
             EnsureEditionsUpdated(editions.Count, updated);
-            ReplaceEditionAliases(editions, connection, transaction);
-        }
-
-        public override void DeleteMany(IEnumerable<int> ids)
-        {
-            var editionIds = ids?.Distinct().ToList();
-            if (editionIds?.Count is not > 0) return;
-            using var connection = _database.OpenConnection();
-            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
-            base.DeleteMany(editionIds, connection, transaction);
-            DeleteEditionAliases(editionIds, connection, transaction);
-            transaction.Commit();
-        }
-
-        private void DeleteEditionAliases(IEnumerable<int> ids, IDbConnection connection, IDbTransaction transaction)
-        {
-            foreach (var chunk in ids.Distinct().Chunk(_database.DatabaseType == DatabaseType.SQLite ? SqliteVariableLimit.MaxParameters : ushort.MaxValue))
-            {
-                var inClause = _database.DatabaseType == DatabaseType.PostgreSQL ? "= ANY(@ids)" : "IN @ids";
-                connection.Execute($"DELETE FROM \"ProviderAliasIndex\" WHERE \"EntityType\" = 'Edition' AND \"Scope\" = 'edition' AND \"EntityId\" {inClause}", new { ids = chunk.ToArray() }, transaction);
-            }
         }
 
         public void RefreshProviderAliases(IList<Edition> editions)
         {
-            using var connection = _database.OpenConnection();
-            using var transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
-            ReplaceEditionAliases(editions, connection, transaction);
-            transaction.Commit();
-        }
-
-        private void ReplaceEditionAliases(IList<Edition> editions, IDbConnection connection, IDbTransaction transaction, bool replaceExisting = true)
-        {
-            if (editions.Count == 0) return;
-            // Reloaded rows have no fresh provider set. Preserve their attested aliases;
-            // explicit upstream sets replace withdrawn aliases during metadata refresh.
-            var existing = (replaceExisting ? ReadEditionAliases(editions.Where(edition => edition.RemoteProviderIds == null).Select(edition => edition.Id), connection, transaction)
-                : new List<ProviderAlias>()).ToLookup(alias => alias.EntityId);
-            var now = DateTime.UtcNow;
-            var aliases = editions.SelectMany(edition => ProviderAliasService.NormalizeAliases(
-                BookEditionIdentity.GetEditionProviderIds(edition).Select(BookEditionIdentity.NormalizeRequestedEditionProviderId)
-                    .Concat(existing[edition.Id].Select(alias => $"{alias.Provider}:{alias.NormalizedProviderId}")))
-                .Select(alias => new ProviderAlias
-                {
-                    EntityType = "Edition", EntityId = edition.Id, Scope = "edition", Provider = alias.Provider,
-                    NormalizedProviderId = alias.NormalizedProviderId, CreatedAt = now, UpdatedAt = now
-                })).ToList();
-            if (replaceExisting) DeleteEditionAliases(editions.Select(edition => edition.Id), connection, transaction);
-            _aliasRepository.InsertMany(aliases, connection, transaction);
-        }
-
-        private List<ProviderAlias> ReadEditionAliases(IEnumerable<int> ids, IDbConnection connection, IDbTransaction transaction = null)
-        {
-            var aliases = new List<ProviderAlias>();
-            foreach (var chunk in ids.Distinct().Chunk(_database.DatabaseType == DatabaseType.SQLite ? SqliteVariableLimit.MaxParameters : ushort.MaxValue))
-            {
-                var inClause = _database.DatabaseType == DatabaseType.PostgreSQL ? "= ANY(@ids)" : "IN @ids";
-                aliases.AddRange(connection.Query<ProviderAlias>($"SELECT * FROM \"ProviderAliasIndex\" WHERE \"EntityType\" = 'Edition' AND \"Scope\" = 'edition' AND \"EntityId\" {inClause}", new { ids = chunk.ToArray() }, transaction));
-            }
-            return aliases;
-        }
-
-        private List<Edition> HydrateEditionAliases(List<Edition> editions)
-        {
-            if (editions.Count == 0) return editions;
-            using var connection = _database.OpenConnection();
-            var aliases = ReadEditionAliases(editions.Select(edition => edition.Id), connection).ToLookup(alias => alias.EntityId);
-            foreach (var edition in editions)
-            {
-                edition.RemoteProviderIds = aliases[edition.Id].Select(alias => $"{alias.Provider}:{alias.NormalizedProviderId}").ToHashSet(StringComparer.OrdinalIgnoreCase);
-            }
-            return editions;
+            SetFields(editions, edition => edition.ProviderIds);
         }
 
         public List<Edition> GetAllMonitoredEditions()
@@ -301,7 +233,7 @@ namespace NzbDrone.Core.Books
             // Each physical book copy has its own set of Edition rows (and thus duplicated ForeignEditionIds).
             // Refresh must only load editions for the specific BookId being refreshed; otherwise editions (and attached
             // files via EditionId) can get re-parented across copies, collapsing multiple books into one.
-            return HydrateEditionAliases(Query(r => r.BookId == bookId));
+            return (Query(r => r.BookId == bookId));
         }
 
         public List<Edition> FindByBook(IEnumerable<int> ids) => FindByBookInternal(ids, hydrateBook: true);
@@ -353,10 +285,10 @@ namespace NzbDrone.Core.Books
                     editions.AddRange(QueryForBookIds(batch.ToArray()));
                 }
 
-                return HydrateEditionAliases(editions.DistinctBy(e => e.Id).ToList());
+                return (editions.DistinctBy(e => e.Id).ToList());
             }
 
-            return HydrateEditionAliases(QueryForBookIds(bookIds));
+            return (QueryForBookIds(bookIds));
         }
 
         public List<Edition> FindByAuthor(int id, bool onlyMonitored = false)
@@ -399,9 +331,9 @@ namespace NzbDrone.Core.Books
             transaction.Commit();
         }
 
-        internal static void PersistSelection(IList<Edition> editions, IDbConnection connection, IDbTransaction transaction, DatabaseType databaseType)
+        internal static void PersistSelection(IList<Edition> editions, IDbConnection connection, IDbTransaction transaction, DatabaseType databaseType, int? commandTimeout = null)
         {
-            PrepareSelection(editions, connection, transaction, databaseType);
+            PrepareSelection(editions, connection, transaction, databaseType, commandTimeout: commandTimeout);
             var updated = 0;
             var batchSize = databaseType == DatabaseType.SQLite ? SqliteVariableLimit.MaxParameters - 2 : Math.Max(1, editions.Count);
             var idPredicate = databaseType == DatabaseType.PostgreSQL ? "= ANY(@ids)" : "IN @ids";
@@ -410,7 +342,7 @@ namespace NzbDrone.Core.Books
                 foreach (var ids in group.Select(edition => edition.Id).Chunk(batchSize))
                 {
                     updated += connection.Execute($"UPDATE \"Editions\" SET \"Monitored\" = @Monitored, \"ManualAdd\" = @ManualAdd WHERE \"Id\" {idPredicate}",
-                        new { group.Key.Monitored, group.Key.ManualAdd, ids }, transaction);
+                        new { group.Key.Monitored, group.Key.ManualAdd, ids }, transaction, commandTimeout: commandTimeout);
                 }
             }
             EnsureEditionsUpdated(editions.Count, updated);
@@ -424,7 +356,7 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        private static void PrepareSelection(IList<Edition> editions, IDbConnection connection, IDbTransaction transaction, DatabaseType databaseType, Edition selectedEdition = null)
+        private static void PrepareSelection(IList<Edition> editions, IDbConnection connection, IDbTransaction transaction, DatabaseType databaseType, Edition selectedEdition = null, int? commandTimeout = null)
         {
             var selections = editions.Where(edition => edition.Monitored).ToList();
             if (selections.Count == 0 && selectedEdition == null) return;
@@ -437,7 +369,7 @@ namespace NzbDrone.Core.Books
             var selectionBookIds = selections.Select(edition => edition.BookId)
                 .Concat(selectedEdition == null ? Enumerable.Empty<int>() : new[] { selectedEdition.BookId })
                 .Distinct().OrderBy(id => id).ToArray();
-            LockSelectionBooks(selectionBookIds, connection, transaction, databaseType);
+            LockSelectionBooks(selectionBookIds, connection, transaction, databaseType, commandTimeout);
 
             // An unchanged selection still participates in the caller's atomic save.
             // Lock and validate its owner without rewriting unchanged metadata/aliases.
@@ -448,7 +380,7 @@ namespace NzbDrone.Core.Books
                 var locking = databaseType == DatabaseType.PostgreSQL ? " FOR UPDATE" : string.Empty;
                 var selectedId = connection.QuerySingleOrDefault<int?>(
                     "SELECT \"Id\" FROM \"Editions\" WHERE \"Id\"=@Id AND \"BookId\"=@BookId" + unchangedSelection + locking,
-                    new { selectedEdition.Id, selectedEdition.BookId }, transaction);
+                    new { selectedEdition.Id, selectedEdition.BookId }, transaction, commandTimeout: commandTimeout);
                 if (!selectedId.HasValue)
                 {
                     throw new ModelConflictException(typeof(Edition), selectedEdition.Id, "was removed, moved, or changed selection before the update could be saved. Reload and try again.");
@@ -466,17 +398,17 @@ namespace NzbDrone.Core.Books
                 var books = databaseType == DatabaseType.PostgreSQL ? "= ANY(@bookIds)" : "IN @bookIds";
                 var selected = databaseType == DatabaseType.PostgreSQL ? "<> ALL(@editionIds)" : "NOT IN @editionIds";
                 connection.Execute($"UPDATE \"Editions\" SET \"Monitored\" = false WHERE \"BookId\" {books} AND \"Monitored\" = true AND \"Id\" {selected}",
-                    new { bookIds, editionIds }, transaction);
+                    new { bookIds, editionIds }, transaction, commandTimeout: commandTimeout);
             }
         }
 
-        internal static void LockSelectionBooks(int[] bookIds, IDbConnection connection, IDbTransaction transaction, DatabaseType databaseType)
+        internal static void LockSelectionBooks(int[] bookIds, IDbConnection connection, IDbTransaction transaction, DatabaseType databaseType, int? commandTimeout = null)
         {
             if (databaseType == DatabaseType.PostgreSQL)
             {
                 // Parent locks serialize competing choices, including first selections.
                 connection.Execute("SELECT \"Id\" FROM \"Books\" WHERE \"Id\" = ANY(@bookIds) ORDER BY \"Id\" FOR UPDATE",
-                    new { bookIds }, transaction);
+                    new { bookIds }, transaction, commandTimeout: commandTimeout);
             }
         }
 
@@ -701,7 +633,7 @@ namespace NzbDrone.Core.Books
             var results = _database.QueryJoined<Edition, Book, Author>(builder, MapEditionBookAuthor)
                 .OrderBy(e => e.Id)
                 .ToList();
-            var aliases = _aliasRepository.FindAliases("Edition", "edition", new[] { ("az", normalizedAsin) });
+            var aliases = _aliases.FindAliases("Edition", "edition", new[] { ("az", normalizedAsin) });
             var ids = aliases.Select(alias => alias.EntityId).Distinct().ToArray();
             if (ids.Length == 0) return results;
             var aliasBuilder = new SqlBuilder(_database.DatabaseType)
@@ -709,7 +641,7 @@ namespace NzbDrone.Core.Books
                 .LeftJoin<Book, Author>((b, a) => b.AuthorId == a.Id)
                 .Where<Edition>(edition => ids.Contains(edition.Id));
             if (mediaType.HasValue) aliasBuilder.Where<Book>(book => book.MediaType == mediaType.Value);
-            return HydrateEditionAliases(results.Concat(_database.QueryJoined<Edition, Book, Author>(aliasBuilder, MapEditionBookAuthor)).DistinctBy(edition => edition.Id).OrderBy(edition => edition.Id).ToList());
+            return (results.Concat(_database.QueryJoined<Edition, Book, Author>(aliasBuilder, MapEditionBookAuthor)).DistinctBy(edition => edition.Id).OrderBy(edition => edition.Id).ToList());
         }
 
         private string BuildAsinColumnClause(string column, string comparison)

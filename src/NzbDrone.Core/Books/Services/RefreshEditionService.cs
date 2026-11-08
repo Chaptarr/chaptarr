@@ -189,55 +189,9 @@ namespace NzbDrone.Core.Books
 	            }
 	        }
 
-	        private void MergeEdition(IDbConnection conn, IDbTransaction tran, int sourceEditionId, int targetEditionId)
-	        {
-	            if (sourceEditionId <= 0 || targetEditionId <= 0 || sourceEditionId == targetEditionId)
-	            {
-	                return;
-	            }
-
-	            // Re-parent file attachments.
-	            conn.Execute(
-	                "UPDATE \"BookFiles\" SET \"EditionId\" = @TargetEditionId WHERE \"EditionId\" = @SourceEditionId",
-	                new { SourceEditionId = sourceEditionId, TargetEditionId = targetEditionId },
-	                tran);
-
-	            // Re-parent history rows (nullable EditionId).
-	            conn.Execute(
-	                "UPDATE \"History\" SET \"EditionId\" = @TargetEditionId WHERE \"EditionId\" = @SourceEditionId",
-	                new { SourceEditionId = sourceEditionId, TargetEditionId = targetEditionId },
-	                tran);
-
-	            // Re-parent any legacy other-file rows that reference EditionId.
-	            conn.Execute(
-	                "UPDATE \"OtherFiles\" SET \"EditionId\" = @TargetEditionId WHERE \"EditionId\" = @SourceEditionId",
-	                new { SourceEditionId = sourceEditionId, TargetEditionId = targetEditionId },
-	                tran);
-
-	            // Re-parent narrator normalized rows (used for matching).
-	            conn.Execute(
-	                "UPDATE \"narrator_normalized\" SET \"EditionId\" = @TargetEditionId WHERE \"EditionId\" = @SourceEditionId",
-	                new { SourceEditionId = sourceEditionId, TargetEditionId = targetEditionId },
-	                tran);
-
-	            // Merge narrator links safely under the unique (EditionId, NarratorId) constraint.
-	            conn.Execute(
-	                "DELETE FROM \"EditionNarratorLink\" " +
-	                "WHERE \"EditionId\" = @SourceEditionId " +
-	                "  AND \"NarratorId\" IN (SELECT \"NarratorId\" FROM \"EditionNarratorLink\" WHERE \"EditionId\" = @TargetEditionId)",
-	                new { SourceEditionId = sourceEditionId, TargetEditionId = targetEditionId },
-	                tran);
-
-	            conn.Execute(
-	                "UPDATE \"EditionNarratorLink\" SET \"EditionId\" = @TargetEditionId WHERE \"EditionId\" = @SourceEditionId",
-	                new { SourceEditionId = sourceEditionId, TargetEditionId = targetEditionId },
-	                tran);
-
-	            // Finally delete the duplicate edition row.
-	            conn.Execute(
-	                "DELETE FROM \"Editions\" WHERE \"Id\" = @SourceEditionId",
-	                new { SourceEditionId = sourceEditionId },
-	                tran);
-	        }
+        private void MergeEdition(IDbConnection conn, IDbTransaction tran, int sourceEditionId, int targetEditionId)
+        {
+            new LibraryIdentityWriter(conn, tran, _mainDatabase.DatabaseType, null).MergeEdition(sourceEditionId, targetEditionId);
+        }
     }
 }

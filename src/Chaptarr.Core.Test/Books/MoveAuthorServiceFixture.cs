@@ -18,6 +18,7 @@ using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Organizer;
+using NzbDrone.Core.RootFolders;
 
 namespace Chaptarr.Core.Test.Books
 {
@@ -141,6 +142,27 @@ namespace Chaptarr.Core.Test.Books
             }
         }
 
+        [TestCase("audiobook")]
+        [TestCase("ebook")]
+        public void folder_move_preserves_colliding_files_and_their_original_tracking(string media)
+        {
+            using var s = new Sandbox(media);
+            var blocked = s.Track(media == "ebook" ? "Dune.epub" : "Dune.m4b");
+            var movable = s.Track(media == "ebook" ? "Dune Messiah.epub" : "Dune Messiah.m4b");
+            var original = blocked.Path;
+            var destination = Path.Combine(s.Target, Path.GetFileName(blocked.Path));
+            File.WriteAllText(destination, "different existing recording");
+
+            s.Move(media);
+
+            Assert.That(File.ReadAllText(destination), Is.EqualTo("different existing recording"));
+            Assert.That(File.ReadAllText(original), Is.EqualTo("sentinel"));
+            Assert.That(blocked.Path, Is.EqualTo(original));
+            Assert.That(movable.Path, Is.EqualTo(Path.Combine(s.Target, Path.GetFileName(movable.Path))));
+            Assert.That(s.Updated, Is.EqualTo(new[] { movable }));
+            Assert.That(s.Logs.Logs.Any(line => line.StartsWith("Warn|") && line.Contains("was not overwritten")), Is.True);
+        }
+
         [TestCase("audiobook", "debug.log")]
         [TestCase("ebook", "debug.log")]
         [TestCase("audiobook", ".nfs123")]
@@ -163,6 +185,59 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(File.ReadAllText(kept.Path), Is.EqualTo("sentinel"));
             Assert.That(s.Updated, Is.EqualTo(new[] { moved }));
             Assert.That(s.UpdateCalls, Is.EqualTo(1));
+        }
+
+        [TestCase("audiobook", false)]
+        [TestCase("ebook", false)]
+        [TestCase("audiobook", true)]
+        [TestCase("ebook", true)]
+        public void explicit_folder_move_reuses_transfer_and_repoints_the_selected_formats(string media, bool shared)
+        {
+            using var s = new Sandbox(media);
+            s.Author.AudiobookRootFolderPath = s.P("old");
+            s.Author.EbookRootFolderPath = s.P("old");
+            if (shared) s.Author.AudiobookPath = s.Author.EbookPath = s.Source;
+            var first = s.Track(media == "ebook" ? "Dune.epub" : "Dune.m4b");
+            var second = shared ? s.Track(media == "ebook" ? "Dune.m4b" : "Dune.epub") : null;
+            var roots = new List<RootFolder>
+            {
+                new() { Path = s.P("old"), FolderType = FolderType.Mixed },
+                new() { Path = s.P("new"), FolderType = FolderType.Mixed }
+            };
+            var commands = AuthorPathBuilder.ChangeFolders(s.Author,
+                media == "audiobook" ? s.Target : null, media == "ebook" ? s.Target : null, roots, true);
+            Assert.That(commands.Count, Is.EqualTo(1));
+            s.Service.Execute(commands.Single());
+            Assert.That(s.Events.Moves, Is.EqualTo(1));
+            Assert.That(File.ReadAllText(first.Path), Is.EqualTo("sentinel"));
+            Assert.That(first.Path, Does.StartWith(s.Target));
+            if (shared)
+            {
+                Assert.That(s.Author.AudiobookPath, Is.EqualTo(s.Target));
+                Assert.That(s.Author.EbookPath, Is.EqualTo(s.Target));
+                Assert.That(second.Path, Does.StartWith(s.Target));
+                Assert.That(File.ReadAllText(second.Path), Is.EqualTo("sentinel"));
+                Assert.That(s.Updated.Count, Is.EqualTo(2));
+            }
+            else
+            {
+                Assert.That(media == "ebook" ? s.Author.AudiobookPath : s.Author.EbookPath, Is.EqualTo(s.P("opposite")));
+            }
+        }
+
+        [Test]
+        public void explicit_ebook_only_move_does_not_create_an_audiobook_path()
+        {
+            using var s = new Sandbox("ebook");
+            s.Author.AudiobookPath = null;
+            var file = s.Track("Dune.epub");
+            var moves = AuthorPathBuilder.ChangeFolders(s.Author, null, s.Target,
+                new List<RootFolder> { new() { Path = s.P("new"), FolderType = FolderType.Ebook } }, true);
+            s.Service.Execute(moves.Single());
+            Assert.That(s.Author.AudiobookPath, Is.Null);
+            Assert.That(s.Author.EbookPath, Is.EqualTo(s.Target));
+            Assert.That(file.Path, Does.StartWith(s.Target));
+            Assert.That(File.ReadAllText(file.Path), Is.EqualTo("sentinel"));
         }
 
         [TestCase("audiobook", false)]

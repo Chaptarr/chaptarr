@@ -23,6 +23,7 @@ namespace NzbDrone.Core.Download
         public Dictionary<string, string> Data { get; set; }
         public TrackedDownload TrackedDownload { get; set; }
         public bool SkipRedownload { get; set; }
+        public bool SkipDownloadClientRemoval { get; set; }
         public ReleaseSourceType ReleaseSource { get; set; }
     }
 }

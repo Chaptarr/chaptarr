@@ -21,9 +21,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
     [TestFixture]
         public class HolyGrailSmokeTestFixture
         {
-        private static FileMatchingService CreateOwnSeriesTitleMatcher(IReadOnlyList<Book> books, List<EditionFtsMatch> candidates, string authorName = "Neil Gaiman", IEditionFtsRepository repository = null, IContainmentValidator validator = null)
+        private static FileMatchingService CreateOwnSeriesTitleMatcher(IReadOnlyList<Book> books, List<EditionFtsMatch> candidates, string authorName = "Neil Gaiman", IEditionFtsRepository repository = null, IContainmentValidator validator = null, Logger logger = null)
         {
-            var logger = LogManager.GetCurrentClassLogger();
+            logger ??= LogManager.GetCurrentClassLogger();
             var bookService = InterfaceProxy.Proxy<IBookService>((method, values) => method.Name switch
             {
                 "GetBook" => books.SingleOrDefault(book => book.Id == (int)values[0]),
@@ -42,7 +42,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         [TestCase(true, true, false)]
         [TestCase(true, false, true)]
         [TestCase(false, true, true)]
-        public void duration_or_narrator_proof_must_not_replace_missing_edition_title_words(
+        public void unattested_title_qualification_requires_both_narrator_and_duration(
             bool durationPresent, bool narratorPresent, bool fullTitlePresent)
         {
             var book = new Book { Id = 1, AuthorId = 77, Title = "Red Country", BaseBookId = "hc:297006",
@@ -72,7 +72,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 DurationSeconds = durationPresent ? 71592 : null
             }, BookMediaType.Audiobook, restrictToAuthorId: 77);
 
-            if (fullTitlePresent)
+            if (fullTitlePresent || (durationPresent && narratorPresent))
             {
                 Assert.That(match?.EditionId, Is.EqualTo(edition.EditionId));
             }
@@ -1261,7 +1261,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
-            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
@@ -1282,6 +1282,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
         private sealed class StubBookService : IBookService
         {
+            public List<Book> GetImportListBookIdentities() => GetAllBooks();
+
             private readonly Dictionary<int, Book> _booksById;
 
             public StubBookService(IEnumerable<Book> books)
@@ -1318,7 +1320,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds) => throw new NotImplementedException();
             public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds) => throw new NotImplementedException();
             public Book AddBook(Book newBook, bool doRefresh = true) => throw new NotImplementedException();
-            public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
+            public List<Book> FindBySlug(string titleSlug) => throw new NotImplementedException();
             public Book FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
             public Book FindByProviderId(string provider, string providerId) => throw new NotImplementedException();
             public Book FindByProviderId(string provider, string providerId, BookMediaType mediaType) => throw new NotImplementedException();
@@ -1344,7 +1346,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public (Book Book, bool ExistingCopy) AddWantedEditionCopy(int bookId, int editionId) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -1396,8 +1398,49 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 restrictToAuthorId: first.AuthorId);
         }
 
-        [Test]
-        public async System.Threading.Tasks.Task diagnostic_trace_should_report_raw_fts_and_actual_production_rank_without_changing_the_winner()
+        [TestCase(BookMediaType.Audiobook, false)]
+        [TestCase(BookMediaType.Ebook, false)]
+        [TestCase(BookMediaType.Audiobook, true)]
+        [TestCase(BookMediaType.Ebook, true)]
+        public void debug_names_monitored_tie_break_only_when_prior_evidence_ties(BookMediaType mediaType, bool higherFtsScore)
+        {
+            using var factory = new LogFactory();
+            var log = new MemoryTarget { Layout = "${message}" };
+            var config = new LoggingConfiguration(factory);
+            config.AddRule(LogLevel.Debug, LogLevel.Fatal, log);
+            factory.Configuration = config;
+            var book = new Book { Id = 1, AuthorId = 77, Title = "Alpha", MediaType = mediaType, AnyEditionOk = true };
+            EditionFtsMatch Candidate(int id, bool monitored) => new EditionFtsMatch
+            {
+                EditionId = id, BookId = book.Id, BookTitle = book.Title, EditionTitle = book.Title,
+                AuthorId = 77, AuthorName = "Test Author", NarratorNames = "Test Reader", DurationSeconds = 3600,
+                ReadingFormatId = mediaType == BookMediaType.Audiobook ? 2 : 3,
+                Monitored = monitored, MatchScore = !monitored && higherFtsScore ? 20 : 10,
+                ForeignEditionId = "hc:edition:" + id
+            };
+            var candidates = new List<EditionFtsMatch> { Candidate(11, false), Candidate(12, true) };
+            var service = CreateOwnSeriesTitleMatcher(new[] { book }, candidates, "Test Author", logger: factory.GetLogger("tie-break"));
+            var match = service.HolyGrailMatchFile(new DiscoveredFileWithMetadata
+            {
+                Path = mediaType == BookMediaType.Audiobook ? "/books/Alpha.m4b" : "/books/Alpha.epub",
+                DurationSeconds = 3600,
+                AllTags = new Dictionary<string, List<string>>
+                {
+                    ["TITLE"] = new List<string> { "Alpha" },
+                    ["AUTHOR"] = new List<string> { "Test Author" },
+                    ["NARRATOR"] = new List<string> { "Test Reader" }
+                }
+            }, mediaType, restrictToAuthorId: 77);
+
+            Assert.That(match?.EditionId, Is.EqualTo(higherFtsScore ? 11 : 12));
+            var ties = log.Logs.Where(line => line.StartsWith("[MATCH-TIEBREAK]", StringComparison.Ordinal)).ToList();
+            if (higherFtsScore) Assert.That(ties, Is.Empty);
+            else Assert.That(ties, Has.Some.Contains("monitored edition 12 ranks ahead of edition 11"));
+        }
+
+        [TestCase(BookMediaType.Audiobook)]
+        [TestCase(BookMediaType.Ebook)]
+        public async System.Threading.Tasks.Task diagnostic_trace_should_report_raw_fts_and_actual_production_rank_without_changing_the_winner(BookMediaType mediaType)
         {
             var logger = LogManager.GetCurrentClassLogger();
             var containment = new ContainmentValidator(new TagNormalizer(), logger);
@@ -1409,7 +1452,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 BookTitle = "Alpha",
                 AuthorId = 25,
                 AuthorName = "Test Author",
-                ReadingFormatId = 2,
+                ReadingFormatId = mediaType == BookMediaType.Audiobook ? 2 : 3,
                 MatchScore = 12.5
             };
             var fts = new StubEditionFtsRepository(new List<EditionFtsMatch> { candidate });
@@ -1436,7 +1479,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             context.TraceSink = trace;
             var file = new DiscoveredFileWithMetadata
             {
-                Path = "/audiobooks/Test Author/Alpha/Alpha.m4b",
+                Path = mediaType == BookMediaType.Audiobook
+                    ? "/audiobooks/Test Author/Alpha/Alpha.m4b"
+                    : "/ebooks/Test Author/Alpha/Alpha.epub",
                 Size = 1,
                 Modified = DateTime.UtcNow,
                 AllTags = new Dictionary<string, List<string>>
@@ -1457,6 +1502,13 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(trace.Events.Any(evt => evt.EventType == "fts_stage2_field_ranking_candidate" && evt.Rank == 1 && evt.EditionId == candidate.EditionId), Is.True);
             Assert.That(trace.Events.Any(evt => evt.EventType == "candidate_ranked" && evt.Rank == 1 && evt.EditionId == candidate.EditionId), Is.True);
             Assert.That(trace.Events.Any(evt => evt.EventType == "match_selected" && evt.EditionId == candidate.EditionId), Is.True);
+
+            var priorities = trace.Events.Where(evt => evt.EventType == "candidate_ranked")
+                .Select(evt => evt.Data["rankingPriority"]).ToList();
+            Assert.That(priorities, Is.Not.Empty);
+            Assert.That(priorities, Is.All.EndsWith(mediaType == BookMediaType.Ebook
+                ? "ftsScore,monitoredEdition"
+                : "ftsScore,monitoredEdition,providerIdentityTie"));
 
             trace.ThrowOnRecord = true;
             var throwingContext = MatchingContextPresets.ForScanLocal(false);

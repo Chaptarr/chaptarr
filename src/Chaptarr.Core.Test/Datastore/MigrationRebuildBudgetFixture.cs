@@ -60,7 +60,7 @@ namespace Chaptarr.Core.Test.Datastore
             }
         }
 
-        private static void Upgrade(IMainDatabase database, bool postgres, long version, Capture capture)
+        private static void Upgrade(IMainDatabase database, bool postgres, long version, Capture capture, bool observeCommands = true)
         {
             capture.Version = 0;
             using var connection = database.OpenConnection();
@@ -80,7 +80,7 @@ namespace Chaptarr.Core.Test.Datastore
                     var processor = ActivatorUtilities.CreateInstance<SelectingProcessorAccessor>(services).Processor;
                     var observed = InterfaceProxy.Proxy<IMigrationProcessor>((method, args) =>
                     {
-                        if (capture.Version >= 108 && args?.FirstOrDefault() is PerformDBOperationExpression expression)
+                        if (observeCommands && capture.Version >= 108 && args?.FirstOrDefault() is PerformDBOperationExpression expression)
                         {
                             var operation = expression.Operation;
                             expression.Operation = (native, transaction) => operation(capture.Wrap(native), transaction);
@@ -262,7 +262,7 @@ namespace Chaptarr.Core.Test.Datastore
                     connection.Execute(@"CREATE TRIGGER fixture_alias_reject BEFORE INSERT ON ""ProviderAliasIndex"" WHEN NEW.""EntityId"" >= 900 BEGIN SELECT RAISE(ABORT, 'fixture alias rollback'); END;");
                 }
                 var capture = new Capture();
-                Assert.That(() => Upgrade(database, postgres, 111, capture), Throws.Exception);
+                Assert.That(() => Upgrade(database, postgres, 111, capture), Throws.Exception.With.Message.Contains("fixture alias rollback"));
                 Assert.That(capture.Commands.Any(command => command.Sql.StartsWith("INSERT INTO \"ProviderAliasIndex\"", StringComparison.Ordinal)), Is.True, "An earlier successful write must be rolled back with the failed page.");
                 var monitoringColumns = postgres
                     ? connection.QuerySingle<int>("SELECT COUNT(*) FROM information_schema.columns WHERE table_name='ImportLists' AND column_name='MonitoringOptions';")
@@ -303,6 +303,59 @@ namespace Chaptarr.Core.Test.Datastore
         private static string[] ExpectedAliasKeys() => new[] { "1:gr:456", "1:gr:99999", "1:az:B00QALIAS1" }
             .Concat(Enumerable.Range(1,900).Select(id => $"{id*2}:gr:{10000+id}"))
             .Concat(Enumerable.Range(1,900).Where(id => id != 450).Select(id => $"{id*2}:az:B00QALIAS1")).ToArray();
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void complete_released_upgrade_preserves_recordings_history_and_extra_files(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                using var connection = database.OpenConnection();
+                Seed(connection);
+                var now = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+                connection.Execute(@"UPDATE ""Books"" SET ""HardcoverBookId""='hc:12345', ""TitleSlug""='cafe';
+                    UPDATE ""Authors"" SET ""GoodreadsAuthorId""='gr:58', ""AudiobookTags""='[1]', ""EbookTags""='[2]';
+                    INSERT INTO ""Books"" (""AuthorId"",""Title"",""CleanTitle"",""AnyEditionOk"",""Added"",""MediaType"",""HardcoverBookId"",""TitleSlug"")
+                        VALUES (1,'Café','stale',@Yes,@Now,0,'hc:12345','cafe');
+                    INSERT INTO ""Editions"" (""BookId"",""Title"",""Monitored"",""NarratorNames"",""ReadingFormatId"",""Asin"")
+                        VALUES (2,'Café',@Yes,'[]',3,'B00CFTEST01'),(3,'Café',@Yes,'[""Another Reader""]',2,'B00CFTEST02');
+                    UPDATE ""Editions"" SET ""ReadingFormatId""=2, ""Asin""='B00CFTEST03' WHERE ""Id""=1;
+                    INSERT INTO ""BookFiles"" (""Path"",""Size"",""Modified"",""DateAdded"",""Quality"",""MediaInfo"",""EditionId"",""CalibreId"",""Part"",""MediaType"")
+                        VALUES ('/audio/Café/Original.m4b',123456,@Now,@Now,'{}','{}',1,0,1,'audiobook'),
+                               ('/ebooks/Café/Book.epub',4321,@Now,@Now,'{}','{}',2,0,1,'ebook'),
+                               ('/audio/Café/Other recording.m4b',456789,@Now,@Now,'{}','{}',3,0,1,'audiobook');
+                    INSERT INTO ""History"" (""BookId"",""AuthorId"",""EditionId"",""Quality"",""Date"",""EventType"",""Data"",""SourceTitle"",""DownloadId"")
+                        VALUES (1,1,1,'{}',@Now,3,'{}','Café original','download-a'),(3,1,3,'{}',@Now,3,'{}','Café other recording','download-b');
+                    INSERT INTO ""DownloadHistory"" (""BookId"",""AuthorId"",""Date"",""EventType"",""SourceTitle"",""DownloadId"")
+                        VALUES (1,1,@Now,1,'Café original','download-a'),(3,1,@Now,1,'Café other recording','download-b');
+                    INSERT INTO ""ExtraFiles"" (""AuthorId"",""BookId"",""BookFileId"",""RelativePath"",""Extension"",""Added"",""LastUpdated"")
+                        VALUES (1,1,1,'Café/cover.jpg','.jpg',@Now,@Now);", new { Yes = true, Now = now });
+                string Snapshot(string table, string columns) => Newtonsoft.Json.JsonConvert.SerializeObject(connection.Query($"SELECT {columns} FROM \"{table}\" ORDER BY \"Id\""));
+                var checks = new Dictionary<string, string>
+                {
+                    ["BookFiles"] = "\"Id\",\"Path\",\"EditionId\",\"Size\",\"MediaType\"",
+                    ["Editions"] = "\"Id\",\"BookId\",\"NarratorNames\",\"ReadingFormatId\"",
+                    ["Books"] = "\"Id\",\"AuthorId\",\"MediaType\"",
+                    ["History"] = "\"Id\",\"BookId\",\"AuthorId\",\"EditionId\",\"DownloadId\"",
+                    ["DownloadHistory"] = "\"Id\",\"BookId\",\"AuthorId\",\"DownloadId\"",
+                    ["ExtraFiles"] = "\"Id\",\"AuthorId\",\"BookId\",\"BookFileId\",\"RelativePath\""
+                };
+                var before = checks.ToDictionary(pair => pair.Key, pair => Snapshot(pair.Key, pair.Value));
+                var capture = new Capture();
+                for (var version = 108; version <= 128; version++)
+                {
+                    var watch = Stopwatch.StartNew();
+                    Upgrade(database, postgres, version, capture, observeCommands: false);
+                    TestContext.Progress.WriteLine($"Complete upgrade {(postgres ? "PG" : "SQLite")} through {version}: {watch.ElapsedMilliseconds} ms");
+                }
+                foreach (var check in checks)
+                    Assert.That(Snapshot(check.Key, check.Value), Is.EqualTo(before[check.Key]), check.Key);
+                Assert.That(connection.ExecuteScalar<int>("SELECT MAX(\"Version\") FROM \"VersionInfo\""), Is.EqualTo(128));
+                Assert.That(connection.Query<string>("SELECT \"TitleSlug\" FROM \"Books\" ORDER BY \"Id\""), Is.EqualTo(new[] { "cafe", "cafe", "cafe_2" }));
+                Assert.That(connection.ExecuteScalar<string>("SELECT \"Title\" FROM \"QualityDefinitions\" WHERE \"Quality\"=0"), Is.EqualTo("Unknown"));
+                Assert.That(connection.ExecuteScalar<int>("SELECT COUNT(*) FROM \"ProviderAliasIndex\" WHERE \"EntityType\"='Edition' AND \"Provider\"='az'"), Is.EqualTo(3));
+            }, desiredVersion: 107);
+        }
 
         private static void Seed(IDbConnection connection)
         {

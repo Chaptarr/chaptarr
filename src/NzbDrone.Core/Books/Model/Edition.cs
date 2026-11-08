@@ -11,7 +11,7 @@ using NzbDrone.Core.MetadataSource;
 
 namespace NzbDrone.Core.Books
 {
-    public class Edition : Entity<Edition>
+    public class Edition : ProviderIdentityEntity<Edition>
     {
         public Edition()
         {
@@ -55,9 +55,6 @@ namespace NzbDrone.Core.Books
         public string HardcoverEditionId { get; set; }
         public string OpenLibraryEditionId { get; set; }
 
-        [MemberwiseEqualityIgnore]
-        [JsonIgnore]
-        public HashSet<string> RemoteProviderIds { get; set; }
 
         // Format identification
         public int? ReadingFormatId { get; set; } // 1=physical, 2=audio, 3=ebook
@@ -122,8 +119,12 @@ namespace NzbDrone.Core.Books
         [JsonIgnore]
         public string SearchPublisher { get; set; }
 
+        protected override string IdentityScope => "edition";
+        protected override IEnumerable<string> GetIdentityIds() => BookEditionIdentity.GetEditionProviderIds(this).Select(BookEditionIdentity.NormalizeRequestedEditionProviderId);
+
         public override IEnumerable<string> PrepareForPersistence(IReadOnlyCollection<string> fields)
         {
+            foreach (var field in base.PrepareForPersistence(fields)) yield return field;
             if (fields == null || fields.Contains(nameof(Subtitle)) || fields.Contains(nameof(SearchSubtitle)))
             {
                 SearchSubtitle = StringSuperNormalizer.NormalizeForFts(Subtitle);

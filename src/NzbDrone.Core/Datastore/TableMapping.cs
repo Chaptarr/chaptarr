@@ -112,6 +112,7 @@ namespace NzbDrone.Core.Datastore
                   .Ignore(s => s.Books)
                   .Ignore(s => s.Series)
                   .Ignore(s => s.RemoteProviderIds)
+                  .Ignore(s => s.ProviderIdsChanged)
                   .Ignore(s => s.RemoteMetadataETag)
                   .Ignore(s => s.MetadataBookCount)
                   .HasOne(a => a.AudiobookQualityProfile, a => a.AudiobookQualityProfileId ?? 0)
@@ -125,6 +126,7 @@ namespace NzbDrone.Core.Datastore
             Mapper.Entity<AuthorSyncQueue>("AuthorSyncQueue").RegisterModel();
             Mapper.Entity<ProviderAlias>("ProviderAliasIndex").RegisterModel();
 
+            Mapper.Entity<PendingNotificationItem>("PendingNotificationItems").RegisterModel();
             Mapper.Entity<PendingAuthorImport>("PendingAuthorImport").RegisterModel();
             Mapper.Entity<ImportListBookIdentityCache>("ImportListBookIdentityCache").RegisterModel();
             Mapper.Entity<PendingImport>("PendingImport").RegisterModel();
@@ -168,6 +170,7 @@ namespace NzbDrone.Core.Datastore
                 .Ignore(x => x.ForeignEditionId)
                 .Ignore(x => x.NarratorName)
                 .Ignore(x => x.RemoteProviderIds)
+                .Ignore(x => x.ProviderIdsChanged)
                 // Legacy field removed from schema; use AudiobookMonitored/EbookMonitored
                 .Ignore(x => x.Monitored)
                 .LazyLoad(x => x.LazyBookFiles,
@@ -192,6 +195,7 @@ namespace NzbDrone.Core.Datastore
 
             Mapper.Entity<Edition>("Editions").RegisterModel()
                 .Ignore(e => e.RemoteProviderIds)
+                .Ignore(e => e.ProviderIdsChanged)
                 .Ignore(e => e.NarratorCredits)
                 .HasOne(e => e.LazyBook, e => e.BookId);
 

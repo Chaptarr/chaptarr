@@ -84,7 +84,7 @@ namespace Chaptarr.Core.Test.Queue
                     : throw new NotImplementedException(method.Name));
                 var profiles = new QualityProfileService(profileRepository, null, null, null, null, null, LogManager.GetCurrentClassLogger());
                 var trackedService = Proxy<ITrackedDownloadService>((method, args) => method.Name == nameof(ITrackedDownloadService.StopTracking) ? null : throw new NotImplementedException(method.Name));
-                var controller = new QueueController(Proxy<IDownloadImportModeResolver>((method, args) => false), null, null, pendingService, profiles, trackedService, null, null, null, blocklistService, null);
+                var controller = new QueueController(global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<global::NzbDrone.Core.Books.ISeriesBookLinkService>((_, _) => throw new global::System.InvalidOperationException("Series batch loading was not expected in this fixture")), Proxy<IDownloadImportModeResolver>((method, args) => false), null, null, pendingService, profiles, trackedService, null, null, null, blocklistService, null);
 
                 if (bulk) controller.RemoveMany(new QueueBulkResource { Ids = new List<int> { queue.Id, queue.Id } }, blocklist: blocklist);
                 else controller.RemoveAction(queue.Id, blocklist: blocklist);
@@ -132,7 +132,7 @@ namespace Chaptarr.Core.Test.Queue
             var pending = Proxy<IPendingReleaseService>((method, args) => null);
             var trackedService = Proxy<ITrackedDownloadService>((method, args) => method.Name == nameof(ITrackedDownloadService.Find) ? tracked : null);
             var provider = Proxy<IProvideDownloadClient>((method, args) => client);
-            var controller = new QueueController(Proxy<IDownloadImportModeResolver>((method, args) => false), null, queue, pending, profiles, trackedService, null, null, provider, null, null);
+            var controller = new QueueController(global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<global::NzbDrone.Core.Books.ISeriesBookLinkService>((_, _) => throw new global::System.InvalidOperationException("Series batch loading was not expected in this fixture")), Proxy<IDownloadImportModeResolver>((method, args) => false), null, queue, pending, profiles, trackedService, null, null, provider, null, null);
             controller.RemoveAction(17, removeFromClient: false, changeCategory: true);
             Assert.That(actualCategories, Is.EqualTo(expectedCategory == null ? Array.Empty<string>() : new[] { expectedCategory }));
             Assert.That(downloadItem.MediaType, Is.Null, "The tracked/client snapshot must remain unchanged.");

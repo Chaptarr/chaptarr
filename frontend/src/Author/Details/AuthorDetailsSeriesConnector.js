@@ -56,6 +56,10 @@ function createMapStateToProps() {
         acc[curr.bookId] = curr.position;
         return acc;
       }, {});
+      const positionOrderMap = (currentSeries.links || []).reduce((acc, curr) => {
+        acc[curr.bookId] = curr.positionOrder;
+        return acc;
+      }, {});
 
       let booksInSeries = _.filter(books.items, (book) => bookIds.includes(book.id));
 
@@ -100,11 +104,9 @@ function createMapStateToProps() {
 
       let sortedBooks = [];
       if (series.sortKey === 'position') {
-        sortedBooks = booksInSeries.sort((a, b) => {
-          const apos = positionMap[a.id] || '';
-          const bpos = positionMap[b.id] || '';
-          return apos.localeCompare(bpos, undefined, { numeric: true, sensitivity: 'base' });
-        });
+        sortedBooks = _.orderBy(booksInSeries,
+          [(book) => positionOrderMap[book.id], (book) => positionMap[book.id] || ''],
+          [sortDir, sortDir]);
       } else {
         sortedBooks = _.orderBy(booksInSeries, series.sortKey, sortDir);
       }

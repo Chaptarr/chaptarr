@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
 using System.Linq;
 using FluentValidation;
 using FluentValidation.Results;
@@ -20,9 +21,7 @@ namespace NzbDrone.Core.ImportLists.Exclusions
         void AddAuthorExclusions(IEnumerable<Author> authors, BookMediaType? mediaType, IDbConnection connection, IDbTransaction transaction);
         void Delete(int id);
         void Delete(List<int> ids);
-        void Delete(string foreignId);
         ImportListExclusion Get(int id);
-        ImportListExclusion FindByForeignId(string foreignId);
         List<ImportListExclusion> FindByForeignId(List<string> foreignIds);
         List<ImportListExclusion> FindByForeignId(List<string> foreignIds, IDbConnection connection, IDbTransaction transaction);
         ImportListExclusion Update(ImportListExclusion importListExclusion);
@@ -60,23 +59,9 @@ namespace NzbDrone.Core.ImportLists.Exclusions
             _repo.DeleteMany(ids);
         }
 
-        public void Delete(string foreignId)
-        {
-            var exclusion = FindByForeignId(foreignId);
-            if (exclusion != null)
-            {
-                Delete(exclusion.Id);
-            }
-        }
-
         public ImportListExclusion Get(int id)
         {
             return _repo.Get(id);
-        }
-
-        public ImportListExclusion FindByForeignId(string foreignId)
-        {
-            return _repo.FindByForeignId(foreignId);
         }
 
         public List<ImportListExclusion> FindByForeignId(List<string> foreignIds)
@@ -94,11 +79,12 @@ namespace NzbDrone.Core.ImportLists.Exclusions
 
         public void ValidateAuthorExclusions(IEnumerable<Author> authors)
         {
-            if (authors?.Any(author => author != null && !AuthorIdentity.GetProviderIdentityTokenList(author).Any()) == true)
+            var missing = (authors ?? Enumerable.Empty<Author>()).Where(author => author != null && !AuthorIdentity.GetProviderIdentityTokenList(author).Any()).ToList();
+            if (missing.Count > 0)
             {
                 throw new ValidationException(new[]
                 {
-                    new ValidationFailure("ProviderId", "Cannot create import-list exclusions for authors without provider IDs.")
+                    new ValidationFailure("ProviderId", $"Cannot create import-list exclusions for authors without provider IDs: {string.Join(", ", missing.Select(author => $"{author.Name} (ID {author.Id})"))}.")
                     {
                         ErrorCode = "AUTHOR_PROVIDER_ID_REQUIRED"
                     }
@@ -156,12 +142,22 @@ namespace NzbDrone.Core.ImportLists.Exclusions
 
         private void AddScopedExclusions(IEnumerable<ImportListExclusion> candidates, IDbConnection connection = null, IDbTransaction transaction = null)
         {
-            var existing = (connection == null ? _repo.All() : _repo.All(connection, transaction)).ToList();
+            var timer = Stopwatch.StartNew();
+            var requested = candidates.ToList();
+            var ids = requested.Select(row => row.ForeignId).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var existing = (connection == null ? _repo.FindByForeignId(ids) : _repo.FindByForeignId(ids, connection, transaction))
+                .ToLookup(row => row.ForeignId.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.OrdinalIgnoreCase);
+            _logger.Debug("[IMPORT-LIST-EXCLUSION] Checked {0} IDs, read {1} exclusions in {2} ms", ids.Count, existing.Sum(pair => pair.Value.Count), timer.ElapsedMilliseconds);
             var additions = new List<ImportListExclusion>();
             var removals = new HashSet<int>();
-            foreach (var candidate in candidates)
+            foreach (var candidate in requested)
             {
-                var matches = existing.Where(row => string.Equals(row.ForeignId, candidate.ForeignId, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (!existing.TryGetValue(candidate.ForeignId, out var matches))
+                {
+                    matches = new List<ImportListExclusion>();
+                    existing.Add(candidate.ForeignId, matches);
+                }
                 if (!candidate.MediaType.HasValue)
                 {
                     removals.UnionWith(matches.Where(row => row.Id > 0 && row.MediaType.HasValue).Select(row => row.Id));
@@ -173,7 +169,7 @@ namespace NzbDrone.Core.ImportLists.Exclusions
                 }
 
                 additions.Add(candidate);
-                existing.Add(candidate);
+                matches.Add(candidate);
             }
 
             // Persist the broader replacement before discarding narrower exclusions.

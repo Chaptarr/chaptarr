@@ -188,6 +188,15 @@ namespace NzbDrone.Core.Books
                         _logger.Warn("[EDITION-FTS] Restoring empty edition search index during FTS maintenance");
                         RebuildIndex();
                     }
+
+                    var hasHeaderIndex = conn.ExecuteScalar<bool>("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='edition_header_fts_docsize')");
+                    // External-content FTS COUNT(*) reads Editions, even if its index is empty.
+                    if (!hasHeaderIndex || conn.ExecuteScalar<bool>("SELECT (SELECT COUNT(*) FROM edition_header_fts_docsize) <> (SELECT COUNT(*) FROM Editions)"))
+                    {
+                        using var transaction = conn.BeginTransaction();
+                        RebuildSqliteHeaderIndex(conn, transaction, _logger);
+                        transaction.Commit();
+                    }
                 }
             }
             catch (Exception ex)
@@ -295,7 +304,8 @@ namespace NzbDrone.Core.Books
                 END;
                 INSERT INTO edition_header_fts(edition_header_fts) VALUES ('rebuild');",
                 transaction: transaction);
-            logger.Info("Rebuilt header title search index in {0} ms", stopwatch.ElapsedMilliseconds);
+            var indexed = connection.ExecuteScalar<long>("SELECT COUNT(*) FROM edition_header_fts_docsize", transaction: transaction);
+            logger.Info("Rebuilt header title search index: {0} entries in {1} ms", indexed, stopwatch.ElapsedMilliseconds);
         }
 
         private static string BuildPostgresTsQuery(IEnumerable<string> tokens, bool requireAllTerms = false)
@@ -518,14 +528,18 @@ namespace NzbDrone.Core.Books
             parameters.Add("allTermsQuery", string.Join(" AND ", terms.Select(term => $"{{{columns}}}:{TokenToFtsQueryTerm(term)}")));
             parameters.Add("mediaType", (int)mediaType);
             parameters.Add("limit", limit);
+            // Keep MATCH as the FTS access path. A rowid IN constraint otherwise probes FTS once per wanted edition.
+            var monitoredEditionFilter = monitoredOnly
+                ? $"AND +edition_fts.rowid IN (SELECT rss_editions.Id FROM Editions rss_editions WHERE rss_editions.Monitored = 1 AND rss_editions.BookId IN ({monitoredBooks.RawSql}))"
+                : string.Empty;
             var ftsMatchSelects = new List<string>
             {
                 $@"
                     SELECT edition_fts.rowid, bm25(edition_fts) AS bm25_score
                     FROM edition_fts
-                    INNER JOIN Editions selected_editions ON selected_editions.Id = edition_fts.rowid
+                    {(monitoredOnly ? string.Empty : "INNER JOIN Editions selected_editions ON selected_editions.Id = edition_fts.rowid")}
                     WHERE edition_fts MATCH @ftsQuery
-                      {(monitoredOnly ? "AND selected_editions.Monitored = 1" : string.Empty)}"
+                      {monitoredEditionFilter}"
             };
 
             AddFtsTraceForAliasGroups(trace, "stage1_book_recall", titleAliasGroups);
@@ -546,10 +560,10 @@ namespace NzbDrone.Core.Books
                 ftsMatchSelects.Add($@"
                     SELECT edition_fts.rowid, bm25(edition_fts) AS bm25_score
                     FROM edition_fts
-                    INNER JOIN Editions selected_editions ON selected_editions.Id = edition_fts.rowid
+                    {(!monitoredOnly || group.Language != null ? "INNER JOIN Editions selected_editions ON selected_editions.Id = edition_fts.rowid" : string.Empty)}
                     WHERE edition_fts MATCH @{parameterName}
                       {languageFilter}
-                      {(monitoredOnly ? "AND selected_editions.Monitored = 1" : string.Empty)}");
+                      {monitoredEditionFilter}");
             }
 
             if (authorId.HasValue)

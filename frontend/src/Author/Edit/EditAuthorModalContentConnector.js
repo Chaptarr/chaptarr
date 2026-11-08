@@ -13,18 +13,19 @@ import getLinkedAuthorMonitoringChanges from 'Utilities/Author/getLinkedAuthorMo
 import { normalizeMonitorNewItemsOption } from 'Utilities/Author/monitorNewItemsOptions';
 import EditAuthorModalContent from './EditAuthorModalContent';
 
-function createIsPathChangingSelector() {
+function createPathChangesSelector() {
   return createSelector(
     (state) => state.authors.pendingChanges,
     createAuthorSelector(),
     (pendingChanges, author) => {
-      const path = pendingChanges.path;
-
-      if (path == null) {
-        return false;
-      }
-
-      return author.path !== path;
+      return ['audiobook', 'ebook'].filter((mediaType) => {
+        const field = `${mediaType}Folder`;
+        return pendingChanges[field] != null && pendingChanges[field] !== author[field];
+      }).map((mediaType) => ({
+        mediaType,
+        originalPath: author[`${mediaType}Folder`],
+        destinationPath: pendingChanges[`${mediaType}Folder`]
+      }));
     }
   );
 }
@@ -36,8 +37,8 @@ function createMapStateToProps() {
     (state) => state.settings.rootFolders,
     createSystemStatusSelector(),
     createAuthorSelector(),
-    createIsPathChangingSelector(),
-    (authorsState, metadataProfiles, rootFolders, systemStatus, author, isPathChanging) => {
+    createPathChangesSelector(),
+    (authorsState, metadataProfiles, rootFolders, systemStatus, author, pathChanges) => {
       const {
         isSaving,
         saveError,
@@ -56,8 +57,8 @@ function createMapStateToProps() {
         'audiobookMetadataProfileId',
         'ebookMetadataProfileId',
         'path',
-        'audiobookPath',
-        'ebookPath',
+        'audiobookFolder',
+        'ebookFolder',
         'rootFolderPath',
         'audiobookRootFolderPath',
         'ebookRootFolderPath',
@@ -90,8 +91,10 @@ function createMapStateToProps() {
         authorName: author.authorName,
         isSaving,
         saveError,
-        isPathChanging,
-        originalPath: author.path,
+        isPathChanging: pathChanges.length > 0,
+        pathChanges,
+        sharedFolder: Boolean(author.audiobookFolder && author.audiobookFolder === author.ebookFolder),
+        originalPath: pathChanges[0]?.originalPath || author.path,
         hasConflictingMonitoringPolicies,
         item: settings.settings,
         showMetadataProfile: metadataProfiles.items.length > 1,

@@ -19,6 +19,34 @@ namespace Chaptarr.Core.Test.Books
     [TestFixture]
     public class BookResourceMapperFixture
     {
+        [TestCase("audiobook", null, false)]
+        [TestCase("ebook", null, false)]
+        [TestCase("audiobook", true, true)]
+        [TestCase("ebook", true, true)]
+        [TestCase("audiobook", false, false)]
+        [TestCase("ebook", false, false)]
+        public void add_only_monitors_when_explicitly_requested(string mediaType, bool? monitored, bool expected)
+        {
+            var json = "{\"title\":\"Dune\",\"mediaType\":\"" + mediaType + "\"" +
+                (monitored.HasValue ? ",\"monitored\":" + monitored.Value.ToString().ToLowerInvariant() : "") + "}";
+            var resource = NzbDrone.Common.Serializer.STJson.Deserialize<BookResource>(json);
+            var book = resource.ToModel();
+            Assert.That(book.IsMonitored(), Is.EqualTo(expected));
+            Assert.That(book.AddOptions.MonitorBook, Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void edition_settings_round_trip_does_not_claim_to_be_a_fresh_identity_snapshot()
+        {
+            var edition = new Edition { Id = 7, BookId = 99, Title = "Dune", ForeignEditionId = "gr:123",
+                ProviderIds = "{\"edition\":[\"gr:123\",\"hc:456\"]}" };
+            var book = new Book { Id = 99, Title = "Dune", Editions = new List<Edition> { edition } };
+            var request = new BookResource { Editions = new List<EditionResource> { new() { Id = 7, Title = "Dune", Monitored = true } } };
+            request.ToModel(book);
+            Assert.That(book.Editions.Single().ProviderIdsChanged, Is.False);
+            Assert.That(book.Editions.Single().ProviderIds, Is.EqualTo(edition.ProviderIds));
+        }
+
         [TestCase("work:12345")]
         [TestCase("WORK:12345")]
         public void should_not_map_unknown_foreign_book_prefixes(string foreignBookId)
@@ -37,6 +65,52 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(model.GoodreadsWorkId, Is.Null);
             Assert.That(model.OpenLibraryWorkId, Is.Null);
             Assert.That(model.GoogleBooksId, Is.Null);
+        }
+
+        [Test]
+        public void metadata_fields_are_documented_read_only_and_cannot_change_on_put()
+        {
+            var stored = new Book { Id = 99, Title = "Dune", ReleaseDate = new DateTime(1965, 8, 1),
+                DurationMinutes = 100, Ratings = new Ratings { Votes = 500, Value = 4 }, Editions = new List<Edition>() };
+            var request = new BookResource { ReleaseDate = new DateTime(2000, 1, 1), DurationMinutes = 1,
+                Ratings = new Ratings { Votes = 0, Value = 0 } };
+            request.ToModel(stored);
+            Assert.That(stored.ReleaseDate, Is.EqualTo(new DateTime(1965, 8, 1)));
+            Assert.That(stored.DurationMinutes, Is.EqualTo(100));
+            Assert.That(stored.Ratings.Votes, Is.EqualTo(500));
+            foreach (var field in new[] { "ReleaseDate", "DurationMinutes", "Ratings" })
+            {
+                var schema = typeof(BookResource).GetProperty(field).GetCustomAttributesData()
+                    .Single(attribute => attribute.AttributeType == typeof(Swashbuckle.AspNetCore.Annotations.SwaggerSchemaAttribute));
+                Assert.That(schema.NamedArguments.Single(argument => argument.MemberName == "ReadOnly").TypedValue.Value, Is.True, field);
+            }
+        }
+
+        [TestCase("{}", false)]
+        [TestCase("{\"releaseDate\":null,\"ratings\":null,\"durationMinutes\":0}", true)]
+        [NonParallelizable]
+        public void ignored_metadata_log_distinguishes_omitted_fields_from_explicit_empty_values(string json, bool explicitValues)
+        {
+            var previous = LogManager.Configuration;
+            var memory = new MemoryTarget { Layout = "${level}|${message}" };
+            var configuration = new LoggingConfiguration();
+            configuration.AddRule(LogLevel.Debug, LogLevel.Fatal, memory);
+            LogManager.Configuration = configuration;
+            try
+            {
+                var book = new Book { Id = 99, Title = "Dune", ReleaseDate = new DateTime(1965, 8, 1),
+                    DurationMinutes = 100, Ratings = new Ratings { Votes = 500, Value = 4 }, Editions = new List<Edition>() };
+                var resource = NzbDrone.Common.Serializer.STJson.Deserialize<BookResource>(json);
+                resource.ToModel(book);
+                var messages = memory.Logs.Where(line => line.Contains("ignored changes to provider-owned metadata fields")).ToList();
+                Assert.That(messages, Has.Count.EqualTo(explicitValues ? 1 : 0));
+                if (explicitValues)
+                    Assert.That(messages.Single(), Does.Contain("releaseDate, ratings, durationMinutes"));
+                Assert.That(book.ReleaseDate, Is.EqualTo(new DateTime(1965, 8, 1)));
+                Assert.That(book.DurationMinutes, Is.EqualTo(100));
+                Assert.That(book.Ratings.Votes, Is.EqualTo(500));
+            }
+            finally { LogManager.Configuration = previous; }
         }
 
         [Test]

@@ -54,6 +54,7 @@ namespace Chaptarr.Core.Test.Books
                     nameof(IAuthorService.UpdateAuthor) => authors.Update((Author)args[0]),
                     nameof(IAuthorService.FindByProviderId) => authors.Get(author.Id),
                     nameof(IAuthorService.GetExistingAuthors) => authors.Get((IEnumerable<int>)args[0]).ToList(),
+                    nameof(IAuthorService.GetAllAuthors) => authors.All().ToList(),
                     nameof(IAuthorService.GetAuthors) => authors.Get((IEnumerable<int>)args[0]).ToList(),
                     _ => throw new AssertionException(method.Name)
                 });
@@ -95,14 +96,14 @@ namespace Chaptarr.Core.Test.Books
                 var refreshEditions = new RefreshEditionService(editions,
                     InterfaceProxy.Proxy<IMetadataTagService>((_, _) => null), null, database, logger);
                 var refresh = new RefreshBookService(books, authorService, roots, editions, null, null, refreshEditions,
-                    files, null, events, null, new EditionSelector(logger), null, null, logger);
+                    files, null, events, null, new EditionSelector(logger), null, null, logger, mainDatabase: null);
                 var profileService = new MetadataProfileService(profileRows, authorService, books, editions, files,
                     null, roots, new TestTermMatcherService(), events, logger);
                 var config = InterfaceProxy.Proxy<IConfigService>((method, _) => method.ReturnType == typeof(bool) ? false :
                     method.ReturnType.IsValueType ? Activator.CreateInstance(method.ReturnType) : null);
-                var refreshAuthors = new RefreshAuthorService(null, authorService, books, editions, profileService, refresh,
-                    null, events, null, files, null, roots, null, null, config, null, null, null, null,
-                    logger, new EditionSelector(logger), database);
+                var refreshAuthors = new RefreshAuthorService(MetadataHealthGateStub.Ready(), null, authorService, books, editions, profileService, refresh,
+                    null, events, null, files, new global::NzbDrone.Core.History.HistoryRepository(database, events), roots, null, null, config, null, null, null, null,
+                    logger, editionSelector: new EditionSelector(logger), mainDatabase: database, bookRepository: new BookRepository(database, events), authorRepository: new AuthorRepository(database, events, logger));
                 var failures = new List<Exception>();
                 Dictionary<int, Book> result;
                 if (interleave)

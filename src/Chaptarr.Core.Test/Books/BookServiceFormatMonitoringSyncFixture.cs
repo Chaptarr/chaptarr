@@ -33,10 +33,13 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class StubBookRepository : IBookRepository
         {
+            public List<Book> GetImportListBookIdentities() => All().ToList();
+
             private readonly Dictionary<int, Book> _booksById = new();
             private int _nextId = 1000;
 
             public int AuthorCatalogLookupCount { get; private set; }
+            public int SlugLookupCount { get; private set; }
             public int UpdatedRowCount { get; private set; }
 
             public StubBookRepository(IEnumerable<Book> books)
@@ -119,7 +122,7 @@ namespace Chaptarr.Core.Test.Books
             public void Delete(int id) => _booksById.Remove(id);
             public void SetFields(IList<Book> models, params System.Linq.Expressions.Expression<Func<Book, object>>[] properties) => throw new NotImplementedException();
             public void DeleteMany(List<Book> model) => DeleteMany(model.Select(book => book.Id));
-            public void DeleteManyAtomic(IEnumerable<int> ids, bool deleteFiles) => DeleteMany(ids);
+            public void DeleteManyAtomic(IEnumerable<int> ids, IEnumerable<int> deletedFileIds = null) => DeleteMany(ids);
             public void DeleteMany(IEnumerable<int> ids)
             {
                 foreach (var id in ids ?? Enumerable.Empty<int>())
@@ -143,7 +146,11 @@ namespace Chaptarr.Core.Test.Books
             public Book FindByProviderIds(string hardcoverBookId = null, string goodreadsBookId = null, string openLibraryWorkId = null) => throw new NotImplementedException();
             public Book FindByProviderIdAndMediaType(string provider, string providerId, BookMediaType mediaType) => throw new NotImplementedException();
             public List<Book> FindAllByProviderIdAndMediaType(string provider, string providerId, BookMediaType mediaType) => new();
-            public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
+            public List<Book> FindTitleSlugConflicts(IEnumerable<string> slugs, IDbConnection connection = null, IDbTransaction transaction = null) {
+                SlugLookupCount++;
+                return _booksById.Values.Where(book => slugs.Any(slug => book.TitleSlug != null && (book.TitleSlug.Equals(slug, StringComparison.OrdinalIgnoreCase) || book.TitleSlug.StartsWith(slug + "_", StringComparison.OrdinalIgnoreCase)))).ToList();
+            }
+            public List<Book> FindBySlug(string titleSlug) => throw new NotImplementedException();
             public PagingSpec<Book> BooksWithoutFiles(PagingSpec<Book> pagingSpec) => throw new NotImplementedException();
             public PagingSpec<Book> BooksWhereCutoffUnmet(PagingSpec<Book> pagingSpec, List<QualitiesBelowCutoff> qualitiesBelowCutoff) => throw new NotImplementedException();
             public List<Book> BooksBetweenDates(DateTime startDate, DateTime endDate, bool includeUnmonitored) => throw new NotImplementedException();
@@ -251,7 +258,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
-            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
@@ -415,20 +422,21 @@ namespace Chaptarr.Core.Test.Books
 
             books[11].TitleSlug = "RÉSUMÉ";
             service.UpdateMany(new List<Book> { books[11] }, titleSlugs);
-            Assert.That(books[11].TitleSlug, Is.EqualTo("RÉSUMÉ_3"));
+            Assert.That(books[11].TitleSlug, Is.EqualTo("résumé_3"));
 
             books[9].TitleSlug = "another";
             service.UpdateMany(new List<Book> { books[9] }, titleSlugs);
             books[10].TitleSlug = "RÉSUMÉ";
             service.UpdateMany(new List<Book> { books[10] }, titleSlugs);
 
-            Assert.That(books[10].TitleSlug, Is.EqualTo("RÉSUMÉ"));
+            Assert.That(books[10].TitleSlug, Is.EqualTo("résumé"));
             foreach (var book in books.Skip(12))
             {
                 service.UpdateMany(new List<Book> { book }, titleSlugs);
             }
 
             Assert.That(repository.AuthorCatalogLookupCount, Is.EqualTo(1));
+            Assert.That(repository.SlugLookupCount, Is.EqualTo(2), "One preloaded batch, then the one newly introduced title; never one read per book.");
         }
 
         [Test]
@@ -450,7 +458,7 @@ namespace Chaptarr.Core.Test.Books
             third.TitleSlug = "Same";
             service.UpdateMany(new List<Book> { third }, titleSlugs);
 
-            Assert.That(third.TitleSlug, Is.EqualTo("Same_2"));
+            Assert.That(third.TitleSlug, Is.EqualTo("same_2"));
             Assert.That(repository.AuthorCatalogLookupCount, Is.EqualTo(1));
         }
 
@@ -652,6 +660,31 @@ namespace Chaptarr.Core.Test.Books
             service.MonitorRequestedBooks(new[] { audiobook.Id }, "audiobook");
 
             Assert.That(repository.Get(ebook.Id).EbookMonitored, Is.False);
+            Assert.That(repository.UpdatedRowCount, Is.Zero);
+        }
+
+        [TestCase("audiobook")]
+        [TestCase("ebook")]
+        public void unchanged_request_should_not_write_or_publish_but_still_repair_its_sibling(string mediaType)
+        {
+            var author = BuildAuthor(1);
+            var audiobook = BuildBook(10, author.Id, BookMediaType.Audiobook, "hc:work-1", monitored: true);
+            var ebook = BuildBook(11, author.Id, BookMediaType.Ebook, "hc:work-1", monitored: true);
+            var repository = new StubBookRepository(new[] { audiobook, ebook });
+            var events = new StubEventAggregator();
+            var service = BuildService(repository, new StubAuthorService(new[] { author }), events);
+            var target = mediaType == "audiobook" ? audiobook : ebook;
+            var sibling = mediaType == "audiobook" ? ebook : audiobook;
+
+            service.MonitorRequestedBooks(new[] { target.Id }, mediaType);
+
+            Assert.That(repository.UpdatedRowCount, Is.Zero);
+            Assert.That(events.Published.OfType<BookEditedEvent>(), Is.Empty);
+            sibling.SetMonitored(false);
+            service.MonitorRequestedBooks(new[] { target.Id }, mediaType);
+            Assert.That(repository.UpdatedRowCount, Is.EqualTo(1));
+            Assert.That(sibling.IsMonitored(), Is.True);
+            Assert.That(events.Published.OfType<BookEditedEvent>().Select(e => e.Book.Id), Is.EqualTo(new[] { sibling.Id }));
         }
 
         [Test]
@@ -717,7 +750,7 @@ namespace Chaptarr.Core.Test.Books
             var repository = new StubBookRepository(new[] { audiobook, ebook });
             var service = BuildService(repository, new StubAuthorService(new[] { author }));
 
-            service.Execute(new BulkSyncFormatMonitoringCommand(new List<int> { author.Id }));
+            service.SyncMonitoredAcrossFormats(new List<int> { author.Id });
 
             Assert.That(repository.Get(ebook.Id).EbookMonitored, Is.True);
         }
@@ -741,7 +774,7 @@ namespace Chaptarr.Core.Test.Books
             service.SetMonitoredForMediaType(ebooks.Select(book => book.Id), "ebook", false);
             Assert.That(ebooks.All(book => !repository.Get(book.Id).EbookMonitored), Is.True);
             events.Published.Clear();
-            service.Execute(new BulkSyncFormatMonitoringCommand(new List<int> { author.Id }));
+            service.SyncMonitoredAcrossFormats(new List<int> { author.Id });
 
             Assert.Multiple(() =>
             {
@@ -782,7 +815,7 @@ namespace Chaptarr.Core.Test.Books
             var repository = new StubBookRepository(books);
             var service = BuildService(repository, new StubAuthorService(new[] { author }), editionService: editionService);
 
-            service.Execute(new BulkSyncFormatMonitoringCommand(new List<int> { author.Id }));
+            service.SyncMonitoredAcrossFormats(new List<int> { author.Id });
 
             Assert.Multiple(() =>
             {
@@ -811,7 +844,7 @@ namespace Chaptarr.Core.Test.Books
             var service = BuildService(repository, new StubAuthorService(new[] { author }),
                 rootFolderService: rootFolders, editionService: editionService);
 
-            service.Execute(new BulkSyncFormatMonitoringCommand(new List<int> { author.Id }));
+            service.SyncMonitoredAcrossFormats(new List<int> { author.Id });
 
             Assert.Multiple(() =>
             {
@@ -868,7 +901,7 @@ namespace Chaptarr.Core.Test.Books
             var repository = new StubBookRepository(new[] { audiobook, ebook });
             var service = BuildService(repository, new StubAuthorService(new[] { author }));
 
-            service.Execute(new BulkSyncFormatMonitoringCommand(new List<int> { author.Id }));
+            service.SyncMonitoredAcrossFormats(new List<int> { author.Id });
 
             Assert.That(repository.Get(ebook.Id).EbookMonitored, Is.False);
         }
@@ -902,7 +935,7 @@ namespace Chaptarr.Core.Test.Books
             var repository = new StubBookRepository(new[] { audiobook, audiobookClone, ebook });
             var service = BuildService(repository, new StubAuthorService(new[] { author }));
 
-            service.Execute(new BulkSyncFormatMonitoringCommand(new List<int> { author.Id }));
+            service.SyncMonitoredAcrossFormats(new List<int> { author.Id });
 
             Assert.That(repository.Get(audiobookClone.Id).AudiobookMonitored, Is.True);
             Assert.That(repository.Get(ebook.Id).EbookMonitored, Is.False);
@@ -938,7 +971,7 @@ namespace Chaptarr.Core.Test.Books
             var repository = new StubBookRepository(new[] { audiobook, ebook, ebookClone });
             var service = BuildService(repository, new StubAuthorService(new[] { author }));
 
-            service.Execute(new BulkSyncFormatMonitoringCommand(new List<int> { author.Id }));
+            service.SyncMonitoredAcrossFormats(new List<int> { author.Id });
 
             Assert.That(repository.Get(ebook.Id).EbookMonitored, Is.True);
             Assert.That(repository.Get(ebookClone.Id).EbookMonitored, Is.True);

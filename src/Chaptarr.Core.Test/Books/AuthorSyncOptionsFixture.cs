@@ -21,6 +21,7 @@ using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaFiles;
@@ -52,6 +53,8 @@ namespace Chaptarr.Core.Test.Books
             public readonly AuthorService Authors;
             public readonly BookService Books;
             public readonly BookRepository BookRows;
+            public readonly global::NzbDrone.Core.History.HistoryRepository HistoryRows;
+            public readonly AuthorRepository AuthorRows;
             public readonly PendingAuthorImportService Pending;
             public readonly AuthorLibraryService Library;
             public readonly IProvideAuthorInfo Info;
@@ -100,17 +103,20 @@ namespace Chaptarr.Core.Test.Books
                 });
                 Files = new MediaFileRepository(database, Events);
                 BookRows = new BookRepository(database, Events);
+                HistoryRows = new global::NzbDrone.Core.History.HistoryRepository(database, Events);
                 Queue = Proxy<IManageCommandQueue>((method, args) =>
                 {
                     if (method.Name != "Push") throw new NotSupportedException(method.Name);
                     var command = (Command)args[0];
+                    command.Trigger = (CommandTrigger)args[2];
                     if (RejectScan && command is RefreshAuthorCommand) throw new InvalidOperationException("Scan queue unavailable");
                     Commands.Add(command);
                     if (command is MissingBookSearchCommand search)
                         SearchTargets.Add(BookRows.GetMissingBookSearchTargets(Enum.TryParse<BookMediaType>(search.MediaType, true, out var searchSide) ? searchSide : null, search.AuthorId).Select(target => target.BookId).ToArray());
                     return new CommandModel { Id = Commands.Count, Name = command.Name, Body = command };
                 });
-                Authors = new AuthorService(new AuthorRepository(database, Events, Logger), Events, paths, Roots, Queue,
+                AuthorRows = new AuthorRepository(database, Events, Logger);
+                Authors = new AuthorService(AuthorRows, Events, paths, Roots, Queue,
                     new CacheManager(), BookRows, null, Logger, null, null, null, database);
                 var editions = new EditionService(new EditionRepository(database, Events), Events, Logger);
                 Editions = editions;
@@ -148,6 +154,9 @@ namespace Chaptarr.Core.Test.Books
                 });
                 Profiles = new MetadataProfileService(profileRepository, Authors, Books, editions,
                     Proxy<IMediaFileService>((_, _) => new List<BookFile>()), null, Roots, null, Events, Logger);
+                Set(Library, "_importListExclusionService", Proxy<IImportListExclusionService>((method, _) =>
+                    method.Name == nameof(IImportListExclusionService.FindByForeignId) ? new List<ImportListExclusion>()
+                    : throw new NotSupportedException(method.Name)));
                 Set(Library, "_metadataProfileService", Profiles);
                 Set(Library, "_editionService", editions);
                 Set(Library, "_authorPathBuilder", paths);
@@ -183,14 +192,14 @@ namespace Chaptarr.Core.Test.Books
                 Proxy<IBookAddedService>((_, _) => null), Events, Logger, Books).Handle(new AuthorScannedEvent(Author));
             public void QueueDiskScan(RefreshAuthorCommand command)
             {
-                var refresh = new RefreshAuthorService(authorInfo: null, authorService: Authors, bookService: Books,
+                var refresh = new RefreshAuthorService(MetadataHealthGateStub.Ready(), authorInfo: null, authorService: Authors, bookService: Books,
                     editionService: null, metadataProfileService: null, refreshBookService: null, refreshSeriesService: null,
                     eventAggregator: Events, commandQueueManager: Queue,
-                    mediaFileService: Proxy<IMediaFileService>((_, _) => new List<BookFile>()), historyService: null,
+                    mediaFileService: Proxy<IMediaFileService>((_, _) => new List<BookFile>()), historyRepository: HistoryRows,
                     rootFolderService: Roots, checkIfAuthorShouldBeRefreshed: null, monitorNewBookService: null,
                     configService: Proxy<IConfigService>((_, _) => RescanAfterRefreshType.Never),
                     importListExclusionService: null, syncMetadataService: null, syncQueueService: null,
-                    rootFolderSettingsResolver: null, logger: Logger);
+                    rootFolderSettingsResolver: null, logger: Logger, bookRepository: BookRows, authorRepository: AuthorRows);
                 refresh.Execute(command);
             }
             public void ProcessPending() => new ProcessPendingImportsCommandHandler(Pending, Library, Books, null, Queue, Events, Logger)
@@ -492,7 +501,10 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(selected, Has.Count.EqualTo(1));
                 Assert.That(selected.Single().MediaType, Is.EqualTo(requestedSide));
                 Assert.That(selected.Single().HardcoverBookId, Is.EqualTo("hc:456789"));
-                Assert.That(h.SearchTargets.Single(), Is.EqualTo(new[] { selected.Single().Id }));
+                var search = h.Commands.OfType<BookSearchCommand>().Single();
+                Assert.That(search.Trigger, Is.EqualTo(CommandTrigger.Unspecified));
+                Assert.That(search.BookIds, Is.EqualTo(new[] { selected.Single().Id }));
+                Assert.That(h.SearchTargets, Is.Empty, "An exact request must not schedule an author-wide missing search.");
             });
         }
 
@@ -932,7 +944,7 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(h.Commands, Is.Empty);
                 Assert.That(h.Author.AudiobookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
                 Assert.That(h.Author.EbookMonitorNewItems, Is.EqualTo(NewItemMonitorTypes.New));
-                var editor = new AuthorEditorController(h.Authors, h.Queue, h.Roots, null, null);
+                var editor = new AuthorEditorController(h.Authors, h.Queue, h.Roots, null, null, null);
                 Assert.Throws<ValidationException>(() => editor.SaveAll(new AuthorEditorResource { AuthorIds = new() { h.Author.Id },
                     AudiobookMonitorNewItems = NewItemMonitorTypes.All, EbookMonitorNewItems = NewItemMonitorTypes.None,
                     AudiobookRootFolderPath = "", EbookRootFolderPath = "", MoveFiles = true }));
@@ -1060,7 +1072,7 @@ namespace Chaptarr.Core.Test.Books
                 if (!listFirst) AddList();
                 h.Available = true;
                 h.ProcessPending();
-                Assert.That(h.Author, Is.Not.Null);
+                Assert.That(h.Author, Is.Not.Null, string.Join("; ", h.Pending.GetAll().Select(item => item.LastError)));
                 Assert.That(h.BookRows.GetBooksByAuthorId(h.Author.Id).Select(book => book.MediaType),
                     Is.EquivalentTo(new[] { BookMediaType.Audiobook, BookMediaType.Ebook }));
                 Assert.That(h.Pending.GetAll().Any(item => item.OverallStatus is PendingImportStatus.Pending or PendingImportStatus.Retrying), Is.False);

@@ -64,6 +64,11 @@ namespace Chaptarr.Core.Test.Api
             Assert.Multiple(() =>
             {
                 Assert.That(result.Result, Is.TypeOf<AcceptedResult>());
+                var response = System.Text.Json.JsonSerializer.SerializeToElement(((AcceptedResult)result.Result).Value);
+                Assert.That(response.GetProperty("message").GetString(), Does.Contain("author or requested books").And.Contain("retry automatically"));
+                Assert.That(response.TryGetProperty("hydrationWarning", out var warning), Is.True, "pending catalog response must expose the hydration warning");
+                Assert.That(warning.GetString(), Is.EqualTo(response.GetProperty("message").GetString()));
+                Assert.That(response.GetProperty("pendingId").GetInt32(), Is.EqualTo(-libraryProxy.PreflightResult.Id));
                 Assert.That(libraryProxy.LastConfig.LastSelectedMediaType, Is.EqualTo("ebook"));
             });
         }
@@ -118,6 +123,11 @@ namespace Chaptarr.Core.Test.Api
             Assert.Multiple(() =>
             {
                 Assert.That(result.Result, Is.TypeOf<AcceptedResult>());
+                var response = System.Text.Json.JsonSerializer.SerializeToElement(((AcceptedResult)result.Result).Value);
+                Assert.That(response.GetProperty("message").GetString(), Does.Contain("author or requested books").And.Contain("retry automatically"));
+                Assert.That(response.TryGetProperty("hydrationWarning", out var warning), Is.True, "pending catalog response must expose the hydration warning");
+                Assert.That(warning.GetString(), Is.EqualTo(response.GetProperty("message").GetString()));
+                Assert.That(response.GetProperty("pendingId").GetInt32(), Is.EqualTo(-libraryProxy.PreflightResult.Id));
                 Assert.That(libraryProxy.LastConfig.LastSelectedMediaType, Is.EqualTo(mediaType));
                 Assert.That(libraryProxy.LastConfig.AuthorName, Is.EqualTo(authorName));
             });
@@ -130,6 +140,9 @@ namespace Chaptarr.Core.Test.Api
             {
                 Id = 7,
                 Name = "Frank Herbert",
+                SyncMonitoredAcrossFormats = true,
+                AudiobookMonitorNewItems = NewItemMonitorTypes.None,
+                EbookMonitorNewItems = NewItemMonitorTypes.None,
                 HardcoverAuthorId = "hc:123",
                 AudiobookRootFolderPath = "/audiobooks",
                 EbookRootFolderPath = "/ebooks",
@@ -157,11 +170,13 @@ namespace Chaptarr.Core.Test.Api
             libraryProxy.PreflightResult = original;
             libraryProxy.ReaddResult = generated;
 
+            var books = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookService>((method, args) =>
+                method.Name == nameof(IBookService.GetBooksByAuthorId) ? new List<Book>() : throw new NotImplementedException(method.Name));
             var commandQueue = new RecordingCommandQueue();
             var controller = new AuthorController(
                 signalRBroadcaster: null,
                 authorService: authorService,
-                bookService: null,
+                bookService: books,
                 bookMonitoredService: null,
                 authorLibraryService: libraryService,
                 authorStatisticsService: null,
@@ -183,13 +198,26 @@ namespace Chaptarr.Core.Test.Api
                 metadataProfileExistsValidator: new MetadataProfileExistsValidator(new TestMetadataProfileService()),
                 authorFolderAsRootFolderValidator: new AuthorFolderAsRootFolderValidator(null));
 
-            var result = await controller.DeleteAuthor(original.Id, readdAuthor: true);
+            var error = Assert.ThrowsAsync<NzbDrone.Core.Exceptions.NzbDroneClientException>(async () =>
+                await controller.DeleteAuthor(original.Id, readdAuthor: true));
+            Assert.Multiple(() =>
+            {
+                Assert.That(error.StatusCode, Is.EqualTo(System.Net.HttpStatusCode.Conflict));
+                Assert.That(libraryProxy.AddCalls, Is.Zero);
+                Assert.That(authorProxy.DeleteForReaddCalls, Is.Zero);
+                Assert.That(commandQueue.Pushed, Is.Empty);
+            });
+
+            var result = await controller.DeleteAuthor(original.Id, readdAuthor: true, applyToBothFormats: true);
 
             Assert.Multiple(() =>
             {
                 Assert.That(result, Is.TypeOf<OkResult>());
                 Assert.That(libraryProxy.AddCalls, Is.EqualTo(2));
                 Assert.That(authorProxy.DeleteForReaddCalls, Is.EqualTo(1));
+                Assert.That(libraryProxy.LastConfig.SyncMonitoredAcrossFormats, Is.True);
+                Assert.That(libraryProxy.LastConfig.AudiobookMonitorNewItems, Is.EqualTo(original.AudiobookMonitorNewItems));
+                Assert.That(libraryProxy.LastConfig.EbookMonitorNewItems, Is.EqualTo(original.EbookMonitorNewItems));
                 Assert.That(commandQueue.Pushed, Has.Count.EqualTo(initialSetup ? 2 : 1));
             });
 
@@ -302,6 +330,7 @@ namespace Chaptarr.Core.Test.Api
             public void Fail(CommandModel command, string message, Exception e) => throw new NotImplementedException();
             public void Requeue() => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void Pause(int id) => throw new NotImplementedException();
             public void Resume(int id) => throw new NotImplementedException();
             public void CleanCommands() => throw new NotImplementedException();

@@ -597,6 +597,7 @@ namespace Chaptarr.Core.Test.Download
                     var mediaWrites = 0;
                     var mediaFiles = Proxy<IMediaFileService>((method, args) =>
                     {
+                        if (method.Name == nameof(IMediaFileService.ValidateReplacementFiles)) { Assert.That((List<BookFile>)args[0], Is.Empty); return null; }
                         if (method.Name == nameof(IMediaFileService.ReplaceMany)) { mediaWrites++; files.ReplaceMany((List<BookFile>)args[0], (List<BookFile>)args[1]); return null; }
                         if (method.Name == nameof(IMediaFileService.Update)) { mediaWrites++; return files.Update((BookFile)args[0]); }
                         if (method.Name == nameof(IMediaFileService.GetFilesByBook)) return files.GetFilesByBook((int)args[0]);
@@ -649,7 +650,7 @@ namespace Chaptarr.Core.Test.Download
                         var constructor = typeof(ManualImportService).GetConstructors().Single();
                         var subject = (ManualImportService)constructor.Invoke(constructor.GetParameters().Select(parameter => dependencies.GetValueOrDefault(parameter.ParameterType)).ToArray());
                         var command = new ManualImportCommand { Files = new() { new() { Path = path, AuthorId = author.Id, BookId = book.Id,
-                            EditionId = edition.Id, Quality = quality, IndexerFlags = 4 } }, ReplaceExistingFiles = true, ImportMode = ImportMode.Move };
+                            EditionId = edition.Id, Quality = quality, IndexerFlags = 4 } }, ReplaceExistingFiles = true, ConfirmedReplacementFiles = new(), ImportMode = ImportMode.Move };
                         var body = System.Text.Json.Nodes.JsonNode.Parse(NzbDrone.Common.Serializer.STJson.ToJson(command));
                         var file = body["files"][0].AsObject();
                         file.Remove("releaseGroup");
@@ -699,7 +700,7 @@ namespace Chaptarr.Core.Test.Download
             var item = (ManualImportItem)method.Invoke(subject, new object[] { new ImportDecision<LocalBook>(new LocalBook
             {
                 Path = "/downloads/preview.epub", ReleaseGroup = group, Quality = new QualityModel(Quality.EPUB)
-            }), null, false, false });
+            }), null, false, false, new Dictionary<LocalBook, List<NzbDrone.Core.CustomFormats.CustomFormat>>() });
             Assert.That(item.ReleaseGroup, Is.EqualTo(group));
         }
 
@@ -786,8 +787,12 @@ namespace Chaptarr.Core.Test.Download
                         new NzbDrone.Common.Cache.CacheManager(), books, null, logger, null, null, null, database, aliases);
                     var editionService = new EditionService(editions, events, logger);
                     var bookFiles = new MediaFileRepository(database, events);
-                    var mediaFiles = Proxy<IMediaFileService>((method, args) => method.Name == nameof(IMediaFileService.GetFilesByBooks)
-                        ? bookFiles.GetFilesByBooks((List<int>)args[0]) : null);
+                    var mediaFiles = Proxy<IMediaFileService>((method, args) => method.Name switch
+                    {
+                        nameof(IMediaFileService.GetFilesByBooks) => bookFiles.GetFilesByBooks((List<int>)args[0]),
+                        nameof(IMediaFileService.GetFileWithPath) => bookFiles.GetFileWithPath((List<string>)args[0]),
+                        _ => throw new NotImplementedException(method.Name)
+                    });
                     var bookService = new BookService(books, editionService, events, authorService, mediaFiles, null,
                         new SeriesBookLinkRepository(database, events), null, logger, providerAliasService: aliases);
                     Assert.That(bookService.GetBook(own.Id).Id, Is.EqualTo(own.Id));
@@ -823,7 +828,7 @@ namespace Chaptarr.Core.Test.Download
                             : new Dictionary<string, List<string>>();
                         return (values, (int?)null);
                     });
-                    var decisionMaker = new SimpleImportDecisionMaker(tags, matching, authorService, bookService, editionService, null, logger);
+                    var decisionMaker = new SimpleImportDecisionMaker(tags, matching, authorService, bookService, editionService, mediaFiles, logger);
                     var tracked = CreateTrackedDownload(new QualityModel(media == BookMediaType.Audiobook ? Quality.M4B : Quality.EPUB), own);
                     tracked.RemoteBook.Author = author;
                     tracked.ImportItem = new DownloadClientItem { OutputPath = new OsPath(singleFile ? oppositePath : temp) };
@@ -832,6 +837,8 @@ namespace Chaptarr.Core.Test.Download
                         [typeof(IDiskProvider)] = disk,
                         [typeof(IDiskScanService)] = Proxy<IDiskScanService>((method, args) => new[] { ownPath, oppositePath }.Select(path => fs.FileInfo.FromFileName(path)).ToArray()),
                         [typeof(IBookService)] = bookService,
+                        [typeof(IHistoryService)] = new HistoryService(new HistoryRepository(database, events), logger,
+                            new NzbDrone.Core.Download.History.DownloadHistoryRepository(database, events)),
                         [typeof(ITrackedDownloadService)] = Proxy<ITrackedDownloadService>((method, args) => tracked),
                         [typeof(IMakeImportDecision)] = decisionMaker,
                         [typeof(NzbDrone.Core.CustomFormats.ICustomFormatCalculationService)] = Proxy<NzbDrone.Core.CustomFormats.ICustomFormatCalculationService>((method, args) => new List<NzbDrone.Core.CustomFormats.CustomFormat>()),
@@ -865,7 +872,9 @@ namespace Chaptarr.Core.Test.Download
             {
                 var book = new Book { Id = 10, MediaType = media };
                 var edition = new Edition { Id = 20, BookId = book.Id };
-                var decisionMaker = new SimpleImportDecisionMaker(null, null, null, null, null, null, LogManager.GetCurrentClassLogger());
+                var mediaFiles = Proxy<IMediaFileService>((method, args) => method.Name == nameof(IMediaFileService.GetFileWithPath)
+                    ? new List<BookFile>() : throw new NotImplementedException(method.Name));
+                var decisionMaker = new SimpleImportDecisionMaker(null, null, null, null, null, mediaFiles, LogManager.GetCurrentClassLogger());
                 var decisions = decisionMaker.GetImportDecisions(new() { new FileSystem().FileInfo.FromFileName(temp) },
                     new NzbDrone.Core.MediaFiles.BookImport.Identification.IdentificationOverrides { Book = book, Edition = edition }, null,
                     new NzbDrone.Core.MediaFiles.BookImport.Identification.ImportDecisionMakerConfig { NewDownload = true, Filter = FilterFilesType.None });

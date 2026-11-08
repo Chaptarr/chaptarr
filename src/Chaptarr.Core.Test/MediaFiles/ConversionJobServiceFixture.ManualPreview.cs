@@ -13,6 +13,8 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.TrackedDownloads;
+using NzbDrone.Core.Download.History;
+using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.MediaFiles.BookImport.Manual;
@@ -63,7 +65,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         return method.Invoke(repository, args);
                     });
                     var converter = new RetainedResultConverter { Success = true };
-                    var jobs = new ConversionJobService(countedRepository, converter, null,
+                    var jobs = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(), countedRepository, converter, null,
                         Proxy<IManageCommandQueue>((_, _) => null), CreateConfig(), LogManager.GetCurrentClassLogger());
                     var requests = new[] { CreateRequest(Path.Combine(directory, "Dune"), "dune"),
                         CreateRequest(Path.Combine(directory, "Dune Messiah"), "messiah") };
@@ -115,13 +117,17 @@ namespace Chaptarr.Core.Test.MediaFiles
                             .Select(source => source.Path).Append(unrelated).Where(path => path.StartsWith(scope + Path.DirectorySeparatorChar, StringComparison.Ordinal))
                             .Select(fs.FileInfo.FromFileName).ToArray()),
                         [typeof(IMakeImportDecision)] = decisions,
-                        [typeof(ITrackedDownloadService)] = Proxy<ITrackedDownloadService>((method, _) =>
+                        [typeof(ITrackedDownloadService)] = Proxy<ITrackedDownloadService>((method, args) =>
                         {
+                            if (method.Name == nameof(ITrackedDownloadService.Find))
+                                return tracks.SingleOrDefault(track => track.DownloadItem.DownloadId == (string)args[0]);
                             Assert.That(method.Name, Is.EqualTo(nameof(ITrackedDownloadService.GetTrackedDownloads)));
                             queueReads++;
                             return tracks;
                         }),
                         [typeof(IDownloadClientFileSnapshotService)] = Proxy<IDownloadClientFileSnapshotService>((_, _) => null),
+                        [typeof(IHistoryService)] = new HistoryService(new HistoryRepository(database, new StubEventAggregator()),
+                            LogManager.GetCurrentClassLogger(), new DownloadHistoryRepository(database, new StubEventAggregator())),
                         [typeof(IConversionJobService)] = jobs
                     };
                     var constructor = typeof(ManualImportService).GetConstructors().Single();
@@ -163,7 +169,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var repository = new ConversionJobRepository(database, new StubEventAggregator());
                 var converter = new RetainedResultConverter { Success = outcome != "encoder-failed" };
                 var request = CreateRequest(directory, "dune-download");
-                var service = new ConversionJobService(repository, converter, null,
+                var service = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(), repository, converter, null,
                     Proxy<IManageCommandQueue>((_, _) => null), CreateConfig(), LogManager.GetCurrentClassLogger());
                 try
                 {
@@ -171,7 +177,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var folderPreview = origin.StartsWith("folder", StringComparison.Ordinal);
                     RunWorker(service, request);
                     if (outcome == "import-failed") service.Fail(request.DownloadId, "Destination is unavailable");
-                    if (outcome == "cancelled") service.Cancel(request.DownloadId);
+                    if (outcome == "cancelled") service.Cancel(request.DownloadId, ConversionRemovalOrigin.UserAction);
                     if (outcome == "missing") File.Delete(request.OutputPath);
                     if (outcome == "changed-output") File.AppendAllText(request.OutputPath, "changed");
                     if (outcome == "missing-source") File.Delete(request.Sources.Single().Path);
@@ -226,7 +232,9 @@ namespace Chaptarr.Core.Test.MediaFiles
                                 : new List<TrackedDownload> { tracked },
                             _ => throw new NotImplementedException(method.Name)
                         }),
-                        Proxy<IDownloadClientFileSnapshotService>((_, _) => null), null, null, null, null,
+                        Proxy<IDownloadClientFileSnapshotService>((_, _) => null),
+                        new HistoryService(new HistoryRepository(database, new StubEventAggregator()), LogManager.GetCurrentClassLogger(),
+                            new DownloadHistoryRepository(database, new StubEventAggregator())), null, null, null,
                         LogManager.GetCurrentClassLogger(), null, service);
 
                     var before = repository.FindByDownloadId(request.DownloadId);

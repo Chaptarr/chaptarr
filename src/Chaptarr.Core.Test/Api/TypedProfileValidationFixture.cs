@@ -18,7 +18,9 @@ namespace Chaptarr.Core.Test.Api
         private sealed class Selection
         {
             public int? Quality { get; set; }
+            public int? StoredQuality { get; set; }
             public int? Metadata { get; set; }
+            public int? StoredMetadata { get; set; }
         }
 
         [Test]
@@ -40,14 +42,22 @@ namespace Chaptarr.Core.Test.Api
                 var rejectedMetadata = metadata.Add(new MetadataProfile { Name = "Other", ProfileType = side == ProfileType.Audiobook ? MetadataProfileType.Ebook : MetadataProfileType.Audiobook });
                 var general = metadata.Add(new MetadataProfile { Name = "Either side", ProfileType = MetadataProfileType.General });
                 var validator = new InlineValidator<Selection>();
-                validator.RuleFor(selection => selection.Quality).SetValidator(new QualityProfileExistsValidator(quality).ForType(side));
-                validator.RuleFor(selection => selection.Metadata).SetValidator(new MetadataProfileExistsValidator(metadata).ForType((MetadataProfileType)side));
+                validator.RuleFor(selection => selection.Quality).SetValidator(new QualityProfileExistsValidator(quality).ForType(side, value => ((Selection)value).StoredQuality));
+                validator.RuleFor(selection => selection.Metadata).SetValidator(new MetadataProfileExistsValidator(metadata).ForType((MetadataProfileType)side, value => ((Selection)value).StoredMetadata));
                 Assert.That(validator.Validate(new Selection { Quality = acceptedQuality.Id, Metadata = acceptedMetadata.Id }).IsValid, Is.True);
                 Assert.That(validator.Validate(new Selection { Quality = acceptedQuality.Id, Metadata = general.Id }).IsValid, Is.True);
                 var failures = validator.Validate(new Selection { Quality = rejectedQuality.Id, Metadata = rejectedMetadata.Id });
                 Assert.That(failures.Errors, Has.Count.EqualTo(2));
                 Assert.That(failures.Errors, Has.All.Matches<FluentValidation.Results.ValidationFailure>(failure => failure.ErrorMessage.Contains("incompatible")));
                 Assert.That(validator.Validate(new Selection { Quality = int.MaxValue, Metadata = int.MaxValue }).Errors, Has.Count.EqualTo(2));
+                Assert.That(validator.Validate(new Selection { Quality = rejectedQuality.Id, StoredQuality = rejectedQuality.Id, Metadata = general.Id }).IsValid, Is.True,
+                    "An unchanged legacy type mismatch must not block an unrelated save");
+                Assert.That(validator.Validate(new Selection { Quality = int.MaxValue, StoredQuality = int.MaxValue, Metadata = general.Id }).IsValid, Is.False,
+                    "An unchanged missing profile is still invalid");
+                Assert.That(validator.Validate(new Selection { Quality = acceptedQuality.Id, Metadata = rejectedMetadata.Id, StoredMetadata = rejectedMetadata.Id }).IsValid, Is.True,
+                    "An unchanged metadata type mismatch must not block an unrelated save");
+                Assert.That(validator.Validate(new Selection { Quality = acceptedQuality.Id, Metadata = int.MaxValue, StoredMetadata = int.MaxValue }).IsValid, Is.False,
+                    "An unchanged missing metadata profile is still invalid");
             });
         }
     }

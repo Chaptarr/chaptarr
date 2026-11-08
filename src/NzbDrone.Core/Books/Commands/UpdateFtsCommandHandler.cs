@@ -1,3 +1,4 @@
+using System;
 using NLog;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.Lifecycle;
@@ -22,7 +23,14 @@ namespace NzbDrone.Core.Books.Commands
         public void Execute(UpdateFtsCommand message)
         {
             _logger.Debug("[FTS-UPDATE] Starting FTS update");
-            _ftsMaintenanceService.RebuildAllFts();
+            try
+            {
+                _ftsMaintenanceService.RebuildAllFts();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "[FTS-UPDATE] Failed to rebuild the author search index; continuing with the book search index");
+            }
             _editionFtsRepository.EnsureIndexPopulated();
             _logger.Debug("[FTS-UPDATE] FTS update completed");
         }

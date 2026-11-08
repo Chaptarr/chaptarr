@@ -80,6 +80,7 @@ namespace Chaptarr.Core.Test.Notifications
                     {
                         nameof(IDiskProvider.FileExistsCanonical) or nameof(IDiskProvider.FileExists) => File.Exists((string)args[0]),
                         nameof(IDiskProvider.FolderExists) => Directory.Exists((string)args[0]),
+                        nameof(IDiskProvider.GetFiles) => Directory.GetFiles((string)args[0]),
                         nameof(IDiskProvider.FolderEmpty) => !Directory.EnumerateFileSystemEntries((string)args[0]).Any(),
                         _ => throw new NotImplementedException(method.Name)
                     });
@@ -105,7 +106,7 @@ namespace Chaptarr.Core.Test.Notifications
                     });
                     var config = Proxy<IConfigService>((method, _) => method.Name == "get_DeleteEmptyFolders"
                         ? false : throw new NotImplementedException(method.Name));
-                    var deletion = new MediaFileDeletionService(disk, recycle, media, null, config, events, roots, null, logger);
+                    var deletion = new MediaFileDeletionService(disk, recycle, media, null, config, events, roots, null, logger, metadataFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Metadata.Files.MetadataFile>(), otherFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Others.OtherExtraFile>(), metadataFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Metadata(), otherFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Other());
                     var subsonicUpdates = 0;
                     var plexUpdates = 0;
                     var failScan = scenario == "scan-failure";
@@ -116,7 +117,7 @@ namespace Chaptarr.Core.Test.Notifications
                         subsonicUpdates++;
                         if (failScan) throw new IOException("Synthetic remote scan failure");
                         return null;
-                    }), new CacheManager())
+                    }), new CacheManager(), new Chaptarr.Core.Test.Common.MemoryPendingNotifications())
                     { Definition = new NotificationDefinition { Id = 1, Settings = new SubsonicSettings { UpdateLibrary = true } } };
                     var plex = new PlexServer(Proxy<IPlexServerService>((method, _) =>
                     {
@@ -136,7 +137,7 @@ namespace Chaptarr.Core.Test.Notifications
                         Assert.That(paths.Any(File.Exists), Is.False);
                         kavitaUpdates++;
                         return null;
-                    }), new CacheManager())
+                    }), new CacheManager(), new Chaptarr.Core.Test.Common.MemoryPendingNotifications())
                     { Definition = new NotificationDefinition { Id = 3, Settings = new KavitaSettings { Notify = true } } };
                     var synology = new SynologyIndexer(Proxy<ISynologyIndexerProxy>((method, args) =>
                     {
@@ -145,7 +146,7 @@ namespace Chaptarr.Core.Test.Notifications
                         Assert.That(File.Exists((string)args[0]), Is.False);
                         synologyDeletes++;
                         return null;
-                    }), disk, new CacheManager())
+                    }), disk, new CacheManager(), new Chaptarr.Core.Test.Common.MemoryPendingNotifications())
                     { Definition = new NotificationDefinition { Id = 4, Settings = new SynologyIndexerSettings { UpdateLibrary = true } } };
                     var providers = new List<INotification> { subsonic, plex, kavita, synology };
                     var factory = Proxy<INotificationFactory>((method, _) => method.Name is nameof(INotificationFactory.OnBookDeleteEnabled) or nameof(INotificationFactory.GetAvailableProviders)

@@ -61,22 +61,28 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 return Decision.Reject("No quality profile configured for {0} files", subject.ParsedBookInfo.Quality.Quality.Name);
             }
 
-            foreach (var file in books.Where(b => b.BookFiles != null).SelectMany(c => c.BookFiles))
+            foreach (var book in books.Where(book => book.BookFiles != null))
             {
-                if (file == null)
+                if (book.BookFiles.Any(file => file == null))
                 {
                     return Decision.Accept();
                 }
 
-                var customFormats = _formatService.ParseCustomFormat(file);
-
-                if (!_upgradableSpecification.IsUpgradable(qualityProfile,
-                                                           file.Quality,
-                                                           customFormats,
-                                                           subject.ParsedBookInfo.Quality,
-                                                           subject.CustomFormats))
+                foreach (var recording in RecordingCustomFormatHelper.GroupStoredForScoring(book.BookFiles, book: book))
                 {
-                    return Decision.Reject("Existing files on disk is of equal or higher preference: {0}", file.Quality.Quality.Name);
+                    var input = RecordingCustomFormatHelper.CreateStoredInput(recording, author: subject.Author, book: book);
+                    var customFormats = _formatService.ParseCustomFormat(input);
+                    foreach (var quality in recording.Select(file => file.Quality).Distinct())
+                    {
+                        if (!_upgradableSpecification.IsUpgradable(qualityProfile,
+                                                                   quality,
+                                                                   customFormats,
+                                                                   subject.ParsedBookInfo.Quality,
+                                                                   subject.CustomFormats))
+                        {
+                            return Decision.Reject("Existing files on disk is of equal or higher preference: {0}", quality.Quality.Name);
+                        }
+                    }
                 }
             }
 

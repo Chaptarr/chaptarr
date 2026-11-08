@@ -157,6 +157,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 {
                     nameof(IMediaFileService.GetFilesByAuthor) => authorFiles,
                     nameof(IMediaFileService.GetFilesByBook) => authorFiles,
+                    nameof(IMediaFileService.GetFilesByBooks) => authorFiles,
                     nameof(IMediaFileService.Get) => new List<BookFile> { file },
                     nameof(IMediaFileService.Update) => null,
                     _ => throw new NotImplementedException(m.Name)
@@ -170,7 +171,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     file.Path = plan.DestinationPath;
                     return file;
                 });
-                var realDisk = new NzbDrone.Windows.Disk.DiskProvider();
+                var realDisk = Chaptarr.Core.Test.Common.RealDiskProvider.Create(LogManager.GetCurrentClassLogger());
                 var disk = Proxy<IDiskProvider>((m, a) =>
                 {
                     if (a?.FirstOrDefault() is string path && !temp.IsParentPath(path)) throw new InvalidOperationException("Sandbox boundary violation");
@@ -216,11 +217,11 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var audio = new Book { Id = 2, AuthorId = 1, Author = author, MediaType = BookMediaType.Audiobook, RemoteProviderIds = new HashSet<string> { "hc:123" } };
                     var imported = new BookFile { Id = 2, Author = author, MediaType = "audiobook", Quality = new QualityModel(Quality.M4B) };
                     new EbookColocateOnAudiobookImportHandler(roots, books, media, mover, disk, events, LogManager.GetCurrentClassLogger())
-                        .Handle(new TrackImportedEvent(new LocalBook { Author = author, Book = audio }, imported, new List<BookFile>(), true, null));
+                        .Handle(new BookImportedEvent(author, audio, new List<BookFile> { imported }, new List<BookFile>(), true, null));
                 }
                 else
                 {
-                    new RenameBookFileService(authors, media, mover, events, disk, LogManager.GetCurrentClassLogger())
+                    new RenameBookFileService(authors, media, mover, events, disk, LogManager.GetCurrentClassLogger(), null)
                         .Execute(new RenameFilesCommand(author.Id, new List<int> { file.Id }));
                 }
 

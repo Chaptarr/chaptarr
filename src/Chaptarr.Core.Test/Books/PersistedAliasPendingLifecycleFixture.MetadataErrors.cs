@@ -24,13 +24,13 @@ namespace Chaptarr.Core.Test.Books
             public ErrorContractRefresh(Harness h, IProvideAuthorInfo authors, IProvideBookInfo metadata)
                 : base(h.BookService, null, null, null, authors, metadata, null,
                     Proxy<IMediaFileService>((_, _) => new List<BookFile>()), null, null, null,
-                    new EditionSelector(LogManager.GetCurrentClassLogger()), null, null, LogManager.GetCurrentClassLogger())
+                    new EditionSelector(LogManager.GetCurrentClassLogger()), null, null, LogManager.GetCurrentClassLogger(), mainDatabase: null)
             {
             }
 
-            protected override RemoteData GetRemoteData(Book local, List<Book> remote, Author author)
+            protected override RemoteData GetRemoteData(Book local, List<Book> remote, Author author, RefreshContext context)
             {
-                var result = base.GetRemoteData(local, remote, author);
+                var result = base.GetRemoteData(local, remote, author, context);
                 if (result.Entity != null) AcceptedRemoteWorkIds.Add(result.Entity.HardcoverBookId);
                 return new RemoteData();
             }

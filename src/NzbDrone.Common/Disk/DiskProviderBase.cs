@@ -5,6 +5,7 @@ using System.IO;
 using System.IO.Abstractions;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using NLog;
 using NzbDrone.Common.EnsureThat;
 using NzbDrone.Common.EnvironmentInfo;
@@ -369,7 +370,21 @@ namespace NzbDrone.Common.Disk
                 }
             }
 
-            _fileSystem.Directory.Delete(path, recursive);
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    _fileSystem.Directory.Delete(path, recursive);
+                    return;
+                }
+                catch (IOException) when (recursive && attempt < 2 && _fileSystem.Directory.Exists(path) &&
+                    !_fileSystem.File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+                {
+                    // Network filesystems can still report entries while a deletion settles.
+                    // Recheck through Directory.Delete, which never traverses directory links.
+                    Thread.Sleep(3000);
+                }
+            }
         }
 
         public string ReadAllText(string filePath)

@@ -223,7 +223,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 TagOptions = _options.TagOptions,
                 TagSignature = "provider chapters"
             };
-            if (cancel) _afterChapterWrite = () => Assert.That(jobs.Cancel(request.DownloadId), Is.True);
+            if (cancel) _afterChapterWrite = () => Assert.That(jobs.Cancel(request.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
             else Directory.CreateDirectory(Path.Combine(_metadata, "chapters.txt"));
             try
             {

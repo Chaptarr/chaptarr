@@ -8,6 +8,7 @@ using Chaptarr.Api.V1.ManualImport;
 using NzbDrone.Common.Disk;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.MediaFiles.BookImport.Manual;
+using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.RootFolders;
 using NLog;
 using NUnit.Framework;
@@ -33,10 +34,12 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class ConversionBoundaryEvents : IEventAggregator
         {
             public Action QueueUpdated { get; set; }
+            public Action<IEvent> Published { get; set; }
 
             public void PublishEvent<TEvent>(TEvent @event) where TEvent : class, IEvent
             {
                 if (@event is QueueUpdatedEvent) QueueUpdated?.Invoke();
+                Published?.Invoke(@event);
             }
         }
 
@@ -87,8 +90,12 @@ namespace Chaptarr.Core.Test.MediaFiles
             public readonly StubMediaFileService MediaFiles = new();
             public readonly List<(decimal? Progress, bool CanCancel, bool LateAccepted, Exception LateError)> ImportBoundaries = new();
             public bool FailTransfer;
+            public readonly List<string> ImportedMessages = new();
+            public readonly List<BookFileConversionFailedEvent> ConversionFailures = new();
+            public bool SourceExists => File.Exists(_source);
+            public void ChangeSource() => File.AppendAllText(_source, "changed bytes");
 
-            public WorkerConversionBoundary(NzbDrone.Core.Datastore.IMainDatabase database = null, int bookId = 91)
+            public WorkerConversionBoundary(NzbDrone.Core.Datastore.IMainDatabase database = null, int bookId = 91, bool enforceCustomFormats = false)
             {
                 _directory = Path.Combine(TestContext.CurrentContext.WorkDirectory, "conversion-stop-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(_directory);
@@ -100,7 +107,14 @@ namespace Chaptarr.Core.Test.MediaFiles
                 _author.AudiobookPath = _directory;
                 _book.CleanTitle = "black sheep";
                 Mover = new StubMoveBookFiles { DestinationPath = Path.Combine(_directory, "output.m4b") };
-                var events = new ConversionBoundaryEvents();
+                var events = new ConversionBoundaryEvents
+                {
+                    Published = message =>
+                    {
+                        if (message is TrackImportedEvent imported) ImportedMessages.Add(imported.Message);
+                        if (message is BookFileConversionFailedEvent failed) ConversionFailures.Add(failed);
+                    }
+                };
                 Tracking = new ConversionTrackingService(events);
                 events.QueueUpdated = () =>
                 {
@@ -119,10 +133,77 @@ namespace Chaptarr.Core.Test.MediaFiles
                     MediaFiles, new StubMetadataTagService(), new StubMediaInfoExtractor(),
                     Proxy<IAuthorService>(), CreateBookService(new List<Book> { _book }).Service, CreateEditionService(new List<Edition> { _edition }),
                     new StubRecycleBinProvider(), Proxy<IExtraService>(), Mover, Proxy<IHistoryService>(),
-                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), new NoOpEventAggregator(),
+                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events,
                     Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(), Converter, LogManager.GetCurrentClassLogger(), Tracking,
-                    conversionJobService: Jobs);
+                    conversionJobService: Jobs, customFormatCalculationService: enforceCustomFormats ? RecordingFormats() : null);
+            }
+
+            public void ChangeAcquisitionSettings(string change)
+            {
+                if (change == "pause") _author.AudiobookMonitored = false;
+                else _author.AudiobookQualityProfile.Value.MinFormatScore = 1000;
+                _author.AudiobookQualityProfile.Value.ConvertToQualityId = null;
+            }
+
+            public void RequireUpgradeConfirmation(bool confirm = true)
+            {
+                _author.AudiobookQualityProfile.Value.UpgradeAllowed = true;
+                _author.AudiobookQualityProfile.Value.ConfirmAutomaticUpgrades = confirm;
+            }
+
+            public void DisableConversion() => _author.AudiobookQualityProfile.Value.ConvertToQualityId = null;
+
+            public List<ImportResult> ImportPass(bool replaceExisting = true, Action<LocalBook> prepare = null, bool rejectCompanion = false)
+            {
+                var local = new LocalBook { Path = _source, Author = _author, Book = _book, Edition = _edition,
+                    Quality = new QualityModel(Quality.MP3), Size = new FileInfo(_source).Length,
+                    Modified = File.GetLastWriteTimeUtc(_source) };
+                prepare?.Invoke(local);
+                var decisions = new List<ImportDecision<LocalBook>> { new(local) };
+                if (rejectCompanion)
+                {
+                    decisions.Add(new ImportDecision<LocalBook>(new LocalBook
+                    {
+                        Path = _source + ".part2.mp3", Author = _author, Book = _book, Edition = _edition,
+                        Quality = new QualityModel(Quality.MP3)
+                    }, new Rejection("Selected companion part was rejected")));
+                }
+                return _service.Import(decisions, replaceExisting,
+                    new DownloadClientItem { DownloadId = DownloadId }, ImportMode.Move);
+            }
+
+            public List<ImportResult> ImportThroughDownloadPath(string route)
+            {
+                var logger = LogManager.GetCurrentClassLogger();
+                var dependencies = new Dictionary<Type, object>
+                {
+                    [typeof(Logger)] = logger,
+                    [typeof(IDiskProvider)] = Chaptarr.Core.Test.Common.RealDiskProvider.Create(logger),
+                    [typeof(IConversionJobService)] = Jobs,
+                    [typeof(IQueueService)] = Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue()
+                };
+                var constructor = typeof(DownloadedBooksImportService).GetConstructors().Single();
+                var arguments = constructor.GetParameters().Select(parameter =>
+                {
+                    if (dependencies.TryGetValue(parameter.ParameterType, out var dependency)) return dependency;
+                    var proxy = System.Reflection.DispatchProxy.Create(parameter.ParameterType, typeof(Chaptarr.Core.Test.Common.InterfaceProxy));
+                    ((Chaptarr.Core.Test.Common.InterfaceProxy)proxy).Handler = (method, _) =>
+                        throw new AssertionException($"Import reached {method.Name} while conversion was still waiting for output");
+                    return proxy;
+                }).ToArray();
+                var importer = (DownloadedBooksImportService)constructor.Invoke(arguments);
+                var path = route == "file" ? _source : route == "folder" ? _directory : Path.Combine(_directory, "not-delivered");
+                return importer.ProcessPath(path, downloadClientItem: new DownloadClientItem
+                    { DownloadId = DownloadId, FilePaths = new() { _source } },
+                    remoteBook: new RemoteBook { Author = _author, Books = new() { _book } });
+            }
+
+            public void RunQueuedWorker()
+            {
+                typeof(ConversionJobService).GetMethod("DispatchQueuedJobs", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                    .Invoke(Jobs, null);
+                Assert.That(SpinWait.SpinUntil(() => !Jobs.IsRunning(DownloadId), TimeSpan.FromSeconds(15)), Is.True);
             }
 
             public List<ImportResult> Import(bool manual = false) => manual ? ImportSelectedOriginals() : ImportWithConversionWorker(_service, new List<ImportDecision<LocalBook>>
@@ -178,16 +259,17 @@ namespace Chaptarr.Core.Test.MediaFiles
                     ((IReadOnlyCollection<BookFile>)args[0]).Select(file => new ManualImportReplacementFile
                     { Id = file.Id, BookId = file.Edition.BookId, Path = file.Path }).ToList());
                 var controller = new ManualImportController(null, null, null, null, media, roots, LogManager.GetCurrentClassLogger(), descriptions);
-                return controller.GetReplacementFiles(new ManualImportCommand { Files = new List<ManualImportFile>
+                return controller.GetReplacementFiles(new ManualImportReplacementRequest { Files = new List<ManualImportReplacementSelection>
                 { new() { Path = Converter.OutputPath, BookId = _book.Id } } });
             }
 
-            public void ExecuteOutputWithoutDownloadId(bool selectSources, WorkerConversionBoundary other = null, bool importOriginals = false)
+            public void ExecuteOutputWithoutDownloadId(bool selectSources, WorkerConversionBoundary other = null, bool importOriginals = false, bool untracked = false)
             {
                 var boundaries = other == null ? new[] { this } : new[] { this, other };
                 var downloads = boundaries.Select(boundary => new TrackedDownload { State = TrackedDownloadState.ImportBlocked,
                     DownloadItem = new DownloadClientItem { DownloadId = boundary.DownloadId, FilePaths = new List<string> { boundary._source } } }).ToList();
                 var tracked = downloads[0];
+                if (untracked) downloads.Clear();
                 var dependencies = new Dictionary<Type, object>
                 {
                     [typeof(Logger)] = LogManager.GetCurrentClassLogger(),
@@ -204,8 +286,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                     [typeof(IImportApprovedBooks)] = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IImportApprovedBooks>((method, args) =>
                     {
                         var downloadId = ((DownloadClientItem)args[2])?.DownloadId;
-                        Assert.That(downloadId, Is.Not.Null, "Every selected conversion must retain its own download context");
-                        var boundary = boundaries.Single(candidate => candidate.DownloadId == downloadId);
+                        Assert.That(downloadId, untracked ? Is.Null : Is.Not.Null, "A retained output can be imported after its download leaves the tracking cache");
+                        var boundary = untracked ? this : boundaries.Single(candidate => candidate.DownloadId == downloadId);
                         Assert.That(((List<ImportDecision<LocalBook>>)args[0]).All(decision => decision.Item.Book.Id == boundary._book.Id), Is.True);
                         return method.Invoke(boundary._service, args);
                     }),
@@ -214,6 +296,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         ((List<ImportResult>)args[2]).All(result => result.Result == ImportResultType.Imported)),
                     [typeof(IEventAggregator)] = new NoOpEventAggregator()
                 };
+                dependencies[typeof(IConversionJobService)] = Jobs;
                 var constructor = typeof(ManualImportService).GetConstructors().Single();
                 var manual = (ManualImportService)constructor.Invoke(constructor.GetParameters().Select(parameter => dependencies.GetValueOrDefault(parameter.ParameterType)).ToArray());
                 var command = new ManualImportCommand { ReplaceExistingFiles = false, ImportMode = ImportMode.Move,
@@ -240,6 +323,20 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Tracking.Complete(DownloadId);
                 if (Directory.Exists(_directory)) Directory.Delete(_directory, true);
             }
+        }
+
+        [Test]
+        public void newly_queued_conversion_reports_why_import_is_pending([Values(false, true)] bool postgres)
+        {
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                using var boundary = new WorkerConversionBoundary(database);
+                var result = boundary.ImportPass().Single();
+                Assert.That(result.Result, Is.EqualTo(ImportResultType.Pending));
+                Assert.That(result.Errors, Is.EqualTo(new[] { "Waiting for conversion to finish." }));
+                Assert.That(boundary.Jobs.Get(boundary.DownloadId).Status, Is.EqualTo(ConversionJobStatus.Queued));
+                Assert.That(boundary.Converter.Calls, Is.Zero);
+            });
         }
 
         [Test]
@@ -328,6 +425,27 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
+        public void unowned_legacy_conversion_import_is_recovered_from_committed_files([Values(false, true)] bool postgres)
+        {
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                using var h = new WorkerConversionBoundary(database);
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Pending));
+                h.RunQueuedWorker();
+                Assert.That(h.Jobs.Get(h.DownloadId).Status, Is.EqualTo(ConversionJobStatus.ReadyToImport));
+                h.Mover.TransferFilesOnDisk = true;
+                h.ExecuteOutputWithoutDownloadId(false, untracked: true);
+                Assert.That(h.MediaFiles.FilesByBook.Single().Path, Is.EqualTo(h.Mover.DestinationPath));
+                Assert.That(File.Exists(h.Mover.DestinationPath), Is.True);
+                typeof(ConversionJobService).GetMethod("Reconcile", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).Invoke(h.Jobs, null);
+                Assert.That(h.Jobs.Get(h.DownloadId)?.Status, Is.Null.Or.EqualTo(ConversionJobStatus.Completed));
+                Assert.That(h.Jobs.GetCompletedConversion(h.DownloadId), Is.Null);
+                Assert.That(h.Converter.Calls, Is.EqualTo(1));
+                Assert.That(h.SourceExists, Is.True);
+            });
+        }
+
+        [Test]
         public void folder_manual_import_of_successful_output_recovers_download_from_recorded_sources(
             [Values(false, true)] bool postgres, [Values(false, true)] bool selectSources)
         {
@@ -353,6 +471,298 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Assert.That(h.MediaFiles.FilesByBook.Single().Quality.Quality, Is.EqualTo(Quality.M4B));
                     Assert.That(h.Jobs.GetCompletedConversion(h.DownloadId), Is.Null);
                 }
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void accepted_ready_conversion_with_unverifiable_receipt_publishes_failure_before_blocking_import(bool postgres)
+        {
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                using var h = new WorkerConversionBoundary(database);
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Pending));
+                h.RunQueuedWorker();
+                var ready = h.Jobs.Get(h.DownloadId);
+                Assert.That(ready.Status, Is.EqualTo(ConversionJobStatus.ReadyToImport));
+                var request = JsonSerializer.Deserialize<ConversionJobRequest>(ready.RequestJson);
+                var manifestPath = Path.Combine(request.WorkFolder, "conversion-artifact.json");
+                var receipt = JsonSerializer.Deserialize<ConversionArtifactManifest>(File.ReadAllText(manifestPath));
+                receipt.EncoderSucceeded = false;
+                File.WriteAllText(manifestPath, JsonSerializer.Serialize(receipt));
+                h.ConversionFailures.Clear();
+
+                var result = h.ImportPass().Single();
+
+                Assert.That(result.Result, Is.Not.EqualTo(ImportResultType.Imported).And.Not.EqualTo(ImportResultType.Pending));
+                Assert.That(h.Jobs.Get(h.DownloadId).Status, Is.EqualTo(ConversionJobStatus.Failed));
+                Assert.That(h.SourceExists, Is.True);
+                Assert.That(h.MediaFiles.FilesByBook, Is.Empty);
+                Assert.That(h.Converter.Calls, Is.EqualTo(1));
+                Assert.That(h.ConversionFailures, Has.Count.EqualTo(1));
+                var failed = h.ConversionFailures.Single();
+                Assert.That(failed.DownloadId, Is.EqualTo(h.DownloadId));
+                Assert.That(failed.SourcePaths, Is.EquivalentTo(request.Sources.Select(source => source.Path)));
+                Assert.That(failed.ConvertedPath, Is.EqualTo(request.OutputPath));
+                Assert.That(failed.Message, Does.Contain("could not be verified"));
+            });
+        }
+
+        [Test]
+        public void automatic_import_waits_before_refusal_and_destination_gates(
+            [Values(false, true)] bool postgres,
+            [Values("quality", "missing-profile", "missing-author", "additional-copy", "edition-pin", "replacement", "replacement-cancelled")] string gate)
+        {
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                using var h = new WorkerConversionBoundary(database);
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Pending));
+                if (gate is "additional-copy" or "replacement" or "replacement-cancelled") h.AddOldRecording();
+                if (gate == "replacement") h.RequireUpgradeConfirmation();
+                if (gate == "replacement-cancelled") h.RequireUpgradeConfirmation(false);
+                var before = h.MediaFiles.FilesByBook.ToArray();
+                var result = h.ImportPass(prepare: local =>
+                {
+                    if (gate == "quality") local.Author.AudiobookQualityProfile.Value.Items.ForEach(item => item.Allowed = false);
+                    if (gate == "missing-profile") { local.Author.AudiobookQualityProfileId = null; local.Author.AudiobookQualityProfile = null; }
+                    if (gate == "missing-author") { local.Book.Author = null; local.Author = null; }
+                    if (gate == "edition-pin") { local.Book.AnyEditionOk = false; local.Edition = new Edition { Id = local.Edition.Id + 1, BookId = local.Book.Id }; }
+                }, rejectCompanion: gate == "replacement-cancelled");
+                Assert.That(result.Select(item => item.Result), Is.All.EqualTo(ImportResultType.Pending));
+                Assert.That(h.Jobs.Get(h.DownloadId).Status, Is.EqualTo(ConversionJobStatus.Queued));
+                Assert.That(h.Converter.Calls, Is.Zero);
+                Assert.That(h.Mover.MoveCalls + h.Mover.CopyCalls, Is.Zero);
+                Assert.That(h.MediaFiles.FilesByBook, Is.EqualTo(before));
+                Assert.That(h.MediaFiles.DeletedFiles, Is.Empty);
+                Assert.That(h.SourceExists, Is.True);
+            });
+        }
+
+        [Test]
+        public void download_paths_wait_before_discovery_and_expected_edition_checks(
+            [Values(false, true)] bool postgres, [Values("file", "folder", "missing")] string route,
+            [Values(ConversionJobStatus.Queued, ConversionJobStatus.Converting, ConversionJobStatus.Cancelling)] ConversionJobStatus state)
+        {
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                using var h = new WorkerConversionBoundary(database);
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Pending));
+                var repository = new ConversionJobRepository(database, new NoOpEventAggregator());
+                var job = repository.FindByDownloadId(h.DownloadId);
+                job.Status = state;
+                repository.SetFields(job, row => row.Status);
+                Assert.That(h.ImportThroughDownloadPath(route).Single().Result, Is.EqualTo(ImportResultType.Pending));
+                Assert.That(repository.FindByDownloadId(h.DownloadId).Status, Is.EqualTo(state));
+                Assert.That(h.Converter.Calls, Is.Zero);
+                Assert.That(h.Mover.CopyCalls + h.Mover.MoveCalls, Is.Zero);
+                Assert.That(h.MediaFiles.FilesByBook, Is.Empty);
+                Assert.That(h.SourceExists, Is.True);
+            });
+        }
+
+        [Test]
+        public void accepted_grab_conversion_keeps_running_after_acquisition_settings_change(
+            [Values(false, true)] bool postgres, [Values(false, true)] bool running, [Values("pause", "cf")] string change)
+        {
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                using var h = new WorkerConversionBoundary(database, enforceCustomFormats: true);
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Pending));
+                Assert.That(h.Jobs.Get(h.DownloadId).Status, Is.EqualTo(ConversionJobStatus.Queued));
+                void ChangeAndRecheck()
+                {
+                    h.ChangeAcquisitionSettings(change);
+                    Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Pending));
+                    Assert.That(h.Jobs.Get(h.DownloadId).Status, Is.EqualTo(running ? ConversionJobStatus.Converting : ConversionJobStatus.Queued));
+                }
+
+                if (running) h.Converter.BeforeReturn = _ => ChangeAndRecheck();
+                else ChangeAndRecheck();
+                h.RunQueuedWorker();
+                Assert.That(h.Jobs.Get(h.DownloadId).Status, Is.EqualTo(ConversionJobStatus.ReadyToImport));
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Imported));
+                Assert.That(h.Converter.Calls, Is.EqualTo(1));
+                Assert.That(h.MediaFiles.FilesByBook.Single().Quality.Quality, Is.EqualTo(Quality.M4B),
+                    "Use the accepted conversion target even after conversion is disabled in the profile");
+            });
+        }
+
+        [Test]
+        public void deleted_client_keeps_a_tracked_conversion_until_it_imports([Values(false, true)] bool postgres)
+        {
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                using var h = new WorkerConversionBoundary(database, enforceCustomFormats: true);
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Pending));
+                var repository = new ConversionJobRepository(database, new NoOpEventAggregator());
+                var job = repository.FindByDownloadId(h.DownloadId);
+                var request = JsonSerializer.Deserialize<ConversionJobRequest>(job.RequestJson);
+                request.DownloadClientId = job.DownloadClientId = 4;
+                job.RequestJson = JsonSerializer.Serialize(request);
+                repository.Update(job);
+                var tracked = new TrackedDownload { DownloadClient = 4, State = TrackedDownloadState.ImportPending,
+                    DownloadItem = new DownloadClientItem { DownloadId = h.DownloadId } };
+                var refresh = new TrackedDownloadRefreshedEvent(new() { tracked }, new Dictionary<int, HashSet<string>>());
+                for (var pass = 0; pass < 3; pass++) h.Jobs.Handle(refresh);
+                Assert.That(h.Jobs.Get(h.DownloadId), Is.Not.Null, "A deleted client cannot remove a still-tracked download's conversion");
+                Assert.That(h.Jobs.Get(h.DownloadId).Status, Is.EqualTo(ConversionJobStatus.Queued));
+                Assert.That(h.Jobs.Cancel(h.DownloadId, ConversionRemovalOrigin.Inferred), Is.False,
+                    "The shared removal guard must also protect the tracked download");
+                h.RunQueuedWorker();
+                h.Jobs.Handle(refresh);
+                Assert.That(h.Jobs.Get(h.DownloadId).Status, Is.EqualTo(ConversionJobStatus.ReadyToImport));
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Imported));
+                Assert.That(h.MediaFiles.FilesByBook.Single().Quality.Quality, Is.EqualTo(Quality.M4B));
+                Assert.That(h.Converter.Calls, Is.EqualTo(1));
+            });
+        }
+
+        [Test]
+        public void changed_source_cleanup_failure_waits_without_throwing_or_repeating_disk_work([Values(false, true)] bool postgres)
+        {
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                using var h = new WorkerConversionBoundary(database, enforceCustomFormats: true);
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Pending));
+                h.RunQueuedWorker();
+                h.ChangeSource();
+                var calls = 0;
+                h.MediaFiles.BeforeOwnershipRead = () => { calls++; throw new IOException("Planted reset cleanup failure"); };
+                List<ImportResult> result = null;
+                Assert.DoesNotThrow(() => result = h.ImportPass(), "Cleanup failures must not escape the import group");
+                Assert.That(result.Single().Result, Is.EqualTo(ImportResultType.Pending), string.Join(" | ", result.Single().Errors) + $"; ownership reads={calls}");
+                var repository = new ConversionJobRepository(database, new NoOpEventAggregator());
+                var kept = repository.FindByDownloadId(h.DownloadId);
+                var request = JsonSerializer.Deserialize<ConversionJobRequest>(kept.RequestJson);
+                Assert.That(kept.CleanupAttention, Is.True);
+                Assert.That(request.CleanupNotBefore, Is.GreaterThan(DateTime.UtcNow));
+                Assert.That(request.CleanupError, Does.Contain("Planted reset cleanup failure"));
+                Assert.That(File.Exists(kept.OutputPath), Is.True);
+                Assert.That(h.SourceExists, Is.True);
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Pending));
+                Assert.That(calls, Is.EqualTo(1), "A pending reset must honor cleanup backoff");
+                Assert.That(h.ConversionFailures, Is.Empty);
+                h.MediaFiles.BeforeOwnershipRead = null;
+                request.CleanupNotBefore = DateTime.UtcNow.AddSeconds(-1);
+                kept.RequestJson = JsonSerializer.Serialize(request);
+                repository.Update(kept);
+                typeof(ConversionJobService).GetMethod("ReviewCleanupAttention", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                    .Invoke(h.Jobs, null);
+                Assert.That(h.Jobs.Get(h.DownloadId), Is.Null);
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Pending));
+                h.RunQueuedWorker();
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Imported));
+                Assert.That(h.Converter.Calls, Is.EqualTo(2));
+            });
+        }
+
+        [Test]
+        public void changed_conversion_source_gets_a_fresh_import_decision(
+            [Values(false, true)] bool postgres, [Values(false, true)] bool ready)
+        {
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                using var h = new WorkerConversionBoundary(database, enforceCustomFormats: true);
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Pending));
+                if (ready) h.RunQueuedWorker();
+                h.ChangeSource();
+                if (ready)
+                {
+                    var refusal = h.ImportPass().Single();
+                    Assert.That(refusal.Result, Is.EqualTo(ImportResultType.Pending));
+                    Assert.That(refusal.Errors.Single(), Does.Contain("Waiting to evaluate"));
+                    Assert.That(h.Jobs.Get(h.DownloadId), Is.Null);
+                    Assert.That(h.ConversionFailures, Is.Empty);
+                }
+                else
+                {
+                    h.RunQueuedWorker();
+                    Assert.That(h.Jobs.Get(h.DownloadId).Status, Is.EqualTo(ConversionJobStatus.Failed));
+                    Assert.That(h.Jobs.Get(h.DownloadId).Error, Does.Contain("sources changed or are missing"));
+                }
+                Assert.That(h.Converter.Calls, Is.EqualTo(ready ? 1 : 0));
+                Assert.That(h.SourceExists, Is.True);
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Pending));
+                h.RunQueuedWorker();
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Imported));
+                Assert.That(h.Converter.Calls, Is.EqualTo(ready ? 2 : 1));
+            });
+        }
+
+        [Test]
+        public void real_download_replacement_refusal_waits_then_retains_conversion(
+            [Values(false, true)] bool postgres, [Values(false, true)] bool existingBeforeAcceptance)
+        {
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                using var h = new WorkerConversionBoundary(database, enforceCustomFormats: true);
+                BookFile existing = null;
+                if (existingBeforeAcceptance)
+                {
+                    existing = h.AddOldRecording();
+                    existing.Quality = new QualityModel(Quality.MP3);
+                    h.RequireUpgradeConfirmation(false);
+                }
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Pending));
+                existing ??= h.AddOldRecording();
+                h.RequireUpgradeConfirmation();
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Pending));
+                Assert.That(h.Jobs.Get(h.DownloadId).Status, Is.EqualTo(ConversionJobStatus.Queued));
+                h.RunQueuedWorker();
+                var refused = h.ImportPass().Single();
+                Assert.That(refused.Result, Is.Not.EqualTo(ImportResultType.Imported).And.Not.EqualTo(ImportResultType.Pending));
+                Assert.That(h.Jobs.Get(h.DownloadId).Status, Is.EqualTo(ConversionJobStatus.Completed));
+                Assert.That(File.Exists(h.Converter.OutputPath), Is.True);
+                Assert.That(File.Exists(existing.Path), Is.True);
+                Assert.That(h.MediaFiles.FilesByBook, Has.Count.EqualTo(1));
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void queued_grab_without_saved_edition_rechecks_current_custom_format_minimum(bool postgres)
+        {
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                using var h = new WorkerConversionBoundary(database, enforceCustomFormats: true);
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Pending));
+                var job = h.Jobs.Get(h.DownloadId);
+                var request = JsonSerializer.Deserialize<ConversionJobRequest>(job.RequestJson);
+                Assert.That(request.EditionId, Is.GreaterThan(0));
+                request.EditionId = 0;
+                job.RequestJson = JsonSerializer.Serialize(request);
+                new ConversionJobRepository(database, new NoOpEventAggregator()).SetFields(job, row => row.RequestJson);
+                h.ChangeAcquisitionSettings("cf");
+
+                var result = h.ImportPass().Single();
+
+                Assert.That(result.Result, Is.EqualTo(ImportResultType.Pending));
+                Assert.That(h.Converter.Calls, Is.Zero);
+                Assert.That(h.MediaFiles.FilesByBook, Is.Empty);
+                Assert.That(h.SourceExists, Is.True);
+                Assert.That(h.Jobs.Get(h.DownloadId).Status, Is.EqualTo(ConversionJobStatus.Queued));
+                h.RunQueuedWorker();
+                var refused = h.ImportPass().Single();
+                Assert.That(refused.Result, Is.Not.EqualTo(ImportResultType.Imported).And.Not.EqualTo(ImportResultType.Pending));
+                Assert.That(h.Jobs.Get(h.DownloadId).Status, Is.EqualTo(ConversionJobStatus.Completed));
+                Assert.That(File.Exists(h.Converter.OutputPath), Is.True);
+                Assert.That(h.SourceExists, Is.True);
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void disabled_conversion_imports_requested_original_without_queueing_work(bool postgres)
+        {
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                using var h = new WorkerConversionBoundary(database);
+                h.DisableConversion();
+                h.Mover.DestinationPath = Path.ChangeExtension(h.Mover.DestinationPath, ".mp3");
+                Assert.That(h.ImportPass().Single().Result, Is.EqualTo(ImportResultType.Imported));
+                Assert.That(h.Jobs.Get(h.DownloadId), Is.Null);
+                Assert.That(h.Converter.Calls, Is.Zero);
+                Assert.That(h.MediaFiles.FilesByBook.Single().Quality.Quality, Is.EqualTo(Quality.MP3));
             });
         }
 
@@ -385,11 +795,21 @@ namespace Chaptarr.Core.Test.MediaFiles
                 h.Mover.FailSourcePath = null;
                 h.Mover.DestinationPath = Path.ChangeExtension(h.Mover.DestinationPath, selectConverted ? ".m4b" : ".mp3");
 
+                var retainedPath = h.Converter.OutputPath;
+                var discardedWorkspace = h.Jobs.Get(h.DownloadId).WorkFolder;
+                h.ImportedMessages.Clear();
                 var result = selectConverted ? h.ImportSelectedOutput() : h.Import(manual: true);
                 Assert.That(result.Single().Result, Is.EqualTo(ImportResultType.Imported));
                 Assert.That(h.Converter.Calls, Is.EqualTo(1), "Manual import must not rerun the encoder");
                 Assert.That(h.MediaFiles.FilesByBook.Single().Quality.Quality, Is.EqualTo(selectConverted ? Quality.M4B : Quality.MP3));
                 Assert.That(h.Jobs.GetCompletedConversion(h.DownloadId), Is.Null, "Imported or deliberately superseded output is retired");
+                if (!selectConverted)
+                {
+                    var messageAtPublish = h.ImportedMessages.Single();
+                    Assert.That(messageAtPublish, Does.Contain("Discarded retained conversion workspace").And.Contain(discardedWorkspace),
+                        "Importer must populate the History message before publishing original-file import");
+                    Assert.That(File.Exists(retainedPath), Is.False, "The note names the output actually discarded by the explicit original-file import");
+                }
             });
         }
 
@@ -400,7 +820,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
             {
                 using var h = new WorkerConversionBoundary(database);
-                h.Converter.BeforeReturn = _ => Assert.That(h.Jobs.Cancel(h.DownloadId), Is.True);
+                h.Converter.BeforeReturn = _ => Assert.That(h.Jobs.Cancel(h.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
                 for (var attempt = 0; attempt < 3; attempt++)
                 {
                     if (attempt > 0) h.Jobs.Reset(h.DownloadId);
@@ -631,7 +1051,13 @@ namespace Chaptarr.Core.Test.MediaFiles
                         Sources = new List<ConversionArtifactSource> { new() { Path = newerSource, Size = info.Length, ModifiedUtcTicks = info.LastWriteTimeUtc.Ticks } },
                         TargetQualityId = Quality.M4B.Id, TargetQualityName = "M4B"
                     });
-                    h.Jobs.Fail(h.DownloadId, "newer different-book failure");
+                    var failed = h.Jobs.Get(h.DownloadId);
+                    failed.Status = ConversionJobStatus.Failed;
+                    failed.Error = "newer different-book failure";
+                    var rows = (IConversionJobRepository)typeof(ConversionJobService)
+                        .GetField("_repository", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(h.Jobs);
+                    rows.SetFields(failed, row => row.Status, row => row.Error);
+                    h.Tracking.Fail(h.DownloadId, failed.Error);
                 }
                 return destination;
             };

@@ -74,7 +74,7 @@ namespace NzbDrone.Core.Datastore.Migration
                 var options = new ImportListMonitoringOptions
                 {
                     AddMissingAuthors = true,
-                    ResumePausedAuthors = list.ShouldMonitor == ImportListMonitorType.SpecificBook && list.ShouldMonitorExisting,
+                    ResumePausedAuthors = false,
                     AudiobookMonitored = list.ShouldMonitor == ImportListMonitorType.SpecificBook ? true : generic ? null : RootSettings("audiobook")?.Monitored ?? true,
                     EbookMonitored = list.ShouldMonitor == ImportListMonitorType.SpecificBook ? true : generic ? null : RootSettings("ebook")?.Monitored ?? true,
                     AudiobookMonitor = list.ShouldMonitor == ImportListMonitorType.EntireAuthor ? MonitorTypes.All : MonitorTypes.None,

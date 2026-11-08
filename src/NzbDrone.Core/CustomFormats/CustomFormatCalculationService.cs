@@ -163,12 +163,19 @@ namespace NzbDrone.Core.CustomFormats
 
         public List<CustomFormat> ParseCustomFormat(LocalBook localBook)
         {
+            return ParseCustomFormat(CreateLocalInput(localBook));
+        }
+
+        private static CustomFormatInput CreateLocalInput(LocalBook localBook, string originalFilePath = null)
+        {
             var mediaType = QualityMediaTypeHelper.GetKnownMediaType(localBook.Quality?.Quality ?? Quality.Unknown) ?? QualityMediaTypeHelper.GetMediaTypeFromPath(localBook.Path);
             var isAudiobook = mediaType == BookMediaType.Audiobook;
+            var isDramatized = isAudiobook && AudioProductionDetector.IsDramatized(localBook);
             var bookInfo = new ParsedBookInfo
             {
                 AuthorName = localBook.Author.Name,
-                ReleaseTitle = localBook.SceneName,
+                ReleaseTitle = localBook.SceneName.IsNotNullOrWhiteSpace() ? localBook.SceneName
+                    : originalFilePath.IsNotNullOrWhiteSpace() ? originalFilePath : Path.GetFileName(localBook.Path),
                 Quality = localBook.Quality,
                 ReleaseGroup = localBook.ReleaseGroup
             };
@@ -178,14 +185,16 @@ namespace NzbDrone.Core.CustomFormats
                 BookInfo = bookInfo,
                 Author = localBook.Author,
                 Size = localBook.Size,
+                Filename = Path.GetFileName(localBook.Path),
                 IndexerFlags = localBook.IndexerFlags,
                 MediaType = mediaType,
-                IsGraphicAudio = isAudiobook && AudioProductionDetector.IsDramatizedOrFullCast(localBook.RawTags?.AllTags),
+                EffectiveAudioProduction = isDramatized,
+                AudioProductionType = isAudiobook ? localBook.AudioProductionType : null,
                 Narrator = localBook.Narrator,
                 AudioProductionFields = isAudiobook ? BuildAudioProductionFields(
-                    localBook.Path,
                     localBook.SceneName,
                     localBook.Narrator,
+                    localBook.AudioProductionType,
                     localBook.Edition?.Title,
                     localBook.Book?.Title,
                     AudioProductionDetector.Flatten(localBook.RawTags?.AllTags)) : new List<string>(),
@@ -193,7 +202,7 @@ namespace NzbDrone.Core.CustomFormats
 
             PreferredNarratorMatcher.ApplyTarget(input, localBook.Book, localBook.Edition);
 
-            return ParseCustomFormat(input);
+            return input;
         }
 
         private List<CustomFormat> ParseCustomFormat(CustomFormatInput input)
@@ -231,57 +240,16 @@ namespace NzbDrone.Core.CustomFormats
 
         private List<CustomFormat> ParseCustomFormat(BookFile bookFile, Author author, List<CustomFormat> allCustomFormats)
         {
-            var releaseTitle = string.Empty;
-
-            if (bookFile.SceneName.IsNotNullOrWhiteSpace())
+            var local = new LocalBook
             {
-                _logger.Trace("Using scene name for release title: {0}", bookFile.SceneName);
-                releaseTitle = bookFile.SceneName;
-            }
-            else if (bookFile.OriginalFilePath.IsNotNullOrWhiteSpace())
-            {
-                _logger.Trace("Using original file path for release title: {0}", bookFile.OriginalFilePath);
-                releaseTitle = bookFile.OriginalFilePath;
-            }
-            else if (bookFile.Path.IsNotNullOrWhiteSpace())
-            {
-                _logger.Trace("Using path for release title: {0}", Path.GetFileName(bookFile.Path));
-                releaseTitle = Path.GetFileName(bookFile.Path);
-            }
-
-            var bookInfo = new ParsedBookInfo
-            {
-                AuthorName = author.Name,
-                ReleaseTitle = releaseTitle,
-                Quality = bookFile.Quality,
-                ReleaseGroup = bookFile.ReleaseGroup
+                Path = bookFile.Path, Size = bookFile.Size, Author = author,
+                Book = bookFile.Edition?.Book, Edition = bookFile.Edition, Quality = bookFile.Quality,
+                SceneName = bookFile.SceneName, ReleaseGroup = bookFile.ReleaseGroup, IndexerFlags = bookFile.IndexerFlags,
+                IsGraphicAudio = bookFile.IsGraphicAudio, AudioProductionOverride = bookFile.AudioProductionOverride,
+                AudioProductionType = bookFile.AudioProductionType, Narrator = bookFile.Narrator,
+                RawTags = new RawFileTags { AllTags = bookFile.AllTags }, MatchProvenance = bookFile.MatchProvenance
             };
-
-            var mediaType = QualityMediaTypeHelper.GetKnownMediaType(bookFile.Quality?.Quality ?? Quality.Unknown) ?? QualityMediaTypeHelper.GetMediaTypeFromPath(bookFile.Path);
-            var isAudiobook = mediaType == BookMediaType.Audiobook;
-            var input = new CustomFormatInput
-            {
-                BookInfo = bookInfo,
-                Author = author,
-                Size = bookFile.Size,
-                IndexerFlags = bookFile.IndexerFlags,
-                Filename = Path.GetFileName(bookFile.Path),
-                MediaType = mediaType,
-                IsGraphicAudio = isAudiobook && (bookFile.IsGraphicAudio || AudioProductionDetector.IsDramatizedOrFullCast(bookFile.AllTags)),
-                AudioProductionType = isAudiobook ? bookFile.AudioProductionType : null,
-                Narrator = bookFile.Narrator,
-                AudioProductionFields = isAudiobook ? BuildAudioProductionFields(
-                    bookFile.Path,
-                    bookFile.SceneName,
-                    bookFile.OriginalFilePath,
-                    bookFile.Narrator,
-                    bookFile.AudioProductionType,
-                    AudioProductionDetector.Flatten(bookFile.AllTags)) : new List<string>()
-            };
-
-            PreferredNarratorMatcher.ApplyTarget(input, bookFile.Edition?.Book, bookFile.Edition);
-
-            return ParseCustomFormat(input, allCustomFormats);
+            return ParseCustomFormat(CreateLocalInput(local, bookFile.OriginalFilePath), allCustomFormats);
         }
 
         private static void ApplyPreferredNarratorTarget(CustomFormatInput input, IEnumerable<Book> books)

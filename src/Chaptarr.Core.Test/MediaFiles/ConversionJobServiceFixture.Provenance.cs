@@ -28,7 +28,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 File.WriteAllText(output, "readable constructed recording");
                 return new ConversionResult
                 {
-                    Success = Success, RetainOutputOnFailure = !Success,
+                    Success = Success,
+                    RetainOutputOnFailure = !Success,
                     ErrorMessage = Success ? null : "encoder reported a chapter failure"
                 };
             }
@@ -56,12 +57,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     if (method.Name == nameof(IConversionTrackingService.Progress) && args[1] is decimal progress && progress == 98m && !stopped)
                     {
                         stopped = true;
-                        if (discard) service.RemoveArtifacts(request.DownloadId);
-                        else Assert.That(service.Cancel(request.DownloadId), Is.True);
+                        if (discard) service.PrepareArtifactRemoval(request.DownloadId, ConversionRemovalOrigin.UserAction)();
+                        else Assert.That(service.Cancel(request.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
                     }
                     return method.ReturnType == typeof(bool) ? false : null;
                 });
-                service = new ConversionJobService(repository, converter, tracking,
+                service = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(), repository, converter, tracking,
                     DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>(), CreateConfig(), LogManager.GetCurrentClassLogger());
                 try
                 {
@@ -186,7 +187,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var failed = 0;
                 var proxy = InterfaceProxy.Proxy<IConversionJobRepository>((method, args) =>
                 {
-                    if (method.Name == nameof(IConversionJobRepository.Update) && args[0] is ConversionJob job && job.Status == ConversionJobStatus.ReadyToImport && Interlocked.Exchange(ref failed, 1) == 0)
+                    if (method.Name == nameof(IConversionJobRepository.SetFields) && args[0] is ConversionJob job && job.Status == ConversionJobStatus.ReadyToImport && Interlocked.Exchange(ref failed, 1) == 0)
                         throw new IOException("constructed ready-state failure");
                     return method.Invoke(repository, args);
                 });
@@ -212,11 +213,10 @@ namespace Chaptarr.Core.Test.MediaFiles
             });
         }
 
-        [TestCase(false, false)]
-        [TestCase(true, false)]
-        [TestCase(false, true)]
-        [TestCase(true, true)]
-        public void committed_source_provenance_recovers_import_before_missing_workspace_can_reencode(bool postgres, bool wrongSources)
+        [Test]
+        public void committed_source_provenance_recovers_import_before_missing_workspace_can_reencode(
+            [Values(false, true)] bool postgres, [Values(false, true)] bool wrongSources,
+            [Values(ConversionJobStatus.Queued, ConversionJobStatus.Converting, ConversionJobStatus.ReadyToImport)] ConversionJobStatus status)
         {
             DualDatabaseFixture.Run(postgres, database =>
             {
@@ -233,20 +233,134 @@ namespace Chaptarr.Core.Test.MediaFiles
                         ImportDownloadId = request.DownloadId,
                         ImportSourcePaths = new List<string> { wrongSources ? Path.Combine(directory, "different-book.mp3") : request.Sources.Single().Path }
                     } } }
+                    : method.Name == nameof(IMediaFileService.GetFilePathOwnership) ? new List<BookFile>()
                     : throw new AssertionException("Unexpected media query: " + method.Name));
-                var service = new ConversionJobService(repository, new UnusedConversionService(), new ConversionTrackingService(new StubEventAggregator()),
-                    InterfaceProxy.Proxy<IManageCommandQueue>((method, args) => null), CreateConfig(), LogManager.GetCurrentClassLogger(), mediaFileService: files);
+                var service = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), files, repository, new UnusedConversionService(), new ConversionTrackingService(new StubEventAggregator()),
+                    InterfaceProxy.Proxy<IManageCommandQueue>((method, args) => null), CreateConfig(), LogManager.GetCurrentClassLogger());
                 try
                 {
                     var job = service.Enqueue(request);
-                    job.Status = ConversionJobStatus.ReadyToImport;
+                    job.Status = status;
                     repository.Update(job);
                     typeof(ConversionJobService).GetMethod("Reconcile", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(service, null);
-                    Assert.That(repository.FindByDownloadId(request.DownloadId).Status, Is.EqualTo(wrongSources ? ConversionJobStatus.Queued : ConversionJobStatus.Completed));
+                    var remaining = repository.FindByDownloadId(request.DownloadId);
+                    if (wrongSources)
+                    {
+                        Assert.That(remaining, Is.Not.Null);
+                        Assert.That(remaining.Status, Is.EqualTo(ConversionJobStatus.Queued));
+                    }
+                    else
+                    {
+                        Assert.That(remaining, Is.Null, "Committed sources must not leave a queued encoder behind");
+                        Assert.That(Directory.Exists(request.WorkFolder), Is.False);
+                    }
                     Assert.That(File.ReadAllText(libraryPath), Is.EqualTo("committed recording"));
                 }
                 finally
                 {
+                    if (Directory.Exists(directory)) Directory.Delete(directory, true);
+                }
+            });
+        }
+
+        [Test]
+        public void committed_import_at_worker_boundary_never_reencodes_or_interrupts_an_active_encoder(
+            [Values(false, true)] bool postgres, [Values(false, true)] bool alreadyEncoding)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var directory = Path.Combine(Path.GetTempPath(), "conversion-commit-worker-" + Guid.NewGuid().ToString("N"));
+                var request = CreateRequest(directory, "committed");
+                request.BookId = 42;
+                var libraryPath = Path.Combine(directory, "library.m4b");
+                File.WriteAllText(libraryPath, "imported recording");
+                var committed = alreadyEncoding ? 0 : 1;
+                var files = InterfaceProxy.Proxy<IMediaFileService>((method, _) => method.Name switch
+                {
+                    nameof(IMediaFileService.GetFilePathOwnership) => new List<BookFile>(),
+                    nameof(IMediaFileService.GetFilesByBook) => Volatile.Read(ref committed) == 0 ? new List<BookFile>() : new List<BookFile>
+                    {
+                        new() { Path = libraryPath, Quality = new QualityModel(Quality.M4B), MatchProvenance = new()
+                        {
+                            ImportDownloadId = request.DownloadId, ImportSourcePaths = request.Sources.Select(source => source.Path).ToList()
+                        } }
+                    },
+                    _ => throw new AssertionException("Unexpected media query: " + method.Name)
+                });
+                var repository = new ConversionJobRepository(database, new StubEventAggregator());
+                var converter = new TokenRecordingConversionService();
+                var service = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), files, repository, converter, null,
+                    DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>(), CreateConfig(), LogManager.GetCurrentClassLogger());
+                try
+                {
+                    service.Enqueue(request);
+                    typeof(ConversionJobService).GetMethod("DispatchQueuedJobs", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(service, null);
+                    if (alreadyEncoding)
+                    {
+                        Assert.That(SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey(request.DownloadId), TimeSpan.FromSeconds(5)), Is.True);
+                        Interlocked.Exchange(ref committed, 1);
+                        service.Complete(request.DownloadId);
+                        Assert.That(converter.OptionsByDownloadId[request.DownloadId].CancellationToken.IsCancellationRequested, Is.False);
+                        Assert.That(Directory.Exists(request.WorkFolder), Is.True);
+                        converter.Release.Set();
+                    }
+                    Assert.That(SpinWait.SpinUntil(() => repository.FindByDownloadId(request.DownloadId) == null && !service.IsRunning(request.DownloadId), TimeSpan.FromSeconds(5)), Is.True,
+                        "The worker must settle committed sources before releasing the job");
+                    Assert.That(converter.CallsByDownloadId.GetValueOrDefault(request.DownloadId), Is.EqualTo(alreadyEncoding ? 1 : 0));
+                    Assert.That(Directory.Exists(request.WorkFolder), Is.False);
+                    Assert.That(File.ReadAllText(libraryPath), Is.EqualTo("imported recording"));
+                    Assert.That(File.Exists(request.Sources[0].Path), Is.True);
+                }
+                finally
+                {
+                    converter.Release.Set();
+                    service.Handle(new ApplicationShutdownRequested());
+                    if (Directory.Exists(directory)) Directory.Delete(directory, true);
+                }
+            });
+        }
+
+        [Test]
+        public void inactive_worker_has_no_stop_callback_during_committed_import_recovery([Values(false, true)] bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var directory = Path.Combine(Path.GetTempPath(), "conversion-stop-boundary-" + Guid.NewGuid().ToString("N"));
+                using var entered = new ManualResetEventSlim();
+                using var release = new ManualResetEventSlim();
+                var request = CreateRequest(directory, "stop-boundary-" + Guid.NewGuid().ToString("N"));
+                request.BookId = 42;
+                var converter = new RetainedResultConverter { Success = true };
+                var files = InterfaceProxy.Proxy<IMediaFileService>((method, _) =>
+                {
+                    if (method.Name == nameof(IMediaFileService.GetFilePathOwnership)) return new List<BookFile>();
+                    Assert.That(method.Name, Is.EqualTo(nameof(IMediaFileService.GetFilesByBook)));
+                    if (converter.Calls > 0)
+                    {
+                        entered.Set();
+                        if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Committed import recovery was not released");
+                    }
+                    return new List<BookFile>();
+                });
+                var repository = new ConversionJobRepository(database, new StubEventAggregator());
+                var tracking = new ConversionTrackingService(new StubEventAggregator());
+                var service = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), files, repository, converter, tracking,
+                    DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>(), CreateConfig(), LogManager.GetCurrentClassLogger());
+                try
+                {
+                    service.Enqueue(request);
+                    typeof(ConversionJobService).GetMethod("DispatchQueuedJobs", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(service, null);
+                    Assert.That(entered.Wait(TimeSpan.FromSeconds(5)), Is.True);
+                    Assert.That(service.IsRunning(request.DownloadId), Is.False);
+                    Assert.That(tracking.Get(request.DownloadId).CanCancel, Is.False, "An importable job must have no encoder stop callback");
+                    Assert.That(tracking.Cancel(request.DownloadId), Is.False);
+                    Assert.That(repository.FindByDownloadId(request.DownloadId).Status, Is.EqualTo(ConversionJobStatus.ReadyToImport));
+                    Assert.That(File.Exists(request.OutputPath), Is.True);
+                }
+                finally
+                {
+                    release.Set();
+                    service.Handle(new ApplicationShutdownRequested());
                     if (Directory.Exists(directory)) Directory.Delete(directory, true);
                 }
             });
@@ -272,9 +386,15 @@ namespace Chaptarr.Core.Test.MediaFiles
                 // retained-failed encoder branches wrote. Its bytes deliberately lack success proof.
                 var receipt = JsonSerializer.Serialize(new
                 {
-                    CreatedUtc = DateTime.UtcNow.AddDays(-2), request.OutputPath,
-                    request.TargetQualityId, request.TargetQualityName, request.AudioBitrate,
-                    request.AudioChannels, TagMode = request.TagOptions.Mode, request.TagSignature, request.Sources
+                    CreatedUtc = DateTime.UtcNow.AddDays(-2),
+                    request.OutputPath,
+                    request.TargetQualityId,
+                    request.TargetQualityName,
+                    request.AudioBitrate,
+                    request.AudioChannels,
+                    TagMode = request.TagOptions.Mode,
+                    request.TagSignature,
+                    request.Sources
                 });
                 var manifestPath = Path.Combine(request.WorkFolder, "conversion-artifact.json");
                 File.WriteAllText(manifestPath, receipt);

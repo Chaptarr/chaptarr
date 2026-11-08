@@ -167,7 +167,7 @@ namespace Chaptarr.Core.Test.History
                 Formats = Proxy<ICustomFormatCalculationService>((method, args) =>
                     method.Name == nameof(ICustomFormatCalculationService.ParseCustomFormat)
                         ? new List<CustomFormat>() : throw new AssertionException(method.Name));
-                Controller = new HistoryController(History, Formats,
+                Controller = new HistoryController(new SeriesBookLinkService(new SeriesBookLinkRepository(database, Events)), History, Formats,
                     Proxy<IUpgradableSpecification>((method, args) => false), NoopFailedDownloadService.Instance,
                     Proxy<IAuthorService>((method, args) => authors.Get((int)args[0])))
                 {
@@ -214,10 +214,10 @@ namespace Chaptarr.Core.Test.History
 
             public CompletedDownloadService Completed() => new(Events, History,
                 Proxy<IProvideImportItemService>((method, args) => Item.Clone()),
-                Proxy<IDownloadedBooksImportService>((method, args) => Results),
+                Proxy<IDownloadedBooksImportService>((method, args) => method.Name == nameof(IDownloadedBooksImportService.ProcessIncludedMedia) ? new List<ImportResult>() : Results),
                 Proxy<IDownloadImportModeResolver>((method, args) => ImportMode.Copy),
                 Proxy<ITrackedDownloadAlreadyImported>((method, args) => false),
-                NoopFailedDownloadService.Instance, Logger, NoopDownloadClientFileSnapshotService.Instance);
+                Logger, NoopDownloadClientFileSnapshotService.Instance);
 
             public TrackedDownloadService Tracker(RemoteBook remote) => new(
                 Proxy<IParsingService>((method, args) => remote), new CacheManager(), History, Events,
@@ -228,6 +228,44 @@ namespace Chaptarr.Core.Test.History
 
             public List<HistoryResource> Visible(int? bookId = null) =>
                 Controller.GetAuthorHistory(Author.Id, bookId, includeAuthor: true, includeBook: true);
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void imported_history_persists_optional_discarded_conversion_note_in_normal_row(bool postgres, bool includeMessage)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database);
+                const string note = "Discarded retained conversion output '/library/.chaptarr-conversions/retained/work/Book.m4b' after manually importing the original files";
+                var message = new TrackImportedEvent(
+                    new LocalBook
+                    {
+                        Author = h.Author, Book = h.Book, Path = "/downloads/Book.epub",
+                        Quality = new QualityModel(Quality.EPUB)
+                    },
+                    new BookFile { Id = 42, Path = "/library/Book.epub" },
+                    new List<BookFile>(), true, h.Item)
+                {
+                    Message = includeMessage ? note : null
+                };
+
+                h.History.Handle(message);
+
+                // Read the serialized data back through the real repository on each engine.
+                var rows = h.HistoryRepository.FindByDownloadId(h.Item.DownloadId.ToUpperInvariant());
+                Assert.That(rows, Has.Count.EqualTo(1), "The note belongs to the original import insert, not another History row");
+                var imported = rows.Single();
+                Assert.Multiple(() =>
+                {
+                    Assert.That(imported.EventType, Is.EqualTo(EntityHistoryEventType.BookFileImported));
+                    Assert.That(imported.GetDataValue("ImportedPath"), Is.EqualTo("/library/Book.epub"));
+                    Assert.That(EntityHistory.TryGetDataValue(imported.Data, "Message", out var persistedMessage), Is.EqualTo(includeMessage));
+                    if (includeMessage) Assert.That(persistedMessage, Is.EqualTo(note));
+                });
+            });
         }
 
         [TestCase(false)]

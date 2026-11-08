@@ -33,7 +33,6 @@ namespace NzbDrone.Core.Books
         private readonly IAuthorLibraryService _authorLibraryService;
         private readonly IBookService _bookService;
         private readonly IBookMonitoredService _bookMonitoredService;
-        private readonly IBookAddedService _bookAddedService;
         private readonly IProvideBookInfo _bookInfo;
         private readonly IImportListExclusionService _importListExclusionService;
         private readonly ISeriesBookLinkService _seriesBookLinkService;
@@ -52,7 +51,6 @@ namespace NzbDrone.Core.Books
                                IAuthorLibraryService authorLibraryService,
                                IBookService bookService,
                                IBookMonitoredService bookMonitoredService,
-                               IBookAddedService bookAddedService,
                                IProvideBookInfo bookInfo,
                                IImportListExclusionService importListExclusionService,
                                ISeriesBookLinkService seriesBookLinkService,
@@ -71,7 +69,6 @@ namespace NzbDrone.Core.Books
             _authorLibraryService = authorLibraryService;
             _bookService = bookService;
             _bookMonitoredService = bookMonitoredService;
-            _bookAddedService = bookAddedService;
             _bookInfo = bookInfo;
             _importListExclusionService = importListExclusionService;
             _seriesBookLinkService = seriesBookLinkService;
@@ -146,9 +143,7 @@ namespace NzbDrone.Core.Books
             if (GetInitialBookPolicy(book).HasValue || book.Author?.AddOptions?.Monitor == MonitorTypes.None || book.AddOptions?.MonitorBook == false)
             {
                 var existing = FindExistingAuthorForAdd(book);
-                var configured = book.MediaType == BookMediaType.Audiobook
-                    ? existing?.AudiobookQualityProfileId.HasValue == true && !string.IsNullOrWhiteSpace(existing.AudiobookRootFolderPath)
-                    : existing?.EbookQualityProfileId.HasValue == true && !string.IsNullOrWhiteSpace(existing.EbookRootFolderPath);
+                var configured = existing?.HasConfiguredMediaSettings(book.MediaType) == true;
                 if (!configured)
                 {
                     return await RequestBookThroughAuthorCatalog(book);
@@ -168,7 +163,7 @@ namespace NzbDrone.Core.Books
             }
 
             book.AddOptions ??= new AddBookOptions();
-            book.AddOptions.SearchForNewBook |= searchRequested;
+            if (searchRequested) book.AddOptions.SearchForNewBook = false;
 
             // Some clients post IDs-only payloads even when the book already exists locally.
             // Ensure we never Upsert NULL Title/Edition titles.
@@ -289,7 +284,7 @@ namespace NzbDrone.Core.Books
                     }
                 }
                 
-                if (monitorRequested || book.AddOptions?.SearchForNewBook == true ||
+                if (monitorRequested || searchRequested ||
                     isSpecificBookIntentForExistingAuthor ||
                     isAllBooksIntentForExistingAuthor)
                 {
@@ -425,6 +420,7 @@ namespace NzbDrone.Core.Books
                 }
             }
 
+            SearchRequestedBook(book, searchRequested);
             return book;
         }
 
@@ -529,9 +525,9 @@ namespace NzbDrone.Core.Books
             {
                 localBook.AddOptions ??= new AddBookOptions();
                 localBook.AddOptions.AddType = BookAddType.Manual;
-                localBook.AddOptions.SearchForNewBook = true;
+                localBook.AddOptions.SearchForNewBook = false;
                 _bookService.SetAddOptions(new[] { localBook });
-                _bookAddedService.SearchForRecentlyAdded(author.Id);
+                SearchRequestedBook(localBook, true);
             }
 
             RemoveMatchingImportListExclusions(localBook);
@@ -652,7 +648,7 @@ namespace NzbDrone.Core.Books
                 });
             }
 
-            var target = _bookService.AddWantedEdition(matches[0].BookId, matches[0].Id);
+            var target = _bookService.AddWantedEditions(new List<Edition> { matches[0] })[matches[0].Id];
             return CompleteScopedBookRequest(target, request.AddOptions?.SearchForNewBook == true,
                 request.AddOptions?.MonitorBook ?? true);
         }
@@ -684,20 +680,27 @@ namespace NzbDrone.Core.Books
             book.AddOptions ??= new AddBookOptions();
             book.AddOptions.AddType = BookAddType.Manual;
             book.AddOptions.MonitorBook = monitorRequested;
+            if (searchRequested) book.AddOptions.SearchForNewBook = false;
             _bookService.SetAddOptions(new[] { book });
             if (author?.AddOptions != null)
             {
                 _commandQueueManager.Push(RefreshAuthorCommand.InitialScan(author));
             }
 
-            if (searchRequested)
-            {
-                _commandQueueManager.Push(new BookSearchCommand(new List<int> { book.Id }), trigger: CommandTrigger.Manual);
-            }
+            SearchRequestedBook(book, searchRequested);
 
             var saved = _bookService.GetBook(book.Id);
             RemoveMatchingImportListExclusions(saved);
             return saved;
+        }
+
+        private void SearchRequestedBook(Book book, bool searchRequested)
+        {
+            if (searchRequested)
+            {
+                book.Author ??= _authorService.GetAuthor(book.AuthorId);
+                _commandQueueManager.Push(new BookSearchCommand(new List<int> { book.Id }), trigger: BookSearchCommand.SearchOnAddTrigger(book.Author, book.MediaType));
+            }
         }
 
         private Book ResolveLocalRequestedBook(int authorId, string workProviderId, BookMediaType mediaType)
@@ -978,7 +981,7 @@ namespace NzbDrone.Core.Books
                 return null;
             }
 
-            var nativeFormat = mediaType == BookMediaType.Audiobook ? 2 : 3;
+            var nativeFormat = EditionReadingFormat.NativeFor(mediaType);
             if (requested.ReadingFormatId == nativeFormat || requested.ManualAdd)
             {
                 return requested;

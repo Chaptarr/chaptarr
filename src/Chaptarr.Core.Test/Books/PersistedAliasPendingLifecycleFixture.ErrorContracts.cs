@@ -248,7 +248,7 @@ namespace Chaptarr.Core.Test.Books
                 var info = BookInfoProxyCanonicalLookupFixture.CreateProxy(http);
                 var libraryCalls = 0;
                 var library = Proxy<IAuthorLibraryService>((_, _) => { libraryCalls++; throw new AssertionException("No work identity was established"); });
-                var service = new AddBookService(h.AuthorService, library, h.BookService, null, null, info,
+                var service = new AddBookService(h.AuthorService, library, h.BookService, null, info,
                     Proxy<IImportListExclusionService>((_, _) => new List<ImportListExclusion>()), null, null, null, null, null,
                     h.EditionService, null, null, null, LogManager.GetCurrentClassLogger(), h.Queue);
                 var requested = new Book

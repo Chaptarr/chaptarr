@@ -10,12 +10,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using Chaptarr.Core.Test.Common;
 using Dapper;
+using DryIoc;
 using Microsoft.Data.Sqlite;
 using NLog;
 using NLog.Config;
 using NLog.Targets;
 using NUnit.Framework;
 using NzbDrone.Common.Messaging;
+using NzbDrone.Common.Composition.Extensions;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Lifecycle;
@@ -23,12 +25,33 @@ using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.RootFolders;
 
 namespace Chaptarr.Core.Test.MediaFiles
 {
     [TestFixture]
     public partial class ConversionJobServiceFixture
     {
+        [Test]
+        public void dependency_injection_keeps_the_production_outcome_retry_delay()
+        {
+            using var container = new Container(rules => rules.WithNzbDroneRules());
+            container.RegisterInstance(InterfaceProxy.Proxy<IConversionJobRepository>((_, _) => null));
+            container.RegisterInstance(ImportLifecycleStubs.NoLibraryMediaFiles());
+            container.RegisterInstance<IM4bConversionService>(new UnusedConversionService());
+            container.RegisterInstance<IConversionTrackingService>(new ConversionTrackingService(new StubEventAggregator()));
+            container.RegisterInstance(DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>());
+            container.RegisterInstance(CreateConfig());
+            container.RegisterInstance(TestRootFolders());
+            container.RegisterInstance(TestCleanupDisk());
+            container.RegisterInstance(LogManager.GetCurrentClassLogger());
+
+            var service = container.Resolve<ConversionJobService>();
+
+            Assert.That(typeof(ConversionJobService).GetField("_outcomeRetryDelay", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(service),
+                Is.EqualTo(TimeSpan.FromSeconds(30)));
+        }
+
         private static void RunWorker(ConversionJobService service, ConversionJobRequest request)
         {
             service.Enqueue(request);
@@ -114,12 +137,14 @@ namespace Chaptarr.Core.Test.MediaFiles
             public string Method { get; set; }
             public int FailOnCall { get; set; }
             public bool AfterWrite { get; set; }
+            public Func<object[], bool> ArgumentsMatch { get; set; }
             public ManualResetEventSlim Failed { get; } = new(false);
             private int _calls;
 
             protected override object Invoke(MethodInfo method, object[] args)
             {
-                var fail = method.Name == Method && Interlocked.Increment(ref _calls) == FailOnCall;
+                var fail = method.Name == Method && (ArgumentsMatch?.Invoke(args) ?? true) &&
+                    Interlocked.Increment(ref _calls) == FailOnCall;
                 try
                 {
                     if (fail && !AfterWrite)
@@ -180,6 +205,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         private class ConfigServiceProxy : DispatchProxy
         {
+            private string _orphanReviewProgress = string.Empty;
             public int ConcurrentConversions { get; set; } = 1;
             public int MaxCpuThreads { get; set; } = 8;
 
@@ -187,12 +213,20 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 return targetMethod?.Name switch
                 {
+                    "GetConversionOrphanReviewProgress" => _orphanReviewProgress,
+                    "SetConversionOrphanReviewProgress" => SetOrphanReviewProgress((string)args[0]),
                     "get_AudiobookConversionConcurrentConversions" => ConcurrentConversions,
                     "get_AudiobookConversionMaxCpuThreads" => MaxCpuThreads,
                     "set_AudiobookConversionConcurrentConversions" => SetConcurrentConversions((int)args[0]),
                     "set_AudiobookConversionMaxCpuThreads" => SetMaxCpuThreads((int)args[0]),
                     _ => throw new NotImplementedException($"Unexpected config call: {targetMethod?.Name}")
                 };
+            }
+
+            private object SetOrphanReviewProgress(string value)
+            {
+                _orphanReviewProgress = value;
+                return null;
             }
 
             private object SetConcurrentConversions(int value)
@@ -268,7 +302,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         [TestCase(true, true)]
         public void dispatch_failure_should_not_strand_an_earlier_reservation(bool postgres, bool afterWrite)
         {
-            VerifySchedulerRecovery(postgres, "Update", 2, afterWrite);
+            VerifySchedulerRecovery(postgres, nameof(IConversionJobRepository.SetFields), 2, afterWrite);
         }
 
         private static void VerifySchedulerRecovery(bool postgres, string method, int failOnCall, bool afterWrite)
@@ -284,6 +318,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 failure.Method = method;
                 failure.FailOnCall = failOnCall;
                 failure.AfterWrite = afterWrite;
+                failure.ArgumentsMatch = args => method != nameof(IConversionJobRepository.SetFields) ||
+                    (args.Length > 0 && args[0] is ConversionJob { Status: ConversionJobStatus.Converting, Progress: 1m });
                 var converter = new TokenRecordingConversionService();
                 var log = new MemoryTarget { Layout = "${level}|${message}|${exception:format=Message}" };
                 using var logFactory = new LogFactory();
@@ -298,7 +334,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Assert.DoesNotThrow(() => service.Handle(new ApplicationStartedEvent()));
                     Assert.That(failure.Failed.Wait(TimeSpan.FromSeconds(5)), Is.True, "The failure must occur in the running scheduler");
 
-                    if (method == "Update")
+                    if (method == nameof(IConversionJobRepository.SetFields))
                     {
                         Assert.That(SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey("first"), TimeSpan.FromSeconds(5)), Is.True,
                             "An earlier persisted reservation must start even when a later write fails");
@@ -402,7 +438,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var tracking = new ConversionTrackingService(eventAggregator);
                 var commandQueue = DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>();
                 var commandRecorder = (RecordingCommandQueueProxy)(object)commandQueue;
-                var service = new ConversionJobService(
+                var service = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(),
                     repository,
                     new UnusedConversionService(),
                     tracking,
@@ -447,7 +483,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var eventAggregator = new StubEventAggregator();
             var tracking = new ConversionTrackingService(eventAggregator);
             var commandQueue = DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>();
-            var service = new ConversionJobService(repository, converter, tracking, commandQueue, CreateConfig(), LogManager.GetCurrentClassLogger());
+            var service = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(), repository, converter, tracking, commandQueue, CreateConfig(), LogManager.GetCurrentClassLogger());
 
             try
             {
@@ -455,7 +491,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 service.Enqueue(request);
                 Assert.That(converter.Started.Wait(TimeSpan.FromSeconds(2)), Is.True);
 
-                Assert.That(service.Cancel(request.DownloadId), Is.True);
+                Assert.That(service.Cancel(request.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
                 Assert.That(
                     SpinWait.SpinUntil(
                         () => repository.FindByDownloadId(request.DownloadId)?.Status == ConversionJobStatus.Cancelled,
@@ -503,7 +539,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 ownerFinished.Set();
                 return new CommandModel { Body = (Command)args[0] };
             });
-            var service = new ConversionJobService(repository, converter, tracking, queue, CreateConfig(), LogManager.GetCurrentClassLogger());
+            var service = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(), repository, converter, tracking, queue, CreateConfig(), LogManager.GetCurrentClassLogger());
             Task<bool> cancel = null;
             try
             {
@@ -511,7 +547,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 service.Enqueue(request);
                 Assert.That(SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey(request.DownloadId), TimeSpan.FromSeconds(5)), Is.True);
                 ownerFinished.Reset();
-                cancel = Task.Run(() => service.Cancel(request.DownloadId));
+                cancel = Task.Run(() => service.Cancel(request.DownloadId, ConversionRemovalOrigin.UserAction));
                 Assert.That(trackerCancelEntered.Wait(TimeSpan.FromSeconds(5)), Is.True);
                 converter.Release.Set();
                 Assert.That(ownerFinished.Wait(TimeSpan.FromSeconds(5)), Is.True);
@@ -582,13 +618,13 @@ namespace Chaptarr.Core.Test.MediaFiles
                     return new CommandModel { Body = (Command)args[0] };
                 });
                 var tracking = new ConversionTrackingService(new StubEventAggregator());
-                var service = new ConversionJobService(repository, converter, tracking, queue, CreateConfig(), LogManager.GetCurrentClassLogger());
+                var service = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(), repository, converter, tracking, queue, CreateConfig(), LogManager.GetCurrentClassLogger());
                 try
                 {
                     service.Handle(new ApplicationStartedEvent());
                     service.Enqueue(request);
                     Assert.That(started.Wait(TimeSpan.FromSeconds(5)), Is.True);
-                    Assert.That(service.Cancel(request.DownloadId), Is.True);
+                    Assert.That(service.Cancel(request.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
                     Assert.That(finished.Wait(TimeSpan.FromSeconds(5)), Is.True);
                     Assert.Multiple(() =>
                     {
@@ -619,7 +655,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var eventAggregator = new StubEventAggregator();
             var tracking = new ConversionTrackingService(eventAggregator);
             var commandQueue = DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>();
-            var service = new ConversionJobService(repository, converter, tracking, commandQueue, CreateConfig(), LogManager.GetCurrentClassLogger());
+            var service = new ConversionJobService(Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestCleanupDisk(), Chaptarr.Core.Test.MediaFiles.ConversionJobServiceFixture.TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(), repository, converter, tracking, commandQueue, CreateConfig(), LogManager.GetCurrentClassLogger());
 
             try
             {
@@ -664,7 +700,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     repository.Update(job);
                 }
 
-                Assert.That(service.Cancel(request.DownloadId), Is.True);
+                Assert.That(service.Cancel(request.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
 
                 var cancelled = repository.FindByDownloadId(request.DownloadId);
                 Assert.That(cancelled.Status, Is.EqualTo(ConversionJobStatus.Cancelled));
@@ -857,12 +893,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Is.False,
                     "A late conversion must wait while the running job owns every CPU token.");
 
-                Assert.That(service.Cancel(first.DownloadId), Is.True);
+                Assert.That(service.Cancel(first.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
                 Assert.That(
                     SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey(second.DownloadId), TimeSpan.FromSeconds(10)),
                     Is.True);
                 Assert.That(converter.OptionsByDownloadId[second.DownloadId].FfmpegThreads, Is.EqualTo(8));
-                Assert.That(service.Cancel(second.DownloadId), Is.True);
+                Assert.That(service.Cancel(second.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
             }
             finally
             {
@@ -917,6 +953,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             return new ConversionJobRequest
             {
                 DownloadId = downloadId,
+                DownloadClientId = 0,
                 BookTitle = "Test Book",
                 WorkRoot = workRoot,
                 WorkFolder = workFolder,
@@ -942,6 +979,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             return new ConversionJob
             {
                 DownloadId = request.DownloadId,
+                DownloadClientId = request.DownloadClientId,
                 Status = status,
                 RequestJson = JsonSerializer.Serialize(request),
                 WorkRoot = request.WorkRoot,
@@ -964,18 +1002,41 @@ namespace Chaptarr.Core.Test.MediaFiles
             IM4bConversionService converter,
             int concurrentConversions = 1,
             int maxCpuThreads = 8,
-            Logger logger = null)
+            Logger logger = null,
+            IConfigService config = null,
+            IRootFolderService roots = null,
+            NzbDrone.Common.Disk.IDiskProvider disk = null)
         {
             var eventAggregator = new StubEventAggregator();
             var tracking = new ConversionTrackingService(eventAggregator);
             var commandQueue = DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>();
-            return new ConversionJobService(
+            return new ConversionJobService(disk ?? TestCleanupDisk(), roots ?? TestRootFolders(), Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoLibraryMediaFiles(),
                 repository,
                 converter,
                 tracking,
                 commandQueue,
-                CreateConfig(concurrentConversions, maxCpuThreads),
-                logger ?? LogManager.GetCurrentClassLogger());
+                config ?? CreateConfig(concurrentConversions, maxCpuThreads),
+                logger ?? LogManager.GetCurrentClassLogger(),
+                outcomeRetryDelay: TimeSpan.FromSeconds(2));
+        }
+
+        internal static NzbDrone.Common.Disk.IDiskProvider TestCleanupDisk(Action beforeProbe = null) => InterfaceProxy.Proxy<NzbDrone.Common.Disk.IDiskProvider>((method, args) =>
+        {
+            beforeProbe?.Invoke();
+            return method.Name switch
+            {
+                nameof(NzbDrone.Common.Disk.IDiskProvider.FolderExists) => Directory.Exists((string)args[0]),
+                nameof(NzbDrone.Common.Disk.IDiskProvider.FolderEmpty) => !Directory.EnumerateFileSystemEntries((string)args[0]).Any(),
+                _ => throw new NotImplementedException(method.Name)
+            };
+        });
+
+        internal static IRootFolderService TestRootFolders(params string[] paths)
+        {
+            var folders = (paths.Length == 0 ? new[] { Path.GetTempPath() } : paths).Select(path => new RootFolder { Path = path }).ToList();
+            return new RootFolderService(InterfaceProxy.Proxy<IRootFolderRepository>((method, _) =>
+                method.Name == nameof(IRootFolderRepository.All) ? folders : throw new NotImplementedException(method.Name)),
+                null, null, null, LogManager.GetCurrentClassLogger());
         }
 
         private static IConfigService CreateConfig(int concurrentConversions = 1, int maxCpuThreads = 8)
@@ -1000,11 +1061,18 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 connection.Open();
                 connection.Execute(@"
+CREATE TABLE ""DownloadClients"" (""Id"" INTEGER PRIMARY KEY);
+CREATE TABLE ""History"" (""Id"" INTEGER PRIMARY KEY, ""DownloadId"" TEXT, ""EventType"" INTEGER);
+CREATE TABLE ""DownloadHistory"" (""Id"" INTEGER PRIMARY KEY, ""DownloadId"" TEXT, ""DownloadClientId"" INTEGER, ""EventType"" INTEGER, ""Date"" TEXT);
 CREATE TABLE ""ConversionJobs"" (
     ""Id"" INTEGER PRIMARY KEY AUTOINCREMENT,
     ""DownloadId"" TEXT NOT NULL UNIQUE,
+    ""DownloadIdKey"" TEXT,
+    ""DownloadClientId"" INTEGER NOT NULL DEFAULT 0,
     ""Status"" INTEGER NOT NULL,
     ""RequestJson"" TEXT NOT NULL,
+    ""CleanupPending"" INTEGER NOT NULL DEFAULT 0,
+    ""CleanupAttention"" INTEGER NOT NULL DEFAULT 0,
     ""WorkRoot"" TEXT,
     ""WorkFolder"" TEXT,
     ""OutputPath"" TEXT,

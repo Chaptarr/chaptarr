@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -124,7 +125,10 @@ namespace NzbDrone.Core.Books.Services
         public HashSet<int> EbookTags { get; set; }
         public HashSet<int> Tags { get; set; }
         public bool? SearchForMissingBooks { get; set; }
+        internal List<RequestedBookSearch> ExplicitBookSearches { get; set; }
         public string RequestedBy { get; set; }
+        public string AudiobookRequestedBy { get; set; }
+        public string EbookRequestedBy { get; set; }
         public string AuthorName { get; set; }
         
         // Specific book monitoring context (for "None, except this one" or series monitoring)
@@ -401,6 +405,16 @@ namespace NzbDrone.Core.Books.Services
             }
 
             var catalogCompleted = false;
+            var existingIdentityVerified = true;
+            Author HandleExisting(Author existing)
+            {
+                // The existing author lock owns catalog reconciliation. Never wait for it
+                // while holding SQLite's unrelated-author insertion gate.
+                writeGate?.Release();
+                writeGate = null;
+                return HandleExistingAuthor(existing, author, config, out existingIdentityVerified);
+            }
+
             try
             {
                 // Provider IDs are identity. Display names are not: distinct authors can share one.
@@ -412,9 +426,9 @@ namespace NzbDrone.Core.Books.Services
                 ThrowIfImportListAuthorExcluded(providerId, author, config);
                 if (existingAuthor != null)
                 {
-                    var handledAuthor = await HandleExistingAuthorAsync(existingAuthor, author, config);
-                    catalogCompleted = true;
-                    return await QueueMissingRequestedWorks(handledAuthor, providerId, config);
+                    var handledAuthor = HandleExisting(existingAuthor);
+                    catalogCompleted = existingIdentityVerified;
+                    return await RetainPendingCatalogRequest(handledAuthor, providerId, config, force: !existingIdentityVerified);
                 }
 
                 PrepareRequestedWorkPreservation(author, config, null);
@@ -473,9 +487,9 @@ namespace NzbDrone.Core.Books.Services
                     var existingAfterConflict = FindExistingAuthor(providerId, author);
                     if (existingAfterConflict != null)
                     {
-                        var handledAuthor = await HandleExistingAuthorAsync(existingAfterConflict, author, config);
-                        catalogCompleted = true;
-                        return await QueueMissingRequestedWorks(handledAuthor, providerId, config);
+                        var handledAuthor = HandleExisting(existingAfterConflict);
+                        catalogCompleted = existingIdentityVerified;
+                        return await RetainPendingCatalogRequest(handledAuthor, providerId, config, force: !existingIdentityVerified);
                     }
 
                     throw;
@@ -486,9 +500,9 @@ namespace NzbDrone.Core.Books.Services
                     var existingAfterConflict = FindExistingAuthor(providerId, author);
                     if (existingAfterConflict != null)
                     {
-                        var handledAuthor = await HandleExistingAuthorAsync(existingAfterConflict, author, config);
-                        catalogCompleted = true;
-                        return await QueueMissingRequestedWorks(handledAuthor, providerId, config);
+                        var handledAuthor = HandleExisting(existingAfterConflict);
+                        catalogCompleted = existingIdentityVerified;
+                        return await RetainPendingCatalogRequest(handledAuthor, providerId, config, force: !existingIdentityVerified);
                     }
 
                     throw;
@@ -519,7 +533,7 @@ namespace NzbDrone.Core.Books.Services
                 if (remoteBooks.Any())
                 {
                     var booksProcessingStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                    await ProcessBooksForAuthor(addedAuthor, remoteBooks, config, remoteSeries);
+                    ProcessBooksForAuthor(addedAuthor, remoteBooks, config, remoteSeries);
                     booksProcessingStopwatch.Stop();
                     _logger.Debug("[DB-TIMING] Processing books/editions for author '{0}' took {1}ms total",
                         addedAuthor.Name, booksProcessingStopwatch.ElapsedMilliseconds);
@@ -527,7 +541,7 @@ namespace NzbDrone.Core.Books.Services
 
                 if (remoteSeries.Any())
                 {
-                    await ProcessSeriesForAuthor(addedAuthor, remoteSeries, config);
+                    ProcessSeriesForAuthor(addedAuthor, remoteSeries, config);
                 }
 
                 addedAuthor = CompleteInitialMetadata(addedAuthor, config);
@@ -558,7 +572,7 @@ namespace NzbDrone.Core.Books.Services
                         overallStopwatch.ElapsedMilliseconds / totalEditions);
                 }
 
-                return await QueueMissingRequestedWorks(addedAuthor, providerId, config);
+                return await RetainPendingCatalogRequest(addedAuthor, providerId, config);
             }
             finally
             {
@@ -587,7 +601,9 @@ namespace NzbDrone.Core.Books.Services
 
         private void ThrowIfImportListAuthorExcluded(string providerId, Author author, MonitoringConfig config)
         {
-            if (!MonitoringConfig.IsImportListRequestOrigin(config?.RequestedBy))
+            var audioList = config?.CreateAudiobook == true && MonitoringConfig.IsImportListRequestOrigin(config.AudiobookRequestedBy ?? config.RequestedBy);
+            var ebookList = config?.CreateEbook == true && MonitoringConfig.IsImportListRequestOrigin(config.EbookRequestedBy ?? config.RequestedBy);
+            if (!audioList && !ebookList)
             {
                 return;
             }
@@ -601,11 +617,20 @@ namespace NzbDrone.Core.Books.Services
                 providerIds.Add(requestedProviderId);
             }
 
-            var exclusions = _importListExclusionService.All();
-
+            var timer = Stopwatch.StartNew();
+            var lookupIds = ImportListProviderIdHelper.GetExclusionLookupIds(providerIds);
+            var exclusions = _importListExclusionService.FindByForeignId(lookupIds);
             var matching = exclusions.Where(exclusion => providerIds.Any(id => ImportListSyncService.MatchesExclusionId(id, exclusion.ForeignId))).ToList();
-            var excludeAudio = matching.Any(exclusion => ImportListExclusionBookMatcher.AppliesToMediaType(exclusion, BookMediaType.Audiobook));
-            var excludeEbook = matching.Any(exclusion => ImportListExclusionBookMatcher.AppliesToMediaType(exclusion, BookMediaType.Ebook));
+            _logger.Debug("[IMPORT-LIST-EXCLUSION] Checked {0} IDs, read {1} exclusions in {2} ms", lookupIds.Count, exclusions.Count, timer.ElapsedMilliseconds);
+            var excludeAudio = audioList && matching.Any(exclusion => ImportListExclusionBookMatcher.AppliesToMediaType(exclusion, BookMediaType.Audiobook));
+            var excludeEbook = ebookList && matching.Any(exclusion => ImportListExclusionBookMatcher.AppliesToMediaType(exclusion, BookMediaType.Ebook));
+            if (excludeAudio || excludeEbook)
+            {
+                var formats = string.Join(", ", new[] { excludeAudio ? "audiobook" : null, excludeEbook ? "ebook" : null }.Where(value => value != null));
+                var origins = string.Join(", ", new[] { excludeAudio ? config.AudiobookRequestedBy ?? config.RequestedBy : null, excludeEbook ? config.EbookRequestedBy ?? config.RequestedBy : null }
+                    .Where(value => value != null).Distinct());
+                _logger.Warn("[IMPORT-LIST-EXCLUSION] Skipped {0} ({1}, {2}) from {3}: excluded", author?.Name ?? config.AuthorName ?? providerId, providerId, formats, origins);
+            }
             if (excludeAudio)
             {
                 config.CreateAudiobook = false;
@@ -642,12 +667,18 @@ namespace NzbDrone.Core.Books.Services
             }
         }
 
-        private async Task<Author> QueueMissingRequestedWorks(Author author, string authorProviderId, MonitoringConfig config)
+        private async Task<Author> RetainPendingCatalogRequest(Author author, string authorProviderId, MonitoringConfig config, bool force = false)
         {
-            if (author == null || author.Id <= 0 || config?.QueueIfUnavailable != true || config.IsFromQueue)
+            if (author == null || author.Id <= 0 || config == null)
             {
                 return author;
             }
+
+            // A replay must retain the existing request rather than report success or
+            // resolve its work against a catalog whose ownership is still unverified.
+            if (force && config.IsFromQueue)
+                throw new AuthorIdentityUnverifiedException("Author identity could not be verified; the request remains queued and will retry automatically.");
+            if (!force && (!config.QueueIfUnavailable || config.IsFromQueue)) return author;
 
             var targets = new[]
             {
@@ -664,20 +695,19 @@ namespace NzbDrone.Core.Books.Services
                 .Distinct()
                 .ToList();
 
-            if (!targets.Any())
+            if (!force && !targets.Any())
             {
                 return author;
             }
 
-            var missing = targets.Where(target => !RequestedWorkExists(author.Id, target.ProviderId, target.MediaType)).ToList();
-            if (!missing.Any())
+            var missing = force ? targets : targets.Where(target => !RequestedWorkExists(author.Id, target.ProviderId, target.MediaType)).ToList();
+            if (!force && !missing.Any())
             {
                 return author;
             }
 
-            _logger.Info(
-                "Author {0} is available, but requested work(s) [{1}] are not yet present in its authoritative catalog; retaining the request",
-                authorProviderId,
+            _logger.Info("Author {0}: retaining catalog request because {1}. Requested works: [{2}]",
+                authorProviderId, force ? "provider identity is not verified" : "requested works are not yet present",
                 string.Join(",", missing.Select(target => target.ProviderId)));
 
             if (string.IsNullOrWhiteSpace(config.AuthorName)) config.AuthorName = author.Name;
@@ -764,7 +794,7 @@ namespace NzbDrone.Core.Books.Services
                     [selection.MediaType] = BookIdentity.GetStableWorkProviderIdentityTokens(remoteTarget.Book)
                         .ToHashSet(StringComparer.OrdinalIgnoreCase)
                 });
-            localAuthor = _authorService.GetAuthor(localAuthor.Id) ?? localAuthor;
+            localAuthor = ReloadReconciledAuthor(localAuthor, remoteAuthor);
             var localBook = ResolveLocalBookForUserSelection(localAuthor, remoteTarget.Book, workProviderId, selection.MediaType);
             var localEdition = ResolveLocalEditionForUserSelection(localAuthor, localBook, remoteTarget.Edition, editionProviderId, selection.MediaType);
 
@@ -968,6 +998,17 @@ namespace NzbDrone.Core.Books.Services
             return matches.SingleOrDefault();
         }
 
+        private Author ReloadReconciledAuthor(Author previous, Author published)
+        {
+            try { return _authorService.GetAuthor(previous.Id) ?? previous; }
+            catch (ModelNotFoundException)
+            {
+                // A confirmed merge can absorb the row this add/refresh originally loaded.
+                return FindExistingAuthor(AuthorIdentity.GetPreferredProviderId(published), published)
+                    ?? throw new InvalidOperationException("The reconciled author is no longer available.");
+            }
+        }
+
         private Author FindExistingAuthor(string requestedProviderId, Author remoteAuthor)
         {
             // 1) Requested provider ID (caller's intent)
@@ -1117,8 +1158,24 @@ namespace NzbDrone.Core.Books.Services
             }
         }
 
-        private async Task<Author> HandleExistingAuthorAsync(Author existingAuthor, Author remoteAuthor, MonitoringConfig config)
+        private Author HandleExistingAuthor(Author existingAuthor, Author remoteAuthor, MonitoringConfig config, out bool identityVerified)
         {
+            // Resolve ownership before replacing the snapshot; dropped IDs may identify
+            // a server split. Do this before taking the survivor's settings-write lock.
+            identityVerified = true;
+            try
+            {
+                if (_refreshAuthorService != null && !AuthorIdentity.GetProviderIdentityTokens(existingAuthor)
+                        .SetEquals(AuthorIdentity.GetProviderIdentityTokens(remoteAuthor)))
+                    existingAuthor = _refreshAuthorService.ReconcilePublishedAuthorIdentity(existingAuthor, remoteAuthor);
+            }
+            catch (AuthorIdentityUnverifiedException ex)
+            {
+                identityVerified = false;
+                _logger.Warn(ex, "[AUTHOR-IDENTITY] Keeping author {0}'s current identity while adding the requested book; refresh will retry reconciliation", existingAuthor.Id);
+            }
+            using var writer = BookService.EnterWantedEditionLock(existingAuthor, _logger);
+            existingAuthor = _authorService.GetAuthor(existingAuthor.Id);
             var resumePendingCatalog = existingAuthor.AddOptions?.AwaitingMetadata == true;
             var initializeAudiobook = config?.CreateAudiobook == true &&
                 (!existingAuthor.HasMediaTypeSettings(BookMediaType.Audiobook) || string.IsNullOrWhiteSpace(existingAuthor.AudiobookRootFolderPath) ||
@@ -1172,11 +1229,23 @@ namespace NzbDrone.Core.Books.Services
             // Books must see the same fill-missing settings that will be persisted for this media side.
             existingAuthor = ApplyExistingAuthorProgressiveSettings(existingAuthor, config);
 
-            existingAuthor = MergeMissingProviderIds(existingAuthor, remoteAuthor);
-            existingAuthor = ApplyAuthorMetadata(existingAuthor, remoteAuthor);
-            SeedAuthorSyncMetadata(existingAuthor, remoteAuthor, null);
+            if (identityVerified)
+            {
+                try
+                {
+                    existingAuthor = ApplyAuthorMetadata(existingAuthor, remoteAuthor);
+                    SeedAuthorSyncMetadata(existingAuthor, remoteAuthor, null);
+                }
+                catch (Exception ex) when (ex is SqliteException sqlite && IsAuthorProviderIdUniqueViolation(sqlite) ||
+                    ex is PostgresException postgres && IsAuthorProviderIdUniqueViolation(postgres))
+                {
+                    identityVerified = false;
+                    existingAuthor = _authorService.GetAuthor(existingAuthor.Id);
+                    _logger.Warn(ex, "[AUTHOR-IDENTITY] Author {0}'s provider identity changed concurrently; keeping the current identity and deferring reconciliation to refresh", existingAuthor.Id);
+                }
+            }
 
-            if (config != null)
+            if (identityVerified && config != null)
             {
                 _eventAggregator.PublishEvent(new AuthorRefreshCompleteEvent(existingAuthor));
             }
@@ -1206,7 +1275,7 @@ namespace NzbDrone.Core.Books.Services
             var needAudiobook = !hasAudiobook && GetEffectiveMetadataProfileId(existingAuthor, config, BookMediaType.Audiobook).HasValue;
             var needEbook = !hasEbook && GetEffectiveMetadataProfileId(existingAuthor, config, BookMediaType.Ebook).HasValue;
 
-            if (!resumePendingCatalog && (needAudiobook || needEbook) && (remoteAuthor?.Books?.Any() == true))
+            if (identityVerified && !resumePendingCatalog && (needAudiobook || needEbook) && (remoteAuthor?.Books?.Any() == true))
             {
                 var booksToBackfill = remoteAuthor.Books
                     .Where(b =>
@@ -1224,12 +1293,12 @@ namespace NzbDrone.Core.Books.Services
                 {
                     _logger.Debug("[HYDRATE] Existing author '{0}' missing profile-enabled media types (audiobook={1}, ebook={2}); backfilling {3} books",
                         existingAuthor.Name, needAudiobook, needEbook, booksToBackfill.Count);
-                    await ProcessBooksForAuthor(existingAuthor, booksToBackfill, config, seriesToBackfill);
+                    ProcessBooksForAuthor(existingAuthor, booksToBackfill, config, seriesToBackfill);
                 }
 
                 if (seriesToBackfill.Any())
                 {
-                    await ProcessSeriesForAuthor(existingAuthor, seriesToBackfill, config);
+                    ProcessSeriesForAuthor(existingAuthor, seriesToBackfill, config);
                 }
 
                 _eventAggregator.PublishEvent(new AuthorRefreshCompleteEvent(existingAuthor, remoteAuthor));
@@ -1247,13 +1316,16 @@ namespace NzbDrone.Core.Books.Services
                 throw new InvalidOperationException("Pending author catalog setup requires authoritative reconciliation.");
             }
 
-            if ((resumePendingCatalog || config?.ProtectedNarrationIds?.Count > 0 || config?.ProtectedNarrationWorkIds?.Count > 0 || requestedProviderIds.Any(requested =>
+            if (identityVerified && (resumePendingCatalog || config?.ProtectedNarrationIds?.Count > 0 || config?.ProtectedNarrationWorkIds?.Count > 0 || requestedProviderIds.Any(requested =>
                     remoteAuthor?.Books?.Any(remoteBook =>
                         remoteBook != null &&
                         remoteBook.MediaType == requested.Key &&
                         requested.Value.Any(providerId => BookMatchesProviderId(remoteBook, providerId))) == true)) &&
                 _refreshAuthorService != null)
             {
+                // Identity reconciliation can need another author's lock. Finish this
+                // author's setup write before acquiring the ordered merge/split locks.
+                writer.Dispose();
                 // Initialize a missing media catalog with its one-time policy before refresh.
                 // Otherwise the first request for the second format uses the ongoing policy
                 // instead. Reconciliation still consumes only the authoritative author blob.
@@ -1265,10 +1337,10 @@ namespace NzbDrone.Core.Books.Services
                 {
                     _refreshAuthorService.ReconcileAuthorBlob(existingAuthor, remoteAuthor);
                 }
-                existingAuthor = _authorService.GetAuthor(existingAuthor.Id) ?? existingAuthor;
+                existingAuthor = ReloadReconciledAuthor(existingAuthor, remoteAuthor);
             }
 
-            existingAuthor = CompleteInitialMetadata(existingAuthor, config);
+            existingAuthor = CompleteInitialMetadata(existingAuthor, config, metadataCompleted: identityVerified);
 
             return existingAuthor;
         }
@@ -1322,20 +1394,9 @@ namespace NzbDrone.Core.Books.Services
                 return existingAuthor;
             }
 
-            // Use the same metadata-copy contract as refresh, while leaving provider-ID
-            // attachment to MergeMissingProviderIds and its uniqueness safeguards.
-            var hardcoverAuthorId = existingAuthor.HardcoverAuthorId;
-            var goodreadsAuthorId = existingAuthor.GoodreadsAuthorId;
-            var audnexusAuthorId = existingAuthor.AudnexusAuthorId;
-            var openLibraryAuthorId = existingAuthor.OpenLibraryAuthorId;
-            var googleBooksAuthorId = existingAuthor.GoogleBooksAuthorId;
-
+            // One metadata write owns both preferred IDs and the complete served ID set.
             existingAuthor.UseMetadataFrom(remoteAuthor);
-            existingAuthor.HardcoverAuthorId = hardcoverAuthorId;
-            existingAuthor.GoodreadsAuthorId = goodreadsAuthorId;
-            existingAuthor.AudnexusAuthorId = audnexusAuthorId;
-            existingAuthor.OpenLibraryAuthorId = openLibraryAuthorId;
-            existingAuthor.GoogleBooksAuthorId = googleBooksAuthorId;
+            existingAuthor.RemoteProviderIds = AuthorIdentity.GetProviderIdentityTokens(remoteAuthor);
             existingAuthor.LastInfoSync = DateTime.UtcNow;
 
             return _authorService.UpdateAuthor(existingAuthor);
@@ -1805,68 +1866,6 @@ namespace NzbDrone.Core.Books.Services
                 }
             });
         }
-
-            private Author MergeMissingProviderIds(Author existingAuthor, Author remoteAuthor)
-            {
-                if (existingAuthor == null || remoteAuthor == null)
-                {
-                    return existingAuthor;
-                }
-
-                var changed = false;
-
-                if (existingAuthor.HardcoverAuthorId.IsNullOrWhiteSpace() && !remoteAuthor.HardcoverAuthorId.IsNullOrWhiteSpace())
-                {
-                    existingAuthor.HardcoverAuthorId = remoteAuthor.HardcoverAuthorId;
-                    changed = true;
-                }
-
-                if (existingAuthor.GoodreadsAuthorId.IsNullOrWhiteSpace() && !remoteAuthor.GoodreadsAuthorId.IsNullOrWhiteSpace())
-                {
-                    existingAuthor.GoodreadsAuthorId = remoteAuthor.GoodreadsAuthorId;
-                    changed = true;
-                }
-
-                if (existingAuthor.AudnexusAuthorId.IsNullOrWhiteSpace() && !remoteAuthor.AudnexusAuthorId.IsNullOrWhiteSpace())
-                {
-                    existingAuthor.AudnexusAuthorId = remoteAuthor.AudnexusAuthorId;
-                    changed = true;
-                }
-
-                if (existingAuthor.OpenLibraryAuthorId.IsNullOrWhiteSpace() && !remoteAuthor.OpenLibraryAuthorId.IsNullOrWhiteSpace())
-                {
-                    existingAuthor.OpenLibraryAuthorId = remoteAuthor.OpenLibraryAuthorId;
-                    changed = true;
-                }
-
-                if (existingAuthor.GoogleBooksAuthorId.IsNullOrWhiteSpace() && !remoteAuthor.GoogleBooksAuthorId.IsNullOrWhiteSpace())
-                {
-                    existingAuthor.GoogleBooksAuthorId = remoteAuthor.GoogleBooksAuthorId;
-                    changed = true;
-                }
-
-                if (!changed)
-                {
-                    return existingAuthor;
-                }
-
-                try
-                {
-                    return _authorService.UpdateAuthor(existingAuthor);
-                }
-                catch (SqliteException ex) when (IsAuthorProviderIdUniqueViolation(ex))
-                {
-                    _logger.Warn(ex, "[AUTHOR-DEDUP] Unique provider ID constraint hit while merging provider IDs onto existing author '{0}' (Id={1}). Keeping existing provider IDs.",
-                        existingAuthor.Name, existingAuthor.Id);
-                }
-                catch (PostgresException ex) when (IsAuthorProviderIdUniqueViolation(ex))
-                {
-                    _logger.Warn(ex, "[AUTHOR-DEDUP] Unique provider ID constraint hit while merging provider IDs onto existing author '{0}' (Id={1}). Keeping existing provider IDs.",
-                        existingAuthor.Name, existingAuthor.Id);
-                }
-
-                return existingAuthor;
-            }
 
         private static readonly string[] AuthorProviderIdColumns =
         {
@@ -2423,11 +2422,11 @@ namespace NzbDrone.Core.Books.Services
                 return null;
             }
 
-        private Task ProcessBooksForAuthor(Author author, List<Book> books, MonitoringConfig config, List<Series> seriesForFiltering)
+        private void ProcessBooksForAuthor(Author author, List<Book> books, MonitoringConfig config, List<Series> seriesForFiltering)
         {
             if (author == null || books == null || !books.Any())
             {
-                return Task.CompletedTask;
+                return;
             }
 
             books = RefreshAuthorService.NormalizeRemoteBooks(
@@ -2447,7 +2446,7 @@ namespace NzbDrone.Core.Books.Services
 
             if (!books.Any())
             {
-                return Task.CompletedTask;
+                return;
             }
 
             // CRITICAL: Log book media types to verify dual-record creation
@@ -2586,7 +2585,7 @@ namespace NzbDrone.Core.Books.Services
 
             if (!books.Any())
             {
-                return Task.CompletedTask;
+                return;
             }
 
             var bookInsertStopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -2645,7 +2644,6 @@ namespace NzbDrone.Core.Books.Services
             // follow user/metadata-profile monitored choices.
             _narratorLinkService?.RebuildBookNarratorLinks(books.Select(b => b.Id));
 
-            return Task.CompletedTask;
         }
 
         private static MonitorTypes? GetInitialMonitorMode(MonitoringConfig config, BookMediaType mediaType)
@@ -2690,11 +2688,11 @@ namespace NzbDrone.Core.Books.Services
             }
         }
 
-        private Task ProcessSeriesForAuthor(Author author, List<Series> series, MonitoringConfig config)
+        private void ProcessSeriesForAuthor(Author author, List<Series> series, MonitoringConfig config)
         {
             if (author == null || series == null || !series.Any())
             {
-                return Task.CompletedTask;
+                return;
             }
 
             // Enforce Goodreads-backed series only.
@@ -2711,7 +2709,7 @@ namespace NzbDrone.Core.Books.Services
 
             if (!series.Any())
             {
-                return Task.CompletedTask;
+                return;
             }
 
             var audiobookEnabled = GetEffectiveMetadataProfileId(author, config, BookMediaType.Audiobook).HasValue;
@@ -2733,14 +2731,13 @@ namespace NzbDrone.Core.Books.Services
 
             if (!series.Any())
             {
-                return Task.CompletedTask;
+                return;
             }
 
             // Delegate to the canonical series refresh engine so repeated imports do not create duplicates,
             // and link reconciliation remains consistent with the rest of the app.
             _refreshSeriesService.RefreshSeriesInfo(author.Id, series, new Author { Id = author.Id }, false, false, null);
 
-            return Task.CompletedTask;
         }
         private string ExtractRawId(string providerId)
         {

@@ -47,7 +47,7 @@ function records() {
     overallStatus: statuses[(index + 1) % statuses.length],
     audiobookStatus: statuses[(index + 1) % statuses.length],
     ebookStatus: 'NotRequested',
-    lastError: 'PRIVATE_RETURNED_REASON'
+    lastError: 'Validation failed: -- providerId: Author gr:58 is excluded from import lists.'
   }));
 }
 
@@ -311,6 +311,22 @@ async function capture(page, name) {
     }
     checks.push('default desktop/phone no-side and Succeeded rows omit Retry; audio/ebook/partial/active requests retain existing keyboard retry,Cancel,Delete');
 
+    for (const width of [1280, 375]) {
+      const partial = await open(browser, width, 'authors', { records: [{
+        ...records()[0], id: 1, authorName: 'Frank Herbert', providerId: 'gr:58',
+        audiobookStatus: 'Succeeded', ebookStatus: 'Failed', overallStatus: 'PartialSuccess',
+        lastError: 'Author gr:58 is excluded from import lists for Ebook.'
+      }] });
+      await populated(partial.page);
+      const row = partial.page.locator('tbody tr');
+      assert.equal(await row.getByText(strings.PartialSuccess, { exact: true }).count(), 1);
+      assert.equal(await row.getByText('Author gr:58 is excluded from import lists for Ebook.', { exact: true }).count(), 0);
+      assert.deepEqual(partial.errors, []);
+      await capture(partial.page, `authors-partial-reason-${width}`);
+      await partial.page.close();
+    }
+    checks.push('partial success keeps consistent status without exposing raw failure reasons');
+
     const desktop = await open(browser);
     const { page } = desktop;
     await populated(page);
@@ -319,10 +335,11 @@ async function capture(page, name) {
     assert.equal(desktop.requests.length, 1);
     assert.equal(new URL(desktop.requests[0].url).searchParams.get('pageSize'), '20');
     assert.equal(await page.getByText(strings.NotAvailable, { exact: true }).count() > 0, true);
+    assert.equal(await page.getByText('Validation failed: -- providerId: Author gr:58 is excluded from import lists.', { exact: true }).count(), 0);
     await noPrivateReason(page);
     receipts.push({ scenario: 'visible desktop geometry', geometry: await visibleRows(page) });
     await capture(page, 'authors-desktop-light');
-    checks.push('1000 records,20 DOM rows,one bounded default GET; actual enum labels; no stored reasons');
+    checks.push('1000 records,20 DOM rows,one bounded default GET; actual enum labels, unavailable status; no raw HTTP exception details');
 
     await page.getByRole('button', { name: '1 / 50', exact: true }).click();
     await page.locator('select[name="pageSelect"]').selectOption('2');
@@ -558,7 +575,7 @@ async function capture(page, name) {
     await noPrivateReason(translated.page);
     assert.deepEqual(translated.errors, []);
     await translated.page.close();
-    checks.push('existing French NotAvailable translation is reused');
+    checks.push('unavailable status uses the existing French translation');
 
     const nativeDir = process.env.CHAPTARR_WANTED_NATIVE_DIR;
     if (nativeDir) {
@@ -584,7 +601,7 @@ async function capture(page, name) {
           assert.equal(await row.getByRole('button', { name: strings.Delete, exact: true }).isDisabled(), false);
           assert.equal(await row.getByRole('button', { name: strings.Retry, exact: true }).count(), name === 'failed' ? 1 : 0);
           if (record.lastError) {
-            assert.equal(await nativeStates.page.getByText(record.lastError, { exact: false }).count(), 0);
+            assert.equal(await row.getByText(record.lastError, { exact: true }).count(), 0);
             assert.equal(await row.locator('[title]').evaluateAll((nodes, reason) => nodes.some((node) => node.getAttribute('title').includes(reason)), record.lastError), false);
           }
         }
@@ -593,7 +610,7 @@ async function capture(page, name) {
         assert.deepEqual(nativeStates.errors, []);
         await nativeStates.page.close();
       }
-      checks.push('both native persisted controller page20 envelopes replay exactly; actual cancelled/failed/succeeded snapshots remain truthful and hide stored reasons');
+      checks.push('both native persisted controller page20 envelopes replay exactly; actual cancelled/failed/succeeded snapshots remain truthful and hide raw failure reasons');
     }
     fs.writeFileSync(path.join(artifacts, 'results.json'), JSON.stringify({ checks, receipts, traces, status: 'passed', fixtures: 'Synthetic stored API-shape rows; native persisted controller exports are separate integration evidence' }, null, 2));
     console.log(JSON.stringify({ suite: 'Wanted Authors existing-pattern browser controls', checks, status: 'passed', artifacts }, null, 2));

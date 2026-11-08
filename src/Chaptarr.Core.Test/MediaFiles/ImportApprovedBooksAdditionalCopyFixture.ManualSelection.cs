@@ -160,6 +160,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var oldFile = files.Insert(new BookFile
                     {
                         EditionId = oldEdition.Id, Edition = oldEdition, Path = oldPath, Quality = quality,
+                        IsGraphicAudio = relink, AudioProductionOverride = relink ? false : null,
                         DateAdded = DateTime.UtcNow, Modified = DateTime.UtcNow, MediaInfo = new MediaInfoModel()
                     });
                     if (relink)
@@ -228,6 +229,10 @@ namespace Chaptarr.Core.Test.MediaFiles
                             case nameof(IMediaFileService.GetFilesByBooks): return files.GetFilesByBooks((List<int>)args[0]);
                             case nameof(IMediaFileService.GetFileWithPath): return args[0] is List<string> paths ? files.GetFileWithPath(paths) : files.GetFileWithPath((string)args[0]);
                             case nameof(IMediaFileService.Update): files.Update((BookFile)args[0]); return null;
+                            case nameof(IMediaFileService.ValidateReplacementFiles):
+                                Assert.That(((List<BookFile>)args[0]).All(file => ManualImportReplacementFiles.IsConfirmed(
+                                    file, (IReadOnlyCollection<ManualImportReplacementFile>)args[1])), Is.True);
+                                return null;
                             case nameof(IMediaFileService.ReplaceMany):
                                 if (scenario == "database-conflict")
                                 {
@@ -245,7 +250,9 @@ namespace Chaptarr.Core.Test.MediaFiles
                                 if (extrasCase)
                                 {
                                     foreach (var replaced in (List<BookFile>)args[1])
-                                        extraWriter.Handle(new BookFileDeletedEvent(replaced, (DeleteMediaFileReason)args[2]));
+                                        extraWriter.Handle(new BookFileDeletedEvent(replaced, (DeleteMediaFileReason)args[2],
+                                            ManualImportReplacementFiles.ConfirmedAssociatedPaths(replaced, (IReadOnlyCollection<ManualImportReplacementFile>)args[3]),
+                                            (List<BookFile>)args[0]));
                                 }
                                 return null;
                             default: throw new InvalidOperationException(method.Name);
@@ -276,7 +283,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     extraWriter = new OtherExtraFileService(extraRows, authorService, extraDisk, new StubRecycleBinProvider(), logger);
                     var extras = new ExtraService(media, editionService, extraDisk, extraConfig,
                         new[] { new OtherExtraService(extraConfig, extraDisk, new DiskTransferService(extraDisk, logger), extraWriter,
-                            InterfaceProxy.Proxy<IMediaFileAttributeService>((_, _) => null), logger) }, logger);
+                            InterfaceProxy.Proxy<IMediaFileAttributeService>((_, _) => null), null, logger) }, logger);
                     if (extrasCase)
                     {
                         foreach (var suffix in new[] { ".jpg", ".nfo" })
@@ -298,7 +305,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var importer = new ImportApprovedBooks(media, new StubMetadataTagService(), new StubMediaInfoExtractor(),
                         Proxy<IAuthorService>(), bookService, editionService, new StubRecycleBinProvider(), extras, mover,
                         history, Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, Proxy<IManageCommandQueue>(),
-                        Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(), Proxy<NzbDrone.Core.Profiles.Qualities.IQualityProfileService>(), Proxy<IM4bConversionService>(), logger);
+                        new SeriesBookLinkService(new SeriesBookLinkRepository(database, events)), Proxy<ISeriesService>(), Proxy<NzbDrone.Core.Profiles.Qualities.IQualityProfileService>(), Proxy<IM4bConversionService>(), logger);
                     var tracked = scenario == "queue-combine" || selectionFailure || alternative ? new TrackedDownload
                     {
                         State = TrackedDownloadState.ImportBlocked,
@@ -331,10 +338,24 @@ namespace Chaptarr.Core.Test.MediaFiles
                         ImportMode = move ? ImportMode.Move : ImportMode.Copy, ReplaceExistingFiles = scenario is "replace" or "database-conflict" || (extrasCase && scenario.EndsWith("replace", StringComparison.Ordinal)),
                         Files = new List<ManualImportFile> { new() { Path = source, AuthorId = author.Id, BookId = book.Id, EditionId = selected.Id, Quality = quality, DisableReleaseSwitching = scenario != "combine-unpinned", DownloadId = tracked?.DownloadItem.DownloadId } }
                     };
+                    if (command.ReplaceExistingFiles)
+                    {
+                        command.ConfirmedReplacementFiles = new List<ManualImportReplacementFile> { new()
+                        {
+                            Id = oldFile.Id, BookId = book.Id, Path = oldFile.Path,
+                            AssociatedPaths = extrasCase ? new[] { ".jpg", ".nfo" }.Select(suffix => Path.ChangeExtension(destination, suffix)).ToList() : new()
+                        } };
+                    }
+
                     if (selectionFailure)
                     {
                         var error = Assert.Catch(() => subject.Execute(command));
                         var saved = files.GetFilesByBook(book.Id);
+                        if (relink)
+                        {
+                            Assert.That(saved.Single().AudioProductionOverride, Is.False, "A relink preserves the explicit recording correction");
+                            Assert.That(AudioProductionDetector.IsDramatized(saved.Single()), Is.False);
+                        }
                         Assert.Multiple(() =>
                         {
                             Assert.That(saved.Single(file => file.Path == destination).EditionId, Is.EqualTo(selected.Id));
@@ -402,7 +423,10 @@ namespace Chaptarr.Core.Test.MediaFiles
                             Assert.That(File.Exists(Path.ChangeExtension(source, suffix)), Is.EqualTo(!move || !transferred));
                             var extra = extraRows.All().Single(row => row.Extension == suffix);
                             Assert.That(extra.BookId, Is.EqualTo(book.Id));
-                            if (!transferred) Assert.That(extra.BookFileId, Is.EqualTo(oldFile.Id), "Skipped extras retain their existing ownership");
+                            if (!transferred)
+                            {
+                                Assert.That(extra.BookFileId, Is.EqualTo(oldFile.Id));
+                            }
                         }
 
                         Assert.That(Directory.GetFiles(library).Count(path => path.EndsWith(".jpg") || path.EndsWith(".nfo")), Is.EqualTo(2));

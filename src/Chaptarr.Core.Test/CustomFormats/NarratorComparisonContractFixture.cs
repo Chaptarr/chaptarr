@@ -9,6 +9,11 @@ namespace Chaptarr.Core.Test.CustomFormats
     public class NarratorComparisonContractFixture
     {
         [TestCase("Robert Stevenson", "Robert Louis Stevenson", true)]
+        [TestCase("Robert Stevenson", "Robert Louis Stevensons", true)]
+        [TestCase("Robert Louis Stevensons", "Robert Stevenson", true)]
+        [TestCase("Stephen Fry", "Stephen Frys", true)]
+        [TestCase("Stephen Frys", "Stephen Fry", true)]
+        [TestCase("Frank Herberts", "Frank Herbert", true)]
         [TestCase("Robert Louis Stevenson", "Robert Stevenson", true)]
         [TestCase("Jennifer Reader", "Jennifer L Reader", true)]
         [TestCase("Jennifer L Reader", "Jennifer Reader", true)]

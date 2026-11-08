@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Dapper;
 using FluentMigrator;
 using Npgsql;
@@ -13,13 +14,12 @@ namespace NzbDrone.Core.Datastore.Migration
         {
             Execute.WithConnection((connection, transaction) =>
             {
+                var timer = Stopwatch.StartNew();
                 // Editions without a parent are invalid and cannot participate in
                 // selection repair, but are still covered by the unique index.
-                var removed = CleanupOrphanedEditions.Cleanup(connection, transaction);
-                _logger.Info("Removed {0} orphaned editions before monitoring repair", removed);
-                var repaired = FixMultipleMonitoredEditions.Repair(connection, transaction, connection is NpgsqlConnection ? DatabaseType.PostgreSQL : DatabaseType.SQLite, _logger, duplicatesOnly: true);
-                _logger.Info("Repaired {0} books with multiple monitored editions", repaired);
-                connection.Execute("CREATE UNIQUE INDEX \"IX_Editions_OneMonitoredPerBook\" ON \"Editions\" (\"BookId\") WHERE \"Monitored\" = true", transaction: transaction);
+                var removed = CleanupOrphanedEditions.Cleanup(connection, transaction, MigrationController.CommandTimeoutSeconds);
+                var repaired = FixMultipleMonitoredEditions.Repair(connection, transaction, connection is NpgsqlConnection ? DatabaseType.PostgreSQL : DatabaseType.SQLite, _logger, duplicatesOnly: true, commandTimeout: MigrationController.CommandTimeoutSeconds);
+                connection.Execute("CREATE UNIQUE INDEX \"IX_Editions_OneMonitoredPerBook\" ON \"Editions\" (\"BookId\") WHERE \"Monitored\" = true", transaction: transaction, commandTimeout: MigrationController.CommandTimeoutSeconds);
 
                 // Reject a stale insert/rehome and a parent deletion whose normal
                 // edition cleanup failed. Do not cascade past EditionDeleted events.
@@ -27,7 +27,7 @@ namespace NzbDrone.Core.Datastore.Migration
                 {
                     connection.Execute(@"ALTER TABLE ""Editions""
                         ADD CONSTRAINT ""FK_Editions_Books"" FOREIGN KEY (""BookId"")
-                        REFERENCES ""Books"" (""Id"") ON DELETE RESTRICT", transaction: transaction);
+                        REFERENCES ""Books"" (""Id"") ON DELETE RESTRICT", transaction: transaction, commandTimeout: MigrationController.CommandTimeoutSeconds);
                 }
                 else
                 {
@@ -46,8 +46,9 @@ namespace NzbDrone.Core.Datastore.Migration
                         BEGIN SELECT RAISE(ABORT, 'FK_Editions_Books: remove its editions before deleting the book'); END;
                         CREATE TRIGGER book_edition_reference_update BEFORE UPDATE OF ""Id"" ON ""Books""
                         WHEN NEW.""Id"" <> OLD.""Id"" AND EXISTS (SELECT 1 FROM ""Editions"" WHERE ""BookId"" = OLD.""Id"")
-                        BEGIN SELECT RAISE(ABORT, 'FK_Editions_Books: editions still reference the book'); END;", transaction: transaction);
+                        BEGIN SELECT RAISE(ABORT, 'FK_Editions_Books: editions still reference the book'); END;", transaction: transaction, commandTimeout: MigrationController.CommandTimeoutSeconds);
                 }
+                _logger.Info("Edition integrity migration: removed {0} orphaned editions, repaired {1} books, elapsed {2} ms", removed, repaired, timer.ElapsedMilliseconds);
             });
         }
     }

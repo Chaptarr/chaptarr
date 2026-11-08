@@ -31,6 +31,7 @@ async function verify(browser, theme, width) {
   page.on('pageerror', (error) => errors.push(error.message));
   const book = (id, title, exactMatch) => ({ id, title, authorName: 'Writer', exactMatch, monitored: true });
   const responses = {
+    Hermione: { books: [{ ...book(22, 'Pocket Potters: Harry', false), matchedEditionTitle: 'Pocket Potters: Hermione' }] },
     It: { authors: [{ id: 10, name: 'It Author', exactMatch: false }], books: [book(1, 'It', true), book(2, 'It Starts With Us', false)] },
     'It St': { books: [book(2, 'It Starts With Us', false)] },
     Ann: { authors: [{ id: 12, name: 'Ann', exactMatch: true }, { id: 13, name: 'Ann Pat', exactMatch: false }], books: [book(3, 'Ann of Somewhere', false)] }
@@ -88,32 +89,45 @@ async function verify(browser, theme, width) {
     await page.goto('http://header-search.test/');
     await page.waitForFunction(() => window.fixtureReady);
     const checks = await page.evaluate(() => {
-      const { createTextSearch, createBookSearchFilter, orderAuthorSearchResults } = window.searchSurface;
+      const { createTextSearch, createBookSearchFilter, createExistingAuthorSelector, orderAuthorSearchResults } = window.searchSurface;
       const cases = [
+        ['Bronte', 'Brontë', true], ['Soren', 'Søren', true], ['İstanbul', 'Istanbul', true], ['ı', 'I', true],
         ['Spider man', 'Spider-Man', true], ['Spider-man', 'Spider Man', true],
         ['Catch 22', 'Catch-22', true], ['Adams', 'Rachel Adams', true], ['Adams', 'Adam Smith', false],
         ['Adams', 'Adam Scott Huerta', false], ['It', 'Smith', false], ['Dune Messiah', 'Dune', false],
         ['Spider missing', 'Spider-Man', false], ['Renée', 'Rene\u0301e', true],
-        ['東京', '東京物語', true], ['الحياة', 'كتاب الحياة', true], ['5.7', '5 7', false], ['---', 'Spider-Man', false]
+        ['東京', '東京物語', true], ['ポッター', 'ハリーポッターと賢者の石', true], ['王子', 'カスピアン王子のつのぶえ', true],
+        ['カスピアン 王子', 'カスピアン王子のつのぶえ', true], ['แมว', 'นิทานแมว', true],
+        ['otter', 'Potter', false], ['2', '12', false], ['Dune 王子', 'Dune カスピアン王子のつのぶえ', true],
+        ['Dunex 王子', 'Dune カスピアン王子のつのぶえ', false], ['الحياة', 'كتاب الحياة', true], ['5.7', '5 7', false], ['---', 'Spider-Man', false]
       ];
       const failures = cases.filter(([term, value, expected]) => createTextSearch(term).matches(value) !== expected);
       const fields = [{ title: 'Spider-Man' }, { authorTitle: 'Spider-Man' }, { seriesTitle: 'Spider-Man' },
-        { narrator: 'Spider-Man' }, { availableNarrators: ['Spider-Man'] }, { seriesLinks: [{ series: { title: 'Spider-Man' } }] },
-        { editions: [{ title: 'Spider-Man' }] }, { editions: [{ subtitle: 'Spider-Man' }] }, { editions: [{ narrator: 'Spider-Man' }] }];
+        { narrator: 'Spider-Man' }, { availableNarrators: ['Spider-Man'] }, { seriesLabels: ['Spider-Man'] },
+        { editions: [{ title: 'Spider-Man' }] }, { editions: [{ subtitle: 'Spider-Man' }] }, { editions: [{ narrator: 'Spider-Man' }] },
+        { seriesTitle: 'Visible header', seriesLabels: ['Visible header #1', 'Spider-Man #8'] }];
       const source = [{ id: 1, author: { authorName: 'Rachel Adamscott' } }, { id: 2, book: {} },
         { id: 3, author: { authorName: 'Rachel Louise Adams' } }, { id: 4, series: {} },
         { id: 5, author: { authorName: 'Rachel Adams' } }, { id: 6, author: { authorName: 'Rachel Lyn Adams' } }];
       const ordered = orderAuthorSearchResults(source, 'Rachel Adams');
+      const findAuthor = createExistingAuthorSelector();
+      const library = { authors: { items: [{ id: 20, foreignAuthorId: 'gr:100' }, { id: 21, foreignAuthorId: 'hc:200' }] } };
+      const fallback = findAuthor(library, { id: 10, foreignAuthorId: 'gr:100' });
+      const direct = findAuthor(library, { id: 21, foreignAuthorId: 'gr:100' });
+      const absent = findAuthor(library, { id: 10, foreignAuthorId: 'gr:404' });
       return { failures, fields: fields.filter(createBookSearchFilter('spider man')).length,
         crossed: createBookSearchFilter('spider man')({ title: 'Spider', editions: [{ title: 'Man' }] }),
         group: createBookSearchFilter('spider man', 'Spider-Man')({ title: 'Another title' }),
-        malformed: createBookSearchFilter('spider man')({ availableNarrators: 'Spider-Man', editions: {}, seriesLinks: 'Spider-Man' }),
+        unemittedLinks: createBookSearchFilter('spider man')({ seriesLinks: [{ series: { title: 'Spider-Man' } }] }),
+        malformed: createBookSearchFilter('spider man')({ availableNarrators: 'Spider-Man', editions: {}, seriesLinks: 'Spider-Man', seriesLabels: 'Spider-Man' }),
         ordered: ordered.map((item) => item.id), original: source.map((item) => item.id),
         references: ordered.every((item) => source.includes(item)),
+        fallback: fallback?.id, direct: direct?.id, absent,
         exact: ['It Starts With Us', 'It', 'Iteration'].sort((a, b) => createTextSearch('It').score(b) - createTextSearch('It').score(a)) };
     });
-    assert.deepEqual(checks, { failures: [], fields: 9, crossed: false, group: true, malformed: false,
+    assert.deepEqual(checks, { failures: [], fields: 10, crossed: false, group: true, unemittedLinks: false, malformed: false,
       ordered: [5, 2, 3, 4, 6, 1], original: [1, 2, 3, 4, 5, 6], references: true,
+      fallback: 20, direct: 21, absent: null,
       exact: ['It', 'It Starts With Us', 'Iteration'] });
     for (const provider of ['goodreads', 'hardcover', 'audible']) {
       await page.evaluate((selected) => window.runAddNewSearch({ term: 'Rachel Adams', provider: selected }), provider);
@@ -139,9 +153,14 @@ async function verify(browser, theme, width) {
     const options = page.locator('[role="option"]');
     const navigations = () => page.evaluate(() => window.headerNavigations);
 
+    await input.fill('Hermione');
+    await page.getByText('Pocket Potters: Harry', { exact: true }).waitFor();
+    await page.getByText('Matched edition: Pocket Potters: Hermione', { exact: true }).waitFor();
+
     await input.fill('It');
     await page.getByText('It', { exact: true }).waitFor();
     assert.match(await options.first().innerText(), /^It\n/);
+    assert.equal(await page.getByText(/^Matched edition:/).count(), 0);
     await input.press('Enter');
     assert.deepEqual(await navigations(), [['book', 1]]);
 

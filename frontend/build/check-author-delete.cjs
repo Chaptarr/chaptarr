@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const webpack = require('webpack');
+const createRouteCapture = require('./capture-browser-route.cjs');
 
 const { chromium } = require('playwright');
 
@@ -27,10 +28,11 @@ for (const rule of config.module.rules) {
 }
 const baseline = process.argv.includes('--baseline');
 const booksOnly = process.argv.includes('--books-only');
+const disposalOnly = process.argv.includes('--disposal-only');
 const evidence = process.env.CHAPTARR_UI_EVIDENCE;
 
 async function checkBookDelete(page, single, strings, theme, width) {
-  const pending = [];
+  const pending = createRouteCapture('author deletion request');
   const requests = [];
   await page.route('**/book/**', async(route) => {
     const request = route.request();
@@ -38,7 +40,7 @@ async function checkBookDelete(page, single, strings, theme, width) {
       return route.fallback();
     }
     requests.push(single ? Object.fromEntries(new URL(request.url()).searchParams) : request.postDataJSON());
-    pending.push(route);
+    pending.capture(route);
   });
   const render = () => page.evaluate((value) => window.renderDeleteFixture(value, 'audiobook', 'book', true), single);
   await render();
@@ -55,9 +57,9 @@ async function checkBookDelete(page, single, strings, theme, width) {
   }
   const expected = single ? { deleteFiles: 'true', addImportListExclusion: 'true', applyToBothFormats: 'true' } :
     { bookIds: [10, 11], deleteFiles: true, addImportListExclusion: true };
-  const first = page.waitForRequest((request) => request.method() === 'DELETE');
+  const first = pending.next();
   await deleteButton.click();
-  await first;
+  const firstRoute = await first;
   await page.waitForFunction((section) => window.getDeleteFixtureState()[section].isDeleting, single ? 'books' : 'bookIndex');
   assert.equal(await deleteButton.isDisabled(), true);
   assert.equal(await files.isDisabled(), true);
@@ -69,9 +71,9 @@ async function checkBookDelete(page, single, strings, theme, width) {
     const scroller = element.closest('[tabindex="-1"]');
     scroller.scrollTop = scroller.scrollHeight;
   });
-  await pending.shift().fulfill({ status: 500, json: { message: 'Unable to delete book file: /audiobooks/Frank Herbert/Dune/Part 02.mp3' } });
+  await firstRoute.fulfill({ status: 500, json: { message: 'Unable to delete book file: /audiobooks/Frank Herbert/Dune/Part 02.mp3' } });
   await page.getByText('Unable to delete book file: /audiobooks/Frank Herbert/Dune/Part 02.mp3', { exact: true }).waitFor();
-  assert.equal(await page.getByRole('alert').evaluate((element) => {
+  assert.equal(await page.getByRole('alert').filter({ hasText: 'Unable to delete book file:' }).evaluate((element) => {
     const scroller = element.closest('[tabindex="-1"]');
     const alertBounds = element.getBoundingClientRect();
     const scrollBounds = scroller.getBoundingClientRect();
@@ -87,13 +89,13 @@ async function checkBookDelete(page, single, strings, theme, width) {
   assert.deepEqual(await page.evaluate(() => window.deleteFixtureNavigation), []);
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${theme} ${width}: book deletion error overflow`);
   await page.screenshot({ path: path.join(output, `${theme}-${width}-book-${single ? 'single' : 'bulk'}-failure.png`) });
-  const retry = page.waitForRequest((request) => request.method() === 'DELETE');
+  const retry = pending.next();
   await deleteButton.click();
-  await retry;
+  const retryRoute = await retry;
   await page.waitForFunction((section) => window.getDeleteFixtureState()[section].isDeleting, single ? 'books' : 'bookIndex');
   assert.equal(await page.getByText('Unable to delete book file: /audiobooks/Frank Herbert/Dune/Part 02.mp3', { exact: true }).count(), 0, 'Retry clears the previous error');
   assert.deepEqual(requests, [expected, expected], 'Retry retains the exact deletion choices');
-  await pending.shift().fulfill({ json: {} });
+  await retryRoute.fulfill({ json: {} });
   await deleteButton.waitFor({ state: 'hidden' });
   assert.equal(await page.evaluate(() => window.deleteFixtureCloses), single ? 0 : 1, 'Removing a single book unmounts its details page before the success callback');
   assert.deepEqual(await page.evaluate(() => window.deleteFixtureNavigation), single ? ['/author/1'] : []);
@@ -102,29 +104,98 @@ async function checkBookDelete(page, single, strings, theme, width) {
   await closeButton.click();
   assert.equal(requests.length, 2, 'Opening and cancelling must not delete anything');
   await render();
-  const fallback = page.waitForRequest((request) => request.method() === 'DELETE');
+  const fallback = pending.next();
   await deleteButton.click();
-  await fallback;
-  await pending.shift().fulfill({ status: 503, contentType: 'text/html', body: 'Gateway unavailable' });
+  const fallbackRoute = await fallback;
+  await fallbackRoute.fulfill({ status: 503, contentType: 'text/html', body: 'Gateway unavailable' });
   await page.getByText(strings.BookDeleteFailed, { exact: true }).waitFor();
   assert.equal(await deleteButton.isEnabled(), true);
   await closeButton.click();
 
   if (single) {
     await render();
-    const leaving = page.waitForRequest((request) => request.method() === 'DELETE');
+    const leaving = pending.next();
     await deleteButton.click();
-    await leaving;
+    const leavingRoute = await leaving;
     await page.keyboard.press('Escape');
     await deleteButton.waitFor({ state: 'hidden' });
     await page.evaluate(() => window.history.pushState({}, '', '/wanted/missing'));
-    await pending.shift().fulfill({ json: {} });
+    await leavingRoute.fulfill({ json: {} });
     await page.waitForFunction(() => !window.getDeleteFixtureState().books.isDeleting);
     assert.deepEqual(await page.evaluate(() => window.deleteFixtureNavigation), [], 'A late response must not navigate after leaving the dialog');
     assert.equal(await page.evaluate(() => window.deleteFixtureCloses), 1);
     await page.evaluate(() => window.history.replaceState({}, '', '/'));
   }
   await page.unroute('**/book/**');
+}
+
+function authorPreview(request, recycleBin = '') {
+  const { authorIds, applyToBothFormats } = request.postDataJSON();
+  const paths = applyToBothFormats ? ['/library/Dune/Frank Herbert', '/audiobooks/Dune/Frank Herbert', '/ebooks/Dune/Frank Herbert', '/library/Dune/Brian Herbert'] : ['/ebooks/Dune/Frank Herbert'];
+  return { recycleBin, warnings: [], otherAuthors: [], files: [], folders: paths.filter((folder) => authorIds.includes(2) || !folder.includes('Brian')).map((folder) => ({
+    path: folder, deleteContents: true, reason: null, bookFileCount: 2, size: 4096, otherFiles: [`${folder}/cover.jpg`]
+  })) };
+}
+
+async function checkAuthorPreview(page, strings) {
+  const pending = createRouteCapture('author delete preview');
+  await page.route('**/author/deletepreview', (route) => pending.capture(route));
+  await page.evaluate(() => window.renderDeleteFixture(true, 'audiobook'));
+  const button = page.getByRole('button', { name: strings.Delete, exact: true });
+  const first = pending.next();
+  await page.locator('input[name="deleteFiles"]').focus();
+  await page.keyboard.press('Space');
+  const held = await first;
+  assert.equal(await button.isDisabled(), true, 'Deletion must wait for the actual inventory');
+  await held.fulfill({ status: 409, json: { message: 'The selected folder is a configured root.' } });
+  await page.getByText('The selected folder is a configured root.', { exact: true }).waitFor();
+  assert.equal(await button.isDisabled(), true, 'A refused preview must never authorize deletion');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => window.renderDeleteFixture(true, 'audiobook'));
+  const second = pending.next();
+  await page.locator('input[name="deleteFiles"]').focus();
+  await page.keyboard.press('Space');
+  const request = await second;
+  const preview = authorPreview(request.request());
+  preview.otherAuthors = [{ authorId: 2, name: 'Brian Herbert', fileCount: 1 }];
+  await request.fulfill({ json: preview });
+  const consent = page.locator('input[name="deleteOtherAuthorsFiles"]');
+  await consent.waitFor();
+  assert.equal(await button.isDisabled(), true, 'The other author warning needs explicit consent');
+  await consent.focus();
+  await page.keyboard.press('Space');
+  const deleting = page.waitForRequest((r) => r.method() === 'DELETE' && new URL(r.url()).pathname.endsWith('/author/1'));
+  await button.click();
+  assert.equal(new URL((await deleting).url()).searchParams.get('deleteOtherAuthorsFiles'), 'true');
+  await button.waitFor({ state: 'hidden' });
+  await page.unroute('**/author/deletepreview');
+}
+
+async function checkAuthorDisposal(page, strings, theme, width) {
+  let cases = 0;
+  for (const single of [false, true]) {
+    for (const recycleBin of ['', '/recycle', null]) {
+      await page.route('**/author/deletepreview', (route) => (recycleBin === null ?
+        route.fulfill({ status: 503, json: { message: 'Unavailable' } }) : route.fulfill({ json: authorPreview(route.request(), recycleBin) })));
+      await page.evaluate((value) => window.renderDeleteFixture(value, 'ebook'), single);
+      const files = page.locator('input[name="deleteFiles"]');
+      await files.focus();
+      await page.keyboard.press('Space');
+      let key = recycleBin ? 'DeleteBookFilesCalibreRecyclingWarning' : 'DeleteBookFilesCalibrePermanentWarning';
+      let state = recycleBin ? 'bin' : 'permanent';
+      if (recycleBin === null) {
+        key = 'AuthorDeleteRecyclingBinUnknown';
+        state = 'unknown';
+      }
+      await page.getByText(strings[key], { exact: true }).waitFor();
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      await page.screenshot({ path: path.join(output, `${theme}-${width}-${single ? 'single' : 'bulk'}-${state}.png`) });
+      await page.keyboard.press('Escape');
+      await page.unroute('**/author/deletepreview');
+      cases++;
+    }
+  }
+  return cases;
 }
 
 (async() => {
@@ -153,6 +224,21 @@ async function checkBookDelete(page, single, strings, theme, width) {
           const pathname = new URL(request.url()).pathname;
           if (pathname.endsWith('/localization')) {
             return route.fulfill({ json: { Strings: strings } });
+          }
+          if (pathname.endsWith('/config/mediamanagement')) {
+            return route.fulfill({ json: { recycleBin: '' } });
+          }
+          if (pathname.endsWith('/author/deletepreview')) {
+            return route.fulfill({ json: authorPreview(request) });
+          }
+          if (pathname.endsWith('/bookfile/deletepreview')) {
+            const { bookIds } = request.postDataJSON();
+            return route.fulfill({ json: {
+              files: bookIds.map((bookId) => ({
+                id: bookId, bookId, path: `/audiobooks/Frank Herbert/Book ${bookId}/Part 01.mp3`,
+                associatedPaths: [], isPermanentDelete: true
+              })), hasCalibreFiles: false
+            } });
           }
           if (request.method() === 'DELETE' && (/\/author\/(editor|1)$/).test(pathname)) {
             return refuseDelete ?
@@ -184,11 +270,14 @@ async function checkBookDelete(page, single, strings, theme, width) {
           return route.fulfill({ contentType: 'text/html', body: `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><style>:root{${variables}}body{margin:0}</style><div id="root"></div><div id="portal-root"></div><script>window.Chaptarr={isProduction:true,apiRoot:'/api/v1',urlBase:''};</script><script src="/fixture.js"></script>` });
         });
         await page.goto('http://delete-fixture.test/');
-        for (const single of [false, true]) {
+        if (!booksOnly) {
+          cases += await checkAuthorDisposal(page, strings, theme, width);
+        }
+        for (const single of disposalOnly ? [] : [false, true]) {
           await checkBookDelete(page, single, strings, theme, width);
           cases++;
         }
-        if (!booksOnly) {
+        if (!booksOnly && !disposalOnly) {
           await page.evaluate(() => window.renderDeleteFixture());
           await page.getByText('Delete Selected Author', { exact: true }).waitFor();
           const deleteButton = page.getByRole('button', { name: 'Delete', exact: true });
@@ -214,7 +303,8 @@ async function checkBookDelete(page, single, strings, theme, width) {
           await page.keyboard.press('Space');
           assert.equal(await files.isChecked(), true);
           assert.equal(await page.getByText(strings.AuthorDeleteFormatFilesHelpText, { exact: true }).isVisible(), true);
-          for (const configuredPath of ['/library/Dune/Frank Herbert', '/audiobooks/Dune/Frank Herbert', '/ebooks/Dune/Frank Herbert', '/library/Dune/Brian Herbert']) {
+          await page.getByText('/ebooks/Dune/Frank Herbert', { exact: true }).waitFor();
+          for (const configuredPath of ['/library/Dune/Frank Herbert', '/audiobooks/Dune/Frank Herbert', '/library/Dune/Brian Herbert']) {
             assert.equal(await page.getByText(configuredPath, { exact: true }).count(), 0, 'A scoped deletion must not present configured folders as folders to delete');
           }
           assert.equal(await page.getByText(strings.AuthorDeleteScopedFilesSummary.replace('{mediaType}', strings.Ebooks), { exact: true }).count(), 2);
@@ -227,6 +317,7 @@ async function checkBookDelete(page, single, strings, theme, width) {
           assert.equal(await deleteButton.isEnabled(), true, 'Refusal must leave a working retry');
           await media.click();
           await page.getByText(strings.AuthorDeleteBothFormats, { exact: true }).click();
+          await page.getByText('/audiobooks/Dune/Frank Herbert', { exact: true }).first().waitFor();
           const selectedPaths = ['/library/Dune/Frank Herbert', '/audiobooks/Dune/Frank Herbert', '/ebooks/Dune/Frank Herbert', '/library/Dune/Brian Herbert'];
           for (const selectedPath of selectedPaths) {
             assert.equal(await page.getByText(selectedPath, { exact: true }).count(), 1, `${selectedPath} must be disclosed once`);
@@ -272,6 +363,10 @@ async function checkBookDelete(page, single, strings, theme, width) {
           assert.equal(readdQuery.get('readdAuthor'), 'true');
           assert.equal(readdQuery.get('applyToBothFormats'), 'true');
           cases++;
+        }
+        if (!baseline && !booksOnly && !disposalOnly && theme === 'light' && width === 320) {
+          await checkAuthorPreview(page, strings);
+          cases += 2;
         }
         assert.deepEqual(errors, []);
         await page.close();

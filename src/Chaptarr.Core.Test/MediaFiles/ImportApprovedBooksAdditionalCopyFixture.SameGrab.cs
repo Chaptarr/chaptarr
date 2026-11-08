@@ -57,6 +57,8 @@ namespace Chaptarr.Core.Test.MediaFiles
         [TestCase(true, "replace-stale")]
         [TestCase(false, "replace-unconfirmed")]
         [TestCase(true, "replace-unconfirmed")]
+        [TestCase(false, "replace-null-confirmation")]
+        [TestCase(true, "replace-null-confirmation")]
         [TestCase(false, "replace-renamed")]
         [TestCase(true, "replace-renamed")]
         [TestCase(false, "replace-old-missing")]
@@ -157,12 +159,13 @@ namespace Chaptarr.Core.Test.MediaFiles
                     });
                     var metadataFiles = new MetadataFileRepository(database, events);
                     var otherFiles = new OtherExtraFileRepository(database, events);
-                    var replacementPreview = new ManualImportReplacementFiles(disk, metadataFiles, otherFiles, new AuthorRepository(database, events, logger), books);
+                    var replacementPreview = new ManualImportReplacementFiles(disk, metadataFiles, otherFiles, new AuthorRepository(database, events, logger), books,
+                        InterfaceProxy.Proxy<NzbDrone.Core.Configuration.IConfigService>((_, _) => string.Empty));
                     var realMedia = new MediaFileService(files, events, null, disk, logger, replacementFiles: replacementPreview);
                     var recycle = InterfaceProxy.Proxy<IRecycleBinProvider>((method, args) => { File.Delete((string)args[0]); return null; });
                     var metadataDeletion = new MetadataFileService(metadataFiles, null, disk, recycle, logger);
                     var otherDeletion = new OtherExtraFileService(otherFiles, null, disk, recycle, logger);
-                    var replicaDeletion = new MediaFileDeletionService(disk, recycle, null, null, null, events, null, null, logger);
+                    var replicaDeletion = new MediaFileDeletionService(disk, recycle, null, null, null, events, null, null, logger, metadataFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Metadata.Files.MetadataFile>(), otherFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Others.OtherExtraFile>(), metadataFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Metadata(), otherFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Other());
                     onFileDeleted = deleted =>
                     {
                         beforeAssociatedDeletion?.Invoke(deleted);
@@ -236,7 +239,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         var importer = new ImportApprovedBooks(media, new StubMetadataTagService(), new StubMediaInfoExtractor(),
                             authorService, bookService, editionService, new StubRecycleBinProvider(), extras, mover,
                             history, Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, Proxy<IManageCommandQueue>(),
-                            Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(), Proxy<NzbDrone.Core.Profiles.Qualities.IQualityProfileService>(),
+                            new SeriesBookLinkService(new SeriesBookLinkRepository(database, events)), Proxy<ISeriesService>(), Proxy<NzbDrone.Core.Profiles.Qualities.IQualityProfileService>(),
                             Proxy<IM4bConversionService>(), logger);
                         var dependencies = new Dictionary<Type, object>
                         {
@@ -356,13 +359,13 @@ namespace Chaptarr.Core.Test.MediaFiles
                                 Assert.That(args[1], Is.SameAs(previewRoots));
                                 return ((string)args[0]).StartsWith(library, StringComparison.Ordinal) ? previewRoots[0] : null;
                             }), logger, replacementPreview);
-                        replacement.ConfirmedReplacementFiles = preview.GetReplacementFiles(replacement);
+                        replacement.ConfirmedReplacementFiles = preview.GetReplacementFiles(new ManualImportReplacementRequest { Files = replacement.Files.Select(file => new ManualImportReplacementSelection { Path = file.Path, BookId = file.BookId }).ToList() });
                         Assert.That(rootReads, Is.EqualTo(1));
                         Assert.That(replacement.ConfirmedReplacementFiles.Select(file => file.Id), Is.EqualTo(new[] { first.Id }));
                         if (associatedScenario)
                         {
                             Assert.That(replacement.ConfirmedReplacementFiles.Single().AssociatedPaths,
-                                Is.EquivalentTo(scenario == "replace-colocated" ? Array.Empty<string>() : new[] { coverPath }));
+                                Is.EquivalentTo(new[] { coverPath }), "An associated audiobook cover is listed even beside an independent ebook");
                         }
                         if (scenario == "replace-sidecars-stale")
                         {
@@ -389,7 +392,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                                 });
                             };
                         }
-                        if (scenario.EndsWith("concurrent", StringComparison.Ordinal))
+                        if (scenario == "replace-null-confirmation")
                         {
                             replacement.ConfirmedReplacementFiles = null;
                         }
@@ -426,9 +429,17 @@ namespace Chaptarr.Core.Test.MediaFiles
                                 MediaInfo = new MediaInfoModel(), DateAdded = DateTime.UtcNow, Modified = DateTime.UtcNow });
                         }
 
-                        if (scenario.EndsWith("failure", StringComparison.Ordinal) || scenario is "replace-missing" or "replace-stale" or "replace-sidecars-stale" or "replace-unconfirmed" or "replace-renamed")
+                        if (scenario.EndsWith("failure", StringComparison.Ordinal) || scenario.EndsWith("concurrent", StringComparison.Ordinal) || scenario is "replace-null-confirmation" or "replace-missing" or "replace-stale" or "replace-sidecars-stale" or "replace-unconfirmed" or "replace-renamed")
                         {
-                            Assert.Throws<CommandFailedException>(() => CreateService().Execute(replacement));
+                            if (scenario.EndsWith("concurrent", StringComparison.Ordinal))
+                            {
+                                var error = Assert.Throws<CommandFailedException>(() => CreateService().Execute(replacement));
+                                Assert.That(error.Message, Does.Contain("Existing files changed"));
+                            }
+                            else
+                            {
+                                Assert.Throws<CommandFailedException>(() => CreateService().Execute(replacement));
+                            }
                             Assert.That(files.Get(first.Id).EditionId, Is.EqualTo(edition.Id));
                             if (oldMissing)
                             {
@@ -470,7 +481,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         Assert.That(extrasBeforeCommit, Is.False);
                         if (associatedScenario)
                         {
-                            var keptCover = scenario is not "replace-sidecars" and not "replace-sidecars-late";
+                            var keptCover = scenario is not "replace-sidecars" and not "replace-sidecars-late" and not "replace-colocated";
                             Assert.That(File.Exists(coverPath), Is.EqualTo(keptCover));
                             if (keptCover)
                             {
@@ -479,6 +490,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                             if (scenario == "replace-colocated")
                             {
                                 Assert.That(File.ReadAllText(Path.Combine(Path.GetDirectoryName(first.Path), "book.epub")), Is.EqualTo("independent ebook"));
+                                Assert.That(metadataFiles.GetFilesByBookFiles(new[] { first.Id }), Is.Empty,
+                                    "The confirmed audiobook-owned cover and its row are removed together");
                             }
                             if (scenario is "replace-sidecars-stale" or "replace-sidecars-late")
                             {
@@ -494,7 +507,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                     {
                         Assert.Throws<CommandFailedException>(() => CreateService().Execute(retry), "A failed correction must not be hidden by the old source-path coverage");
                         Assert.That(tracked.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
-                        Assert.That(tracked.StatusMessages.Any(message => message.Title == paths[0]), Is.True, "Name the part whose selected edition could not be imported");
+                        Assert.That(tracked.StatusMessages.Any(message => message.Title == Path.GetFileName(paths[0])), Is.True, "Name the part whose selected edition could not be imported");
+                        Assert.That(tracked.StatusMessages.Any(message => message.SourcePath == paths[0]), Is.True, "Keep the missing source identity");
                         Assert.That(files.GetFilesByBook(book.Id).Single(file => file.Path == first.Path).EditionId, Is.EqualTo(edition.Id));
                     }
                     else

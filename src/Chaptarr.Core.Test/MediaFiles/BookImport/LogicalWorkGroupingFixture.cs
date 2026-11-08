@@ -62,7 +62,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
-            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
@@ -83,6 +83,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
         private sealed class StubBookService : IBookService
         {
+            public List<Book> GetImportListBookIdentities() => GetAllBooks();
+
             private readonly Dictionary<int, Book> _booksById;
 
             public StubBookService(IEnumerable<Book> books)
@@ -114,7 +116,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds) => throw new NotImplementedException();
             public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds) => throw new NotImplementedException();
             public Book AddBook(Book newBook, bool doRefresh = true) => throw new NotImplementedException();
-            public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
+            public List<Book> FindBySlug(string titleSlug) => throw new NotImplementedException();
             public Book FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Book FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public Book FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
@@ -143,7 +145,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public (Book Book, bool ExistingCopy) AddWantedEditionCopy(int bookId, int editionId) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -200,9 +202,10 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             List<Book> books,
             List<Edition> editions = null,
             BookMatchingStrictness strictness = BookMatchingStrictness.Balanced,
-            StubBookService bookService = null)
+            StubBookService bookService = null,
+            Logger logger = null)
         {
-            var logger = LogManager.GetCurrentClassLogger();
+            logger ??= LogManager.GetCurrentClassLogger();
             if (editions != null)
             {
                 var editionsByBook = editions.ToLookup(edition => edition.BookId);
@@ -227,6 +230,44 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 editionRepository: null,
                 mediaInfoExtractor: null,
                 logger: logger);
+        }
+
+        [TestCase("split", 1)]
+        [TestCase("bracket", 1)]
+        [TestCase("bracket-stripped split", 1)]
+        [TestCase("whole", 0)]
+        public void accepted_title_proof_should_log_once_without_logging_whole_titles(string proof, int expected)
+        {
+            using var factory = new LogFactory();
+            var target = new NLog.Targets.MemoryTarget { Layout = "${message}" };
+            var config = new NLog.Config.LoggingConfiguration(factory);
+            config.AddRule(LogLevel.Debug, LogLevel.Fatal, target);
+            factory.Configuration = config;
+            var title = proof == "bracket" ? "The Robot Chronicles (The Future Chronicles)" : "The Robot Chronicles: The Future Chronicles";
+            if (proof == "bracket-stripped split") title += " (Unabridged)";
+            var book = new Book { Id = 501, AuthorId = 25, Title = title, MediaType = BookMediaType.Ebook };
+            var candidate = new EditionFtsMatch
+            {
+                EditionId = 502, BookId = 501, AuthorId = 25, AuthorName = "Hugh Howey",
+                BookTitle = title, EditionTitle = title, ReadingFormatId = 3, MatchScore = 10
+            };
+            var tags = new Dictionary<string, List<string>>
+            {
+                ["TITLE"] = new() { proof == "whole" ? title : "The Robot Chronicles" },
+                ["AUTHOR"] = new() { "Hugh Howey" }
+            };
+            if (proof.Contains("split", StringComparison.Ordinal)) tags["CUSTOM"] = new() { "The Future Chronicles" };
+            var service = CreateSut(new List<EditionFtsMatch> { candidate }, new List<Book> { book }, logger: factory.GetLogger("title-proof"));
+            var match = service.HolyGrailMatchFile(new DiscoveredFileWithMetadata { Path = "/constructed/robot.epub", AllTags = tags },
+                BookMediaType.Ebook, restrictToAuthorId: 25);
+            Assert.That(match?.EditionId, Is.EqualTo(502));
+            var lines = target.Logs.Where(line => line.StartsWith("[TITLE-PROOF]", StringComparison.Ordinal)).ToList();
+            Assert.That(lines, Has.Count.EqualTo(expected));
+            if (expected > 0)
+            {
+                Assert.That(lines.Single(), Does.Contain("/constructed/robot.epub").And.Contain("edition 502").And.Contain(proof).And.Contain("TITLE"));
+                if (proof.Contains("split", StringComparison.Ordinal)) Assert.That(lines.Single(), Does.Contain("CUSTOM"));
+            }
         }
 
         [Test]

@@ -45,7 +45,7 @@ namespace NzbDrone.Core.Extras.Metadata
                                IMetadataFileService metadataFileService,
                                IBookService bookService,
                                Logger logger)
-            : base(configService, diskProvider, diskTransferService, logger)
+            : base(configService, diskProvider, diskTransferService, recycleBinProvider, logger)
         {
             _metadataFactory = metadataFactory;
             _cleanMetadataService = cleanMetadataService;
@@ -146,8 +146,10 @@ namespace NzbDrone.Core.Extras.Metadata
             {
                 // Resolve every original before mutating tracking; a later destination must not
                 // claim a sidecar already moved for another copy of the same book.
-                var plans = GetMetadataFilesForConsumer(consumer, metadataFiles)
+                var consumerFiles = GetMetadataFilesForConsumer(consumer, metadataFiles)
                     .Where(extra => extra.Type == MetadataType.BookImage || extra.Type == MetadataType.BookMetadata)
+                    .ToList();
+                var plans = consumerFiles
                     .SelectMany(extra => bookFiles.Select(move => new
                     {
                         Extra = extra,
@@ -159,6 +161,8 @@ namespace NzbDrone.Core.Extras.Metadata
                     }))
                     .Where(plan => plan.Source != null)
                     .ToList();
+
+                WarnUnresolvedRenameSources(consumerFiles, bookFiles, plans.Select(plan => plan.Extra.Id).ToHashSet());
 
                 foreach (var group in plans.GroupBy(plan => plan.Source, PathEqualityComparer.Instance))
                 {

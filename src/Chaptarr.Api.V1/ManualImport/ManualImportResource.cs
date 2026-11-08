@@ -31,6 +31,8 @@ namespace Chaptarr.Api.V1.ManualImport
         public List<CustomFormatResource> CustomFormats { get; set; }
         public QualityModel Quality { get; set; }
         public string ReleaseGroup { get; set; }
+        public bool? AudioProductionOverride { get; set; }
+        public bool IsGraphicAudio { get; set; }
         public int QualityWeight { get; set; }
         public string DownloadId { get; set; }
         public int IndexerFlags { get; set; }
@@ -79,6 +81,8 @@ namespace Chaptarr.Api.V1.ManualImport
                 SuggestedEditionTitle = model.SuggestedEditionTitle,
                 Quality = model.Quality,
                 ReleaseGroup = model.ReleaseGroup,
+                AudioProductionOverride = model.AudioProductionOverride,
+                IsGraphicAudio = model.IsGraphicAudio,
 
                 //QualityWeight
                 DownloadId = model.DownloadId,

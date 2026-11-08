@@ -5962,6 +5962,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     // best-effort book cache — non-fatal if it fails
                 }
 
+                var workKeys = BuildMatchingWorkKeys(ftsResults, booksById);
                 var numericAliasAuthorCatalogs = new Dictionary<int, List<Book>>();
                 List<Book> GetNumericAliasAuthorCatalog(int candidateAuthorId)
                 {
@@ -6054,28 +6055,24 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                           _containmentValidator.ValidateAuthorInTags(candidateAuthorName, authorEvidenceTags, knownTitles));
                     }
 
-                var narratorMatchCache = new Dictionary<int, int>();
-                int GetNarratorMatchCountCached(EditionFtsMatch candidate)
+                var narratorMatchCache = new Dictionary<int, (int Matched, int Independent, int Missing)>();
+                (int Matched, int Independent, int Missing) GetNarratorEvidenceCached(EditionFtsMatch candidate)
                 {
-                    if (!allowNarratorEvidence)
+                    if (!allowNarratorEvidence || candidate == null || candidate.EditionId <= 0)
                     {
-                        return 0;
+                        return (0, 0, 0);
                     }
 
-                    if (candidate == null || candidate.EditionId <= 0)
+                    if (!narratorMatchCache.TryGetValue(candidate.EditionId, out var evidence))
                     {
-                        return 0;
+                        evidence = GetNarratorEvidenceInResidualTags(candidate.NarratorNames, candidate.AuthorName, allTags);
+                        narratorMatchCache[candidate.EditionId] = evidence;
                     }
 
-                    if (narratorMatchCache.TryGetValue(candidate.EditionId, out var cached))
-                    {
-                        return cached;
-                    }
-
-                    var computed = CountNarratorMatchesInResidualTags(candidate.NarratorNames, candidate.AuthorName, allTags);
-                    narratorMatchCache[candidate.EditionId] = computed;
-                    return computed;
+                    return evidence;
                 }
+
+                int GetNarratorMatchCountCached(EditionFtsMatch candidate) => GetNarratorEvidenceCached(candidate).Matched;
 
                 bool HasCompleteNarratorEvidence(EditionFtsMatch candidate)
                 {
@@ -6084,19 +6081,18 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return false;
                     }
 
-                    var narratorCount = SplitNarrators(candidate.NarratorNames).Count;
-                    return narratorCount > 0 &&
-                           GetNarratorMatchCountCached(candidate) >= narratorCount;
+                    var evidence = GetNarratorEvidenceCached(candidate);
+                    return HasCompleteNarratorSet(evidence.Matched, evidence.Missing);
                 }
 
                 bool IsAudiobookEdition(EditionFtsMatch candidate)
                 {
-                    return candidate?.ReadingFormatId == 2;
+                    return EditionReadingFormat.IsAudiobook(candidate?.ReadingFormatId);
                 }
 
                 bool IsRepresentativeEdition(EditionFtsMatch candidate)
                 {
-                    return candidate?.ReadingFormatId == 3 || candidate?.ReadingFormatId == 1;
+                    return EditionReadingFormat.RepresentativeRank(candidate?.ReadingFormatId, BookMediaType.Audiobook) > 0;
                 }
 
                 bool IsAudiobookSiblingOf(EditionFtsMatch other, EditionFtsMatch candidate)
@@ -6105,7 +6101,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                            candidate != null &&
                            !SameEditionIdentity(other, candidate) &&
                            IsAudiobookEdition(other) &&
-                           SameLogicalWork(other, candidate, booksById);
+                           SameLogicalWork(other, candidate, workKeys);
                 }
 
                 bool HasConflictingNarratorEvidence(EditionFtsMatch candidate)
@@ -6159,7 +6155,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         .Where(other =>
                             other != null &&
                             (other.EditionId == candidate.EditionId || IsAudiobookEdition(other)) &&
-                            SameLogicalWork(other, candidate, booksById))
+                            SameLogicalWork(other, candidate, workKeys))
                         .GroupBy(other => GetEditionIdentityKey(other.ForeignEditionId, other.EditionId), StringComparer.OrdinalIgnoreCase)
                         .Select(group => group.First())
                         .ToList();
@@ -6402,6 +6398,40 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                            fullTokens.SequenceEqual(expectedTokens, StringComparer.OrdinalIgnoreCase);
                 }
 
+                var corroboratedBaseTitles = new Dictionary<EditionFtsMatch, string>();
+                List<EditionFtsMatch> durationMatchedSoloEditions = null;
+                string GetCorroboratedAudiobookBaseTitle(EditionFtsMatch candidate)
+                {
+                    if (candidate == null) return null;
+                    if (corroboratedBaseTitles.TryGetValue(candidate, out var cached)) return cached;
+                    string baseTitle = null;
+                    var separator = candidate.EditionTitle?.IndexOfAny(NzbDrone.Core.Parser.Parser.SubtitleSeparators) ?? -1;
+                    if (strictness != BookMatchingStrictness.Strict && mediaType == BookMediaType.Audiobook &&
+                        IsAudiobookEdition(candidate) && separator > 0 && separator < candidate.EditionTitle.Length - 1 &&
+                        GetNarratorMatchCountCached(candidate) > 0 && TryGetDurationFallbackDetail(candidate, out _))
+                    {
+                        var head = candidate.EditionTitle.Substring(0, separator).Trim();
+                        var tail = candidate.EditionTitle.Substring(separator + 1).Trim();
+                        var soloAlternative = false;
+                        if (GetNarratorMatchCountCached(candidate) == 1 && !HasCompleteNarratorEvidence(candidate))
+                        {
+                            // One shared voice and duration cannot distinguish a cast from its solo recording.
+                            durationMatchedSoloEditions ??= ftsResults.Where(other =>
+                                IsAudiobookEdition(other) && TryGetDurationFallbackDetail(other, out _) &&
+                                SplitNarrators(other.NarratorNames).Count == 1 && GetNarratorMatchCountCached(other) == 1).ToList();
+                            soloAlternative = durationMatchedSoloEditions.Any(other =>
+                                IsAudiobookSiblingOf(other, candidate) &&
+                                ReleaseNarratorEvidenceExtractor.ContainsCompleteCredit(other.NarratorNames, candidate.NarratorNames));
+                        }
+
+                        if (!soloAlternative && !SeriesPositionTokenHelper.HasPositionIdentity(tail) && !BaseTitleMatchesSeriesPrefix(candidate, head))
+                            baseTitle = head;
+                    }
+
+                    corroboratedBaseTitles[candidate] = baseTitle;
+                    return baseTitle;
+                }
+
                 bool CandidateExplainsSingleField(EditionFtsMatch candidate, IDictionary<string, List<string>> singleFieldTags)
                 {
                     if ((_containmentValidator.GetEditionTitleEvidence(candidate.EditionTitle, singleFieldTags, knownNarrators: SplitNarrators(candidate.NarratorNames))?.Count ?? 0) > 0 ||
@@ -6412,10 +6442,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return true;
                     }
 
-                    return ReleaseTitleMatchScorer.TryGetKnownSubtitleBaseTitle(
-                               candidate.EditionTitle,
-                               candidate.EditionSubTitle,
-                               out var otherBaseTitle) &&
+                    var otherBaseTitle = ReleaseTitleMatchScorer.TryGetKnownSubtitleBaseTitle(
+                        candidate.EditionTitle, candidate.EditionSubTitle, out var knownBaseTitle)
+                        ? knownBaseTitle : GetCorroboratedAudiobookBaseTitle(candidate);
+                    return otherBaseTitle != null &&
                            (_containmentValidator.GetEditionTitleEvidence(otherBaseTitle, singleFieldTags, knownNarrators: SplitNarrators(candidate.NarratorNames))?.Count ?? 0) > 0;
                 }
 
@@ -6425,15 +6455,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     bool includeDurationGatedNearExact,
                     Func<EditionTitleEvidence, bool> evidenceIsEligible)
                 {
-                    if (candidate == null ||
-                        directEvidence?.Count > 0 ||
-                        !ReleaseTitleMatchScorer.TryGetKnownSubtitleBaseTitle(
-                            candidate.EditionTitle,
-                            candidate.EditionSubTitle,
-                            out var baseTitle) ||
-                        !HasOnlyAttestedSubtitleDelta(candidate.EditionTitle, baseTitle, candidate.EditionSubTitle) ||
-                        SeriesPositionTokenHelper.HasPositionIdentity(candidate.EditionSubTitle) ||
-                        BaseTitleMatchesSeriesPrefix(candidate, baseTitle))
+                    if (candidate == null || directEvidence?.Count > 0)
+                        return Array.Empty<EditionTitleEvidence>();
+
+                    var corroboratedBaseTitle = GetCorroboratedAudiobookBaseTitle(candidate);
+                    var hasAttestedSubtitle = ReleaseTitleMatchScorer.TryGetKnownSubtitleBaseTitle(
+                        candidate.EditionTitle, candidate.EditionSubTitle, out var baseTitle) &&
+                        HasOnlyAttestedSubtitleDelta(candidate.EditionTitle, baseTitle, candidate.EditionSubTitle) &&
+                        !SeriesPositionTokenHelper.HasPositionIdentity(candidate.EditionSubTitle);
+                    if (!hasAttestedSubtitle) baseTitle = corroboratedBaseTitle;
+                    if (baseTitle == null || BaseTitleMatchesSeriesPrefix(candidate, baseTitle))
                     {
                         return Array.Empty<EditionTitleEvidence>();
                     }
@@ -6460,8 +6491,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         var isAmbiguous = ftsResults.Any(other =>
                             other != null &&
                             other.EditionId != candidate.EditionId &&
-                            !SameLogicalWork(other, candidate, booksById) &&
+                            !SameLogicalWork(other, candidate, workKeys) &&
                             (candidate.AuthorId <= 0 || other.AuthorId <= 0 || other.AuthorId == candidate.AuthorId) &&
+                            !(corroboratedBaseTitle != null &&
+                              TokenizeForLeftoverGateSequence(other.EditionTitle).SequenceEqual(
+                                  TokenizeForLeftoverGateSequence(baseTitle), StringComparer.OrdinalIgnoreCase)) &&
                             CandidateExplainsSingleField(other, singleFieldTags));
 
                         if (!isAmbiguous)
@@ -6473,7 +6507,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     if (acceptedEvidence.Count > 0)
                     {
                         _logger.Debug(
-                            "[HOLY-GRAIL][{0}] Subtitle-only containment rescue: EditionId={1} BaseTitle='{2}' Fields=[{3}]",
+                            "[HOLY-GRAIL][{0}] Qualified title containment: EditionId={1} BaseTitle='{2}' Fields=[{3}]",
                             phase, candidate.EditionId, Truncate(baseTitle, 80),
                             string.Join(", ", acceptedEvidence.Select(item => item.FieldName).Distinct(StringComparer.OrdinalIgnoreCase)));
                     }
@@ -6490,6 +6524,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         mediaType,
                         stagedGroupFields,
                         booksById,
+                        workKeys,
+                        GetCorroboratedAudiobookBaseTitle,
                         GetNumericAliasAuthorCatalog,
                         fileDurationSeconds,
                         fileYear,
@@ -6709,18 +6745,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                     _containmentValidator.GetEditionTitleEvidence(stripped, allTags, includeDurationGatedNearExact, SplitNarrators(result.NarratorNames)));
                                 if (baseEvidence != null && baseEvidence.Count > 0)
                                 {
-                                    // May re-visit this again after working to clean up titles upstream
-                                    // var hasCleanSiblingEdition = ftsResults.Any(r =>
-                                        // r != null &&
-                                        // SameLogicalWork(r, result, booksById) &&
-                                        // r.EditionId != result.EditionId &&
-                                        // string.Equals(r.EditionTitle?.Trim(), stripped, StringComparison.OrdinalIgnoreCase));
-
-                                    // if (hasCleanSiblingEdition)
-                                    // {
-                                        // return null;
-                                    // }
-
                                     evidence = baseEvidence;
                                     bracketEditionEvidence = baseEvidence;
                                 }
@@ -6966,6 +6990,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     scoredCandidate.AuthorMatch = authorGateCache.TryGetValue(AuthorGateKey(result.AuthorId, result.AuthorName), out var scoredAuthorGate) &&
                         (scoredAuthorGate.ProvenName != null || scoredAuthorGate.IdentityNames.Any(name => CandidateAuthorInTags(name, new[] { result.EditionTitle, result.BookTitle })));
                     scoredCandidate.HasDurationProof = audiobookDurationMatches;
+                    var narratorEvidence = GetNarratorEvidenceCached(result);
+                    scoredCandidate.IndependentNarratorMatchCount = narratorEvidence.Independent;
+                    scoredCandidate.MissingNarratorCount = narratorEvidence.Missing;
                     scoredCandidate.TitleOccurrenceExplanations = BuildTitleOccurrenceExplanations(
                         result,
                         bookIdentityEvidence,
@@ -7024,7 +7051,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             other != candidate &&
                             other.TitleEvidenceFields != null &&
                             candidate.TitleEvidenceFields.Overlaps(other.TitleEvidenceFields) &&
-                            !SameLogicalWork(candidate.Match, other.Match, booksById));
+                            !SameLogicalWork(candidate.Match, other.Match, workKeys));
                     }
                 }
 
@@ -7042,8 +7069,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     try
                     {
                         var editionRankingPriority = mediaType == BookMediaType.Ebook
-                            ? "titleEvidenceTier,exactYear,closestYear,publisherMatches,author,seriesName,seriesPosition,readingFormat,fewerLeftovers,ftsScore"
-                            : "titleEvidenceTier,audiobookProofTier,durationProof,representativeRank,narratorTier,narratorMatches,author,seriesName,seriesPosition,readingFormat,closestDurationOutsideTolerance,exactYear,closestYear,fewerLeftovers,ftsScore,providerIdentityTie";
+                            ? "titleEvidenceTier,exactYear,closestYear,publisherMatches,author,seriesName,seriesPosition,readingFormat,fewerLeftovers,ftsScore,monitoredEdition"
+                            : "titleEvidenceTier,audiobookProofTier,durationProof,representativeRank,narratorTier,narratorMatches,independentNarratorMatches,completeNarratorEvidence,author,seriesName,seriesPosition,readingFormat,closestDurationOutsideTolerance,exactYear,closestYear,fewerLeftovers,ftsScore,monitoredEdition,providerIdentityTie";
                         var rankingPriority = string.Equals(selectionScope, "global-stage2-selected-provider-book", StringComparison.OrdinalIgnoreCase)
                             ? "stage2ProviderBookScore," + editionRankingPriority
                             : selectionScope?.StartsWith("global-", StringComparison.OrdinalIgnoreCase) == true
@@ -7111,6 +7138,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                                     ["representativeRank"] = scored.RepresentativeRank.ToString(CultureInfo.InvariantCulture),
                                     ["narratorTier"] = scored.NarratorTier.ToString(CultureInfo.InvariantCulture),
                                     ["narratorMatchCount"] = scored.NarratorMatchCount.ToString(CultureInfo.InvariantCulture),
+                                    ["independentNarratorMatchCount"] = scored.IndependentNarratorMatchCount.ToString(CultureInfo.InvariantCulture),
+                                    ["missingNarratorCount"] = scored.MissingNarratorCount.ToString(CultureInfo.InvariantCulture),
                                     ["authorMatch"] = scored.AuthorMatch.ToString(CultureInfo.InvariantCulture),
                                     ["seriesNameMatch"] = scored.SeriesNameMatch.ToString(CultureInfo.InvariantCulture),
                                     ["seriesPositionMatch"] = scored.SeriesPositionMatch.ToString(CultureInfo.InvariantCulture),
@@ -7175,7 +7204,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         ftsResults,
                         allTags,
                         mediaType,
-                        booksById);
+                        booksById,
+                        workKeys);
 
                     foreach (var work in occurrenceSelection.Works)
                     {
@@ -7221,7 +7251,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     }
 
                     EnableSeriesPositionTiebreaks(selectionCandidates);
-                    if (!useStagedSelection && HasNearExactTitleAmbiguity(phase, selectionCandidates, booksById))
+                    if (!useStagedSelection && HasNearExactTitleAmbiguity(phase, selectionCandidates, workKeys))
                     {
                         // Shared weak evidence is insufficient, so folder/filename evidence may disambiguate.
                         return null;
@@ -7286,6 +7316,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     selectionReason,
                     winner.EditionId,
                     winner.EditionTitle?.Length > 50 ? winner.EditionTitle.Substring(0, 50) + "..." : winner.EditionTitle);
+                LogTitleProof(selectedCandidate, filePath);
                 RecordTrace("match_selected", rejectionPhase, winner, selectionReason, filePath: filePath);
                 var identityProof = BuildSelectedMatchIdentityProof(
                     selectedCandidate,
@@ -7312,6 +7343,36 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 };
             }
 
+            private void LogTitleProof(ScoredCandidate candidate, string filePath)
+            {
+                if (!_logger.IsDebugEnabled || candidate?.Match == null) return;
+                var title = candidate.Match.EditionTitle;
+                var evidence = candidate.TitleEvidence;
+                if (evidence.Count == 0 || evidence.Any(item => item.MatchedTitle == title)) return;
+
+                string proof = null;
+                var baseTitle = TitleBracketCatalog.BaseTitle(title);
+                if (baseTitle != title && evidence.Any(item => item.MatchedTitle == baseTitle))
+                {
+                    proof = $"bracket-stripped title '{baseTitle}'";
+                }
+                else
+                {
+                    var parts = baseTitle.Split(NzbDrone.Core.Parser.Parser.SubtitleSeparators, 2);
+                    if (parts.Length == 2 && parts.All(part => evidence.Any(item => item.MatchedTitle == part.Trim())))
+                    {
+                        proof = baseTitle != title ? "bracket-stripped split title" : "split title";
+                    }
+                }
+
+                if (proof != null)
+                {
+                    _logger.Debug("[TITLE-PROOF] {0}: edition {1} '{2}' proven by {3}; {4}",
+                        filePath, candidate.Match.EditionId, title, proof,
+                        string.Join("; ", evidence.Select(item => $"'{item.MatchedTitle}' from {item.FieldName}").Distinct()));
+                }
+            }
+
             /// <summary>
             /// Internal class to hold a scored candidate with all signals for unified sorting.
             /// </summary>
@@ -7322,6 +7383,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 public IReadOnlyList<string> Leftovers { get; set; } = Array.Empty<string>();
                 public int NarratorTier { get; set; }
                 public int NarratorMatchCount { get; set; }
+                public int IndependentNarratorMatchCount { get; set; }
+                public int MissingNarratorCount { get; set; }
                 public int TitleEvidenceTier { get; set; }
                 public int TitleEvidenceCount { get; set; }
                 public IReadOnlyList<EditionTitleEvidence> TitleEvidence { get; set; } = Array.Empty<EditionTitleEvidence>();
@@ -7402,7 +7465,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 // ReadingFormat match: audiobooks prefer RF=2, ebooks prefer RF=3
                 if (candidate.ReadingFormatId.HasValue)
                 {
-                    var expectedRf = mediaType == BookMediaType.Ebook ? 3 : 2;
+                    var expectedRf = EditionReadingFormat.NativeFor(mediaType);
                     scored.ReadingFormatMatch = candidate.ReadingFormatId.Value == expectedRf;
                 }
 
@@ -7410,17 +7473,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 {
                     scored.AudiobookProofTier = audiobookNarratorMatches > 0
                         ? 2
-                        : audiobookDurationMatches && candidate.ReadingFormatId == 2
+                        : audiobookDurationMatches && EditionReadingFormat.IsAudiobook(candidate.ReadingFormatId)
                             ? 1
                             : 0;
 
                     if (audiobookRepresentativeTitleMatch)
                     {
-                        scored.RepresentativeRank = candidate.ReadingFormatId == 3
-                            ? 2
-                            : candidate.ReadingFormatId == 1
-                                ? 1
-                                : 0;
+                        scored.RepresentativeRank = EditionReadingFormat.RepresentativeRank(candidate.ReadingFormatId, mediaType);
                         scored.MatchedVia = "escape_hatch";
                     }
                     else if (audiobookUndistinguishedEditionFallback)
@@ -7851,7 +7910,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 IReadOnlyList<EditionFtsMatch> recalledCandidates,
                 IDictionary<string, List<string>> allTags,
                 BookMediaType mediaType,
-                IDictionary<int, Book> booksById)
+                IDictionary<int, Book> booksById,
+                IReadOnlyDictionary<int, string> workKeys)
             {
                 var result = new OccurrenceSelectionResult();
                 if (scoredCandidates == null || scoredCandidates.Count == 0)
@@ -7862,7 +7922,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 var eligibleCandidates = scoredCandidates.Where(candidate => candidate?.Match != null).ToList();
                 var works = eligibleCandidates
                     .GroupBy(
-                        candidate => GetProviderOccurrenceWorkKey(candidate.Match, booksById) ?? $"local-book-row:{candidate.Match.BookId.ToString(CultureInfo.InvariantCulture)}",
+                        candidate => GetProviderOccurrenceWorkKey(candidate.Match, workKeys) ?? $"local-book-row:{candidate.Match.BookId.ToString(CultureInfo.InvariantCulture)}",
                         StringComparer.OrdinalIgnoreCase)
                     .Select(group =>
                     {
@@ -7875,7 +7935,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         return new OccurrenceWorkSelection
                         {
                             LogicalWorkKey = group.Key,
-                            HasProviderBookIdentity = GetProviderOccurrenceWorkKey(candidates[0].Match, booksById) != null,
+                            HasProviderBookIdentity = GetProviderOccurrenceWorkKey(candidates[0].Match, workKeys) != null,
                             Candidates = candidates,
                             // A weaker sibling Edition must not make its Book lose when another sibling under
                             // that same provider Book explains the occurrence just as fully as the rival does.
@@ -8022,7 +8082,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             continue;
                         }
 
-                        var workKey = GetProviderOccurrenceWorkKey(recalledCandidate, booksById) ??
+                        var workKey = GetProviderOccurrenceWorkKey(recalledCandidate, workKeys) ??
                                       $"local-book-row:{recalledCandidate.BookId.ToString(CultureInfo.InvariantCulture)}";
                         if (!worksByKey.TryGetValue(workKey, out var work))
                         {
@@ -8978,9 +9038,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             {
                 return readingFormatId switch
                 {
-                    1 => "print",
-                    2 => "audiobook",
-                    3 => "ebook",
+                    EditionReadingFormat.Print => "print",
+                    EditionReadingFormat.Audiobook => "audiobook",
+                    EditionReadingFormat.Ebook => "ebook",
                     _ => $"format {readingFormatId.ToString(CultureInfo.InvariantCulture)}"
                 };
             }
@@ -8989,14 +9049,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 /// Compare two scored candidates for sorting (higher = better).
             /// Audiobooks prioritize narrator-aware sibling selection; ebooks prioritize year/publisher.
             /// </summary>
-            private static int CompareScoredCandidates(ScoredCandidate a, ScoredCandidate b, BookMediaType mediaType)
+            private int CompareScoredCandidates(ScoredCandidate a, ScoredCandidate b, BookMediaType mediaType)
             {
                 return mediaType == BookMediaType.Ebook
                     ? CompareEbookScoredCandidates(a, b)
                     : CompareAudiobookScoredCandidates(a, b);
             }
 
-            private static int CompareAudiobookScoredCandidates(ScoredCandidate a, ScoredCandidate b)
+            private int CompareAudiobookScoredCandidates(ScoredCandidate a, ScoredCandidate b)
             {
                 int cmp;
 
@@ -9018,7 +9078,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 cmp = a.NarratorMatchCount.CompareTo(b.NarratorMatchCount);
                 if (cmp != 0) return cmp;
 
+                // Another credited voice distinguishes a recording from inferred self-narration.
+                cmp = a.IndependentNarratorMatchCount.CompareTo(b.IndependentNarratorMatchCount);
+                if (cmp != 0) return cmp;
 
+                if (a.NarratorMatchCount > 0)
+                {
+                    cmp = HasCompleteNarratorSet(a.NarratorMatchCount, a.MissingNarratorCount)
+                        .CompareTo(HasCompleteNarratorSet(b.NarratorMatchCount, b.MissingNarratorCount));
+                    if (cmp != 0) return cmp;
+                }
 
                 cmp = a.AuthorMatch.CompareTo(b.AuthorMatch);
                 if (cmp != 0) return cmp;
@@ -9033,7 +9102,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 if (cmp != 0) return cmp;
 
                 // Durations accepted by the shared matching tolerance provide equal evidence.
-                // I may want to re-visit doing tighter banding inside of editions that
+                // I may want to revisit doing tighter banding inside of editions that
                 // pass the generic 5 mins or 2% check to tighten up on very long audiobooks which
                 // editions are candidates, like red country booktrack vs regular
                 if (!a.HasDurationProof && !b.HasDurationProof)
@@ -9057,10 +9126,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 cmp = a.Bm25Score.CompareTo(b.Bm25Score);
                 if (cmp != 0) return cmp;
 
-                cmp = a.Match.Monitored.CompareTo(b.Match.Monitored);
+                cmp = CompareMonitoredEditions(a, b);
                 if (cmp != 0) return cmp;
 
-                // Only the ruled no-corroboration cohort needs a new final ordering rule. Keep the
+                // Only candidates without corroboration need this final ordering rule. Keep the
                 // existing evidence ladder authoritative, then make an otherwise exact tie stable
                 // by provider identity. Local database row IDs are never semantic matching evidence.
                 if (a.UndistinguishedAudiobookEditionFallback && b.UndistinguishedAudiobookEditionFallback)
@@ -9084,7 +9153,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return 0;
             }
 
-            private static int CompareEbookScoredCandidates(ScoredCandidate a, ScoredCandidate b)
+            private int CompareEbookScoredCandidates(ScoredCandidate a, ScoredCandidate b)
             {
                 int cmp;
 
@@ -9123,10 +9192,23 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 cmp = a.Bm25Score.CompareTo(b.Bm25Score);
                 if (cmp != 0) return cmp;
 
-                return a.Match.Monitored.CompareTo(b.Match.Monitored);
+                return CompareMonitoredEditions(a, b);
             }
 
-            private bool HasNearExactTitleAmbiguity(string phase, List<ScoredCandidate> scoredCandidates, IDictionary<int, Book> booksById)
+            private int CompareMonitoredEditions(ScoredCandidate a, ScoredCandidate b)
+            {
+                var comparison = a.Match.Monitored.CompareTo(b.Match.Monitored);
+                if (comparison != 0)
+                {
+                    _logger.Debug("[MATCH-TIEBREAK] Evidence and FTS scores tie; monitored edition {0} ranks ahead of edition {1}",
+                        comparison > 0 ? a.Match.EditionId : b.Match.EditionId,
+                        comparison > 0 ? b.Match.EditionId : a.Match.EditionId);
+                }
+
+                return comparison;
+            }
+
+            private bool HasNearExactTitleAmbiguity(string phase, List<ScoredCandidate> scoredCandidates, IReadOnlyDictionary<int, string> workKeys)
             {
                 if (scoredCandidates == null || scoredCandidates.Count < 2)
                 {
@@ -9140,13 +9222,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     return false;
                 }
 
-                var workKeys = scoredCandidates
-                    .Select(c => GetLogicalWorkKey(c.Match, booksById) ?? $"book:{c.Match.BookId.ToString(CultureInfo.InvariantCulture)}")
+                var distinctWorkKeys = scoredCandidates
+                    .Select(c => GetProviderOccurrenceWorkKey(c.Match, workKeys) ?? $"book:{c.Match.BookId.ToString(CultureInfo.InvariantCulture)}")
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .Take(2)
                     .ToList();
 
-                if (workKeys.Count <= 1)
+                if (distinctWorkKeys.Count <= 1)
                 {
                     return false;
                 }
@@ -9365,7 +9447,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     StringComparison.OrdinalIgnoreCase);
             }
 
-            private bool SameLogicalWork(EditionFtsMatch left, EditionFtsMatch right, IDictionary<int, Book> booksById)
+            private static bool SameLogicalWork(EditionFtsMatch left, EditionFtsMatch right, IReadOnlyDictionary<int, string> workKeys)
             {
                 if (left == null || right == null)
                 {
@@ -9377,8 +9459,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     return true;
                 }
 
-                var leftKey = GetLogicalWorkKey(left, booksById);
-                var rightKey = GetLogicalWorkKey(right, booksById);
+                var leftKey = GetProviderOccurrenceWorkKey(left, workKeys);
+                var rightKey = GetProviderOccurrenceWorkKey(right, workKeys);
 
                 return !string.IsNullOrWhiteSpace(leftKey) &&
                        !string.IsNullOrWhiteSpace(rightKey) &&
@@ -9406,62 +9488,69 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return $"{authorComponent}|{mediaComponent}|{stableId}";
             }
 
-            private string GetLogicalWorkKey(FileMatch match, IDictionary<int, Book> booksById)
+            private static IReadOnlyDictionary<int, string> BuildMatchingWorkKeys(
+                IReadOnlyList<EditionFtsMatch> candidates, IDictionary<int, Book> booksById)
             {
-                if (match == null)
+                var parents = booksById.Keys.ToDictionary(id => id, id => id);
+                var owners = new Dictionary<(int AuthorId, BookMediaType MediaType, string Identity), int>();
+                var identified = new HashSet<int>();
+                int Root(int id)
                 {
-                    return null;
+                    while (parents[id] != id)
+                    {
+                        parents[id] = parents[parents[id]];
+                        id = parents[id];
+                    }
+
+                    return id;
                 }
 
-                var book = TryGetBookCached(match.BookId, booksById);
-                var stableId = GetStableLogicalWorkComponent(book) ??
-                    $"book:{match.BookId.ToString(CultureInfo.InvariantCulture)}";
+                void Add(Book book, string identity)
+                {
+                    if (string.IsNullOrWhiteSpace(identity)) return;
+                    identified.Add(book.Id);
+                    if (book.AuthorId <= 0) return;
+                    var key = (book.AuthorId, book.MediaType, identity.ToLowerInvariant());
+                    if (owners.TryGetValue(key, out var previous))
+                    {
+                        var left = Root(previous);
+                        var right = Root(book.Id);
+                        parents[Math.Max(left, right)] = Math.Min(left, right);
+                    }
+                    else
+                    {
+                        owners.Add(key, book.Id);
+                    }
+                }
 
-                var authorComponent = match.AuthorId > 0
-                    ? match.AuthorId.ToString(CultureInfo.InvariantCulture)
-                    : (book?.AuthorId ?? 0).ToString(CultureInfo.InvariantCulture);
+                // Build once from the already-loaded catalog; overlapping provider identities
+                // share one comparison group without changing stored rows or their editions.
+                foreach (var book in booksById.Values)
+                {
+                    foreach (var identity in BookIdentity.GetStableWorkProviderIdentityTokens(book))
+                        Add(book, "work:" + identity);
+                    var legacyKey = GetStableLogicalWorkComponent(book);
+                    if (legacyKey != null) Add(book, "stored:" + legacyKey);
+                }
 
-                var mediaComponent = (book?.MediaType ?? BookMediaType.Audiobook).ToString();
-                return $"{authorComponent}|{mediaComponent}|{stableId}";
+                foreach (var candidate in candidates)
+                {
+                    if (!string.IsNullOrWhiteSpace(candidate?.ForeignEditionId) &&
+                        booksById.TryGetValue(candidate.BookId, out var book))
+                        Add(book, "edition:" + candidate.ForeignEditionId.Trim());
+                }
+
+                return identified.ToDictionary(id => id, id =>
+                {
+                    var root = booksById[Root(id)];
+                    var identity = GetStableLogicalWorkComponent(root) ?? $"book:{root.Id}";
+                    return $"{root.AuthorId}|{root.MediaType}|{identity}";
+                });
             }
 
-            private string GetLogicalWorkKey(EditionFtsMatch candidate, IDictionary<int, Book> booksById)
+            private static string GetProviderOccurrenceWorkKey(EditionFtsMatch candidate, IReadOnlyDictionary<int, string> workKeys)
             {
-                if (candidate == null)
-                {
-                    return null;
-                }
-
-                var book = TryGetBookCached(candidate.BookId, booksById);
-                // Stay conservative: cluster only on stable provider/work identity copied across clone rows.
-                // Do not fall back to title/title-slug here or we risk merging unrelated same-author siblings.
-                var stableId = GetStableLogicalWorkComponent(book) ??
-                    $"book:{candidate.BookId.ToString(CultureInfo.InvariantCulture)}";
-
-                var authorComponent = candidate.AuthorId > 0
-                    ? candidate.AuthorId.ToString(CultureInfo.InvariantCulture)
-                    : (book?.AuthorId ?? 0).ToString(CultureInfo.InvariantCulture);
-
-                var mediaComponent = (book?.MediaType ?? BookMediaType.Audiobook).ToString();
-                return $"{authorComponent}|{mediaComponent}|{stableId}";
-            }
-
-            private string GetProviderOccurrenceWorkKey(EditionFtsMatch candidate, IDictionary<int, Book> booksById)
-            {
-                if (candidate == null)
-                {
-                    return null;
-                }
-
-                var book = TryGetBookCached(candidate.BookId, booksById);
-                var providerBookIdentity = GetStableLogicalWorkComponent(book);
-                if (string.IsNullOrWhiteSpace(providerBookIdentity))
-                {
-                    return null;
-                }
-
-                var mediaComponent = (book?.MediaType ?? BookMediaType.Audiobook).ToString();
-                return $"{mediaComponent}|{providerBookIdentity}";
+                return candidate != null && workKeys.TryGetValue(candidate.BookId, out var key) ? key : null;
             }
 
             private static string GetStableLogicalWorkComponent(Book book)
@@ -9845,23 +9934,24 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
             private List<string> SplitNarrators(string narratorNames) => ReleaseNarratorEvidenceExtractor.SplitCredits(narratorNames).ToList();
 
-            private int CountNarratorMatchesInResidualTags(string narratorNames, string authorName, IDictionary<string, List<string>> allTags)
-            {
-                if (string.IsNullOrWhiteSpace(narratorNames) || allTags == null || allTags.Count == 0)
-                {
-                    return 0;
-                }
+            private static bool HasCompleteNarratorSet(int matched, int missing) => matched > 0 && missing == 0;
 
-                var matchedNarratorCount = 0;
-                foreach (var narrator in SplitNarrators(narratorNames))
+            private (int Matched, int Independent, int Missing) GetNarratorEvidenceInResidualTags(
+                string narratorNames, string authorName, IDictionary<string, List<string>> allTags)
+            {
+                var narrators = SplitNarrators(narratorNames);
+                var matched = 0;
+                var independent = 0;
+                foreach (var narrator in narrators)
                 {
                     if (ExactMatchEvidenceBuilder.FindNarratorEvidenceFields(narrator, authorName, allTags, applySelfNarrationGate: false).Count > 0)
                     {
-                        matchedNarratorCount++;
+                        matched++;
+                        if (!AuthorNameMatcher.ContainsAuthorName(authorName, narrator)) independent++;
                     }
                 }
 
-                return matchedNarratorCount;
+                return (matched, independent, narrators.Count - matched);
             }
 
             private static List<KeyValuePair<string, string>> FindNarratorEvidenceFields(
@@ -10934,6 +11024,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             BookMediaType mediaType,
             IReadOnlyList<GroupPhysicalField> groupFields,
             IDictionary<int, Book> booksById,
+            IReadOnlyDictionary<int, string> workKeys,
+            Func<EditionFtsMatch, string> corroboratedBaseTitle,
             Func<int, List<Book>> authorCatalogLoader,
             int? fileDurationSeconds,
             int? fileYear,
@@ -10952,7 +11044,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 .Select(candidate => new
                 {
                     Candidate = candidate,
-                    WorkKey = GetProviderOccurrenceWorkKey(candidate, booksById)
+                    WorkKey = GetProviderOccurrenceWorkKey(candidate, workKeys)
                 })
                 .Where(item => !string.IsNullOrWhiteSpace(item.WorkKey))
                 .ToList();
@@ -10996,7 +11088,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     {
                         candidate?.BookTitle,
                         candidate?.MatchingTitle,
-                        candidate?.EditionTitle
+                        candidate?.EditionTitle,
+                        corroboratedBaseTitle(candidate)
                     }
                     .Where(value => !string.IsNullOrWhiteSpace(value))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -11421,7 +11514,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 {
                     var knownDurations = work.Candidates
                         .Where(candidate =>
-                            candidate.ReadingFormatId == 2 &&
+                            EditionReadingFormat.IsAudiobook(candidate.ReadingFormatId) &&
                             candidate.DurationSeconds.HasValue &&
                             candidate.DurationSeconds.Value > 0)
                         .Select(candidate => candidate.DurationSeconds.Value)

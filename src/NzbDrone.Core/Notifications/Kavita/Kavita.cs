@@ -11,12 +11,14 @@ namespace NzbDrone.Core.Notifications.Kavita;
 public class Kavita : NotificationBase<KavitaSettings>
 {
     private readonly IKavitaService _kavitaService;
-    private readonly ICached<HashSet<string>> _pendingFolders;
+    private readonly ICached<object> _queueLocks;
+    private readonly IPendingNotificationRepository _pending;
 
-    public Kavita(IKavitaService kavitaService, ICacheManager cacheManager)
+    public Kavita(IKavitaService kavitaService, ICacheManager cacheManager, IPendingNotificationRepository pending)
     {
         _kavitaService = kavitaService;
-        _pendingFolders = cacheManager.GetCache<HashSet<string>>(GetType(), "pendingFolders");
+        _queueLocks = cacheManager.GetCache<object>(GetType(), "queueLocks");
+        _pending = pending;
     }
 
     public override string Link => "https://www.kavitareader.com/";
@@ -46,33 +48,17 @@ public class Kavita : NotificationBase<KavitaSettings>
 
     public override string Name => "Kavita";
 
-    public override bool HasPendingQueue
-    {
-        get
-        {
-            lock (_pendingFolders)
-            {
-                return _pendingFolders.Find(Definition.Id.ToString())?.Count > 0;
-            }
-        }
-    }
+    public override bool HasPendingQueue => _pending.HasPending(Definition.Id);
 
     public override void ProcessQueue()
     {
-        lock (_pendingFolders)
+        lock (_queueLocks.Get(Definition.Id.ToString(), () => new object()))
         {
-            var key = Definition.Id.ToString();
-            var folders = _pendingFolders.Find(key);
-            if (Settings.Notify && folders != null)
+            foreach (var item in _pending.GetPending(Definition.Id))
             {
-                foreach (var folder in folders.ToList())
-                {
-                    _kavitaService.Notify(Settings, folder);
-                    folders.Remove(folder);
-                }
+                if (Settings.Notify) _kavitaService.Notify(Settings, item.Path);
+                _pending.Complete(new[] { item });
             }
-
-            _pendingFolders.Remove(key);
         }
     }
 
@@ -92,9 +78,9 @@ public class Kavita : NotificationBase<KavitaSettings>
             var folder = Directory.GetParent(filePath)?.FullName;
             if (folder.IsNotNullOrWhiteSpace())
             {
-                lock (_pendingFolders)
+                lock (_queueLocks.Get(Definition.Id.ToString(), () => new object()))
                 {
-                    _pendingFolders.Get(Definition.Id.ToString(), () => new HashSet<string>(PathEqualityComparer.Instance)).Add(folder);
+                    _pending.Enqueue(Definition.Id, folder, true);
                 }
             }
         }

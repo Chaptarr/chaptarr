@@ -205,6 +205,7 @@ namespace Chaptarr.Core.Test.Books
                 var second = h.AddBook(BookMediaType.Audiobook, "hc:7001", "hc:edition:3001");
                 var request = h.Request(new() { "hc:7000", "hc:7001" });
                 request.RequestedBy = "UserInterface";
+                Harness.MarkExplicitSearches(request);
                 h.Requests.Update(request);
                 var library = Proxy<IAuthorLibraryService>((_, _) => Task.FromResult(h.Author));
                 var calls = 0;
@@ -312,7 +313,7 @@ namespace Chaptarr.Core.Test.Books
                 { Id = -h.Library.Pending.EnqueueAsync((string)args[0], (MonitoringConfig)args[1], "UserInterface").GetAwaiter().GetResult() }));
                 var exclusions = Proxy<IImportListExclusionService>((method, _) => method.Name == nameof(IImportListExclusionService.FindByForeignId)
                     ? new List<ImportListExclusion>() : throw new AssertionException(method.Name));
-                var add = new AddBookService(null, initialLibrary, initialBooks, null, null, initialInfo, exclusions,
+                var add = new AddBookService(null, initialLibrary, initialBooks, null, initialInfo, exclusions,
                     null, null, null, null, null, null, null, null, null, LogManager.GetCurrentClassLogger(), null);
                 var request = new Book { Title = "Requested Work", HardcoverBookId = "hc:7000", MediaType = media,
                     Author = h.Source, AddOptions = new AddBookOptions { SearchForNewBook = true } };

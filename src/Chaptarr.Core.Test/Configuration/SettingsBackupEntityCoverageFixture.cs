@@ -229,7 +229,7 @@ namespace Chaptarr.Core.Test.Configuration
                 Service<IRemotePathMappingService, RemotePathMapping>(source, capture), null,
                 Service<IDelayProfileService, DelayProfile>(source, capture),
                 Service<IReleaseProfileService, ReleaseProfile>(source, capture),
-                Service<IQualityDefinitionService, QualityDefinition>(source, capture));
+                Service<IQualityDefinitionService, QualityDefinition>(source, capture), mediaPaths: null, filenameValidation: SettingsBackupCoverageFixture.CreateFilenameValidation());
         }
 
         private static TService Service<TService, TModel>(ModelBase source, Action<ModelBase> capture)

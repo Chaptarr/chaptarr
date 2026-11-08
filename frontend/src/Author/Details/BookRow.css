@@ -6,8 +6,9 @@
 
 .narrator {
   composes: cell from '~Components/Table/Cells/TableRowCell.css';
-  
+
   overflow: hidden;
+  max-width: 200px;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -18,10 +18,58 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
     [TestFixture]
     public class SimpleImportDecisionMakerFixture
     {
+        private class StoredRecordingProxy : DispatchProxy
+        {
+            public List<BookFile> Files { get; set; }
+            public int Calls { get; private set; }
+            protected override object Invoke(MethodInfo method, object[] args)
+            {
+                if (method.Name != nameof(IMediaFileService.GetFileWithPath) || args[0] is not List<string> paths)
+                    throw new NotImplementedException(method.Name);
+                Calls++;
+                Assert.That(paths.Count, Is.EqualTo(2));
+                return Files;
+            }
+        }
+
+        [Test]
+        public void manual_preview_loads_recording_corrections_once_for_the_file_batch()
+        {
+            var root = Path.Combine(Path.GetTempPath(), "recording-preview-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+            try
+            {
+                var paths = new[] { Path.Combine(root, "one.m4b"), Path.Combine(root, "two.m4b") };
+                foreach (var path in paths) File.WriteAllText(path, "fixture");
+                var media = DispatchProxy.Create<IMediaFileService, StoredRecordingProxy>();
+                var proxy = (StoredRecordingProxy)(object)media;
+                proxy.Files = paths.Select(path => new BookFile { Path = path, AudioProductionOverride = false }).ToList();
+                var subject = new SimpleImportDecisionMaker(DispatchProxy.Create<IMetadataTagService, MetadataTagServiceProxy>(),
+                    DispatchProxy.Create<IFileMatchingService, ThrowingProxy<IFileMatchingService>>(),
+                    DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
+                    DispatchProxy.Create<IBookService, ThrowingProxy<IBookService>>(),
+                    DispatchProxy.Create<IEditionService, ThrowingProxy<IEditionService>>(), media, LogManager.GetCurrentClassLogger());
+                var edition = new Edition { IsGraphicAudio = true };
+                var results = subject.GetImportDecisions(paths.Select(path => (IFileInfo)new FileInfoWrapper(new FileSystem(), new FileInfo(path))).ToList(),
+                    new IdentificationOverrides { Edition = edition }, null,
+                    new ImportDecisionMakerConfig { Filter = FilterFilesType.None, NewDownload = true });
+                Assert.That(proxy.Calls, Is.EqualTo(1));
+                Assert.That(results.Count, Is.EqualTo(2));
+                Assert.That(results.All(result => result.Item.AudioProductionOverride == false), Is.True);
+                Assert.That(results.Any(result => AudioProductionDetector.IsDramatized(result.Item)), Is.False);
+            }
+            finally { Directory.Delete(root, true); }
+        }
+
         private class ThrowingProxy<T> : DispatchProxy where T : class
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (typeof(T) == typeof(IMediaFileService) && targetMethod?.Name == nameof(IMediaFileService.GetFileWithPath))
+                {
+                    return new List<BookFile>();
+                }
+
                 throw new NotImplementedException($"Test proxy does not implement {typeof(T).Name}.{targetMethod?.Name}");
             }
         }

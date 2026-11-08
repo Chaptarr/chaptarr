@@ -21,7 +21,8 @@ namespace Chaptarr.Core.Test.Books
             [Values(false, true)] bool postgres,
             [Values(BookMediaType.Audiobook, BookMediaType.Ebook)] BookMediaType removedMedia,
             [Values(false, true)] bool retainedTagsEmpty,
-            [Values(false, true)] bool bulk)
+            [Values(false, true)] bool bulk,
+            [Values(false, true)] bool explicitFormatPaths)
         {
             DualDatabaseFixture.Run(postgres, database =>
             {
@@ -47,6 +48,8 @@ namespace Chaptarr.Core.Test.Books
                     {
                         Name = "Author " + index, CleanName = "author" + index, TitleSlug = "author-" + index,
                         Path = "fixture", Added = DateTime.UtcNow,
+                        AudiobookPath = explicitFormatPaths ? "audio-fixture" : null,
+                        EbookPath = explicitFormatPaths ? "ebook-fixture" : null,
                         Tags = new HashSet<int> { 10, 20, 30 },
                         AudiobookTags = new HashSet<int> { 10, 30 },
                         EbookTags = new HashSet<int> { 20, 30 }
@@ -64,7 +67,7 @@ namespace Chaptarr.Core.Test.Books
                     {
                         books.Insert(new Book
                         {
-                            AuthorId = author.Id, Title = "Book", CleanTitle = "book", TitleSlug = "book-" + media,
+                            AuthorId = author.Id, Title = "Book", CleanTitle = "book", TitleSlug = "book-" + index + "-" + media,
                             MediaType = media, Added = DateTime.UtcNow
                         });
                     }
@@ -84,6 +87,9 @@ namespace Chaptarr.Core.Test.Books
                     retainedBook.Author = stored;
                     Assert.Multiple(() =>
                     {
+                        Assert.That(stored.Path, Is.EqualTo(explicitFormatPaths
+                            ? retainedMedia == BookMediaType.Audiobook ? "audio-fixture" : "ebook-fixture"
+                            : "fixture"), "Use the surviving format path, retaining the legacy path when no separate path exists");
                         Assert.That(stored.Tags, Is.EquivalentTo(expected), "persisted aggregate");
                         Assert.That(stored.GetTagsForMediaType(removedMedia), Is.Empty);
                         Assert.That(stored.GetTagsForMediaType(retainedMedia), Is.EquivalentTo(expected));

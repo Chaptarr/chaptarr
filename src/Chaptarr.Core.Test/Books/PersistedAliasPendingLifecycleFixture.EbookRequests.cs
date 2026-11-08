@@ -128,7 +128,7 @@ namespace Chaptarr.Core.Test.Books
         [TestCase(true, BookMediaType.Audiobook)]
         [TestCase(false, BookMediaType.Ebook)]
         [TestCase(true, BookMediaType.Ebook)]
-        public void mixed_media_same_work_search_acknowledges_only_accepted_side_and_retries_other_once(bool postgres, BookMediaType rejectedSide)
+        public void mixed_media_same_work_list_batch_keeps_both_intents_until_accepted(bool postgres, BookMediaType rejectedSide)
         {
             DualDatabaseFixture.Run(postgres, database =>
             {
@@ -145,7 +145,7 @@ namespace Chaptarr.Core.Test.Books
                 item.EbookBooksToSearch = JsonConvert.SerializeObject(new[] { "hc:1001" });
                 h.Requests.Update(item);
                 var rejected = rejectedSide == BookMediaType.Audiobook ? audio : ebook;
-                var accepted = rejectedSide == BookMediaType.Audiobook ? ebook : audio;
+                var other = rejectedSide == BookMediaType.Audiobook ? ebook : audio;
                 h.RejectedBookId = rejected.Id;
                 h.Run();
                 var retry = h.Requests.Get(item.Id);
@@ -153,11 +153,11 @@ namespace Chaptarr.Core.Test.Books
                 Assert.Multiple(() =>
                 {
                     Assert.That(retry.OverallStatus, Is.EqualTo(PendingImportStatus.Retrying));
-                    Assert.That(h.Commands.OfType<BookSearchCommand>().SelectMany(command => command.BookIds), Is.EqualTo(new[] { accepted.Id }));
+                    Assert.That(h.Commands.OfType<BookSearchCommand>(), Is.Empty);
                     Assert.That(remaining.Single(request => request["MediaType"]?.Value<int>() == (int)rejectedSide)["Search"]?.Value<bool>(), Is.True);
-                    Assert.That(remaining.Any(request => request["MediaType"]?.Value<int>() == (int)accepted.MediaType), Is.False);
+                    Assert.That(remaining.Single(request => request["MediaType"]?.Value<int>() == (int)other.MediaType)["Search"]?.Value<bool>(), Is.True);
                     Assert.That(h.Books.Get(rejected.Id).AddOptions.SearchForNewBook, Is.True);
-                    Assert.That(h.Books.Get(accepted.Id).AddOptions.SearchForNewBook, Is.False);
+                    Assert.That(h.Books.Get(other.Id).AddOptions.SearchForNewBook, Is.True);
                     Assert.That(BookEditionIdentity.GetMonitoredEdition(h.BookService.GetBook(audio.Id)).Id, Is.EqualTo(audioEdition.Id));
                     Assert.That(BookEditionIdentity.GetMonitoredEdition(h.BookService.GetBook(ebook.Id)).Id, Is.EqualTo(ebookEdition.Id));
                 });
@@ -166,7 +166,8 @@ namespace Chaptarr.Core.Test.Books
                 Assert.Multiple(() =>
                 {
                     Assert.That(h.Requests.All(), Is.Empty);
-                    Assert.That(h.Commands.OfType<BookSearchCommand>().SelectMany(command => command.BookIds), Is.EquivalentTo(new[] { audio.Id, ebook.Id }));
+                    Assert.That(h.Commands.OfType<BookSearchCommand>().Single().BookIds, Is.EquivalentTo(new[] { audio.Id, ebook.Id }));
+                    Assert.That(h.Commands.OfType<BookSearchCommand>().Single().Trigger, Is.EqualTo(CommandTrigger.Unspecified));
                     Assert.That(h.Books.All(), Has.Count.EqualTo(2));
                 });
             });

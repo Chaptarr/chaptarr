@@ -230,6 +230,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
         public string Name { get; set; }
         public ProfileType ProfileType { get; set; }
         public bool UpgradeAllowed { get; set; }
+        public bool ConfirmAutomaticUpgrades { get; set; }
         public bool PreferCustomFormatsOverQuality { get; set; }
         public bool ConvertMp3ToM4b { get; set; }
         public int? ConvertToQualityId { get; set; }

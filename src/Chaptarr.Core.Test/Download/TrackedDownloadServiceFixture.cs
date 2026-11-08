@@ -1090,7 +1090,7 @@ namespace Chaptarr.Core.Test.Download
                 CaptureClientListCalls++;
             }
 
-            public void CaptureCompletedOutput(DownloadClientItem item, bool throwOnError = false)
+            public void CaptureCompletedOutput(DownloadClientItem item, bool throwOnError = false, DownloadCleanupContext cleanup = null)
             {
             }
 

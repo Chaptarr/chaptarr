@@ -876,7 +876,15 @@ namespace NzbDrone.Core.Datastore
             for (var i = 0; i < propertiesToUpdate.Count; i++)
             {
                 var property = propertiesToUpdate[i];
-                sb.AppendFormat("\"{0}\" = @{1}", property.Name, property.Name);
+                if (property.Name == "ProviderIds")
+                {
+                    // Settings-only saves must not restore a stale metadata snapshot.
+                    sb.Append("\"ProviderIds\" = CASE WHEN @ProviderIdsChanged THEN @ProviderIds ELSE \"ProviderIds\" END");
+                }
+                else
+                {
+                    sb.AppendFormat("\"{0}\" = @{1}", property.Name, property.Name);
+                }
                 if (i < propertiesToUpdate.Count - 1)
                 {
                     sb.Append(", ");

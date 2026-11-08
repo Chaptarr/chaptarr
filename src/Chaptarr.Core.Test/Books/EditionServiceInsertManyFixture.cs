@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using Chaptarr.Core.Test.Common;
+using Dapper;
 using NLog;
 using NLog.Config;
 using NLog.Targets;
@@ -20,6 +21,42 @@ namespace Chaptarr.Core.Test.Books
     [NonParallelizable]
     public class EditionServiceInsertManyFixture
     {
+        [TestCase(false)]
+        [TestCase(true)]
+        public void unique_edition_slug_constraint_uses_the_existing_retry_suffix_format(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var events = Proxy<IEventAggregator>((_, _) => null);
+                var logger = LogManager.GetCurrentClassLogger();
+                var author = new AuthorRepository(database, events, logger).Insert(new Author
+                {
+                    Name = "Slug fixture", CleanName = "slugfixture", SortName = "slugfixture", TitleSlug = "slug-fixture",
+                    Path = @"C:\Books\Slug fixture".AsOsAgnostic(), Added = DateTime.UtcNow
+                });
+                var book = new BookRepository(database, events).Insert(new Book
+                {
+                    Title = "Slug fixture", CleanTitle = "slugfixture", TitleSlug = "slug-fixture", AuthorId = author.Id, Added = DateTime.UtcNow
+                });
+                // Exercise the existing compatibility retry under a unique-slug schema.
+                // Current fresh databases intentionally allow cloned provider editions.
+                using (var connection = database.OpenConnection())
+                    connection.Execute("CREATE UNIQUE INDEX \"IX_Editions_TitleSlug\" ON \"Editions\" (\"TitleSlug\")");
+                var repository = new EditionRepository(database, events);
+                Edition New(string id, string slug) => new Edition
+                {
+                    BookId = book.Id, Title = book.Title, TitleSlug = slug, ForeignEditionId = "gr:" + id,
+                    ReadingFormatId = 2, Language = "eng", Monitored = false
+                };
+                repository.InsertMany(new[] { New("9100", "slug-fixture"), New("9101", "slug-fixture_2") });
+                var incoming = new List<Edition> { New("9200", "slug-fixture"), New("9201", "slug-fixture") };
+                new EditionService(repository, events, logger).InsertMany(incoming);
+                Assert.That(incoming.Select(edition => edition.TitleSlug), Is.EqualTo(new[] { "slug-fixture_3", "slug-fixture_4" }));
+                Assert.That(repository.FindByBook(new[] { book.Id }).Select(edition => edition.TitleSlug),
+                    Is.EquivalentTo(new[] { "slug-fixture", "slug-fixture_2", "slug-fixture_3", "slug-fixture_4" }));
+            });
+        }
+
         [Test]
         public void debug_logging_preserves_inserted_images_without_reloading_editions(
             [Values(false, true)] bool postgres, [Values(false, true)] bool foreignIdPresent,
