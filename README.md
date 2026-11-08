@@ -28,6 +28,20 @@ For local MCP access, see the [SnapeTech MCP integration guide](docs/integration
 
 ### BookshelfNG migration status
 
+**Current status: 2026-11-08 UTC.** [ChaptarrNG v0.9.986](https://github.com/snapetech-org/chaptarrng/releases/tag/v0.9.986)
+is the latest public release. Its [public release run](https://github.com/snapetech-org/chaptarrng/actions/runs/42515404591)
+passed native Linux, Windows, macOS, PostgreSQL and Docker validation, all ten
+standalone archive builds, and release publication. A separate
+[package distribution retry](https://github.com/snapetech-org/chaptarrng/actions/runs/42523595619)
+passed ChaptarrNG AUR and Chocolatey publication; COPR accepted its build
+trigger. The legacy BookshelfNG package bridges remain disabled. Existing
+BookshelfNG installations should follow the [preview, backup, migration and
+rollback guide](docs/MIGRATE_FROM_BOOKSHELFNG.md) before changing production
+service or package identities.
+
+The dated qualification notes below record the evidence available before this
+release. References to `v0.9.977` as the latest release are historical.
+
 **Status checked: 2026-11-05 UTC.** The unpublished candidate now includes
 schema-126 indexes for large-library migration identity lookups. BookshelfNG `0.4.21.76` and ChaptarrNG `v0.9.977` remain the latest
 public releases. Trusted validation may use compatible public GitHub-hosted

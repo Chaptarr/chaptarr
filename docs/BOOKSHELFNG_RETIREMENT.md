@@ -1,6 +1,27 @@
 # BookshelfNG retirement status
 
-## Current status — 2026-11-07 UTC
+## Current status — 2026-11-08 UTC
+
+[ChaptarrNG v0.9.986](https://github.com/snapetech-org/chaptarrng/releases/tag/v0.9.986)
+is public with ten checksummed standalone archives and the standard container
+image. Its [release run](https://github.com/snapetech-org/chaptarrng/actions/runs/42515404591)
+passed native Linux, Windows, macOS, PostgreSQL, Docker, the archive builders
+and final publication. The [package distribution retry](https://github.com/snapetech-org/chaptarrng/actions/runs/42523595619)
+passed ChaptarrNG AUR and Chocolatey publication and the COPR trigger. COPR
+build completion is a separate downstream result.
+
+The application and data-migration qualification at `b5c25742` below remains
+the installed and operator-data evidence for the release payload. The later
+release changes are versioning, workflow, packaging and test-harness changes;
+they do not replace that installed acceptance. Legacy BookshelfNG package
+bridges remain disabled, and no production installation was migrated or
+retired by publishing this release. Keep the source backup and use explicit
+preview, apply and rollback for each installation. External catalogs and
+production cutover still require their own channel and operator acceptance.
+The dated sections below are historical checkpoints, including their earlier
+statements about the then-latest public version.
+
+## Historical status — 2026-11-07 UTC
 
 Application and data-migration qualification is complete at exact head
 `b5c25742`. Public Build run
@@ -26,7 +47,7 @@ updates, migrating production installations, and retiring BookshelfNG remain
 separate owner/operator decisions. The latter actions are not implied by a
 ChaptarrNG application release.
 
-## Current status — 2026-11-06 UTC
+## Historical status — 2026-11-06 UTC
 
 The source and migration candidate is now internally qualified as the
 BookshelfNG replacement at application head `5a96ccf6`. Two frozen operator
