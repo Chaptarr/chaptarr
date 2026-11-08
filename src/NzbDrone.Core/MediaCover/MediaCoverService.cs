@@ -240,7 +240,8 @@ namespace NzbDrone.Core.MediaCover
                 {
                     var coverPath = GetCoverPath(entityId, coverEntity, mediaCover.CoverType, mediaCover.Extension);
                     filePath = GetVariantPath(coverPath, ComputeHash(remoteUrl));
-                    cacheToken = selectedAuthorImageHash;
+                    // The selection hash identifies a URL, not its bytes. A fallback
+                    // rendition can be replaced by the original at this same path.
                 }
                 else if (coverEntity == MediaCoverEntity.Author)
                 {

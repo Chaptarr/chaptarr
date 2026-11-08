@@ -787,7 +787,7 @@ namespace Chaptarr.Core.Test.MediaCover
             subject.ConvertToLocalUrls(12, MediaCoverEntity.Author, covers, selectedHash);
 
             Assert.That(covers, Is.EqualTo(new[] { otherCover, selectedCover }));
-            Assert.That(selectedCover.Url, Is.EqualTo($"/MediaCover/12/poster-{hash}.jpg?v={selectedHash}"));
+            Assert.That(selectedCover.Url, Is.EqualTo($"/MediaCover/12/poster-{hash}.jpg"));
             Assert.That(selectedCover.RemoteUrl, Is.EqualTo(remoteUrl));
             Assert.That(otherCover.Url, Is.EqualTo("/MediaCoverProxy/hash/cover.jpg"));
             Assert.That(otherCover.RemoteUrl, Is.EqualTo("https://images.example/other-author.jpg"));
@@ -1353,7 +1353,7 @@ namespace Chaptarr.Core.Test.MediaCover
             author.SelectedPosterHash = MediaCoverRendition.ComputeStableAuthorImageHash(remoteUrl, MediaCoverTypes.Poster);
             var resource = author.ToResource();
             subject.ConvertToLocalUrls(resource.Id, MediaCoverEntity.Author, resource.Images, author.SelectedPosterHash);
-            Assert.That(resource.Images.Single().Url, Is.EqualTo($"/MediaCover/{authorId}/poster-{urlHash}{sourceExtension}?v={author.SelectedPosterHash}"));
+            Assert.That(resource.Images.Single().Url, Is.EqualTo($"/MediaCover/{authorId}/poster-{urlHash}{sourceExtension}"));
             Assert.That(resource.Images.Single().RemoteUrl, Is.EqualTo(remoteUrl));
             Assert.That(proxy.ProxyCalls, Is.Zero);
         }
