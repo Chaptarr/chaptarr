@@ -2,16 +2,18 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using Chaptarr.Core.Test.Common;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Cache;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Common.Disk;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport;
-using NzbDrone.Core.MediaFiles.BookImport.Aggregation;
 using NzbDrone.Core.MediaFiles.BookImport.Services;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Events;
@@ -25,11 +27,22 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
     {
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
+                System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+                => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
+
+            public void ReplaceMany(System.Collections.Generic.List<BookFile> bookFiles, System.Collections.Generic.List<BookFile> replacedFiles,
+                DeleteMediaFileReason reason, System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+                System.Action<System.Action<System.Data.IDbConnection, System.Data.IDbTransaction>> persist)
+                => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
+
             private int _nextId = 1000;
             private readonly Dictionary<string, BookFile> _stored = new(StringComparer.OrdinalIgnoreCase);
 
             public int AddManyCalls { get; private set; }
             public int UpdateCalls { get; private set; }
+            public int BulkPathCalls { get; private set; }
+            public int SinglePathCalls { get; private set; }
             public bool IgnoreUpdates { get; set; }
 
             public void Seed(BookFile file)
@@ -68,6 +81,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     _stored[bookFile.Path] = Clone(bookFile);
                 }
             }
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles)
             {
@@ -89,8 +103,16 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<BookFile> Get(IEnumerable<int> ids) => new();
             public List<BookFile> GetFilesWithBasePath(string path) => new();
             public List<BookFile> GetFilesWithBasePath(string path, string mediaType) => new();
-            public List<BookFile> GetFileWithPath(List<string> path) => path?.Select(GetFileWithPath).Where(file => file != null).ToList() ?? new List<BookFile>();
-            public BookFile GetFileWithPath(string path) => Stored(path);
+            public List<BookFile> GetFileWithPath(List<string> paths)
+            {
+                BulkPathCalls++;
+                return paths?.Select(Stored).Where(file => file != null).ToList() ?? new List<BookFile>();
+            }
+            public BookFile GetFileWithPath(string path)
+            {
+                SinglePathCalls++;
+                return Stored(path);
+            }
             public void UpdateMediaInfo(List<BookFile> bookFiles) { }
             public List<BookFile> GetFilesByAuthorAndMediaType(int authorId, string mediaType) => new();
 
@@ -252,11 +274,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public Edition TargetEdition { get; init; }
             public CapturingEventAggregator Events { get; init; }
             public StubMediaInfoExtractor MediaInfo { get; init; }
+            public CacheManager CacheManager { get; init; }
         }
 
         private static T Proxy<T>() where T : class => DispatchProxy.Create<T, ThrowingProxy<T>>();
 
-        private static Context CreateContext()
+        private static Context CreateContext(IMainDatabase database = null, BookMediaType mediaType = BookMediaType.Ebook)
         {
             var author = new Author { Id = 1, Name = "Author", Path = "/books/Author", HardcoverAuthorId = "101" };
             var book = new Book
@@ -266,10 +289,29 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Author = author,
                 Title = "Book",
                 CleanTitle = "book",
-                MediaType = BookMediaType.Ebook,
+                MediaType = mediaType,
                 HardcoverBookId = "201"
             };
-            var edition = new Edition { Id = 20, BookId = book.Id, Book = book, Title = book.Title, Monitored = true, IsEbook = true, HardcoverEditionId = "301" };
+            var edition = new Edition { Id = 20, BookId = book.Id, Book = book, Title = book.Title, Monitored = true, IsEbook = mediaType == BookMediaType.Ebook, HardcoverEditionId = "301" };
+
+            var events = new CapturingEventAggregator();
+            if (database != null)
+            {
+                author.Id = 0;
+                author.CleanName = "author";
+                author.TitleSlug = "author";
+                author.Added = DateTime.UtcNow;
+                new AuthorRepository(database, events, LogManager.GetCurrentClassLogger()).Insert(author);
+                book.Id = 0;
+                book.AuthorId = author.Id;
+                book.TitleSlug = "book";
+                book.Added = DateTime.UtcNow;
+                new BookRepository(database, events).Insert(book);
+                edition.Id = 0;
+                edition.BookId = book.Id;
+                edition.ForeignEditionId = "hc:edition:301";
+                new EditionRepository(database, events).Insert(edition);
+            }
 
             var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
             ((BookServiceProxy)(object)bookService).Book = book;
@@ -281,15 +323,17 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
             var diskProxy = (DiskProviderProxy)(object)diskProvider;
             var mediaFiles = new StubMediaFileService();
-            var events = new CapturingEventAggregator();
+            IMediaFileService persistence = database == null ? mediaFiles : new MediaFileService(
+                new MediaFileRepository(database, events), events, Proxy<IIngestQueueRepository>(),
+                diskProvider, LogManager.GetCurrentClassLogger());
             var mediaInfo = new StubMediaInfoExtractor();
+            var cacheManager = new CacheManager();
 
             var sut = new BookImportService(
                 bookService,
                 editionService,
-                mediaFiles,
-                Proxy<IUpgradeMediaFiles>(),
-                Proxy<IAugmentingService>(),
+                persistence,
+                cacheManager,
                 diskProvider,
                 mediaInfo,
                 events,
@@ -306,8 +350,182 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Book = book,
                 TargetEdition = edition,
                 Events = events,
-                MediaInfo = mediaInfo
+                MediaInfo = mediaInfo,
+                CacheManager = cacheManager
             };
+        }
+
+        [Test]
+        public void calibre_identity_survives_single_and_batch_track_in_place(
+            [Values(false, true)] bool postgres,
+            [Values(false, true)] bool batch,
+            [Values(0, 1, 2)] int existingState,
+            [Values(null, 0, 314)] int? cachedId)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var context = CreateContext(database);
+                var repository = new MediaFileRepository(database, context.Events);
+                var path = @"C:\books\Author\Book\Book.epub".AsOsAgnostic();
+                var modified = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+                var observed = new DiscoveredFileWithMetadata { Path = path, Size = 100, Modified = modified };
+                context.Disk.Files[path] = (100, modified);
+                if (cachedId.HasValue)
+                {
+                    context.CacheManager.GetCache<CalibreBook>(typeof(CalibreProxy)).Set(path, new CalibreBook { Id = cachedId.Value });
+                }
+
+                var initialId = 0;
+                if (existingState > 0)
+                {
+                    initialId = repository.Insert(new BookFile
+                    {
+                        Path = path, EditionId = existingState == 2 ? context.TargetEdition.Id : 0,
+                        Part = 1, PartCount = 1, Size = observed.Size, Modified = modified,
+                        DateAdded = modified, MediaType = "ebook", Quality = new QualityModel(Quality.EPUB),
+                        MediaInfo = new MediaInfoModel(), CalibreId = cachedId > 0 ? 0 : 316
+                    }).Id;
+                }
+
+                BookImportFileResult Apply() => batch
+                    ? context.Sut.ImportFilesAsync(new List<(DiscoveredFileWithMetadata File, int? EditionId, MatchProvenance Provenance)>
+                    {
+                        (observed, context.TargetEdition.Id, null)
+                    }, context.Book.Id).GetAwaiter().GetResult().Single()
+                    : context.Sut.ImportExistingFileAsync(observed, context.Book.Id, context.TargetEdition.Id, null, null)
+                        .GetAwaiter().GetResult();
+
+                var result = Apply();
+                var stored = repository.GetFileWithPath(path);
+                var expectedId = cachedId > 0 ? cachedId.Value : existingState > 0 ? 316 : 0;
+                Assert.Multiple(() =>
+                {
+                    Assert.That(result.Outcome, Is.EqualTo(existingState == 2 ? ImportOutcome.AlreadyLinked : ImportOutcome.Imported));
+                    Assert.That(stored.CalibreId, Is.EqualTo(expectedId));
+                    Assert.That(stored.EditionId, Is.EqualTo(context.TargetEdition.Id));
+                    Assert.That(result.BookFileId, Is.EqualTo(stored.Id));
+                    if (initialId > 0)
+                    {
+                        Assert.That(stored.Id, Is.EqualTo(initialId));
+                        Assert.That(stored.DateAdded, Is.EqualTo(modified));
+                    }
+                });
+
+                var updatedEvents = context.Events.Events.OfType<BookFileUpdatedEvent>().Count();
+                Assert.That(Apply().Outcome, Is.EqualTo(ImportOutcome.AlreadyLinked));
+                Assert.That(repository.All(), Has.Count.EqualTo(1));
+                Assert.That(repository.GetFileWithPath(path).CalibreId, Is.EqualTo(expectedId));
+                if (!batch)
+                {
+                    Assert.That(context.Events.Events.OfType<BookFileUpdatedEvent>().Count(), Is.EqualTo(updatedEvents));
+                }
+
+                Assert.That(context.Disk.GetFileSizeCalls, Is.Zero);
+                Assert.That(context.Disk.FileGetLastWriteCalls, Is.Zero);
+            });
+        }
+
+        [Test]
+        public async System.Threading.Tasks.Task track_in_place_copies_calibre_identity_from_the_shared_proxy_cache()
+        {
+            var context = CreateContext();
+            var path = @"C:\books\Author\Book\Book.epub".AsOsAgnostic();
+            var modified = DateTime.UtcNow;
+            context.Disk.Files[path] = (100, modified);
+            context.CacheManager.GetCache<CalibreBook>(typeof(CalibreProxy)).Set(path, new CalibreBook { Id = 314 });
+
+            var results = await context.Sut.ImportFilesAsync(
+                new List<(DiscoveredFileWithMetadata File, int? EditionId, MatchProvenance Provenance)>
+                {
+                    (new DiscoveredFileWithMetadata { Path = path, Size = 100, Modified = modified }, context.TargetEdition.Id, null)
+                },
+                context.Book.Id);
+
+            Assert.That(results.Single().Outcome, Is.EqualTo(ImportOutcome.Imported));
+            Assert.That(context.MediaFiles.Stored(path)?.CalibreId, Is.EqualTo(314));
+        }
+
+        [Test]
+        public async System.Threading.Tasks.Task track_in_place_repairs_cached_calibre_identity_for_linked_and_relinked_rows()
+        {
+            var context = CreateContext();
+            var unchangedPath = @"C:\books\Author\Book 1\Book.epub".AsOsAgnostic();
+            var relinkedPath = @"C:\books\Author\Book 2\Book.epub".AsOsAgnostic();
+            var modified = DateTime.UtcNow;
+            context.Disk.Files[unchangedPath] = (100, modified);
+            context.Disk.Files[relinkedPath] = (100, modified);
+            context.MediaFiles.Seed(new BookFile
+            {
+                Id = 101,
+                Path = unchangedPath,
+                EditionId = context.TargetEdition.Id,
+                Part = 1,
+                PartCount = 1,
+                Size = 100,
+                Modified = modified,
+                MediaType = "ebook"
+            });
+            context.MediaFiles.Seed(new BookFile
+            {
+                Id = 102,
+                Path = relinkedPath,
+                EditionId = 0,
+                Part = 1,
+                PartCount = 1,
+                Size = 100,
+                Modified = modified,
+                MediaType = "ebook"
+            });
+            var cache = context.CacheManager.GetCache<CalibreBook>(typeof(CalibreProxy));
+            cache.Set(unchangedPath, new CalibreBook { Id = 314 });
+            cache.Set(relinkedPath, new CalibreBook { Id = 315 });
+
+            var results = await context.Sut.ImportFilesAsync(
+                new List<(DiscoveredFileWithMetadata File, int? EditionId, MatchProvenance Provenance)>
+                {
+                    (new DiscoveredFileWithMetadata { Path = unchangedPath, Size = 100, Modified = modified }, context.TargetEdition.Id, null),
+                    (new DiscoveredFileWithMetadata { Path = relinkedPath, Size = 100, Modified = modified }, context.TargetEdition.Id, null)
+                },
+                context.Book.Id);
+
+            Assert.That(results, Has.Count.EqualTo(2));
+            Assert.That(results.Single(result => result.Path == unchangedPath).Outcome, Is.EqualTo(ImportOutcome.AlreadyLinked));
+            Assert.That(results.Single(result => result.Path == relinkedPath).Outcome, Is.EqualTo(ImportOutcome.Imported));
+            Assert.That(context.MediaFiles.Stored(unchangedPath)?.CalibreId, Is.EqualTo(314));
+            Assert.That(context.MediaFiles.Stored(relinkedPath)?.CalibreId, Is.EqualTo(315));
+            Assert.That(context.MediaFiles.UpdateCalls, Is.EqualTo(2));
+        }
+
+        [Test]
+        public async System.Threading.Tasks.Task track_in_place_preserves_existing_calibre_identity_when_cache_misses()
+        {
+            var context = CreateContext();
+            var path = @"C:\books\Author\Book\Book.epub".AsOsAgnostic();
+            var modified = DateTime.UtcNow;
+            context.Disk.Files[path] = (100, modified);
+            context.MediaFiles.Seed(new BookFile
+            {
+                Id = 103,
+                Path = path,
+                EditionId = context.TargetEdition.Id,
+                Part = 1,
+                PartCount = 1,
+                Size = 100,
+                Modified = modified,
+                MediaType = "ebook",
+                CalibreId = 316
+            });
+
+            var results = await context.Sut.ImportFilesAsync(
+                new List<(DiscoveredFileWithMetadata File, int? EditionId, MatchProvenance Provenance)>
+                {
+                    (new DiscoveredFileWithMetadata { Path = path, Size = 100, Modified = modified }, context.TargetEdition.Id, null)
+                },
+                context.Book.Id);
+
+            Assert.That(results.Single().Outcome, Is.EqualTo(ImportOutcome.AlreadyLinked));
+            Assert.That(context.MediaFiles.Stored(path)?.CalibreId, Is.EqualTo(316));
+            Assert.That(context.MediaFiles.UpdateCalls, Is.Zero);
         }
 
         [Test]
@@ -463,6 +681,45 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         }
 
         [Test]
+        public void track_batch_verifies_all_writes_with_one_bounded_path_read(
+            [Values(false, true)] bool postgres, [Values(false, true)] bool existing)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var reads = new List<string>();
+                var observedDatabase = InterfaceProxy.Proxy<IMainDatabase>((method, args) =>
+                    method.Name == nameof(IMainDatabase.OpenConnection)
+                        ? CommandObserver.Wrap(database.OpenConnection(), command => reads.Add(command.CommandText))
+                        : method.Invoke(database, args));
+                var context = CreateContext(observedDatabase, BookMediaType.Audiobook);
+                var repository = new MediaFileRepository(database, context.Events);
+                var requests = new List<(DiscoveredFileWithMetadata File, int? EditionId, MatchProvenance Provenance)>();
+                var modified = DateTime.UtcNow;
+                for (var part = 1; part <= 64; part++)
+                {
+                    var path = $"/books/Author/Book/part-{part:000}.mp3";
+                    context.Disk.Files[path] = (100, modified);
+                    requests.Add((new DiscoveredFileWithMetadata { Path = path, Size = 100, Modified = modified,
+                        DurationSeconds = 60, Quality = new QualityModel(Quality.MP3) }, context.TargetEdition.Id, null));
+                    if (existing) repository.Insert(new BookFile { Path = path, Size = 50, Modified = modified,
+                        DateAdded = modified, EditionId = 0, Quality = new QualityModel(Quality.MP3), MediaInfo = new MediaInfoModel() });
+                }
+                reads.Clear();
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                var results = context.Sut.ImportFilesAsync(requests, context.Book.Id).GetAwaiter().GetResult();
+                timer.Stop();
+                Assert.That(results, Has.Count.EqualTo(64));
+                Assert.That(results.All(result => result.Outcome == ImportOutcome.Imported), Is.True);
+                Assert.That(repository.All().Select(file => file.EditionId), Has.All.EqualTo(context.TargetEdition.Id));
+                var pathReads = reads.Count(sql => sql.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase) &&
+                    (sql.Contains("\"BookFiles\".\"Path\" IN", StringComparison.OrdinalIgnoreCase) ||
+                     sql.Contains("\"BookFiles\".\"Path\" = ANY", StringComparison.OrdinalIgnoreCase)));
+                Assert.That(pathReads, Is.EqualTo(2), string.Join("\n", reads));
+                TestContext.WriteLine($"{(postgres ? "PostgreSQL" : "SQLite")}: 64 {(existing ? "updates" : "inserts")}, path reads={pathReads}, elapsed={timer.ElapsedMilliseconds}ms");
+            });
+        }
+
+        [Test]
         public async System.Threading.Tasks.Task unchanged_exact_identity_does_not_rewrite_metadata_or_provenance()
         {
             var context = CreateContext();
@@ -475,7 +732,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Path = path,
                 EditionId = context.TargetEdition.Id,
                 Part = 1,
-                PartCount = 1,
+                PartCount = 0, // Ignored by persistence; real database materialization restores zero.
                 Size = 999,
                 Modified = modified,
                 Quality = new QualityModel { Quality = Quality.EPUB },
@@ -510,6 +767,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(context.MediaInfo.GetDurationCalls, Is.EqualTo(0));
             Assert.That(context.MediaInfo.ExtractMediaInfoCalls, Is.EqualTo(0));
             Assert.That(context.Events.Events, Is.Empty);
+            Assert.That(context.MediaFiles.BulkPathCalls, Is.EqualTo(1));
+            Assert.That(context.MediaFiles.SinglePathCalls, Is.EqualTo(0));
         }
 
         [Test]
@@ -563,7 +822,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var otherEdition = new Edition { Id = 21, BookId = context.Book.Id, Book = context.Book, Title = context.Book.Title, IsEbook = true };
             context.Editions.Editions.Add(otherEdition);
             context.Disk.Files[path] = (100, DateTime.UtcNow);
-            context.MediaFiles.Seed(new BookFile { Id = 51, Path = path, EditionId = otherEdition.Id, Part = 1 });
+            context.MediaFiles.Seed(new BookFile { Id = 51, Path = path, EditionId = otherEdition.Id, Part = 1, CalibreId = 316 });
+            context.CacheManager.GetCache<CalibreBook>(typeof(CalibreProxy)).Set(path, new CalibreBook { Id = 314 });
             var rejectedProvenance = new MatchProvenance { DecisionId = "must-not-persist-unmapped" };
 
             var result = await context.Sut.ImportExistingFileAsync(
@@ -579,6 +839,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(result.ReasonCode, Is.EqualTo("PATH_LINKED_TO_DIFFERENT_EDITION"));
             Assert.That(context.MediaFiles.UpdateCalls, Is.EqualTo(0));
             Assert.That(context.MediaFiles.Stored(path).EditionId, Is.EqualTo(otherEdition.Id));
+            Assert.That(context.MediaFiles.Stored(path).CalibreId, Is.EqualTo(316));
             Assert.That(context.MediaFiles.Stored(path).MatchProvenance, Is.Null);
         }
 
@@ -692,25 +953,6 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(results.Single().ReasonCode, Is.EqualTo("PINNED_EDITION_DESTINATION_CONFLICT"));
             Assert.That(context.MediaFiles.AddManyCalls, Is.EqualTo(0));
             Assert.That(context.Editions.MonitoredSelections, Is.Empty);
-            Assert.That(context.TargetEdition.ManualAdd, Is.True);
-        }
-
-        [Test]
-        public async System.Threading.Tasks.Task legacy_import_refuses_to_replace_a_different_pinned_edition_before_disk_mutation()
-        {
-            var context = CreateContext();
-            context.Book.AnyEditionOk = false;
-            context.TargetEdition.ManualAdd = true;
-            var matchedEdition = new Edition { Id = 21, BookId = context.Book.Id, Book = context.Book, Title = "Book - Other Edition", IsEbook = true };
-            context.Editions.Editions.Add(matchedEdition);
-            var path = "/books/Author/Book/Other.epub";
-            context.Disk.Files[path] = (100, DateTime.UtcNow);
-
-            await context.Sut.ImportFileAsync(path, context.Book.Id, matchedEdition.Id, "Unknown", null);
-
-            Assert.That(context.MediaFiles.Stored(path), Is.Null);
-            Assert.That(context.Editions.MonitoredSelections, Is.Empty);
-            Assert.That(context.Disk.GetFileSizeCalls, Is.EqualTo(0));
             Assert.That(context.TargetEdition.ManualAdd, Is.True);
         }
 

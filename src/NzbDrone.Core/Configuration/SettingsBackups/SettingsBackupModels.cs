@@ -6,10 +6,13 @@ using NzbDrone.Common.Http.Proxy;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Indexers;
+using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Organizer;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Profiles.Metadata;
+using NzbDrone.Core.Profiles.Delay;
+using NzbDrone.Core.Profiles.Releases;
 using NzbDrone.Core.Profiles.Qualities;
 
 namespace NzbDrone.Core.Configuration.SettingsBackups
@@ -36,7 +39,14 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
         public List<CustomFormatBackup> CustomFormats { get; set; } = new();
         public List<QualityProfileBackup> QualityProfiles { get; set; } = new();
         public List<MetadataProfile> MetadataProfiles { get; set; } = new();
+        public List<DelayProfile> DelayProfiles { get; set; }
+        public List<ReleaseProfile> ReleaseProfiles { get; set; }
+        public List<QualityDefinition> QualityDefinitions { get; set; }
+        public Dictionary<int, string> IndexerNames { get; set; } = new();
 
+        public IndexerSettingsBackup IndexerSettings { get; set; }
+        public DownloadClientSettingsBackup DownloadClientSettings { get; set; }
+        public UiSettingsBackup UiSettings { get; set; }
         public MediaManagementBackup MediaManagement { get; set; }
         public string MetadataServerUrl { get; set; }
         public string MetadataSource { get; set; }
@@ -124,6 +134,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
         public bool OnBookFileDelete { get; set; }
         public bool OnBookFileDeleteForUpgrade { get; set; }
         public bool OnHealthIssue { get; set; }
+        public bool? IncludeHealthWarnings { get; set; }
         public bool OnHealthRestored { get; set; }
         public bool OnDownloadFailure { get; set; }
         public bool OnImportFailure { get; set; }
@@ -219,6 +230,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
         public string Name { get; set; }
         public ProfileType ProfileType { get; set; }
         public bool UpgradeAllowed { get; set; }
+        public bool ConfirmAutomaticUpgrades { get; set; }
         public bool PreferCustomFormatsOverQuality { get; set; }
         public bool ConvertMp3ToM4b { get; set; }
         public int? ConvertToQualityId { get; set; }
@@ -238,9 +250,49 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
         public int Score { get; set; }
     }
 
+    internal class IndexerSettingsBackup
+    {
+        public int Retention { get; set; }
+        public int RssSyncInterval { get; set; }
+        public int MaximumSize { get; set; }
+        public int MinimumAge { get; set; }
+    }
+
+    internal class DownloadClientSettingsBackup
+    {
+        public string DownloadClientWorkingFolders { get; set; }
+        public int DownloadClientHistoryLimit { get; set; }
+        public bool EnableCompletedDownloadHandling { get; set; }
+        public bool AutoRedownloadFailed { get; set; }
+        public bool AutoRedownloadFailedFromInteractiveSearch { get; set; }
+    }
+
+    internal class UiSettingsBackup
+    {
+        public int FirstDayOfWeek { get; set; }
+        public string CalendarWeekColumnHeader { get; set; }
+        public string ShortDateFormat { get; set; }
+        public string LongDateFormat { get; set; }
+        public string TimeFormat { get; set; }
+        public bool ShowRelativeDates { get; set; }
+        public bool EnableColorImpairedMode { get; set; }
+        public int UILanguage { get; set; }
+        public string Theme { get; set; }
+        public string AddNewDefaultMediaType { get; set; }
+    }
+
     internal class MediaManagementBackup
     {
         public bool AutoUnmonitorPreviouslyDownloadedBooks { get; set; }
+        public WriteAudioTagsType? WriteAudioTags { get; set; }
+        public bool? ScrubAudioTags { get; set; }
+        public WriteBookTagsType? WriteBookTags { get; set; }
+        public bool? UpdateCovers { get; set; }
+        public bool? EmbedMetadata { get; set; }
+        public CoverDownloadScope? CoverDownloadScope { get; set; }
+        public BookMatchingStrictness? BookMatchingStrictness { get; set; }
+        public bool? UsePathAsTagsFallback { get; set; }
+        public bool? AutoAddMissingAuthorsFromCompletedDownloads { get; set; }
         public string RecycleBin { get; set; }
         public int RecycleBinCleanupDays { get; set; }
         public ProperDownloadTypes DownloadPropersAndRepacks { get; set; }

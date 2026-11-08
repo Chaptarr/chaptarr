@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Parser.Model;
 
@@ -18,8 +19,12 @@ namespace NzbDrone.Core.Download.Pending
         public RemoteBook RemoteBook { get; set; }
     }
 
-    public class PendingReleaseAdditionalInfo
+    public class PendingReleaseAdditionalInfo : IEmbeddedDocument
     {
         public ReleaseSourceType ReleaseSource { get; set; }
+        public List<int> BookIds { get; set; } = new();
+        public bool AlternativeCopies { get; set; }
+        public Dictionary<int, int> TargetEditionIds { get; set; } = new();
+        public Dictionary<int, int> TargetCustomFormatScores { get; set; } = new();
     }
 }

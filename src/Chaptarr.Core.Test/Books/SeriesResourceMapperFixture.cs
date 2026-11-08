@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Globalization;
 using Chaptarr.Api.V1.Series;
 using NzbDrone.Core.Books;
 using NUnit.Framework;
@@ -8,6 +9,19 @@ namespace Chaptarr.Core.Test.Books
     [TestFixture]
     public class SeriesResourceMapperFixture
     {
+        [TestCase("1-3", "1")]
+        [TestCase("2.02", "2.02")]
+        [TestCase("2.2", "2.2")]
+        [TestCase("3.5,4.5,6.7", "3.5")]
+        [TestCase("序章", null)]
+        [SetCulture("fr-FR")]
+        public void link_resource_exposes_the_canonical_position_order_without_changing_the_original_text(string position, string expected)
+        {
+            var resource = new SeriesBookLink { Position = position, BookId = 7, SeriesId = 8 }.ToResource();
+            Assert.That(resource.Position, Is.EqualTo(position));
+            Assert.That(resource.PositionOrder, Is.EqualTo(expected == null ? decimal.MaxValue : decimal.Parse(expected, CultureInfo.InvariantCulture)));
+        }
+
         [Test]
         public void should_map_media_type()
         {

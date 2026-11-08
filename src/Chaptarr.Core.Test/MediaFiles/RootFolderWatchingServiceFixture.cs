@@ -59,6 +59,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void Fail(CommandModel command, string message, Exception e) => throw new NotImplementedException();
             public void Requeue() => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void Pause(int id) => throw new NotImplementedException();
             public void Resume(int id) => throw new NotImplementedException();
             public void CleanCommands() => throw new NotImplementedException();

@@ -23,6 +23,8 @@ namespace Chaptarr.Core.Test.Api.Wanted
     {
         private sealed class CapturingBookService : IBookService
         {
+            public List<Book> GetImportListBookIdentities() => GetAllBooks();
+
             public PagingSpec<Book> CapturedPagingSpec { get; private set; }
 
             public PagingSpec<Book> BooksWithoutFiles(PagingSpec<Book> pagingSpec)
@@ -35,14 +37,14 @@ namespace Chaptarr.Core.Test.Api.Wanted
 
             public Book GetBook(int bookId) => throw new NotImplementedException();
             public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new NotImplementedException();
-            public List<Book> GetBooksByAuthor(int authorId) => throw new NotImplementedException();
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => throw new NotImplementedException();
             public List<Book> GetNextBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetLastBooksByAuthorId(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetBooksByAuthorId(int authorId) => throw new NotImplementedException();
             public List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds) => throw new NotImplementedException();
             public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds) => throw new NotImplementedException();
             public Book AddBook(Book newBook, bool doRefresh = true) => throw new NotImplementedException();
-            public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
+            public List<Book> FindBySlug(string titleSlug) => throw new NotImplementedException();
             public Book FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Book FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public Book FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
@@ -54,6 +56,7 @@ namespace Chaptarr.Core.Test.Api.Wanted
             public List<Book> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false) => throw new NotImplementedException();
             public List<Book> GetAllBooks() => throw new NotImplementedException();
+            public Book UpdateBook(Book book, List<Edition> editionUpdates, string monitoredMediaType = null, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated = null) => throw new System.NotSupportedException();
             public Book UpdateBook(Book book) => throw new NotImplementedException();
             public void SetBookMonitored(int bookId, bool monitored) => throw new NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
@@ -64,12 +67,12 @@ namespace Chaptarr.Core.Test.Api.Wanted
             public void InsertMany(List<Book> books) => throw new NotImplementedException();
             public void InsertMany(List<Book> books, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Book> books) => throw new NotImplementedException();
-            public void DeleteMany(List<Book> books) => throw new NotImplementedException();
+            public void DeleteMany(List<Book> books, bool filesAlreadyDeleted = false, List<NzbDrone.Core.MediaFiles.BookFile> deletedBookFiles = null) => throw new NotImplementedException();
             public void SetAddOptions(IEnumerable<Book> books) => throw new NotImplementedException();
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public (Book Book, bool ExistingCopy) AddWantedEditionCopy(int bookId, int editionId) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -106,6 +109,7 @@ namespace Chaptarr.Core.Test.Api.Wanted
         {
             public List<AuthorStatistics> AuthorStatistics() => new();
             public AuthorStatistics AuthorStatistics(int authorId) => new();
+            public List<AuthorStatistics> AuthorStatistics(IEnumerable<int> authorIds) => new();
             public List<AuthorStatistics> AuthorStatistics(string mediaType) => new();
             public AuthorStatistics AuthorStatistics(int authorId, string mediaType) => new();
             public void InvalidateAuthorCache(int authorId) { }
@@ -113,7 +117,19 @@ namespace Chaptarr.Core.Test.Api.Wanted
 
         private sealed class StubCoverMapper : IMapCoversToLocal
         {
-            public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IEnumerable<MediaCoverModel> covers, string selectedAuthorImageHash = null) { }
+            public void EnsureBookCoversForBooks(List<Book> books) => throw new NotImplementedException();
+            public void EnsureBookCoversForImport(Book book) => EnsureBookCovers(book);
+            public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers)
+            {
+                foreach (var book in covers)
+                {
+                    ConvertToLocalUrls(book.Key, MediaCoverEntity.Book, book.Value);
+                }
+            }
+
+            public void DeleteBookCovers(int bookId) => throw new NotImplementedException();
+
+            public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<MediaCoverModel> covers, string selectedAuthorImageHash = null) { }
             public string GetCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCoverTypes coverType, string extension, int? height = null) => null;
             public void EnsureAuthorCovers(Author author) { }
             public void EnsureBookCovers(Book book) { }

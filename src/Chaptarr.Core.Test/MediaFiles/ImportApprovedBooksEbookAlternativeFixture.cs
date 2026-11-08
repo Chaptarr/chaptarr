@@ -67,6 +67,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(retained.Single().Item.Quality.Quality, Is.EqualTo(Quality.AZW3));
             Assert.That(importResults, Has.Count.EqualTo(3));
             Assert.That(importResults.All(r => r.Result == ImportResultType.Rejected), Is.True);
+            Assert.That(importResults.All(result => result.ImportDecision.Rejections.Single().Category == "EbookAlternative"), Is.True);
         }
 
         [Test]

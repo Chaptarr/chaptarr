@@ -16,6 +16,7 @@ import TableBody from 'Components/Table/TableBody';
 import TableOptionsModalWrapper from 'Components/Table/TableOptions/TableOptionsModalWrapper';
 import TablePager from 'Components/Table/TablePager';
 import { align, icons, kinds } from 'Helpers/Props';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import getRemovedItems from 'Utilities/Object/getRemovedItems';
 import hasDifferentItems from 'Utilities/Object/hasDifferentItems';
 import translate from 'Utilities/String/translate';
@@ -202,6 +203,7 @@ class Queue extends Component {
       autoAddMissingAuthorsFromCompletedDownloads,
       isAutoAddMissingAuthorsPopulated,
       isAutoAddMissingAuthorsSaving,
+      autoAddAuthorsSaveError,
       isRefreshMonitoredDownloadsExecuting,
       onRefreshPress,
       ...otherProps
@@ -297,6 +299,12 @@ class Queue extends Component {
 
         <PageContentBody>
           {
+            autoAddAuthorsSaveError &&
+              <Alert kind={kinds.DANGER} role="alert">
+                {getErrorMessage(autoAddAuthorsSaveError, translate('UnableToSaveMediaManagementSettings'))}
+              </Alert>
+          }
+          {
             isRefreshing && !isAllPopulated ?
               <LoadingIndicator /> :
               null
@@ -372,6 +380,9 @@ class Queue extends Component {
         <RemoveQueueItemModal
           isOpen={isConfirmRemoveModalOpen}
           selectedCount={selectedCount}
+          defaultRemoveFromClient={!items.some((item) =>
+            selectedIds.includes(item.id) && item.trackedDownloadState === 'imported'
+          )}
           canChangeCategory={isConfirmRemoveModalOpen && (
             selectedIds.every((id) => {
               const item = items.find((i) => i.id === id);
@@ -383,7 +394,7 @@ class Queue extends Component {
             selectedIds.every((id) => {
               const item = items.find((i) => i.id === id);
 
-              return !!(item && item.downloadId);
+              return !!(item && (item.downloadId || item.status === 'delay' || item.status === 'downloadClientUnavailable'));
             })
           )}
           isPending={isConfirmRemoveModalOpen && (
@@ -423,6 +434,7 @@ Queue.propTypes = {
   autoAddMissingAuthorsFromCompletedDownloads: PropTypes.bool.isRequired,
   isAutoAddMissingAuthorsPopulated: PropTypes.bool.isRequired,
   isAutoAddMissingAuthorsSaving: PropTypes.bool.isRequired,
+  autoAddAuthorsSaveError: PropTypes.object,
   isRefreshMonitoredDownloadsExecuting: PropTypes.bool.isRequired,
   onRefreshPress: PropTypes.func.isRequired,
   onRetryImportSelectedPress: PropTypes.func.isRequired,

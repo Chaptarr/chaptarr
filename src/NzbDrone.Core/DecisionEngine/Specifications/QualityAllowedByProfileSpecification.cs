@@ -1,5 +1,6 @@
 using System.Linq;
 using NLog;
+using NzbDrone.Core.Download;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
 
@@ -43,13 +44,19 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                         "NULL");
             }
 
-            _logger.Trace("[QUALITY_PROFILE_CHECK] Calling GetQualityProfileForQuality for quality ID {0}...",
+            _logger.Trace("[QUALITY_PROFILE_CHECK] Resolving target quality profile for quality ID {0}...",
                 subject.ParsedBookInfo.Quality.Quality.Id);
-            var profile = subject.Author.GetQualityProfileForQuality(subject.ParsedBookInfo.Quality.Quality);
+            var profile = subject.GetQualityProfile();
 
             if (profile == null)
             {
-                _logger.Trace("[QUALITY_PROFILE_CHECK] GetQualityProfileForQuality returned NULL!");
+                if (!subject.GetMediaType().HasValue)
+                {
+                    _logger.Trace("[QUALITY_PROFILE_CHECK] Release media type is unresolved; a target profile cannot be selected");
+                    return Decision.RejectSoftFilter("Release media type could not be determined", "Quality");
+                }
+
+                _logger.Trace("[QUALITY_PROFILE_CHECK] Target quality profile is unavailable!");
                 _logger.Trace("[QUALITY_PROFILE_CHECK] This means no profile is configured for quality '{0}' (ID: {1})",
                     subject.ParsedBookInfo.Quality.Quality.Name,
                     subject.ParsedBookInfo.Quality.Quality.Id);

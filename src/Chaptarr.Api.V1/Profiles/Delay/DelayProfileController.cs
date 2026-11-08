@@ -17,17 +17,12 @@ namespace Chaptarr.Api.V1.Profiles.Delay
         {
             _delayProfileService = delayProfileService;
 
-            SharedValidator.RuleFor(d => d.Tags).NotEmpty().When(d => d.Id != 1);
-            SharedValidator.RuleFor(d => d.Tags).Empty().When(d => d.Id == 1);
             SharedValidator.RuleFor(d => d.Tags).SetValidator(tagInUseValidator);
-            SharedValidator.RuleFor(d => d.UsenetDelay).GreaterThanOrEqualTo(0);
-            SharedValidator.RuleFor(d => d.TorrentDelay).GreaterThanOrEqualTo(0);
-
-            SharedValidator.RuleFor(d => d).Custom((delayProfile, context) =>
+            SharedValidator.RuleFor(value => value).Custom((value, context) =>
             {
-                if (!delayProfile.EnableUsenet && !delayProfile.EnableTorrent)
+                foreach (var error in NzbDrone.Core.Configuration.ConfigValueValidation.ValidateDelayProfile(value.ToModel()))
                 {
-                    context.AddFailure("Either Usenet or Torrent should be enabled");
+                    context.AddFailure(error);
                 }
             });
         }

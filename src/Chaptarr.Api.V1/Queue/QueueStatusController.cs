@@ -56,7 +56,7 @@ namespace Chaptarr.Api.V1.Queue
                 Count = queue.Count(q => q.Author != null) + pending.Count,
                 UnknownCount = queue.Count(q => q.Author == null),
                 Errors = queue.Any(q => q.Author != null && q.TrackedDownloadStatus == TrackedDownloadStatus.Error),
-                Warnings = queue.Any(q => q.Author != null && q.TrackedDownloadStatus == TrackedDownloadStatus.Warning),
+                Warnings = queue.Any(q => q.Author != null && q.TrackedDownloadStatus == TrackedDownloadStatus.Warning) || pending.Any(q => q.Book == null),
                 UnknownErrors = queue.Any(q => q.Author == null && q.TrackedDownloadStatus == TrackedDownloadStatus.Error),
                 UnknownWarnings = queue.Any(q => q.Author == null && q.TrackedDownloadStatus == TrackedDownloadStatus.Warning)
             };

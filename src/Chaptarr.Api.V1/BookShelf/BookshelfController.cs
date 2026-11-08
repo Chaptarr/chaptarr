@@ -25,7 +25,7 @@ namespace Chaptarr.Api.V1.Bookshelf
 
             if (request.MonitorNewItems.HasValue || requestedAuthors.Any(author => author.Monitored.HasValue))
             {
-                return BadRequest("Bookshelf only changes book monitoring. Use Author Editor to change author or future-book monitoring.");
+                return BadRequest("Bookshelf only changes book monitoring. Use Author Editor to change author monitoring or Monitor New Books.");
             }
 
             if (request.MonitoringOptions?.Monitor == MonitorTypes.SpecificBook &&

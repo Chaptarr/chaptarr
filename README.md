@@ -13,7 +13,7 @@ A book collection manager for audiobooks and eBooks.
 
 <div align="center"><a href='https://ko-fi.com/chaptarr' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi6.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a></div>
 
-> **Chaptarr is beta software.** It is under active development. Bugs are likely; breaking changes less so, but still possible. Full disclosure: the last data loss event was in pre-alpha, with a tester group of roughly 30 people, about 12 months ago. Over the last 6 months we've grown past 11,000 active users with no reported data loss events. Still, follow good backup practice and avoid pointing it at a library you can't afford to lose.
+> **Chaptarr is beta software.** It is under active development. Bugs are likely; breaking changes less so, but still possible. Keep backups of your library, turn on the recycling bin, and don't point it at a library you can't afford to lose.
 
 ## What is Chaptarr?
 
@@ -48,6 +48,26 @@ Chaptarr is an independent project. It is **not affiliated with the Servarr team
 
 Chaptarr is not compatible with Readarr's metadata sources. It uses its own modular pipeline that resolves entities across metadata providers and aggregates their data through automated refinement and consensus. As anyone in the book metadata space would expect, this is an ongoing effort to deliver the best, most accurate data possible. It is the core of our mission.
 
+## Roadmap
+
+No dates; priorities can change. Feature requests and votes on GitHub issues help decide what's next.
+
+**In progress**
+- Primary series from the metadata server (rolling out; improves as authors refresh)
+- Mobile layout
+- Native installs, starting with Windows
+
+**Planned**
+- Wiki docs with screenshots that update every release
+- A Series page across authors: monitor a whole series in one place
+- Library search by any series
+- Import other wanted books found in the same download
+- Ebook format conversion (e.g. EPUB to AZW3/KEPUB)
+- Multilingual word lists for matching and parsing
+- Matching rework for simpler maintenance
+- Hardcover: list the exact token permissions needed
+- PostgreSQL: option to keep your own database backups
+
 ## Getting Started
 
 > **Docker is currently the only supported way to run Chaptarr.** Chaptarr is developed and tested in Docker. Releases do not include native install packages; earlier zip attachments were incomplete build artifacts and have been withdrawn. Native support (starting with an experimental Windows build) is being worked on.
@@ -59,6 +79,8 @@ Pull the image:
 docker pull chaptarr/chaptarr:latest
 ```
 
+Image tags: `latest` is the stable release, promoted after it has run on `develop`. `develop` gets new releases first; use `chaptarr/chaptarr:develop` for the most recent updates. Exact versions (for example `chaptarr/chaptarr:0.9.965`) are also published.
+
 Run with Docker:
 ```bash
 docker run -d \
@@ -67,14 +89,12 @@ docker run -d \
   -e PUID=1000 \
   -e PGID=1000 \
   -v /path/to/config:/config \
-  -v /path/to/audiobooks:/audiobooks \
-  -v /path/to/ebooks:/ebooks \
-  -v /path/to/downloads:/downloads \
+  -v /path/to/data:/data \
   --restart unless-stopped \
   chaptarr/chaptarr:latest
 ```
 
-Note: if `PUID`/`PGID` are not set, the image defaults to `99:100`. If `/path/to/config` doesn't exist, Docker will create it as `root:root`. Create it first (or fix ownership) so it matches `PUID`/`PGID`. Avoid setting `user:` in Compose; it bypasses the entrypoint permission setup. On Unraid, media folders commonly use `99:100`, so use `PUID=99` and `PGID=100` unless your share is owned differently. If multiple containers/users share the same media group, add `-e UMASK=002`. When testing permissions with `docker exec`, test as the app user, not root, for example: `docker exec -u 99:100 chaptarr sh -c 'id; touch /audiobooks/.chaptarr-write-test && rm /audiobooks/.chaptarr-write-test'`.
+Note: if `PUID`/`PGID` are not set, the image defaults to `99:100`. If `/path/to/config` doesn't exist, Docker will create it as `root:root`. Create it first (or fix ownership) so it matches `PUID`/`PGID`. Avoid setting `user:` in Compose; it bypasses the entrypoint permission setup. On Unraid, media folders commonly use `99:100`, so use `PUID=99` and `PGID=100` unless your share is owned differently. If multiple containers/users share the same media group, add `-e UMASK=002`. When testing permissions with `docker exec`, test as the app user, not root, for example: `docker exec -u 99:100 chaptarr sh -c 'id; touch /data/media/books/audiobooks/.chaptarr-write-test && rm /data/media/books/audiobooks/.chaptarr-write-test'`.
 
 Or use Docker Compose:
 ```bash
@@ -96,7 +116,30 @@ Environment variables:
 - `Chaptarr__Postgres__LogDb` (default: `chaptarr-log`)
 - `Chaptarr__Postgres__CacheDb` (default: `chaptarr-cache`)
 
-Note: Chaptarr does not create PostgreSQL databases automatically; create the databases and grant the configured user access.
+For a new installation, create the PostgreSQL databases and grant the configured user access before starting Chaptarr.
+
+System > Backup includes the main database and `config.xml` on both SQLite and PostgreSQL. Logs and cache databases are optional and excluded by default. The temporary import queue is not backed up; a restore starts with an empty queue, and the next library scan rechecks files. PostgreSQL backups use `pg_dump` and `pg_restore` from the server's major version. The 64-bit Docker images include clients for PostgreSQL 14–18; other installations need matching client tools on `PATH` or in the standard PostgreSQL installation directory.
+
+A PostgreSQL restore loads and migrates temporary databases before replacing the configured databases at restart. The configured role needs ownership of all three databases and `CREATEDB`; it does not need superuser access. The destination's PostgreSQL connection settings are preserved. Originals remain available until application startup succeeds, including listener binding. External `pg_dump`/`pg_restore` workflows remain available.
+
+### Unraid
+
+In **Apps**, search for Chaptarr and install the project-maintained template when listed. If it is not listed yet, download [unraid/chaptarr.xml](unraid/chaptarr.xml) to `/boot/config/plugins/dockerMan/templates-user/` on the Unraid host, then choose it under **Docker → Add Container → Template**. No source build or Compose plugin is required.
+
+Set **Media and downloads** to your shared data folder (for example, `/mnt/user/data` on the host, mounted as `/data` in the container). Use the same host folder and `/data` mapping in your download client. A typical layout is:
+
+```text
+/data/torrents
+/data/usenet
+/data/media/books/audiobooks
+/data/media/books/ebooks
+```
+
+Add `/data/media/books/audiobooks` and `/data/media/books/ebooks` as Chaptarr's root folders. When the client reports those same container paths, no Remote Path Mapping is needed. Set PUID/PGID to the owners of your files; Unraid commonly uses `99:100`.
+
+Use one `/data` mount in both containers so downloads and library files can share a filesystem for hardlinks and atomic moves. Separate host filesystems still cannot hardlink, even under one mount. See the [TRaSH Unraid layout guide](https://trash-guides.info/Hardlinks/How-to-setup-for/Unraid/).
+
+These examples are for new setups. Updating Chaptarr does not change existing mounts or library paths.
 
 ## Building from Source
 Building from source requires the .NET 10 SDK, Node.js, and Yarn. When running Chaptarr natively, install FFmpeg for your operating system and make sure both `ffmpeg` and `ffprobe` are available on the `PATH` used to start Chaptarr. Normal source builds do not bundle them automatically; the official Docker image already includes them.
@@ -139,66 +182,9 @@ dotnet _output/publish/Chaptarr.Console.dll
 
 Note: the assembly is named `Chaptarr.dll` on Linux/macOS and `Chaptarr.Console.dll` on Windows.
 
-### Testing from Unraid
-This process requires the "Docker Compose Manager" plugin.
-
-1. Open the Unraid terminal and type:
-   ```bash
-   cd /YOUR/APPDATA/PATH/HERE
-   ```
-   For example:
-   ```bash
-   cd /mnt/user/appdata/
-   ```
-2. Create the appdata folder:
-   ```bash
-   mkdir Chaptarr
-   ```
-3. Clone the repository:
-   ```bash
-   git clone https://github.com/chaptarr/chaptarr.git
-   ```
-
-#### After cloning Git repository
-1. Now go to Docker tab and then the Compose tab in Unraid
-2. Make a new stack
-3. Choose "Chaptarr" as stack name
-4. Click Advanced, enter the folder path that leads to Chaptarr, for example `/mnt/user/appdata/Chaptarr/`, and click "OK"
-5. Click the gear icon next to the Chaptarr Stack -> "Edit Stack" -> Compose File
-6. Replace the uncommented top section with the following, using your real media paths, for example `/mnt/user/YOURAUDIOBOOKSHERE:/audiobooks`
-``` yaml
-services:
-  chaptarr:
-    build:
-      context: ./
-      dockerfile: Dockerfile.build
-    container_name: chaptarr
-    network_mode: bridge
-    environment:
-      - PUID=99
-      - PGID=100
-      - UMASK=002
-      - TZ=America/New_York  # Change to your timezone
-    volumes:
-      - /mnt/user/appdata/Chaptarr:/config
-      - /mnt/user/data/media/books/audiobooks:/audiobooks
-      - /mnt/user/data/media/books/ebooks:/ebooks
-      - /mnt/user/data:/downloads
-    ports:
-      - 8789:8789
-    restart: unless-stopped 
-```
-Paths are case sensitive.
-
-7. Save the compose file. Leave the generated UI fields empty, then click Compose Up.
-
-Chaptarr should now be available at the IP address of your Unraid server on port 8789, for example `http://192.168.xxx.xxx:8789/`.
-
-If you experience an error, check folder ownership and permissions, then run compose down and rebuild Chaptarr.
-
-
 ## Documentation
 
+- Wiki: https://wiki.chaptarr.com
 - Default web UI: http://localhost:8789
 - Default username/password: Set on first launch
 

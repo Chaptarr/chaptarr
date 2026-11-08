@@ -20,7 +20,19 @@ namespace Chaptarr.Core.Test.Api
     {
         private sealed class CoverMapperStub : IMapCoversToLocal
         {
-            public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IEnumerable<NzbDrone.Core.MediaCover.MediaCover> covers, string selectedAuthorImageHash = null)
+            public void EnsureBookCoversForBooks(List<Book> books) => throw new NotImplementedException();
+            public void EnsureBookCoversForImport(Book book) => EnsureBookCovers(book);
+            public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers)
+            {
+                foreach (var book in covers)
+                {
+                    ConvertToLocalUrls(book.Key, MediaCoverEntity.Book, book.Value);
+                }
+            }
+
+            public void DeleteBookCovers(int bookId) => throw new NotImplementedException();
+
+            public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<NzbDrone.Core.MediaCover.MediaCover> covers, string selectedAuthorImageHash = null)
             {
             }
 
@@ -49,22 +61,50 @@ namespace Chaptarr.Core.Test.Api
             }
 
             public string GetUrl(string hash) => throw new NotImplementedException();
-            public byte[] GetImage(string hash) => throw new NotImplementedException();
+            public byte[] GetImageFromUrl(string url) => throw new NotImplementedException();
         }
 
         private class BookServiceProxy : DispatchProxy
         {
             public readonly List<(string Provider, string ProviderId, BookMediaType MediaType)> FindAllCalls = new();
+            public readonly List<List<(string Scope, string Provider, string Id)>> BatchLookupCalls = new();
             public bool SingularLookupCalled { get; private set; }
+            public List<Book> Books { get; set; }
+
+            private List<Book> Catalog => Books ?? new List<Book>
+            {
+                new() { Id = 1, Title = "Audiobook", MediaType = BookMediaType.Audiobook, HardcoverBookId = "hc:123" },
+                new() { Id = 2, Title = "Ebook", MediaType = BookMediaType.Ebook, HardcoverBookId = "hc:123" }
+            };
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
-                if (targetMethod?.Name == nameof(IBookService.FindAllByProviderId))
+                if (targetMethod?.Name == nameof(IBookService.FindBookIdsByProviderIds))
+                {
+                    var keys = ((IEnumerable<(string Scope, string Provider, string Id)>)args[0]).Distinct().ToList();
+                    BatchLookupCalls.Add(keys);
+                    return keys.ToDictionary(key => key, _ => Catalog.Select(book => book.Id).ToList());
+                }
+                if (targetMethod?.Name == nameof(IBookService.GetBooksForLookup))
+                {
+                    return Books ?? new List<Book>();
+                }
+                if (targetMethod?.Name == nameof(IBookService.GetExistingBooks))
+                {
+                    var ids = ((IEnumerable<int>)args[0]).ToHashSet();
+                    return Catalog.Where(book => ids.Contains(book.Id)).ToList();
+                }
+                if (targetMethod?.Name == nameof(IBookService.FindAllByProviderId) || targetMethod?.Name == nameof(IBookService.FindAllByWorkProviderId))
                 {
                     var provider = (string)args[0];
                     var providerId = (string)args[1];
                     var mediaType = (BookMediaType)args[2];
                     FindAllCalls.Add((provider, providerId, mediaType));
+
+                    if (Books != null)
+                    {
+                        return Books.Where(book => book.MediaType == mediaType).ToList();
+                    }
 
                     return mediaType == BookMediaType.Audiobook
                         ? new List<Book> { new Book { Id = 1, Title = "Audiobook", MediaType = BookMediaType.Audiobook, HardcoverBookId = "hc:123" } }
@@ -101,7 +141,7 @@ namespace Chaptarr.Core.Test.Api
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
-                if (targetMethod?.Name == nameof(IMediaFileService.GetFilesByBook))
+                if (targetMethod?.Name == nameof(IMediaFileService.GetFilesByBook) || targetMethod?.Name == nameof(IMediaFileService.GetFilesByBooks))
                 {
                     return new List<BookFile>();
                 }
@@ -113,13 +153,47 @@ namespace Chaptarr.Core.Test.Api
         [Test]
         public void should_normalize_work_terms_by_readarr_facade_dialect_only()
         {
-            var native = ReadarrFacadeProviderIdTranslator.NormalizeWorkTerm("work:123", null);
-            var hc = ReadarrFacadeProviderIdTranslator.NormalizeWorkTerm("work:123", new ReadarrFacadeContext("hc", "audiobook", "/readarr/hc/audiobook"));
-            var gr = ReadarrFacadeProviderIdTranslator.NormalizeWorkTerm("work:123", new ReadarrFacadeContext("gr", "ebook", "/readarr/gr/ebook"));
+            var native = ReadarrFacadeProviderIdTranslator.NormalizeLookupTerm("work:123", null);
+            var hc = ReadarrFacadeProviderIdTranslator.NormalizeLookupTerm("work:123", new ReadarrFacadeContext("hc", "audiobook", "/readarr/hc/audiobook"));
+            var gr = ReadarrFacadeProviderIdTranslator.NormalizeLookupTerm("work:123", new ReadarrFacadeContext("gr", "ebook", "/readarr/gr/ebook"));
 
             Assert.That(native, Is.EqualTo("work:123"));
             Assert.That(hc, Is.EqualTo("hc:123"));
             Assert.That(gr, Is.EqualTo("gr:123"));
+        }
+
+        [TestCase("hc", "hc-ed:123")]
+        [TestCase("gr", "gr-ed:123")]
+        public void facade_edition_term_keeps_edition_identity(string provider, string expected)
+        {
+            var facade = new ReadarrFacadeContext(provider, "ebook", "/readarr/" + provider + "/ebook");
+            Assert.That(ReadarrFacadeProviderIdTranslator.NormalizeLookupTerm("edition:123", facade), Is.EqualTo(expected));
+            Assert.That(ReadarrFacadeProviderIdTranslator.NormalizeLookupTerm("edition:123", null), Is.EqualTo("edition:123"));
+            Assert.That(ReadarrFacadeProviderIdTranslator.NormalizeLookupTerm("edition:not-an-id", facade), Is.EqualTo("edition:not-an-id"));
+        }
+
+        [TestCase("audiobook", BookMediaType.Audiobook)]
+        [TestCase("ebook", BookMediaType.Ebook)]
+        public void facade_lookup_puts_an_already_selected_copy_first_without_crossing_formats(string scope, BookMediaType mediaType)
+        {
+            var books = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            var proxy = (BookServiceProxy)books;
+            proxy.Books = Enumerable.Range(1, 3).Select(id => new Book
+            {
+                Id = id, Title = "Requested work", HardcoverBookId = "hc:123", MediaType = mediaType,
+                AudiobookMonitored = mediaType == BookMediaType.Audiobook && id > 1,
+                EbookMonitored = mediaType == BookMediaType.Ebook && id > 1
+            }).ToList();
+            proxy.Books.Add(new Book { Id = 4, HardcoverBookId = "hc:123", Title = "Other format",
+                MediaType = mediaType == BookMediaType.Audiobook ? BookMediaType.Ebook : BookMediaType.Audiobook });
+            var context = new DefaultHttpContext();
+            context.Items[ReadarrFacadeContext.ItemKey] = new ReadarrFacadeContext("hc", scope, "/" + scope);
+            var controller = new BookLookupController(null, new CoverMapperStub(), books,
+                DispatchProxy.Create<IEditionService, EditionServiceProxy>(), DispatchProxy.Create<IMediaFileService, MediaFileServiceProxy>(),
+                new MediaCoverProxyStub(), null) { ControllerContext = new ControllerContext { HttpContext = context } };
+            var result = controller.Search("work:123").Value;
+            Assert.That(result.Select(book => book.Id), Is.EqualTo(new[] { 2, 1, 3 }));
+            Assert.That(result[0].Monitored, Is.True);
         }
 
         [Test]
@@ -162,11 +236,12 @@ namespace Chaptarr.Core.Test.Api
                 providerAliasService: null);
 
             var method = typeof(BookLookupController).GetMethod("LookupLocalByProvider", BindingFlags.Instance | BindingFlags.NonPublic);
-            var result = (List<Book>)method.Invoke(controller, new object[] { "hc", "hc:123", null });
+            var result = (List<Book>)method.Invoke(controller, new object[] { "hc", "hc:123", null, new List<Book>() });
 
             Assert.That(result.Select(book => book.Id).ToList(), Is.EqualTo(new List<int> { 1, 2 }));
             Assert.That(bookProxy.SingularLookupCalled, Is.False);
-            Assert.That(bookProxy.FindAllCalls.Select(call => call.MediaType).ToList(), Is.EqualTo(new List<BookMediaType> { BookMediaType.Audiobook, BookMediaType.Ebook }));
+            Assert.That(bookProxy.FindAllCalls, Is.Empty);
+            Assert.That(bookProxy.BatchLookupCalls.Single(), Is.EqualTo(new[] { (Scope: "work", Provider: "hc", Id: "hc:123") }));
         }
 
         [Test]
@@ -186,7 +261,7 @@ namespace Chaptarr.Core.Test.Api
                 providerAliasService: null);
 
             var method = typeof(BookLookupController).GetMethod("LookupLocalByProviderOrEdition", BindingFlags.Instance | BindingFlags.NonPublic);
-            var result = (List<Book>)method.Invoke(controller, new object[] { "isbn:9780123456789", null });
+            var result = (List<Book>)method.Invoke(controller, new object[] { "isbn:9780123456789", null, new List<Book>() });
 
             Assert.That(result.Select(book => book.Id).ToList(), Is.EqualTo(new List<int> { 1, 2 }));
             Assert.That(bookProxy.SingularLookupCalled, Is.False);
@@ -241,7 +316,7 @@ namespace Chaptarr.Core.Test.Api
                 providerAliasService: null);
             var method = typeof(BookLookupController).GetMethod("MapToResource", BindingFlags.Instance | BindingFlags.NonPublic);
 
-            var resources = ((IEnumerable<BookResource>)method.Invoke(controller, new object[] { new[] { book }, null })).ToList();
+            var resources = ((IEnumerable<BookResource>)method.Invoke(controller, new object[] { new[] { book }, null, null })).ToList();
 
             Assert.That(proxy.RegisteredUrls, Is.EqualTo(new[] { firstCover, secondCover }));
             Assert.That(resources.Single().Editions.SelectMany(edition => edition.Images).Select(image => image.Url),

@@ -2,6 +2,8 @@
   <!-- Common to all Chaptarr Projects -->
   <PropertyGroup>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Keep advisories visible without breaking source builds; the dedicated CI audit enforces severity. -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <ErrorOnDuplicatePublishOutputFiles>true</ErrorOnDuplicatePublishOutputFiles>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
@@ -26,10 +28,6 @@
     <ChaptarrProject Condition="$(MSBuildProjectName.StartsWith('Chaptarr'))">true</ChaptarrProject>
     <ChaptarrProject Condition="$(MSBuildProjectName.StartsWith('ServiceInstall'))">true</ChaptarrProject>
     <ChaptarrProject Condition="$(MSBuildProjectName.StartsWith('ServiceUninstall'))">true</ChaptarrProject>
-
-    <!-- A test project gets the test sdk packages automatically added -->
-    <TestProject>false</TestProject>
-    <TestProject Condition="$(MSBuildProjectName.EndsWith('.Test'))">true</TestProject>
 
     <!-- XML documentation comments are needed to enforce rule IDE0005 on build -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -74,9 +72,9 @@
     <Copyright>Copyright 2017-$([System.DateTime]::Now.ToString('yyyy')) chaptarr.com (GNU General Public v3)</Copyright>
 
     <!-- Chaptarr Development Version -->
-    <AssemblyVersion>0.9.965.0</AssemblyVersion>
-    <AssemblyFileVersion>0.9.965.0</AssemblyFileVersion>
-    <AssemblyInformationalVersion>0.9.965-chaptarr-dev</AssemblyInformationalVersion>
+    <AssemblyVersion>0.9.999.0</AssemblyVersion>
+    <AssemblyFileVersion>0.9.999.0</AssemblyFileVersion>
+    <AssemblyInformationalVersion>0.9.999-chaptarr-dev</AssemblyInformationalVersion>
     <AssemblyConfiguration>$(Configuration)-chaptarr-dev</AssemblyConfiguration>
     <NeutralLanguage>en</NeutralLanguage>
 
@@ -127,16 +125,6 @@
       to Sentry and not distributed to run on the server, it helps debug crashes while making releases smaller -->
     <EmbedAllSources>true</EmbedAllSources>
   </PropertyGroup>
-
-  <!-- Standard testing packages -->
-  <ItemGroup Condition="'$(TestProject)'=='true'">
-    <PackageReference Include="Microsoft.NET.Test.Sdk" />
-    <PackageReference Include="NUnit" />
-    <PackageReference Include="NUnit3TestAdapter" />
-    <PackageReference Include="NunitXml.TestLogger" />
-    <PackageReference Include="coverlet.collector" />
-  </ItemGroup>
-
 
   <!--
        Set runtime identifier to local system type if not specified

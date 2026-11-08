@@ -3,9 +3,9 @@ import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import { coerceFolderType } from 'Helpers/Props/folderTypes';
-import { deleteRootFolder, fetchMediaManagementSettings, fetchRootFolders, saveMediaManagementSettings, saveRootFolder, setMediaManagementSettingsValue, setRootFolderValue } from 'Store/Actions/settingsActions';
+import { deleteRootFolder, fetchMediaManagementSettings, fetchRootFolders, saveMediaManagementSettingsFields, saveRootFolder, setRootFolderValue } from 'Store/Actions/settingsActions';
 import createProviderSettingsSelector from 'Store/Selectors/createProviderSettingsSelector';
-import createSettingsSectionSelector from 'Store/Selectors/createSettingsSectionSelector';
+import translate from 'Utilities/String/translate';
 import EditRootFolderModalContent from './EditRootFolderModalContent';
 import {
   cleanRootFolderPath,
@@ -21,19 +21,22 @@ function createMapStateToProps() {
     (state) => state.settings.metadataProfiles,
     (state) => state.settings.rootFolders,
     createProviderSettingsSelector('rootFolders'),
-    createSettingsSectionSelector('mediaManagement'),
+    (state) => state.settings.mediaManagement,
     (state, { folderType }) => folderType,
     (advancedSettings, metadataProfiles, rootFolders, rootFolderSettings, mediaManagementSettings, folderTypeProp) => {
-      const mediaManagement = mediaManagementSettings.settings || {};
+      const mediaManagement = mediaManagementSettings.item || {};
 
       return {
         ...rootFolderSettings,
         advancedSettings,
         showMetadataProfile: metadataProfiles.items.length > 1,
         rootFolders: rootFolders.items || [],
+        rootFolderSection: rootFolders,
         isMediaManagementPopulated: mediaManagementSettings.isPopulated,
-        defaultAudiobookRootFolderPath: mediaManagement.defaultAudiobookRootFolderPath?.value || '',
-        defaultEbookRootFolderPath: mediaManagement.defaultEbookRootFolderPath?.value || '',
+        isMediaManagementFetching: mediaManagementSettings.isFetching,
+        mediaManagementError: mediaManagementSettings.error,
+        defaultAudiobookRootFolderPath: mediaManagement.defaultAudiobookRootFolderPath || '',
+        defaultEbookRootFolderPath: mediaManagement.defaultEbookRootFolderPath || '',
         folderTypeProp
       };
     }
@@ -45,15 +48,17 @@ const mapDispatchToProps = {
   saveRootFolder,
   deleteRootFolder,
   fetchMediaManagementSettings,
-  setMediaManagementSettingsValue,
-  saveMediaManagementSettings,
+  saveMediaManagementSettings: saveMediaManagementSettingsFields,
   fetchRootFolders
 };
 
 class EditRootFolderModalContentConnector extends Component {
   state = {
     defaultAudiobookRootFolder: null,
-    defaultEbookRootFolder: null
+    defaultEbookRootFolder: null,
+    savedRootFolderId: null,
+    isSaving: false,
+    saveError: null
   };
 
   componentDidMount() {
@@ -74,43 +79,37 @@ class EditRootFolderModalContentConnector extends Component {
     }
   }
 
-  componentDidUpdate(prevProps) {
-    if (prevProps.isSaving && !this.props.isSaving && !this.props.saveError) {
-      this.saveDefaultRootFolderSettings();
-
-      if (this.pendingNewRootFolderPath && this.props.onRootFolderAdded) {
-        this.props.onRootFolderAdded({ value: this.pendingNewRootFolderPath });
-      }
-
-      this.clearPendingRootFolderSave();
-
-      this.setState({
-        defaultAudiobookRootFolder: null,
-        defaultEbookRootFolder: null
-      });
-
-      if (this.props.onSaveSuccess) {
-        this.props.onSaveSuccess();
-      }
-
-      this.onModalClose();
-    }
+  componentWillUnmount() {
+    this.saveRequest = null;
   }
 
   pendingNewRootFolderPath = null;
-  pendingOriginalRootFolderPath = null;
-  pendingRootFolder = null;
-  pendingDefaultRootFolderStates = null;
+  originalRootFolderPath = null;
+  savedRootFolderSelector = createProviderSettingsSelector('rootFolders');
+
+  getItem = () => {
+    if (!this.state.savedRootFolderId) {
+      return this.props.item;
+    }
+
+    return this.savedRootFolderSelector({ settings: {
+      rootFolders: { ...this.props.rootFolderSection, saveError: this.state.saveError }
+    } }, { id: this.state.savedRootFolderId }).item;
+  };
 
   getExistingRootFolder = () => {
-    const { id, item, rootFolders } = this.props;
+    const { rootFolders } = this.props;
+    const item = this.getItem();
+    const id = this.state.savedRootFolderId || this.props.id;
     const rootFolderId = item?.id?.value || id;
 
     return rootFolders.find((rootFolder) => rootFolder.id === rootFolderId);
   };
 
   getRootFolderCandidate = () => {
-    const { id, item, folderTypeProp } = this.props;
+    const { folderTypeProp } = this.props;
+    const item = this.getItem();
+    const id = this.state.savedRootFolderId || this.props.id;
 
     return {
       id: item?.id?.value || id,
@@ -120,7 +119,7 @@ class EditRootFolderModalContentConnector extends Component {
   };
 
   getOriginalRootFolderPath = () => {
-    const { item } = this.props;
+    const item = this.getItem();
     const existingRootFolder = this.getExistingRootFolder();
 
     return cleanRootFolderPath(
@@ -163,7 +162,8 @@ class EditRootFolderModalContentConnector extends Component {
         existingRootFolder?.isEffectiveDefaultEbook
     );
     const isEffectiveDefault = isOnlyCompatibleRootFolder ||
-      (!!defaultRootFolderPath && defaultRootFolderPath === candidatePath) ||
+      (!!defaultRootFolderPath && (defaultRootFolderPath === candidatePath ||
+        defaultRootFolderPath === (this.originalRootFolderPath ?? this.getOriginalRootFolderPath()))) ||
       isSavedEffectiveDefault;
 
     return {
@@ -174,15 +174,11 @@ class EditRootFolderModalContentConnector extends Component {
     };
   };
 
-  getDefaultRootFolderSettingUpdates = () => {
-    const rootFolder = this.pendingRootFolder;
-
+  getDefaultRootFolderSettingUpdates = (rootFolder, originalRootFolderPath, defaultStates) => {
     if (!rootFolder?.path) {
       return {};
     }
 
-    const originalRootFolderPath = this.pendingOriginalRootFolderPath;
-    const defaultStates = this.pendingDefaultRootFolderStates || {};
     const updates = {};
 
     const addUpdate = (mediaType, settingName) => {
@@ -202,7 +198,7 @@ class EditRootFolderModalContentConnector extends Component {
         return;
       }
 
-      if (matchesOriginalPath && currentDefaultRootFolderPath !== rootFolder.path) {
+      if (!defaultState.hasOverride && matchesOriginalPath && currentDefaultRootFolderPath !== rootFolder.path) {
         updates[settingName] = rootFolder.path;
         return;
       }
@@ -226,38 +222,6 @@ class EditRootFolderModalContentConnector extends Component {
     return updates;
   };
 
-  saveDefaultRootFolderSettings = () => {
-    if (!this.props.isMediaManagementPopulated) {
-      return;
-    }
-
-    const updates = this.getDefaultRootFolderSettingUpdates();
-    const updateNames = Object.keys(updates);
-
-    if (!updateNames.length) {
-      return;
-    }
-
-    updateNames.forEach((name) => {
-      this.props.setMediaManagementSettingsValue({ name, value: updates[name] });
-    });
-
-    const saveRequest = this.props.saveMediaManagementSettings(updates);
-
-    if (saveRequest?.done) {
-      saveRequest.done(() => {
-        this.props.fetchRootFolders();
-      });
-    }
-  };
-
-  clearPendingRootFolderSave = () => {
-    this.pendingNewRootFolderPath = null;
-    this.pendingOriginalRootFolderPath = null;
-    this.pendingRootFolder = null;
-    this.pendingDefaultRootFolderStates = null;
-  };
-
   onInputChange = ({ name, value }) => {
     this.props.setRootFolderValue({ name, value });
   };
@@ -271,40 +235,77 @@ class EditRootFolderModalContentConnector extends Component {
   };
 
   onSavePress = () => {
-    const { id, item } = this.props;
-    this.pendingNewRootFolderPath = null;
-    this.pendingOriginalRootFolderPath = this.getOriginalRootFolderPath();
-    this.pendingRootFolder = this.getRootFolderCandidate();
-    this.pendingDefaultRootFolderStates = {
-      [rootFolderMediaTypes.AUDIOBOOK]: this.getDefaultRootFolderState(rootFolderMediaTypes.AUDIOBOOK),
-      [rootFolderMediaTypes.EBOOK]: this.getDefaultRootFolderState(rootFolderMediaTypes.EBOOK)
-    };
-
-    if (!id && this.props.onRootFolderAdded) {
-      const path = item?.path?.value;
-
-      if (path) {
-        this.pendingNewRootFolderPath = cleanRootFolderPath(path);
+    if (this.state.isSaving || !this.props.isMediaManagementPopulated || this.props.isMediaManagementFetching || this.props.mediaManagementError) {
+      return;
+    }
+    const rootFolder = this.getRootFolderCandidate();
+    this.originalRootFolderPath ??= this.getOriginalRootFolderPath();
+    const updates = this.getDefaultRootFolderSettingUpdates(
+      rootFolder,
+      this.originalRootFolderPath,
+      {
+        [rootFolderMediaTypes.AUDIOBOOK]: this.getDefaultRootFolderState(rootFolderMediaTypes.AUDIOBOOK),
+        [rootFolderMediaTypes.EBOOK]: this.getDefaultRootFolderState(rootFolderMediaTypes.EBOOK)
       }
+    );
+
+    if (!rootFolder.id || this.pendingNewRootFolderPath) {
+      this.pendingNewRootFolderPath = rootFolder.path;
     }
 
-    this.props.saveRootFolder({ id: this.props.id });
+    this.setState({ isSaving: true, saveError: null });
+    let rootSaved = false;
+    const request = this.props.saveRootFolder({ id: rootFolder.id }).then((savedRootFolder) => {
+      rootSaved = true;
+      if (this.saveRequest === request) {
+        this.setState({ savedRootFolderId: savedRootFolder.id });
+      }
+
+      if (Object.keys(updates).length) {
+        return this.props.saveMediaManagementSettings(updates).done(() => this.props.fetchRootFolders());
+      }
+    });
+    this.saveRequest = request;
+
+    request.done(() => {
+      if (this.saveRequest !== request) {
+        return;
+      }
+
+      if (this.pendingNewRootFolderPath) {
+        this.props.onRootFolderAdded?.({ value: this.pendingNewRootFolderPath });
+      }
+      this.originalRootFolderPath = null;
+      this.props.onSaveSuccess?.();
+      this.setState({ isSaving: false }, this.onModalClose);
+    });
+    request.fail((saveError) => {
+      if (this.saveRequest === request) {
+        this.setState({
+          isSaving: false,
+          saveError: rootSaved ? { message: translate('RootFolderSavedDefaultFailed') } : saveError
+        });
+      }
+    });
   };
 
   onDeleteRootFolderPress = () => {
-    this.clearPendingRootFolderSave();
-
     if (this.props.onDeleteRootFolderPress) {
       this.props.onDeleteRootFolderPress();
       return;
     }
 
-    this.props.deleteRootFolder({ id: this.props.id });
+    this.props.deleteRootFolder({ id: this.state.savedRootFolderId || this.props.id });
     this.onModalClose();
   };
 
   onModalClose = () => {
-    this.clearPendingRootFolderSave();
+    if (this.state.isSaving) {
+      return;
+    }
+    this.saveRequest = null;
+    this.pendingNewRootFolderPath = null;
+    this.originalRootFolderPath = null;
     this.props.onModalClose();
   };
 
@@ -315,6 +316,10 @@ class EditRootFolderModalContentConnector extends Component {
     return (
       <EditRootFolderModalContent
         {...this.props}
+        id={this.state.savedRootFolderId || this.props.id}
+        item={this.getItem()}
+        isSaving={this.state.isSaving}
+        saveError={this.state.saveError}
         isDefaultAudiobookRootFolder={audiobookDefaultRootFolderState.value}
         isDefaultAudiobookRootFolderDisabled={audiobookDefaultRootFolderState.isDisabled}
         isDefaultAudiobookRootFolderAutomatic={audiobookDefaultRootFolderState.isAutomatic}
@@ -336,11 +341,12 @@ EditRootFolderModalContentConnector.propTypes = {
   id: PropTypes.number,
   folderTypeProp: PropTypes.number,
   isFetching: PropTypes.bool.isRequired,
-  isSaving: PropTypes.bool.isRequired,
-  saveError: PropTypes.object,
   item: PropTypes.object.isRequired,
   rootFolders: PropTypes.arrayOf(PropTypes.object).isRequired,
+  rootFolderSection: PropTypes.object.isRequired,
   isMediaManagementPopulated: PropTypes.bool.isRequired,
+  isMediaManagementFetching: PropTypes.bool.isRequired,
+  mediaManagementError: PropTypes.object,
   defaultAudiobookRootFolderPath: PropTypes.string.isRequired,
   defaultEbookRootFolderPath: PropTypes.string.isRequired,
   onRootFolderAdded: PropTypes.func,
@@ -348,7 +354,6 @@ EditRootFolderModalContentConnector.propTypes = {
   saveRootFolder: PropTypes.func.isRequired,
   deleteRootFolder: PropTypes.func.isRequired,
   fetchMediaManagementSettings: PropTypes.func.isRequired,
-  setMediaManagementSettingsValue: PropTypes.func.isRequired,
   saveMediaManagementSettings: PropTypes.func.isRequired,
   fetchRootFolders: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired,
@@ -356,4 +361,4 @@ EditRootFolderModalContentConnector.propTypes = {
   onSaveSuccess: PropTypes.func
 };
 
-export default connect(createMapStateToProps, mapDispatchToProps)(EditRootFolderModalContentConnector);
+export default connect(createMapStateToProps, mapDispatchToProps, null, { forwardRef: true })(EditRootFolderModalContentConnector);

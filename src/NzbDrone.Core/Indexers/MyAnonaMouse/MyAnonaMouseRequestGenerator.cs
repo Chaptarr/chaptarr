@@ -66,16 +66,6 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             return pageableRequests;
         }
 
-        public virtual IndexerPageableRequestChain GetSearchRequests(AuthorSearchCriteria searchCriteria)
-        {
-            var pageableRequests = new IndexerPageableRequestChain();
-
-            // Use JSON API for enhanced metadata
-            pageableRequests.Add(GetJsonApiRequests(searchCriteria));
-
-            return pageableRequests;
-        }
-
         private IEnumerable<IndexerRequest> GetRecentJsonApiRequests()
         {
             // MAM has no reliable RSS endpoint; emulate RSS sync by pulling the "recent" list from its JSON search endpoint.
@@ -86,7 +76,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         {
             var searchTerms = new List<string>();
 
-            void AddSearchTerm(string term, string logMessage, bool isFallback = false)
+            void AddSearchTerm(string term, string logMessage)
             {
                 var normalized = term?.Trim() ?? string.Empty;
                 if (string.IsNullOrWhiteSpace(normalized))
@@ -106,14 +96,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 // log shows the fallbacks without the term they were falling back from.
                 var tier = searchTerms.Count + 1;
 
-                if (isFallback)
-                {
-                    Logger.Debug(logMessage + " [tier {1}]", normalized, tier);
-                }
-                else
-                {
-                    Logger.Debug(logMessage + " [tier {2}]", normalized, bookQuery ?? "Empty", tier);
-                }
+                Logger.Debug(logMessage + " [tier {1}]", normalized, tier);
 
                 searchTerms.Add(normalized);
             }
@@ -155,12 +138,18 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 decodedQuery += decodedAuthor.Trim();
             }
 
-            AddSearchTerm(decodedQuery, "MAM_SEARCH_TERM: '{0}' (decoded from: '{1}')");
+            var narratorQuery = NormalizeApostrophes(System.Web.HttpUtility.UrlDecode(searchCriteria.NarratorQuery));
+            if (!string.IsNullOrWhiteSpace(narratorQuery))
+            {
+                AddSearchTerm($"{decodedQuery} {narratorQuery}", "MAM_SEARCH_TERM: '{0}' (pinned narrator)");
+            }
+
+            AddSearchTerm(decodedQuery, "MAM_SEARCH_TERM: '{0}' (title and author)");
 
             if (!string.IsNullOrWhiteSpace(decodedTitle) &&
                 !string.Equals(decodedTitle.Trim(), decodedQuery, StringComparison.OrdinalIgnoreCase))
             {
-                AddSearchTerm(decodedTitle, "MAM_SEARCH_FALLBACK_TERM: '{0}' (title-only fallback)", isFallback: true);
+                AddSearchTerm(decodedTitle, "MAM_SEARCH_FALLBACK_TERM: '{0}' (title-only fallback)");
             }
 
             // Interactive search: add a fallback query for verbose titles like "... , Book 3" that can hurt recall.
@@ -170,14 +159,14 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 if (!string.IsNullOrWhiteSpace(fallbackTitle) &&
                     !string.Equals(fallbackTitle, decodedTitle.Trim(), StringComparison.OrdinalIgnoreCase))
                 {
-                    AddSearchTerm(fallbackTitle, "MAM_SEARCH_FALLBACK_TERM: '{0}' (book-number fallback)", isFallback: true);
+                    AddSearchTerm(fallbackTitle, "MAM_SEARCH_FALLBACK_TERM: '{0}' (book-number fallback)");
                 }
             }
 
             return searchTerms;
         }
 
-        private IEnumerable<IndexerRequest> GetJsonApiRequests(string searchText, SearchCriteriaBase searchCriteria = null)
+        internal IEnumerable<IndexerRequest> GetJsonApiRequests(string searchText, SearchCriteriaBase searchCriteria = null)
         {
             for (var page = 0; page < SearchMaxPages; page++)
             {
@@ -201,22 +190,6 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             var normalized = title.Replace("’", " ").Replace("'", " ");
             normalized = MultiWhitespaceRegex.Replace(normalized, " ").Trim();
             return normalized;
-        }
-
-        private IEnumerable<IndexerRequest> GetJsonApiRequests(AuthorSearchCriteria searchCriteria)
-        {
-            var authorQuery = GetSafeAuthorQuery(searchCriteria);
-
-            // Decode URL-encoded search query for JSON API (MAM expects raw text, not URL-encoded)
-            var decodedQuery = string.IsNullOrWhiteSpace(authorQuery) ?
-                string.Empty :
-                System.Web.HttpUtility.UrlDecode(authorQuery);
-
-            Logger.Trace("MAM_SEARCH_TERM: '{0}' (decoded from: '{1}')", decodedQuery ?? "Empty", authorQuery ?? "Empty");
-            foreach (var request in GetJsonApiRequests(decodedQuery, searchCriteria))
-            {
-                yield return request;
-            }
         }
 
         private static string GetSafeBookQuery(BookSearchCriteria searchCriteria)
@@ -264,6 +237,11 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             request.StoreRequestCookie = true;
             request.StoreResponseCookie = true;
 
+            // The request URL and payload are already traced above; this completes the pair so the structured
+            // response fields (author_info, narrator_info, series_info, mediaInfo) can be read verbatim at Trace.
+            // HttpClient only emits the body when this flag is set, and only at Trace level.
+            request.LogResponseContent = true;
+
             Logger.Trace("MAM_API_COOKIES: mam_id present={0}, mam_ssl={1}, persistence=on", !string.IsNullOrWhiteSpace(Settings.MamId), Settings.MamSsl);
 
             return request;
@@ -277,7 +255,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             {
                 ["text"] = searchText ?? "",
                 ["srchIn"] = new[] { "title", "author", "narrator", "series", "tags" },
-                ["searchType"] = Settings.MinimumSeeders > 0 ? "active" : "all",
+                ["searchType"] = "all",
                 ["searchIn"] = "torrents",
                 ["cat"] = new[] { "0" },
                 ["main_cat"] = BuildMainCategories(searchCriteria),

@@ -35,7 +35,7 @@ const mapDispatchToProps = {
   dispatchFetchDownloadClients: fetchDownloadClients
 };
 
-class MetadatasConnector extends Component {
+class TagsConnector extends Component {
 
   //
   // Lifecycle
@@ -74,7 +74,7 @@ class MetadatasConnector extends Component {
   }
 }
 
-MetadatasConnector.propTypes = {
+TagsConnector.propTypes = {
   dispatchFetchTags: PropTypes.func.isRequired,
   dispatchFetchTagDetails: PropTypes.func.isRequired,
   dispatchFetchDelayProfiles: PropTypes.func.isRequired,
@@ -85,4 +85,4 @@ MetadatasConnector.propTypes = {
   dispatchFetchDownloadClients: PropTypes.func.isRequired
 };
 
-export default connect(createMapStateToProps, mapDispatchToProps)(MetadatasConnector);
+export default connect(createMapStateToProps, mapDispatchToProps)(TagsConnector);

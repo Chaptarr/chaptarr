@@ -46,7 +46,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
-                if (targetMethod?.Name == nameof(IIngestQueueRepository.PurgeUnderPath))
+                if (targetMethod?.Name == nameof(IIngestQueueRepository.PurgePaths))
                 {
                     return 0;
                 }
@@ -112,7 +112,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 };
 
                 var ingestQueue = DispatchProxy.Create<IIngestQueueRepository, IngestQueueRepositoryProxy>();
-                var sut = new MediaFileService(repo, new StubEventAggregator(), ingestQueue, LogManager.GetLogger("test"));
+                var sut = new MediaFileService(repo, new StubEventAggregator(), ingestQueue, null, LogManager.GetLogger("test"));
 
                 var result = sut.FilterUnchangedFiles(new List<IFileInfo> { mappedDisk, unmappedDisk }, FilterFilesType.Matched);
                 var resultPaths = result.Select(f => f.FullName).ToList();

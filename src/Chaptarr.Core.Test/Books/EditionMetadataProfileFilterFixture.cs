@@ -15,42 +15,34 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void should_treat_isbn10_as_valid_when_skip_missing_isbn_is_enabled()
+        public void should_apply_identifier_requirements_independently_to_each_edition()
         {
-            var profile = new MetadataProfile { SkipMissingIsbn = true };
-            var edition = new Edition { Isbn10 = "0441172717" };
+            var unidentified = new Edition { Isbn10 = " ", Isbn13 = "\t", Asin = " " };
+            var unrestricted = new MetadataProfile();
+            var identifierRequired = new MetadataProfile { SkipMissingIsbn = true };
+            var asinRequired = new MetadataProfile { SkipMissingAsin = true };
+            var bothRequired = new MetadataProfile { SkipMissingIsbn = true, SkipMissingAsin = true };
 
-            var allowed = EditionMetadataProfileFilter.MeetsIdentifierRequirements(edition, profile);
+            Assert.Multiple(() =>
+            {
+                Assert.That(EditionMetadataProfileFilter.MeetsIdentifierRequirements(unidentified, unrestricted), Is.True);
 
-            Assert.That(allowed, Is.True);
-        }
+                Assert.That(EditionMetadataProfileFilter.MeetsIdentifierRequirements(new Edition { Isbn13 = "9780441172719" }, identifierRequired), Is.True);
+                Assert.That(EditionMetadataProfileFilter.MeetsIdentifierRequirements(new Edition { Isbn10 = "0441172717" }, identifierRequired), Is.True);
+                Assert.That(EditionMetadataProfileFilter.MeetsIdentifierRequirements(new Edition { Asin = "B000TEST" }, identifierRequired), Is.True);
+                Assert.That(EditionMetadataProfileFilter.MeetsIdentifierRequirements(new Edition { Isbn13 = " ", Asin = "B000TEST" }, identifierRequired), Is.True);
+                Assert.That(EditionMetadataProfileFilter.MeetsIdentifierRequirements(unidentified, identifierRequired), Is.False);
 
-        [Test]
-        public void should_require_asin_when_skip_missing_asin_is_enabled()
-        {
-            var profile = new MetadataProfile { SkipMissingAsin = true };
+                Assert.That(EditionMetadataProfileFilter.MeetsIdentifierRequirements(new Edition { Asin = "B000TEST" }, asinRequired), Is.True);
+                Assert.That(EditionMetadataProfileFilter.MeetsIdentifierRequirements(new Edition { Isbn10 = "0441172717" }, asinRequired), Is.False);
+                Assert.That(EditionMetadataProfileFilter.MeetsIdentifierRequirements(new Edition { Isbn13 = "9780441172719", Asin = " " }, asinRequired), Is.False);
 
-            Assert.That(
-                EditionMetadataProfileFilter.MeetsIdentifierRequirements(new Edition { Isbn13 = "9780441172719" }, profile),
-                Is.False);
-
-            Assert.That(
-                EditionMetadataProfileFilter.MeetsIdentifierRequirements(new Edition { Asin = "B000TEST" }, profile),
-                Is.True);
-        }
-
-        [Test]
-        public void should_require_both_isbn_and_asin_when_both_identifier_filters_are_enabled()
-        {
-            var profile = new MetadataProfile { SkipMissingIsbn = true, SkipMissingAsin = true };
-
-            Assert.That(
-                EditionMetadataProfileFilter.MeetsIdentifierRequirements(new Edition { Asin = "B000TEST" }, profile),
-                Is.False);
-
-            Assert.That(
-                EditionMetadataProfileFilter.MeetsIdentifierRequirements(new Edition { Isbn13 = "9780441172719", Asin = "B000TEST" }, profile),
-                Is.True);
+                Assert.That(EditionMetadataProfileFilter.MeetsIdentifierRequirements(new Edition { Isbn13 = "9780441172719", Asin = "B000TEST" }, bothRequired), Is.True);
+                Assert.That(EditionMetadataProfileFilter.MeetsIdentifierRequirements(new Edition { Isbn10 = "0441172717", Asin = "B000TEST" }, bothRequired), Is.True);
+                Assert.That(EditionMetadataProfileFilter.MeetsIdentifierRequirements(new Edition { Isbn13 = "9780441172719" }, bothRequired), Is.False);
+                Assert.That(EditionMetadataProfileFilter.MeetsIdentifierRequirements(new Edition { Asin = "B000TEST" }, bothRequired), Is.True);
+                Assert.That(EditionMetadataProfileFilter.MeetsIdentifierRequirements(unidentified, bothRequired), Is.False);
+            });
         }
 
         [Test]

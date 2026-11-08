@@ -8,6 +8,7 @@ namespace Chaptarr.Api.V1.Books
     {
         public string ForeignBookId { get; set; }
         public string ForeignAuthorId { get; set; }
+        public string AuthorName { get; set; }
         public string ForeignEditionId { get; set; }
         public string MediaType { get; set; }
         public string RootFolder { get; set; }

@@ -92,7 +92,7 @@ namespace Chaptarr.Core.Test.Http
             var context = CreateContextFromRawTarget(rawTarget);
             await app.Build()(context);
 
-            var sanitizedTarget = rawTarget.Replace("secret", "<REDACTED>", StringComparison.Ordinal);
+            var sanitizedTarget = rawTarget.Replace("secret", "(removed)", StringComparison.Ordinal);
             var combinedLogs = string.Join("\n", memoryTarget.Logs);
 
             Assert.That(normalizedPath, Is.EqualTo("/api/v1/health"));

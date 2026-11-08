@@ -4,14 +4,16 @@ import createAllAuthorsSelector from './createAllAuthorsSelector';
 
 function createExistingAuthorSelector() {
   return createSelector(
+    (state, { authorId, id }) => authorId || id,
     (state, { foreignAuthorId }) => foreignAuthorId,
     createAllAuthorsSelector(),
-    (foreignAuthorId, authors) => {
-      if (!foreignAuthorId) {
-        return null;
+    (authorId, foreignAuthorId, authors) => {
+      const existing = authorId > 0 ? _.find(authors, (author) => author.id === authorId) : null;
+      if (existing) {
+        return existing;
       }
 
-      return _.find(authors, (a) => a.foreignAuthorId === foreignAuthorId) || null;
+      return foreignAuthorId ? _.find(authors, (author) => author.foreignAuthorId === foreignAuthorId) || null : null;
     }
   );
 }

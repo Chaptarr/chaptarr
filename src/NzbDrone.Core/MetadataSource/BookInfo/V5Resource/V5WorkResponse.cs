@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using NzbDrone.Core.Books;
 
 namespace NzbDrone.Core.MetadataSource.BookInfo.V5Resource
 {
@@ -60,11 +61,43 @@ namespace NzbDrone.Core.MetadataSource.BookInfo.V5Resource
 
     internal static class ProviderIdMapCoercion
     {
+        public static HashSet<string> ToAliasSet(Dictionary<string, List<string>> providerIds)
+        {
+            var evidence = Book.CloneProviderIds(providerIds?.Values
+                .SelectMany(values => values ?? Enumerable.Empty<string>())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase));
+            if (evidence == null || evidence.Count == 0)
+            {
+                return evidence;
+            }
+
+            var aliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var providerIdsForKey in providerIds)
+            {
+                var provider = ProviderAliasService.NormalizeProviderKey(providerIdsForKey.Key);
+                if (provider == null)
+                {
+                    continue;
+                }
+
+                var candidates = (providerIdsForKey.Value ?? Enumerable.Empty<string>())
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Select(value => value.Contains(':') ? value : $"{provider}:{value.Trim()}");
+                // The map key attests the namespace; a value cannot introduce a different provider identity.
+                foreach (var alias in ProviderAliasService.NormalizeAliases(candidates).Where(alias => alias.Provider == provider))
+                {
+                    aliases.Add($"{alias.Provider}:{alias.NormalizedProviderId}");
+                }
+            }
+
+            return aliases.Count > 0 ? aliases : null;
+        }
+
         public static Dictionary<string, List<string>> ToListMap(
             Dictionary<string, List<string>> providerIdsAll,
             Dictionary<string, object> legacyProviderIds)
         {
-            if (HasAnyValue(providerIdsAll))
+            if (providerIdsAll != null)
             {
                 return providerIdsAll;
             }

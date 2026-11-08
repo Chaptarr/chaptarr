@@ -96,7 +96,7 @@ namespace NzbDrone.Core.Datastore
             }
             catch (Exception e)
             {
-                _logger.Error(e, "An Error occurred while vacuuming database.");
+                _logger.Error(e, "An error occurred while maintaining the database.");
             }
         }
     }

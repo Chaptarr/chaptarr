@@ -64,6 +64,8 @@ namespace NzbDrone.Core.Organizer.NamingPattern
             // GraphicAudio tokens
             { "GraphicAudio", "{GraphicAudio}" },
             { "AudioProductionType", "{AudioProductionType}" },
+            { "FullCast", "{FullCast}" },
+            { "SmartNarrator", "{Smart Narrator}" },
 
             // Other tokens
             { "ReleaseGroup", "{Release Group}" },
@@ -76,6 +78,7 @@ namespace NzbDrone.Core.Organizer.NamingPattern
             { "NarratorNameMultiple", "{Narrator}" },
             { "NarratorCleanName", "{Narrator CleanName}" },
             { "NarratorFirst", "{Narrator First}" },
+            { "FirstNarrator", "{First Narrator}" },
             { "NarratorLast", "{Narrator Last}" },
             { "NarratorInitials", "{Narrator Initials}" },
             { "Narrators", "{Narrators}" }
@@ -123,6 +126,11 @@ namespace NzbDrone.Core.Organizer.NamingPattern
 
         private string CompileToken(TokenNode token)
         {
+            if (token.TokenKey == "SmartNarrator" && token.Args.TryGetValue("order", out var order))
+            {
+                return "{Smart Narrator:" + string.Join(",", SmartNarratorToken.ParseOrder(order?.ToString())) + "}";
+            }
+
             if (!_tokenKeyToPattern.TryGetValue(token.TokenKey, out var pattern))
             {
                 return $"{{{token.TokenKey}}}"; // Fallback
@@ -243,6 +251,18 @@ namespace NzbDrone.Core.Organizer.NamingPattern
         private (PatternNode node, List<PatternNode> childNodes) ParseTokenWithChildren(string token)
         {
             var childNodes = new List<PatternNode>();
+
+            var smartMatch = SmartNarratorToken.Pattern.Match(token);
+            if (smartMatch.Success && smartMatch.Length == token.Length &&
+                smartMatch.Groups["prefix"].Length == 0 && smartMatch.Groups["suffix"].Length == 0 &&
+                smartMatch.Groups["token"].Value == "Smart Narrator" && smartMatch.Groups["customFormat"].Success)
+            {
+                return (new TokenNode
+                {
+                    TokenKey = "SmartNarrator",
+                    Args = new Dictionary<string, object> { { "order", string.Join(",", SmartNarratorToken.ParseOrder(smartMatch.Groups["customFormat"].Value)) } }
+                }, childNodes);
+            }
 
             // Check if it's a known token pattern
             if (_patternToTokenKey.TryGetValue(token, out var tokenKey))

@@ -9,7 +9,8 @@ namespace NzbDrone.Core.MediaCover
         bool MarkBookForCoverDownload(int bookId);
         bool MarkBooksForCoverDownload(IEnumerable<int> bookIds);
         void RemovePendingBook(int bookId);
-        void RemovePendingBooks(IEnumerable<int> bookIds);
+        void RequeueBooksForCoverDownload(IEnumerable<int> bookIds);
+        List<int> TakePendingBookIds();
         IEnumerable<int> GetPendingBookIds();
         bool IsCoverDownloadDeferred { get; set; }
     }
@@ -105,29 +106,21 @@ namespace NzbDrone.Core.MediaCover
             }
         }
 
-        public void RemovePendingBooks(IEnumerable<int> bookIds)
+        public void RequeueBooksForCoverDownload(IEnumerable<int> bookIds)
         {
-            if (bookIds == null)
-            {
-                return;
-            }
-
-            var removed = 0;
-
             lock (_stateLock)
             {
-                foreach (var bookId in bookIds)
-                {
-                    if (_pendingBookIds.Remove(bookId))
-                    {
-                        removed++;
-                    }
-                }
+                _pendingBookIds.UnionWith(bookIds);
             }
+        }
 
-            if (removed > 0)
+        public List<int> TakePendingBookIds()
+        {
+            lock (_stateLock)
             {
-                _logger.Debug("Removed {0} books from deferred cover queue", removed);
+                var bookIds = _pendingBookIds.ToList();
+                _pendingBookIds.Clear();
+                return bookIds;
             }
         }
 

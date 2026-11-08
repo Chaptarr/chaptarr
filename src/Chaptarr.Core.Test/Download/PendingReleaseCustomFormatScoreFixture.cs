@@ -12,6 +12,7 @@ using NzbDrone.Core.Download.Aggregation;
 using NzbDrone.Core.Download.Pending;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles;
@@ -84,6 +85,7 @@ namespace Chaptarr.Core.Test.Download
             ((ParsingServiceProxy)(object)parsingService).Books = new List<Book> { book };
             var aggregationService = DispatchProxy.Create<IRemoteBookAggregationService, DefaultProxy<IRemoteBookAggregationService>>();
             var calculator = new FixedCustomFormatCalculationService(format);
+            var events = DispatchProxy.Create<IEventAggregator, DefaultProxy<IEventAggregator>>();
             var service = new PendingReleaseService(
                 indexerStatusService: null,
                 repository,
@@ -96,25 +98,42 @@ namespace Chaptarr.Core.Test.Download
                 aggregationService,
                 downloadClientFactory: null,
                 indexerFactory: null,
-                eventAggregator: null,
-                LogManager.GetCurrentClassLogger());
+                eventAggregator: events,
+                LogManager.GetCurrentClassLogger(),
+                bookService: null);
 
             var remoteBook = service.GetPendingRemoteBooks(author.Id).Single();
 
             Assert.That(remoteBook.CustomFormats, Is.EqualTo(new[] { format }));
             Assert.That(remoteBook.CustomFormatScore, Is.EqualTo(50));
             Assert.That(remoteBook.ReleaseSource, Is.EqualTo(ReleaseSourceType.InteractiveSearch));
+            Assert.That(((PendingRepositoryProxy)(object)repository).BatchWrites, Is.EqualTo(1));
+            Assert.That(pending.AdditionalInfo.BookIds, Is.EqualTo(new[] { book.Id }));
+            Assert.That(((DefaultProxy<IEventAggregator>)(object)events).Invocations, Is.EqualTo(1));
         }
 
         private class PendingRepositoryProxy : DispatchProxy
         {
             public List<PendingRelease> Releases { get; set; } = new();
+            public int BatchWrites { get; private set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IPendingReleaseRepository.AllByAuthorId))
                 {
                     return Releases.Where(release => release.AuthorId == (int)args[0]).ToList();
+                }
+
+                if (targetMethod?.Name == nameof(IPendingReleaseRepository.UpdateMany))
+                {
+                    BatchWrites++;
+                    foreach (var release in (IList<PendingRelease>)args[0])
+                    {
+                        var index = Releases.FindIndex(value => value.Id == release.Id);
+                        Assert.That(index, Is.GreaterThanOrEqualTo(0));
+                        Releases[index] = release;
+                    }
+                    return null;
                 }
 
                 throw new NotImplementedException(targetMethod?.Name);
@@ -127,7 +146,7 @@ namespace Chaptarr.Core.Test.Download
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
-                if (targetMethod?.Name == nameof(IAuthorService.GetAuthors))
+                if (targetMethod?.Name is nameof(IAuthorService.GetAuthors) or nameof(IAuthorService.GetExistingAuthors))
                 {
                     var ids = ((IEnumerable<int>)args[0]).ToHashSet();
                     return Authors.Where(author => ids.Contains(author.Id)).ToList();
@@ -145,7 +164,7 @@ namespace Chaptarr.Core.Test.Download
             {
                 if (targetMethod?.Name == nameof(IParsingService.GetBooks))
                 {
-                    return Books;
+                    return ((IReadOnlyList<ParsedBookInfo>)args[0]).Select(_ => Books).ToList();
                 }
 
                 throw new NotImplementedException(targetMethod?.Name);
@@ -155,8 +174,11 @@ namespace Chaptarr.Core.Test.Download
         private class DefaultProxy<T> : DispatchProxy
             where T : class
         {
+            public int Invocations { get; private set; }
+
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                Invocations++;
                 return targetMethod?.ReturnType == typeof(void)
                     ? null
                     : targetMethod?.ReturnType.IsValueType == true

@@ -346,12 +346,287 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
-        [Test]
-        public void should_report_unsupported_files_when_download_folder_has_no_supported_media()
+        private static IEnumerable<TestCaseData> SharedGrabTransferCases()
+        {
+            foreach (var postgres in new[] { false, true })
+            foreach (var media in new[] { BookMediaType.Audiobook, BookMediaType.Ebook })
+            foreach (var alternative in new[] { false, true })
+            foreach (var mode in new[] { ImportMode.Copy, ImportMode.Move })
+            foreach (var extras in new[] { "disabled", "default", "custom", "disabled-custom", "disabled-missing-companion" })
+            {
+                if (extras == "disabled-missing-companion" && mode == ImportMode.Move) continue;
+                yield return new TestCaseData(postgres, media, alternative, mode, extras);
+            }
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void profile_disallowed_ebook_alternative_should_not_block_durable_eligible_import(bool postgres, bool alternative)
+        {
+            captured_grab_should_import_only_its_book_files_and_honor_existing_extra_file_settings(postgres, BookMediaType.Ebook, alternative, ImportMode.Copy, "disabled-quality");
+        }
+
+        [TestCaseSource(nameof(SharedGrabTransferCases))]
+        [TestCase(false, BookMediaType.Audiobook, false, ImportMode.Copy, "disabled-unscoped")]
+        [TestCase(true, BookMediaType.Audiobook, false, ImportMode.Copy, "disabled-unscoped")]
+        public void captured_grab_should_import_only_its_book_files_and_honor_existing_extra_file_settings(
+            bool postgres, BookMediaType media, bool alternative, ImportMode mode, string extras)
+        {
+            Chaptarr.Core.Test.Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                var temp = Path.Combine(Path.GetTempPath(), "chaptarr-grab-extras-" + Guid.NewGuid().ToString("N"));
+                var source = Path.Combine(temp, "download");
+                var destination = Path.Combine(temp, "library");
+                Directory.CreateDirectory(source); Directory.CreateDirectory(destination);
+                try
+                {
+                    var logger = LogManager.GetCurrentClassLogger();
+                    var noop = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IEventAggregator>((method, args) => null);
+                    var author = new AuthorRepository(database, noop, logger).Insert(new Author { Name = "Test Writer", CleanName = "testwriter",
+                        SortName = "testwriter", TitleSlug = "test-writer", Path = destination, Added = DateTime.UtcNow });
+                    var profile = new NzbDrone.Core.Profiles.Qualities.QualityProfile { Id = 1, Name = "Native formats", UpgradeAllowed = true,
+                        ProfileType = media == BookMediaType.Audiobook ? NzbDrone.Core.Profiles.Qualities.ProfileType.Audiobook : NzbDrone.Core.Profiles.Qualities.ProfileType.Ebook,
+                        Items = (media == BookMediaType.Audiobook ? new[] { NzbDrone.Core.Qualities.Quality.M4B } :
+                            new[] { NzbDrone.Core.Qualities.Quality.PDF, NzbDrone.Core.Qualities.Quality.MOBI, NzbDrone.Core.Qualities.Quality.EPUB })
+                            .Select(quality => new NzbDrone.Core.Profiles.Qualities.QualityProfileQualityItem { Allowed = true, Quality = quality }).ToList() };
+                    if (extras == "disabled-quality") profile.Items.Single(item => item.Quality == NzbDrone.Core.Qualities.Quality.MOBI).Allowed = false;
+                    if (media == BookMediaType.Audiobook) { author.AudiobookQualityProfileId = 1; author.AudiobookQualityProfile = profile; }
+                    else { author.EbookQualityProfileId = 1; author.EbookQualityProfile = profile; }
+                    var books = new BookRepository(database, noop);
+                    var editions = new EditionRepository(database, noop);
+                    Book Seed(string slug)
+                    {
+                        var book = books.Insert(new Book { AuthorId = author.Id, Author = author, Title = "Paper Lanterns", CleanTitle = "paperlanterns",
+                            TitleSlug = slug, MediaType = media, Added = DateTime.UtcNow, AnyEditionOk = false });
+                        var edition = editions.Insert(new Edition { BookId = book.Id, Book = book, Title = book.Title,
+                            ForeignEditionId = "local:" + slug, ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, Monitored = true,
+                            Narrator = "First Reader", NarratorNames = new() { "First Reader" } });
+                        book.Editions = new() { edition }; return book;
+                    }
+                    var chosen = Seed("chosen"); var other = Seed("other");
+                    var ownPaths = media == BookMediaType.Audiobook
+                        ? Enumerable.Range(1, 3).Select(index => Path.Combine(source, "Book" + index + ".m4b")).ToList()
+                        : new[] { ".epub", ".mobi", ".pdf" }.Select(extension => Path.Combine(source, "Book" + extension)).ToList();
+                    var companion = Path.Combine(source, media == BookMediaType.Audiobook ? "Book1.epub" : "Book.m4b");
+                    var cover = Path.Combine(source, "cover.jpg");
+                    var matchingJpeg = Path.Combine(source, media == BookMediaType.Audiobook ? "Book1.jpg" : "Book.jpg");
+                    var junk = ownPaths.Select(path => Path.Combine(source, "._" + Path.GetFileName(path))).ToList();
+                    foreach (var path in ownPaths.Concat(junk).Append(companion).Append(cover).Append(matchingJpeg)
+                        .Where(path => extras != "disabled-missing-companion" || path != companion)) File.WriteAllText(path, Path.GetFileName(path));
+                    var fileSystem = new System.IO.Abstractions.FileSystem();
+                    var transfers = new List<(string Path, string Target, bool Copy, bool Extra)>();
+                    var disk = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IDiskProvider>((method, args) => method.Name switch
+                    {
+                        nameof(IDiskProvider.FolderExists) => Directory.Exists((string)args[0]),
+                        nameof(IDiskProvider.FileExists) or nameof(IDiskProvider.FileExistsCanonical) => File.Exists((string)args[0]),
+                        nameof(IDiskProvider.GetFileInfo) => fileSystem.FileInfo.FromFileName((string)args[0]),
+                        nameof(IDiskProvider.GetDirectoryInfo) => fileSystem.DirectoryInfo.FromDirectoryName((string)args[0]),
+                        nameof(IDiskProvider.GetFileSize) => new FileInfo((string)args[0]).Length,
+                        nameof(IDiskProvider.FileGetLastWrite) => File.GetLastWriteTimeUtc((string)args[0]),
+                        nameof(IDiskProvider.GetParentFolder) => Path.GetDirectoryName((string)args[0]),
+                        nameof(IDiskProvider.GetFiles) => Directory.GetFiles((string)args[0], "*", (bool)args[1] ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly),
+                        nameof(IDiskProvider.GetFileInfos) => Directory.GetFiles((string)args[0]).Select(path => (IFileInfo)fileSystem.FileInfo.FromFileName(path)).ToList(),
+                        nameof(IDiskProvider.DeleteFolder) => DeleteFolder((string)args[0]),
+                        _ => null
+                    });
+                    object DeleteFolder(string path) { Directory.Delete(path, true); return null; }
+                    var scan = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IDiskScanService>((method, args) =>
+                        Directory.GetFiles((string)args[0], "*", SearchOption.AllDirectories).Where(path => MediaFileExtensions.AllExtensions.Contains(Path.GetExtension(path)))
+                            .Select(path => (IFileInfo)fileSystem.FileInfo.FromFileName(path)).ToArray());
+                    var extraExtensions = extras.Contains("custom") ? (media == BookMediaType.Audiobook ? "epub" : "m4b") : "jpg,png,cue,m3u,opf";
+                    var config = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IConfigService>((method, args) => method.Name switch
+                    {
+                        "get_ImportExtraFiles" => !extras.StartsWith("disabled", StringComparison.Ordinal),
+                        "get_ExtraFileExtensions" => extraExtensions,
+                        "get_CopyUsingHardlinks" => false,
+                        "get_DownloadPropersAndRepacks" => NzbDrone.Core.Qualities.ProperDownloadTypes.PreferAndUpgrade,
+                        "get_BookMatchingStrictness" => BookMatchingStrictness.Balanced,
+                        _ => method.ReturnType.IsValueType ? Activator.CreateInstance(method.ReturnType) : null
+                    });
+                    var bookService = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookService>((method, args) => method.Name switch
+                    {
+                        nameof(IBookService.GetBook) => (int)args[0] == chosen.Id ? chosen : other,
+                        nameof(IBookService.GetExistingBooks) => new List<Book> { chosen, other }.Where(book => ((IEnumerable<int>)args[0]).Contains(book.Id)).ToList(),
+                        _ => null
+                    });
+                    var authorService = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IAuthorService>((method, args) => author);
+                    var editionService = new EditionService(editions, noop, logger);
+                    var files = new MediaFileRepository(database, noop);
+                    var mediaFiles = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IMediaFileService>((method, args) =>
+                    {
+                        if (method.Name == nameof(IMediaFileService.ReplaceMany)) { files.ReplaceMany((List<BookFile>)args[0], (List<BookFile>)args[1]); return null; }
+                        if (method.Name == nameof(IMediaFileService.GetFilesByBook)) return files.GetFilesByBook((int)args[0]);
+                        if (method.Name == nameof(IMediaFileService.GetFilesByEdition)) return files.GetFilesByEdition((int)args[0]);
+                        if (method.Name == nameof(IMediaFileService.GetFileWithPath)) return files.GetFileWithPath((string)args[0]);
+                        throw new InvalidOperationException("Unexpected media operation " + method.Name);
+                    });
+                    var history = new NzbDrone.Core.History.HistoryService(new NzbDrone.Core.History.HistoryRepository(database, noop), logger);
+                    var downloadHistory = new NzbDrone.Core.Download.History.DownloadHistoryService(
+                        new NzbDrone.Core.Download.History.DownloadHistoryRepository(database, noop), history);
+                    var events = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IEventAggregator>((method, args) =>
+                    {
+                        if (args[0] is NzbDrone.Core.MediaFiles.Events.TrackImportedEvent imported) history.Handle(imported);
+                        if (args[0] is NzbDrone.Core.Download.DownloadCompletedEvent completed) downloadHistory.Handle(completed);
+                        return null;
+                    });
+                    var extraRows = new NzbDrone.Core.Extras.Others.OtherExtraFileRepository(database, noop);
+                    var extraWriter = new NzbDrone.Core.Extras.Others.OtherExtraFileService(extraRows, authorService, disk, null, logger);
+                    var transfer = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IDiskTransferService>((method, args) =>
+                    {
+                        var copy = (TransferMode)args[2] != TransferMode.Move;
+                        transfers.Add(((string)args[0], (string)args[1], copy, true));
+                        if (copy) File.Copy((string)args[0], (string)args[1], true); else File.Move((string)args[0], (string)args[1], true);
+                        return args[2];
+                    });
+                    var extraService = new NzbDrone.Core.Extras.ExtraService(mediaFiles, editionService, disk, config,
+                        new[] { new NzbDrone.Core.Extras.Others.OtherExtraService(config, disk, transfer, extraWriter,
+                            Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IMediaFileAttributeService>((method, args) => null), null, logger) }, logger);
+                    var mover = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IMoveBookFiles>((method, args) =>
+                    {
+                        var file = (BookFile)args[0]; var local = (LocalBook)args[1];
+                        var target = Path.Combine(destination, Path.GetFileName(local.Path));
+                        if (method.Name == nameof(IMoveBookFiles.GetImportDestinationPath)) return target;
+                        Assert.That(method.Name, Is.AnyOf(nameof(IMoveBookFiles.CopyBookFile), nameof(IMoveBookFiles.MoveBookFile)));
+                        var copy = method.Name == nameof(IMoveBookFiles.CopyBookFile);
+                        file.Path = target;
+                        transfers.Add((local.Path, file.Path, copy, false));
+                        if (copy) File.Copy(local.Path, file.Path); else File.Move(local.Path, file.Path);
+                        return file;
+                    });
+                    var dependencies = new Dictionary<Type, object> { [typeof(IMediaFileService)] = mediaFiles, [typeof(IMetadataTagService)] = new StubMetadataTagService(),
+                        [typeof(IMediaInfoExtractor)] = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IMediaInfoExtractor>((method, args) =>
+                            method.Name == nameof(IMediaInfoExtractor.GetDuration) ? TimeSpan.Zero : null),
+                        [typeof(IBookService)] = bookService, [typeof(IAuthorService)] = authorService, [typeof(IEditionService)] = editionService,
+                        [typeof(NzbDrone.Core.Extras.IExtraService)] = extraService, [typeof(IMoveBookFiles)] = mover,
+                        [typeof(NzbDrone.Core.History.IHistoryService)] = history, [typeof(IEventAggregator)] = events, [typeof(Logger)] = logger,
+                        [typeof(IDiskProvider)] = disk, [typeof(IConfigService)] = config };
+                    var constructor = typeof(ImportApprovedBooks).GetConstructors().Single();
+                    var writer = (ImportApprovedBooks)constructor.Invoke(constructor.GetParameters().Select(parameter => dependencies.GetValueOrDefault(parameter.ParameterType)).ToArray());
+                    var submitted = new List<string>();
+                    var matching = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IFileMatchingService>((method, args) =>
+                    {
+                        var input = (DiscoveredFileWithMetadata[])args[0]; submitted.AddRange(input.Select(file => file.Path));
+                        return Task.FromResult(new FileMatchResult
+                        {
+                            MatchedFiles = input.Where(file => ownPaths.Contains(file.Path)).Select(file => new FileMatch { File = file, BookId = chosen.Id,
+                                EditionId = chosen.Editions[0].Id, AuthorId = author.Id, AuthorName = author.Name, BookTitle = chosen.Title }).ToArray(),
+                            UnmatchedFiles = input.Where(file => !ownPaths.Contains(file.Path)).Select(file => new UnmatchedFile { File = file, Reason = "Companion" }).ToArray()
+                        });
+                    });
+                    var captured = new Dictionary<int, int> { [chosen.Id] = chosen.Editions[0].Id, [other.Id] = other.Editions[0].Id };
+                    var grabbed = DateTime.UtcNow.AddMinutes(-1);
+                    var client = new DownloadClientItem { DownloadId = "grab", Title = "Captured grab", CanMoveFiles = mode == ImportMode.Move,
+                        Status = DownloadItemStatus.Completed, DownloadClientInfo = new DownloadClientItemClientInfo { Name = "Native test client", Type = "Test" },
+                        FilePaths = ownPaths.Concat(junk).Append(Path.Combine(source, "._Missing" + Path.GetExtension(ownPaths[0])))
+                            .Append(companion).Append(cover).Append(matchingJpeg).ToList(), FileListConfidence = DownloadClientFileListConfidence.Authoritative };
+                    var remote = new RemoteBook { Author = author, Books = alternative ? new() { chosen, other } : new() { chosen },
+                        AlternativeCopies = alternative, AlternativeCopyGrabDate = grabbed, TargetEditionIds = captured };
+                    if (extras == "disabled-unscoped") client.FilePaths = null;
+                    var importer = new DownloadedBooksImportService(disk, scan, matching, new StubMetadataTagService(), writer, bookService, authorService,
+                        editionService, null, null, null, config, history, events, null, null, logger, queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    var results = importer.ProcessPath(source, mode, author, client, remote);
+                    TestContext.WriteLine(string.Join("; ", results.SelectMany(result => result.Errors)));
+                    var expectedCount = media == BookMediaType.Audiobook ? 3 : 1;
+                    Assert.Multiple(() =>
+                    {
+                        Assert.That(submitted, Is.EquivalentTo(ownPaths));
+                        Assert.That(results, Has.Count.EqualTo(ownPaths.Count));
+                        Assert.That(results.Count(result => result.Result == ImportResultType.Imported), Is.EqualTo(expectedCount),
+                            string.Join("; ", results.SelectMany(result => result.Errors)));
+                        Assert.That(files.All(), Has.Count.EqualTo(expectedCount));
+                        Assert.That(files.All().All(file => file.EditionId == chosen.Editions[0].Id), Is.True);
+                        Assert.That(files.GetFilesByBook(other.Id), Is.Empty);
+                        Assert.That(transfers.Count(item => !item.Extra), Is.EqualTo(expectedCount));
+                        Assert.That(transfers.Where(item => !item.Extra).All(item => item.Copy == (mode == ImportMode.Copy)), Is.True);
+                        Assert.That(transfers.Any(item => item.Path == cover), Is.False);
+                    });
+                    var savedHistory = history.FindByDownloadId(client.DownloadId);
+                    Assert.That(savedHistory, Has.Count.EqualTo(expectedCount));
+                    Assert.That(savedHistory.All(row => row.BookId == chosen.Id && row.EditionId == chosen.Editions[0].Id), Is.True);
+                    Assert.That(transfers.Count(item => item.Path == companion), Is.Zero);
+                    Assert.That(transfers.Count(item => item.Path == matchingJpeg), Is.EqualTo(extras == "default" ? 1 : 0));
+                    Assert.That(extraRows.All(), Has.Count.EqualTo(extras == "default" ? 1 : 0));
+                    Assert.That(File.Exists(companion), Is.EqualTo(extras != "disabled-missing-companion"));
+                    Assert.That(File.Exists(cover), Is.True);
+                    Assert.That(Directory.Exists(source), Is.True);
+                    Assert.That(File.Exists(Path.Combine(destination, Path.GetFileName(companion))), Is.False);
+                    var tracked = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownload { DownloadItem = client, RemoteBook = remote };
+                    if (extras == "disabled-quality")
+                    {
+                        var immediate = NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported.Evaluate(tracked, results).Complete;
+                        var strictReplay = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(logger).IsImported(tracked, savedHistory);
+                        var snapshotService = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Download.IDownloadClientFileSnapshotService>((method, args) => null);
+                        var completion = new NzbDrone.Core.Download.CompletedDownloadService(events, history, null, null, null,
+                            new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(logger), logger, snapshotService);
+                        var verified = completion.VerifyImport(tracked, results);
+                        var latest = downloadHistory.GetLatestDownloadHistoryItem(client.DownloadId);
+                        var tracker = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadService(
+                            Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Parser.IParsingService>((method, args) => remote),
+                            new NzbDrone.Common.Cache.CacheManager(), history, noop, downloadHistory,
+                            Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.CustomFormats.ICustomFormatCalculationService>((method, args) =>
+                                new List<NzbDrone.Core.CustomFormats.CustomFormat>()), logger, snapshotService);
+                        var restoredDownload = tracker.TrackDownload(new NzbDrone.Core.Download.DownloadClientDefinition { Id = 1 }, client);
+                        TestContext.Progress.WriteLine($"QUALITY_COMPLETION database={database.DatabaseType} alternative={alternative} imported={results.Count(result => result.Result == ImportResultType.Imported)} rejects={string.Join(';', results.Where(result => result.Result != ImportResultType.Imported).Select(result => System.IO.Path.GetExtension(result.ImportDecision.Item.Path) + ':' + string.Join(',', result.ImportDecision.Rejections.Select(rejection => rejection.Category))))} mobiCopied={transfers.Any(transfer => transfer.Path.EndsWith(".mobi", StringComparison.OrdinalIgnoreCase))} historyRows={savedHistory.Count} importedBookIds={string.Join(',', results.Where(result => result.Result == ImportResultType.Imported).Select(result => result.ImportDecision.Item.Book.Id).Distinct())} immediate={immediate} verified={verified} strictReplay={strictReplay} aggregate={latest?.EventType.ToString() ?? "none"} restored={restoredDownload?.State}");
+                        Assert.That(results.Count(result => result.ImportDecision.Rejections.Any(rejection => rejection.IsQualityFilter)), Is.EqualTo(1));
+                        Assert.That(transfers.Any(transfer => transfer.Path.EndsWith(".mobi", StringComparison.OrdinalIgnoreCase)), Is.False);
+                        Assert.That(immediate, Is.True);
+                        Assert.That(verified, Is.True);
+                        Assert.That(strictReplay, Is.True);
+                        Assert.That(latest.EventType, Is.EqualTo(NzbDrone.Core.Download.History.DownloadHistoryEventType.DownloadImported));
+                        Assert.That(restoredDownload.State, Is.EqualTo(NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadState.Imported));
+                        return;
+                    }
+                    Assert.That(NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported.Evaluate(tracked, results).Complete, Is.True);
+                    if (extras == "disabled-unscoped")
+                    {
+                        Assert.That(new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(logger).IsImported(tracked, savedHistory),
+                            Is.False, "Without a saved source inventory, history alone cannot prove that every source was imported");
+                        return;
+                    }
+                    Assert.That(new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(logger).IsImported(tracked, savedHistory),
+                        Is.True);
+                    var snapshots = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Download.IDownloadClientFileSnapshotService>((method, args) => null);
+                    var completedService = new NzbDrone.Core.Download.CompletedDownloadService(events, history, null, null, null,
+                        new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(logger), logger, snapshots);
+                    Assert.That(completedService.VerifyImport(tracked, results), Is.True);
+                    Assert.That(downloadHistory.GetLatestDownloadHistoryItem(client.DownloadId).EventType,
+                        Is.EqualTo(NzbDrone.Core.Download.History.DownloadHistoryEventType.DownloadImported));
+                    var freshTracker = new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadService(
+                        Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Parser.IParsingService>((method, args) => remote),
+                        new NzbDrone.Common.Cache.CacheManager(), history, noop, downloadHistory,
+                        Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.CustomFormats.ICustomFormatCalculationService>((method, args) =>
+                            new List<NzbDrone.Core.CustomFormats.CustomFormat>()), logger, snapshots);
+                    var restored = freshTracker.TrackDownload(new NzbDrone.Core.Download.DownloadClientDefinition { Id = 1 }, client);
+                    Assert.That(restored.State, Is.EqualTo(NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadState.Imported));
+                    TestContext.Progress.WriteLine($"GRAB_EXTRAS db={database.DatabaseType} media={media} alternative={alternative} mode={mode} extras={extras} nativeFiles={files.All().Count()} history={savedHistory.Count} extraRows={extraRows.All().Count()} companionTransfers={transfers.Count(item => item.Path == companion)}");
+                }
+                finally { if (Directory.Exists(temp)) Directory.Delete(temp, true); }
+            });
+        }
+
+        [TestCase(".mkv", false, false)]
+        // Confirmed wrong output stops for manual import; incomplete folders keep waiting.
+        [TestCase(".mkv", true, true)]
+        [TestCase(".nfo", true, true)]
+        [TestCase(".nfo", false, false)]
+        [TestCase(".epub", false, true)]
+        [TestCase(".epub", true, true)]
+        [TestCase(".m4b.partial~", true, false)]
+        [TestCase(".exe", false, true)]
+        [TestCase(".EXE", true, true)]
+        [TestCase(".ps1", false, true)]
+        [TestCase(".ps1", true, true)]
+        [TestCase(".zip", false, true)]
+        [TestCase(".zip", true, true)]
+        [TestCase(".rar", false, true)]
+        [TestCase(".rar", true, true)]
+        public void should_classify_downloads_without_target_media(string extension, bool singleFile, bool requiresAction)
         {
             var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempDir);
-            var filePath = Path.Combine(tempDir, "The Five People You Meet in Heaven (2004).mkv");
+            var filePath = Path.Combine(tempDir, "The Five People You Meet in Heaven (2004)" + extension);
             File.WriteAllBytes(filePath, new byte[] { 1, 2, 3, 4 });
 
             try
@@ -373,14 +648,22 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                     DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
-                var results = service.ProcessPath(tempDir, ImportMode.Auto, author: null, downloadClientItem: null);
+                var results = service.ProcessPath(singleFile ? filePath : tempDir, ImportMode.Auto,
+                    remoteBook: new RemoteBook { Books = new List<Book> { new Book { MediaType = BookMediaType.Audiobook } } });
 
                 Assert.That(results, Has.Count.EqualTo(1));
-                Assert.That(results[0].ImportDecision.Rejections.Single().Type, Is.EqualTo(RejectionType.Permanent));
-                Assert.That(results[0].Errors.Single(), Does.Contain("The Five People You Meet in Heaven (2004).mkv"));
-                Assert.That(results[0].Errors.Single(), Does.Contain("Unsupported extension(s): .mkv"));
+                Assert.That(results[0].ImportDecision.Rejections.Single().Type, Is.EqualTo(requiresAction ? RejectionType.Permanent : RejectionType.Temporary));
+                Assert.That(File.Exists(filePath), Is.True, "A refusal must leave the download for the user.");
+                if (requiresAction || extension == ".mkv")
+                {
+                    Assert.That(results[0].Errors.Single(), Does.Contain(Path.GetFileName(filePath)));
+                }
+                else
+                {
+                    Assert.That(results[0].Errors.Single(), Does.Contain("No supported audiobook files"));
+                }
             }
             finally
             {
@@ -389,7 +672,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
-        public void should_only_retry_missing_supported_media_from_an_authoritative_file_list()
+        public void should_keep_waiting_when_supported_media_is_not_available()
         {
             var tempDir = Path.Combine(Path.GetTempPath(), "chaptarr-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempDir);
@@ -423,14 +706,14 @@ namespace Chaptarr.Core.Test.MediaFiles
                     new StubRootFolderService(),
                     ConfigServiceTestProxy.Create(),
                     DispatchProxy.Create<IHistoryService, ThrowingProxy<IHistoryService>>(),
-                    DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
-                    DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
+                    Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IEventAggregator>((method, args) => null),
+                    Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>((method, args) => false),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
-                RejectionType Classify(DownloadClientItem downloadClientItem)
+                RejectionType Classify(DownloadClientItem downloadClientItem, string path = null)
                 {
-                    return service.ProcessPath(tempDir, ImportMode.Auto, author: null, downloadClientItem: downloadClientItem)
+                    return service.ProcessPath(path ?? tempDir, ImportMode.Auto, author: null, downloadClientItem: downloadClientItem)
                         .Single()
                         .ImportDecision
                         .Rejections
@@ -450,7 +733,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 };
                 var authoritativeNonMediaList = new DownloadClientItem
                 {
-                    FilePaths = new List<string> { existingArchive, missingNfo },
+                    FilePaths = new List<string> { existingArchive, missingNfo, Path.Combine(tempDir, "._Missing.m4b") },
                     FileListConfidence = DownloadClientFileListConfidence.Authoritative
                 };
                 var partiallyVisibleAuthoritativeMediaList = new DownloadClientItem
@@ -459,8 +742,14 @@ namespace Chaptarr.Core.Test.MediaFiles
                     FileListConfidence = DownloadClientFileListConfidence.Authoritative
                 };
 
+                for (var pass = 0; pass < 5; pass++)
+                {
+                    Assert.That(Classify(new DownloadClientItem(), Path.Combine(tempDir, "Still arriving")),
+                        Is.EqualTo(RejectionType.Temporary), $"Missing path must still wait on pass {pass + 1}");
+                }
+
                 Assert.That(Classify(authoritativeMediaList), Is.EqualTo(RejectionType.Temporary));
-                Assert.That(Classify(degradedMediaList), Is.EqualTo(RejectionType.Permanent));
+                Assert.That(Classify(degradedMediaList), Is.EqualTo(RejectionType.Temporary));
                 Assert.That(Classify(authoritativeNonMediaList), Is.EqualTo(RejectionType.Permanent));
                 Assert.That(Classify(partiallyVisibleAuthoritativeMediaList), Is.EqualTo(RejectionType.Temporary));
 
@@ -522,7 +811,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                     DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 var result = service.ProcessPath(tempDir, ImportMode.Auto, author: null, downloadClientItem: null).Single();
 
@@ -658,7 +947,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 _ = service.ProcessPath(filePath, ImportMode.Auto, author: null, downloadClientItem: null);
 
@@ -769,7 +1058,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                     DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 _ = service.ProcessPath(tempDir, ImportMode.Auto, author: null, downloadClientItem: null);
 
@@ -859,7 +1148,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                     DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 _ = service.ProcessPath(filePath, ImportMode.Auto, author: null, downloadClientItem: null, requireDefaultRootFolderForMissingAuthors: true);
 
@@ -949,7 +1238,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                     DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 _ = service.ProcessPath(filePath, ImportMode.Auto, author: null, downloadClientItem: new DownloadClientItem { DownloadId = "external-grab" });
 
@@ -1075,7 +1364,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                     DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 _ = service.ProcessPath(filePath, ImportMode.Auto, author: null, downloadClientItem: new DownloadClientItem { DownloadId = "external-grab" });
 
@@ -1176,7 +1465,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                     DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 _ = service.ProcessPath(filePath, ImportMode.Auto, author: null, downloadClientItem: new DownloadClientItem { DownloadId = "external-grab" });
 
@@ -1308,7 +1597,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                     DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 _ = service.ProcessPath(filePath, ImportMode.Auto, author: null, downloadClientItem: new DownloadClientItem { DownloadId = "external-grab" });
 
@@ -1397,7 +1686,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 _ = service.ProcessPath(filePath, ImportMode.Auto, author: null, downloadClientItem: null);
 
@@ -1495,7 +1784,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 _ = service.ProcessPath(
                     tempDir,
@@ -1606,7 +1895,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 var remoteBook = new RemoteBook
                 {
@@ -1703,7 +1992,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 var remoteBook = new RemoteBook
                 {
@@ -1839,7 +2128,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 var remoteBook = new RemoteBook
                 {
@@ -1950,7 +2239,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 var remoteBook = new RemoteBook
                 {
@@ -2055,7 +2344,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 var remoteBook = new RemoteBook
                 {
@@ -2166,7 +2455,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 var remoteBook = new RemoteBook
                 {
@@ -2276,7 +2565,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 var remoteBook = new RemoteBook
                 {
@@ -2386,7 +2675,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 var remoteBook = new RemoteBook
                 {
@@ -2493,7 +2782,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 var remoteBook = new RemoteBook
                 {
@@ -2604,7 +2893,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 var remoteBook = new RemoteBook
                 {
@@ -2715,7 +3004,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
 
                 var remoteBook = new RemoteBook
                 {

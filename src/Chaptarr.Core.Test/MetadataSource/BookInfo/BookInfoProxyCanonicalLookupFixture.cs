@@ -74,7 +74,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             return new MetadataServerHealthGate(configService, new MetadataServerHealthService(logger), logger);
         }
 
-        private static BookInfoProxy CreateProxy(IHttpClient httpClient)
+        internal static BookInfoProxy CreateProxy(IHttpClient httpClient)
         {
             var configService = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
             var requestBuilder = new MetadataRequestBuilder(configService);
@@ -94,6 +94,156 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 metadataServerHealthGate: CreateHealthGate(configService));
         }
 
+        internal const string SecondaryEditionAliasesPayload = """
+        {
+          "work": {
+            "id": "hc:312460", "title": "Dune", "hardcoverBookId": "hc:312460",
+            "goodreadsWorkId": "gr:3634639",
+            "editions": [
+              { "id": "hc:edition:12250068", "title": "Dune", "format": "physical", "readingFormatId": 1,
+                "provider_ids_all": { "gr": ["gr:1000049", "gr:44767458"],
+                  "hc": ["hc:edition:12250068", "hc:edition:12250069"] } },
+              { "id": "hc:edition:90000000", "title": "Other edition", "format": "audiobook", "readingFormatId": 2,
+                "provider_ids_all": { "gr": ["gr:80000000"], "hc": ["hc:edition:90000000"] } }
+            ]
+          },
+          "editions": [
+            { "id": "hc:edition:12250068", "title": "Dune", "format": "physical", "readingFormatId": 1,
+              "provider_ids_all": { "gr": ["gr:1000049", "gr:44767458"],
+                "hc": ["hc:edition:12250068", "hc:edition:12250069"] } },
+            { "id": "hc:edition:90000000", "title": "Other edition", "format": "audiobook", "readingFormatId": 2,
+              "provider_ids_all": { "gr": ["gr:80000000"], "hc": ["hc:edition:90000000"] } }
+          ],
+          "authors": [{ "id": 20, "name": "Frank Herbert", "providerIds": { "gr": "gr:58" } }],
+          "series": []
+        }
+        """;
+
+        [TestCase(BookMediaType.Ebook, false)]
+        [TestCase(BookMediaType.Ebook, true)]
+        [TestCase(BookMediaType.Audiobook, false)]
+        [TestCase(BookMediaType.Audiobook, true)]
+        public void exact_secondary_alias_keeps_canonical_identity_and_requested_media(BookMediaType mediaType, bool allEditions)
+        {
+            var client = new RecordingHttpClient(req => new HttpResponse(req,
+                new HttpHeader { ContentType = "application/json" }, SecondaryEditionAliasesPayload, HttpStatusCode.OK));
+            var proxy = CreateProxy(client);
+            var direct = proxy.GetEditionInfo("gr:44767458", mediaType).Item2;
+            Assert.That(direct.Editions.Single(e => e.ForeignEditionId.Contains("12250068")).RemoteProviderIds, Does.Contain("gr:44767458"));
+            foreach (var term in new[] { "gr-ed:44767458", "hc-ed:12250069", "hc:edition:12250069" })
+            {
+                var book = proxy.SearchForNewBook(term, null, allEditions, mediaType).Single();
+                var edition = book.Editions.Single(e => BookEditionIdentity.EditionMatchesProviderId(e, term));
+                Assert.Multiple(() =>
+                {
+                    Assert.That(book.MediaType, Is.EqualTo(mediaType));
+                    Assert.That(edition.ForeignEditionId, Is.EqualTo("hc:edition:12250068-" + mediaType.ToString().ToLowerInvariant()));
+                    Assert.That(edition.GoodreadsEditionId, Is.Null);
+                    Assert.That(edition.HardcoverEditionId, Is.EqualTo("12250068"));
+                    Assert.That(edition.ReadingFormatId, Is.EqualTo(1));
+                    Assert.That(BookEditionIdentity.EditionMatchesProviderId(edition, "gr:3634639"), Is.False);
+                    Assert.That(book.Editions, Has.Count.EqualTo(allEditions ? 2 : 1));
+                    Assert.That(edition.RemoteProviderIds, Is.EquivalentTo(new[]
+                        { "gr:1000049", "gr:44767458", "hc:edition:12250068", "hc:edition:12250069" }));
+                });
+            }
+            Assert.That(client.Requests, Has.Count.EqualTo(4));
+        }
+
+        [Test]
+        public void edition_aliases_are_copied_without_changing_pins_or_retaining_withdrawn_ids()
+        {
+            var source = CreateProxy(new RecordingHttpClient(req => new HttpResponse(req,
+                new HttpHeader { ContentType = "application/json" }, SecondaryEditionAliasesPayload, HttpStatusCode.OK)))
+                .SearchForNewBook("gr-ed:44767458", null, false, BookMediaType.Ebook).Single().Editions.Single();
+            source.ManualAdd = true;
+            var clone = RefreshEntityCopy.CloneEdition(source);
+            Assert.That(BookEditionIdentity.EditionMatchesProviderId(clone, "gr-ed:44767458"), Is.True);
+            clone.RemoteProviderIds.Remove("gr:44767458");
+            Assert.That(source.RemoteProviderIds, Does.Contain("gr:44767458"));
+            Assert.That(clone.ManualAdd, Is.True);
+            var target = new Edition { ManualAdd = true, Monitored = true };
+            target.UseMetadataFrom(source);
+            Assert.That(BookEditionIdentity.EditionMatchesProviderId(target, "gr-ed:44767458"), Is.True);
+            Assert.That(target.RemoteProviderIds, Is.Not.SameAs(source.RemoteProviderIds));
+            source.RemoteProviderIds = new HashSet<string>();
+            target.UseMetadataFrom(source);
+            Assert.That(BookEditionIdentity.EditionMatchesProviderId(target, "gr-ed:44767458"), Is.False);
+            Assert.That(target.ManualAdd, Is.True);
+            Assert.That(target.Monitored, Is.True);
+        }
+
+        [TestCase("gr-ed:44767458", "gr:44767458")]
+        [TestCase("hc-ed:12250069", "hc:12250069")]
+        [TestCase("hc:edition:12250069", "hc:12250069")]
+        [TestCase(" HC-ED:12250069 ", "hc:12250069")]
+        [TestCase("hc:edition:12250069-audiobook", "hc:12250069")]
+        [TestCase(" HC:EDITION:12250069-ebook ", "hc:12250069")]
+        public void direct_edition_lookup_should_accept_the_same_identifiers_as_public_search(string term, string canonicalId)
+        {
+            var client = new RecordingHttpClient(req => new HttpResponse(req,
+                new HttpHeader { ContentType = "application/json" }, SecondaryEditionAliasesPayload, HttpStatusCode.OK));
+            var proxy = CreateProxy(client);
+
+            foreach (var mediaType in new[] { BookMediaType.Audiobook, BookMediaType.Ebook })
+            {
+                var direct = proxy.GetEditionInfo(term, mediaType).Item2;
+                var search = proxy.SearchForNewBook(term, null, true, mediaType).Single();
+                Assert.Multiple(() =>
+                {
+                    Assert.That(direct.MediaType, Is.EqualTo(mediaType));
+                    Assert.That(direct.HardcoverBookId, Is.EqualTo("hc:312460"));
+                    Assert.That(direct.Editions.Any(e => BookEditionIdentity.EditionMatchesProviderId(e, term)), Is.True);
+                    Assert.That(direct.Editions.Select(e => e.ForeignEditionId),
+                        Is.EquivalentTo(search.Editions.Select(e => e.ForeignEditionId)));
+                });
+            }
+
+            Assert.That(client.Requests, Has.Count.EqualTo(4));
+            Assert.That(client.Requests.Select(req => Uri.UnescapeDataString(req.Url.ToString())),
+                Is.All.EqualTo("http://metadata/api/v5/book/" + canonicalId));
+        }
+
+        [Test]
+        public void malformed_legacy_edition_lookup_should_fail_before_contacting_metadata()
+        {
+            var client = new RecordingHttpClient(_ => throw new AssertionException("HTTP should not be called"));
+            Assert.Throws<InvalidProviderIdException>(() => CreateProxy(client).GetEditionInfo("hc:edition:"));
+            Assert.That(client.Requests, Is.Empty);
+        }
+
+        [TestCase("hc")]
+        [TestCase("gr")]
+        public void same_number_work_and_edition_lookups_should_keep_their_own_routes(string provider)
+        {
+            var client = new RecordingHttpClient(req => new HttpResponse(req,
+                new HttpHeader { ContentType = "application/json" }, "{}", HttpStatusCode.NotFound));
+            var proxy = CreateProxy(client);
+
+            Assert.Throws<BookNotFoundException>(() => proxy.GetWorkInfo(provider + ":123"));
+            Assert.Throws<BookNotFoundException>(() => proxy.GetEditionInfo(provider + "-ed:123"));
+            Assert.That(proxy.SearchForNewBook(provider + ":123", null), Is.Empty);
+            Assert.That(proxy.SearchForNewBook(provider + "-ed:123", null), Is.Empty);
+
+            Assert.That(client.Requests.Select(req => Uri.UnescapeDataString(req.Url.ToString())), Is.EqualTo(new[]
+            {
+                "http://metadata/api/v5/work/" + provider + ":123",
+                "http://metadata/api/v5/book/" + provider + ":123",
+                "http://metadata/api/v5/work/" + provider + ":123",
+                "http://metadata/api/v5/book/" + provider + ":123"
+            }));
+        }
+
+        [TestCase("hc-ed:123")]
+        [TestCase("gr-ed:123")]
+        [TestCase("hc:edition:123")]
+        public void work_lookup_should_reject_an_explicit_edition_without_contacting_metadata(string term)
+        {
+            var client = new RecordingHttpClient(_ => throw new AssertionException("HTTP should not be called"));
+            Assert.Throws<InvalidProviderIdException>(() => CreateProxy(client).GetWorkInfo(term));
+            Assert.That(client.Requests, Is.Empty);
+        }
+
         [Test]
         public void should_canonicalize_goodreads_text_search_edition_identity()
         {
@@ -107,7 +257,8 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                     WorkId = 22733728,
                     Title = "The Long Way to a Small, Angry Planet",
                     Author = new AuthorJsonResource { Id = 1306980, Name = "Becky Chambers" }
-                }
+                },
+                null
             });
 
             var resource = book.ToResource();
@@ -124,6 +275,71 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 Assert.That(resource.ForeignEditionId, Is.EqualTo("gr:22733729"));
                 Assert.That(resource.Editions.Single().ForeignEditionId, Is.EqualTo("gr:22733729"));
                 Assert.That(prefixFailures, Is.Empty);
+            });
+        }
+
+        [TestCase("goodreads-search")]
+        [TestCase("hardcover")]
+        [TestCase("audible")]
+        public void provider_book_keys_should_preserve_signed_numeric_titles_with_unicode_padding(string provider)
+        {
+            const string title = "\u2003+00123\u2003";
+            var proxy = CreateProxy(new RecordingHttpClient(_ => throw new AssertionException("HTTP should not be called")));
+            var method = provider switch
+            {
+                "goodreads-search" => "CreateBookFromSearchResult",
+                "hardcover" => "ConvertHardcoverBook",
+                _ => "MapAudibleCatalogBookToDomain"
+            };
+            object input = provider switch
+            {
+                "goodreads-search" => new SearchJsonResource
+                {
+                    BookId = 90001, WorkId = 90002, Title = title,
+                    Author = new AuthorJsonResource { Id = 90003, Name = "Fixture Author" }
+                },
+                "hardcover" => new NzbDrone.Core.MetadataSource.Hardcover.HardcoverBookResult { Id = "90001", Title = title },
+                _ => new NzbDrone.Core.MetadataSource.Audible.Resources.AudibleCatalogBookResource
+                {
+                    Asin = "B00BOOK001", Title = title,
+                    Authors = new List<NzbDrone.Core.MetadataSource.Audible.Resources.AudibleCatalogAuthorResource>
+                    {
+                        new() { Asin = "B00AUTH001", Name = "Fixture Author" }
+                    }
+                }
+            };
+            var mapper = typeof(BookInfoProxy).GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic);
+            var book = (Book)mapper.Invoke(proxy, provider == "goodreads-search" ? new[] { input, null } : new[] { input });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(book.Title, Is.EqualTo(title));
+                Assert.That(book.CleanTitle, Is.EqualTo("+00123"));
+            });
+        }
+
+        [Test]
+        public void audible_book_key_should_derive_from_the_existing_full_stored_title()
+        {
+            var proxy = CreateProxy(new RecordingHttpClient(_ => throw new AssertionException("HTTP should not be called")));
+            var mapper = typeof(BookInfoProxy).GetMethod("MapAudibleCatalogBookToDomain", BindingFlags.Instance | BindingFlags.NonPublic);
+            var book = (Book)mapper.Invoke(proxy, new object[]
+            {
+                new NzbDrone.Core.MetadataSource.Audible.Resources.AudibleCatalogBookResource
+                {
+                    Asin = "B00BOOK001", Title = "The Book Title", Subtitle = "A Subtitle",
+                    Authors = new List<NzbDrone.Core.MetadataSource.Audible.Resources.AudibleCatalogAuthorResource>
+                    {
+                        new() { Asin = "B00AUTH001", Name = "Fixture Author" }
+                    }
+                }
+            });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(book.Title, Is.EqualTo("The Book Title: A Subtitle"));
+                Assert.That(book.Editions.Single().Title, Is.EqualTo(book.Title));
+                Assert.That(book.CleanTitle, Is.EqualTo("thebooktitleasubtitle"));
             });
         }
 
@@ -262,6 +478,78 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
 
             Assert.That(exception.Message, Does.Contain("temporarily unavailable"));
             Assert.That(httpClient.Requests, Is.Empty);
+        }
+
+        [TestCase("edition:58613424", "gr:58613424", BookMediaType.Audiobook)]
+        [TestCase("gr-ed:58613424", "gr:58613424", BookMediaType.Ebook)]
+        [TestCase("hc-ed:11111", "hc:11111", BookMediaType.Ebook)]
+        [TestCase("hc:edition:11111", "hc:11111", BookMediaType.Audiobook)]
+        public void explicit_edition_uses_canonical_lookup_and_keeps_requested_media(string term, string editionId, BookMediaType mediaType)
+        {
+            var http = new RecordingHttpClient(req => new HttpResponse(req,
+                new HttpHeader { ContentType = "application/json" },
+                editionId.StartsWith("hc:") ? HardcoverWorkPayload : GoodreadsWorkPayload, HttpStatusCode.OK));
+            var result = CreateProxy(http).SearchForNewBook(term, null, getAllEditions: false, mediaType: mediaType);
+            Assert.Multiple(() =>
+            {
+                Assert.That(result, Has.Count.EqualTo(1));
+                Assert.That(result[0].MediaType, Is.EqualTo(mediaType));
+                Assert.That(BookEditionIdentity.EditionMatchesProviderId(result[0].Editions.Single(), editionId), Is.True);
+                Assert.That(result[0].Editions.Single().Monitored, Is.True);
+                Assert.That(result[0].Editions.Single().Book, Is.SameAs(result[0]));
+                Assert.That(http.Requests, Has.Count.EqualTo(1));
+                Assert.That(Uri.UnescapeDataString(http.Requests[0].Url.ToString()), Does.Contain("/api/v5/book/" + editionId));
+            });
+        }
+
+        [TestCase(BookMediaType.Audiobook)]
+        [TestCase(BookMediaType.Ebook)]
+        public void trimming_v5_edition_keeps_full_catalog_aliases_and_requested_media(BookMediaType mediaType)
+        {
+            var http = new RecordingHttpClient(req => new HttpResponse(req,
+                new HttpHeader { ContentType = "application/json" }, SecondaryEditionAliasesPayload, HttpStatusCode.OK));
+            var proxy = CreateProxy(http);
+            var trimmed = proxy.SearchForNewBook("gr-ed:44767458", null, getAllEditions: false, mediaType: mediaType).Single();
+            var complete = proxy.SearchForNewBook("gr-ed:44767458", null, mediaType: mediaType).Single();
+            var alias = proxy.SearchForNewBook("hc-ed:12250069", null, getAllEditions: false, mediaType: mediaType).Single();
+            var edition = proxy.GetEditionInfo("gr:44767458", mediaType).Item2;
+            var work = proxy.GetWorkInfo("gr:3634639", mediaType).Item2;
+            Assert.Multiple(() =>
+            {
+                Assert.That(trimmed.MediaType, Is.EqualTo(mediaType));
+                Assert.That(trimmed.Editions, Has.Count.EqualTo(1));
+                Assert.That(trimmed.Editions.Single().Monitored, Is.True);
+                Assert.That(trimmed.Editions.Single().Book, Is.SameAs(trimmed));
+                Assert.That(BookEditionIdentity.EditionMatchesProviderId(trimmed.Editions.Single(), "gr:44767458"), Is.True);
+                Assert.That(BookEditionIdentity.EditionMatchesProviderId(alias.Editions.Single(), "hc:12250069"), Is.True);
+                Assert.That(complete.Editions, Has.Count.EqualTo(2));
+                Assert.That(edition.Editions.Select(e => e.ForeignEditionId), Is.EquivalentTo(complete.Editions.Select(e => e.ForeignEditionId)));
+                Assert.That(work.Editions.Select(e => e.ForeignEditionId), Is.EquivalentTo(complete.Editions.Select(e => e.ForeignEditionId)));
+                Assert.That(edition.MediaType, Is.EqualTo(mediaType));
+                Assert.That(work.MediaType, Is.EqualTo(mediaType));
+                Assert.That(http.Requests, Has.Count.EqualTo(5));
+            });
+        }
+
+        [Test]
+        public void explicit_edition_not_in_response_does_not_become_a_work_request()
+        {
+            var http = new RecordingHttpClient(req => new HttpResponse(req,
+                new HttpHeader { ContentType = "application/json" }, HardcoverWorkPayload, HttpStatusCode.OK));
+            Assert.That(CreateProxy(http).SearchForNewBook("hc-ed:383236", null, mediaType: BookMediaType.Ebook), Is.Empty);
+            Assert.That(http.Requests, Has.Count.EqualTo(1));
+            Assert.That(http.Requests[0].Url.ToString(), Does.Contain("/api/v5/book/"));
+        }
+
+        [Test]
+        public void legacy_work_term_uses_the_same_canonical_work_lookup()
+        {
+            var http = new RecordingHttpClient(req => new HttpResponse(req,
+                new HttpHeader { ContentType = "application/json" }, GoodreadsWorkPayload, HttpStatusCode.OK));
+            var result = CreateProxy(http).SearchForNewBook("work:3046572", null);
+            Assert.That(result.Select(book => book.MediaType), Is.EquivalentTo(new[] { BookMediaType.Audiobook, BookMediaType.Ebook }));
+            Assert.That(http.Requests, Has.Count.EqualTo(1));
+            Assert.That(Uri.UnescapeDataString(http.Requests[0].Url.ToString()), Does.Contain("/api/v5/work/gr:3046572"));
         }
 
         private const string GoodreadsWorkPayload = @"{
@@ -483,7 +771,9 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             var audio = audioBook.Editions.Single(e => e.Format == "audiobook");
             Assert.That(audio.ReadingFormatId, Is.EqualTo(2));
             Assert.That(audio.ForeignEditionId, Is.EqualTo("hc:edition:22222-audiobook"));
-            Assert.That(audio.GoodreadsEditionId, Is.EqualTo(61304420));
+            Assert.That(audio.GoodreadsEditionId, Is.Null);
+            Assert.That(audio.RemoteProviderIds, Does.Contain("gr:61304420"));
+            Assert.That(BookEditionIdentity.EditionMatchesProviderId(audio, "gr:61304420"), Is.True);
             Assert.That(audio.HardcoverEditionId, Is.EqualTo("22222"));
             Assert.That(audio.AudibleASIN, Is.EqualTo("B017WO34IQ"));
             Assert.That(audio.Ratings.Votes, Is.EqualTo(200));
@@ -754,7 +1044,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
         }
 
         [Test]
-        public void should_return_empty_list_when_canonical_lookup_not_ready()
+        public void should_report_unavailable_when_canonical_lookup_not_ready()
         {
             var httpClient = new RecordingHttpClient(req =>
                 new HttpResponse(req, new HttpHeader { ContentType = "application/json" }, "null", HttpStatusCode.Accepted));
@@ -776,9 +1066,9 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 cacheManager: new CacheManager(),
                 metadataServerHealthGate: CreateHealthGate(configService));
 
-            var results = proxy.SearchForNewBook("hc:12345", author: null);
+            var error = Assert.Throws<BookInfoException>(() => proxy.SearchForNewBook("hc:12345", author: null));
 
-            Assert.That(results, Is.Empty);
+            Assert.That(error.StatusCode, Is.EqualTo(HttpStatusCode.ServiceUnavailable));
             Assert.That(httpClient.Requests, Has.Count.EqualTo(1));
         }
 
@@ -787,7 +1077,8 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
         {
             const string reason = "Work rescue is blocked_safety_gate";
             var proxy = CreateProxy(new RecordingHttpClient(request =>
-                new HttpResponse(request, new HttpHeader { ContentType = "text/plain" }, reason, HttpStatusCode.Conflict)));
+                new HttpResponse(request, new HttpHeader { ContentType = "application/json" },
+                    BookInfoProxyLookupFailureFixture.TypedLookupPayload("work_rescue_terminal", "gr:12345", reason), HttpStatusCode.Conflict)));
 
             var exception = Assert.Throws<WorkRescueTerminalException>(() =>
                 proxy.GetWorkInfo("gr:12345", BookMediaType.Ebook, "gr:author"));

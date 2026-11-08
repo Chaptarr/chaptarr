@@ -1,7 +1,5 @@
 using System;
 using System.Linq.Expressions;
-using NzbDrone.Core.Profiles.Qualities;
-using NzbDrone.Core.Qualities;
 
 namespace NzbDrone.Core.Books
 {
@@ -89,36 +87,6 @@ namespace NzbDrone.Core.Books
                             book.Author.EbookMonitored == null));
         }
 
-        public static QualityProfile GetQualityProfileForQuality(this Author author, Quality quality)
-        {
-            var mediaType = GetEffectiveMediaType(quality);
-
-            if (mediaType == BookMediaType.Audiobook)
-            {
-                // Return audiobook quality profile if set, otherwise null
-                return author?.AudiobookQualityProfile?.Value;
-            }
-            else
-            {
-                // Return ebook quality profile if set, otherwise null
-                return author?.EbookQualityProfile?.Value;
-            }
-        }
-
-        public static string GetRootFolderForQuality(this Author author, Quality quality)
-        {
-            var mediaType = GetEffectiveMediaType(quality);
-
-            if (mediaType == BookMediaType.Audiobook)
-            {
-                return author.AudiobookRootFolderPath;
-            }
-            else
-            {
-                return author.EbookRootFolderPath;
-            }
-        }
-
         public static string GetPathForMediaType(this Author author, bool isAudiobook)
         {
             if (isAudiobook)
@@ -190,14 +158,5 @@ namespace NzbDrone.Core.Books
             return changed;
         }
 
-        private static BookMediaType GetEffectiveMediaType(Quality quality)
-        {
-            if (quality == null || quality == Quality.Unknown)
-            {
-                return BookMediaType.Ebook;
-            }
-
-            return QualityMediaTypeHelper.GetKnownMediaType(quality) ?? BookMediaType.Audiobook;
-        }
     }
 }

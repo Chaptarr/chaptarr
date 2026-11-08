@@ -11,6 +11,7 @@ using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.Profiles;
 using NzbDrone.Core.Qualities;
 using QueueItem = NzbDrone.Core.Queue.Queue;
 using IQueueService = NzbDrone.Core.Queue.IQueueService;
@@ -20,6 +21,33 @@ namespace Chaptarr.Core.Test.DecisionEngine
     [TestFixture]
     public class QueueSpecificationFixture
     {
+        [TestCase(false)]
+        [TestCase(true)]
+        public void imported_cleanup_warning_does_not_block_another_search(bool batch)
+        {
+            var author = BuildAuthor();
+            var book = BuildBook(author, 100, BookMediaType.Audiobook);
+            var subject = BuildRemoteBook(author, book, Quality.MP3);
+            var queueItem = BuildQueueItem(author, book, Quality.M4B, TrackedDownloadState.Imported);
+            var specification = BuildSubject(queueItem);
+            var decision = batch ? specification.PrepareCheck()(subject) : specification.IsSatisfiedBy(subject, null);
+            Assert.That(decision.Accepted, Is.True);
+        }
+
+        [Test]
+        public void batch_queue_check_reads_once_and_does_not_request_conversion_status_overlays()
+        {
+            var queue = new StubQueueService(new List<QueueItem>());
+            var specification = new QueueSpecification(queue, null, null, null, LogManager.GetCurrentClassLogger());
+            var check = specification.PrepareCheck();
+            var author = BuildAuthor();
+            var book = BuildBook(author, 100, BookMediaType.Audiobook);
+            var subject = BuildRemoteBook(author, book, Quality.MP3);
+            for (var i = 0; i < 1000; i++) Assert.That(check(subject).Accepted, Is.True);
+            Assert.That(queue.Reads, Is.EqualTo(1));
+            Assert.That(queue.IncludedConversionStatus, Is.False);
+        }
+
         [Test]
         public void should_reject_when_same_book_already_has_queued_release_that_meets_cutoff()
         {
@@ -131,6 +159,39 @@ namespace Chaptarr.Core.Test.DecisionEngine
             Assert.That(decision.Accepted, Is.True);
         }
 
+        [Test]
+        public void unknown_quality_audiobook_target_should_use_audio_custom_format_upgrade_preferences()
+        {
+            var author = BuildAuthor(includeEbookProfile: true);
+            var format = new CustomFormat { Id = 10, Name = "Selected narrator" };
+            author.AudiobookQualityProfile.Value.PreferCustomFormatsOverQuality = true;
+            author.AudiobookQualityProfile.Value.FormatItems = new List<ProfileFormatItem>
+            {
+                new() { Format = format, Score = 50 }
+            };
+            var book = BuildBook(author, 100, BookMediaType.Audiobook);
+            var subject = BuildRemoteBook(author, book, Quality.Unknown);
+            subject.CustomFormats = new List<CustomFormat> { format };
+            subject.CustomFormatScore = 50;
+            var queueItem = BuildQueueItem(author, book, Quality.MP3, TrackedDownloadState.Downloading);
+
+            Assert.That(BuildSubject(queueItem).IsSatisfiedBy(subject, null).Accepted, Is.True);
+        }
+
+        [TestCase(BookMediaType.Audiobook)]
+        [TestCase(BookMediaType.Ebook)]
+        public void unknown_quality_target_should_not_compete_with_opposite_media_queue(BookMediaType mediaType)
+        {
+            var author = BuildAuthor(includeEbookProfile: true);
+            var audiobook = BuildBook(author, 100, BookMediaType.Audiobook);
+            var ebook = BuildBook(author, 200, BookMediaType.Ebook);
+            var subject = BuildRemoteBook(author, mediaType == BookMediaType.Audiobook ? audiobook : ebook, Quality.Unknown);
+            var queuedBook = mediaType == BookMediaType.Audiobook ? ebook : audiobook;
+            var queueItem = BuildQueueItem(author, queuedBook, Quality.Unknown, TrackedDownloadState.Downloading);
+
+            Assert.That(BuildSubject(queueItem).IsSatisfiedBy(subject, null).Accepted, Is.True);
+        }
+
         private static QueueSpecification BuildSubject(params QueueItem[] queue)
         {
             IConfigService configService = ConfigServiceTestProxy.Create();
@@ -236,6 +297,8 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
         private sealed class StubQueueService : IQueueService
         {
+            public int Reads { get; private set; }
+            public bool IncludedConversionStatus { get; private set; }
             private readonly List<QueueItem> _queue;
 
             public StubQueueService(List<QueueItem> queue)
@@ -243,8 +306,10 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 _queue = queue;
             }
 
-            public List<QueueItem> GetQueue()
+            public List<QueueItem> GetQueue(bool includeConversionStatus = true)
             {
+                Reads++;
+                IncludedConversionStatus = includeConversionStatus;
                 return _queue;
             }
 

@@ -39,6 +39,106 @@ namespace NzbDrone.Core.Books
 
     public static class BookIdentity
     {
+        internal static Author GetRequestedWorkPrimaryAuthor(Tuple<string, Book, List<Author>> metadata, string workProviderId, BookMediaType mediaType)
+        {
+            var book = metadata?.Item2;
+            if (book?.MediaType != mediaType ||
+                !ProviderIdHelper.TryNormalize(workProviderId, null, out var requestedWorkId) ||
+                !GetStableWorkProviderIdentityTokens(book).Contains(requestedWorkId))
+            {
+                return null;
+            }
+
+            return GetLookupPrimaryAuthor(metadata);
+        }
+
+        internal static Author GetLookupPrimaryAuthor(Tuple<string, Book, List<Author>> metadata)
+        {
+            if (!ProviderIdHelper.TryNormalize(metadata?.Item1, null, out var primaryProviderId)) return null;
+            // The lookup's selected persona owns this work; contributor order cannot
+            // replace that identity or override a conflicting returned book owner.
+            var bookAuthorIds = AuthorIdentity.GetProviderIdentityTokens(metadata.Item2?.Author);
+            if (bookAuthorIds.Count > 0)
+            {
+                return bookAuthorIds.Contains(primaryProviderId) ? metadata.Item2.Author : null;
+            }
+
+            var selected = metadata.Item3?.Where(author => AuthorIdentity.GetProviderIdentityTokens(author).Contains(primaryProviderId)).ToList();
+            return selected?.Count == 1 ? selected[0] : null;
+        }
+
+        public static Book SelectRequestedBook(IEnumerable<Book> books)
+        {
+            return books.Where(book => book.Id > 0)
+                .OrderByDescending(book => book.IsMonitored())
+                .ThenBy(book => book.Id)
+                .FirstOrDefault();
+        }
+
+        internal static bool HasUserPreservationMarker(Book book)
+        {
+            return book == null ||
+                book.AddOptions?.AddType == BookAddType.Manual ||
+                !book.AnyEditionOk ||
+                book.Editions?.Any(edition => edition?.ManualAdd == true) == true;
+        }
+
+        // Decide from the loaded snapshot, before any edition or file ownership changes.
+        internal static bool CanAbsorbDuplicate(Book book, bool hasFiles) =>
+            !hasFiles && !HasLocalCopyMarker(book);
+
+        internal static bool HasLocalCopyMarker(Book book) =>
+            HasUserPreservationMarker(book) || !string.IsNullOrWhiteSpace(book.UnitKeyHash);
+
+        internal static Book FindMatchingRemotePocket(IEnumerable<Book> candidates, Book local)
+        {
+            var matches = FindWorkFirstMatches(candidates?.Where(book => book.MediaType == local.MediaType), local);
+            return matches.Count > 1
+                ? matches.OrderByDescending(candidate => GetPocketMatchRank(candidate, local)).First()
+                : matches.FirstOrDefault();
+        }
+
+        // Fingerprint = media type, stable work IDs and the complete edition-ID set.
+        // Missing edition identity cannot establish an identical server pocket.
+        internal static string BuildIdenticalPocketFingerprint(Book book)
+        {
+            if (book?.Editions == null || book.Editions.Count == 0)
+            {
+                return null;
+            }
+
+            var editionIds = new List<string>(book.Editions.Count);
+            foreach (var edition in book.Editions)
+            {
+                if (edition == null || string.IsNullOrWhiteSpace(edition.ForeignEditionId))
+                {
+                    return null;
+                }
+
+                editionIds.Add(edition.ForeignEditionId.Trim().ToLowerInvariant());
+            }
+
+            editionIds.Sort(StringComparer.Ordinal);
+            var workTokens = GetStableWorkProviderIdentityTokens(book)
+                .Where(token => !string.IsNullOrWhiteSpace(token))
+                .Select(token => token.Trim().ToLowerInvariant())
+                .OrderBy(token => token, StringComparer.Ordinal);
+
+            return $"{book.MediaType}::W[{string.Join(",", workTokens)}]::E[{string.Join(",", editionIds)}]";
+        }
+
+        internal static int GetPocketMatchRank(Book candidate, Book book)
+        {
+            // Only disambiguate candidates already matched by provider identity. The server's
+            // pocket key survives edition updates; the existing fingerprint separates same-key pockets.
+            var sameKey = ProviderIdHelper.TryNormalize(candidate.BaseBookId, null, out var candidateId) &&
+                ProviderIdHelper.TryNormalize(book.BaseBookId, null, out var bookId) &&
+                string.Equals(candidateId, bookId, StringComparison.OrdinalIgnoreCase);
+            var fingerprint = BuildIdenticalPocketFingerprint(book);
+            var identical = fingerprint != null && fingerprint == BuildIdenticalPocketFingerprint(candidate);
+            return (sameKey ? 2 : 0) + (identical ? 1 : 0);
+        }
+
         public static bool MatchesByProviderIdIntersection(Book local, Book remote)
         {
             if (local == null || remote == null)
@@ -49,6 +149,12 @@ namespace NzbDrone.Core.Books
             var localWorkTokens = GetStableWorkProviderIdentityTokens(local);
             var remoteWorkTokens = GetStableWorkProviderIdentityTokens(remote);
 
+            return MatchesByProviderIdIntersection(local, remote, localWorkTokens, remoteWorkTokens);
+        }
+
+        internal static bool MatchesByProviderIdIntersection(Book local, Book remote,
+            HashSet<string> localWorkTokens, HashSet<string> remoteWorkTokens)
+        {
             if (localWorkTokens.Count > 0 || remoteWorkTokens.Count > 0)
             {
                 return localWorkTokens.Count > 0 &&

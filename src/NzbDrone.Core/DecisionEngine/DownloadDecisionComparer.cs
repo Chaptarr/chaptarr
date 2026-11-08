@@ -21,8 +21,8 @@ namespace NzbDrone.Core.DecisionEngine
         private readonly IQualityProfileService _qualityProfileService;
         private readonly Logger _logger;
 
-        public delegate int CompareDelegate(DownloadDecision x, DownloadDecision y);
-        public delegate int CompareDelegate<TSubject, TValue>(DownloadDecision x, DownloadDecision y);
+        private delegate int CompareDelegate(DownloadDecision x, DownloadDecision y);
+        private readonly (string Name, CompareDelegate Compare)[] _comparers;
 
         public DownloadDecisionComparer(IConfigService configService, IDelayProfileService delayProfileService, IQualityProfileService qualityProfileService, Logger logger)
         {
@@ -30,56 +30,7 @@ namespace NzbDrone.Core.DecisionEngine
             _delayProfileService = delayProfileService;
             _qualityProfileService = qualityProfileService;
             _logger = logger;
-        }
-
-        public int Compare(DownloadDecision x, DownloadDecision y)
-        {
-            _logger.Debug("Compare called - X: {0} ({1}), Y: {2} ({3})",
-                x.RemoteBook.Release.Title,
-                x.RemoteBook.Release.Size.SizeSuffix(),
-                y.RemoteBook.Release.Title,
-                y.RemoteBook.Release.Size.SizeSuffix());
-
-            var comparers = new List<(string name, CompareDelegate comparer)>
-            {
-                ("Title Match", CompareTitleMatch),
-                ("Native Category", CompareNativeCategory),
-                ("Format Type", CompareFormatType),
-                ("Profile Preference", CompareProfilePreference),
-                ("Protocol", CompareProtocol),
-                ("Indexer Priority", CompareIndexerPriority),
-                ("Size", CompareSize),
-                ("Peers", ComparePeersIfTorrent),
-                ("Book Count", CompareBookCount),
-                ("Age", CompareAgeIfUsenet)
-            };
-
-            foreach (var (name, comparer) in comparers)
-            {
-                var result = comparer(x, y);
-                _logger.Debug("Comparison {0}: {1}", name, result);
-                if (result != 0)
-                {
-                    _logger.Debug("Comparison {0} decided winner (result: {1}) - FLIPPED SIGNS: positive=X wins, negative=Y wins", name, result);
-                    return result;
-                }
-            }
-
-            _logger.Debug("All comparisons tied, returning 0");
-            return 0;
-        }
-
-        public DownloadDecisionComparisonResult CompareWithReasons(DownloadDecision x, DownloadDecision y)
-        {
-            _logger.Debug("CompareWithReasons called - X: {0} ({1}), Y: {2} ({3})",
-                x.RemoteBook.Release.Title,
-                x.RemoteBook.Release.Size.SizeSuffix(),
-                y.RemoteBook.Release.Title,
-                y.RemoteBook.Release.Size.SizeSuffix());
-
-            var reasons = new List<DownloadDecisionReason>();
-
-            var comparers = new List<(string name, CompareDelegate comparer)>
+            _comparers = new (string, CompareDelegate)[]
             {
                 ("Title Match", CompareTitleMatch),
                 ("Native Category", CompareNativeCategory),
@@ -87,31 +38,49 @@ namespace NzbDrone.Core.DecisionEngine
                 ("Profile Preference", CompareProfilePreference),
                 ("Protocol Preference", CompareProtocol),
                 ("Indexer Priority", CompareIndexerPriority),
-                ("File Size", CompareSize),
                 ("Torrent Health", ComparePeersIfTorrent),
                 ("Release Scope", CompareBookCount),
-                ("Usenet Age", CompareAgeIfUsenet)
+                ("Usenet Age", CompareAgeIfUsenet),
+                ("File Size", CompareSize)
             };
+        }
 
-            foreach (var (name, comparer) in comparers)
+        public int Compare(DownloadDecision x, DownloadDecision y)
+        {
+            return Compare(x, y, out _);
+        }
+
+        private int Compare(DownloadDecision x, DownloadDecision y, out string decidingFactor)
+        {
+            _logger.Debug("Comparing {0} ({1}) with {2} ({3})",
+                x.RemoteBook.Release.Title,
+                x.RemoteBook.Release.Size.SizeSuffix(),
+                y.RemoteBook.Release.Title,
+                y.RemoteBook.Release.Size.SizeSuffix());
+
+            foreach (var (name, comparer) in _comparers)
             {
                 var result = comparer(x, y);
+                _logger.Debug("Comparison {0}: {1}", name, result);
                 if (result != 0)
                 {
-                    var comparisonWinner = result > 0 ? x : y;
-                    var reason = GetPrimaryReason(name, x, y, comparisonWinner);
-                    reasons.Add(new DownloadDecisionReason("Primary", reason));
-                    return new DownloadDecisionComparisonResult(result, reasons);
+                    decidingFactor = name;
+                    return result;
                 }
             }
 
-            // If we get here, all comparisons were tied - show generic fallback
-            if (!reasons.Any())
-            {
-                reasons.Add(new DownloadDecisionReason("Primary", "Download allowed and meets all requirements"));
-            }
+            decidingFactor = null;
+            return 0;
+        }
 
-            return new DownloadDecisionComparisonResult(0, reasons);
+        public DownloadDecisionComparisonResult CompareWithReasons(DownloadDecision x, DownloadDecision y)
+        {
+            var result = Compare(x, y, out var decidingFactor);
+            var reason = result == 0
+                ? "Download allowed and meets all requirements"
+                : GetPrimaryReason(decidingFactor, x, y, result > 0 ? x : y);
+
+            return new DownloadDecisionComparisonResult(result, new DownloadDecisionReason("Primary", reason));
         }
 
         private string GetPrimaryReason(string comparisonName, DownloadDecision x, DownloadDecision y, DownloadDecision winner)
@@ -127,8 +96,7 @@ namespace NzbDrone.Core.DecisionEngine
                     return "Preferred indexer category";
 
                 case "Format Type":
-                    var quality = winner.RemoteBook.ParsedBookInfo.Quality.Quality;
-                    var isEbook = IsEbookFormat(quality);
+                    var isEbook = winner.RemoteBook.GetMediaType() == BookMediaType.Ebook;
                     return isEbook ? "Ebook format" : "Audiobook format preferred";
 
                 case "Profile Preference":
@@ -179,7 +147,7 @@ namespace NzbDrone.Core.DecisionEngine
         {
             try
             {
-                var qualityProfile = decision.RemoteBook.Author.GetQualityProfileForQuality(decision.RemoteBook.ParsedBookInfo.Quality.Quality);
+                var qualityProfile = decision.RemoteBook.GetQualityProfile();
                 return qualityProfile?.Name ?? "Unknown";
             }
             catch
@@ -203,12 +171,6 @@ namespace NzbDrone.Core.DecisionEngine
             return CompareBy(left, right, funcValue) * -1;
         }
 
-        private int CompareByReverse<TValue>(TValue left, TValue right)
-            where TValue : IComparable<TValue>
-        {
-            return right.CompareTo(left);
-        }
-
         private int CompareAll(params int[] comparers)
         {
             return comparers.Select(comparer => comparer).FirstOrDefault(result => result != 0);
@@ -216,36 +178,12 @@ namespace NzbDrone.Core.DecisionEngine
 
         private int CompareFormatType(DownloadDecision x, DownloadDecision y)
         {
-            var xQuality = x.RemoteBook.ParsedBookInfo.Quality.Quality;
-            var yQuality = y.RemoteBook.ParsedBookInfo.Quality.Quality;
-
-            var xIsEbook = IsEbookFormat(xQuality);
-            var yIsEbook = IsEbookFormat(yQuality);
-
-            // If both are the same format type, they're equal in this comparison
-            if (xIsEbook == yIsEbook)
+            return CompareBy(x.RemoteBook, y.RemoteBook, remoteBook => remoteBook.GetMediaType() switch
             {
-                return 0;
-            }
-
-            // Audiobooks come before ebooks in the results
-            if (!xIsEbook && yIsEbook)
-            {
-                _logger.Debug("Format Type - X is audiobook, Y is ebook. X wins.");
-                return 1; // x (audiobook) is better
-            }
-
-            _logger.Debug("Format Type - X is ebook, Y is audiobook. Y wins.");
-            return -1; // y (audiobook) is better
-        }
-
-        private bool IsEbookFormat(Quality quality)
-        {
-            return quality.Id == Quality.Unknown.Id ||
-                   quality.Id == Quality.PDF.Id ||
-                   quality.Id == Quality.MOBI.Id ||
-                   quality.Id == Quality.EPUB.Id ||
-                   quality.Id == Quality.AZW3.Id;
+                BookMediaType.Audiobook => 2,
+                BookMediaType.Ebook => 1,
+                _ => 0
+            });
         }
 
         // MAM-specific ranking is handled through quality profiles and custom formats.
@@ -269,7 +207,12 @@ namespace NzbDrone.Core.DecisionEngine
                 return 0;
             }
 
-            var mediaType = remoteBook.GetPreferredMediaType();
+            var mediaType = remoteBook.GetMediaType();
+            if (!mediaType.HasValue)
+            {
+                return 0;
+            }
+
             var normalized = categories.Select(NormalizeCategory).ToList();
 
             if (mediaType == BookMediaType.Ebook)
@@ -310,16 +253,10 @@ namespace NzbDrone.Core.DecisionEngine
                 return new QualityProfilePreferenceComparison(0, QualityProfilePreferenceFactor.None);
             }
 
-            var author = x.RemoteBook.Author ?? y.RemoteBook.Author;
-            if (author == null)
-            {
-                return new QualityProfilePreferenceComparison(0, QualityProfilePreferenceFactor.None);
-            }
-
-            // Use a single, stable profile for both sides to keep comparisons symmetric.
-            var qualityProfile = author.GetQualityProfileForQuality(xQuality.Quality);
-
-            if (qualityProfile == null)
+            // Per-author sorting uses the target's media profile for both sides of this comparison.
+            var qualityProfile = x.RemoteBook.GetQualityProfile();
+            var otherProfile = y.RemoteBook.GetQualityProfile();
+            if (qualityProfile == null || otherProfile == null || qualityProfile.Id != otherProfile.Id)
             {
                 return new QualityProfilePreferenceComparison(0, QualityProfilePreferenceFactor.None);
             }
@@ -420,71 +357,9 @@ namespace NzbDrone.Core.DecisionEngine
 
         private int CompareSize(DownloadDecision x, DownloadDecision y)
         {
-            // Larger files are better for audiobooks (higher quality, more complete content)
-            var xSize = x.RemoteBook.Release.Size;
-            var ySize = y.RemoteBook.Release.Size;
-
-            _logger.Debug("CompareSize - X: {0} ({1}), Y: {2} ({3})",
-                x.RemoteBook.Release.Title,
-                xSize.SizeSuffix(),
-                y.RemoteBook.Release.Title,
-                ySize.SizeSuffix());
-
-            // Direct comparison: larger size wins - FLIPPED
-            var result = xSize.CompareTo(ySize); // FLIPPED: X compared to Y makes larger X win
-            _logger.Debug("CompareSize result: {0} (positive means X wins, negative means Y wins)", result);
-            return result;
-        }
-
-        private string GetComparisonDetails(string comparisonType, DownloadDecision x, DownloadDecision y, DownloadDecision winner)
-        {
-            switch (comparisonType)
-            {
-                case "Quality":
-                    var winnerQuality = winner.RemoteBook.ParsedBookInfo.Quality.Quality.Name;
-                    return $"Quality profile preference ({winnerQuality})";
-
-                case "Custom Format Score":
-                    var score = winner.RemoteBook.CustomFormatScore;
-                    return $"Custom format score ({score})";
-
-                case "Protocol Preference":
-                    var protocol = winner.RemoteBook.Release.DownloadProtocol.ToString();
-                    return $"Preferred protocol ({protocol})";
-
-                case "Indexer Priority":
-                    var indexer = winner.RemoteBook.Release.Indexer;
-                    var priority = winner.RemoteBook.Release.IndexerPriority;
-                    return $"Indexer priority ({indexer}, priority {priority})";
-
-                case "Torrent Health":
-                    if (winner.RemoteBook.Release.DownloadProtocol == DownloadProtocol.Torrent)
-                    {
-                        var seeders = TorrentInfo.GetSeeders(winner.RemoteBook.Release);
-                        return $"Better torrent health ({seeders} seeders)";
-                    }
-
-                    return "Torrent health";
-
-                case "Release Scope":
-                    if (winner.RemoteBook.ParsedBookInfo.Discography)
-                    {
-                        return "Discography release";
-                    }
-
-                    return $"More books ({winner.RemoteBook.Books.Count} books)";
-
-                case "Usenet Age":
-                    var age = winner.RemoteBook.Release.Age;
-                    return $"Newer usenet release ({age} days old)";
-
-                case "File Size":
-                    var size = winner.RemoteBook.Release.Size;
-                    return $"File size preference ({size.SizeSuffix()})";
-
-                default:
-                    return comparisonType;
-            }
+            // Size only breaks ties after preferences, availability and release scope.
+            return CompareBy(x.RemoteBook, y.RemoteBook, remoteBook => remoteBook.Release.Size.Round(
+                (remoteBook.GetPreferredMediaType() == BookMediaType.Ebook ? 1 : 200).Megabytes()));
         }
 
         private int CompareTitleMatch(DownloadDecision x, DownloadDecision y)

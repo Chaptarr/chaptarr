@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
@@ -8,19 +9,17 @@ using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.Books;
-using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.ImportLists.Exclusions;
-using NzbDrone.Core.ImportLists.Goodreads;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.ImportLists.Hardcover.Library;
+using NzbDrone.Core.MediaCover.Commands;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Parser.Model;
-using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Core.RootFolders;
 
 namespace NzbDrone.Core.ImportLists
@@ -36,11 +35,7 @@ namespace NzbDrone.Core.ImportLists
         private readonly IProvideBookInfo _bookInfoProxy;
         private readonly IAuthorService _authorService;
         private readonly IBookService _bookService;
-        private readonly IBookRepository _bookRepository;
         private readonly IEditionService _editionService;
-        private readonly IEditionMetadataProfileFilter _editionMetadataProfileFilter;
-        private readonly IEditionSelector _editionSelector;
-        private readonly IAuthorLibraryService _authorLibraryService;
         private readonly IPendingAuthorImportService _pendingAuthorImportService;
         private readonly IImportListBookIdentityCacheRepository _bookIdentityCacheRepository;
         private readonly IRootFolderService _rootFolderService;
@@ -55,11 +50,7 @@ namespace NzbDrone.Core.ImportLists
                                      IProvideBookInfo bookInfoProxy,
                                      IAuthorService authorService,
                                      IBookService bookService,
-                                     IBookRepository bookRepository,
                                      IEditionService editionService,
-                                     IEditionMetadataProfileFilter editionMetadataProfileFilter,
-                                     IEditionSelector editionSelector,
-                                     IAuthorLibraryService authorLibraryService,
                                      IPendingAuthorImportService pendingAuthorImportService,
                                      IRootFolderService rootFolderService,
                                      IRootFolderSettingsResolver rootFolderSettingsResolver,
@@ -74,11 +65,7 @@ namespace NzbDrone.Core.ImportLists
             _bookInfoProxy = bookInfoProxy;
             _authorService = authorService;
             _bookService = bookService;
-            _bookRepository = bookRepository;
             _editionService = editionService;
-            _editionMetadataProfileFilter = editionMetadataProfileFilter;
-            _editionSelector = editionSelector;
-            _authorLibraryService = authorLibraryService;
             _pendingAuthorImportService = pendingAuthorImportService;
             _bookIdentityCacheRepository = bookIdentityCacheRepository;
             _rootFolderService = rootFolderService;
@@ -88,75 +75,83 @@ namespace NzbDrone.Core.ImportLists
             _logger = logger;
         }
 
-        private ResolvedRootFolderSettings ResolveRootFolderSettings(string rootFolderPath, BookMediaType mediaType)
+        private ResolvedRootFolderSettings ResolveRootFolderSettings(string rootFolderPath, BookMediaType mediaType,
+            Dictionary<string, RootFolder> roots = null)
         {
             if (rootFolderPath.IsNullOrWhiteSpace())
             {
                 return new ResolvedRootFolderSettings { IsConfigured = false, Source = "Unconfigured" };
             }
 
-            var rootFolder = _rootFolderService.GetBestRootFolder(rootFolderPath);
+            RootFolder rootFolder;
+            if (roots == null || !roots.TryGetValue(rootFolderPath, out rootFolder))
+            {
+                rootFolder = _rootFolderService.GetBestRootFolder(rootFolderPath);
+                if (roots != null)
+                {
+                    roots[rootFolderPath] = rootFolder;
+                }
+            }
+
             return _rootFolderSettingsResolver.ResolveSettings(rootFolder, mediaType);
         }
 
-        private MonitoringConfig BuildMonitoringConfigForHardcoverLibraryImportList(ImportListDefinition importList,
-            HardcoverLibraryImportListSettings settings,
-            string authorProviderId,
+        private MonitoringConfig BuildConfigFromImportList(ImportListDefinition importList,
             string authorName,
-            Dictionary<(int importListId, string authorProviderId), (HashSet<string> audiobookBooks, HashSet<string> ebookBooks)> booksToMonitor)
+            Dictionary<string, RootFolder> roots = null)
         {
-            if (importList == null || settings == null)
-            {
-                return BuildConfigFromImportList(importList);
-            }
-
-            var monitorExistingMode = importList.ShouldMonitor switch
-            {
-                ImportListMonitorType.SpecificBook => MonitorTypes.SpecificBook,
-                ImportListMonitorType.EntireAuthor => MonitorTypes.All,
-                _ => MonitorTypes.None
-            };
-
+            var settings = (DualMediaImportListSettings)importList.Settings;
+            var options = importList.GetMonitoringOptions();
             var monitorAudiobooks = settings.MonitorAudiobooks;
             var monitorEbooks = settings.MonitorEbooks;
+            var audiobookQualityOverride = settings.AudiobookQualityProfileId;
+            var ebookQualityOverride = settings.EbookQualityProfileId;
+            var audiobookMetadataOverride = settings.AudiobookMetadataProfileId;
+            var ebookMetadataOverride = settings.EbookMetadataProfileId;
+            var audiobookRootFolderPath = settings.AudiobookRootFolderPath;
+            var ebookRootFolderPath = settings.EbookRootFolderPath;
 
-            var audiobookRootFolderPath = settings.AudiobookRootFolderPath.IsNotNullOrWhiteSpace()
-                ? settings.AudiobookRootFolderPath
-                : importList.RootFolderPath;
-            var ebookRootFolderPath = settings.EbookRootFolderPath.IsNotNullOrWhiteSpace()
-                ? settings.EbookRootFolderPath
-                : importList.RootFolderPath;
+            var audiobookRootFolderSettings = monitorAudiobooks
+                ? ResolveRootFolderSettings(audiobookRootFolderPath, BookMediaType.Audiobook, roots) : null;
+            var ebookRootFolderSettings = monitorEbooks
+                ? ResolveRootFolderSettings(ebookRootFolderPath, BookMediaType.Ebook, roots) : null;
 
-            var audiobookRootFolderSettings = ResolveRootFolderSettings(audiobookRootFolderPath, BookMediaType.Audiobook);
-            var ebookRootFolderSettings = ResolveRootFolderSettings(ebookRootFolderPath, BookMediaType.Ebook);
-
-            var audiobookQualityProfileId = settings.AudiobookQualityProfileId > 0
-                ? settings.AudiobookQualityProfileId
+            var audiobookQualityProfileId = audiobookQualityOverride > 0
+                ? audiobookQualityOverride
                 : (audiobookRootFolderSettings?.QualityProfileId ?? 0);
 
-            var ebookQualityProfileId = settings.EbookQualityProfileId > 0
-                ? settings.EbookQualityProfileId
+            var ebookQualityProfileId = ebookQualityOverride > 0
+                ? ebookQualityOverride
                 : (ebookRootFolderSettings?.QualityProfileId ?? 0);
 
-            var audiobookMetadataProfileId = settings.AudiobookMetadataProfileId > 0
-                ? settings.AudiobookMetadataProfileId
+            var audiobookMetadataProfileId = audiobookMetadataOverride > 0
+                ? audiobookMetadataOverride
                 : (audiobookRootFolderSettings?.MetadataProfileId ?? 0);
 
-            var ebookMetadataProfileId = settings.EbookMetadataProfileId > 0
-                ? settings.EbookMetadataProfileId
+            var ebookMetadataProfileId = ebookMetadataOverride > 0
+                ? ebookMetadataOverride
                 : (ebookRootFolderSettings?.MetadataProfileId ?? 0);
 
             if (monitorAudiobooks && (audiobookQualityProfileId <= 0 || audiobookMetadataProfileId <= 0))
             {
-                throw new InvalidOperationException("Hardcover Library: audiobook defaults are not configured (set profile overrides or configure root folder defaults)");
+                throw new InvalidOperationException($"{importList.Name}: audiobook defaults are not configured (set profile overrides or configure root folder defaults)");
             }
 
             if (monitorEbooks && (ebookQualityProfileId <= 0 || ebookMetadataProfileId <= 0))
             {
-                throw new InvalidOperationException("Hardcover Library: ebook defaults are not configured (set profile overrides or configure root folder defaults)");
+                throw new InvalidOperationException($"{importList.Name}: ebook defaults are not configured (set profile overrides or configure root folder defaults)");
             }
 
-            var (audiobookTags, ebookTags) = BuildMediaTagsForHardcoverLibrary(importList, settings);
+            var audiobookTags = new HashSet<int>();
+            var ebookTags = new HashSet<int>();
+            if (monitorAudiobooks)
+            {
+                audiobookTags.UnionWith((IEnumerable<int>)settings.AudiobookTags ?? Enumerable.Empty<int>());
+            }
+            if (monitorEbooks)
+            {
+                ebookTags.UnionWith((IEnumerable<int>)settings.EbookTags ?? Enumerable.Empty<int>());
+            }
 
             var config = new MonitoringConfig
             {
@@ -170,12 +165,14 @@ namespace NzbDrone.Core.ImportLists
                 AudiobookRootFolderPath = monitorAudiobooks ? audiobookRootFolderPath : null,
                 EbookRootFolderPath = monitorEbooks ? ebookRootFolderPath : null,
 
-                AudiobookMonitored = monitorAudiobooks ? audiobookRootFolderSettings?.Monitored : null,
-                AudiobookMonitorNewItems = monitorAudiobooks ? importList.MonitorNewItems : null,
-                AudiobookMonitorExistingMode = monitorAudiobooks ? monitorExistingMode : MonitorTypes.None,
-                EbookMonitored = monitorEbooks ? ebookRootFolderSettings?.Monitored : null,
-                EbookMonitorNewItems = monitorEbooks ? importList.MonitorNewItems : null,
-                EbookMonitorExistingMode = monitorEbooks ? monitorExistingMode : MonitorTypes.None,
+                AudiobookMonitored = monitorAudiobooks ? options.AudiobookMonitored ?? audiobookRootFolderSettings?.Monitored : null,
+                AudiobookMonitorNewItems = monitorAudiobooks ? options.AudiobookMonitorNewItems ?? audiobookRootFolderSettings?.MonitorNewItems : null,
+                AudiobookMonitorExistingMode = monitorAudiobooks
+                    ? options.AudiobookMonitor ?? audiobookRootFolderSettings?.MonitorExistingMode : MonitorTypes.None,
+                EbookMonitored = monitorEbooks ? options.EbookMonitored ?? ebookRootFolderSettings?.Monitored : null,
+                EbookMonitorNewItems = monitorEbooks ? options.EbookMonitorNewItems ?? ebookRootFolderSettings?.MonitorNewItems : null,
+                EbookMonitorExistingMode = monitorEbooks
+                    ? options.EbookMonitor ?? ebookRootFolderSettings?.MonitorExistingMode : MonitorTypes.None,
 
                 AudiobookTags = audiobookTags,
                 EbookTags = ebookTags,
@@ -186,117 +183,6 @@ namespace NzbDrone.Core.ImportLists
             config.RequestedBy = $"ImportList:{importList.Name}";
             config.AuthorName = authorName;
             config.SearchForMissingBooks = importList.ShouldSearch;
-
-            if (importList.ShouldMonitor == ImportListMonitorType.SpecificBook &&
-                booksToMonitor != null &&
-                booksToMonitor.TryGetValue((importList.Id, authorProviderId), out var monitorLists))
-            {
-                config.AudiobookBooksToMonitor = monitorLists.audiobookBooks?.ToList();
-                config.EbookBooksToMonitor = monitorLists.ebookBooks?.ToList();
-            }
-
-            EnableRequestedMediaGates(config);
-
-            return config;
-        }
-
-        private MonitoringConfig BuildMonitoringConfigForGoodreadsImportList(ImportListDefinition importList,
-            IGoodreadsDualMediaImportListSettings settings,
-            string authorProviderId,
-            string authorName,
-            Dictionary<(int importListId, string authorProviderId), (HashSet<string> audiobookBooks, HashSet<string> ebookBooks)> booksToMonitor)
-        {
-            if (importList == null || settings == null)
-            {
-                return BuildConfigFromImportList(importList);
-            }
-
-            var monitorExistingMode = importList.ShouldMonitor switch
-            {
-                ImportListMonitorType.SpecificBook => MonitorTypes.SpecificBook,
-                ImportListMonitorType.EntireAuthor => MonitorTypes.All,
-                _ => MonitorTypes.None
-            };
-
-            var monitorAudiobooks = settings.MonitorAudiobooks;
-            var monitorEbooks = settings.MonitorEbooks;
-
-            var audiobookRootFolderPath = settings.AudiobookRootFolderPath.IsNotNullOrWhiteSpace()
-                ? settings.AudiobookRootFolderPath
-                : importList.RootFolderPath;
-            var ebookRootFolderPath = settings.EbookRootFolderPath.IsNotNullOrWhiteSpace()
-                ? settings.EbookRootFolderPath
-                : importList.RootFolderPath;
-
-            var audiobookRootFolderSettings = ResolveRootFolderSettings(audiobookRootFolderPath, BookMediaType.Audiobook);
-            var ebookRootFolderSettings = ResolveRootFolderSettings(ebookRootFolderPath, BookMediaType.Ebook);
-
-            var audiobookQualityProfileId = settings.AudiobookQualityProfileId > 0
-                ? settings.AudiobookQualityProfileId
-                : (audiobookRootFolderSettings?.QualityProfileId ?? 0);
-
-            var ebookQualityProfileId = settings.EbookQualityProfileId > 0
-                ? settings.EbookQualityProfileId
-                : (ebookRootFolderSettings?.QualityProfileId ?? 0);
-
-            var audiobookMetadataProfileId = settings.AudiobookMetadataProfileId > 0
-                ? settings.AudiobookMetadataProfileId
-                : (audiobookRootFolderSettings?.MetadataProfileId ?? 0);
-
-            var ebookMetadataProfileId = settings.EbookMetadataProfileId > 0
-                ? settings.EbookMetadataProfileId
-                : (ebookRootFolderSettings?.MetadataProfileId ?? 0);
-
-            if (monitorAudiobooks && (audiobookQualityProfileId <= 0 || audiobookMetadataProfileId <= 0))
-            {
-                throw new InvalidOperationException("Goodreads import list: audiobook defaults are not configured (set profile overrides or configure root folder defaults)");
-            }
-
-            if (monitorEbooks && (ebookQualityProfileId <= 0 || ebookMetadataProfileId <= 0))
-            {
-                throw new InvalidOperationException("Goodreads import list: ebook defaults are not configured (set profile overrides or configure root folder defaults)");
-            }
-
-            var (audiobookTags, ebookTags) = BuildMediaTagsForGoodreads(importList, settings);
-
-            var config = new MonitoringConfig
-            {
-                CreateAudiobook = monitorAudiobooks,
-                CreateEbook = monitorEbooks,
-
-                AudiobookQualityProfileId = monitorAudiobooks ? audiobookQualityProfileId : null,
-                EbookQualityProfileId = monitorEbooks ? ebookQualityProfileId : null,
-                AudiobookMetadataProfileId = monitorAudiobooks ? audiobookMetadataProfileId : null,
-                EbookMetadataProfileId = monitorEbooks ? ebookMetadataProfileId : null,
-                AudiobookRootFolderPath = monitorAudiobooks ? audiobookRootFolderPath : null,
-                EbookRootFolderPath = monitorEbooks ? ebookRootFolderPath : null,
-
-                AudiobookMonitored = monitorAudiobooks ? audiobookRootFolderSettings?.Monitored : null,
-                AudiobookMonitorNewItems = monitorAudiobooks ? importList.MonitorNewItems : null,
-                AudiobookMonitorExistingMode = monitorAudiobooks ? monitorExistingMode : MonitorTypes.None,
-                EbookMonitored = monitorEbooks ? ebookRootFolderSettings?.Monitored : null,
-                EbookMonitorNewItems = monitorEbooks ? importList.MonitorNewItems : null,
-                EbookMonitorExistingMode = monitorEbooks ? monitorExistingMode : MonitorTypes.None,
-
-                AudiobookTags = audiobookTags,
-                EbookTags = ebookTags,
-                Tags = audiobookTags.Concat(ebookTags).ToHashSet()
-            };
-
-            config.QueueIfUnavailable = true;
-            config.RequestedBy = $"ImportList:{importList.Name}";
-            config.AuthorName = authorName;
-            config.SearchForMissingBooks = importList.ShouldSearch;
-
-            if (importList.ShouldMonitor == ImportListMonitorType.SpecificBook &&
-                booksToMonitor != null &&
-                booksToMonitor.TryGetValue((importList.Id, authorProviderId), out var monitorLists))
-            {
-                config.AudiobookBooksToMonitor = monitorLists.audiobookBooks?.ToList();
-                config.EbookBooksToMonitor = monitorLists.ebookBooks?.ToList();
-            }
-
-            EnableRequestedMediaGates(config);
 
             return config;
         }
@@ -306,18 +192,62 @@ namespace NzbDrone.Core.ImportLists
             string authorName,
             MonitoringConfig config,
             ISet<string> pendingAuthors,
-            string context)
+            string context,
+            IEnumerable<ImportListItemInfo> reports,
+            List<ImportListExclusion> listExclusions,
+            bool authorExists = false)
         {
-            if (authorProviderId.IsNullOrWhiteSpace())
+            if ((!authorExists && !importList.GetMonitoringOptions().AddMissingAuthors) || authorProviderId.IsNullOrWhiteSpace())
             {
                 return false;
             }
 
-            config ??= BuildConfigFromImportList(importList);
+            // Filter requested sides before persisting intent so excluded books cannot become endless retries.
+            var requestedAudiobooks = config.AudiobookBooksToMonitor?.Count ?? 0;
+            var requestedEbooks = config.EbookBooksToMonitor?.Count ?? 0;
+            config.AudiobookBooksToMonitor?.RemoveAll(id => listExclusions.Any(exclusion =>
+                ImportListExclusionBookMatcher.AppliesToProviderId(exclusion, id, BookMediaType.Audiobook) ||
+                ImportListExclusionBookMatcher.AppliesToProviderId(exclusion, authorProviderId, BookMediaType.Audiobook)));
+            config.EbookBooksToMonitor?.RemoveAll(id => listExclusions.Any(exclusion =>
+                ImportListExclusionBookMatcher.AppliesToProviderId(exclusion, id, BookMediaType.Ebook) ||
+                ImportListExclusionBookMatcher.AppliesToProviderId(exclusion, authorProviderId, BookMediaType.Ebook)));
+            if ((requestedAudiobooks > 0 && config.AudiobookBooksToMonitor?.Any() != true) ||
+                listExclusions.Any(exclusion => ImportListExclusionBookMatcher.AppliesToProviderId(exclusion, authorProviderId, BookMediaType.Audiobook)))
+            {
+                config.CreateAudiobook = false;
+            }
+
+            if ((requestedEbooks > 0 && config.EbookBooksToMonitor?.Any() != true) ||
+                listExclusions.Any(exclusion => ImportListExclusionBookMatcher.AppliesToProviderId(exclusion, authorProviderId, BookMediaType.Ebook)))
+            {
+                config.CreateEbook = false;
+            }
+
+            if (!config.CreateAudiobook && !config.CreateEbook)
+            {
+                return false;
+            }
+
             config.QueueIfUnavailable = true;
             config.RequestedBy ??= $"ImportList:{importList?.Name ?? "Unknown"}";
             config.AuthorName ??= authorName;
-            config.SearchForMissingBooks ??= importList?.ShouldSearch ?? false;
+            config.SearchForMissingBooks = !authorExists && importList.ShouldSearch &&
+                ((config.CreateAudiobook && config.AudiobookMonitored == true) ||
+                 (config.CreateEbook && config.EbookMonitored == true));
+            if (importList.ShouldSearch)
+            {
+                // Existing authors keep row-scoped list intent; catalog-wide search belongs to first author setup.
+                config.AudiobookBooksToSearch = !authorExists && config.AudiobookMonitored == true ? null : config.AudiobookBooksToMonitor?.ToList();
+                config.EbookBooksToSearch = !authorExists && config.EbookMonitored == true ? null : config.EbookBooksToMonitor?.ToList();
+            }
+
+            var audiobookWorkIds = (config.AudiobookBooksToMonitor ?? new List<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var ebookWorkIds = (config.EbookBooksToMonitor ?? new List<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            config.AudiobookNarrations = reports.Select(report => BuildRequestedNarration(report, importList.ShouldSearch &&
+                    (authorExists || (report.EditionMediaType == BookMediaType.Ebook ? config.EbookMonitored : config.AudiobookMonitored) != true)))
+                .Where(request => request != null && (request.MediaType == BookMediaType.Audiobook
+                    ? config.CreateAudiobook && audiobookWorkIds.Contains(request.WorkProviderId)
+                    : config.CreateEbook && ebookWorkIds.Contains(request.WorkProviderId))).ToList();
 
             var pendingId = _pendingAuthorImportService.EnqueueAsync(authorProviderId, config, config.RequestedBy)
                 .GetAwaiter()
@@ -325,7 +255,7 @@ namespace NzbDrone.Core.ImportLists
 
             if (pendingId <= 0)
             {
-                return false;
+                throw new InvalidOperationException("Pending import request was not durably accepted");
             }
 
             pendingAuthors?.Add(authorProviderId);
@@ -342,149 +272,23 @@ namespace NzbDrone.Core.ImportLists
             }, CommandPriority.Normal);
         }
 
-        private static void AddGenericSpecificBooksToMonitor(MonitoringConfig config,
-            ImportListDefinition importList,
-            string authorProviderId,
-            IEnumerable<(string authorProviderId, string bookProviderId, ImportListItemInfo report)> booksToMonitor)
+        private void AddListedBooksToMonitor(ImportListDefinition importList, MonitoringConfig config, IEnumerable<ImportListItemInfo> reports)
         {
-            if (config == null ||
-                importList?.ShouldMonitor != ImportListMonitorType.SpecificBook ||
-                authorProviderId.IsNullOrWhiteSpace() ||
-                booksToMonitor == null)
+            if (config == null || reports == null)
             {
                 return;
             }
 
-            foreach (var item in booksToMonitor)
-            {
-                if (!authorProviderId.Equals(item.authorProviderId, StringComparison.OrdinalIgnoreCase) ||
-                    item.report?.ImportListId != importList.Id ||
-                    item.bookProviderId.IsNullOrWhiteSpace())
-                {
-                    continue;
-                }
-
-                config.AudiobookBooksToMonitor ??= new List<string>();
-                config.EbookBooksToMonitor ??= new List<string>();
-
-                if (!config.AudiobookBooksToMonitor.Contains(item.bookProviderId, StringComparer.OrdinalIgnoreCase))
-                {
-                    config.AudiobookBooksToMonitor.Add(item.bookProviderId);
-                }
-
-                if (!config.EbookBooksToMonitor.Contains(item.bookProviderId, StringComparer.OrdinalIgnoreCase))
-                {
-                    config.EbookBooksToMonitor.Add(item.bookProviderId);
-                }
-            }
-
-            EnableRequestedMediaGates(config);
+            var bookIds = reports.Select(GetBookProviderId).Where(id => id.IsNotNullOrWhiteSpace()).ToList();
+            var options = importList.GetMonitoringOptions();
+            config.AudiobookBooksToMonitor = config.CreateAudiobook && options.GetMonitorListedBooks(BookMediaType.Audiobook, importList.ShouldMonitor)
+                ? (config.AudiobookBooksToMonitor ?? Enumerable.Empty<string>()).Concat(bookIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+                : null;
+            config.EbookBooksToMonitor = config.CreateEbook && options.GetMonitorListedBooks(BookMediaType.Ebook, importList.ShouldMonitor)
+                ? (config.EbookBooksToMonitor ?? Enumerable.Empty<string>()).Concat(bookIds).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+                : null;
         }
 
-        private static void EnableRequestedMediaGates(MonitoringConfig config)
-        {
-            if (config?.AudiobookBooksToMonitor?.Any() == true)
-            {
-                config.AudiobookMonitored = true;
-            }
-
-            if (config?.EbookBooksToMonitor?.Any() == true)
-            {
-                config.EbookMonitored = true;
-            }
-        }
-
-        private MonitoringConfig BuildConfigFromImportList(ImportListDefinition importList)
-        {
-            if (importList == null)
-            {
-                return new MonitoringConfig();
-            }
-
-            var tags = importList.Tags != null ? new HashSet<int>(importList.Tags) : new HashSet<int>();
-            var audiobookRootFolderSettings = ResolveRootFolderSettings(importList.RootFolderPath, BookMediaType.Audiobook);
-            var ebookRootFolderSettings = ResolveRootFolderSettings(importList.RootFolderPath, BookMediaType.Ebook);
-
-            var config = new MonitoringConfig
-            {
-                CreateAudiobook = audiobookRootFolderSettings.IsConfigured,
-                CreateEbook = ebookRootFolderSettings.IsConfigured,
-                AudiobookMonitored = audiobookRootFolderSettings.IsConfigured ? audiobookRootFolderSettings.Monitored : null,
-                AudiobookMonitorNewItems = audiobookRootFolderSettings.IsConfigured ? importList.MonitorNewItems : null,
-                AudiobookMonitorExistingMode = audiobookRootFolderSettings.IsConfigured ? importList.ShouldMonitor switch
-                {
-                    ImportListMonitorType.SpecificBook => MonitorTypes.SpecificBook,
-                    ImportListMonitorType.EntireAuthor => MonitorTypes.All,
-                    _ => MonitorTypes.None
-                } : null,
-                EbookMonitored = ebookRootFolderSettings.IsConfigured ? ebookRootFolderSettings.Monitored : null,
-                EbookMonitorNewItems = ebookRootFolderSettings.IsConfigured ? importList.MonitorNewItems : null,
-                EbookMonitorExistingMode = ebookRootFolderSettings.IsConfigured ? importList.ShouldMonitor switch
-                {
-                    ImportListMonitorType.SpecificBook => MonitorTypes.SpecificBook,
-                    ImportListMonitorType.EntireAuthor => MonitorTypes.All,
-                    _ => MonitorTypes.None
-                } : null,
-                AudiobookQualityProfileId = importList.QualityProfileId,
-                EbookQualityProfileId = importList.QualityProfileId,
-                AudiobookMetadataProfileId = importList.MetadataProfileId,
-                EbookMetadataProfileId = importList.MetadataProfileId,
-                AudiobookRootFolderPath = importList.RootFolderPath,
-                EbookRootFolderPath = importList.RootFolderPath,
-                AudiobookTags = tags,
-                EbookTags = tags,
-                Tags = tags
-            };
-
-            return config;
-        }
-
-        private bool ApplyImportListMonitoringToExistingAuthor(Author author, ImportListDefinition importList)
-        {
-            if (author == null ||
-                importList == null ||
-                !importList.ShouldMonitorExisting ||
-                importList.ShouldMonitor != ImportListMonitorType.EntireAuthor)
-            {
-                return false;
-            }
-
-            var hardcoverSettings = GetHardcoverLibrarySettings(importList);
-            var goodreadsSettings = GetGoodreadsSettings(importList);
-            var monitorAudiobooks = hardcoverSettings?.MonitorAudiobooks ?? goodreadsSettings?.MonitorAudiobooks ?? true;
-            var monitorEbooks = hardcoverSettings?.MonitorEbooks ?? goodreadsSettings?.MonitorEbooks ?? true;
-            var changed = false;
-
-            if (importList.ShouldMonitor == ImportListMonitorType.EntireAuthor)
-            {
-                var books = _bookService.GetBooksByAuthor(author.Id) ?? new List<Book>();
-                var booksToUpdate = new List<Book>();
-
-                foreach (var book in books)
-                {
-                    if (book.MediaType == BookMediaType.Audiobook && monitorAudiobooks && !book.AudiobookMonitored)
-                    {
-                        book.AudiobookMonitored = true;
-                        book.EbookMonitored = false;
-                        booksToUpdate.Add(book);
-                    }
-                    else if (book.MediaType == BookMediaType.Ebook && monitorEbooks && !book.EbookMonitored)
-                    {
-                        book.AudiobookMonitored = false;
-                        book.EbookMonitored = true;
-                        booksToUpdate.Add(book);
-                    }
-                }
-
-                if (booksToUpdate.Any())
-                {
-                    _bookService.UpdateMany(booksToUpdate);
-                    changed = true;
-                }
-            }
-
-            return changed;
-        }
 
         private static string NormalizeProviderId(string value, string defaultPrefix)
         {
@@ -508,31 +312,9 @@ namespace NzbDrone.Core.ImportLists
             return (providerId.Substring(0, idx).ToLowerInvariant(), providerId.Substring(idx + 1));
         }
 
-        private static bool MatchesExclusionId(string providerId, string exclusionId)
+        internal static bool MatchesExclusionId(string providerId, string exclusionId)
         {
-            if (providerId.IsNullOrWhiteSpace() || exclusionId.IsNullOrWhiteSpace())
-            {
-                return false;
-            }
-
-            providerId = providerId.Trim();
-            exclusionId = exclusionId.Trim();
-
-            if (exclusionId.Contains(":"))
-            {
-                return providerId.Equals(exclusionId, StringComparison.OrdinalIgnoreCase);
-            }
-
-            // Backward compatibility: some exclusions were stored as raw IDs (no provider prefix),
-            // including ISBN10/ISBN13 (and potentially other non-prefixed identifiers).
-            if (!providerId.Contains(":"))
-            {
-                return providerId.Equals(exclusionId, StringComparison.OrdinalIgnoreCase);
-            }
-
-            // Backward compatibility: old exclusions stored raw Goodreads IDs without the gr: prefix.
-            var (prefix, rawId) = SplitProviderId(providerId);
-            return prefix == "gr" && rawId.IsNotNullOrWhiteSpace() && rawId.Equals(exclusionId, StringComparison.OrdinalIgnoreCase);
+            return ImportListProviderIdHelper.MatchesExclusionId(providerId, exclusionId);
         }
 
         private string GetAuthorProviderId(ImportListItemInfo report)
@@ -542,27 +324,7 @@ namespace NzbDrone.Core.ImportLists
 
         private string GetBookProviderId(ImportListItemInfo report)
         {
-            if (report == null)
-            {
-                return null;
-            }
-
-            if (report.BookProviderId.IsNotNullOrWhiteSpace() && report.BookProviderId.Contains(":"))
-            {
-                return report.BookProviderId.Trim();
-            }
-
-            if (report.EditionProviderId.IsNotNullOrWhiteSpace() && report.EditionProviderId.Contains(":"))
-            {
-                return report.EditionProviderId.Trim();
-            }
-
-            if (report.BookProviderId.IsNotNullOrWhiteSpace())
-            {
-                return NormalizeProviderId(report.BookProviderId, "gr");
-            }
-
-            return NormalizeProviderId(report.EditionProviderId, "gr");
+            return NormalizeProviderId(report?.BookProviderId, "gr");
         }
 
         private static IEnumerable<string> GetBookProviderIds(Book book)
@@ -607,7 +369,13 @@ namespace NzbDrone.Core.ImportLists
         private sealed class ImportListLocalLookup
         {
             private readonly Dictionary<string, Author> _authors = new(StringComparer.OrdinalIgnoreCase);
-            private readonly Dictionary<string, Book> _books = new(StringComparer.OrdinalIgnoreCase);
+            private readonly Dictionary<string, List<Book>> _books = new(StringComparer.OrdinalIgnoreCase);
+            private readonly Dictionary<string, List<Book>> _editionBooks = new(StringComparer.OrdinalIgnoreCase);
+            private readonly Dictionary<int, Author> _authorsById = new();
+            private readonly Dictionary<int, Book> _booksById = new();
+            private readonly Dictionary<int, HashSet<BookMediaType>> _mediaTypesByAuthor = new();
+
+            public bool HasBooks(int authorId, BookMediaType mediaType) => _mediaTypesByAuthor.TryGetValue(authorId, out var types) && types.Contains(mediaType);
 
             public int AuthorCount { get; private set; }
             public int BookCount { get; private set; }
@@ -620,6 +388,7 @@ namespace NzbDrone.Core.ImportLists
                 }
 
                 AuthorCount++;
+                _authorsById[author.Id] = author;
 
                 foreach (var providerId in GetAuthorProviderIds(author))
                 {
@@ -635,11 +404,125 @@ namespace NzbDrone.Core.ImportLists
                 }
 
                 BookCount++;
+                _booksById[book.Id] = book;
+                if (!_mediaTypesByAuthor.TryGetValue(book.AuthorId, out var mediaTypes))
+                {
+                    mediaTypes = new HashSet<BookMediaType>();
+                    _mediaTypesByAuthor[book.AuthorId] = mediaTypes;
+                }
 
-                foreach (var providerId in GetBookProviderIds(book))
+                mediaTypes.Add(book.MediaType);
+                foreach (var edition in book.Editions ?? new List<Edition>())
+                {
+                    foreach (var id in BookEditionIdentity.GetEditionProviderIds(edition))
+                    {
+                        if (!_editionBooks.TryGetValue(id, out var matches))
+                        {
+                            matches = new List<Book>();
+                            _editionBooks[id] = matches;
+                        }
+
+                        matches.Add(book);
+                    }
+                }
+
+                foreach (var providerId in BookIdentity.GetStableWorkProviderIdentityTokens(book))
                 {
                     AddBookKey(providerId, book);
                 }
+            }
+
+            public Book FindOwnedBook(string workId, string editionId, IEnumerable<BookMediaType> mediaTypes, int? cachedAuthorId = null)
+            {
+                var editionKey = BookEditionIdentity.NormalizeRequestedEditionProviderId(editionId);
+                var books = FindBooks(workId).Where(book => mediaTypes.Contains(book.MediaType)).ToList();
+                var editionBooks = editionKey != null && _editionBooks.TryGetValue(editionKey, out var editions)
+                    ? editions.Where(book => mediaTypes.Contains(book.MediaType)).ToList() : new List<Book>();
+                if (editionBooks.Count > 0 && books.Select(book => book.AuthorId).Distinct().Count() != 1)
+                {
+                    var compatibleEditionBooks = editionBooks.Where(book => MatchesWork(workId, book, mediaTypes)).ToList();
+                    if (compatibleEditionBooks.Count == 0)
+                    {
+                        return null;
+                    }
+
+                    // Edition membership cannot select a primary from multiple stored work owners.
+                    if (books.Count == 0)
+                    {
+                        books = compatibleEditionBooks.Concat(compatibleEditionBooks
+                                .SelectMany(BookIdentity.GetStableWorkProviderIdentityTokens)
+                                .Distinct(StringComparer.OrdinalIgnoreCase)
+                                .SelectMany(FindBooks)
+                                .Where(book => mediaTypes.Contains(book.MediaType)))
+                            .DistinctBy(book => book.Id).ToList();
+                    }
+                }
+
+                if (cachedAuthorId.HasValue)
+                {
+                    books = books.Where(book => book.AuthorId == cachedAuthorId.Value).ToList();
+                }
+
+                if (books.Count == 0 || books.Select(book => book.AuthorId).Distinct().Count() != 1 ||
+                    !_authorsById.ContainsKey(books[0].AuthorId))
+                {
+                    return null;
+                }
+
+                return books.OrderBy(book => book.Id).First();
+            }
+
+            public bool MatchesWork(string workId, Book book, IEnumerable<BookMediaType> mediaTypes)
+            {
+                if (workId.IsNullOrWhiteSpace())
+                {
+                    return true;
+                }
+
+                var workTokens = BookIdentity.GetStableWorkProviderIdentityTokens(book);
+                if (workTokens.Contains(workId) || FindBooks(workId).Any(local => mediaTypes.Contains(local.MediaType) &&
+                    BookIdentity.MatchesByStableWorkProviderId(local, book)))
+                {
+                    return true;
+                }
+
+                var requested = new Book { RemoteProviderIds = new HashSet<string> { workId } };
+                return workTokens.Count == 0 && BookIdentity.GetStableWorkProviderIdentityTokens(requested).Count == 0 &&
+                    mediaTypes.Contains(book.MediaType) && GetBookProviderIds(book).Contains(workId, StringComparer.OrdinalIgnoreCase);
+            }
+
+            public bool TryMapBookReport(ImportListItemInfo report, IEnumerable<BookMediaType> mediaTypes = null)
+            {
+                mediaTypes ??= new[] { BookMediaType.Audiobook, BookMediaType.Ebook };
+                report.AuthorProviderId = NormalizeProviderId(report.AuthorProviderId, "gr");
+                report.BookProviderId = NormalizeProviderId(report.BookProviderId, "gr");
+                report.EditionProviderId = NormalizeProviderId(report.EditionProviderId, "gr");
+                var book = FindOwnedBook(report.BookProviderId, report.EditionProviderId, mediaTypes);
+                if (book == null)
+                {
+                    return false;
+                }
+
+                var author = _authorsById[book.AuthorId];
+                report.BookProviderId ??= GetPreferredBookProviderId(book);
+                report.AuthorProviderId = GetPreferredAuthorProviderId(author);
+                report.Book ??= book.Title;
+                report.Author = author.Name;
+                var source = FindBooks(report.BookProviderId, report.EditionProviderId)
+                    .Where(candidate => mediaTypes.Contains(candidate.MediaType) && candidate.AuthorId == author.Id &&
+                        MatchesWork(report.BookProviderId, candidate, mediaTypes))
+                    .SelectMany(candidate => candidate.Editions ?? new List<Edition>())
+                    .FirstOrDefault(edition => BookEditionIdentity.EditionMatchesProviderId(edition, report.EditionProviderId));
+                if (source != null && report.EditionHasNarration != true)
+                {
+                    report.EditionHasNarration = BookEditionIdentity.IsNarratedAudiobookEdition(source);
+                }
+                if (BookEditionIdentity.IsNarratedAudiobookEdition(source))
+                {
+                    report.EditionNarratorNames = BookEditionIdentity.GetNarratorNames(source);
+                }
+
+                return report.BookProviderId.IsNotNullOrWhiteSpace() && report.AuthorProviderId.IsNotNullOrWhiteSpace();
             }
 
             public Author FindAuthor(string providerId)
@@ -655,17 +538,60 @@ namespace NzbDrone.Core.ImportLists
                 return null;
             }
 
-            public Book FindBook(string providerId)
+            public IEnumerable<Book> FindBooks(string providerId)
             {
-                foreach (var key in ExpandProviderLookupKeys(providerId))
+                if (providerId != null && _books.TryGetValue(providerId.Trim(), out var books))
                 {
-                    if (_books.TryGetValue(key, out var book))
-                    {
-                        return book;
-                    }
+                    return books;
                 }
 
-                return null;
+                var key = providerId?.Trim();
+                // These providers number works and editions independently; a missing work is not an edition lookup.
+                var isWorkId = key?.StartsWith("hc:", StringComparison.OrdinalIgnoreCase) == true ||
+                    key?.StartsWith("gr:", StringComparison.OrdinalIgnoreCase) == true;
+                return key != null && !isWorkId && _editionBooks.TryGetValue(key, out var book)
+                    ? book : Enumerable.Empty<Book>();
+            }
+
+            public IEnumerable<Book> FindBooks(string workId, string editionId)
+            {
+                var key = BookEditionIdentity.NormalizeRequestedEditionProviderId(editionId);
+                var editions = key != null && _editionBooks.TryGetValue(key, out var books) ? books : Enumerable.Empty<Book>();
+                return FindBooks(workId).Concat(editions).DistinctBy(book => book.Id);
+            }
+
+            public Book FindBook(string providerId) => FindBooks(providerId).FirstOrDefault();
+
+            public void AddBookAlias(string providerId, Book book) => AddBookKey(providerId, book);
+
+            public void AddProviderMatches((string Scope, string Provider, string Id) key, IEnumerable<int> ids)
+            {
+                foreach (var id in ids)
+                {
+                    if (!_booksById.TryGetValue(id, out var book))
+                    {
+                        continue;
+                    }
+
+                    if (key.Scope == "work")
+                    {
+                        AddBookKey(key.Id, book);
+                    }
+                    else if (key.Scope == "edition")
+                    {
+                        var providerId = BookEditionIdentity.NormalizeRequestedEditionProviderId(key.Id);
+                        if (!_editionBooks.TryGetValue(providerId, out var matches))
+                        {
+                            matches = new List<Book>();
+                            _editionBooks[providerId] = matches;
+                        }
+
+                        if (!matches.Any(candidate => candidate.Id == book.Id))
+                        {
+                            matches.Add(book);
+                        }
+                    }
+                }
             }
 
             private void AddAuthorKey(string providerId, Author author)
@@ -683,10 +609,13 @@ namespace NzbDrone.Core.ImportLists
             {
                 foreach (var key in ExpandProviderLookupKeys(providerId))
                 {
-                    if (!_books.ContainsKey(key))
+                    if (!_books.TryGetValue(key, out var books))
                     {
-                        _books[key] = book;
+                        books = new List<Book>();
+                        _books[key] = books;
                     }
+
+                    books.Add(book);
                 }
             }
 
@@ -704,6 +633,19 @@ namespace NzbDrone.Core.ImportLists
         private sealed class ImportListSyncStats
         {
             private readonly HashSet<string> _existingAuthors = new(StringComparer.OrdinalIgnoreCase);
+
+            public int EditionLookups;
+            public int WorkLookups;
+            public int CacheFailures;
+            public int EvidenceRejections;
+            public Exception CacheError;
+            public bool CacheReadFailed;
+
+            public void MarkCacheFailure(Exception exception)
+            {
+                Interlocked.Increment(ref CacheFailures);
+                Interlocked.CompareExchange(ref CacheError, exception, null);
+            }
 
             public int MissingProviderIds { get; private set; }
             public int Excluded { get; private set; }
@@ -729,8 +671,9 @@ namespace NzbDrone.Core.ImportLists
             }
         }
 
-        private ImportListLocalLookup BuildImportListLocalLookup()
+        private ImportListLocalLookup BuildImportListLocalLookup(IReadOnlySet<int> editionBookIds, int incompleteLookups, Exception lookupError)
         {
+            var stopwatch = Stopwatch.StartNew();
             var lookup = new ImportListLocalLookup();
 
             foreach (var author in _authorService.GetAllAuthors() ?? new List<Author>())
@@ -738,28 +681,34 @@ namespace NzbDrone.Core.ImportLists
                 lookup.AddAuthor(author);
             }
 
-            foreach (var book in _bookService.GetAllBooks() ?? new List<Book>())
+            var books = _bookService.GetImportListBookIdentities() ?? new List<Book>();
+            if (editionBookIds == null)
+            {
+                _logger.Warn(lookupError, "Import list sync: {0} provider lookups incomplete; loading editions for all {1} books this run", incompleteLookups, books.Count);
+            }
+            var unloadedBooks = books.Where(book => book?.Id > 0 && book.LazyEditions?.IsLoaded == false).ToList();
+            var booksNeedingEditions = unloadedBooks.Where(book => editionBookIds == null || editionBookIds.Contains(book.Id)).ToList();
+            // All work identities remain available for owner/cached-mapping checks. Only requested
+            // works/editions need edition metadata; never let indexing trigger a lazy query per book.
+            foreach (var book in unloadedBooks) book.Editions = new List<Edition>();
+            if (booksNeedingEditions.Count > 0)
+            {
+                var editionsByBook = _editionService.GetEditionRowsByBook(booksNeedingEditions.Select(book => book.Id))
+                    .GroupBy(edition => edition.BookId)
+                    .ToDictionary(group => group.Key, group => group.ToList());
+                foreach (var book in booksNeedingEditions)
+                {
+                    book.Editions = editionsByBook.GetValueOrDefault(book.Id) ?? new List<Edition>();
+                }
+            }
+
+            foreach (var book in books)
             {
                 lookup.AddBook(book);
             }
 
+            _logger.Debug("Indexed {0} authors and {1} books for import lists; loaded editions for {2} books in {3} ms", lookup.AuthorCount, lookup.BookCount, booksNeedingEditions.Count, stopwatch.ElapsedMilliseconds);
             return lookup;
-        }
-
-        private static bool MatchesProviderId(string candidateId, string providerId, string rawId)
-        {
-            if (candidateId.IsNullOrWhiteSpace())
-            {
-                return false;
-            }
-
-            candidateId = candidateId.Trim();
-            if (candidateId.Equals(providerId, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            return rawId.IsNotNullOrWhiteSpace() && candidateId.Equals(rawId, StringComparison.OrdinalIgnoreCase);
         }
 
         private Book FindExistingBook(string bookProviderId, ImportListLocalLookup localLookup, Dictionary<string, Book> liveBookLookupHitCache = null)
@@ -775,7 +724,13 @@ namespace NzbDrone.Core.ImportLists
                 return indexedBook;
             }
 
-            return FindExistingBookLive(bookProviderId, liveBookLookupHitCache);
+            var book = FindExistingBookLive(bookProviderId, liveBookLookupHitCache);
+            if (book != null)
+            {
+                localLookup?.AddBookAlias(bookProviderId, book);
+            }
+
+            return book;
         }
 
         private Book FindExistingBookLive(string bookProviderId, Dictionary<string, Book> liveBookLookupHitCache = null)
@@ -792,16 +747,15 @@ namespace NzbDrone.Core.ImportLists
                 return cachedBook;
             }
 
-            var (prefix, rawId) = SplitProviderId(bookProviderId);
+            var (prefix, _) = SplitProviderId(bookProviderId);
             if (prefix.IsNullOrWhiteSpace())
             {
                 return null;
             }
 
-            var book = _bookService.FindByProviderId(prefix, bookProviderId)
-                ?? (rawId.IsNotNullOrWhiteSpace() ? _bookService.FindByProviderId(prefix, rawId) : null);
+            var book = _bookService.FindByProviderId(prefix, bookProviderId);
 
-            if (book != null && liveBookLookupHitCache != null)
+            if (liveBookLookupHitCache != null)
             {
                 liveBookLookupHitCache[bookProviderId] = book;
             }
@@ -842,16 +796,15 @@ namespace NzbDrone.Core.ImportLists
                 return cachedAuthor;
             }
 
-            var (prefix, rawId) = SplitProviderId(authorProviderId);
+            var (prefix, _) = SplitProviderId(authorProviderId);
             if (prefix.IsNullOrWhiteSpace())
             {
                 return null;
             }
 
-            var author = _authorService.FindByProviderId(prefix, authorProviderId)
-                ?? (rawId.IsNotNullOrWhiteSpace() ? _authorService.FindByProviderId(prefix, rawId) : null);
+            var author = _authorService.FindByProviderId(prefix, authorProviderId);
 
-            if (author != null && liveAuthorLookupHitCache != null)
+            if (liveAuthorLookupHitCache != null)
             {
                 liveAuthorLookupHitCache[authorProviderId] = author;
             }
@@ -859,447 +812,10 @@ namespace NzbDrone.Core.ImportLists
             return author;
         }
 
-        private static HardcoverLibraryImportListSettings GetHardcoverLibrarySettings(ImportListDefinition importList)
-        {
-            return importList?.Settings as HardcoverLibraryImportListSettings;
-        }
-
-        private static IGoodreadsDualMediaImportListSettings GetGoodreadsSettings(ImportListDefinition importList)
-        {
-            return importList?.Settings as IGoodreadsDualMediaImportListSettings;
-        }
-
-        private static (HashSet<int> audiobookTags, HashSet<int> ebookTags) BuildMediaTagsForHardcoverLibrary(ImportListDefinition importList, HardcoverLibraryImportListSettings settings)
-        {
-            var baseTags = importList?.Tags ?? new HashSet<int>();
-            var audiobookTags = new HashSet<int>(baseTags);
-            var ebookTags = new HashSet<int>(baseTags);
-
-            if (settings == null)
-            {
-                return (audiobookTags, ebookTags);
-            }
-
-            if (settings.MonitorAudiobooks && settings.AudiobookTags != null)
-            {
-                foreach (var tag in settings.AudiobookTags)
-                {
-                    audiobookTags.Add(tag);
-                }
-            }
-
-            if (settings.MonitorEbooks && settings.EbookTags != null)
-            {
-                foreach (var tag in settings.EbookTags)
-                {
-                    ebookTags.Add(tag);
-                }
-            }
-
-            return (audiobookTags, ebookTags);
-        }
-
-        private static (HashSet<int> audiobookTags, HashSet<int> ebookTags) BuildMediaTagsForGoodreads(ImportListDefinition importList, IGoodreadsDualMediaImportListSettings settings)
-        {
-            var baseTags = importList?.Tags ?? new HashSet<int>();
-            var audiobookTags = new HashSet<int>(baseTags);
-            var ebookTags = new HashSet<int>(baseTags);
-
-            if (settings == null)
-            {
-                return (audiobookTags, ebookTags);
-            }
-
-            if (settings.MonitorAudiobooks && settings.AudiobookTags != null)
-            {
-                foreach (var tag in settings.AudiobookTags)
-                {
-                    audiobookTags.Add(tag);
-                }
-            }
-
-            if (settings.MonitorEbooks && settings.EbookTags != null)
-            {
-                foreach (var tag in settings.EbookTags)
-                {
-                    ebookTags.Add(tag);
-                }
-            }
-
-            return (audiobookTags, ebookTags);
-        }
-
-        private static bool BookMatchesProviderId(Book book, string providerPrefix, string providerId, string rawId)
-        {
-            if (book == null || providerId.IsNullOrWhiteSpace())
-            {
-                return false;
-            }
-
-            if (BookIdentity.GetProviderIdentityTokens(book).Contains(providerId))
-            {
-                return true;
-            }
-
-            switch (providerPrefix)
-            {
-                case "hc":
-                    return BookEditionIdentity.HasCanonicalWorkProviderId(book, providerId) ||
-                           BookEditionIdentity.HasCanonicalEditionProviderId(book, providerId);
-
-                case "gr":
-                    return BookEditionIdentity.HasCanonicalWorkProviderId(book, providerId) ||
-                           BookEditionIdentity.HasCanonicalEditionProviderId(book, providerId) ||
-                           MatchesProviderId(book.ForeignEditionId, providerId, rawId);
-
-                case "ol":
-                    return BookEditionIdentity.HasCanonicalWorkProviderId(book, providerId) ||
-                           BookEditionIdentity.HasCanonicalEditionProviderId(book, providerId);
-
-                case "gb":
-                    return BookEditionIdentity.HasCanonicalEditionProviderId(book, providerId);
-
-                case "az":
-                case "ax":
-                    return BookEditionIdentity.HasCanonicalEditionProviderId(book, providerId);
-            }
-
-            return BookEditionIdentity.HasCanonicalWorkProviderId(book, providerId) ||
-                   BookEditionIdentity.HasCanonicalEditionProviderId(book, providerId) ||
-                   MatchesProviderId(book.ForeignEditionId, providerId, rawId);
-        }
-
-        private static BookMediaType? GetMediaTypeForEdition(Edition edition)
-        {
-            if (edition == null)
-            {
-                return null;
-            }
-
-            // Hardcover: reading_format_id=2 indicates audiobook.
-            if (edition.ReadingFormatId == 2)
-            {
-                return BookMediaType.Audiobook;
-            }
-
-            if (edition.DurationSeconds.HasValue && edition.DurationSeconds.Value > 0)
-            {
-                return BookMediaType.Audiobook;
-            }
-
-            if (edition.ReadingFormatId == 3 || edition.ReadingFormatId == 4)
-            {
-                return BookMediaType.Ebook;
-            }
-
-            if (edition.IsEbook)
-            {
-                return BookMediaType.Ebook;
-            }
-
-            var format = (edition.EditionFormat ?? edition.Format ?? string.Empty).Trim();
-            if (format.IsNotNullOrWhiteSpace())
-            {
-                if (format.Contains("audio", StringComparison.OrdinalIgnoreCase) ||
-                    format.Contains("audiobook", StringComparison.OrdinalIgnoreCase))
-                {
-                    return BookMediaType.Audiobook;
-                }
-
-                if (format.Contains("kindle", StringComparison.OrdinalIgnoreCase) ||
-                    format.Contains("ebook", StringComparison.OrdinalIgnoreCase) ||
-                    format.Contains("e-book", StringComparison.OrdinalIgnoreCase))
-                {
-                    return BookMediaType.Ebook;
-                }
-
-                if (format.Contains("hardcover", StringComparison.OrdinalIgnoreCase) ||
-                    format.Contains("paperback", StringComparison.OrdinalIgnoreCase) ||
-                    format.Contains("mass market", StringComparison.OrdinalIgnoreCase) ||
-                    format.Contains("library binding", StringComparison.OrdinalIgnoreCase))
-                {
-                    return null;
-                }
-            }
-
-            // Physical/unknown: don't force into ebook/audiobook.
-            if (edition.ReadingFormatId == 1)
-            {
-                return null;
-            }
-
-            return null;
-        }
-
-        private Book CloneBookWithEditions(Book canonicalBook, string requiredEditionProviderId = null, string requiredEditionRawId = null)
-        {
-            if (canonicalBook == null)
-            {
-                return null;
-            }
-
-            var sourceEditions = canonicalBook.Editions ?? _editionService.GetEditionsByBook(canonicalBook.Id);
-            var retainedSourceEditions = SelectCloneEditions(canonicalBook, sourceEditions, requiredEditionProviderId, requiredEditionRawId);
-            if (!retainedSourceEditions.Any())
-            {
-                _logger.Warn("[HARDCOVER-CLONE] Skipping clone for BookId={0} (MediaType={1}) because no editions survived metadata-profile filtering and media-type retention",
-                    canonicalBook.Id,
-                    canonicalBook.MediaType);
-                return null;
-            }
-
-            // Build a unique slug suffix (short but high-entropy)
-            var suffix = DateTime.UtcNow.Ticks.ToString().Substring(10);
-
-            var newBook = new Book
-            {
-                Title = canonicalBook.Title,
-                Subtitle = canonicalBook.Subtitle,
-                TitleSlug = (canonicalBook.TitleSlug ?? canonicalBook.Title).Trim() + "_copy_" + suffix,
-                Author = canonicalBook.Author,
-                AuthorId = canonicalBook.AuthorId,
-                MediaType = canonicalBook.MediaType,
-                ForeignEditionId = canonicalBook.ForeignEditionId,
-
-                GoodreadsWorkId = canonicalBook.GoodreadsWorkId,
-                HardcoverBookId = canonicalBook.HardcoverBookId,
-                OpenLibraryWorkId = canonicalBook.OpenLibraryWorkId,
-                BaseBookId = canonicalBook.BaseBookId,
-                RemoteProviderIds = CloneProviderIds(canonicalBook.RemoteProviderIds),
-
-                // Monitoring state will be updated after edition selection
-                AudiobookMonitored = false,
-                EbookMonitored = false,
-                AnyEditionOk = true,
-                Added = DateTime.UtcNow,
-                Narrator = canonicalBook.Narrator,
-                DurationMinutes = canonicalBook.DurationMinutes,
-                CleanTitle = canonicalBook.CleanTitle,
-
-                SeriesId = canonicalBook.SeriesId,
-                SeriesName = canonicalBook.SeriesName,
-                SeriesPosition = canonicalBook.SeriesPosition,
-
-                OriginalTitle = canonicalBook.OriginalTitle,
-                Overview = canonicalBook.Overview,
-                ReleaseDate = canonicalBook.ReleaseDate,
-                Links = canonicalBook.Links,
-                Genres = canonicalBook.Genres,
-                Ratings = canonicalBook.Ratings,
-                Images = canonicalBook.Images,
-                LanguageCode = canonicalBook.LanguageCode,
-                LanguageName = canonicalBook.LanguageName,
-                PublicationYear = canonicalBook.PublicationYear,
-                Publisher = canonicalBook.Publisher,
-                PageCount = canonicalBook.PageCount,
-                IsGraphicAudio = canonicalBook.IsGraphicAudio,
-                AudioProductionType = canonicalBook.AudioProductionType,
-                ProviderUrls = canonicalBook.ProviderUrls
-            };
-
-            // Insert the book (sets Id on the instance)
-            _bookService.InsertMany(new List<Book> { newBook });
-
-            var newEditions = new List<Edition>();
-
-            foreach (var srcEd in retainedSourceEditions)
-            {
-                var edSuffix = $"{suffix}_{srcEd.Id}";
-                var newEd = new Edition
-                {
-                    BookId = newBook.Id,
-                    ForeignEditionId = srcEd.ForeignEditionId,
-                    Title = srcEd.Title,
-                    Subtitle = srcEd.Subtitle,
-                    TitleSlug = (srcEd.TitleSlug ?? srcEd.Title).Trim() + "_copy_" + edSuffix,
-                    MatchingTitle = srcEd.MatchingTitle,
-                    Asin = srcEd.Asin,
-                    Isbn13 = srcEd.Isbn13,
-                    Isbn10 = srcEd.Isbn10,
-                    GoodreadsEditionId = srcEd.GoodreadsEditionId,
-                    HardcoverEditionId = srcEd.HardcoverEditionId,
-                    OpenLibraryEditionId = srcEd.OpenLibraryEditionId,
-                    Language = srcEd.Language,
-                    Overview = srcEd.Overview,
-                    Format = srcEd.Format,
-                    IsEbook = srcEd.IsEbook,
-                    Disambiguation = srcEd.Disambiguation,
-                    Publisher = srcEd.Publisher,
-                    PageCount = srcEd.PageCount,
-                    ReleaseDate = srcEd.ReleaseDate,
-                    Images = srcEd.Images,
-                    Links = srcEd.Links,
-                    Ratings = srcEd.Ratings,
-                    AudibleASIN = srcEd.AudibleASIN,
-                    GoogleBooksEditionId = srcEd.GoogleBooksEditionId,
-                    ReviewCount = srcEd.ReviewCount,
-                    Narrator = srcEd.Narrator,
-                    NarratorNames = srcEd.NarratorNames,
-                    Chapters = srcEd.Chapters?.Select(c => new EditionChapter
-                    {
-                        Title = c?.Title,
-                        StartOffsetMs = c?.StartOffsetMs ?? 0,
-                        StartOffsetSec = c?.StartOffsetSec ?? 0,
-                        LengthMs = c?.LengthMs ?? 0
-                    }).ToList() ?? new List<EditionChapter>(),
-                    ProviderUrls = srcEd.ProviderUrls,
-                    LastUpdated = DateTime.UtcNow,
-                    Monitored = false,
-                    ManualAdd = false,
-                    IsFallbackEdition = srcEd.IsFallbackEdition,
-                    ReadingFormatId = srcEd.ReadingFormatId,
-                    EditionFormat = srcEd.EditionFormat,
-                    EditionInfo = srcEd.EditionInfo,
-                    DurationSeconds = srcEd.DurationSeconds,
-                    ChapterCount = srcEd.ChapterCount,
-                    HasChapters = srcEd.HasChapters,
-                    IsGraphicAudio = srcEd.IsGraphicAudio,
-                    AudioProductionType = srcEd.AudioProductionType
-                };
-                newEditions.Add(newEd);
-            }
-
-            if (newEditions.Any())
-            {
-                _editionService.InsertMany(newEditions);
-            }
-
-            newBook.Editions = newEditions;
-            EditionPinPolicy.MarkSelectionAsAutomatic(newBook, newEditions);
-            _bookService.RefreshProviderAliases(newBook);
-
-            _logger.Debug("[HARDCOVER-CLONE] Cloned BookId={0} from BookId={1} (MediaType={2}) with {3} editions",
-                newBook.Id, canonicalBook.Id, canonicalBook.MediaType, newEditions.Count);
-
-            return newBook;
-        }
-
-        private static HashSet<string> CloneProviderIds(IEnumerable<string> source)
-        {
-            var values = source?
-                .Where(id => !id.IsNullOrWhiteSpace())
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            return values?.Count > 0 ? values : null;
-        }
-
-        private IReadOnlyList<Edition> SelectCloneEditions(Book canonicalBook, IEnumerable<Edition> sourceEditions, string requiredEditionProviderId, string requiredEditionRawId)
-        {
-            var editions = (sourceEditions ?? Enumerable.Empty<Edition>())
-                .Where(e => e != null)
-                .ToList();
-
-            if (!editions.Any() || _editionSelector == null || canonicalBook == null)
-            {
-                return editions;
-            }
-
-            var protectedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var requiredEdition = editions.FirstOrDefault(edition =>
-                !requiredEditionProviderId.IsNullOrWhiteSpace() &&
-                MatchesProviderId(edition.HardcoverEditionId, requiredEditionProviderId, requiredEditionRawId));
-
-            foreach (var edition in editions)
-            {
-                if (edition.ForeignEditionId.IsNullOrWhiteSpace())
-                {
-                    continue;
-                }
-
-                if (!requiredEditionProviderId.IsNullOrWhiteSpace() &&
-                    MatchesProviderId(edition.HardcoverEditionId, requiredEditionProviderId, requiredEditionRawId))
-                {
-                    protectedIds.Add(edition.ForeignEditionId);
-                }
-            }
-
-            var author = canonicalBook.Author;
-            if ((author == null || (!author.AudiobookMetadataProfileId.HasValue && !author.EbookMetadataProfileId.HasValue)) &&
-                canonicalBook.AuthorId > 0)
-            {
-                try
-                {
-                    author = _authorService.GetAuthor(canonicalBook.AuthorId);
-                }
-                catch
-                {
-                    author = canonicalBook.Author;
-                }
-            }
-
-            MetadataProfile metadataProfile = canonicalBook.MediaType == BookMediaType.Ebook
-                ? author?.EbookMetadataProfile?.Value
-                : author?.AudiobookMetadataProfile?.Value;
-
-            var filteredEditions = _editionMetadataProfileFilter?.Apply(editions, metadataProfile, protectedIds) ?? editions;
-
-            var selection = _editionSelector.SelectRetainedEditions(
-                canonicalBook.MediaType,
-                filteredEditions);
-
-            var retained = selection?.RetainedEditions?.Where(e => e != null).ToList() ?? new List<Edition>();
-
-            if (requiredEdition == null)
-            {
-                return retained;
-            }
-
-            var requiredEditionKey = EditionSelector.GetRetentionDedupeKey(requiredEdition);
-            var retainedKeys = new HashSet<string>(retained
-                .Select(EditionSelector.GetRetentionDedupeKey)
-                .Where(key => key.IsNotNullOrWhiteSpace()),
-                StringComparer.OrdinalIgnoreCase);
-
-            if (requiredEditionKey.IsNotNullOrWhiteSpace() && retainedKeys.Contains(requiredEditionKey))
-            {
-                return retained;
-            }
-
-            return editions
-                .Where(edition =>
-                    retainedKeys.Contains(EditionSelector.GetRetentionDedupeKey(edition)) ||
-                    string.Equals(EditionSelector.GetRetentionDedupeKey(edition), requiredEditionKey, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-        }
-
-        private Book FindBookAlreadyTargetingHardcoverEdition(IEnumerable<Book> candidateBooks, string editionProviderId, string editionRawId)
-        {
-            return (candidateBooks ?? Enumerable.Empty<Book>())
-                .Where(book =>
-                {
-                    var monitoredEdition = GetMonitoredEdition(book?.Editions);
-                    return monitoredEdition != null &&
-                           MatchesProviderId(monitoredEdition.HardcoverEditionId, editionProviderId, editionRawId);
-                })
-                .OrderBy(book => book.Id)
-                .FirstOrDefault();
-        }
-
-        private Edition GetMonitoredEdition(IEnumerable<Edition> editions)
-        {
-            return editions?
-                .Where(e => e != null && e.Monitored)
-                .OrderBy(e => e.Id)
-                .FirstOrDefault();
-        }
-
-        private static Book FindReusableHardcoverTargetBook(IEnumerable<Book> candidateBooks, ISet<int> reservedIds, ISet<int> bookIdsWithFiles)
-        {
-            return (candidateBooks ?? Enumerable.Empty<Book>())
-                .Where(book =>
-                    book != null &&
-                    (reservedIds?.Contains(book.Id) != true) &&
-                    (bookIdsWithFiles?.Contains(book.Id) != true) &&
-                    EditionPinPolicy.CanAutomationSelectEdition(book, book.Editions))
-                .OrderBy(book => book.Id)
-                .FirstOrDefault();
-        }
-
         private bool ShouldProcessBookReport(ImportListItemInfo report, List<ImportListExclusion> listExclusions, ImportListLocalLookup localLookup, ImportListSyncStats stats = null, Dictionary<string, Book> liveBookLookupHitCache = null)
         {
             var bookProviderId = GetBookProviderId(report);
             var authorProviderId = GetAuthorProviderId(report);
-            var reportMediaType = GetReportMediaTypeForExclusion(report);
 
             // Check if book already exists
             var existingBook = FindExistingBook(bookProviderId, localLookup, liveBookLookupHitCache);
@@ -1313,17 +829,18 @@ namespace NzbDrone.Core.ImportLists
             }
 
             // For new books, check if the provider ID from the report is excluded
-            if (existingBook == null && bookProviderId.IsNotNullOrWhiteSpace() && listExclusions.Any(s => ImportListExclusionBookMatcher.AppliesToProviderId(s, bookProviderId, reportMediaType)))
+            if (existingBook == null && bookProviderId.IsNotNullOrWhiteSpace() && listExclusions.Any(s => ImportListExclusionBookMatcher.AppliesToProviderId(s, bookProviderId, null)))
             {
                 _logger.Debug("{0} [{1}] Rejected due to list exclusion", report.EditionProviderId, report.Book);
                 stats?.MarkExcluded();
                 return false;
             }
 
-            // Check if author is excluded
-            if (existingBook != null && existingBook.Author != null)
+            // Exclusions follow the proven owner without reloading each matched book's author.
+            var existingAuthor = localLookup.FindAuthor(authorProviderId);
+            if (existingAuthor != null)
             {
-                if (IsAuthorExcludedByAnyProviderId(listExclusions, existingBook.Author))
+                if (IsAuthorExcludedByAnyProviderId(listExclusions, existingAuthor, null))
                 {
                     _logger.Debug("{0} [{1}] Rejected due to list exclusion for parent author", report.EditionProviderId, report.Book);
                     stats?.MarkExcluded();
@@ -1352,7 +869,7 @@ namespace NzbDrone.Core.ImportLists
             var existingAuthor = FindExistingAuthor(authorProviderId, localLookup, liveAuthorLookupHitCache);
 
             // Check if author excluded by any provider ID
-            if (existingAuthor != null && IsAuthorExcludedByAnyProviderId(listExclusions, existingAuthor))
+            if (existingAuthor != null && IsAuthorExcludedByAnyProviderId(listExclusions, existingAuthor, null))
             {
                 _logger.Debug("{0} [{1}] Rejected due to list exclusion (matched by provider ID)", report.AuthorProviderId, report.Author);
                 stats?.MarkExcluded();
@@ -1377,26 +894,49 @@ namespace NzbDrone.Core.ImportLists
             return listExclusions.Any(exclusion => ImportListExclusionBookMatcher.AppliesToBook(exclusion, book));
         }
 
-        private static BookMediaType? GetReportMediaTypeForExclusion(ImportListItemInfo report)
+        private static bool? IsReportedAudioEdition(ImportListItemInfo report)
         {
-            if (!report?.HardcoverReadingFormatId.HasValue ?? true)
+            if (report?.IsGenericBookRequest == true) return false;
+            return report?.EditionHasNarration ?? (report?.HardcoverReadingFormatId switch
+            {
+                1 or 4 => false,
+                _ => null
+            });
+        }
+
+        private RequestedNarration BuildRequestedNarration(ImportListItemInfo report, bool search)
+        {
+            if (report.IsGenericBookRequest || report.EditionProviderId.IsNullOrWhiteSpace() ||
+                (report.EditionMediaType != BookMediaType.Ebook && IsReportedAudioEdition(report) == false))
             {
                 return null;
             }
 
-            return report.HardcoverReadingFormatId == 2
-                ? BookMediaType.Audiobook
-                : (report.HardcoverReadingFormatId == 3 || report.HardcoverReadingFormatId == 4)
-                    ? BookMediaType.Ebook
-                    : null;
+            var mediaType = report.EditionMediaType == BookMediaType.Ebook ? BookMediaType.Ebook : BookMediaType.Audiobook;
+            return new RequestedNarration
+            {
+                MediaType = mediaType,
+                WorkProviderId = GetBookProviderId(report),
+                EditionProviderId = BookEditionIdentity.NormalizeRequestedEditionProviderId(NormalizeProviderId(report.EditionProviderId, "gr")),
+                NarratorNames = mediaType == BookMediaType.Audiobook ? report.EditionNarratorNames?.ToList() : null,
+                RequiresEdition = mediaType == BookMediaType.Ebook || IsReportedAudioEdition(report) == true,
+                Search = search
+            };
         }
 
-        private bool IsAuthorExcludedByAnyProviderId(List<ImportListExclusion> listExclusions, Author author)
+        private static bool NeedsMapping(ImportListItemInfo report, ImportListLocalLookup localLookup, IEnumerable<BookMediaType> mediaTypes)
+        {
+            return ((report.Book.IsNotNullOrWhiteSpace() || report.BookProviderId.IsNotNullOrWhiteSpace() || report.EditionProviderId.IsNotNullOrWhiteSpace()) &&
+                    !localLookup.TryMapBookReport(report, mediaTypes)) ||
+                   (report.EditionProviderId.IsNotNullOrWhiteSpace() && IsReportedAudioEdition(report) == null);
+        }
+
+        private bool IsAuthorExcludedByAnyProviderId(List<ImportListExclusion> listExclusions, Author author, BookMediaType? mediaType)
         {
             if (author == null) return false;
 
             var providerIds = AuthorIdentity.GetProviderIdentityTokenList(author);
-            return listExclusions.Any(exclusion => providerIds.Any(pid => MatchesExclusionId(pid, exclusion.ForeignId)));
+            return listExclusions.Any(exclusion => ImportListExclusionBookMatcher.AppliesToMediaType(exclusion, mediaType) && providerIds.Any(pid => MatchesExclusionId(pid, exclusion.ForeignId)));
         }
 
         private List<Book> SyncAll()
@@ -1423,24 +963,36 @@ namespace NzbDrone.Core.ImportLists
         {
             _logger.ProgressInfo($"Starting Import List Refresh for List {definition.Name}");
 
-            var listItems = _listFetcherAndParser.FetchSingleList(definition).ToList();
-
-            return ProcessListItems(listItems);
+            var importList = _importListFactory.GetInstance(definition);
+            var listItems = _listFetcherAndParser.FetchSingleList(importList).ToList();
+            var failuresByList = new ConcurrentDictionary<int, int>();
+            var processed = ProcessListItems(listItems, failuresByList);
+            CommitHardcoverState(importList, failuresByList);
+            return processed;
         }
 
-        private List<Book> ProcessListItems(List<ImportListItemInfo> items)
+        private List<Book> ProcessListItems(List<ImportListItemInfo> items, ConcurrentDictionary<int, int> failuresByList = null)
         {
+            var stopwatch = Stopwatch.StartNew();
             var processed = new List<Book>();
-            var addedAuthorIds = new List<int>();
             var bookIdsToSearch = new HashSet<int>();
-            var authorIdsToMissingSearch = new HashSet<int>();
-            var authorsToMonitor = new Dictionary<string, ImportListItemInfo>(StringComparer.OrdinalIgnoreCase); // providerId -> report
+            var selectedBooks = new Dictionary<int, Book>();
+            var changedAddOptions = new Dictionary<int, Book>();
+            var newlyMonitoredIds = new HashSet<int>();
+            var changedEditionBookIds = new HashSet<int>();
+            var authorsToMonitor = new Dictionary<string, ImportListItemInfo>(StringComparer.OrdinalIgnoreCase); // list and author -> report
             var booksToMonitor = new List<(string authorProviderId, string bookProviderId, ImportListItemInfo report)>();
-            var hardcoverBooksToMonitor = new Dictionary<(int importListId, string authorProviderId), (HashSet<string> audiobookBooks, HashSet<string> ebookBooks)>();
-            var goodreadsBooksToMonitor = new Dictionary<(int importListId, string authorProviderId), (HashSet<string> audiobookBooks, HashSet<string> ebookBooks)>();
             var pendingAuthors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var pendingAuthorsQueuedEarly = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var pendingExistingAuthors = new Dictionary<string, (HashSet<string> Audiobooks, HashSet<string> Ebooks)>(StringComparer.OrdinalIgnoreCase);
+            var roots = new Dictionary<string, RootFolder>(StringComparer.Ordinal);
             var booksMonitored = 0;
+            var missingBookSides = 0;
+            var failedItems = 0;
+            var appliedBooksByList = new Dictionary<int, HashSet<int>>();
+            var missingSidesByList = new Dictionary<int, int>();
+            var pendingByList = new HashSet<(int ListId, string AuthorId)>();
+            failuresByList ??= new ConcurrentDictionary<int, int>();
+            void MarkFailure(int listId) => failuresByList.AddOrUpdate(listId, 1, (_, count) => count + 1);
 
             if (items.Count == 0)
             {
@@ -1453,12 +1005,46 @@ namespace NzbDrone.Core.ImportLists
             var liveBookLookupHitCache = new Dictionary<string, Book>(StringComparer.OrdinalIgnoreCase);
 
             _logger.ProgressInfo("Import list sync: fetched {0} list items; indexing local library", items.Count);
-            var localLookup = BuildImportListLocalLookup();
+            var lookupKeys = items.SelectMany(report => new[]
+                {
+                    (Scope: "work", Id: NormalizeProviderId(report.BookProviderId, "gr")),
+                    (Scope: "edition", Id: BookEditionIdentity.NormalizeRequestedEditionProviderId(NormalizeProviderId(report.EditionProviderId, "gr")))
+                }).Where(key => key.Id.IsNotNullOrWhiteSpace()).Select(key =>
+                {
+                    var (provider, _) = SplitProviderId(key.Id);
+                    return (key.Scope, Provider: provider, key.Id);
+                }).Where(key => key.Provider.IsNotNullOrWhiteSpace()).Distinct().ToList();
+            Dictionary<(string Scope, string Provider, string Id), List<int>> providerMatches = null;
+            var incomplete = new HashSet<(string Scope, string Provider, string Id)>();
+            var lookupTimer = Stopwatch.StartNew();
+            Exception lookupError = null;
+            try
+            {
+                providerMatches = lookupKeys.Count == 0 ? new() : _bookService.FindBookIdsByProviderIds(lookupKeys, key => incomplete.Add(key));
+            }
+            catch (Exception ex)
+            {
+                lookupError = ex;
+                incomplete.UnionWith(lookupKeys);
+            }
+            _logger.Debug("Import list sync: batch lookup of {0} provider keys, {1} incomplete, took {2} ms", lookupKeys.Count, incomplete.Count, lookupTimer.ElapsedMilliseconds);
+            var localLookup = BuildImportListLocalLookup(incomplete.Count == 0 ? providerMatches?.Values.SelectMany(ids => ids).ToHashSet() : null, incomplete.Count, lookupError);
+            if (providerMatches != null)
+            {
+                foreach (var (key, ids) in providerMatches)
+                {
+                    localLookup.AddProviderMatches(key, ids);
+                    if (key.Scope == "work" && !incomplete.Contains(key))
+                        liveBookLookupHitCache[key.Id] = localLookup.FindBook(key.Id);
+                }
+            }
             _logger.ProgressInfo("Import list sync: local match index ready ({0} authors, {1} books)",
                 localLookup.AuthorCount, localLookup.BookCount);
 
+
             var reportNumber = 1;
             var listExclusions = _importListExclusionService.All();
+            var globalListExclusions = listExclusions.Where(exclusion => !exclusion.MediaType.HasValue).ToList();
             var importListCache = new Dictionary<int, ImportListDefinition>();
 
             ImportListDefinition GetImportListDefinition(int importListId)
@@ -1472,21 +1058,74 @@ namespace NzbDrone.Core.ImportLists
                 return importList;
             }
 
-            // Map provider IDs in bounded parallelism. Goodreads bookshelf RSS only includes edition IDs,
-            // so we need to map those to work + author IDs before we can import authors/books.
-            // We process mapping in batches so we can start importing authors before mapping completes,
-            // allowing later mapping to hit the local library instead of the metadata server.
+            var listMediaTypes = new Dictionary<int, (bool audiobook, bool ebook)>();
+            (bool audiobook, bool ebook) GetListMediaTypes(ImportListDefinition list)
+            {
+                if (!listMediaTypes.TryGetValue(list.Id, out var mediaTypes))
+                {
+                    var settings = (DualMediaImportListSettings)list.Settings;
+                    mediaTypes = (settings.MonitorAudiobooks, settings.MonitorEbooks);
+
+                    listMediaTypes[list.Id] = mediaTypes;
+                }
+
+                return mediaTypes;
+            }
+
+            var requestedMediaTypes = new Dictionary<int, BookMediaType[]>();
+            var unavailableLists = new HashSet<int>();
+            foreach (var listItems in items.GroupBy(report => report.ImportListId))
+            {
+                try
+                {
+                    var list = GetImportListDefinition(listItems.Key);
+                    if (list == null)
+                    {
+                        throw new InvalidOperationException("Import list definition is no longer available");
+                    }
+                    var sides = GetListMediaTypes(list);
+                    requestedMediaTypes[listItems.Key] = new[] { BookMediaType.Audiobook, BookMediaType.Ebook }
+                        .Where(side => side == BookMediaType.Audiobook ? sides.audiobook : sides.ebook).ToArray();
+                }
+                catch (Exception ex)
+                {
+                    unavailableLists.Add(listItems.Key);
+                    failedItems += listItems.Count();
+                    foreach (var report in listItems)
+                    {
+                        MarkFailure(report.ImportListId);
+                    }
+                    _logger.Warn(ex, "Import list sync: could not load settings for list {0}; skipping {1} entries and continuing with other lists",
+                        listItems.Key, listItems.Count());
+                }
+            }
+            items = items.Where(report => !unavailableLists.Contains(report.ImportListId)).ToList();
+
+            // Resolve each source once, then collect complete selections before persisting list demand.
             const int maxDegreeOfParallelism = 12;
-            const int mappingBatchSize = 250;
             const int mappingReportInterval = 100;
 
             var reportsNeedingMapping = items
-                .Where(r =>
-                    (r.Book.IsNotNullOrWhiteSpace() || r.EditionGoodreadsId.IsNotNullOrWhiteSpace()) &&
-                    (r.EditionGoodreadsId.IsNullOrWhiteSpace() ||
-                     r.AuthorGoodreadsId.IsNullOrWhiteSpace() ||
-                     r.BookGoodreadsId.IsNullOrWhiteSpace()))
+                .Where(report => requestedMediaTypes[report.ImportListId].Length > 0 &&
+                    NeedsMapping(report, localLookup, requestedMediaTypes[report.ImportListId]))
                 .ToList();
+
+            ConcurrentDictionary<string, ImportListBookIdentityCache> sourceMappings = null;
+            if (_bookIdentityCacheRepository != null && reportsNeedingMapping.Count > 0)
+            {
+                try
+                {
+                    sourceMappings = new ConcurrentDictionary<string, ImportListBookIdentityCache>(
+                        _bookIdentityCacheRepository.FindBySourceProviderIds(reportsNeedingMapping.Select(GetMappingSourceProviderId))
+                            .ToDictionary(mapping => mapping.SourceProviderId, StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
+                }
+                catch (Exception ex)
+                {
+                    stats.MarkCacheFailure(ex);
+                    stats.CacheReadFailed = true;
+                    sourceMappings = new ConcurrentDictionary<string, ImportListBookIdentityCache>(StringComparer.OrdinalIgnoreCase);
+                }
+            }
 
             var totalToMap = reportsNeedingMapping.Count;
             var directIdentityCount = items.Count(r => GetAuthorProviderId(r).IsNotNullOrWhiteSpace() && GetBookProviderId(r).IsNotNullOrWhiteSpace());
@@ -1494,16 +1133,9 @@ namespace NzbDrone.Core.ImportLists
             var mappedReady = 0;
             var mappedUnavailable = 0;
             var lastReported = 0;
-            var attemptedEarlyAuthorImports = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var allowEarlyAuthorQueueing = totalToMap > 0;
 
             _logger.ProgressInfo("Import list sync: checking local matches for {0} items ({1} already include author/book IDs, {2} need metadata ID resolution)",
                 items.Count, directIdentityCount, totalToMap);
-
-            if (!allowEarlyAuthorQueueing)
-            {
-                _logger.ProgressInfo("Import list sync: provider IDs are inline; collecting full selections before queueing authors");
-            }
 
             if (totalToMap > 0)
             {
@@ -1511,158 +1143,110 @@ namespace NzbDrone.Core.ImportLists
                     totalToMap, maxDegreeOfParallelism);
             }
 
-            for (var offset = 0; offset < items.Count; offset += mappingBatchSize)
-            {
-                var batch = items.Skip(offset).Take(mappingBatchSize).ToList();
-
-                var batchToMap = batch
-                    .Where(r =>
-                        (r.Book.IsNotNullOrWhiteSpace() || r.EditionGoodreadsId.IsNotNullOrWhiteSpace()) &&
-                        (r.EditionGoodreadsId.IsNullOrWhiteSpace() ||
-                         r.AuthorGoodreadsId.IsNullOrWhiteSpace() ||
-                         r.BookGoodreadsId.IsNullOrWhiteSpace()))
-                    .ToList();
-
-                if (batchToMap.Any())
+            var mappingStopwatch = Stopwatch.StartNew();
+            Parallel.ForEach(reportsNeedingMapping.GroupBy(GetMappingSourceProviderId),
+                new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism },
+                sourceReports =>
                 {
-                    Parallel.ForEach(batchToMap,
-                        new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism },
-                        report =>
-                        {
-                            try
-                            {
-                                MapBookReport(report);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.Debug(ex, "Import list sync: failed to map list item ({0} - {1})", report.Author, report.Book);
-                            }
-                            finally
-                            {
-                                if (GetAuthorProviderId(report).IsNotNullOrWhiteSpace() && GetBookProviderId(report).IsNotNullOrWhiteSpace())
-                                {
-                                    Interlocked.Increment(ref mappedReady);
-                                }
-                                else
-                                {
-                                    Interlocked.Increment(ref mappedUnavailable);
-                                }
-
-                                var completed = Interlocked.Increment(ref mappedCompleted);
-                                var reported = Volatile.Read(ref lastReported);
-                                if (completed == totalToMap ||
-                                    (completed - reported >= mappingReportInterval &&
-                                     Interlocked.CompareExchange(ref lastReported, completed, reported) == reported))
-                                {
-                                    _logger.ProgressInfo("Import list sync: resolving metadata identities {0}/{1} (ready: {2}, unavailable: {3}, queued: {4})",
-                                        completed, totalToMap, Volatile.Read(ref mappedReady), Volatile.Read(ref mappedUnavailable), pendingAuthors.Count);
-                                }
-                            }
-                        });
-                }
-
-                if (allowEarlyAuthorQueueing)
-                {
-                    // Opportunistically import authors as soon as fallback mapping gives us their provider IDs.
-                    foreach (var report in batch)
+                    var reports = sourceReports.OrderByDescending(report => report.EditionMediaType.HasValue)
+                        .ThenByDescending(report => GetAuthorProviderId(report).IsNotNullOrWhiteSpace() &&
+                            GetBookProviderId(report).IsNotNullOrWhiteSpace()).ToList();
+                    var mappedReport = reports[0];
+                    try
                     {
-                        string authorProviderId;
-
-                        if (report.Book.IsNotNullOrWhiteSpace() || report.EditionProviderId.IsNotNullOrWhiteSpace())
+                        var mapped = MapBookReportWithMappings(mappedReport, localLookup, sourceMappings, stats,
+                            requestedMediaTypes[mappedReport.ImportListId]);
+                        var mappedBook = mapped?.Item2;
+                        var mappedAuthor = mapped?.Item3?.FirstOrDefault();
+                        var mappingCached = mappedReport.AuthorProviderId.IsNotNullOrWhiteSpace() &&
+                            mappedReport.AuthorProviderId.EqualsIgnoreCase(GetPreferredAuthorProviderId(mappedAuthor)) &&
+                            localLookup.MatchesWork(mappedReport.BookProviderId, mappedBook, requestedMediaTypes[mappedReport.ImportListId]);
+                        foreach (var report in reports.Skip(1))
                         {
-                            if (!ShouldProcessBookReport(report, listExclusions, localLookup, liveBookLookupHitCache: liveBookLookupHitCache))
+                            var mediaTypes = requestedMediaTypes[report.ImportListId];
+                            var localMapped = localLookup.TryMapBookReport(report, mediaTypes);
+                            if (sourceReports.Key == null || mappedBook == null || GetPreferredAuthorProviderId(mappedAuthor).IsNullOrWhiteSpace() ||
+                                !localLookup.MatchesWork(report.BookProviderId, mappedBook, mediaTypes))
                             {
-                                continue;
-                            }
-
-                            authorProviderId = GetAuthorProviderId(report);
-                        }
-                        else if (report.Author.IsNotNullOrWhiteSpace() || report.AuthorProviderId.IsNotNullOrWhiteSpace())
-                        {
-                            if (!ShouldProcessAuthorReport(report, listExclusions, localLookup, liveAuthorLookupHitCache))
-                            {
-                                continue;
-                            }
-
-                            authorProviderId = GetAuthorProviderId(report);
-                        }
-                        else
-                        {
-                            continue;
-                        }
-
-                        if (authorProviderId.IsNullOrWhiteSpace() ||
-                            pendingAuthors.Contains(authorProviderId) ||
-                            attemptedEarlyAuthorImports.Contains(authorProviderId))
-                        {
-                            continue;
-                        }
-
-                        attemptedEarlyAuthorImports.Add(authorProviderId);
-
-                        var importList = GetImportListDefinition(report.ImportListId);
-
-                        try
-                        {
-                            var existingAuthor = FindExistingAuthor(authorProviderId, localLookup, liveAuthorLookupHitCache);
-                            if (existingAuthor != null)
-                            {
-                                stats.MarkExistingAuthor(authorProviderId);
-
-                                if (ApplyImportListMonitoringToExistingAuthor(existingAuthor, importList))
+                                if (!localMapped)
                                 {
-                                    addedAuthorIds.Add(existingAuthor.Id);
-
-                                    if (importList.ShouldSearch && importList.ShouldMonitor == ImportListMonitorType.EntireAuthor)
+                                    report.AuthorProviderId = null;
+                                    if (mappedBook != null)
                                     {
-                                        authorIdsToMissingSearch.Add(existingAuthor.Id);
+                                        Interlocked.Increment(ref stats.EvidenceRejections);
+                                        _logger.Warn("Metadata mapping for {0} rejected: requested work or selected primary does not match; retaining only proven local intent", GetMappingSourceProviderId(report));
                                     }
                                 }
-
                                 continue;
                             }
 
-                            var hardcoverLibrarySettings = GetHardcoverLibrarySettings(importList);
-                            var goodreadsSettings = GetGoodreadsSettings(importList);
-
-                            MonitoringConfig config;
-                            if (hardcoverLibrarySettings != null)
+                            report.BookProviderId ??= GetPreferredBookProviderId(mappedBook);
+                            report.AuthorProviderId = GetPreferredAuthorProviderId(mappedAuthor);
+                            report.Book ??= mappedBook.Title;
+                            report.Author = mappedAuthor.Name;
+                            var edition = mappedBook.Editions?.FirstOrDefault(candidate => BookEditionIdentity.EditionMatchesProviderId(candidate, report.EditionProviderId));
+                            if (edition != null)
                             {
-                                config = BuildMonitoringConfigForHardcoverLibraryImportList(importList, hardcoverLibrarySettings, authorProviderId, report.Author, null);
-                            }
-                            else if (goodreadsSettings != null)
-                            {
-                                config = BuildMonitoringConfigForGoodreadsImportList(importList, goodreadsSettings, authorProviderId, report.Author, null);
+                                report.EditionHasNarration = BookEditionIdentity.IsNarratedAudiobookEdition(edition);
+                                report.EditionNarratorNames = report.EditionHasNarration == true ? BookEditionIdentity.GetNarratorNames(edition) : null;
                             }
                             else
                             {
-                                config = BuildConfigFromImportList(importList);
+                                report.EditionHasNarration ??= mappedReport.EditionHasNarration;
+                                report.EditionNarratorNames ??= mappedReport.EditionNarratorNames?.ToList();
                             }
-
-                            if (QueueAuthorForImportList(importList, authorProviderId, report.Author, config, pendingAuthors, "early mapping"))
+                            if (!mappingCached)
                             {
-                                pendingAuthorsQueuedEarly.Add(authorProviderId);
-
-                                if (pendingAuthorsQueuedEarly.Count % 25 == 0)
-                                {
-                                    _logger.ProgressInfo("Import list sync: queued {0} authors while resolving metadata identities", pendingAuthorsQueuedEarly.Count);
-                                }
+                                CacheBookReportMapping(report, sourceMappings, stats);
+                                mappingCached = true;
                             }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.Error(ex, "Failed to add author {0} from import list (early import)", report.Author);
                         }
                     }
-                }
-            }
+                    catch (Exception ex)
+                    {
+                        foreach (var report in reports)
+                        {
+                            if (!localLookup.TryMapBookReport(report, requestedMediaTypes[report.ImportListId]))
+                            {
+                                report.AuthorProviderId = null;
+                            }
+                            MarkFailure(report.ImportListId);
+                        }
+                        _logger.Warn(ex, "Import list sync: failed to map source {0} ({1} - {2}); continuing with other entries",
+                            sourceReports.Key, mappedReport.Author, mappedReport.Book);
+                    }
+                    finally
+                    {
+                        foreach (var report in reports)
+                        {
+                            if (GetAuthorProviderId(report).IsNotNullOrWhiteSpace() && GetBookProviderId(report).IsNotNullOrWhiteSpace())
+                            {
+                                Interlocked.Increment(ref mappedReady);
+                            }
+                            else
+                            {
+                                Interlocked.Increment(ref mappedUnavailable);
+                            }
 
-            if (pendingAuthorsQueuedEarly.Any())
+                            var completed = Interlocked.Increment(ref mappedCompleted);
+                            var reported = Volatile.Read(ref lastReported);
+                            if (completed == totalToMap || (completed - reported >= mappingReportInterval &&
+                                Interlocked.CompareExchange(ref lastReported, completed, reported) == reported))
+                            {
+                                _logger.ProgressInfo("Import list sync: resolving metadata identities {0}/{1} (ready: {2}, unavailable: {3})",
+                                    completed, totalToMap, Volatile.Read(ref mappedReady), Volatile.Read(ref mappedUnavailable));
+                            }
+                        }
+                    }
+                });
+
+            _logger.Info("Import list sync: {0} edition lookups, {1} work lookups, {2} unresolved narration sources, {3} source evidence rejections; mapping elapsed: {4} ms",
+                stats.EditionLookups, stats.WorkLookups,
+                reportsNeedingMapping.Where(report => report.EditionProviderId.IsNotNullOrWhiteSpace() && IsReportedAudioEdition(report) == null)
+                    .Select(GetMappingSourceProviderId).Distinct().Count(), stats.EvidenceRejections, mappingStopwatch.ElapsedMilliseconds);
+            if (stats.CacheFailures > 0)
             {
-                _logger.ProgressInfo("Import list sync: refreshing local match index after queueing {0} authors", pendingAuthorsQueuedEarly.Count);
-                localLookup = BuildImportListLocalLookup();
-                _logger.ProgressInfo("Import list sync: refreshed local match index ({0} authors, {1} books)",
-                    localLookup.AuthorCount, localLookup.BookCount);
+                _logger.Warn(stats.CacheError, "Import list sync: source cache had {0} failures; continuing with available local and metadata evidence. Uncached sources may require another lookup next sync.", stats.CacheFailures);
             }
 
             _logger.ProgressInfo("Import list sync: collecting author and book selections");
@@ -1674,16 +1258,14 @@ namespace NzbDrone.Core.ImportLists
 
                 if (currentReportNumber == 1 || currentReportNumber % 25 == 0 || currentReportNumber == items.Count)
                 {
-                    _logger.ProgressInfo("Import list sync: checking list item {0}/{1} (authors: {2}, books: {3}, unavailable: {4}, excluded: {5})",
+                    _logger.ProgressInfo("Import list sync: checking list item {0}/{1} (author selections: {2}, books: {3}, unavailable: {4}, excluded: {5})",
                         currentReportNumber, items.Count, authorsToMonitor.Count, booksToMonitor.Count, mappedUnavailable + stats.MissingProviderIds, stats.Excluded);
                 }
-
-                var importList = GetImportListDefinition(report.ImportListId);
 
                 if (report.Book.IsNotNullOrWhiteSpace() || report.EditionProviderId.IsNotNullOrWhiteSpace())
                 {
                     // Check exclusions
-                    if (!ShouldProcessBookReport(report, listExclusions, localLookup, stats, liveBookLookupHitCache))
+                    if (!ShouldProcessBookReport(report, globalListExclusions, localLookup, stats, liveBookLookupHitCache))
                     {
                         continue;
                     }
@@ -1698,96 +1280,11 @@ namespace NzbDrone.Core.ImportLists
                     }
 
                     // Track author if not already tracked
-                    if (!authorsToMonitor.ContainsKey(authorProviderId))
-                    {
-                        authorsToMonitor[authorProviderId] = report;
-                    }
+                    authorsToMonitor.TryAdd($"{report.ImportListId}:{authorProviderId}", report);
 
                     // Track book to monitor
                     booksToMonitor.Add((authorProviderId, bookProviderId, report));
 
-                    var hardcoverLibrarySettings = GetHardcoverLibrarySettings(importList);
-                    if (hardcoverLibrarySettings != null && importList.ShouldMonitor == ImportListMonitorType.SpecificBook)
-                    {
-                        var key = (importList.Id, authorProviderId);
-                        if (!hardcoverBooksToMonitor.TryGetValue(key, out var monitorLists))
-                        {
-                            monitorLists = (
-                                new HashSet<string>(StringComparer.OrdinalIgnoreCase),
-                                new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                            );
-                        }
-
-                        var editionProviderId = report.EditionProviderId?.Trim();
-                        var (editionPrefix, editionRawId) = SplitProviderId(editionProviderId);
-                        var hasEditionSelection = editionPrefix.IsNotNullOrWhiteSpace() && editionRawId.IsNotNullOrWhiteSpace();
-
-                        if (!hasEditionSelection)
-                        {
-                            if (hardcoverLibrarySettings.MonitorAudiobooks)
-                            {
-                                monitorLists.audiobookBooks.Add(bookProviderId);
-                            }
-
-                            if (hardcoverLibrarySettings.MonitorEbooks)
-                            {
-                                monitorLists.ebookBooks.Add(bookProviderId);
-                            }
-                        }
-                        else if (report.HardcoverReadingFormatId == 2)
-                        {
-                            if (hardcoverLibrarySettings.MonitorAudiobooks)
-                            {
-                                monitorLists.audiobookBooks.Add(bookProviderId);
-                            }
-                        }
-                        else if (report.HardcoverReadingFormatId == 3 || report.HardcoverReadingFormatId == 4)
-                        {
-                            if (hardcoverLibrarySettings.MonitorEbooks)
-                            {
-                                monitorLists.ebookBooks.Add(bookProviderId);
-                            }
-                        }
-                        else
-                        {
-                            if (hardcoverLibrarySettings.MonitorAudiobooks)
-                            {
-                                monitorLists.audiobookBooks.Add(bookProviderId);
-                            }
-
-                            if (hardcoverLibrarySettings.MonitorEbooks)
-                            {
-                                monitorLists.ebookBooks.Add(bookProviderId);
-                            }
-                        }
-
-                        hardcoverBooksToMonitor[key] = monitorLists;
-                    }
-
-                    if (importList.Settings is IGoodreadsDualMediaImportListSettings goodreadsSettings &&
-                        importList.ShouldMonitor == ImportListMonitorType.SpecificBook)
-                    {
-                        var key = (importList.Id, authorProviderId);
-                        if (!goodreadsBooksToMonitor.TryGetValue(key, out var monitorLists))
-                        {
-                            monitorLists = (
-                                new HashSet<string>(StringComparer.OrdinalIgnoreCase),
-                                new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                            );
-                        }
-
-                        if (goodreadsSettings.MonitorAudiobooks)
-                        {
-                            monitorLists.audiobookBooks.Add(bookProviderId);
-                        }
-
-                        if (goodreadsSettings.MonitorEbooks)
-                        {
-                            monitorLists.ebookBooks.Add(bookProviderId);
-                        }
-
-                        goodreadsBooksToMonitor[key] = monitorLists;
-                    }
                     }
                     else if (report.Author.IsNotNullOrWhiteSpace() || report.AuthorProviderId.IsNotNullOrWhiteSpace())
                     {
@@ -1800,36 +1297,30 @@ namespace NzbDrone.Core.ImportLists
                         }
 
                         // Check exclusions
-                        if (!ShouldProcessAuthorReport(report, listExclusions, localLookup, liveAuthorLookupHitCache, stats))
+                        if (!ShouldProcessAuthorReport(report, globalListExclusions, localLookup, liveAuthorLookupHitCache, stats))
                         {
                             continue;
                         }
 
-                        if (!authorsToMonitor.ContainsKey(authorProviderId))
-                        {
-                            authorsToMonitor[authorProviderId] = report;
-                        }
+                        authorsToMonitor.TryAdd($"{report.ImportListId}:{authorProviderId}", report);
                     }
                 }
 
+            var reportsByListAndAuthor = booksToMonitor.ToLookup(
+                item => (item.report.ImportListId, item.authorProviderId), item => item.report);
+
             // Process authors and books
-            var hardcoverAuthorBookIdsWithFilesCache = new Dictionary<int, HashSet<int>>();
-            var hardcoverReservedBookIds = new Dictionary<(int authorId, string bookProviderId, BookMediaType mediaType), HashSet<int>>();
             var authorsProcessed = 0;
             var totalAuthorsToProcess = authorsToMonitor.Count;
 
+            bool HasConfiguredSide(Author author, BookMediaType side) => localLookup.HasBooks(author.Id, side) || author.HasMediaTypeSettings(side);
+
             // Add authors that need to be added
-            foreach (var kvp in authorsToMonitor)
+            foreach (var report in authorsToMonitor.Values)
             {
                 authorsProcessed++;
-                var authorProviderId = kvp.Key;
-                var report = kvp.Value;
+                var authorProviderId = GetAuthorProviderId(report);
                 var importList = GetImportListDefinition(report.ImportListId);
-
-                if (pendingAuthors.Contains(authorProviderId))
-                {
-                    continue;
-                }
 
                 try
                 {
@@ -1838,113 +1329,208 @@ namespace NzbDrone.Core.ImportLists
 
                     if (existingAuthor == null)
                     {
-                        // Add new author
-                        var hardcoverLibrarySettings = GetHardcoverLibrarySettings(importList);
-                        var goodreadsSettings = GetGoodreadsSettings(importList);
-
-                        MonitoringConfig config;
-
-                        if (hardcoverLibrarySettings != null)
+                        if (!importList.GetMonitoringOptions().AddMissingAuthors)
                         {
-                            config = BuildMonitoringConfigForHardcoverLibraryImportList(importList, hardcoverLibrarySettings, authorProviderId, report.Author, hardcoverBooksToMonitor);
-                        }
-                        else if (goodreadsSettings != null)
-                        {
-                            config = BuildMonitoringConfigForGoodreadsImportList(importList, goodreadsSettings, authorProviderId, report.Author, goodreadsBooksToMonitor);
-                        }
-                        else
-                        {
-                            config = BuildConfigFromImportList(importList);
-                            AddGenericSpecificBooksToMonitor(config, importList, authorProviderId, booksToMonitor);
+                            continue;
                         }
 
-                        QueueAuthorForImportList(importList, authorProviderId, report.Author, config, pendingAuthors, "author pass");
+                        var config = BuildConfigFromImportList(importList, report.Author, roots);
+                        AddListedBooksToMonitor(importList, config, reportsByListAndAuthor[(importList.Id, authorProviderId)]);
+
+                        if (QueueAuthorForImportList(importList, authorProviderId, report.Author, config, pendingAuthors, "author pass", reportsByListAndAuthor[(importList.Id, authorProviderId)], listExclusions))
+                        {
+                            pendingByList.Add((importList.Id, authorProviderId));
+                        }
                     }
                     else
                     {
                         stats.MarkExistingAuthor(authorProviderId);
-
-                        if (ApplyImportListMonitoringToExistingAuthor(existingAuthor, importList))
+                        var missingAudiobookSide = !HasConfiguredSide(existingAuthor, BookMediaType.Audiobook);
+                        var missingEbookSide = !HasConfiguredSide(existingAuthor, BookMediaType.Ebook);
+                        var sides = GetListMediaTypes(importList);
+                        missingAudiobookSide &= sides.audiobook;
+                        missingEbookSide &= sides.ebook;
+                        if (importList.GetMonitoringOptions().AddMissingAuthors && (missingAudiobookSide || missingEbookSide) &&
+                            reportsByListAndAuthor[(importList.Id, authorProviderId)].Any())
                         {
-                            addedAuthorIds.Add(existingAuthor.Id);
-
-                            if (importList.ShouldSearch && importList.ShouldMonitor == ImportListMonitorType.EntireAuthor)
+                            var config = BuildConfigFromImportList(importList, report.Author, roots);
+                            config.CreateAudiobook &= missingAudiobookSide;
+                            config.CreateEbook &= missingEbookSide;
+                            AddListedBooksToMonitor(importList, config, reportsByListAndAuthor[(importList.Id, authorProviderId)]);
+                            if (config.CreateAudiobook || config.CreateEbook)
                             {
-                                authorIdsToMissingSearch.Add(existingAuthor.Id);
+                                if (QueueAuthorForImportList(importList, authorProviderId, report.Author, config, null,
+                                    "missing media side", reportsByListAndAuthor[(importList.Id, authorProviderId)], listExclusions, authorExists: true))
+                                {
+                                    pendingExistingAuthors[authorProviderId] = (
+                                        (config.CreateAudiobook ? config.AudiobookBooksToMonitor : null)?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                                        (config.CreateEbook ? config.EbookBooksToMonitor : null)?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                                    pendingByList.Add((importList.Id, authorProviderId));
+                                }
                             }
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error(ex, "Failed to add author {0} from import list", report.Author);
+                    MarkFailure(importList.Id);
+                    _logger.Warn(ex, "Failed to add author {0} from import list; continuing with other entries", report.Author);
                     _logger.ProgressError("Import list '{0}': failed to add author '{1}' ({2})", importList.Name, report.Author, ex.Message);
                 }
 
                 if (authorsProcessed == totalAuthorsToProcess || authorsProcessed % 25 == 0)
                 {
-                    _logger.ProgressInfo("Import list sync: authors {0}/{1} (queued: {2})",
+                    _logger.ProgressInfo("Import list sync: author selections {0}/{1} (queued: {2})",
                         authorsProcessed, totalAuthorsToProcess, pendingAuthors.Count);
                 }
             }
 
-            // For authors that were queued during early import (before we had a complete picture of all selected books),
-            // update the pending import record with the full book selection so it monitors the right items when it becomes available.
-            if (pendingAuthorsQueuedEarly.Any())
+            var candidateIds = booksToMonitor.Where(item => !pendingAuthors.Contains(item.authorProviderId))
+                .SelectMany(item => localLookup.FindBooks(item.bookProviderId, item.report.EditionProviderId)).Select(book => book.Id).Distinct().ToList();
+            var currentBooks = candidateIds.Count == 0 ? new Dictionary<int, Book>() :
+                _bookService.GetExistingBooks(candidateIds).ToDictionary(book => book.Id);
+            var wasMonitoredById = currentBooks.Values.ToDictionary(book => book.Id, book => book.IsMonitored());
+            var selectedEditionById = currentBooks.Values.ToDictionary(book => book.Id, book => BookEditionIdentity.GetMonitoredEdition(book)?.Id);
+            var narratorRequests = new Dictionary<ImportListItemInfo, (Edition Edition, Author Author)>();
+            var missingRequests = new Dictionary<(int ListId, string AuthorId),
+                (Author Author, List<ImportListItemInfo> Reports, HashSet<string> Audiobooks, HashSet<string> Ebooks)>();
+            var pendingNarrationReports = new HashSet<ImportListItemInfo>();
+            void HoldEditionRequest(ImportListItemInfo report, Author author, BookMediaType mediaType)
             {
-                _logger.ProgressInfo("Import list sync: updating queued authors with full selection ({0})", pendingAuthorsQueuedEarly.Count);
-
-                foreach (var authorProviderId in pendingAuthorsQueuedEarly)
+                var key = (report.ImportListId, GetAuthorProviderId(report));
+                if (!missingRequests.TryGetValue(key, out var missing))
                 {
-                    if (!authorsToMonitor.TryGetValue(authorProviderId, out var report))
-                    {
-                        continue;
-                    }
+                    missing = (author, new List<ImportListItemInfo>(), new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                    missingRequests[key] = missing;
+                }
+                missing.Reports.Add(report);
+                (mediaType == BookMediaType.Audiobook ? missing.Audiobooks : missing.Ebooks).Add(GetBookProviderId(report));
+                pendingNarrationReports.Add(report);
+            }
 
-                    var importList = GetImportListDefinition(report.ImportListId);
-                    var hardcoverLibrarySettings = GetHardcoverLibrarySettings(importList);
-                    var goodreadsSettings = GetGoodreadsSettings(importList);
+            foreach (var item in booksToMonitor.Where(item => !pendingAuthors.Contains(item.authorProviderId)))
+            {
+                var list = GetImportListDefinition(item.report.ImportListId);
+                var request = BuildRequestedNarration(item.report, false);
+                var sides = GetListMediaTypes(list);
+                if (!list.ShouldMonitorExisting || request == null ||
+                    !(request.MediaType == BookMediaType.Audiobook ? sides.audiobook : sides.ebook))
+                {
+                    continue;
+                }
 
-                    MonitoringConfig config;
-                    if (hardcoverLibrarySettings != null)
-                    {
-                        config = BuildMonitoringConfigForHardcoverLibraryImportList(importList, hardcoverLibrarySettings, authorProviderId, report.Author, hardcoverBooksToMonitor);
-                    }
-                    else if (goodreadsSettings != null)
-                    {
-                        config = BuildMonitoringConfigForGoodreadsImportList(importList, goodreadsSettings, authorProviderId, report.Author, goodreadsBooksToMonitor);
-                    }
-                    else
-                    {
-                        config = BuildConfigFromImportList(importList);
-                        AddGenericSpecificBooksToMonitor(config, importList, authorProviderId, booksToMonitor);
-                    }
+                var author = FindExistingAuthor(item.authorProviderId, localLookup, liveAuthorLookupHitCache);
+                if (author == null || !HasConfiguredSide(author, request.MediaType) ||
+                    IsAuthorExcludedByAnyProviderId(listExclusions, author, request.MediaType))
+                {
+                    continue;
+                }
 
-                    try
-                    {
-                        _pendingAuthorImportService.EnqueueAsync(authorProviderId, config, config.RequestedBy ?? "ImportListSync")
-                            .GetAwaiter().GetResult();
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Warn(ex, "Import list sync: failed to update queued author config for {0}", authorProviderId);
-                    }
+                var edition = BookEditionIdentity.OrderRequestedNarrationEditions(localLookup.FindBooks(item.bookProviderId,
+                        request.MediaType == BookMediaType.Ebook ? null : item.report.EditionProviderId)
+                    .Select(book => currentBooks.GetValueOrDefault(book.Id))
+                    .Where(book => book?.MediaType == request.MediaType && book.AuthorId == author.Id &&
+                        !IsBookExcludedByAnyProviderId(listExclusions, book))
+                    .SelectMany(book => book.Editions ?? new List<Edition>())
+                    .Where(edition => request.MediaType == BookMediaType.Ebook
+                        ? BookEditionIdentity.EditionMatchesProviderId(edition, request.EditionProviderId)
+                        : BookEditionIdentity.IsNarratedAudiobookEdition(edition) &&
+                            BookEditionIdentity.MatchesRequestedNarration(edition, request.EditionProviderId, request.NarratorNames))).FirstOrDefault();
+                if (edition == null && request.RequiresEdition && !listExclusions.Any(exclusion =>
+                    ImportListExclusionBookMatcher.AppliesToProviderId(exclusion, item.bookProviderId, request.MediaType)))
+                {
+                    HoldEditionRequest(item.report, author, request.MediaType);
+                }
+
+                if (edition != null)
+                {
+                    narratorRequests[item.report] = (edition, author);
+                }
+            }
+
+            var narratorBooks = narratorRequests.Count == 0 ? new Dictionary<int, Book>() :
+                _bookService.AddWantedEditions(narratorRequests.Values.Select(request => request.Edition).DistinctBy(edition => edition.Id).ToList(),
+                    (edition, error) => _logger.Warn(error, "Import list: could not select requested edition {0}; continuing with other entries", edition.ForeignEditionId));
+            foreach (var (report, request) in narratorRequests.Where(pair => !narratorBooks.ContainsKey(pair.Value.Edition.Id)))
+            {
+                HoldEditionRequest(report, request.Author, report.EditionMediaType ?? BookMediaType.Audiobook);
+            }
+            foreach (var book in narratorBooks.Values.DistinctBy(book => book.Id))
+            {
+                if (!currentBooks.ContainsKey(book.Id))
+                {
+                    localLookup.AddBook(book);
+                }
+
+                currentBooks[book.Id] = book;
+                if (selectedEditionById.GetValueOrDefault(book.Id) != BookEditionIdentity.GetMonitoredEdition(book)?.Id)
+                {
+                    changedEditionBookIds.Add(book.Id);
                 }
             }
 
             var booksProcessed = 0;
             var totalBooksToProcess = booksToMonitor.Count;
-            var authorBooksCache = new Dictionary<int, List<Book>>();
-
-            List<Book> GetCachedBooksByAuthor(int authorId)
+            void ApplyListedBooks(ImportListDefinition list, Author author, IEnumerable<Book> candidates, ImportListItemInfo report)
             {
-                if (!authorBooksCache.TryGetValue(authorId, out var authorBooks))
+                var mediaTypes = GetListMediaTypes(list);
+
+                var books = candidates.Select(book => currentBooks.GetValueOrDefault(book.Id)).Where(book => book != null)
+                    .Where(book => book.MediaType == BookMediaType.Audiobook
+                    ? mediaTypes.audiobook : mediaTypes.ebook)
+                    .Where(book => !IsBookExcludedByAnyProviderId(listExclusions, book) &&
+                        !IsAuthorExcludedByAnyProviderId(listExclusions, author, book.MediaType))
+                    .GroupBy(book => book.MediaType)
+                    .Select(group => group.Key == (report.EditionMediaType ?? BookMediaType.Audiobook) && pendingNarrationReports.Contains(report) ? null :
+                        narratorRequests.TryGetValue(report, out var requested) && group.Key ==
+                            (report.EditionMediaType ?? BookMediaType.Audiobook)
+                        ? narratorBooks.GetValueOrDefault(requested.Edition.Id) : BookIdentity.SelectRequestedBook(group)).Where(book => book != null).ToList();
+                foreach (var book in books)
                 {
-                    authorBooks = _bookService.GetBooksByAuthor(authorId);
-                    authorBooksCache[authorId] = authorBooks;
+                    if (!list.ShouldMonitorExisting)
+                    {
+                        continue;
+                    }
+
+                    book.Author = author;
+                    var wasMonitored = wasMonitoredById.GetValueOrDefault(book.Id);
+                    wasMonitoredById[book.Id] = true;
+
+                    if (list.ShouldSearch && (!wasMonitored || book.AddOptions?.SearchForNewBook == true ||
+                        changedEditionBookIds.Contains(book.Id)))
+                    {
+                        bookIdsToSearch.Add(book.Id);
+                    }
+
+                    selectedBooks[book.Id] = book;
+                    if (book.AddOptions?.AddType != BookAddType.Manual)
+                    {
+                        // The list requests this work; edition selection keeps its existing policy.
+                        book.AddOptions ??= new AddBookOptions();
+                        book.AddOptions.AddType = BookAddType.Manual;
+                        changedAddOptions[book.Id] = book;
+                    }
+                    if (!appliedBooksByList.TryGetValue(list.Id, out var applied))
+                    {
+                        applied = new HashSet<int>();
+                        appliedBooksByList[list.Id] = applied;
+                    }
+                    applied.Add(book.Id);
+                    if (!wasMonitored)
+                    {
+                        if (!book.IsMonitored())
+                        {
+                            newlyMonitoredIds.Add(book.Id);
+                            book.SetMonitored(true);
+                        }
+                        booksMonitored++;
+                    }
+
                 }
 
-                return authorBooks;
+                EnsureAuthorMonitoring(list, author, books.Any(book => book.MediaType == BookMediaType.Audiobook),
+                    books.Any(book => book.MediaType == BookMediaType.Ebook));
             }
 
             // Monitor specific books if needed
@@ -1959,681 +1545,214 @@ namespace NzbDrone.Core.ImportLists
                         booksProcessed, totalBooksToProcess, pendingAuthors.Count, booksMonitored);
                 }
 
-                if (importList.ShouldMonitor == ImportListMonitorType.SpecificBook)
+                try
                 {
-                    try
+                    if (!importList.ShouldMonitorExisting && !importList.GetMonitoringOptions().ResumePausedAuthors)
                     {
-                        // Respect "Monitor Existing" for authors already in Chaptarr. Newly added authors should always be processed.
-                        if (!importList.ShouldMonitorExisting)
+                        continue;
+                    }
+
+                    if (pendingAuthors.Contains(authorProviderId))
+                    {
+                        continue;
+                    }
+
+                    var author = FindExistingAuthor(authorProviderId, localLookup, liveAuthorLookupHitCache);
+                    if (author == null)
+                    {
+                        continue;
+                    }
+
+                    var targetBooks = localLookup.FindBooks(bookProviderId, report.EditionProviderId)
+                        .Where(book => book.AuthorId == author.Id &&
+                            !IsAuthorExcludedByAnyProviderId(listExclusions, author, book.MediaType)).ToList();
+                    var sides = GetListMediaTypes(importList);
+                    foreach (var side in new[] { BookMediaType.Audiobook, BookMediaType.Ebook })
+                    {
+                        if (!(side == BookMediaType.Audiobook ? sides.audiobook : sides.ebook) || !HasConfiguredSide(author, side) ||
+                            (pendingExistingAuthors.TryGetValue(authorProviderId, out var queuedTargets) &&
+                                (side == BookMediaType.Audiobook ? queuedTargets.Audiobooks : queuedTargets.Ebooks).Contains(bookProviderId)) ||
+                            targetBooks.Any(book => book.MediaType == side) ||
+                            IsAuthorExcludedByAnyProviderId(listExclusions, author, side) || listExclusions.Any(exclusion =>
+                                ImportListExclusionBookMatcher.AppliesToProviderId(exclusion, bookProviderId, side)))
                         {
                             continue;
                         }
 
-                        if (pendingAuthors.Contains(authorProviderId))
+                        missingBookSides++;
+                        missingSidesByList[importList.Id] = missingSidesByList.GetValueOrDefault(importList.Id) + 1;
+                        EnsureAuthorMonitoring(importList, author, side == BookMediaType.Audiobook, side == BookMediaType.Ebook);
+                        if (importList.ShouldMonitorExisting)
                         {
-                            continue;
-                        }
-
-                        var hardcoverLibrarySettings = GetHardcoverLibrarySettings(importList);
-
-                        if (hardcoverLibrarySettings != null)
-                        {
-                            var author = FindExistingAuthor(authorProviderId, localLookup, liveAuthorLookupHitCache);
-                            if (author == null)
+                            var key = (importList.Id, authorProviderId);
+                            if (!missingRequests.TryGetValue(key, out var missing))
                             {
-                                // Author add was queued or failed during the author pass; skip book monitoring until it exists locally.
-                                continue;
+                                missing = (author, new List<ImportListItemInfo>(), new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                                    new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                                missingRequests[key] = missing;
                             }
 
-                            var authorBooks = GetCachedBooksByAuthor(author.Id);
-
-                            // Hardcover library import list stores the Hardcover edition ID (when selected) in EditionGoodreadsId as hc-ed:<id>.
-                            var editionProviderId = report.EditionProviderId?.Trim();
-                            var (editionPrefix, editionRawId) = SplitProviderId(editionProviderId);
-                            var hasEditionSelection = editionPrefix.IsNotNullOrWhiteSpace() && editionRawId.IsNotNullOrWhiteSpace();
-
-                            var (bookPrefix, bookRawId) = SplitProviderId(bookProviderId);
-
-                            // If no edition is selected on Hardcover (Want to Read without edition), monitor both media types.
-                            if (!hasEditionSelection)
-                            {
-                                var books = authorBooks
-                                    .Where(b => BookMatchesProviderId(b, bookPrefix, bookProviderId, bookRawId))
-                                    .ToList();
-
-                                foreach (var book in books)
-                                {
-                                    var wasEligible = book.IsMonitoredWithAuthor(author);
-
-                                    if (book.MediaType == BookMediaType.Audiobook)
-                                    {
-                                        if (hardcoverLibrarySettings.MonitorAudiobooks)
-                                        {
-                                            book.AudiobookMonitored = true;
-                                        }
-                                    }
-                                    else if (book.MediaType == BookMediaType.Ebook)
-                                    {
-                                        if (hardcoverLibrarySettings.MonitorEbooks)
-                                        {
-                                            book.EbookMonitored = true;
-                                        }
-                                    }
-
-                                    if (importList.ShouldSearch &&
-                                        importList.ShouldMonitor == ImportListMonitorType.SpecificBook &&
-                                        !wasEligible &&
-                                        (book.AudiobookMonitored || book.EbookMonitored) &&
-                                        book.Id > 0)
-                                    {
-                                        bookIdsToSearch.Add(book.Id);
-                                    }
-                                }
-
-                                if (books.Any())
-                                {
-                                    _bookService.UpdateMany(books);
-                                    booksMonitored++;
-                                }
-
-                                EnsureAuthorMonitoringForBooks(author, books);
-
-                                if (!addedAuthorIds.Contains(author.Id))
-                                {
-                                    addedAuthorIds.Add(author.Id);
-                                }
-
-                                continue;
-                            }
-
-                            // Edition selected: monitor only the media type implied by that edition, and ensure this edition is the monitored one.
-                            var editionToClassify = authorBooks
-                                .SelectMany(b => b.Editions ?? new List<Edition>())
-                                .FirstOrDefault(e => MatchesProviderId(e.HardcoverEditionId, editionProviderId, editionRawId));
-
-                            if (editionToClassify == null)
-                            {
-                                var hasHardcoverReadingFormat = report.HardcoverReadingFormatId.HasValue && report.HardcoverReadingFormatId.Value > 0;
-
-                                if (hasHardcoverReadingFormat)
-                                {
-                                    BookMediaType? desiredMediaTypeFromHardcover = report.HardcoverReadingFormatId == 2
-                                        ? BookMediaType.Audiobook
-                                        : (report.HardcoverReadingFormatId == 3 || report.HardcoverReadingFormatId == 4)
-                                            ? BookMediaType.Ebook
-                                            : null;
-
-                                    _logger.Warn("Hardcover Library: selected edition '{0}' not found locally for '{1}' by '{2}'. Using Hardcover reading_format_id={3} to monitor by book ID.",
-                                        editionProviderId, report.Book, report.Author, report.HardcoverReadingFormatId);
-
-                                    if (!desiredMediaTypeFromHardcover.HasValue)
-                                    {
-                                        _logger.Warn("Hardcover Library: reading_format_id={0} does not map to a tracked media type; falling back to monitoring by book ID using list defaults",
-                                            report.HardcoverReadingFormatId);
-                                    }
-                                    else if (desiredMediaTypeFromHardcover == BookMediaType.Audiobook && !hardcoverLibrarySettings.MonitorAudiobooks)
-                                    {
-                                        continue;
-                                    }
-                                    else if (desiredMediaTypeFromHardcover == BookMediaType.Ebook && !hardcoverLibrarySettings.MonitorEbooks)
-                                    {
-                                        continue;
-                                    }
-
-                                    var books = authorBooks
-                                        .Where(b => !desiredMediaTypeFromHardcover.HasValue || b.MediaType == desiredMediaTypeFromHardcover.Value)
-                                        .Where(b => BookMatchesProviderId(b, bookPrefix, bookProviderId, bookRawId))
-                                        .ToList();
-
-                                    foreach (var book in books)
-                                    {
-                                        var wasEligible = book.IsMonitoredWithAuthor(author);
-
-                                        if (desiredMediaTypeFromHardcover == BookMediaType.Audiobook)
-                                        {
-                                            book.AudiobookMonitored = true;
-                                            book.EbookMonitored = false;
-                                        }
-                                        else if (desiredMediaTypeFromHardcover == BookMediaType.Ebook)
-                                        {
-                                            book.EbookMonitored = true;
-                                            book.AudiobookMonitored = false;
-                                        }
-                                        else
-                                        {
-                                            if (book.MediaType == BookMediaType.Audiobook)
-                                            {
-                                                book.AudiobookMonitored = hardcoverLibrarySettings.MonitorAudiobooks;
-                                            }
-                                            else
-                                            {
-                                                book.EbookMonitored = hardcoverLibrarySettings.MonitorEbooks;
-                                            }
-                                        }
-
-                                        if (importList.ShouldSearch &&
-                                            importList.ShouldMonitor == ImportListMonitorType.SpecificBook &&
-                                            !wasEligible &&
-                                            (book.AudiobookMonitored || book.EbookMonitored) &&
-                                            book.Id > 0)
-                                        {
-                                            bookIdsToSearch.Add(book.Id);
-                                        }
-                                    }
-
-                                    if (books.Any())
-                                    {
-                                        _bookService.UpdateMany(books);
-                                        booksMonitored++;
-                                    }
-
-                                    EnsureAuthorMonitoringForBooks(author, books);
-
-                                    if (!addedAuthorIds.Contains(author.Id))
-                                    {
-                                        addedAuthorIds.Add(author.Id);
-                                    }
-
-                                    continue;
-                                }
-
-                                _logger.Warn("Hardcover Library: selected edition '{0}' not found locally for '{1}' by '{2}'. Falling back to monitoring by book ID.",
-                                    editionProviderId, report.Book, report.Author);
-
-                                var fallbackBooks = authorBooks
-                                    .Where(b => BookMatchesProviderId(b, bookPrefix, bookProviderId, bookRawId))
-                                    .ToList();
-
-                                foreach (var book in fallbackBooks)
-                                {
-                                    var wasEligible = book.IsMonitoredWithAuthor(author);
-
-                                    if (book.MediaType == BookMediaType.Audiobook)
-                                    {
-                                        if (hardcoverLibrarySettings.MonitorAudiobooks)
-                                        {
-                                            book.AudiobookMonitored = true;
-                                        }
-                                    }
-                                    else if (book.MediaType == BookMediaType.Ebook)
-                                    {
-                                        if (hardcoverLibrarySettings.MonitorEbooks)
-                                        {
-                                            book.EbookMonitored = true;
-                                        }
-                                    }
-
-                                    if (importList.ShouldSearch &&
-                                        importList.ShouldMonitor == ImportListMonitorType.SpecificBook &&
-                                        !wasEligible &&
-                                        (book.AudiobookMonitored || book.EbookMonitored) &&
-                                        book.Id > 0)
-                                    {
-                                        bookIdsToSearch.Add(book.Id);
-                                    }
-                                }
-
-                                if (fallbackBooks.Any())
-                                {
-                                    _bookService.UpdateMany(fallbackBooks);
-                                    booksMonitored++;
-                                }
-
-                                EnsureAuthorMonitoringForBooks(author, fallbackBooks);
-
-                                if (!addedAuthorIds.Contains(author.Id))
-                                {
-                                    addedAuthorIds.Add(author.Id);
-                                }
-
-                                continue;
-                            }
-
-                            var desiredMediaType = GetMediaTypeForEdition(editionToClassify);
-
-                            if (!desiredMediaType.HasValue)
-                            {
-                                _logger.Warn("Hardcover Library: selected edition '{0}' maps to a physical/unknown format for '{1}' by '{2}'. Falling back to monitoring by book ID using list defaults.",
-                                    editionProviderId, report.Book, report.Author);
-
-                                var fallbackBooks = authorBooks
-                                    .Where(b => BookMatchesProviderId(b, bookPrefix, bookProviderId, bookRawId))
-                                    .ToList();
-
-                                foreach (var book in fallbackBooks)
-                                {
-                                    var wasEligible = book.IsMonitoredWithAuthor(author);
-
-                                    if (book.MediaType == BookMediaType.Audiobook)
-                                    {
-                                        if (hardcoverLibrarySettings.MonitorAudiobooks)
-                                        {
-                                            book.AudiobookMonitored = true;
-                                        }
-                                    }
-                                    else if (book.MediaType == BookMediaType.Ebook)
-                                    {
-                                        if (hardcoverLibrarySettings.MonitorEbooks)
-                                        {
-                                            book.EbookMonitored = true;
-                                        }
-                                    }
-
-                                    if (importList.ShouldSearch &&
-                                        importList.ShouldMonitor == ImportListMonitorType.SpecificBook &&
-                                        !wasEligible &&
-                                        (book.AudiobookMonitored || book.EbookMonitored) &&
-                                        book.Id > 0)
-                                    {
-                                        bookIdsToSearch.Add(book.Id);
-                                    }
-                                }
-
-                                if (fallbackBooks.Any())
-                                {
-                                    _bookService.UpdateMany(fallbackBooks);
-                                    booksMonitored++;
-                                }
-
-                                EnsureAuthorMonitoringForBooks(author, fallbackBooks);
-
-                                if (!addedAuthorIds.Contains(author.Id))
-                                {
-                                    addedAuthorIds.Add(author.Id);
-                                }
-
-                                continue;
-                            }
-
-                            if (desiredMediaType == BookMediaType.Audiobook && !hardcoverLibrarySettings.MonitorAudiobooks)
-                            {
-                                continue;
-                            }
-
-                            if (desiredMediaType == BookMediaType.Ebook && !hardcoverLibrarySettings.MonitorEbooks)
-                            {
-                                continue;
-                            }
-
-                            var candidateBooks = authorBooks
-                                .Where(b => b.MediaType == desiredMediaType.Value)
-                                .Where(b => BookMatchesProviderId(b, bookPrefix, bookProviderId, bookRawId))
-                                .ToList();
-
-                            if (!candidateBooks.Any())
-                            {
-                                _logger.Warn("Hardcover Library: no '{0}' instance found for '{1}' by '{2}' (book provider '{3}')",
-                                    desiredMediaType, report.Book, report.Author, bookProviderId);
-                                continue;
-                            }
-
-                            var reservationKey = (author.Id, bookProviderId, desiredMediaType.Value);
-                            if (!hardcoverReservedBookIds.TryGetValue(reservationKey, out var reservedIds))
-                            {
-                                reservedIds = new HashSet<int>();
-                                hardcoverReservedBookIds[reservationKey] = reservedIds;
-                            }
-
-                            // Prefer a book instance whose monitored edition already targets this Hardcover edition.
-                            var targetBook = FindBookAlreadyTargetingHardcoverEdition(candidateBooks, editionProviderId, editionRawId);
-
-                            if (targetBook == null)
-                            {
-                                if (!hardcoverAuthorBookIdsWithFilesCache.TryGetValue(author.Id, out var bookIdsWithFiles))
-                                {
-                                    bookIdsWithFiles = new HashSet<int>(_bookService.GetAuthorBooksWithFiles(author).Select(b => b.Id));
-                                    hardcoverAuthorBookIdsWithFilesCache[author.Id] = bookIdsWithFiles;
-                                }
-
-                                // Reuse an unreserved, non-pinned, no-files instance if possible; otherwise clone a new instance.
-                                targetBook = FindReusableHardcoverTargetBook(candidateBooks, reservedIds, bookIdsWithFiles);
-
-                                if (targetBook == null)
-                                {
-                                    var sourceBook = candidateBooks.OrderBy(b => b.Id).First();
-                                    var cloned = CloneBookWithEditions(sourceBook, editionProviderId, editionRawId);
-                                    if (cloned != null)
-                                    {
-                                        authorBooks.Add(cloned);
-                                        candidateBooks.Add(cloned);
-                                        targetBook = cloned;
-                                    }
-                                }
-
-                                if (targetBook != null)
-                                {
-                                    var targetEdition = targetBook.Editions?.FirstOrDefault(e =>
-                                        MatchesProviderId(e.HardcoverEditionId, editionProviderId, editionRawId));
-
-                                    if (targetEdition != null)
-                                    {
-                                        _editionService.SetMonitored(targetEdition);
-
-                                        if (targetBook.Editions != null)
-                                        {
-                                            foreach (var ed in targetBook.Editions)
-                                            {
-                                                if (ed.Id == targetEdition.Id)
-                                                {
-                                                    ed.Monitored = true;
-                                                }
-                                                else
-                                                {
-                                                    ed.Monitored = false;
-                                                }
-                                            }
-                                        }
-
-                                        EditionPinPolicy.MarkSelectionAsAutomatic(targetBook, targetBook.Editions);
-
-                                        if (targetEdition.ForeignEditionId.IsNotNullOrWhiteSpace())
-                                        {
-                                            targetBook.ForeignEditionId = targetEdition.ForeignEditionId;
-                                        }
-                                    }
-                                    else
-                                    {
-                                        _logger.Warn("Hardcover Library: edition '{0}' not present in local editions for '{1}' by '{2}' (BookId={3})",
-                                            editionProviderId, report.Book, report.Author, targetBook.Id);
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                // The desired edition is already selected. Import-list synchronization must not
-                                // create, clear, or strengthen an explicit user preservation pin.
-                            }
-
-                            if (targetBook == null)
-                            {
-                                continue;
-                            }
-
-                            var wasTargetBookEligible = targetBook.IsMonitoredWithAuthor(author);
-
-                            if (targetBook.MediaType == BookMediaType.Audiobook)
-                            {
-                                targetBook.AudiobookMonitored = true;
-                                targetBook.EbookMonitored = false;
-                            }
-                            else
-                            {
-                                targetBook.EbookMonitored = true;
-                                targetBook.AudiobookMonitored = false;
-                            }
-
-                            _bookService.UpdateMany(new List<Book> { targetBook });
-                            booksMonitored++;
-
-                            if (importList.ShouldSearch &&
-                                importList.ShouldMonitor == ImportListMonitorType.SpecificBook &&
-                                !wasTargetBookEligible &&
-                                (targetBook.AudiobookMonitored || targetBook.EbookMonitored) &&
-                                targetBook.Id > 0)
-                            {
-                                bookIdsToSearch.Add(targetBook.Id);
-                            }
-
-                            reservedIds.Add(targetBook.Id);
-
-                            EnsureAuthorMonitoringForBooks(author, new[] { targetBook });
-
-                            if (!addedAuthorIds.Contains(author.Id))
-                            {
-                                addedAuthorIds.Add(author.Id);
-                            }
+                            missing.Reports.Add(report);
+                            (side == BookMediaType.Audiobook ? missing.Audiobooks : missing.Ebooks).Add(bookProviderId);
                         }
                         else
                         {
-                            // Non-Hardcover import lists have full context (root folder + profiles) on ImportListDefinition.
-                            // Do not call AddAuthorMonitoringBookAsync here because it cannot inherit import list settings and
-                            // would attempt to add the author with config=null, which under "missing profile = disabled" can
-                            // hydrate 0 books/editions for a brand new author.
-                            var author = FindExistingAuthor(authorProviderId, localLookup, liveAuthorLookupHitCache);
-
-                            if (author == null)
-                            {
-                                MonitoringConfig config;
-
-                                var goodreadsSettings = GetGoodreadsSettings(importList);
-                                if (goodreadsSettings != null)
-                                {
-                                    config = BuildMonitoringConfigForGoodreadsImportList(importList, goodreadsSettings, authorProviderId, report.Author, goodreadsBooksToMonitor);
-                                }
-                                else
-                                {
-                                    config = BuildConfigFromImportList(importList);
-                                }
-
-                                if (goodreadsSettings == null && importList.ShouldMonitor == ImportListMonitorType.SpecificBook)
-                                {
-                                    config.AudiobookBooksToMonitor ??= new List<string>();
-                                    config.EbookBooksToMonitor ??= new List<string>();
-
-                                    if (!config.AudiobookBooksToMonitor.Contains(bookProviderId, StringComparer.OrdinalIgnoreCase))
-                                    {
-                                        config.AudiobookBooksToMonitor.Add(bookProviderId);
-                                    }
-
-                                    if (!config.EbookBooksToMonitor.Contains(bookProviderId, StringComparer.OrdinalIgnoreCase))
-                                    {
-                                        config.EbookBooksToMonitor.Add(bookProviderId);
-                                    }
-                                }
-
-                                QueueAuthorForImportList(importList, authorProviderId, report.Author, config, pendingAuthors, "specific book");
-                                continue;
-                            }
-
-                            if (author == null || author.Id <= 0)
-                            {
-                                continue;
-                            }
-
-                            var (bookPrefix, bookRawId) = SplitProviderId(bookProviderId);
-                            var targetBooks = GetCachedBooksByAuthor(author.Id)
-                                .Where(b => BookMatchesProviderId(b, bookPrefix, bookProviderId, bookRawId))
-                                .ToList();
-
-                            if (!targetBooks.Any())
-                            {
-                                _logger.Warn("Import list '{0}': book '{1}' by '{2}' was not found locally after ensuring author exists; it may have been filtered out or the media type is disabled",
-                                    importList.Name, report.Book, report.Author);
-                                continue;
-                            }
-
-                            var allowAudiobooks = true;
-                            var allowEbooks = true;
-
-                            if (importList.Settings is IGoodreadsDualMediaImportListSettings goodreadsMediaSettings)
-                            {
-                                allowAudiobooks = goodreadsMediaSettings.MonitorAudiobooks;
-                                allowEbooks = goodreadsMediaSettings.MonitorEbooks;
-
-                                if (!allowAudiobooks && !allowEbooks)
-                                {
-                                    allowAudiobooks = true;
-                                    allowEbooks = true;
-                                }
-                            }
-
-                            foreach (var book in targetBooks)
-                            {
-                                var wasEligible = book.IsMonitoredWithAuthor(author);
-
-                                if (book.MediaType == BookMediaType.Audiobook)
-                                {
-                                    book.AudiobookMonitored = allowAudiobooks;
-                                    book.EbookMonitored = false;
-                                }
-                                else if (book.MediaType == BookMediaType.Ebook)
-                                {
-                                    book.EbookMonitored = allowEbooks;
-                                    book.AudiobookMonitored = false;
-                                }
-
-                                if (importList.ShouldSearch &&
-                                    importList.ShouldMonitor == ImportListMonitorType.SpecificBook &&
-                                    !wasEligible &&
-                                    (book.AudiobookMonitored || book.EbookMonitored) &&
-                                    book.Id > 0)
-                                {
-                                    bookIdsToSearch.Add(book.Id);
-                                }
-                            }
-
-                            _bookService.UpdateMany(targetBooks);
-                            booksMonitored++;
-
-                            EnsureAuthorMonitoringForBooks(author, targetBooks);
-
-                            if (!addedAuthorIds.Contains(author.Id))
-                            {
-                                addedAuthorIds.Add(author.Id);
-                            }
+                            _logger.Warn("Import list '{0}': '{1}' ({2}) is missing from existing author '{3}' on the {4} side; monitoring listed books for existing authors is off",
+                                importList.Name, report.Book, bookProviderId, author.Name, side);
                         }
                     }
-                    catch (Exception ex)
+
+                    ApplyListedBooks(importList, author, targetBooks, report);
+                }
+                catch (Exception ex)
+                {
+                    failedItems++;
+                    MarkFailure(importList.Id);
+                    _logger.Warn(ex, "Failed to monitor book {0} from import list; continuing with other entries", report.Book);
+                }
+            }
+
+            foreach (var group in selectedBooks.Values.Where(book => newlyMonitoredIds.Contains(book.Id)).GroupBy(book => book.MediaType))
+            {
+                _bookService.MonitorRequestedBooks(group.Select(book => book.Id).ToList(), group.Key == BookMediaType.Audiobook ? "audiobook" : "ebook");
+            }
+
+            var searchBooks = bookIdsToSearch.Select(id => selectedBooks[id]).ToList();
+            foreach (var book in searchBooks)
+            {
+                book.AddOptions ??= new AddBookOptions();
+                book.AddOptions.SearchForNewBook = true;
+                changedAddOptions[book.Id] = book;
+            }
+
+            if (changedAddOptions.Any())
+            {
+                _bookService.SetAddOptions(changedAddOptions.Values);
+            }
+
+            var acceptedSearchIds = new HashSet<int>();
+            var rejectedSearchIds = new HashSet<int>();
+            if (searchBooks.Count > 0)
+            {
+                try
+                {
+                    if (_commandQueueManager.Push(new BookSearchCommand(bookIdsToSearch.OrderBy(id => id).ToList())) == null)
+                        throw new InvalidOperationException("The search command was not accepted");
+                    acceptedSearchIds.UnionWith(bookIdsToSearch);
+                }
+                catch (Exception ex)
+                {
+                    rejectedSearchIds.UnionWith(bookIdsToSearch);
+                    _logger.Warn(ex, "Import list sync: could not queue searches for {0} books; requests retained for retry", searchBooks.Count);
+                }
+                if (acceptedSearchIds.Count > 0)
+                {
+                    searchBooks.ForEach(book => book.AddOptions.SearchForNewBook = false);
+                    _bookService.SetAddOptions(searchBooks);
+                    _logger.Info("Import list sync: queued {0} books in one automatic search batch", searchBooks.Count);
+                }
+            }
+
+            if (changedEditionBookIds.Any())
+            {
+                _commandQueueManager.Push(new DownloadBookMediaCommand { BookIds = changedEditionBookIds.ToList() });
+            }
+
+            foreach (var listItems in items.GroupBy(item => item.ImportListId))
+            {
+                if (!GetImportListDefinition(listItems.Key).GetMonitoringOptions().AddMissingAuthors)
+                {
+                    var skipped = listItems.Select(GetAuthorProviderId).Where(id => id.IsNotNullOrWhiteSpace())
+                        .Distinct(StringComparer.OrdinalIgnoreCase).Count(id => localLookup.FindAuthor(id) == null &&
+                            (!liveAuthorLookupHitCache.TryGetValue(id, out var liveAuthor) || liveAuthor == null));
+                    _logger.Info("Import list {0}: skipped {1} missing authors because adding is off", GetImportListDefinition(listItems.Key).Name, skipped);
+                }
+            }
+
+            foreach (var (key, missing) in missingRequests)
+            {
+                try
+                {
+                    var list = GetImportListDefinition(key.ListId);
+                    var author = missing.Author;
+                    var requests = missing.Reports.DistinctBy(report => (GetBookProviderId(report), report.EditionProviderId, report.EditionMediaType)).ToList();
+                    var requestedBooks = requests.SelectMany(report => localLookup.FindBooks(GetBookProviderId(report), report.EditionProviderId))
+                        .Where(book => book.AuthorId == author.Id &&
+                            (book.MediaType == BookMediaType.Audiobook ? missing.Audiobooks.Any() : missing.Ebooks.Any()) &&
+                            !IsBookExcludedByAnyProviderId(listExclusions, book) &&
+                            !IsAuthorExcludedByAnyProviderId(listExclusions, author, book.MediaType)).ToList();
+                    EnsureAuthorMonitoring(list, author, requestedBooks.Any(book => book.MediaType == BookMediaType.Audiobook),
+                        requestedBooks.Any(book => book.MediaType == BookMediaType.Ebook));
+                    // Existing author settings remain authoritative for a bounded catalog request.
+                    var config = new MonitoringConfig
                     {
-                        _logger.Error(ex, "Failed to monitor book {0} from import list", report.Book);
+                        CreateAudiobook = missing.Audiobooks.Any(),
+                        CreateEbook = missing.Ebooks.Any(),
+                        AudiobookMonitored = author.AudiobookMonitored,
+                        EbookMonitored = author.EbookMonitored,
+                        AudiobookMonitorNewItems = author.AudiobookMonitorNewItems,
+                        EbookMonitorNewItems = author.EbookMonitorNewItems,
+                        AudiobookQualityProfileId = author.AudiobookQualityProfileId,
+                        EbookQualityProfileId = author.EbookQualityProfileId,
+                        AudiobookMetadataProfileId = author.AudiobookMetadataProfileId,
+                        EbookMetadataProfileId = author.EbookMetadataProfileId,
+                        AudiobookRootFolderPath = author.AudiobookRootFolderPath,
+                        EbookRootFolderPath = author.EbookRootFolderPath,
+                        AudiobookTags = author.AudiobookTags,
+                        EbookTags = author.EbookTags,
+                        AudiobookBooksToMonitor = missing.Audiobooks.ToList(),
+                        EbookBooksToMonitor = missing.Ebooks.ToList()
+                    };
+                    if (QueueAuthorForImportList(list, key.AuthorId, author.Name, config, pendingAuthors,
+                        "requested catalog works", requests, listExclusions, authorExists: true))
+                    {
+                        pendingByList.Add((key.ListId, key.AuthorId));
+                    }
+                    else
+                    {
+                        _logger.Warn("Import list '{0}': catalog request for existing author '{1}' was not accepted",
+                            list.Name, author.Name);
                     }
                 }
-            }
-
-            var unavailableItems = mappedUnavailable + stats.MissingProviderIds;
-            var message = $"Import List Sync Completed. Items found: {items.Count}, Existing authors: {stats.ExistingAuthors}, Authors queued: {pendingAuthors.Count}, Books monitored: {booksMonitored}, Unavailable: {unavailableItems}, Excluded: {stats.Excluded}";
-            _logger.ProgressInfo(message);
-
-            if (bookIdsToSearch.Any())
-            {
-                var bookIds = bookIdsToSearch.OrderBy(x => x).ToList();
-                _logger.ProgressInfo("Import list sync: Queuing searches for {0} newly monitored books", bookIds.Count);
-                _commandQueueManager.Push(new BookSearchCommand(bookIds));
-            }
-
-            if (authorIdsToMissingSearch.Any())
-            {
-                var authorIds = authorIdsToMissingSearch.OrderBy(x => x).ToList();
-                _logger.ProgressInfo("Import list sync: Queuing missing searches for {0} authors", authorIds.Count);
-                foreach (var authorId in authorIds)
+                catch (Exception ex)
                 {
-                    _commandQueueManager.Push(new MissingBookSearchCommand(authorId));
+                    MarkFailure(key.ListId);
+                    _logger.Warn(ex, "Import list: could not queue requested catalog works for author {0}; continuing with other entries", key.AuthorId);
                 }
             }
 
-            // Refresh added authors
-            if (addedAuthorIds.Any())
+            if (pendingAuthors.Any() || pendingExistingAuthors.Any())
             {
-                _commandQueueManager.Push(new BulkRefreshAuthorCommand(addedAuthorIds.Distinct().ToList(), areNewAuthors: true, forceRefresh: true));
-            }
-
-            if (pendingAuthors.Any())
-            {
-                _logger.ProgressInfo("Import list sync: queued {0} authors for background import", pendingAuthors.Count);
+                _logger.ProgressInfo("Import list sync: queued {0} authors for background import", pendingAuthors.Union(pendingExistingAuthors.Keys).Count());
                 PushImportListPendingImportDrain();
             }
+
+            foreach (var listItems in items.GroupBy(item => item.ImportListId))
+            {
+                var applied = appliedBooksByList.GetValueOrDefault(listItems.Key) ?? new HashSet<int>();
+                var rejected = applied.Count(rejectedSearchIds.Contains);
+                _logger.Info("Import list '{0}': {1} items, {2} selected book rows, {3} accepted searches, {4} queued authors, {5} missing book sides, {6} failures, {7} changed edition rows; apply run {8} ms",
+                    GetImportListDefinition(listItems.Key).Name, listItems.Count(), applied.Count, applied.Count(acceptedSearchIds.Contains),
+                    pendingByList.Count(request => request.ListId == listItems.Key), missingSidesByList.GetValueOrDefault(listItems.Key),
+                    failuresByList.GetValueOrDefault(listItems.Key) + rejected, applied.Count(changedEditionBookIds.Contains), stopwatch.ElapsedMilliseconds);
+            }
+
+            var unavailableItems = mappedUnavailable + stats.MissingProviderIds + missingBookSides;
+            if (missingBookSides > 0 || failedItems > 0)
+            {
+                _logger.Warn("Import list sync: {0} requested book sides were absent and {1} items failed", missingBookSides, failedItems);
+            }
+            _logger.ProgressInfo("Import List Sync Completed. Items found: {0}, Existing authors: {1}, Authors queued: {2}, Books monitored: {3}, Unavailable: {4}, Excluded: {5}, Elapsed: {6} ms",
+                items.Count, stats.ExistingAuthors, pendingAuthors.Count, booksMonitored, unavailableItems, stats.Excluded, stopwatch.ElapsedMilliseconds);
 
             return processed;
         }
 
-        private bool TryMapBookReportFromLocalLibrary(ImportListItemInfo report)
+        private bool TryMapBookReportFromIdentityCache(ImportListItemInfo report, ImportListLocalLookup localLookup,
+            ConcurrentDictionary<string, ImportListBookIdentityCache> sourceMappings, ImportListSyncStats stats, IEnumerable<BookMediaType> mediaTypes,
+            out Book ownerBook)
         {
-            if (report == null)
-            {
-                return false;
-            }
-
-            if (report.AuthorProviderId.IsNotNullOrWhiteSpace())
-            {
-                report.AuthorProviderId = NormalizeProviderId(report.AuthorProviderId, "gr");
-            }
-
-            if (report.BookProviderId.IsNotNullOrWhiteSpace())
-            {
-                report.BookProviderId = NormalizeProviderId(report.BookProviderId, "gr");
-            }
-
-            if (report.EditionProviderId.IsNotNullOrWhiteSpace())
-            {
-                report.EditionProviderId = NormalizeProviderId(report.EditionProviderId, "gr");
-            }
-
-            if (report.AuthorProviderId.IsNotNullOrWhiteSpace() && report.BookProviderId.IsNotNullOrWhiteSpace())
-            {
-                return true;
-            }
-
-            if (report.EditionProviderId.IsNullOrWhiteSpace())
-            {
-                return false;
-            }
-
-            var editionProviderId = report.EditionProviderId.Trim();
-            var (editionPrefix, editionRawId) = SplitProviderId(editionProviderId);
-
-            Edition edition = null;
-
-            // Preferred: use provider-specific columns (GoodreadsEditionId / HardcoverEditionId / OpenLibraryEditionId)
-            // rather than ForeignEditionId, since ForeignEditionId includes media-type suffixes and can be Hardcover-based.
-            if (editionPrefix == "gr" && long.TryParse(editionRawId, out var goodreadsEditionId))
-            {
-                edition = _editionService.GetEditionByGoodreadsEditionId(goodreadsEditionId);
-            }
-            else if (editionPrefix == "hc-ed" || editionPrefix == "hc")
-            {
-                edition = _editionService.GetEditionByHardcoverEditionId(editionRawId);
-            }
-            else if (editionPrefix == "ol")
-            {
-                edition = _editionService.GetEditionByOpenLibraryEditionId(editionRawId);
-            }
-
-            // Fallback: ForeignEditionId lookup (already-suffixed IDs)
-            if (edition == null)
-            {
-                edition = _editionService.GetEditionByForeignEditionId(editionProviderId);
-            }
-
-            // Backward-compat: older ForeignEditionIds used "gr:{id}-{suffix}".
-            if (edition == null && editionPrefix == "gr" && long.TryParse(editionRawId, out _))
-            {
-                edition = _editionService.GetEditionByForeignEditionId($"{editionProviderId}-audiobook") ??
-                         _editionService.GetEditionByForeignEditionId($"{editionProviderId}-ebook");
-            }
-
-            if (edition == null)
-            {
-                return false;
-            }
-
-            var book = _bookRepository.Find(edition.BookId);
-            if (book == null)
-            {
-                return false;
-            }
-
-            Author author = null;
-            if (book.AuthorId > 0)
-            {
-                try
-                {
-                    author = _authorService.GetAuthor(book.AuthorId);
-                }
-                catch
-                {
-                    author = null;
-                }
-            }
-
-            report.BookProviderId ??= GetPreferredBookProviderId(book);
-            report.Book ??= edition.Title ?? book.Title;
-            report.Author ??= author?.Name;
-            report.AuthorProviderId ??= GetPreferredAuthorProviderId(author);
-            return report.AuthorProviderId.IsNotNullOrWhiteSpace() && report.BookProviderId.IsNotNullOrWhiteSpace();
-        }
-
-        private bool TryMapBookReportFromIdentityCache(ImportListItemInfo report)
-        {
+            ownerBook = null;
             if (_bookIdentityCacheRepository == null)
             {
                 return false;
@@ -2647,7 +1766,8 @@ namespace NzbDrone.Core.ImportLists
 
             try
             {
-                var cached = _bookIdentityCacheRepository.FindBySourceProviderId(sourceProviderId);
+                var cached = sourceMappings != null ? sourceMappings.GetValueOrDefault(sourceProviderId) :
+                    _bookIdentityCacheRepository.FindBySourceProviderId(sourceProviderId);
                 if (cached == null ||
                     cached.BookProviderId.IsNullOrWhiteSpace() ||
                     cached.AuthorProviderId.IsNullOrWhiteSpace())
@@ -2655,22 +1775,55 @@ namespace NzbDrone.Core.ImportLists
                     return false;
                 }
 
+                var cachedAuthor = localLookup.FindAuthor(cached.AuthorProviderId);
+                var cacheIsCurrent = cachedAuthor != null && (cachedAuthor.LastInfoSync == null || cachedAuthor.LastInfoSync <= cached.UpdatedAt);
+                ownerBook = localLookup.FindOwnedBook(cached.BookProviderId, report.EditionProviderId, mediaTypes);
+                if (ownerBook == null && cacheIsCurrent)
+                {
+                    // Only source metadata's cached owner can disambiguate duplicate local work owners.
+                    ownerBook = localLookup.FindOwnedBook(cached.BookProviderId, report.EditionProviderId, mediaTypes, cachedAuthor.Id);
+                }
+                if (ownerBook == null || cachedAuthor?.Id != ownerBook.AuthorId)
+                {
+                    return false;
+                }
+
+                var workMatches = localLookup.MatchesWork(report.BookProviderId, ownerBook, mediaTypes);
+                var reportedAuthor = localLookup.FindAuthor(report.AuthorProviderId);
+                if (!workMatches && report.EditionProviderId.IsNotNullOrWhiteSpace() && cached.EditionHasNarration.HasValue &&
+                    !localLookup.FindBooks(report.BookProviderId).Any(book => mediaTypes.Contains(book.MediaType)) &&
+                    reportedAuthor?.Id == ownerBook.AuthorId)
+                {
+                    report.BookProviderId = cached.BookProviderId;
+                    workMatches = true;
+                }
+                if (!workMatches)
+                {
+                    return false;
+                }
+
                 report.BookProviderId ??= cached.BookProviderId;
-                report.AuthorProviderId ??= cached.AuthorProviderId;
+                report.AuthorProviderId = GetPreferredAuthorProviderId(cachedAuthor);
                 report.Book ??= cached.Book;
-                report.Author ??= cached.Author;
+                report.Author = cachedAuthor.Name;
+                if (cacheIsCurrent)
+                {
+                    report.EditionHasNarration ??= cached.EditionHasNarration;
+                    report.EditionNarratorNames ??= cached.EditionNarratorNames?.ToList();
+                }
                 return report.BookProviderId.IsNotNullOrWhiteSpace() && report.AuthorProviderId.IsNotNullOrWhiteSpace();
             }
             catch (Exception ex)
             {
-                _logger.Debug(ex, "Import list sync: failed to read cached identity mapping for {0}", sourceProviderId);
+                stats.MarkCacheFailure(ex);
                 return false;
             }
         }
 
-        private void CacheBookReportMapping(ImportListItemInfo report)
+        private void CacheBookReportMapping(ImportListItemInfo report,
+            ConcurrentDictionary<string, ImportListBookIdentityCache> sourceMappings, ImportListSyncStats stats)
         {
-            if (_bookIdentityCacheRepository == null)
+            if (_bookIdentityCacheRepository == null || stats.CacheReadFailed)
             {
                 return;
             }
@@ -2689,20 +1842,26 @@ namespace NzbDrone.Core.ImportLists
             try
             {
                 var now = DateTime.UtcNow;
-                _bookIdentityCacheRepository.UpsertBySourceProviderId(new ImportListBookIdentityCache
+                var saved = _bookIdentityCacheRepository.UpsertBySourceProviderId(new ImportListBookIdentityCache
                 {
                     SourceProviderId = sourceProviderId,
                     BookProviderId = bookProviderId,
                     AuthorProviderId = authorProviderId,
                     Book = report.Book,
                     Author = report.Author,
+                    EditionHasNarration = report.EditionHasNarration,
+                    EditionNarratorNames = report.EditionNarratorNames?.ToList(),
                     CreatedAt = now,
                     UpdatedAt = now
                 });
+                if (sourceMappings != null)
+                {
+                    sourceMappings[sourceProviderId] = saved;
+                }
             }
             catch (Exception ex)
             {
-                _logger.Debug(ex, "Import list sync: failed to cache identity mapping for {0}", sourceProviderId);
+                stats.MarkCacheFailure(ex);
             }
         }
 
@@ -2715,77 +1874,153 @@ namespace NzbDrone.Core.ImportLists
 
             if (report.EditionProviderId.IsNotNullOrWhiteSpace())
             {
-                return NormalizeProviderId(report.EditionProviderId, "gr");
+                return "edition:" + BookEditionIdentity.NormalizeRequestedEditionProviderId(NormalizeProviderId(report.EditionProviderId, "gr"));
             }
 
-            return NormalizeProviderId(report.BookProviderId, "gr");
+            var workId = NormalizeProviderId(report.BookProviderId, "gr");
+            return workId == null ? null : "work:" + workId;
         }
 
-        private void MapBookReport(ImportListItemInfo report)
+        private Tuple<string, Book, List<Author>> MapBookReportWithMappings(ImportListItemInfo report, ImportListLocalLookup localLookup,
+            ConcurrentDictionary<string, ImportListBookIdentityCache> sourceMappings, ImportListSyncStats stats,
+            IEnumerable<BookMediaType> mediaTypes = null)
         {
-            if (TryMapBookReportFromLocalLibrary(report) || TryMapBookReportFromIdentityCache(report))
+            mediaTypes ??= new[] { BookMediaType.Audiobook, BookMediaType.Ebook };
+            if (!mediaTypes.Any())
+            {
+                return null;
+            }
+            var localMapped = localLookup.TryMapBookReport(report, mediaTypes);
+            var localBook = localMapped ? localLookup.FindOwnedBook(report.BookProviderId, report.EditionProviderId, mediaTypes) : null;
+            var localMapping = localBook == null ? null : Tuple.Create(report.AuthorProviderId, localBook,
+                new List<Author> { localLookup.FindAuthor(report.AuthorProviderId) });
+            if (localMapped && (report.EditionProviderId.IsNullOrWhiteSpace() || IsReportedAudioEdition(report) != null))
+            {
+                var cached = sourceMappings?.GetValueOrDefault(GetMappingSourceProviderId(report));
+                if (sourceMappings != null && report.EditionHasNarration.HasValue &&
+                    (cached?.EditionHasNarration != report.EditionHasNarration ||
+                     !(cached?.EditionNarratorNames ?? new List<string>()).SequenceEqual(report.EditionNarratorNames ?? new List<string>(), StringComparer.OrdinalIgnoreCase)))
+                {
+                    CacheBookReportMapping(report, sourceMappings, stats);
+                }
+
+                return localMapping;
+            }
+
+            if (TryMapBookReportFromIdentityCache(report, localLookup, sourceMappings, stats, mediaTypes, out var cachedBook))
+            {
+                localBook = cachedBook;
+                localMapped = localBook != null;
+                localMapping = localBook == null ? null : Tuple.Create(report.AuthorProviderId, localBook,
+                    new List<Author> { localLookup.FindAuthor(report.AuthorProviderId) });
+                if (report.EditionProviderId.IsNullOrWhiteSpace() || IsReportedAudioEdition(report) == false ||
+                    (IsReportedAudioEdition(report) == true && report.EditionNarratorNames?.Count > 0))
+                {
+                    return localMapping;
+                }
+            }
+
+            var requestedAuthorId = GetAuthorProviderId(report);
+            if (!localMapped)
+            {
+                report.AuthorProviderId = null;
+            }
+
+            try
+            {
+                var requestedWorkId = GetBookProviderId(report);
+                var isEdition = report.EditionProviderId.IsNotNullOrWhiteSpace();
+                Tuple<string, Book, List<Author>> mapped;
+                var mediaType = mediaTypes.First();
+                if (isEdition)
+                {
+                    Interlocked.Increment(ref stats.EditionLookups);
+                    mapped = _bookInfoProxy.GetEditionInfo(report.EditionProviderId, report.EditionMediaType ?? mediaType);
+                }
+                else if (requestedWorkId.IsNotNullOrWhiteSpace())
+                {
+                    Interlocked.Increment(ref stats.WorkLookups);
+                    mapped = _bookInfoProxy.GetWorkInfo(requestedWorkId, mediaType,
+                        AuthorIdentity.NormalizeWorkLookupAuthorHint(requestedWorkId, requestedAuthorId));
+                }
+                else
+                {
+                    return localMapping;
+                }
+
+                var book = mapped.Item2;
+                var author = BookIdentity.GetLookupPrimaryAuthor(mapped);
+                mapped = Tuple.Create(mapped.Item1, book, new List<Author> { author });
+                var edition = book?.Editions?.FirstOrDefault(candidate => BookEditionIdentity.EditionMatchesProviderId(candidate, report.EditionProviderId));
+                var workMatches = book != null && localLookup.MatchesWork(requestedWorkId, book, mediaTypes);
+                if (!workMatches && edition != null && requestedWorkId.IsNotNullOrWhiteSpace() &&
+                    !localLookup.FindBooks(requestedWorkId).Any(local => mediaTypes.Contains(local.MediaType)))
+                {
+                    var sourceAuthor = localLookup.FindAuthor(GetPreferredAuthorProviderId(author));
+                    var reportedAuthor = localLookup.FindAuthor(requestedAuthorId);
+                    workMatches = sourceAuthor != null && (requestedAuthorId.IsNullOrWhiteSpace() || reportedAuthor?.Id == sourceAuthor.Id) &&
+                        localLookup.FindBooks(GetPreferredBookProviderId(book)).Any(local => mediaTypes.Contains(local.MediaType) &&
+                            BookIdentity.MatchesByStableWorkProviderId(local, book) && local.AuthorId == sourceAuthor.Id);
+                    if (workMatches)
+                    {
+                        report.BookProviderId = GetPreferredBookProviderId(book);
+                    }
+                }
+
+                // A supplied contributor or cached pair cannot establish ownership of a different work.
+                if (!workMatches || (isEdition && edition == null) || GetPreferredAuthorProviderId(author).IsNullOrWhiteSpace())
+                {
+                    Interlocked.Increment(ref stats.EvidenceRejections);
+                    var reason = !workMatches ? "requested work does not match" :
+                        isEdition && edition == null ? "requested edition is absent" : "selected primary author is absent or conflicting";
+                    _logger.Warn("Metadata mapping for {0} rejected: {1}; retaining only proven local intent", GetMappingSourceProviderId(report), reason);
+                    if (!localMapped)
+                    {
+                        report.AuthorProviderId = null;
+                    }
+                    var rejectedMapping = isEdition && edition != null && GetPreferredAuthorProviderId(author).IsNotNullOrWhiteSpace() ? mapped : localMapping;
+                    return rejectedMapping;
+                }
+
+                report.BookProviderId ??= GetPreferredBookProviderId(book);
+                report.Book = book.Title;
+                report.Author = author.Name;
+                report.AuthorProviderId = GetPreferredAuthorProviderId(author);
+                if (edition != null)
+                {
+                    report.EditionHasNarration = BookEditionIdentity.IsNarratedAudiobookEdition(edition);
+                    report.EditionNarratorNames = report.EditionHasNarration == true ? BookEditionIdentity.GetNarratorNames(edition) : null;
+                }
+
+                CacheBookReportMapping(report, sourceMappings, stats);
+                return mapped;
+            }
+            catch (Exception ex) when (ex is BookNotFoundException || ex is WorkRescueTerminalException || ex is InvalidProviderIdException)
+            {
+                if (ex is BookNotFoundException)
+                {
+                    _logger.Debug("No metadata mapping found for source [{0}] ({1} - {2})",
+                        GetMappingSourceProviderId(report), report.Author, report.Book);
+                }
+                else
+                {
+                    Interlocked.Increment(ref stats.EvidenceRejections);
+                    _logger.Warn("Metadata mapping for {0} rejected: {1}; retaining only proven local intent", GetMappingSourceProviderId(report), ex.Message);
+                }
+                if (!localMapped)
+                {
+                    report.AuthorProviderId = null;
+                }
+                return localMapping;
+            }
+        }
+
+        private void EnsureAuthorMonitoring(ImportListDefinition importList, Author author, bool enableAudiobooks, bool enableEbooks)
+        {
+            if (!importList.GetMonitoringOptions().ResumePausedAuthors || author == null)
             {
                 return;
             }
-
-            if (report.EditionProviderId.IsNotNullOrWhiteSpace())
-            {
-                try
-                {
-                    // Prefer the metadata server for mapping edition IDs to canonical work + author IDs.
-                    // This avoids app-identifying Goodreads API keys and keeps provider ID mapping centralized.
-                    var mapped = _bookInfoProxy.GetEditionInfo(report.EditionProviderId);
-                    var book = mapped.Item2;
-                    var author = mapped.Item3?.FirstOrDefault() ?? book?.Author;
-
-                    report.BookProviderId ??= GetPreferredBookProviderId(book);
-                    report.Book = book?.Title;
-                    report.Author ??= author?.Name;
-                    report.AuthorProviderId ??= GetPreferredAuthorProviderId(author);
-                    CacheBookReportMapping(report);
-                }
-                catch (BookNotFoundException)
-                {
-                    // No fallback mapping. If the metadata server can't map the provider ID, the import list item is skipped.
-                    _logger.Debug("No metadata mapping found for edition [{0}] ({1} - {2})",
-                        report.EditionProviderId, report.Author, report.Book);
-                }
-            }
-            else if (report.BookProviderId.IsNotNullOrWhiteSpace())
-            {
-                try
-                {
-                    var bookProviderId = GetBookProviderId(report);
-                    var mappedWork = _bookInfoProxy.GetWorkInfo(bookProviderId, BookMediaType.Audiobook, AuthorIdentity.NormalizeWorkLookupAuthorHint(bookProviderId, GetAuthorProviderId(report)));
-                    var book = mappedWork.Item2;
-                    var author = mappedWork.Item3?.FirstOrDefault() ?? book?.Author;
-
-                    report.BookProviderId ??= GetPreferredBookProviderId(book);
-                    report.Book ??= book?.Title;
-                    report.Author ??= author?.Name;
-                    report.AuthorProviderId ??= GetPreferredAuthorProviderId(author);
-                    CacheBookReportMapping(report);
-                }
-                catch (BookNotFoundException)
-                {
-                    _logger.Debug("No metadata mapping found for work [{0}] ({1} - {2})",
-                        report.BookProviderId, report.Author, report.Book);
-                }
-            }
-        }
-
-        private void EnsureAuthorMonitoringForBooks(Author author, IEnumerable<Book> books)
-        {
-            if (author == null || books == null)
-            {
-                return;
-            }
-
-            var monitoredBooks = books.Where(book => book != null).ToList();
-            var enableAudiobooks = monitoredBooks.Any(book =>
-                book.MediaType == BookMediaType.Audiobook && book.AudiobookMonitored);
-            var enableEbooks = monitoredBooks.Any(book =>
-                book.MediaType == BookMediaType.Ebook && book.EbookMonitored);
 
             if ((!enableAudiobooks || author.AudiobookMonitored == true) &&
                 (!enableEbooks || author.EbookMonitored == true))
@@ -2793,18 +2028,19 @@ namespace NzbDrone.Core.ImportLists
                 return;
             }
 
-            if (enableAudiobooks)
+            if (enableAudiobooks && author.AudiobookMonitored != true)
             {
+                _authorService.SetMediaTypeMonitoring(author.Id, "audiobook", true);
                 author.AudiobookMonitored = true;
             }
 
-            if (enableEbooks)
+            if (enableEbooks && author.EbookMonitored != true)
             {
+                _authorService.SetMediaTypeMonitoring(author.Id, "ebook", true);
                 author.EbookMonitored = true;
             }
 
             author.Monitored = author.IsMonitoredFromMediaSettings();
-            _authorService.UpdateAuthor(author);
         }
 
         public void Execute(ImportListSyncCommand message)
@@ -2826,7 +2062,6 @@ namespace NzbDrone.Core.ImportLists
         {
             var hardcoverImportLists = _importListFactory.AutomaticAddEnabled(filterBlockedImportLists)
                 .Where(l => l.Definition.Implementation.EqualsIgnoreCase(nameof(HardcoverLibraryImportList)))
-                .Select(l => (ImportListDefinition)l.Definition)
                 .ToList();
 
             if (hardcoverImportLists.Empty())
@@ -2838,12 +2073,42 @@ namespace NzbDrone.Core.ImportLists
             _logger.ProgressInfo("Starting Hardcover Library Sync");
 
             var listItems = new List<ImportListItemInfo>();
-            foreach (var definition in hardcoverImportLists)
+            foreach (var importList in hardcoverImportLists)
             {
-                listItems.AddRange(_listFetcherAndParser.FetchSingleList(definition));
+                listItems.AddRange(_listFetcherAndParser.FetchSingleList(importList));
             }
 
-            return ProcessListItems(listItems);
+            var failuresByList = new ConcurrentDictionary<int, int>();
+            var processed = ProcessListItems(listItems, failuresByList);
+            foreach (var importList in hardcoverImportLists)
+            {
+                CommitHardcoverState(importList, failuresByList);
+            }
+            return processed;
+        }
+
+        private void CommitHardcoverState(IImportList importList, ConcurrentDictionary<int, int> failuresByList)
+        {
+            if (importList is not HardcoverLibraryImportList hardcover)
+            {
+                return;
+            }
+
+            var failures = failuresByList.GetValueOrDefault(importList.Definition.Id);
+            if (failures > 0)
+            {
+                _logger.Warn("Keeping Hardcover import list '{0}' cursor unchanged after {1} unaccepted items", importList.Definition.Name, failures);
+                return;
+            }
+
+            try
+            {
+                hardcover.CommitState();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Could not commit Hardcover import list '{0}' cursor", importList.Definition.Name);
+            }
         }
     }
 }

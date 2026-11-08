@@ -8,7 +8,8 @@ namespace NzbDrone.Core.Books.Repositories
 {
     public interface IEditionNarratorLinkRepository : IBasicRepository<EditionNarratorLink>
     {
-        void DeleteByEditionIds(List<int> editionIds);
+        List<EditionNarratorLink> GetByEditionIds(List<int> editionIds);
+        void ApplyChanges(List<int> deletedLinkIds, List<EditionNarratorLink> newLinks, List<int> demotedPrimaryLinkIds = null);
         List<EditionNarratorLinkWithMonitored> GetByBookIds(List<int> bookIds);
     }
 
@@ -27,24 +28,55 @@ namespace NzbDrone.Core.Books.Repositories
         {
         }
 
-        public void DeleteByEditionIds(List<int> editionIds)
+        public List<EditionNarratorLink> GetByEditionIds(List<int> editionIds)
         {
             if (editionIds == null || editionIds.Count == 0)
             {
-                return;
+                return new List<EditionNarratorLink>();
             }
 
+            var links = new List<EditionNarratorLink>();
             using var conn = _database.OpenConnection();
             var isPostgres = _database.DatabaseType == DatabaseType.PostgreSQL;
 
-            foreach (var batch in editionIds.Chunk(SqliteVariableLimit.MaxParameters))
+            foreach (var batch in editionIds.Distinct().Chunk(isPostgres ? editionIds.Count : SqliteVariableLimit.MaxParameters))
             {
-                conn.Execute(
-                    isPostgres
-                        ? @"DELETE FROM ""EditionNarratorLink"" WHERE ""EditionId"" = ANY(@ids)"
-                        : @"DELETE FROM ""EditionNarratorLink"" WHERE ""EditionId"" IN @ids",
-                    new { ids = isPostgres ? batch.ToArray() : batch });
+                links.AddRange(conn.Query<EditionNarratorLink, Narrator, NarratorMetadata, EditionNarratorLink>(
+                    @"SELECT enl.*, n.*, m.*
+                      FROM ""EditionNarratorLink"" enl
+                      LEFT JOIN ""Narrators"" n ON n.""Id"" = enl.""NarratorId""
+                      LEFT JOIN ""NarratorMetadata"" m ON m.""Id"" = n.""NarratorMetadataId""
+                      WHERE enl.""EditionId"" " + (isPostgres ? @"= ANY(@ids)" : @"IN @ids"),
+                    (link, narrator, metadata) =>
+                    {
+                        if (narrator != null) narrator.Metadata = metadata;
+                        link.Narrator = narrator;
+                        return link;
+                    },
+                    new { ids = batch.ToArray() }));
             }
+
+            return links;
+        }
+
+        public void ApplyChanges(List<int> deletedLinkIds, List<EditionNarratorLink> newLinks, List<int> demotedPrimaryLinkIds = null)
+        {
+            using var connection = _database.OpenConnection();
+            using var transaction = connection.BeginTransaction();
+            DeleteMany(deletedLinkIds, connection, transaction);
+            if (demotedPrimaryLinkIds?.Count > 0)
+            {
+                var isPostgres = _database.DatabaseType == DatabaseType.PostgreSQL;
+                foreach (var batch in demotedPrimaryLinkIds.Distinct().Chunk(isPostgres ? demotedPrimaryLinkIds.Count : SqliteVariableLimit.MaxParameters))
+                {
+                    connection.Execute(@"UPDATE ""EditionNarratorLink"" SET ""IsPrimary"" = @primary WHERE ""Id"" " +
+                        (isPostgres ? @"= ANY(@ids)" : @"IN @ids"),
+                        new { primary = false, ids = batch.ToArray() }, transaction);
+                }
+            }
+
+            InsertMany(newLinks, connection, transaction);
+            transaction.Commit();
         }
 
         public List<EditionNarratorLinkWithMonitored> GetByBookIds(List<int> bookIds)

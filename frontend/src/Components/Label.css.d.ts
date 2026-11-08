@@ -14,6 +14,7 @@ interface CssExports {
   'small': string;
   'success': string;
   'warning': string;
+  'wrapping': string;
 }
 export const cssExports: CssExports;
 export default cssExports;

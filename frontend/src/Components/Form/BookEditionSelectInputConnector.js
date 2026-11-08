@@ -3,7 +3,10 @@ import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
+import { EditionReadingFormat } from 'Helpers/Props/editionReadingFormats';
+import getNarratorDisplay from 'Utilities/Book/getNarratorDisplay';
 import titleCase from 'Utilities/String/titleCase';
+import translate from 'Utilities/String/translate';
 import SelectInput from './SelectInput';
 
 function createMapStateToProps() {
@@ -31,11 +34,17 @@ function createMapStateToProps() {
         if (bookEdition.format) {
           extras.push(bookEdition.format);
         }
+        if (bookEdition.readingFormatId === EditionReadingFormat.Audiobook) {
+          const narrator = getNarratorDisplay(bookEdition);
+          if (narrator) {
+            extras.push(`${translate('Narrator')}: ${narrator}`);
+          }
+        }
         if (bookEdition.pageCount > 0) {
           extras.push(`${bookEdition.pageCount}p`);
         }
 
-        if (extras) {
+        if (extras.length) {
           value = `${value} [${extras.join(', ')}]`;
         }
 

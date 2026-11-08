@@ -14,11 +14,11 @@ namespace Chaptarr.Core.Test.Api
     [TestFixture]
     public class BookshelfControllerFixture
     {
-        [Test]
-        public void should_treat_an_empty_monitoring_object_as_no_command()
+        [TestCase("{\"authors\":[{\"id\":42}],\"monitoringOptions\":{}}")]
+        [TestCase("{\"authors\":[{\"id\":42}],\"monitoringOptions\":{\"monitor\":null}}")]
+        public void should_treat_an_empty_monitoring_object_as_no_command(string json)
         {
-            var request = STJson.Deserialize<BookshelfResource>(
-                "{\"authors\":[{\"id\":42}],\"monitoringOptions\":{}}");
+            var request = STJson.Deserialize<BookshelfResource>(json);
             var authorService = CreateAuthorService(new Author { Id = 42, Name = "Martha Wells" });
             var monitoredService = CreateRecordingMonitoredService();
             var controller = new BookshelfController(authorService, monitoredService);

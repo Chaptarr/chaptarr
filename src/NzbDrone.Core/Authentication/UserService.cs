@@ -114,7 +114,7 @@ namespace NzbDrone.Core.Authentication
             return _repo.FindUser(identifier);
         }
 
-        private User SetUserHashedPassword(User user, string password)
+        internal static User SetUserHashedPassword(User user, string password)
         {
             var salt = GenerateSalt();
 
@@ -139,7 +139,7 @@ namespace NzbDrone.Core.Authentication
             return Convert.ToBase64String(hash);
         }
 
-        private static bool VerifyHashedPassword(User user, string password)
+        internal static bool VerifyHashedPassword(User user, string password)
         {
             if (user.Iterations <= 0 || user.Salt.IsNullOrWhiteSpace())
             {

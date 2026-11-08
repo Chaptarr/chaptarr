@@ -213,11 +213,11 @@ namespace NzbDrone.Core.Books.Calibre
         {
             var edition = file.Edition;
             var book = edition.Book;
-            var serieslink = book.SeriesLinks.OrderBy(x => x.SeriesPosition).FirstOrDefault(x => x.Series.Value.Title.IsNotNullOrWhiteSpace());
+            var serieslink = BookSeries.Select(book);
 
             var series = serieslink?.Series.Value;
             double? seriesIndex = null;
-            if (double.TryParse(serieslink?.Position, out var index))
+            if (double.TryParse(serieslink?.Position, System.Globalization.NumberStyles.AllowDecimalPoint | System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out var index))
             {
                 _logger.Trace("Parsed '{0}' as '{1}'", serieslink.Position, index);
                 seriesIndex = index;

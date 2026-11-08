@@ -1,3 +1,4 @@
+using Chaptarr.Core.Test.Common;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -5,6 +6,7 @@ using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
 
@@ -15,6 +17,8 @@ namespace Chaptarr.Core.Test.Books
     {
         private sealed class StubBookService : IBookService
         {
+            public List<Book> GetImportListBookIdentities() => GetAllBooks();
+
             private readonly List<Book> _books;
 
             public List<List<Book>> UpdateManyCalls { get; } = new();
@@ -37,7 +41,7 @@ namespace Chaptarr.Core.Test.Books
                 return _books.Where(b => idSet.Contains(b.Id)).ToList();
             }
 
-            public List<Book> GetBooksByAuthor(int authorId) => _books;
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false) => _books;
 
             public void UpdateMany(List<Book> books)
             {
@@ -50,7 +54,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds) => throw new NotImplementedException();
             public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds) => throw new NotImplementedException();
             public Book AddBook(Book newBook, bool doRefresh = true) => throw new NotImplementedException();
-            public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
+            public List<Book> FindBySlug(string titleSlug) => throw new NotImplementedException();
             public Book FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Book FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public Book FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
@@ -62,6 +66,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false) => throw new NotImplementedException();
             public List<Book> GetAllBooks() => throw new NotImplementedException();
+            public Book UpdateBook(Book book, List<Edition> editionUpdates, string monitoredMediaType = null, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated = null) => throw new System.NotSupportedException();
             public Book UpdateBook(Book book) => throw new NotImplementedException();
             public void SetBookMonitored(int bookId, bool monitored) => throw new NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
@@ -72,12 +77,12 @@ namespace Chaptarr.Core.Test.Books
             public List<Book> AuthorBooksBetweenDates(Author author, DateTime start, DateTime end, bool includeUnmonitored) => throw new NotImplementedException();
             public void InsertMany(List<Book> books) => throw new NotImplementedException();
             public void InsertMany(List<Book> books, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
-            public void DeleteMany(List<Book> books) => throw new NotImplementedException();
+            public void DeleteMany(List<Book> books, bool filesAlreadyDeleted = false, List<NzbDrone.Core.MediaFiles.BookFile> deletedBookFiles = null) => throw new NotImplementedException();
             public void SetAddOptions(IEnumerable<Book> books) => throw new NotImplementedException();
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public (Book Book, bool ExistingCopy) AddWantedEditionCopy(int bookId, int editionId) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -98,7 +103,7 @@ namespace Chaptarr.Core.Test.Books
         private sealed class TestableRefreshAuthorService : RefreshAuthorService
         {
             public TestableRefreshAuthorService(IBookService bookService, IEventAggregator eventAggregator, Logger logger)
-                : base(authorInfo: null,
+                : base(MetadataHealthGateStub.Ready(), authorInfo: null,
                     authorService: null,
                     bookService: bookService,
                     editionService: null,
@@ -108,7 +113,7 @@ namespace Chaptarr.Core.Test.Books
                     eventAggregator: eventAggregator,
                     commandQueueManager: null,
                     mediaFileService: null,
-                    historyService: null,
+                    historyRepository: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoHistoryRepositoryCalls(),
                     rootFolderService: null,
                     checkIfAuthorShouldBeRefreshed: null,
                     monitorNewBookService: new MonitorNewBookService(logger),
@@ -117,19 +122,34 @@ namespace Chaptarr.Core.Test.Books
                     syncMetadataService: null,
                     syncQueueService: null,
                     rootFolderSettingsResolver: null,
-                    logger: logger)
+                    logger: logger, bookRepository: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoBookRepositoryCalls(), authorRepository: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoPendingAuthorSetup())
             {
             }
 
-            public void PublishRefreshComplete(Author author)
+            public void PublishRefreshComplete(Author author, Author remoteAuthor = null)
             {
-                base.PublishRefreshCompleteEvent(author);
+                base.PublishRefreshCompleteEvent(author, remoteAuthor);
             }
 
             public void ProcessAddedBooks(Author author, SortedChildren children)
             {
                 base.ProcessChildren(author, children);
             }
+        }
+
+        [Test]
+        public void refresh_complete_must_publish_the_actual_remote_snapshot_separately_from_the_local_author()
+        {
+            var events = new StubEventAggregator();
+            var service = new TestableRefreshAuthorService(new StubBookService(new List<Book>()), events, LogManager.GetCurrentClassLogger());
+            var local = new Author { Id = 10 };
+            var remote = new Author { Series = new List<Series> { new Series { GoodreadsSeriesId = "gr:40346" } } };
+
+            service.PublishRefreshComplete(local, remote);
+
+            var published = events.PublishedEvents.OfType<AuthorRefreshCompleteEvent>().Single();
+            Assert.That(published.Author, Is.SameAs(local));
+            Assert.That(published.RemoteAuthor, Is.SameAs(remote));
         }
 
         [Test]

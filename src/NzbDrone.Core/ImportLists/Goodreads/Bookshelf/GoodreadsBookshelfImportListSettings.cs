@@ -18,10 +18,11 @@ namespace NzbDrone.Core.ImportLists.Goodreads
                 .WithMessage("Goodreads user ID must be a numeric ID (or a profile URL containing it)");
             RuleFor(c => c.BookshelfIds).NotEmpty();
             this.AddDualMediaRules();
+            RuleFor(c => c.ImportLimit).GreaterThanOrEqualTo(0).WithMessage("Import limit must be 0 or greater");
         }
     }
 
-    public class GoodreadsBookshelfImportListSettings : IGoodreadsDualMediaImportListSettings
+    public class GoodreadsBookshelfImportListSettings : DualMediaImportListSettings
     {
         private static readonly GoodreadsBookshelfImportListSettingsValidator Validator = new();
 
@@ -29,11 +30,9 @@ namespace NzbDrone.Core.ImportLists.Goodreads
         {
             BaseUrl = "www.goodreads.com";
             BookshelfIds = new string[] { };
-            MonitorAudiobooks = true;
-            MonitorEbooks = true;
         }
 
-        public string BaseUrl { get; set; }
+        public override string BaseUrl { get; set; }
 
         [FieldDefinition(0,
             Label = "User ID or URL",
@@ -44,46 +43,10 @@ namespace NzbDrone.Core.ImportLists.Goodreads
         [FieldDefinition(1, Label = "Bookshelves", Type = FieldType.Bookshelf)]
         public IEnumerable<string> BookshelfIds { get; set; }
 
-        [FieldDefinition(2,
-            Label = "Monitor Audiobooks",
-            Type = FieldType.Checkbox,
-            HelpText = "When enabled, audiobook items will be created/monitored for books from these shelves.")]
-        public bool MonitorAudiobooks { get; set; }
-
-        [FieldDefinition(3,
-            Label = "Monitor Ebooks",
-            Type = FieldType.Checkbox,
-            HelpText = "When enabled, ebook items will be created/monitored for books from these shelves.")]
-        public bool MonitorEbooks { get; set; }
-
-        [FieldDefinition(4, Label = "Import Limit", Type = FieldType.Number, HelpText = "Maximum number of unique source books to import from these shelves. 0 is unlimited.", Advanced = true)]
+        [FieldDefinition(4, Label = "Import Limit", Type = FieldType.Number, HelpText = "Maximum number of unique source books to import when work IDs are supplied. RSS fallback counts listed editions. 0 is unlimited.", Advanced = true)]
         public int ImportLimit { get; set; }
 
-        [FieldDefinition(5, Label = "Audiobook Quality Profile", Type = FieldType.Select, SelectOptionsProviderAction = "getAudiobookQualityProfiles", HelpText = "Quality profile used when importing audiobooks from these shelves.")]
-        public int AudiobookQualityProfileId { get; set; }
-
-        [FieldDefinition(6, Label = "Ebook Quality Profile", Type = FieldType.Select, SelectOptionsProviderAction = "getEbookQualityProfiles", HelpText = "Quality profile used when importing ebooks from these shelves.")]
-        public int EbookQualityProfileId { get; set; }
-
-        [FieldDefinition(7, Label = "Audiobook Metadata Profile", Type = FieldType.Select, SelectOptionsProviderAction = "getAudiobookMetadataProfiles", HelpText = "Metadata profile used when importing audiobooks from these shelves.")]
-        public int AudiobookMetadataProfileId { get; set; }
-
-        [FieldDefinition(8, Label = "Ebook Metadata Profile", Type = FieldType.Select, SelectOptionsProviderAction = "getEbookMetadataProfiles", HelpText = "Metadata profile used when importing ebooks from these shelves.")]
-        public int EbookMetadataProfileId { get; set; }
-
-        [FieldDefinition(9, Label = "Audiobook Root Folder", Type = FieldType.Path, HelpText = "Root folder used when importing audiobooks from these shelves.")]
-        public string AudiobookRootFolderPath { get; set; }
-
-        [FieldDefinition(10, Label = "Ebook Root Folder", Type = FieldType.Path, HelpText = "Root folder used when importing ebooks from these shelves.")]
-        public string EbookRootFolderPath { get; set; }
-
-        [FieldDefinition(11, Label = "Audiobook Tags", Type = FieldType.TagSelect, SelectOptionsProviderAction = "getTags", HelpText = "Optional: tags to apply when importing audiobooks from these shelves.")]
-        public List<int> AudiobookTags { get; set; } = new();
-
-        [FieldDefinition(12, Label = "Ebook Tags", Type = FieldType.TagSelect, SelectOptionsProviderAction = "getTags", HelpText = "Optional: tags to apply when importing ebooks from these shelves.")]
-        public List<int> EbookTags { get; set; } = new();
-
-        public NzbDroneValidationResult Validate()
+        public override NzbDroneValidationResult Validate()
         {
             if (!UserId.IsNullOrWhiteSpace() && GoodreadsUserIdParser.TryParse(UserId, out var normalized))
             {

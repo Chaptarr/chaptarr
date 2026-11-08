@@ -90,7 +90,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     (proof.Has(MatchIdentityRole.Author) && proof.Has(MatchIdentityRole.Title)));
         }
 
-        public static MatchIdentityProof CommonProof(IEnumerable<MatchIdentityProof> proofs)
+        public static MatchIdentityProof CommonProof(IEnumerable<MatchIdentityProof> proofs, bool requireSameObservedValue = true)
         {
             var all = (proofs ?? Enumerable.Empty<MatchIdentityProof>()).ToList();
             if (all.Count == 0 || all.Any(proof => proof == null))
@@ -99,7 +99,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             var common = all[0].Values
-                .Where(value => all.Skip(1).All(proof => proof.Values.Any(candidate => SameTuple(value, candidate))))
+                .Where(value => all.Skip(1).All(proof => proof.Values.Any(candidate => SameTuple(value, candidate, requireSameObservedValue))))
                 .ToList();
             return new MatchIdentityProof(common);
         }
@@ -134,13 +134,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             return new MatchIdentityProof(matched);
         }
 
-        private static bool SameTuple(MatchIdentityProofValue left, MatchIdentityProofValue right)
+        private static bool SameTuple(MatchIdentityProofValue left, MatchIdentityProofValue right, bool requireSameObservedValue)
         {
             return left != null && right != null &&
                    left.Role == right.Role &&
                    string.Equals(left.Source, right.Source, StringComparison.OrdinalIgnoreCase) &&
                    string.Equals(left.Field, right.Field, StringComparison.OrdinalIgnoreCase) &&
-                   string.Equals(left.Observed, right.Observed, StringComparison.Ordinal);
+                   string.Equals(requireSameObservedValue ? left.Observed : left.Expected,
+                       requireSameObservedValue ? right.Observed : right.Expected, StringComparison.Ordinal);
         }
     }
 
@@ -150,7 +151,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             string authorName,
             IEnumerable<string> titleCandidates,
             IDictionary<string, List<string>> tags,
-            IContainmentValidator containmentValidator)
+            IContainmentValidator containmentValidator,
+            IEnumerable<string> knownNarrators = null)
         {
             var matchableTags = (tags ?? new Dictionary<string, List<string>>())
                 .Where(pair => !TagExclusionPolicy.IsExcludedFromMatching(pair.Key) && pair.Value != null)
@@ -164,6 +166,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return new MatchIdentityProof(values);
             }
 
+            var titles = (titleCandidates ?? Enumerable.Empty<string>())
+                .Where(title => !string.IsNullOrWhiteSpace(title))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
             if (!string.IsNullOrWhiteSpace(authorName))
             {
                 foreach (var field in matchableTags)
@@ -174,7 +181,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         {
                             [field.Key] = new List<string> { observed }
                         };
-                        if (containmentValidator.ValidateAuthorInTags(authorName, singleField))
+                        var hasAuthor = titles.Count > 0
+                            ? containmentValidator.ValidateAuthorInTags(authorName, singleField, titles)
+                            : containmentValidator.ValidateAuthorInTags(authorName, singleField);
+                        if (hasAuthor)
                         {
                             values.Add(new MatchIdentityProofValue(
                                 MatchIdentityRole.Author,
@@ -189,11 +199,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
             }
 
-            foreach (var title in (titleCandidates ?? Enumerable.Empty<string>())
-                         .Where(title => !string.IsNullOrWhiteSpace(title))
-                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            foreach (var title in titles)
             {
-                var titleEvidence = containmentValidator.GetEditionTitleEvidence(title, matchableTags) ??
+                var titleEvidence = containmentValidator.GetEditionTitleEvidence(title, matchableTags, knownNarrators: knownNarrators) ??
                                     Array.Empty<EditionTitleEvidence>();
                 foreach (var evidence in titleEvidence.Where(evidence =>
                              evidence != null &&

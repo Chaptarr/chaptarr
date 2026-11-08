@@ -1,5 +1,6 @@
 using Chaptarr.Http;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.AspNetCore.Mvc;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.MediaCover;
@@ -32,7 +33,12 @@ namespace Chaptarr.Api.V1.Search
             foreach (var book in results.Books)
             {
                 book.Images ??= new List<MediaCover>();
-                _coverMapper.ConvertToLocalUrls(book.Id, MediaCoverEntity.Book, book.Images);
+            }
+
+            if (results.Books.Count > 0)
+            {
+                _coverMapper.ConvertBookCoversToLocalUrls(results.Books.Select(book =>
+                    new KeyValuePair<int, List<MediaCover>>(book.Id, book.Images)));
             }
 
             return results;

@@ -10,12 +10,12 @@ using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.MediaFiles.BookImport.Services
 {
     internal static class TrackedMultipartAudioRepairHelper
     {
-        private static readonly Regex ProofTokenRegex = new Regex(@"[\p{L}\p{Nd}]+", RegexOptions.Compiled);
         private static readonly Regex RomanNumeralRegex = new Regex(@"^(m{0,4}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3}))$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly HashSet<string> PackagingTokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -272,7 +272,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             IEditionService editionService,
             IContainmentValidator containmentValidator)
         {
-            if (clusterTags == null || clusterTags.Count == 0 || !containmentValidator.ValidateAuthorInTags(targetAuthor?.Name, clusterTags))
+            if (clusterTags == null || clusterTags.Count == 0)
             {
                 return null;
             }
@@ -294,7 +294,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             var audiobookEditions = allEditions
-                .Where(edition => edition.ReadingFormatId == 0 || edition.ReadingFormatId == 2)
+                .Where(edition => edition.ReadingFormatId == EditionReadingFormat.Unknown || EditionReadingFormat.IsAudiobook(edition.ReadingFormatId))
                 .ToList();
 
             if (!audiobookEditions.Any())
@@ -312,6 +312,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 .Select(edition =>
                 {
                     var evidence = ExactMatchEvidenceBuilder.Build(targetAuthor?.Name, targetBook.Title, edition, clusterTags, containmentValidator);
+                    if (evidence.AuthorTags.Count == 0)
+                    {
+                        return null;
+                    }
 
                     return new EditionCandidate
                     {
@@ -320,6 +324,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                         NarratorEvidenceCount = CountValues(evidence.NarratorTags)
                     };
                 })
+                .Where(candidate => candidate != null)
                 .ToList();
 
             if (strictEdition)
@@ -348,7 +353,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             return containmentValidator.ValidateEditionInTags(targetBook.Title, clusterTags)
-                ? preferredEdition ?? audiobookEditions.FirstOrDefault(edition => edition.Monitored) ?? audiobookEditions.First()
+                ? candidates.FirstOrDefault(candidate => candidate.Edition.Id == preferredEdition?.Id)?.Edition ??
+                  candidates.FirstOrDefault(candidate => candidate.Edition.Monitored)?.Edition ??
+                  candidates.FirstOrDefault()?.Edition
                 : null;
         }
 
@@ -593,9 +600,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 return null;
             }
 
-            var tokens = ProofTokenRegex
-                .Matches(value.ToLowerInvariant())
-                .Cast<Match>()
+            var tokens = UnicodeComparisonNormalizer.WordSpans(value.ToLowerInvariant())
                 .Select(match => match.Value)
                 .ToList();
 

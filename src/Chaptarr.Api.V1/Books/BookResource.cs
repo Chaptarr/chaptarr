@@ -2,12 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;
 using Chaptarr.Api.V1.Author;
 using Chaptarr.Api.V1.BookFiles;
 using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http.Middleware;
 using Chaptarr.Http.REST;
+using FluentValidation;
+using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.AuthorStats;
@@ -16,6 +17,7 @@ using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Parser;
+using Swashbuckle.AspNetCore.Annotations;
 
 namespace Chaptarr.Api.V1.Books
 {
@@ -24,6 +26,8 @@ namespace Chaptarr.Api.V1.Books
         public string Title { get; set; }
         public string AuthorTitle { get; set; }
         public string SeriesTitle { get; set; }
+        [SwaggerSchema("Ordered labels for all same-media Goodreads series memberships; submitted changes are ignored.", ReadOnly = true)]
+        public List<string> SeriesLabels { get; set; }
         public string Disambiguation { get; set; }
         public string Overview { get; set; }
         public int AuthorId { get; set; }
@@ -31,6 +35,9 @@ namespace Chaptarr.Api.V1.Books
         public string LocalBookId { get; set; }
         public string ForeignEditionId { get; set; }
         public string BaseBookId { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        [SwaggerSchema("An existing copy of this provider edition (on any audiobook row of the same work) was returned unchanged; nothing was changed or searched.", ReadOnly = true)]
+        public bool? ExistingCopy { get; set; }
 
         // Individual provider IDs for frontend compatibility
         public string HardcoverBookId { get; set; }
@@ -41,12 +48,39 @@ namespace Chaptarr.Api.V1.Books
         public string ASIN { get; set; }
         public string AudibleASIN { get; set; }
         public string TitleSlug { get; set; }
-        public bool Monitored { get; set; }
+        private bool? _monitored;
+        public bool Monitored
+        {
+            get => _monitored.GetValueOrDefault();
+            set => _monitored = value;
+        }
+
         public bool? AudiobookMonitored { get; set; }
         public bool? EbookMonitored { get; set; }
-        public bool AnyEditionOk { get; set; }
-        public Ratings Ratings { get; set; }
-        public DateTime? ReleaseDate { get; set; }
+        private bool? _anyEditionOk;
+        public bool AnyEditionOk
+        {
+            get => _anyEditionOk.GetValueOrDefault();
+            set => _anyEditionOk = value;
+        }
+
+        internal bool AnyEditionOkSpecified => _anyEditionOk.HasValue;
+        [SwaggerSchema("Provider metadata; changes submitted to PUT are ignored.", ReadOnly = true)]
+        public Ratings Ratings
+        {
+            get => _ratings;
+            set { _ratings = value; RatingsSpecified = true; }
+        }
+        private Ratings _ratings;
+        internal bool RatingsSpecified { get; private set; }
+        [SwaggerSchema("Provider metadata; changes submitted to PUT are ignored.", ReadOnly = true)]
+        public DateTime? ReleaseDate
+        {
+            get => _releaseDate;
+            set { _releaseDate = value; ReleaseDateSpecified = true; }
+        }
+        private DateTime? _releaseDate;
+        internal bool ReleaseDateSpecified { get; private set; }
         public DateTime Added { get; set; }
         public int PageCount { get; set; }
         public List<string> Genres { get; set; }
@@ -65,13 +99,36 @@ namespace Chaptarr.Api.V1.Books
         // Narrator info
         public string MediaType { get; set; }
         public string InstanceCombinedId { get; set; }
-        public string Narrator { get; set; }
+        private string _narrator;
+        public string Narrator
+        {
+            get => _narrator;
+            set
+            {
+                _narrator = value;
+                NarratorSpecified = true;
+            }
+        }
+
+        // An omitted PUT field is not an explicit request to clear the stored narrator.
+        internal bool NarratorSpecified { get; private set; }
         // For client-side search/filtering: all narrator names available across editions (even when Narrator display is hidden).
         public List<string> AvailableNarrators { get; set; }
+        [SwaggerSchema(ReadOnly = true)]
+        public List<NarratorResource> AvailableNarratorCredits => NarratorResource.FromNames(AvailableNarrators);
         // Narrator names for the monitored edition (used for "Full Cast" tooltips and per-edition display).
         public List<string> NarratorNames { get; set; }
+        [SwaggerSchema(ReadOnly = true)]
+        public List<NarratorResource> Narrators => NarratorResource.FromNames(NarratorNames, Narrator);
         public TimeSpan? Duration { get; set; }
-        public double? DurationMinutes { get; set; }
+        [SwaggerSchema("Provider metadata; changes submitted to PUT are ignored.", ReadOnly = true)]
+        public double? DurationMinutes
+        {
+            get => _durationMinutes;
+            set { _durationMinutes = value; DurationMinutesSpecified = true; }
+        }
+        private double? _durationMinutes;
+        internal bool DurationMinutesSpecified { get; private set; }
 
         // Indicates if this book has any physical files on disk
         public bool HasFiles { get; set; }
@@ -134,6 +191,19 @@ namespace Chaptarr.Api.V1.Books
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
+        private static List<MediaCover> CloneImages(IEnumerable<MediaCover> images)
+        {
+            return (images ?? Enumerable.Empty<MediaCover>())
+                .Where(image => image != null && !string.IsNullOrWhiteSpace(image.Url))
+                .Select(image => new MediaCover(image.CoverType, image.Url)
+                {
+                    RemoteUrl = image.RemoteUrl,
+                    TemporaryUrl = image.TemporaryUrl,
+                    Hash = image.Hash
+                })
+                .ToList();
+        }
+
         public static BookResource ToResource(this Book model)
         {
             return ToResource(model, BookResourceMappingOptions.Rich());
@@ -149,21 +219,12 @@ namespace Chaptarr.Api.V1.Books
             options ??= BookResourceMappingOptions.Rich();
 
             var selectedEdition = SelectMonitoredEdition(model.Editions);
-            var title = (selectedEdition?.Title ?? model.Title) ?? string.Empty;
 
-            // Use SeriesName and SeriesPosition from Book model until SeriesBookLink is properly populated
-            var seriesTitle = !string.IsNullOrWhiteSpace(model.SeriesName)
-                ? model.SeriesName + (!string.IsNullOrWhiteSpace(model.SeriesPosition) ? $" #{model.SeriesPosition}" : string.Empty)
-                : null;
+            var seriesLabels = BookSeries.GetLinks(model).Select(BookSeries.Label).ToList();
+            var headerSeries = BookSeries.GetHeaderLink(model);
+            var seriesTitle = headerSeries != null ? BookSeries.Label(headerSeries) : seriesLabels.ConcatToString("; ");
 
-            // Fallback to SeriesLinks if available (for future when SeriesBookLink is populated)
-            if (string.IsNullOrWhiteSpace(seriesTitle) && model.SeriesLinks?.Any() == true)
-            {
-                var seriesLinks = model.SeriesLinks.OrderBy(x => x.SeriesPosition);
-                seriesTitle = seriesLinks.Select(x => x?.Series?.Value?.Title + (x?.Position.IsNotNullOrWhiteSpace() ?? false ? $" #{x.Position}" : string.Empty)).ConcatToString("; ");
-            }
-
-            title = StripDuplicatedSeriesSuffix(title, seriesTitle);
+            var title = BookTitleDisplay.GetTitle(model.Title, selectedEdition?.Title, seriesLabels);
 
             var authorTitle = $"{model.Author?.SortNameLastFirst} {title}";
             var hasFiles = options.Statistics != null
@@ -222,19 +283,18 @@ namespace Chaptarr.Api.V1.Books
                 Title = title,
                 AuthorTitle = authorTitle,
                 SeriesTitle = seriesTitle,
+                SeriesLabels = seriesLabels,
                 Disambiguation = selectedEdition?.Disambiguation,
                 Overview = options.IncludeOverview && !string.IsNullOrWhiteSpace(selectedEdition?.Overview)
                     ? selectedEdition.Overview
                     : (options.IncludeOverview ? (model.Overview ?? string.Empty) : null),
-                Images = selectedEdition != null
-                    ? (selectedEdition.Images ?? new List<MediaCover>()).Where(i => !string.IsNullOrWhiteSpace(i?.Url)).ToList()
-                    : (model.Images ?? new List<MediaCover>()).Where(i => !string.IsNullOrWhiteSpace(i?.Url)).ToList(),
+                Images = CloneImages(selectedEdition != null ? selectedEdition.Images : model.Images),
                 Links = links,
                 Statistics = options.Statistics?.ToResource(),
                 AddOptions = model.AddOptions,
                 RemoteCover = string.Empty,
                 Grabbed = false,
-                Narrator = GetNarratorDisplay(model, selectedEdition),
+                Narrator = GetNarratorDisplay(model, selectedEdition, hasFiles),
                 AvailableNarrators = GetAvailableNarrators(model),
                 NarratorNames = GetNarratorNamesForDisplay(model, selectedEdition),
                 Duration = GetDuration(model, selectedEdition),
@@ -251,61 +311,11 @@ namespace Chaptarr.Api.V1.Books
             if (model.MediaType == BookMediaType.Audiobook && !(hasFiles || hasPinnedEdition))
             {
                 // Hide narrator fields when not eligible
-                resource.Narrator = null;
                 resource.NarratorNames = new List<string>();
             }
 
             return resource;
         }
-
-            private static string StripDuplicatedSeriesSuffix(string title, string seriesTitle)
-            {
-                title ??= string.Empty;
-                title = title.Trim();
-
-                if (title.Length == 0 || string.IsNullOrWhiteSpace(seriesTitle))
-                {
-                    return title;
-                }
-
-                var match = Regex.Match(title, @"^(?<base>.*?)(?:\s*\((?<suffix>[^()]*)\))$");
-                if (!match.Success)
-                {
-                    return title;
-                }
-
-                var suffix = match.Groups["suffix"].Value;
-                if (!SuffixMatchesSeriesTitle(suffix, seriesTitle))
-                {
-                    return title;
-                }
-
-                return match.Groups["base"].Value.TrimEnd();
-            }
-
-            private static bool SuffixMatchesSeriesTitle(string suffix, string seriesTitle)
-            {
-                if (suffix.IsNullOrWhiteSpace() || seriesTitle.IsNullOrWhiteSpace())
-                {
-                    return false;
-                }
-
-                if (!suffix.Contains('#'))
-                {
-                    return false;
-                }
-
-                return NormalizeSeriesSuffix(suffix) == NormalizeSeriesSuffix(seriesTitle);
-            }
-
-            private static string NormalizeSeriesSuffix(string value)
-            {
-                var normalized = value.ToLowerInvariant();
-                normalized = Regex.Replace(normalized, @"[^\p{L}\p{N}#]+", " ");
-                normalized = Regex.Replace(normalized, @"\s+", " ").Trim();
-                normalized = Regex.Replace(normalized, @"\s+#", " #");
-                return normalized;
-            }
 
             private static List<Links> BuildFallbackLinks(Book book, Edition selectedEdition)
             {
@@ -410,8 +420,13 @@ namespace Chaptarr.Api.V1.Books
                 return normalized;
             }
 
-                private static string GetNarratorDisplay(Book book, Edition edition)
+                private static string GetNarratorDisplay(Book book, Edition edition, bool? hasFiles = null)
                 {
+                    if (hasFiles == false && book.MediaType == BookMediaType.Audiobook && book.AnyEditionOk)
+                    {
+                        return null;
+                    }
+
                     var narrators = GetNarratorNamesForDisplay(book, edition);
                     if (narrators.Count > 0)
                     {
@@ -712,6 +727,9 @@ namespace Chaptarr.Api.V1.Books
                         }
 
             var mediaType = MediaTypeParameterParser.ParseRequired(resource.MediaType);
+            var addOptions = resource.AddOptions ?? new AddBookOptions();
+            addOptions.MonitorBook = (mediaType == BookMediaType.Audiobook ? resource.AudiobookMonitored : resource.EbookMonitored)
+                ?? resource.Monitored;
 
             var book = new Book
             {
@@ -720,14 +738,14 @@ namespace Chaptarr.Api.V1.Books
                 TitleSlug = resource.TitleSlug,
                 Title = resource.Title,
                 // CleanTitle is used for matching and must use the same normalization as Parser/BookRepository lookups.
-                CleanTitle = (resource.Title ?? string.Empty).CleanBookTitle().CleanAuthorName(),
+                CleanTitle = NzbDrone.Core.Books.Extensions.StringSuperNormalizer.ComputeBookComparisonKey(resource.Title),
                 ReleaseDate = resource.ReleaseDate,
                 Ratings = resource.Ratings ?? new Ratings(),
-                AudiobookMonitored = resource.AudiobookMonitored ?? (mediaType == BookMediaType.Audiobook && resource.Monitored),
-                EbookMonitored = resource.EbookMonitored ?? (mediaType == BookMediaType.Ebook && resource.Monitored),
+                AudiobookMonitored = resource.AudiobookMonitored ?? (mediaType == BookMediaType.Audiobook && (addOptions.MonitorBook ?? false)),
+                EbookMonitored = resource.EbookMonitored ?? (mediaType == BookMediaType.Ebook && (addOptions.MonitorBook ?? false)),
                 MediaType = mediaType,
                 AnyEditionOk = resource.AnyEditionOk,
-                AddOptions = resource.AddOptions,
+                AddOptions = addOptions,
                 Author = author,
                 AuthorId = author.Id,
                 Narrator = resource.Narrator,
@@ -974,12 +992,65 @@ namespace Chaptarr.Api.V1.Books
                 return null;
             }
 
-                // ForeignBookId is deprecated
-                book.TitleSlug = resource.TitleSlug;
-                // The book title is owned by metadata refresh, not user edits/monitor toggles.
-                // Do not overwrite it from the API resource (which may carry an edition-specific title).
-                book.ReleaseDate = resource.ReleaseDate;
-                book.Ratings = resource.Ratings ?? new Ratings();
+            List<Edition> updatedEditions = null;
+            if (resource.Editions?.Count > 0)
+            {
+                var storedEditionsById = book.Editions?
+                    .Where(edition => edition != null && edition.Id > 0)
+                    .ToDictionary(edition => edition.Id) ?? new Dictionary<int, Edition>();
+
+                if (resource.Editions.Any(edition => edition == null ||
+                    !storedEditionsById.ContainsKey(edition.Id) ||
+                    (edition.BookId != 0 && edition.BookId != book.Id)))
+                {
+                    throw new ValidationException(new[]
+                    {
+                        new ValidationFailure(nameof(resource.Editions), "All editions must belong to the book being updated.")
+                    });
+                }
+
+                if (resource.Editions.Select(edition => edition.Id).Distinct().Count() != resource.Editions.Count ||
+                    resource.Editions.Count(edition => edition.Monitored) > 1)
+                {
+                    throw new ValidationException(new[]
+                    {
+                        new ValidationFailure(nameof(resource.Editions), "Submit each edition once and select at most one monitored edition.")
+                    });
+                }
+
+                var submittedById = resource.Editions.ToDictionary(edition => edition.Id, edition =>
+                {
+                    var mapped = edition.ToModel(facadeContext);
+                    PreserveStoredEditionIdentity(mapped, storedEditionsById[edition.Id]);
+                    if (!edition.ManualAddSpecified)
+                    {
+                        mapped.ManualAdd = storedEditionsById[edition.Id].ManualAdd;
+                    }
+
+                    return mapped;
+                });
+                var selectedId = resource.Editions.SingleOrDefault(edition => edition.Monitored)?.Id;
+                updatedEditions = storedEditionsById.Values.Select(stored =>
+                {
+                    var edition = submittedById.GetValueOrDefault(stored.Id, stored);
+                    if (selectedId.HasValue && edition.Id != selectedId &&
+                        ReferenceEquals(edition, stored) && stored.Monitored)
+                    {
+                        edition = stored.ToResource().ToModel();
+                        PreserveStoredEditionIdentity(edition, stored);
+                    }
+
+                    return edition;
+                }).ToList();
+                if (selectedId.HasValue)
+                {
+                    EditionPinPolicy.ApplyExplicitSelection(updatedEditions, selectedId.Value,
+                        storedEditionsById.Values.Where(edition => edition.Monitored).Select(edition => edition.Id).ToHashSet());
+                }
+            }
+
+                // Existing metadata and duration writers own the stored book values.
+                // The resource may project edition or file values that must not be copied back.
             // Native clients may address each side explicitly. Readarr-compatible clients address
             // only the selected facade side through the legacy Monitored field.
             if (facadeContext?.MediaType == "audiobook")
@@ -1010,32 +1081,33 @@ namespace Chaptarr.Api.V1.Books
                     book.EbookMonitored = resource.Monitored;
                 }
             }
-            book.AnyEditionOk = resource.AnyEditionOk;
+            if (Logger.IsDebugEnabled)
+            {
+                var selected = SelectMonitoredEdition(book.Editions);
+                var ignored = new List<string>();
+                if (resource.ReleaseDateSpecified && resource.ReleaseDate != (selected?.ReleaseDate ?? book.ReleaseDate)) ignored.Add("releaseDate");
+                if (resource.RatingsSpecified && !Equals(resource.Ratings, selected?.Ratings ?? book.Ratings ?? new Ratings())) ignored.Add("ratings");
+                if (resource.DurationMinutesSpecified && resource.DurationMinutes != GetDurationMinutes(book, selected)) ignored.Add("durationMinutes");
+                if (ignored.Count > 0) Logger.Debug("Book {0}: ignored changes to provider-owned metadata fields: {1}", book.Id, string.Join(", ", ignored));
+            }
+
+            // Round-tripped display metadata does not express a manual narrator choice.
+            var shouldUpdateNarrator = resource.NarratorSpecified && !string.Equals(resource.Narrator,
+                GetNarratorDisplay(book, SelectMonitoredEdition(book.Editions), book.HasFiles), StringComparison.Ordinal);
+            if (resource.AnyEditionOkSpecified)
+            {
+                book.AnyEditionOk = resource.AnyEditionOk;
+            }
             book.AddOptions = resource.AddOptions;
-            book.Narrator = resource.Narrator;
-            book.DurationMinutes = resource.DurationMinutes.HasValue ? (int?)resource.DurationMinutes.Value : null;
+            if (shouldUpdateNarrator)
+            {
+                book.Narrator = resource.Narrator;
+            }
 
-                // Readarr/Seerr compatibility: Readarr sends editions in PUT /book to update monitored edition.
-                if (resource.Editions != null && resource.Editions.Any())
-                {
-                    var storedEditionsById = book.Editions?
-                        .Where(edition => edition != null && edition.Id > 0)
-                        .ToDictionary(edition => edition.Id) ?? new Dictionary<int, Edition>();
-
-                    book.Editions = resource.Editions
-                        .Select(resourceEdition =>
-                        {
-                            var mappedEdition = resourceEdition.ToModel(facadeContext);
-                            if (mappedEdition?.Id > 0 &&
-                                storedEditionsById.TryGetValue(mappedEdition.Id, out var storedEdition))
-                            {
-                                PreserveStoredEditionIdentity(mappedEdition, storedEdition);
-                            }
-
-                            return mappedEdition;
-                        })
-                        .ToList();
-                }
+            if (updatedEditions != null)
+            {
+                book.Editions = updatedEditions;
+            }
 
             return book;
         }
@@ -1047,6 +1119,17 @@ namespace Chaptarr.Api.V1.Books
                 return;
             }
 
+            // Values absent from the editable resource remain owned by their existing writers.
+            target.UseImagesFrom(stored);
+            target.MatchingTitle = stored.MatchingTitle;
+            target.IsGraphicAudio = stored.IsGraphicAudio;
+            target.AudioProductionType = stored.AudioProductionType;
+            target.NarratorCredits = stored.NarratorCredits;
+            target.ProviderUrls = stored.ProviderUrls;
+            target.ProviderIds = stored.ProviderIds;
+            target.LastUpdated = stored.LastUpdated;
+            target.IsFallbackEdition = stored.IsFallbackEdition;
+            target.BookId = stored.BookId;
             target.ForeignEditionId = stored.ForeignEditionId;
             target.TitleSlug = stored.TitleSlug;
             target.GoodreadsEditionId = stored.GoodreadsEditionId;

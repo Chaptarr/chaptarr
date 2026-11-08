@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NzbDrone.Core.Books;
@@ -241,6 +242,10 @@ namespace NzbDrone.Core.RootFolders
             }
         }
 
+        public IEnumerable<int> GetReferencedTags() => (DefaultTags ?? Enumerable.Empty<int>())
+            .Concat(GetAudiobookSettings()?.Tags ?? Enumerable.Empty<int>())
+            .Concat(GetEbookSettings()?.Tags ?? Enumerable.Empty<int>());
+
         public void SetAudiobookSettings(MediaTypeSettings settings)
         {
             AudiobookSettings = SerializeMediaTypeSettings(settings);
@@ -285,7 +290,6 @@ namespace NzbDrone.Core.RootFolders
                 return null;
             }
 
-            settings.ApplyLegacyMonitoringSettings(settings.MonitorExisting, settings.MonitorFuture);
             return JsonConvert.SerializeObject(settings);
         }
     }

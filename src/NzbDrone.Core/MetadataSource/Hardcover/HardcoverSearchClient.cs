@@ -11,6 +11,7 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.MetadataSource.Hardcover
 {
@@ -186,18 +187,20 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
                     using var document = JsonDocument.Parse(response.Content);
                     if (!TryExtractSearchPayload(target.QueryType, document.RootElement, out var searchPayload))
                     {
+                        _logger.Trace("Unusable Hardcover {0} search response: {1}", target.QueryType, response.Content);
                         throw new NzbDroneClientException(
                             HttpStatusCode.ServiceUnavailable,
-                            $"Hardcover {target.QueryType} search returned an unusable response: {TruncateForError(response.Content)}");
+                            $"Hardcover {target.QueryType} search returned an unusable response: {GetErrorSummary(response.Content)}");
                     }
 
                     searchPayloads[target.ResponseProperty] = searchPayload;
                 }
                 catch (JsonException ex)
                 {
+                    _logger.Trace("Unparseable Hardcover {0} search response: {1}", target.QueryType, response.Content);
                     throw new NzbDroneClientException(
                         HttpStatusCode.ServiceUnavailable,
-                        $"Hardcover {target.QueryType} search returned unparseable JSON ({ex.Message}): {TruncateForError(response.Content)}");
+                        $"Hardcover {target.QueryType} search returned unparseable JSON ({ex.Message})");
                 }
             }
 
@@ -205,14 +208,33 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
             return ParseSearchResponse(query, combinedContent, jsonOptions);
         }
 
-        private static string TruncateForError(string content)
+        private static string GetErrorMessage(JsonElement error)
         {
-            if (string.IsNullOrEmpty(content))
+            return error.ValueKind == JsonValueKind.String
+                ? error.GetString()
+                : error.ValueKind == JsonValueKind.Object &&
+                  error.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String
+                    ? message.GetString()
+                    : "Unspecified provider error";
+        }
+
+        private static string GetErrorSummary(string content)
+        {
+            try
             {
-                return "(empty body)";
+                using var document = JsonDocument.Parse(content ?? string.Empty);
+                if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                    document.RootElement.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Array)
+                {
+                    return string.Join("; ", errors.EnumerateArray().Select(GetErrorMessage));
+                }
+            }
+            catch (JsonException)
+            {
+                // Raw response bodies belong in Trace, even when error parsing fails.
             }
 
-            return content.Length <= 500 ? content : content.Substring(0, 500) + "…";
+            return "No structured error detail";
         }
 
         private bool TryExtractSearchPayload(string queryType, JsonElement root, out JsonElement searchPayload)
@@ -224,11 +246,7 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
                 var hasAuthError = false;
                 foreach (var error in errorsElement.EnumerateArray())
                 {
-                    var message = error.ValueKind == JsonValueKind.String
-                        ? error.GetString()
-                        : error.TryGetProperty("message", out var messageElement) && messageElement.ValueKind == JsonValueKind.String
-                            ? messageElement.GetString()
-                            : error.GetRawText();
+                    var message = GetErrorMessage(error);
 
                     _logger.Error($"Hardcover {queryType} search GraphQL error: {message}");
 
@@ -310,7 +328,7 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
                     return response;
                 }
 
-                failureDetail = $"HTTP {(int)response.StatusCode} {response.StatusCode}: {TruncateForError(response.Content)}";
+                failureDetail = $"HTTP {(int)response.StatusCode} {response.StatusCode}: {GetErrorSummary(response.Content)}";
 
                 if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
                 {
@@ -736,15 +754,7 @@ namespace NzbDrone.Core.MetadataSource.Hardcover
 
         private string NormalizeCompact(string value)
         {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return string.Empty;
-            }
-
-            return new string(value
-                .ToLowerInvariant()
-                .Where(char.IsLetterOrDigit)
-                .ToArray());
+            return UnicodeComparisonNormalizer.NormalizeKey(value);
         }
 
         private int GetAnchorTypePriority(SearchEntityType type)

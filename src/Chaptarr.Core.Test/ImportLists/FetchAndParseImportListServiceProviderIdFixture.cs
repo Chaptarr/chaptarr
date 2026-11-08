@@ -105,7 +105,7 @@ namespace Chaptarr.Core.Test.ImportLists
 
             Assert.DoesNotThrow(() =>
             {
-                var result = service.FetchSingleList(definition);
+                var result = service.FetchSingleList(importList);
                 Assert.That(result, Has.Count.EqualTo(1));
                 Assert.That(result[0].AuthorProviderId, Is.EqualTo("hc:10"));
                 Assert.That(result[0].BookProviderId, Is.EqualTo("hc:20"));

@@ -7,22 +7,25 @@ import { searchMissing, setCalendarDaysCount, setCalendarFilter } from 'Store/Ac
 import createAuthorCountSelector from 'Store/Selectors/createAuthorCountSelector';
 import createCommandsSelector from 'Store/Selectors/createCommandsSelector';
 import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
+import { isBookSearchEligible } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import { isCommandExecuting } from 'Utilities/Command';
 import isBefore from 'Utilities/Date/isBefore';
 import CalendarPage from './CalendarPage';
 
-function createMissingBookIdsSelector() {
+export function createMissingBookIdsSelector() {
   return createSelector(
     (state) => state.calendar.start,
     (state) => state.calendar.end,
     (state) => state.calendar.items,
     (state) => state.queue.details.items,
-    (start, end, books, queueDetails) => {
+    (state) => state.authors,
+    (start, end, books, queueDetails, authors) => {
       return books.reduce((acc, book) => {
         const releaseDate = book.releaseDate;
         const percentOfBooks = book.statistics?.percentOfBooks ?? 0;
 
         if (
+          isBookSearchEligible(book, authors.items[authors.itemMap[book.authorId]] ?? book.author) &&
           percentOfBooks < 100 &&
           moment(releaseDate).isAfter(start) &&
           moment(releaseDate).isBefore(end) &&

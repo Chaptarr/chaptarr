@@ -19,7 +19,7 @@ function isValidTag(tagName) {
 
 function createMapStateToProps() {
   return createSelector(
-    (state, { value }) => value,
+    (state, { value }) => value ?? [],
     createTagsSelector(),
     (tags = [], tagList) => {
       const sortedTags = _.sortBy(tagList, 'label');
@@ -161,7 +161,7 @@ class TagInputConnector extends Component {
 
 TagInputConnector.propTypes = {
   name: PropTypes.string.isRequired,
-  value: PropTypes.arrayOf(PropTypes.number).isRequired,
+  value: PropTypes.arrayOf(PropTypes.number),
   tags: PropTypes.arrayOf(PropTypes.object).isRequired,
   allTags: PropTypes.arrayOf(PropTypes.object).isRequired,
   onChange: PropTypes.func.isRequired,

@@ -19,9 +19,7 @@ services:
     volumes:
       # If ./config doesn't exist, Docker will create it as root:root; create it first (or fix ownership) so it matches PUID/PGID.
       - ./config:/config
-      - /path/to/audiobooks:/audiobooks  # Change to your audiobook path
-      - /path/to/ebooks:/ebooks          # Change to your ebook path
-      - /path/to/downloads:/downloads    # Change to your download path
+      - ./data:/data  # Shared downloads and media; use the same host path in your download client
     ports:
       - 8789:8789
     restart: unless-stopped
@@ -37,7 +35,7 @@ services:
   #     - WEBUI_PORT=8080
   #   volumes:
   #     - ./qbittorrent/config:/config
-  #     - /path/to/downloads:/downloads
+  #     - ./data:/data
   #   ports:
   #     - 8080:8080
   #     - 6881:6881

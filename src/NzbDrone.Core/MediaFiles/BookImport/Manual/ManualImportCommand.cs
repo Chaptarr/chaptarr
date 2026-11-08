@@ -13,5 +13,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
 
         public ImportMode ImportMode { get; set; }
         public bool ReplaceExistingFiles { get; set; }
+        public List<ManualImportReplacementFile> ConfirmedReplacementFiles { get; set; }
     }
 }

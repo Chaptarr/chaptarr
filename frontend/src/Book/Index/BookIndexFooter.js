@@ -21,6 +21,7 @@ class BookIndexFooter extends PureComponent {
   }
 
   componentDidMount() {
+    window.addEventListener('resize', this.updatePinnedHeight);
     this.updatePinnedHeight();
   }
 
@@ -33,6 +34,8 @@ class BookIndexFooter extends PureComponent {
   }
 
   componentWillUnmount() {
+    window.removeEventListener('resize', this.updatePinnedHeight);
+
     // Reset pinned height for next page/view
     if (typeof document !== 'undefined') {
       document.documentElement.style.setProperty('--bookIndexFooterPinnedHeight', '0px');
@@ -87,57 +90,55 @@ class BookIndexFooter extends PureComponent {
         {(enableColorImpairedMode) => {
           return (
             <div ref={this._footerRef} className={classNames(styles.footer, isSticky && styles.sticky)}>
-              {isSticky ? null : (
-                <div>
-                  <div className={styles.legendItem}>
-                    <div
-                      className={classNames(
-                        styles.continuing,
-                        enableColorImpairedMode && 'colorImpaired'
-                      )}
-                    />
-                    <div>
-                      {translate('ContinuingAllBooksDownloaded')}
-                    </div>
-                  </div>
-
-                  <div className={styles.legendItem}>
-                    <div
-                      className={classNames(
-                        styles.ended,
-                        enableColorImpairedMode && 'colorImpaired'
-                      )}
-                    />
-                    <div>
-                      {translate('EndedAllBooksDownloaded')}
-                    </div>
-                  </div>
-
-                  <div className={styles.legendItem}>
-                    <div
-                      className={classNames(
-                        styles.missingMonitored,
-                        enableColorImpairedMode && 'colorImpaired'
-                      )}
-                    />
-                    <div>
-                      {translate('MissingBooksAuthorMonitored')}
-                    </div>
-                  </div>
-
-                  <div className={styles.legendItem}>
-                    <div
-                      className={classNames(
-                        styles.missingUnmonitored,
-                        enableColorImpairedMode && 'colorImpaired'
-                      )}
-                    />
-                    <div>
-                      {translate('MissingBooksAuthorNotMonitored')}
-                    </div>
+              <div className={styles.legend}>
+                <div className={styles.legendItem}>
+                  <div
+                    className={classNames(
+                      styles.filesAvailable,
+                      enableColorImpairedMode && 'colorImpaired'
+                    )}
+                  />
+                  <div>
+                    {translate('BookFilesAvailable')}
                   </div>
                 </div>
-              )}
+
+                <div className={styles.legendItem}>
+                  <div
+                    className={classNames(
+                      styles.missingMonitored,
+                      enableColorImpairedMode && 'colorImpaired'
+                    )}
+                  />
+                  <div>
+                    {translate('MissingBookMonitored')}
+                  </div>
+                </div>
+
+                <div className={styles.legendItem}>
+                  <div
+                    className={classNames(
+                      styles.unreleasedMonitored,
+                      enableColorImpairedMode && 'colorImpaired'
+                    )}
+                  />
+                  <div>
+                    {translate('UnreleasedOrUnknownBookMonitored')}
+                  </div>
+                </div>
+
+                <div className={styles.legendItem}>
+                  <div
+                    className={classNames(
+                      styles.missingUnmonitored,
+                      enableColorImpairedMode && 'colorImpaired'
+                    )}
+                  />
+                  <div>
+                    {translate('BookNoFilesUnmonitored')}
+                  </div>
+                </div>
+              </div>
 
               <div className={styles.statistics}>
                 {isFetchingStatistics ? (

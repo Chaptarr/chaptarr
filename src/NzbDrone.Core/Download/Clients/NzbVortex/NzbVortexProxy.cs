@@ -159,7 +159,7 @@ namespace NzbDrone.Core.Download.Clients.NzbVortex
             }
             catch (JsonException ex)
             {
-                throw new DownloadClientException("NzbVortex response could not be processed {0}: {1}", ex.Message, response.Content);
+                throw new DownloadClientException($"NzbVortex response could not be processed: {ex.Message}", ex);
             }
             catch (HttpException ex)
             {

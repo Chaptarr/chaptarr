@@ -192,8 +192,10 @@ namespace NzbDrone.Core.HealthCheck
                 }
             }
 
-            // TODO: Add debounce
-            PerformHealthCheck(filteredChecks.ToArray(), message);
+            if (filteredChecks.Count > 0)
+            {
+                PerformHealthCheck(filteredChecks.ToArray(), message);
+            }
         }
     }
 }

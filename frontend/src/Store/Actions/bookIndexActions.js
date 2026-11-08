@@ -398,7 +398,8 @@ export const actionHandlers = handleThunks({
   [BULK_DELETE_BOOK]: function(getState, payload, dispatch) {
     dispatch(set({
       section,
-      isDeleting: true
+      isDeleting: true,
+      deleteError: null
     }));
 
     const promise = createAjaxRequest({
@@ -425,6 +426,8 @@ export const actionHandlers = handleThunks({
         deleteError: xhr
       }));
     });
+
+    return promise;
   }
 });
 

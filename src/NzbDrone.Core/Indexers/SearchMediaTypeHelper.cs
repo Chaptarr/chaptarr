@@ -5,7 +5,7 @@ using NzbDrone.Core.IndexerSearch.Definitions;
 
 namespace NzbDrone.Core.Indexers
 {
-    internal static class SearchMediaTypeHelper
+    public static class SearchMediaTypeHelper
     {
         public static BookMediaType? GetRequestedMediaType(SearchCriteriaBase searchCriteria)
         {
@@ -35,9 +35,8 @@ namespace NzbDrone.Core.Indexers
             }
 
             // Newznab/Torznab categories are user-selected at the indexer level,
-            // but single-book searches must still be media-type scoped. Keep every
-            // configured category under the matching parent range; never add
-            // categories the user did not configure.
+            // but single-book searches must still be media-type scoped. Generic Books
+            // can contain either format; never add categories the user did not configure.
             return configuredCategories
                 .Where(category => CategoryMatchesMediaType(category, mediaType.Value))
                 .ToList();
@@ -48,8 +47,17 @@ namespace NzbDrone.Core.Indexers
             return mediaType switch
             {
                 BookMediaType.Ebook => IsEbookCategory(category),
-                _ => IsAudiobookCategory(category),
+                _ => category == 7000 || IsAudiobookCategory(category),
             };
+        }
+
+        public static BookMediaType? GetMediaTypeFromCategories(IReadOnlyCollection<int> categories)
+        {
+            var hasAudio = categories?.Any(IsAudiobookCategory) == true;
+            // The broad Books search category (7000) can contain either media type.
+            // Only the standardized Books/EBook subcategory proves ebook content.
+            var hasEbooks = categories?.Contains(7020) == true;
+            return hasAudio == hasEbooks ? null : hasAudio ? BookMediaType.Audiobook : BookMediaType.Ebook;
         }
 
         private static bool IsAudiobookCategory(int category)

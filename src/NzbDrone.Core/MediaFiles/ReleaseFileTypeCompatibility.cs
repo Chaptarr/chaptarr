@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using NzbDrone.Core.Books;
 
@@ -9,7 +10,7 @@ namespace NzbDrone.Core.MediaFiles
     public static class ReleaseFileTypeCompatibility
     {
         private static readonly Regex FileTypeTokenRegex = new Regex(@"[a-z0-9]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-        private static readonly Regex ReleaseTitleExtensionRegex = new Regex(@"\.(?<extension>[a-z0-9]+)(?![\p{L}\p{Nd}])", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex ReleaseTitleExtensionRegex = new Regex(@"\.(?<extension>[a-z0-9]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private static readonly HashSet<string> SupportedFileTypeTokens = new HashSet<string>(
             MediaFileExtensions.AllExtensions.Select(e => e.TrimStart('.')),
@@ -83,6 +84,8 @@ namespace NzbDrone.Core.MediaFiles
             var tokens = ReleaseTitleExtensionRegex
                 .Matches(releaseTitle)
                 .Cast<Match>()
+                .Where(match => match.Index + match.Length == releaseTitle.Length ||
+                    !Rune.TryGetRuneAt(releaseTitle, match.Index + match.Length, out var next) || !Rune.IsLetterOrDigit(next))
                 .Select(match => match.Groups["extension"].Value)
                 .Select(extension => extension.ToLowerInvariant())
                 .Distinct(StringComparer.OrdinalIgnoreCase)

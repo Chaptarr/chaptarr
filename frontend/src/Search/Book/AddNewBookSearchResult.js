@@ -110,7 +110,6 @@ class AddNewBookSearchResult extends Component {
     const {
       isSmallScreen,
       searchProvider,
-      isExistingAuthor,
       ...book
     } = this.props;
 
@@ -129,6 +128,7 @@ class AddNewBookSearchResult extends Component {
     return {
       initialMediaType: mediaType,
       foreignBookId,
+      authorId: author.id,
       foreignAuthorId: author.foreignAuthorId,
       book,
       bookTitle: title,
@@ -139,8 +139,7 @@ class AddNewBookSearchResult extends Component {
       folder: author.folder,
       images,
       localAudiobookBooks,
-      localEbookBooks,
-      isExistingAuthor
+      localEbookBooks
     };
   };
 
@@ -374,7 +373,6 @@ AddNewBookSearchResult.propTypes = {
   narrator: PropTypes.oneOfType([PropTypes.string, PropTypes.arrayOf(PropTypes.string)]),
   durationMinutes: PropTypes.number,
   searchProvider: PropTypes.string,
-  isExistingAuthor: PropTypes.bool.isRequired,
   localAudiobookBooks: PropTypes.arrayOf(PropTypes.object),
   localEbookBooks: PropTypes.arrayOf(PropTypes.object),
   isSmallScreen: PropTypes.bool.isRequired

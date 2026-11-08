@@ -14,6 +14,30 @@ namespace Chaptarr.Core.Test.MetadataSource
         private const string Source = "https://api2.chaptarr.com";
 
         [Test]
+        public void scheduling_check_shares_request_eligibility_without_stealing_recovery()
+        {
+            var service = new MetadataServerHealthService(LogManager.GetCurrentClassLogger());
+            Assert.That(service.CanBeginRequest(Source, out _), Is.True);
+            service.ReportFailure(Source, new WebException("unavailable"));
+            Assert.That(service.CanBeginRequest(Source, out var wait), Is.False);
+            Assert.That(wait.TotalSeconds, Is.InRange(55, 60));
+            var status = service.GetStatus(Source);
+            status.RateLimitedUntil = DateTime.UtcNow.AddSeconds(-1);
+            Assert.That(service.CanBeginRequest(Source, out _), Is.True);
+            Assert.That(service.CanBeginRequest(Source, out _), Is.True);
+            Assert.That(status.ProbeInProgress, Is.False);
+            Assert.That(service.CanAttemptWithoutProbe(Source, out _), Is.False, "optional work still cannot probe");
+            Assert.That(service.TryBeginRequest(Source, out _), Is.True);
+            Assert.That(service.CanBeginRequest(Source, out _), Is.False);
+            Assert.That(service.TryBeginRequest(Source, out _), Is.False);
+            status.ProbeStartedAt = DateTime.UtcNow.AddMinutes(-3);
+            Assert.That(service.CanBeginRequest(Source, out _), Is.True, "an abandoned probe can recover");
+            Assert.That(service.TryBeginRequest(Source, out _), Is.True);
+            service.ReportSuccess(Source);
+            Assert.That(service.CanBeginRequest(Source, out _), Is.True);
+        }
+
+        [Test]
         public void should_open_short_cooldown_then_allow_single_probe()
         {
             var service = new MetadataServerHealthService(LogManager.GetCurrentClassLogger());

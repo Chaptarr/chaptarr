@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using NzbDrone.Common.Http.Proxy;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.Security;
 
@@ -9,6 +10,8 @@ namespace NzbDrone.Core.Configuration
     public interface IConfigService
     {
         void SaveConfigDictionary(Dictionary<string, object> configValues);
+        string GetConversionOrphanReviewProgress();
+        void SetConversionOrphanReviewProgress(string value);
 
         bool IsDefined(string key);
 
@@ -80,6 +83,7 @@ namespace NzbDrone.Core.Configuration
 
         //Internal
         bool CleanupMetadataImages { get; set; }
+        CoverDownloadScope CoverDownloadScope { get; set; }
         bool AudioProductionCustomFormatsSeeded { get; set; }
         string SeededBuiltInCustomFormatKeys { get; set; }
 
@@ -121,13 +125,9 @@ namespace NzbDrone.Core.Configuration
         string BackupFolder { get; }
         int BackupInterval { get; }
         int BackupRetention { get; }
+        bool BackupIncludeLogsAndCache { get; }
 
         CertificateValidationType CertificateValidation { get; }
         string ApplicationUrl { get; }
-
-        // GitHub Updates
-        bool UseGitHubUpdates { get; set; }
-        string GitHubOwner { get; set; }
-        string GitHubRepo { get; set; }
     }
 }

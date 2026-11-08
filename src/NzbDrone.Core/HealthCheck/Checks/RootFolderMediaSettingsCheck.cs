@@ -87,9 +87,7 @@ namespace NzbDrone.Core.HealthCheck.Checks
                 return mediaType == BookMediaType.Ebook;
             }
 
-            return mediaType == BookMediaType.Audiobook
-                ? !string.IsNullOrWhiteSpace(rootFolder.AudiobookSettings)
-                : !string.IsNullOrWhiteSpace(rootFolder.EbookSettings);
+            return rootFolder.FolderType == FolderType.Mixed;
         }
     }
 }

@@ -1,6 +1,6 @@
 import { filesize } from 'filesize';
 
-function formatBytes(input, showBits = false) {
+function formatBytes(input, showBits = false, round = 1) {
   const size = Number(input);
 
   if (isNaN(size)) {
@@ -9,7 +9,7 @@ function formatBytes(input, showBits = false) {
 
   return `${filesize(size, {
     base: 2,
-    round: 1,
+    round,
     bits: showBits
   })}`;
 }

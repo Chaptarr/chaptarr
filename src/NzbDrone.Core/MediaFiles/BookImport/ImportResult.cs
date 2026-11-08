@@ -11,6 +11,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
         public ImportDecision<LocalBook> ImportDecision { get; private set; }
         public List<string> Errors { get; private set; }
+        public bool IsIncludedMediaSkip { get; private set; }
+
+        public static ImportResult SkipIncludedMedia(ImportDecision<LocalBook> decision, string reason)
+        {
+            return new ImportResult(decision, ImportResultType.Skipped, reason) { IsIncludedMediaSkip = true };
+        }
 
         public ImportResultType Result
         {

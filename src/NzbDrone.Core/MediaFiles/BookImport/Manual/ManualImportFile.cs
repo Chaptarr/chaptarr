@@ -23,7 +23,18 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
         public string ForeignEditionId { get; set; }
         public string ForeignEditionTitle { get; set; }
         public ManualImportSelectionSource SelectionSource { get; set; }
+        private bool? _audioProductionOverride;
+        public bool? AudioProductionOverride
+        {
+            get => _audioProductionOverride;
+            set { _audioProductionOverride = value; AudioProductionOverrideSpecified = true; }
+        }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public bool AudioProductionOverrideSpecified { get; private set; }
+
         public QualityModel Quality { get; set; }
+        public string ReleaseGroup { get; set; }
         public int IndexerFlags { get; set; }
         public string DownloadId { get; set; }
         public bool DisableReleaseSwitching { get; set; }

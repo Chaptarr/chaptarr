@@ -66,14 +66,17 @@ namespace NzbDrone.Core.Books
             {
                 var now = System.DateTime.UtcNow;
 
-                // Query for sync metadata that is due for sync (NextSyncNotBefore is NULL or past)
+                // NULL means no automatic retry, not an immediately due healthy author.
+                // The existing NextDue index supplies the bounded ordered retry batch.
                 var sql = @"
-                    SELECT * FROM ""AuthorSyncMetadata""
-                    WHERE ""NextSyncNotBefore"" IS NULL OR ""NextSyncNotBefore"" <= @now
-                    ORDER BY (""NextSyncNotBefore"" IS NOT NULL), ""NextSyncNotBefore"", ""Id""
+                    SELECT * FROM ""AuthorSyncMetadata"" AS s
+                    WHERE s.""NextSyncNotBefore"" <= @now
+                      AND s.""LastSyncStatus"" IN (@failed, @rateLimited)
+                      AND EXISTS (SELECT 1 FROM ""Authors"" AS a WHERE a.""Id"" = s.""AuthorId"")
+                    ORDER BY s.""NextSyncNotBefore"", s.""Id""
                     LIMIT @limit";
 
-                return conn.Query<AuthorSyncMetadata>(sql, new { limit, now }).ToList();
+                return conn.Query<AuthorSyncMetadata>(sql, new { limit, now, failed = SyncStatus.Failed, rateLimited = SyncStatus.RateLimited }).ToList();
             }
         }
 

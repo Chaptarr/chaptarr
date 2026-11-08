@@ -65,7 +65,6 @@ interface CssExports {
   'quickstartCardWarning': string;
   'quickstartHeaderNextButton': string;
   'quickstartList': string;
-  'quickstartMatchingActions': string;
   'quickstartMatchingControl': string;
   'quickstartMatchingControls': string;
   'quickstartMatchingHelpText': string;

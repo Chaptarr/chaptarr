@@ -1,5 +1,6 @@
 using System;
-using System.Collections.Generic;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Parser;
 
 namespace NzbDrone.Core.IndexerSearch.Definitions
@@ -16,6 +17,20 @@ namespace NzbDrone.Core.IndexerSearch.Definitions
         // Including the author here can double-apply author terms (hurting recall) and breaks book-search endpoints
         // that expect a clean title (e.g., Newznab's t=book&author=...&title=...).
         public string BookQuery => GetQueryTitle(GetMainSearchTitle(BookTitle, Author?.Name));
+
+        public string NarratorQuery
+        {
+            get
+            {
+                if (Books?.Count != 1 || Books[0]?.MediaType != BookMediaType.Audiobook)
+                {
+                    return string.Empty;
+                }
+
+                var target = PreferredNarratorMatcher.BuildTarget(Books[0]);
+                return target == null ? string.Empty : GetQueryTitle(string.Join(" ", target.Names));
+            }
+        }
 
         internal static string GetMainSearchTitle(string title, string author)
         {

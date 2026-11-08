@@ -1,6 +1,7 @@
 import _ from 'lodash';
 import { createAction } from 'redux-actions';
 import { batchActions } from 'redux-batched-actions';
+import orderAuthorSearchResults from 'Search/orderAuthorSearchResults';
 import { createThunk, handleThunks } from 'Store/thunks';
 import monitorNewItemsOptions, { normalizeMonitorNewItemsOption } from 'Utilities/Author/monitorNewItemsOptions';
 import monitorOptions, { normalizeMonitorOption } from 'Utilities/Author/monitorOptions';
@@ -8,6 +9,7 @@ import getNewBook from 'Utilities/Book/getNewBook';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import getSectionState from 'Utilities/State/getSectionState';
 import updateSectionState from 'Utilities/State/updateSectionState';
+import translate from 'Utilities/String/translate';
 import { showMessage } from './appActions';
 import { set, update, updateItem } from './baseActions';
 import createHandleActions from './Creators/createHandleActions';
@@ -21,6 +23,17 @@ let currentSearchRequestId = 0;
 
 //
 // State
+
+export const bookMonitoringDefaults = {
+  monitor: 'specificBook',
+  audiobookMonitored: true,
+  ebookMonitored: true,
+  audiobookMonitor: 'specificBook',
+  ebookMonitor: 'specificBook',
+  monitorNewItems: 'none',
+  audiobookMonitorNewItems: 'none',
+  ebookMonitorNewItems: 'none'
+};
 
 export const defaultState = {
   isFetching: false,
@@ -59,26 +72,19 @@ export const defaultState = {
   },
 
   bookDefaults: {
+    ...bookMonitoringDefaults,
     rootFolderPath: '',
     audiobookRootFolderPath: '',
     ebookRootFolderPath: '',
-    monitor: monitorOptions[0].key,
-    audiobookMonitored: true,
-    ebookMonitored: true,
-    audiobookMonitor: monitorOptions[0].key,
-    ebookMonitor: monitorOptions[0].key,
-    monitorNewItems: monitorNewItemsOptions[0].key,
-    audiobookMonitorNewItems: monitorNewItemsOptions[0].key,
-    ebookMonitorNewItems: monitorNewItemsOptions[0].key,
-    qualityProfileId: 1,
-    audiobookQualityProfileId: 1,
-    ebookQualityProfileId: 1,
+    qualityProfileId: 0,
+    audiobookQualityProfileId: 0,
+    ebookQualityProfileId: 0,
     metadataProfileId: 0,
     audiobookMetadataProfileId: 0,
     ebookMetadataProfileId: 0,
     tags: [],
-    audiobookTags: [],
-    ebookTags: []
+    audiobookTags: null,
+    ebookTags: null
   }
 };
 
@@ -196,8 +202,8 @@ function getMediaTypePayload(payload, mediaType, searchForNewBook) {
   const requestedMonitor = isAudiobook ?
     (payload.audiobookMonitor || payload.monitor) :
     (payload.ebookMonitor || payload.monitor);
-  const normalizedRequestedMonitor = (requestedMonitor ?? '').toString().trim().toLowerCase() === 'all' ?
-    'all' : 'specificBook';
+  const monitorValue = (requestedMonitor ?? '').toString().trim().toLowerCase();
+  const normalizedRequestedMonitor = ['all', 'none'].includes(monitorValue) ? monitorValue : 'specificBook';
 
   return {
     ...payload,
@@ -320,7 +326,7 @@ export const actionHandlers = handleThunks({
       abortCurrentRequest = null;
 
       dispatch(batchActions([
-        update({ section, data }),
+        update({ section, data: orderAuthorSearchResults(data, payload.term) }),
 
         set({
           section,
@@ -379,402 +385,67 @@ export const actionHandlers = handleThunks({
       }).request;
     };
 
-    const getImportErrorMessage = (xhr) => {
-      if (!xhr) {
-        return 'Unknown error';
-      }
-
-      const responseJson = xhr.responseJSON;
-      if (responseJson) {
-        if (typeof responseJson === 'string') {
-          return responseJson;
-        }
-
-        if (responseJson.message) {
-          return responseJson.message;
-        }
-
-        if (Array.isArray(responseJson) && responseJson.length && responseJson[0].errorMessage) {
-          return responseJson[0].errorMessage;
-        }
-      }
-
-      const status = xhr.status ? `HTTP ${xhr.status}` : 'Request failed';
-      const statusText = xhr.statusText || '';
-      return `${status} ${statusText}`.trim();
-    };
-
-    // Support a "Both" UI option by submitting two sequential imports (audiobook then ebook).
-    // Backend expects single mediaType per request.
-    if (explicitMediaType === 'both') {
-      const audiobookMonitor = normalizeMonitorOption(payload.audiobookMonitor || monitor);
-      const ebookMonitor = normalizeMonitorOption(payload.ebookMonitor || monitor);
-      const audiobookMonitorNew = normalizeMonitorNewItemsOption(payload.audiobookMonitorNewItems || monitorNewItems);
-      const ebookMonitorNew = normalizeMonitorNewItemsOption(payload.ebookMonitorNewItems || monitorNewItems);
-
-      const audiobookMetadataProfileId = audiobookMeta || metadataProfile;
-      const ebookMetadataProfileId = ebookMeta || metadataProfile;
-
-      if (!audiobookMetadataProfileId || audiobookMetadataProfileId <= 0 || !ebookMetadataProfileId || ebookMetadataProfileId <= 0) {
-        dispatch(batchActions([
-          showMessage({
-            id: `author-import-missing-metadataprofile-${Date.now()}`,
-            name: 'AuthorImportMissingMetadataProfile',
-            message: 'Select a metadata profile for both Audiobooks and Ebooks before adding this author.',
-            type: 'error',
-            hideAfter: 14
-          }),
-          set({
-            section,
-            isAdding: false,
-            isAdded: false,
-            addError: null
-          })
-        ]));
-
-        return;
-      }
-
-      const audiobookV1Payload = {
-        foreignAuthorId,
-        mediaType: 'audiobook',
-        rootFolder: audiobookRoot || '',
-        qualityProfileId: audiobookProfile || 0,
-        metadataProfileId: audiobookMetadataProfileId,
-        monitor: audiobookMonitor,
-        audiobookMonitorExistingMode: audiobookMonitor,
-        audiobookMonitored: payload.audiobookMonitored !== false,
-        audiobookMonitorNewItems: audiobookMonitorNew,
-        tags: payload.audiobookTags,
-        manualFlag: true,
-        // Defer missing search until the second import so both media types are hydrated first.
-        searchForMissingBooks: false
-      };
-
-      const ebookV1Payload = {
-        foreignAuthorId,
-        mediaType: 'ebook',
-        rootFolder: ebookRoot || '',
-        qualityProfileId: ebookProfile || 0,
-        metadataProfileId: ebookMetadataProfileId,
-        monitor: ebookMonitor,
-        ebookMonitorExistingMode: ebookMonitor,
-        ebookMonitored: payload.ebookMonitored !== false,
-        ebookMonitorNewItems: ebookMonitorNew,
-        tags: payload.ebookTags,
-        manualFlag: true,
-        searchForMissingBooks: payload.searchForMissingBooks
-      };
-
-      const first = postImport(audiobookV1Payload);
-
-      first.done((data1, textStatus1, xhr1) => {
-        const status1 = (xhr1 && xhr1.status) || (data1 && data1.pendingId ? 202 : 201);
-
-        if ((status1 === 200 || status1 === 201) && data1 && data1.id) {
-          dispatch(updateItem({ section: 'authors', ...data1 }));
-
-          if (data1.hydrationWarning) {
-            dispatch(showMessage({
-              id: `author-add-hydration-warning-${Date.now()}`,
-              name: 'AuthorHydrationWarning',
-              message: data1.hydrationWarning,
-              type: 'warning',
-              hideAfter: 12
-            }));
-          }
-        }
-
-        const second = postImport(ebookV1Payload);
-
-        second.done((data2, textStatus2, xhr2) => {
-          const status2 = (xhr2 && xhr2.status) || (data2 && data2.pendingId ? 202 : 201);
-
-          // If either request queued the import, treat the overall add as queued.
-          if (status1 === 202 || status2 === 202) {
-            const pendingId = (status2 === 202 && data2 && data2.pendingId) || (status1 === 202 && data1 && data1.pendingId) || null;
-
-            let message = (data2 && data2.message) || (data1 && data1.message) || 'Author queued for import';
-            if (status1 !== 202 && status2 === 202) {
-              message = `Audiobooks added, eBooks queued for import. ${message}`.trim();
-            } else if (status1 === 202 && status2 !== 202) {
-              message = `eBooks added, audiobooks queued for import. ${message}`.trim();
-            }
-
-            dispatch(batchActions([
-              showMessage({
-                id: `author-queued-${Date.now()}`,
-                name: 'AuthorQueued',
-                message,
-                type: 'success',
-                hideAfter: 10
-              }),
-              set({
-                section,
-                isAdding: false,
-                isAdded: false,
-                isQueued: true,
-                addNotice: message,
-                pendingId,
-                addError: null
-              })
-            ]));
-            return;
-          }
-
-          // Prefer the second response (it should reflect the final merged settings)
-          const authorId = (data2 && data2.id) || (data1 && data1.id);
-
-          // 200 OK: we should already have the author resource
-          if (status2 === 200 && data2) {
-            dispatch(batchActions([
-              updateItem({ section: 'authors', ...data2 }),
-              showMessage({
-                id: `author-add-${Date.now()}`,
-                name: 'AuthorAdded',
-                message: 'Author added to your library',
-                type: 'success',
-                hideAfter: 8
-              }),
-              data2.hydrationWarning ? showMessage({
-                id: `author-add-hydration-warning-${Date.now()}`,
-                name: 'AuthorHydrationWarning',
-                message: data2.hydrationWarning,
-                type: 'warning',
-                hideAfter: 12
-              }) : null,
-              set({
-                section,
-                isAdding: false,
-                isAdded: true,
-                isQueued: false,
-                addNotice: null,
-                pendingId: null,
-                addError: null
-              })
-            ].filter(Boolean)));
-            return;
-          }
-
-          // 201 Created: fetch the full author resource for UI state
-          if (status2 === 201 && authorId) {
-            const fetchReq = createAjaxRequest({
-              url: `/author/${authorId}`,
-              method: 'GET',
-              dataType: 'json'
-            }).request;
-
-            fetchReq.done((authorData) => {
-              dispatch(batchActions([
-                updateItem({ section: 'authors', ...authorData }),
-                showMessage({
-                  id: `author-add-${Date.now()}`,
-                  name: 'AuthorAdded',
-                  message: 'Author added to your library',
-                  type: 'success',
-                  hideAfter: 8
-                }),
-                set({
-                  section,
-                  isAdding: false,
-                  isAdded: true,
-                  isQueued: false,
-                  addNotice: null,
-                  pendingId: null,
-                  addError: null
-                })
-              ]));
-            });
-
-            fetchReq.fail(() => {
-              dispatch(batchActions([
-                showMessage({
-                  id: `author-add-${Date.now()}`,
-                  name: 'AuthorAdded',
-                  message: 'Author added to your library',
-                  type: 'success',
-                  hideAfter: 8
-                }),
-                set({
-                  section,
-                  isAdding: false,
-                  isAdded: true,
-                  isQueued: false,
-                  addNotice: null,
-                  pendingId: null,
-                  addError: null
-                })
-              ]));
-            });
-            return;
-          }
-
-          // Fallback: treat as added without a fetch
-          dispatch(batchActions([
-            showMessage({
-              id: `author-add-${Date.now()}`,
-              name: 'AuthorAdded',
-              message: 'Author added to your library',
-              type: 'success',
-              hideAfter: 8
-            }),
-            set({
-              section,
-              isAdding: false,
-              isAdded: true,
-              isQueued: false,
-              addNotice: null,
-              pendingId: null,
-              addError: null
-            })
-          ]));
-        });
-
-        second.fail((xhr) => {
-          const error = getImportErrorMessage(xhr);
-
-          if (status1 === 202) {
-            const message = (data1 && data1.message) ? data1.message : 'Author queued for import';
-            const pendingId = (data1 && data1.pendingId) || null;
-
-            dispatch(batchActions([
-              showMessage({
-                id: `author-queued-${Date.now()}`,
-                name: 'AuthorQueued',
-                message,
-                type: 'success',
-                hideAfter: 10
-              }),
-              showMessage({
-                id: `author-add-ebook-failed-${Date.now()}`,
-                name: 'AuthorAddEbookFailed',
-                message: `Ebook import failed: ${error} (audiobook import is queued; you can retry eBooks later)`,
-                type: 'error',
-                hideAfter: 14
-              }),
-              set({
-                section,
-                isAdding: false,
-                isAdded: false,
-                isQueued: true,
-                addNotice: message,
-                pendingId,
-                addError: xhr
-              })
-            ]));
-            return;
-          }
-
-          dispatch(batchActions([
-            showMessage({
-              id: `author-add-audiobook-partial-${Date.now()}`,
-              name: 'AuthorAddAudiobookPartial',
-              message: 'Audiobooks added successfully, but eBooks failed to import.',
-              type: 'warning',
-              hideAfter: 12
-            }),
-            showMessage({
-              id: `author-add-ebook-failed-${Date.now()}`,
-              name: 'AuthorAddEbookFailed',
-              message: `Ebook import failed: ${error} (you can retry by selecting Ebooks and clicking Add)`,
-              type: 'error',
-              hideAfter: 14
-            }),
-            set({
-              section,
-              isAdding: false,
-              isAdded: false,
-              isQueued: false,
-              addNotice: null,
-              pendingId: null,
-              addError: xhr
-            })
-          ]));
-        });
-      });
-
-      first.fail((xhr) => {
-        const error = getImportErrorMessage(xhr);
-
-        dispatch(batchActions([
-          showMessage({
-            id: `author-add-audiobook-failed-${Date.now()}`,
-            name: 'AuthorAddAudiobookFailed',
-            message: `Audiobook import failed: ${error}`,
-            type: 'error',
-            hideAfter: 14
-          }),
-          set({
-            section,
-            isAdding: false,
-            isAdded: false,
-            addError: xhr
-          })
-        ]));
-      });
-
-      return;
-    }
-
     let mediaType = explicitMediaType;
-    if (explicitMediaType !== 'audiobook' && explicitMediaType !== 'ebook') {
+    if (!['audiobook', 'ebook', 'both'].includes(mediaType)) {
       mediaType = (audiobookRoot || audiobookProfile) ? 'audiobook' : 'ebook';
     }
+    const requestedMediaTypes = mediaType === 'both' ? ['audiobook', 'ebook'] : [mediaType];
+    const metadataByMediaType = { audiobook: audiobookMeta || metadataProfile, ebook: ebookMeta || metadataProfile };
 
-    const rootFolder = mediaType === 'audiobook' ? audiobookRoot : ebookRoot;
-    const qualityProfileId = mediaType === 'audiobook' ? (audiobookProfile || 0) : (ebookProfile || 0);
-    // Choose the correct per-type metadata profile ID for v5.
-    // Do not hard-code IDs; require the UI-provided defaults or a generic metadataProfileId.
-    const metadataProfileId = mediaType === 'audiobook' ?
-      (audiobookMeta || metadataProfile) :
-      (ebookMeta || metadataProfile);
-
-    if (!metadataProfileId || metadataProfileId <= 0) {
+    if (requestedMediaTypes.some((type) => !metadataByMediaType[type] || metadataByMediaType[type] <= 0)) {
       dispatch(batchActions([
         showMessage({
           id: `author-import-missing-metadataprofile-${Date.now()}`,
           name: 'AuthorImportMissingMetadataProfile',
-          message: 'Select a metadata profile before adding this author.',
+          message: mediaType === 'both' ?
+            translate('AuthorImportBothMetadataRequired') :
+            translate('AuthorImportMetadataRequired'),
           type: 'error',
           hideAfter: 14
         }),
-        set({
-          section,
-          isAdding: false,
-          isAdded: false,
-          addError: null
-        })
+        set({ section, isAdding: false, isAdded: false, addError: null })
       ]));
-
       return;
     }
 
-    const monitored = mediaType === 'audiobook' ? payload.audiobookMonitored : payload.ebookMonitored;
-    const selectedMonitorNewItems = normalizeMonitorNewItemsOption(mediaType === 'audiobook' ?
-      (payload.audiobookMonitorNewItems || monitorNewItems) :
-      (payload.ebookMonitorNewItems || monitorNewItems));
-
+    // Submit both formats in one request through the same response path as a
+    // single side. Per-format settings stay independent except linked policies.
     const v1Payload = {
       foreignAuthorId,
+      authorName: payload.authorName,
       mediaType,
-      rootFolder: rootFolder || '',
-      qualityProfileId,
-      metadataProfileId,
-      monitor,
-      ...(mediaType === 'audiobook' ? {
-        audiobookMonitorExistingMode: monitor,
-        audiobookMonitored: monitored !== false,
-        audiobookMonitorNewItems: selectedMonitorNewItems,
-        tags: payload.audiobookTags ?? payload.tags
-      } : {
-        ebookMonitorExistingMode: monitor,
-        ebookMonitored: monitored !== false,
-        ebookMonitorNewItems: selectedMonitorNewItems,
-        tags: payload.ebookTags ?? payload.tags
-      }),
+      syncMonitoredAcrossFormats: payload.syncMonitoredAcrossFormats,
       manualFlag: true,
       searchForMissingBooks: payload.searchForMissingBooks
     };
+    for (const type of ['audiobook', 'ebook']) {
+      // A linked new-book policy also applies to an already-configured side.
+      if (payload[`${type}MonitorNewItems`] != null) {
+        v1Payload[`${type}MonitorNewItems`] = normalizeMonitorNewItemsOption(payload[`${type}MonitorNewItems`]);
+      }
+      if (requestedMediaTypes.includes(type)) {
+        const rootFolder = type === 'audiobook' ? audiobookRoot : ebookRoot;
+        const qualityProfileId = type === 'audiobook' ? audiobookProfile : ebookProfile;
+        const selectedMonitor = normalizeMonitorOption(payload[`${type}Monitor`] ?? monitor);
+        v1Payload[`${type}MonitorExistingMode`] = selectedMonitor;
+        v1Payload[`${type}Monitored`] = payload[`${type}Monitored`] !== false;
+        v1Payload[`${type}MonitorNewItems`] = normalizeMonitorNewItemsOption(payload[`${type}MonitorNewItems`] ?? monitorNewItems);
+        if (mediaType === 'both') {
+          v1Payload[`${type}RootFolderPath`] = rootFolder || '';
+          v1Payload[`${type}QualityProfileId`] = qualityProfileId || 0;
+          v1Payload[`${type}MetadataProfileId`] = metadataByMediaType[type];
+          v1Payload[`${type}Tags`] = payload[`${type}Tags`] ?? payload.tags;
+        } else {
+          Object.assign(v1Payload, {
+            rootFolder: rootFolder || '',
+            qualityProfileId: qualityProfileId || 0,
+            metadataProfileId: metadataByMediaType[type],
+            monitor: selectedMonitor,
+            tags: payload[`${type}Tags`] ?? payload.tags
+          });
+        }
+      }
+    }
 
     const promise = postImport(v1Payload);
 
@@ -892,7 +563,7 @@ export const actionHandlers = handleThunks({
     });
 
     promise.fail((xhr) => {
-      const error = getImportErrorMessage(xhr);
+      const error = getAjaxErrorMessage(xhr);
 
       dispatch(batchActions([
         showMessage({

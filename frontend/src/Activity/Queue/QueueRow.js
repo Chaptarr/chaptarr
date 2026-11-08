@@ -215,6 +215,7 @@ class QueueRow extends Component {
             if (name === 'status') {
               return (
                 <QueueStatusCell
+                  awaitingImportConfirmation={this.props.awaitingImportConfirmation}
                   key={name}
                   sourceTitle={title}
                   status={status}
@@ -515,12 +516,13 @@ class QueueRow extends Component {
           title={title}
           onModalClose={this.onInteractiveImportModalClose}
           showReplaceExistingFiles={true}
-          replaceExistingFiles={true}
+          replaceExistingFiles={!!this.props.awaitingImportConfirmation}
         />
 
         <RemoveQueueItemModal
           isOpen={isRemoveQueueItemModalOpen}
           sourceTitle={title}
+          defaultRemoveFromClient={trackedDownloadState !== 'imported'}
           canChangeCategory={!!downloadClientHasPostImportCategory}
           canIgnore={!!downloadId}
           isPending={isPending}
@@ -549,6 +551,7 @@ QueueRow.propTypes = {
   conversionMessage: PropTypes.string,
   canCancelConversion: PropTypes.bool.isRequired,
   canRetryImport: PropTypes.bool.isRequired,
+  awaitingImportConfirmation: PropTypes.bool,
   author: PropTypes.object,
   book: PropTypes.object,
   quality: PropTypes.object.isRequired,

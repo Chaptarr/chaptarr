@@ -14,6 +14,7 @@ namespace Chaptarr.Core.Test.Datastore
     {
         private sealed class TestStagingDbContext : IStagingDbContext
         {
+            public System.Exception InitializationError => null;
             private readonly string _connectionString;
 
             public TestStagingDbContext(string connectionString)

@@ -14,7 +14,7 @@ namespace NzbDrone.Core.Books
         EditionRetentionSelection SelectRetainedEditions(
             BookMediaType instanceMediaType,
             IReadOnlyList<Edition> editions);
-        bool EnsureSingleMonitoredEdition(List<Edition> editions, IReadOnlyDictionary<int, int> fileCountsByEditionId = null, BookMediaType? mediaType = null);
+        bool EnsureSingleMonitoredEdition(List<Edition> editions, IReadOnlyDictionary<int, int> fileCountsByEditionId = null, BookMediaType? mediaType = null, bool anyEditionOk = true);
     }
 
     public sealed record EditionRetentionSelection(
@@ -46,7 +46,7 @@ namespace NzbDrone.Core.Books
                 return null;
             }
 
-            var nativeFormat = mediaType == BookMediaType.Audiobook ? 2 : 3;
+            var nativeFormat = EditionReadingFormat.NativeFor(mediaType);
             var nativeFormatCandidates = candidates
                 .Where(e => e.ReadingFormatId == nativeFormat)
                 .ToList();
@@ -67,7 +67,7 @@ namespace NzbDrone.Core.Books
             }
 
             var candidates = editions.Where(e => e != null).ToList();
-            var nativeFormat = mediaType == BookMediaType.Audiobook ? 2 : 3;
+            var nativeFormat = EditionReadingFormat.NativeFor(mediaType);
             var nativeCandidates = candidates.Where(e => e.ReadingFormatId == nativeFormat).ToList();
 
             candidates = nativeCandidates.Any()
@@ -105,6 +105,22 @@ namespace NzbDrone.Core.Books
             return selected2;
         }
 
+        internal static List<Edition> EnsureWorkRepresentative(BookMediaType mediaType, IEnumerable<Edition> originalEditions, List<Edition> filteredEditions)
+        {
+            // Work preservation needs a usable representative without inventing edition intent.
+            // Eligible editions resume ordinary selection as soon as they are available.
+            if (SelectByNativeFormatThenRatings(filteredEditions, mediaType) == null)
+            {
+                var representative = SelectByNativeFormatThenRatings(originalEditions, mediaType);
+                if (representative != null)
+                {
+                    filteredEditions.Add(representative);
+                }
+            }
+
+            return filteredEditions;
+        }
+
         /// <summary>
         /// Returns the retained edition set for refresh/add.
         /// Shapes an already-filtered edition set into the retained edition set for add/refresh.
@@ -125,7 +141,7 @@ namespace NzbDrone.Core.Books
 
             var retained = new List<Edition>();
             var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var nativeFormat = instanceMediaType == BookMediaType.Audiobook ? 2 : 3;
+            var nativeFormat = EditionReadingFormat.NativeFor(instanceMediaType);
 
             foreach (var languageGroup in candidates.GroupBy(e => EditionMetadataProfileFilter.NormalizeLanguageBucket(e.Language) ?? "null"))
             {
@@ -154,50 +170,27 @@ namespace NzbDrone.Core.Books
         /// Write-side repair selector used only to restore the single monitored-edition invariant.
         /// Read/display paths must use the persisted monitored edition directly.
         /// </summary>
-        private static Edition SelectRepairEdition(IEnumerable<Edition> editions, IReadOnlyDictionary<int, int> fileCountsByEditionId = null)
+        internal static Edition SelectRepairEdition(IEnumerable<Edition> editions,
+            IReadOnlyDictionary<int, int> fileCountsByEditionId = null, BookMediaType? mediaType = null, bool anyEditionOk = true)
         {
-            if (editions == null)
+            var candidates = editions?.Where(edition => edition != null).ToList() ?? new List<Edition>();
+            var withFiles = candidates.Where(edition => fileCountsByEditionId?.GetValueOrDefault(edition.Id, 0) > 0).ToList();
+            if (withFiles.Count > 0)
             {
-                return null;
+                candidates = withFiles;
             }
 
-            var list = editions.Where(e => e != null).ToList();
-            if (list.Count == 0)
+            var pinned = candidates.Where(edition => EditionPinPolicy.IsProtected(edition, anyEditionOk)).ToList();
+            if (pinned.Count > 0)
             {
-                return null;
+                candidates = pinned;
             }
 
-            var manual = list.Where(e => e.ManualAdd).ToList();
-            if (manual.Any())
-            {
-                return manual.Where(e => e.Monitored).OrderBy(e => e.Id).FirstOrDefault()
-                       ?? manual.OrderBy(e => e.Id).First();
-            }
-
-            if (fileCountsByEditionId != null)
-            {
-                var withFiles = list
-                    .Where(e => fileCountsByEditionId.TryGetValue(e.Id, out var c) && c > 0)
-                    .ToList();
-
-                if (withFiles.Any())
-                {
-                    return withFiles.Where(e => e.Monitored).OrderBy(e => e.Id).FirstOrDefault()
-                           ?? withFiles.OrderByDescending(e => fileCountsByEditionId.GetValueOrDefault(e.Id, 0))
-                                       .ThenBy(e => e.Id).First();
-                }
-            }
-
-            var monitored = list.Where(e => e.Monitored).OrderBy(e => e.Id).FirstOrDefault();
-            if (monitored != null)
-            {
-                return monitored;
-            }
-
-            return list.OrderBy(e => e.Id).First();
+            return (mediaType.HasValue ? SelectByNativeFormatThenRatings(candidates, mediaType.Value) : null)
+                ?? SelectMostRated(candidates);
         }
 
-        public bool EnsureSingleMonitoredEdition(List<Edition> editions, IReadOnlyDictionary<int, int> fileCountsByEditionId = null, BookMediaType? mediaType = null)
+        public bool EnsureSingleMonitoredEdition(List<Edition> editions, IReadOnlyDictionary<int, int> fileCountsByEditionId = null, BookMediaType? mediaType = null, bool anyEditionOk = true)
         {
             if (editions == null)
             {
@@ -210,8 +203,6 @@ namespace NzbDrone.Core.Books
                 return false;
             }
 
-            var hasManual = list.Any(e => e.ManualAdd);
-            var hasFiles = fileCountsByEditionId != null && list.Any(e => fileCountsByEditionId.TryGetValue(e.Id, out var c) && c > 0);
             var monitoredEditions = list.Where(e => e.Monitored).OrderBy(e => e.Id).ToList();
 
             Edition selected;
@@ -219,13 +210,9 @@ namespace NzbDrone.Core.Books
             {
                 selected = monitoredEditions[0];
             }
-            else if (monitoredEditions.Count == 0 && !hasManual && !hasFiles && mediaType.HasValue)
-            {
-                selected = SelectByNativeFormatThenRatings(list, mediaType.Value);
-            }
             else
             {
-                selected = SelectRepairEdition(list, fileCountsByEditionId);
+                selected = SelectRepairEdition(list, fileCountsByEditionId, mediaType, anyEditionOk);
             }
 
             if (selected == null)
@@ -236,7 +223,8 @@ namespace NzbDrone.Core.Books
             var changed = false;
             foreach (var edition in list)
             {
-                var shouldMonitor = edition.Id == selected.Id;
+                // Unsaved editions share ID zero but remain separate choices until insertion.
+                var shouldMonitor = ReferenceEquals(edition, selected);
                 if (edition.Monitored != shouldMonitor)
                 {
                     edition.Monitored = shouldMonitor;
@@ -291,7 +279,7 @@ namespace NzbDrone.Core.Books
 
             var normalizedTitle = edition?.Title?.Trim().ToLowerInvariant() ?? string.Empty;
             var normalizedLanguage = edition?.Language?.CanonicalizeLanguage()?.Trim().ToLowerInvariant() ?? "null";
-            var readingFormat = edition?.ReadingFormatId ?? 0;
+            var readingFormat = edition?.ReadingFormatId ?? EditionReadingFormat.Unknown;
             var releaseDate = edition?.ReleaseDate?.ToString("yyyyMMdd") ?? "null";
 
             return $"fallback:{normalizedTitle}|{normalizedLanguage}|{readingFormat}|{releaseDate}";
@@ -313,34 +301,14 @@ namespace NzbDrone.Core.Books
 
         private static bool IsRepresentativeFallback(Edition edition, BookMediaType mediaType)
         {
-            return GetRepresentativeFallbackRank(edition, mediaType) > 0;
-        }
-
-        private static int GetRepresentativeFallbackRank(Edition edition, BookMediaType mediaType)
-        {
-            if (edition == null)
-            {
-                return 0;
-            }
-
-            if (mediaType == BookMediaType.Audiobook)
-            {
-                return edition.ReadingFormatId switch
-                {
-                    3 => 2,
-                    1 => 1,
-                    _ => 0
-                };
-            }
-
-            return edition.ReadingFormatId == 1 ? 1 : 0;
+            return EditionReadingFormat.RepresentativeRank(edition?.ReadingFormatId, mediaType) > 0;
         }
 
         private static Edition SelectRepresentativeFallback(IEnumerable<Edition> editions, BookMediaType mediaType)
         {
             return (editions ?? Enumerable.Empty<Edition>())
                 .Where(e => IsRepresentativeFallback(e, mediaType))
-                .OrderByDescending(e => GetRepresentativeFallbackRank(e, mediaType))
+                .OrderByDescending(e => EditionReadingFormat.RepresentativeRank(e?.ReadingFormatId, mediaType))
                 .ThenByDescending(e => e.Ratings?.Votes ?? 0)
                 .ThenByDescending(e => e.Ratings?.Value ?? 0m)
                 .ThenBy(e => e.Id)

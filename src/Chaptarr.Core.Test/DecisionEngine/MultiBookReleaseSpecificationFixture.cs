@@ -11,13 +11,15 @@ namespace Chaptarr.Core.Test.DecisionEngine
     public class MultiBookReleaseSpecificationFixture
     {
         [Test]
-        public void should_hard_reject_multi_book_pack()
+        public void should_soft_reject_multi_book_pack()
         {
             var spec = new MultiBookReleaseSpecification(LogManager.GetCurrentClassLogger());
             var decision = spec.IsSatisfiedBy(BuildRemoteBook(ReleasePackDetectionVerdict.MultipleBooks), new BookSearchCriteria());
 
+            // Still never auto-grabbed: DownloadDecision.Approved requires zero rejections of any kind.
+            // Soft only means the user can bypass it deliberately in interactive search.
             Assert.That(decision.Accepted, Is.False);
-            Assert.That(decision.CanBypass, Is.False);
+            Assert.That(decision.CanBypass, Is.True);
             Assert.That(decision.Category, Is.EqualTo("Pack"));
             Assert.That(decision.Reason, Is.EqualTo("Release appears to contain multiple books"));
         }

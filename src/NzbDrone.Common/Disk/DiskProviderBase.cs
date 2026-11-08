@@ -355,28 +355,36 @@ namespace NzbDrone.Common.Disk
         {
             Ensure.That(path, () => path).IsValidPath(PathValidationType.CurrentOs);
 
-            var files = GetFiles(path, recursive).ToList();
-
-            files.ForEach(RemoveReadOnly);
-
-            var attempts = 0;
-
-            while (attempts < 3 && files.Any())
+            // Let the filesystem enforce recursive=false and unlink directory links without
+            // traversing them. Pre-emptying defeated both guarantees and raced new arrivals.
+            if (recursive && !_fileSystem.File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
             {
-                EmptyFolder(path);
-
-                if (GetFiles(path, recursive).Any())
+                foreach (var file in _fileSystem.Directory.EnumerateFiles(path, "*", new EnumerationOptions
                 {
-                    // Wait for IO operations to complete  after emptying the folder since they aren't always
-                    // instantly removed and it can lead to false positives that files are still present.
-                    Thread.Sleep(3000);
+                    RecurseSubdirectories = true,
+                    AttributesToSkip = FileAttributes.ReparsePoint,
+                    IgnoreInaccessible = false
+                }))
+                {
+                    RemoveReadOnly(file);
                 }
-
-                attempts++;
-                files = GetFiles(path, recursive).ToList();
             }
 
-            _fileSystem.Directory.Delete(path, recursive);
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    _fileSystem.Directory.Delete(path, recursive);
+                    return;
+                }
+                catch (IOException) when (recursive && attempt < 2 && _fileSystem.Directory.Exists(path) &&
+                    !_fileSystem.File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+                {
+                    // Network filesystems can still report entries while a deletion settles.
+                    // Recheck through Directory.Delete, which never traverses directory links.
+                    Thread.Sleep(3000);
+                }
+            }
         }
 
         public string ReadAllText(string filePath)
@@ -929,9 +937,20 @@ namespace NzbDrone.Common.Disk
 
         public void RemoveEmptySubfolders(string path)
         {
+            // Cleanup must not traverse a link into a different tree.
+            if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+            {
+                return;
+            }
+
             // Depth first search for empty subdirectories
             foreach (var subdir in Directory.EnumerateDirectories(path))
             {
+                if (File.GetAttributes(subdir).HasFlag(FileAttributes.ReparsePoint))
+                {
+                    continue;
+                }
+
                 RemoveEmptySubfolders(subdir);
 
                 if (Directory.EnumerateFileSystemEntries(subdir).Empty())

@@ -31,6 +31,7 @@ namespace NzbDrone.Core.Download.TrackedDownloads
         private readonly ITrackedDownloadService _trackedDownloadService;
         private readonly Logger _logger;
         private readonly Debouncer _refreshDebounce;
+        private readonly Dictionary<int, DateTime> _failedPolls = new();
 
         public DownloadMonitoringService(IDownloadClientStatusService downloadClientStatusService,
                                          IDownloadClientFactory downloadClientFactory,
@@ -65,19 +66,25 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             _refreshDebounce.Pause();
             try
             {
-                var downloadClients = _downloadClientFactory.DownloadHandlingEnabled();
+                var downloadClients = _downloadClientFactory.DownloadHandlingEnabled(false);
+                var blockedClients = _downloadClientStatusService.GetBlockedProviders().Select(client => client.ProviderId).ToHashSet();
+                var previous = _trackedDownloadService.GetTrackedDownloads().Where(item => item.IsTrackable).ToLookup(item => item.DownloadClient);
 
                 var trackedDownloads = new List<TrackedDownload>();
+                var reportedDownloadIds = new Dictionary<int, HashSet<string>>();
 
                 foreach (var downloadClient in downloadClients)
                 {
-                    var clientTrackedDownloads = ProcessClientDownloads(downloadClient);
+                    var retained = previous[downloadClient.Definition.Id].ToList();
+                    var clientTrackedDownloads = blockedClients.Contains(downloadClient.Definition.Id)
+                        ? retained
+                        : ProcessClientDownloads(downloadClient, reportedDownloadIds, retained);
 
                     trackedDownloads.AddRange(clientTrackedDownloads.Where(DownloadIsTrackable));
                 }
 
                 _trackedDownloadService.UpdateTrackable(trackedDownloads);
-                _eventAggregator.PublishEvent(new TrackedDownloadRefreshedEvent(trackedDownloads));
+                _eventAggregator.PublishEvent(new TrackedDownloadRefreshedEvent(trackedDownloads, reportedDownloadIds));
 
                 var processCommand = new ProcessMonitoredDownloadsCommand
                 {
@@ -92,21 +99,32 @@ namespace NzbDrone.Core.Download.TrackedDownloads
             }
         }
 
-        private List<TrackedDownload> ProcessClientDownloads(IDownloadClient downloadClient)
+        private List<TrackedDownload> ProcessClientDownloads(IDownloadClient downloadClient,
+            Dictionary<int, HashSet<string>> reportedDownloadIds, List<TrackedDownload> retained)
         {
             var downloadClientItems = new List<DownloadClientItem>();
             var trackedDownloads = new List<TrackedDownload>();
 
             try
             {
+                (downloadClient as IRecoverDownloadClientOperations)?.RecoverPendingOperations();
                 downloadClientItems = downloadClient.GetItems().ToList();
-
                 _downloadClientStatusService.RecordSuccess(downloadClient.Definition.Id);
+                if (_failedPolls.Remove(downloadClient.Definition.Id, out var failedSince))
+                {
+                    _logger.Info("Download client {0} ({1}) responded after {2:F1}s of failed polls; reconciling {3} items.",
+                        downloadClient.Definition.Name, downloadClient.Definition.Id,
+                        (DateTime.UtcNow - failedSince).TotalSeconds, downloadClientItems.Count);
+                }
             }
             catch (Exception ex)
             {
                 _downloadClientStatusService.RecordFailure(downloadClient.Definition.Id);
-                _logger.Warn(ex, "Unable to retrieve queue and history items from " + downloadClient.Definition.Name);
+                _failedPolls.TryAdd(downloadClient.Definition.Id, DateTime.UtcNow);
+                _logger.Warn(ex, "Unable to retrieve queue and history items from {0} ({1}); retaining {2} tracked downloads. Failed polls for {3:F1}s.",
+                    downloadClient.Definition.Name, downloadClient.Definition.Id, retained.Count,
+                    (DateTime.UtcNow - _failedPolls[downloadClient.Definition.Id]).TotalSeconds);
+                return retained;
             }
 
             foreach (var downloadItem in downloadClientItems)
@@ -115,6 +133,8 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                 trackedDownloads.AddIfNotNull(item);
             }
 
+            reportedDownloadIds[downloadClient.Definition.Id] = downloadClientItems
+                .Select(item => item.DownloadId).ToHashSet(StringComparer.OrdinalIgnoreCase);
             return trackedDownloads;
         }
 
@@ -137,13 +157,20 @@ namespace NzbDrone.Core.Download.TrackedDownloads
                 _logger.Error(e, "Couldn't process tracked download {0}", downloadItem.Title);
             }
 
-            return null;
+            return _trackedDownloadService.Find(downloadItem.DownloadId);
         }
 
         private bool DownloadIsTrackable(TrackedDownload trackedDownload)
         {
-            // If the download has already been imported or failed or the user ignored it don't track it
-            if (trackedDownload.State == TrackedDownloadState.Imported ||
+            // A deliberate cleanup refusal must stay visible, including failed downloads.
+            if (trackedDownload.CleanupDeletionRefused && !trackedDownload.DownloadItem.Removed &&
+                trackedDownload.State != TrackedDownloadState.Ignored)
+            {
+                return true;
+            }
+
+            // Keep failed cleanup checks visible while the imported download awaits a retry.
+            if ((trackedDownload.State == TrackedDownloadState.Imported && !trackedDownload.CleanupCheckFailed) ||
                 trackedDownload.State == TrackedDownloadState.DownloadFailed ||
                 trackedDownload.State == TrackedDownloadState.Ignored)
             {

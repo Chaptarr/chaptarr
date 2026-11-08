@@ -3,12 +3,15 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Dapper;
+using Chaptarr.Core.Test.Common;
 using Microsoft.Data.Sqlite;
 using NUnit.Framework;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Qualities;
 
 namespace Chaptarr.Core.Test.MediaFiles
 {
@@ -68,6 +71,47 @@ namespace Chaptarr.Core.Test.MediaFiles
                     "/library/old.epub",
                     "/library/conflict.epub"
                 }));
+            });
+        }
+
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        public void replacement_should_commit_or_rollback_stale_row_updates_with_the_other_parts(bool postgres, bool fail)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var repository = new MediaFileRepository(database, new StubEventAggregator());
+                BookFile Create(string path) => new()
+                {
+                    Path = path, DateAdded = DateTime.UtcNow, Modified = DateTime.UtcNow,
+                    Quality = new QualityModel(Quality.MP3), MediaInfo = new MediaInfoModel()
+                };
+                var stale = repository.Insert(Create("/library/Part 01.mp3"));
+                var old = repository.Insert(Create("/library/Old Part 02.mp3"));
+                var conflict = repository.Insert(Create("/library/Occupied.mp3"));
+                var staleId = stale.Id;
+                stale.Size = 1234;
+                var added = Create(fail ? conflict.Path : "/library/Part 02.mp3");
+
+                void Commit() => repository.ReplaceMany(new List<BookFile> { stale, added }, new List<BookFile> { old });
+                if (fail)
+                {
+                    Assert.That(Commit, Throws.Exception);
+                    Assert.That(repository.Get(staleId).Size, Is.Zero);
+                    Assert.That(repository.Get(old.Id).Path, Is.EqualTo(old.Path));
+                    Assert.That(added.Id, Is.Zero);
+                }
+                else
+                {
+                    Commit();
+                    Assert.That(repository.Get(staleId).Size, Is.EqualTo(1234));
+                    Assert.That(repository.All().Select(file => file.Id), Does.Not.Contain(old.Id));
+                    Assert.That(added.Id, Is.GreaterThan(0));
+                }
+
+                Assert.That(stale.Id, Is.EqualTo(staleId));
             });
         }
 

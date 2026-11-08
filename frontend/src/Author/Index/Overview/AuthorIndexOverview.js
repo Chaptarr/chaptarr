@@ -214,7 +214,6 @@ class AuthorIndexOverview extends Component {
                 images={images}
                 authorId={id}
                 selectedPosterHash={selectedPosterHash}
-                placeholder="/Content/Images/author-placeholder-muted.png"
                 size={250}
                 lazy={false}
                 overflow={true}
@@ -313,6 +312,7 @@ class AuthorIndexOverview extends Component {
         />
 
         <DeleteAuthorModal
+          selectedMediaType={this.props.selectedMediaType}
           isOpen={isDeleteAuthorModalOpen}
           authorId={id}
           onModalClose={this.onDeleteAuthorModalClose}
@@ -323,6 +323,7 @@ class AuthorIndexOverview extends Component {
 }
 
 AuthorIndexOverview.propTypes = {
+  selectedMediaType: PropTypes.string,
   id: PropTypes.number.isRequired,
   authorName: PropTypes.string.isRequired,
   authorNameLastFirst: PropTypes.string.isRequired,

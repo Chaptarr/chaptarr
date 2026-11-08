@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using NzbDrone.Core.Parser.Model;
 
 namespace NzbDrone.Core.Indexers
@@ -9,6 +10,8 @@ namespace NzbDrone.Core.Indexers
     public interface INarratorMetadataProvider
     {
         bool CanProvideNarratorMetadata { get; }
+        bool? SupportsNarratorMetadata { get; }
+        void TestNarratorMetadata(IEnumerable<ReleaseInfo> releases);
 
         /// <summary>
         /// Attempts to populate extra metadata onto the given release. Returns true when any fields were populated.

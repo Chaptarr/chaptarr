@@ -12,6 +12,7 @@ import ModalHeader from 'Components/Modal/ModalHeader';
 import { sizes } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 import NamingOption from './NamingOption';
+import SmartNarratorEditor, { smartNarratorPattern } from './SmartNarratorEditor';
 import styles from './NamingModal.css';
 
 const separatorOptions = [
@@ -116,22 +117,24 @@ const narratorTokens = [
   { token: '{Narrator Initials}', example: 'RP' },
   { token: '{Narrator First}', example: 'Ray' },
   { token: '{Narrator Last}', example: 'Porter' },
-  { token: '{Narrators}', example: 'Ray Porter, Kate Reading' },
+  { token: '{Narrators}', example: 'Alice Reader, Bob Reader, Carol Reader' },
+  { token: '{First Narrator}', example: 'Alice Reader' },
+  { token: '{FullCast}', get example() {
+    return translate('NamingFullCastThreePlus');
+  } },
+  { token: '{GraphicAudio}', example: 'GraphicAudio' },
+  { token: '{AudioProductionType}', example: 'GraphicAudio · Dramatized · Full Cast · Booktrack' },
   { token: '{ - Narrator}', example: ' - Ray Porter' }
 ];
 
 const seriesTokens = [
   { token: '{Book Series}', example: 'Dresden Files' },
   { token: '{Book SeriesPosition}', example: '3' },
+  { token: '{Book SeriesPosition:00}', example: '03' },
   { token: '{Book SeriesTitle}', example: 'Dresden Files #3' },
   { token: '{Series Folder}', example: 'Dresden Files' },
   { token: '{Book TitleWithSeries}', example: 'Grave Peril - Dresden Files #3' },
   { token: '{ - Book SeriesPosition}', example: ' - 3' }
-];
-
-const graphicAudioTokens = [
-  { token: '{GraphicAudio}', example: 'GraphicAudio' },
-  { token: '{AudioProductionType}', example: 'GraphicAudio' }
 ];
 
 const otherTokens = [
@@ -200,8 +203,26 @@ class NamingModal extends Component {
       const newValue = `${start}${tokenValue}${end}`;
 
       onInputChange({ name, value: newValue });
-      this._selectionStart = newValue.length - 1;
-      this._selectionEnd = newValue.length - 1;
+      this._selectionStart = start.length + tokenValue.length;
+      this._selectionEnd = this._selectionStart;
+    }
+  };
+
+  onSmartNarratorApply = (order) => {
+    const { name, value, onInputChange } = this.props;
+    if (smartNarratorPattern.test(value)) {
+      const occurrences = new RegExp(smartNarratorPattern.source, 'gi');
+      onInputChange({ name, value: value.replace(occurrences, (_, start, previous, end) => `${start}:${order}${end}`) });
+    } else {
+      const { separator, case: tokenCase } = this.state;
+      let token = 'Smart Narrator'.replace(/ /g, separator);
+      if (tokenCase === 'lower') {
+        token = token.toLowerCase();
+      }
+      if (tokenCase === 'upper') {
+        token = token.toUpperCase();
+      }
+      this.onOptionPress({ tokenValue: `{${token}:${order}}` });
     }
   };
 
@@ -354,6 +375,12 @@ class NamingModal extends Component {
                   {
                     !isEbook &&
                       <FieldSet legend={translate('Narrator')}>
+                        <SmartNarratorEditor
+                          value={value}
+                          tokenSeparator={tokenSeparator}
+                          tokenCase={tokenCase}
+                          onApply={this.onSmartNarratorApply}
+                        />
                         <div className={styles.groups}>
                           {
                             narratorTokens.map(({ token, example }) => {
@@ -442,27 +469,6 @@ class NamingModal extends Component {
                           );
                         }
                         )
-                      }
-                    </div>
-                  </FieldSet>
-
-                  <FieldSet legend={translate('GraphicAudio')}>
-                    <div className={styles.groups}>
-                      {
-                        graphicAudioTokens.map(({ token, example }) => {
-                          return (
-                            <NamingOption
-                              key={token}
-                              name={name}
-                              value={value}
-                              token={token}
-                              example={example}
-                              tokenSeparator={tokenSeparator}
-                              tokenCase={tokenCase}
-                              onPress={this.onOptionPress}
-                            />
-                          );
-                        })
                       }
                     </div>
                   </FieldSet>

@@ -1,19 +1,19 @@
-using NzbDrone.Common.Exceptions;
+using System.Net;
 
 namespace NzbDrone.Core.Exceptions
 {
-    public class InvalidProviderIdException : NzbDroneException
+    public class InvalidProviderIdException : NzbDroneClientException
     {
         public string ProviderId { get; }
 
         public InvalidProviderIdException(string providerId, string message)
-            : base(message)
+            : base(HttpStatusCode.BadRequest, message)
         {
             ProviderId = providerId;
         }
 
         public InvalidProviderIdException(string providerId, string message, params object[] args)
-            : base(message, args)
+            : base(HttpStatusCode.BadRequest, message, args)
         {
             ProviderId = providerId;
         }

@@ -169,7 +169,7 @@ namespace NzbDrone.Core.Datastore
             return All().Single();
         }
 
-        public TModel Insert(TModel model)
+        public virtual TModel Insert(TModel model)
         {
             if (model.Id != 0)
             {
@@ -218,8 +218,9 @@ namespace NzbDrone.Core.Datastore
             return $"INSERT INTO {_table} ({sbColumnList.ToString()}) VALUES ({sbParameterList.ToString()}); SELECT last_insert_rowid() id";
         }
 
-        private TModel Insert(IDbConnection connection, IDbTransaction transaction, TModel model)
+        private TModel Insert(IDbConnection connection, IDbTransaction transaction, TModel model, bool prepared = false)
         {
+            if (!prepared) PrepareForPersistence(new[] { model }, _properties);
             SqlBuilderExtensions.LogQuery(_insertSql, model);
 
             GridReader multi;
@@ -240,9 +241,10 @@ namespace NzbDrone.Core.Datastore
             return model;
         }
 
-        public void InsertMany(IList<TModel> models)
+        public virtual void InsertMany(IList<TModel> models)
         {
             var __insertAllSw = System.Diagnostics.Stopwatch.StartNew();
+            PrepareForPersistence(models, _properties);
             if (models.Any(x => x.Id != 0))
             {
                 throw new InvalidOperationException("Can't insert model with existing ID != 0");
@@ -397,7 +399,7 @@ namespace NzbDrone.Core.Datastore
                                     var __rowLoopSw = System.Diagnostics.Stopwatch.StartNew();
                                     foreach (var model in models)
                                     {
-                                        Insert(conn, tran, model);
+                                        Insert(conn, tran, model, prepared: true);
                                     }
                                     __rowLoopSw.Stop();
                                     try
@@ -414,7 +416,7 @@ namespace NzbDrone.Core.Datastore
                                 var __rowLoopSw = System.Diagnostics.Stopwatch.StartNew();
                                 foreach (var model in models)
                                 {
-                                    Insert(conn, tran, model);
+                                    Insert(conn, tran, model, prepared: true);
                                 }
                                 __rowLoopSw.Stop();
                                 try
@@ -451,7 +453,7 @@ namespace NzbDrone.Core.Datastore
                         var __rowLoopSw = System.Diagnostics.Stopwatch.StartNew();
                         foreach (var model in models)
                         {
-                            Insert(conn, tran, model);
+                            Insert(conn, tran, model, prepared: true);
                         }
                         tran.Commit();
                         __rowLoopSw.Stop();
@@ -480,8 +482,9 @@ namespace NzbDrone.Core.Datastore
             }
         }
 
-        public void InsertMany(IList<TModel> models, IDbConnection connection, IDbTransaction transaction)
+        public virtual void InsertMany(IList<TModel> models, IDbConnection connection, IDbTransaction transaction)
         {
+            PrepareForPersistence(models, _properties);
             if (models.Any(x => x.Id != 0))
             {
                 throw new InvalidOperationException("Can't insert model with existing ID != 0");
@@ -571,7 +574,7 @@ namespace NzbDrone.Core.Datastore
                         // fallback per-row
                         foreach (var model in models)
                         {
-                            Insert(connection, transaction, model);
+                            Insert(connection, transaction, model, prepared: true);
                         }
                     }
                 }
@@ -579,7 +582,7 @@ namespace NzbDrone.Core.Datastore
                 {
                     foreach (var model in models)
                     {
-                        Insert(connection, transaction, model);
+                        Insert(connection, transaction, model, prepared: true);
                     }
                 }
             }
@@ -587,12 +590,12 @@ namespace NzbDrone.Core.Datastore
             {
                 foreach (var model in models)
                 {
-                    Insert(connection, transaction, model);
+                    Insert(connection, transaction, model, prepared: true);
                 }
             }
         }
 
-        public TModel Update(TModel model)
+        public virtual TModel Update(TModel model)
         {
             if (model.Id == 0)
             {
@@ -609,7 +612,7 @@ namespace NzbDrone.Core.Datastore
             return model;
         }
 
-        public void UpdateMany(IList<TModel> models)
+        public virtual void UpdateMany(IList<TModel> models)
         {
             if (models.Any(x => x.Id == 0))
             {
@@ -641,7 +644,7 @@ namespace NzbDrone.Core.Datastore
                             }
                         }
 
-                        UpdateFields(conn, tran, models, GetUpdateProperties());
+                        UpdateMany(models, conn, tran);
                         tran.Commit();
                     }
                     finally
@@ -663,6 +666,12 @@ namespace NzbDrone.Core.Datastore
                     }
                 }
             }
+        }
+
+        protected int UpdateMany(IList<TModel> models, IDbConnection connection, IDbTransaction transaction)
+        {
+            if (models.Any(model => model.Id == 0)) throw new InvalidOperationException("Can't update model with ID 0");
+            return UpdateFields(connection, transaction, models, GetUpdateProperties());
         }
 
         protected void Delete(Expression<Func<TModel, bool>> where)
@@ -690,7 +699,7 @@ namespace NzbDrone.Core.Datastore
             Delete(x => x.Id == id);
         }
 
-        public void DeleteMany(IEnumerable<int> ids)
+        public virtual void DeleteMany(IEnumerable<int> ids)
         {
             if (ids == null)
             {
@@ -867,7 +876,15 @@ namespace NzbDrone.Core.Datastore
             for (var i = 0; i < propertiesToUpdate.Count; i++)
             {
                 var property = propertiesToUpdate[i];
-                sb.AppendFormat("\"{0}\" = @{1}", property.Name, property.Name);
+                if (property.Name == "ProviderIds")
+                {
+                    // Settings-only saves must not restore a stale metadata snapshot.
+                    sb.Append("\"ProviderIds\" = CASE WHEN @ProviderIdsChanged THEN @ProviderIds ELSE \"ProviderIds\" END");
+                }
+                else
+                {
+                    sb.AppendFormat("\"{0}\" = @{1}", property.Name, property.Name);
+                }
                 if (i < propertiesToUpdate.Count - 1)
                 {
                     sb.Append(", ");
@@ -879,8 +896,23 @@ namespace NzbDrone.Core.Datastore
             return sb.ToString();
         }
 
+        private List<PropertyInfo> PrepareForPersistence(IEnumerable<TModel> models, List<PropertyInfo> properties)
+        {
+            var fields = properties == _properties ? null : properties.Select(property => property.Name).ToArray();
+            var derived = new HashSet<string>();
+            foreach (var model in models)
+            {
+                derived.UnionWith(model.PrepareForPersistence(fields));
+            }
+
+            return fields == null || derived.Count == 0
+                ? properties
+                : _properties.Where(property => fields.Contains(property.Name) || derived.Contains(property.Name)).ToList();
+        }
+
         private void UpdateFields(IDbConnection connection, IDbTransaction transaction, TModel model, List<PropertyInfo> propertiesToUpdate)
         {
+            propertiesToUpdate = PrepareForPersistence(new[] { model }, propertiesToUpdate);
             var sql = propertiesToUpdate == _properties ? _updateSql : GetUpdateSql(propertiesToUpdate);
 
             SqlBuilderExtensions.LogQuery(sql, model);
@@ -896,8 +928,9 @@ namespace NzbDrone.Core.Datastore
             }
         }
 
-        private void UpdateFields(IDbConnection connection, IDbTransaction transaction, IList<TModel> models, List<PropertyInfo> propertiesToUpdate)
+        private int UpdateFields(IDbConnection connection, IDbTransaction transaction, IList<TModel> models, List<PropertyInfo> propertiesToUpdate)
         {
+            propertiesToUpdate = PrepareForPersistence(models, propertiesToUpdate);
             var sql = propertiesToUpdate == _properties ? _updateSql : GetUpdateSql(propertiesToUpdate);
 
             foreach (var model in models)
@@ -907,7 +940,7 @@ namespace NzbDrone.Core.Datastore
 
             try
             {
-                connection.Execute(sql, models, transaction: transaction);
+                return connection.Execute(sql, models, transaction: transaction);
             }
             catch (Exception e)
             {

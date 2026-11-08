@@ -98,6 +98,8 @@ class BookIndexRow extends Component {
       authorTitle,
       narrator,
       narratorNames,
+      narrators,
+      availableNarratorCredits,
       availableNarrators,
       durationMinutes,
       titleSlug,
@@ -222,6 +224,8 @@ class BookIndexRow extends Component {
                       bookId={id}
                       narrator={narrator}
                       narratorNames={narratorNames}
+                      narrators={narrators}
+                      availableNarratorCredits={availableNarratorCredits}
                       availableNarrators={availableNarrators}
                       hasFiles={hasFilesForDisplay}
                       hasPinnedEdition={hasPinnedEdition}
@@ -404,6 +408,7 @@ class BookIndexRow extends Component {
         />
 
         <DeleteAuthorModal
+          selectedMediaType={this.props.mediaType}
           isOpen={isDeleteAuthorModalOpen}
           authorId={authorId}
           onModalClose={this.onDeleteAuthorModalClose}
@@ -421,6 +426,7 @@ class BookIndexRow extends Component {
 }
 
 BookIndexRow.propTypes = {
+  mediaType: PropTypes.string,
   id: PropTypes.number.isRequired,
   authorId: PropTypes.number.isRequired,
   audiobookMonitored: PropTypes.bool,
@@ -435,6 +441,8 @@ BookIndexRow.propTypes = {
   authorTitle: PropTypes.string,
   narrator: PropTypes.string,
   narratorNames: PropTypes.arrayOf(PropTypes.string),
+  narrators: PropTypes.arrayOf(PropTypes.object),
+  availableNarratorCredits: PropTypes.arrayOf(PropTypes.object),
   availableNarrators: PropTypes.arrayOf(PropTypes.string),
   duration: PropTypes.string,
   durationMinutes: PropTypes.number,
