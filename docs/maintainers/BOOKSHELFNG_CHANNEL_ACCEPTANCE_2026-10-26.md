@@ -14,6 +14,9 @@ public index propagation was not independently verified. Legacy BookshelfNG
 package identities, external catalogs and production cutover remain separate
 gates; the migration bridge was disabled for this release. The dated sections
 below are historical evidence and may describe earlier publication status.
+The public standard image `ghcr.io/snapetech-org/chaptarrng:0.9.986` resolves
+to OCI index digest
+`sha256:5d295630d3120109c73616cb34c939264b10ad5c42ebdc6813bb149ab825e2ed`.
 
 The [published-archive installed run](https://github.com/snapetech-org/chaptarrng/actions/runs/42524674959)
 passed No, headless Manual, Yes with source retention, target health, and
