@@ -11,17 +11,17 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: Admit this release workflow to the private JIT broker
+        description: Publish a validated release from main
         required: true
         type: choice
         options:
           - publish
       runner_pool:
-        description: Select the private ephemeral JIT pool
+        description: Select the authorized public runner pool
         required: true
         type: choice
         options:
-          - private
+          - public
       release_tag:
         description: Exact existing stable release tag to validate and build
         required: true
@@ -40,9 +40,9 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/main' &&
       inputs.action == 'publish' &&
-      inputs.runner_pool == 'private' &&
+      inputs.runner_pool == 'public' &&
       inputs.release_tag != ''
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-preflight"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     outputs:
       release_requested: ${{ steps.release-request.outputs.release_requested }}
       release_tag: ${{ steps.release-request.outputs.release_tag }}
@@ -66,8 +66,8 @@ jobs:
       run: |
         set -euo pipefail
         TAG="$RELEASE_TAG"
-        if [[ "$GITHUB_REF" != refs/heads/main || "$ACTION" != publish || "$RUNNER_POOL" != private ]]; then
-          echo 'Releases require a main-branch workflow dispatch with action=publish and pool=private.' >&2
+        if [[ "$GITHUB_REF" != refs/heads/main || "$ACTION" != publish || "$RUNNER_POOL" != public ]]; then
+          echo 'Releases require a main-branch workflow dispatch with action=publish and pool=public.' >&2
           exit 1
         fi
         if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -133,13 +133,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'publish' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'public'
         )
       ) &&
       (
         needs.preflight.outputs.release_requested == 'true'
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-release"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     outputs:
@@ -353,13 +353,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'publish' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'public'
         )
       ) &&
       (
         vars.CHAPTARRNG_MIGRATION_BRIDGE_ENABLED == 'true' && vars.CHAPTARRNG_RELEASE_READY == 'true' && vars.BOOKSHELFNG_RELEASE_READY == 'true'
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-dispatch-legacy-ghcr"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -395,7 +395,7 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'publish' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'public'
         )
       ) &&
       (
@@ -449,7 +449,7 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'publish' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'public'
         )
       ) &&
       (
@@ -544,7 +544,7 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/main' &&
       inputs.action == 'publish' &&
-      inputs.runner_pool == 'private'
+      inputs.runner_pool == 'public'
     runs-on: windows-2025
     permissions:
       contents: read
@@ -610,13 +610,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'publish' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'public'
         )
       ) &&
       (
         always() && needs.release.result == 'success' && needs.standalone-assets.result == 'success'
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-legacy-desktop-candidates"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -636,13 +636,15 @@ jobs:
         name: chaptarrng-standalone-linux-x64
         path: ${{ runner.temp }}/linux-x64
 
-    - name: Verify desktop candidate tools were installed by the private JIT broker
+    - name: Install desktop candidate tools
       if: ${{ vars.CHAPTARRNG_MIGRATION_BRIDGE_ENABLED == 'true' && vars.CHAPTARRNG_RELEASE_READY == 'true' && vars.BOOKSHELFNG_RELEASE_READY == 'true' }}
       run: |
         set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install --yes --no-install-recommends flatpak flatpak-builder curl
         for tool in flatpak flatpak-builder curl; do
           command -v "$tool" >/dev/null 2>&1 || {
-            echo "$tool must be installed by the private JIT broker before this job starts." >&2
+            echo "$tool must be installed before building desktop candidates." >&2
             exit 1
           }
         done
@@ -704,7 +706,7 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'publish' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'public'
         )
       ) &&
       (
@@ -764,13 +766,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'publish' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'public'
         )
       ) &&
       (
         true
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-publish-release"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
@@ -917,7 +919,7 @@ jobs:
       packages: write
     with:
       action: publish
-      runner_pool: private
+      runner_pool: public
       tag: ${{ needs.release.outputs.tag }}
       version: ${{ needs.release.outputs.version }}
       legacy_bridge_enabled: ${{ vars.CHAPTARRNG_MIGRATION_BRIDGE_ENABLED == 'true' && vars.CHAPTARRNG_RELEASE_READY == 'true' && vars.BOOKSHELFNG_RELEASE_READY == 'true' }}
@@ -937,13 +939,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'publish' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'public'
         )
       ) &&
       (
         true
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-announce-discord"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     env:

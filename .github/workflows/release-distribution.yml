@@ -38,17 +38,17 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: Admit this publisher workflow to the private JIT broker
+        description: Publish verified packages from main
         required: true
         type: choice
         options:
           - publish
       runner_pool:
-        description: Select the private ephemeral JIT pool
+        description: Select the authorized public runner pool
         required: true
         type: choice
         options:
-          - private
+          - public
       tag:
         description: Published stable release tag to retry
         required: true
@@ -72,9 +72,9 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' &&
       inputs.action == 'publish' &&
-      inputs.runner_pool == 'private' &&
+      inputs.runner_pool == 'public' &&
       (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-release-target"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     outputs:
       tag: ${{ steps.target.outputs.tag }}
       version: ${{ steps.target.outputs.version }}
@@ -110,12 +110,12 @@ jobs:
         [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]
         [[ "$TAG" == "v${VERSION}" ]]
         [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-        if [[ "$REF" != refs/heads/main || "$ACTION" != publish || "$RUNNER_POOL" != private ]]; then
-          echo 'Package publishing requires action=publish, pool=private, and a main-branch workflow run.' >&2
+        if [[ "$REF" != refs/heads/main || "$ACTION" != publish || "$RUNNER_POOL" != public ]]; then
+          echo 'Package publishing requires action=publish, pool=public, and a main-branch workflow run.' >&2
           exit 1
         fi
         if [[ "$EVENT_NAME" != workflow_dispatch && "$EVENT_NAME" != workflow_call ]]; then
-          echo 'Package publishing requires an explicit private dispatch or release workflow call.' >&2
+          echo 'Package publishing requires an explicit public dispatch or release workflow call.' >&2
           exit 1
         fi
         git fetch --no-tags origin "refs/tags/${TAG}:refs/tags/${TAG}" refs/heads/main:refs/remotes/origin/main
@@ -147,13 +147,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'publish' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'public'
         )
       ) &&
       (
         true
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-credentials"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     outputs:
       aur: ${{ steps.check.outputs.aur }}
       copr: ${{ steps.check.outputs.copr }}
@@ -182,7 +182,7 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'publish' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'public'
         )
       ) &&
       (
@@ -192,7 +192,7 @@ jobs:
       fail-fast: false
       matrix:
         series: ${{ fromJSON(needs.credentials.outputs.ppa_series) }}
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-{1}-build-legacy-ppa"]}}', github.run_id, strategy.job-index)) }}
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -201,9 +201,11 @@ jobs:
 
     - uses: ./.github/actions/setup-github-cli
 
-    - name: Verify Debian source packaging tools were installed by the private JIT broker
+    - name: Install Debian source packaging tools
       run: |
         set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install --yes --no-install-recommends dpkg-dev gnupg
         command -v dpkg-buildpackage >/dev/null 2>&1
         command -v gpg >/dev/null 2>&1
 
@@ -244,19 +246,21 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'publish' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'public'
         )
       ) &&
       (
         needs.credentials.outputs.ppa == 'true' && needs.release-target.outputs.legacy_bridge_enabled == 'true'
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-publish-legacy-ppa"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     steps:
-    - name: Verify the Launchpad upload tool was installed by the private JIT broker
+    - name: Install the Launchpad upload tool
       run: |
         set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install --yes --no-install-recommends dput
         command -v dput >/dev/null 2>&1 || {
-          echo 'dput must be installed by the private JIT broker before this job starts.' >&2
+          echo 'dput must be installed before uploading to Launchpad.' >&2
           exit 1
         }
 
@@ -285,13 +289,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'publish' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'public'
         )
       ) &&
       (
         true
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-build-aur"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -340,13 +344,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'publish' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'public'
         )
       ) &&
       (
         needs.credentials.outputs.aur == 'true'
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-publish-aur"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
@@ -419,7 +423,7 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' &&
       inputs.action == 'publish' &&
-      inputs.runner_pool == 'private'
+      inputs.runner_pool == 'public'
     runs-on: windows-2025
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -603,7 +607,7 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' &&
       inputs.action == 'publish' &&
-      inputs.runner_pool == 'private' &&
+      inputs.runner_pool == 'public' &&
       needs.credentials.outputs.chocolatey == 'true'
     runs-on: windows-2025
     steps:
@@ -633,13 +637,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'publish' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'public'
         )
       ) &&
       (
         needs.credentials.outputs.copr == 'true'
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-trigger-copr"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     steps:
     - name: Submit verified release tag to the ChaptarrNG COPR webhook
       env:
@@ -669,13 +673,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'publish' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'public'
         )
       ) &&
       (
         needs.credentials.outputs.bookshelfng_copr == 'true' && needs.release-target.outputs.legacy_bridge_enabled == 'true'
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-trigger-legacy-copr"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     steps:
     - name: Submit the release tag to the existing bookshelfng COPR package
       env:
@@ -705,13 +709,13 @@ jobs:
         (
           github.ref == 'refs/heads/main' &&
           inputs.action == 'publish' &&
-          inputs.runner_pool == 'private'
+          inputs.runner_pool == 'public'
         )
       ) &&
       (
         needs.release-target.outputs.legacy_bridge_enabled == 'true' && vars.CHAPTARRNG_MIGRATION_BRIDGE_ENABLED == 'true' && vars.BOOKSHELFNG_RELEASE_READY == 'true'
       )
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-publish-legacy-helm-bridge"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -731,8 +735,10 @@ jobs:
         VERSION: ${{ needs.release-target.outputs.version }}
       run: |
         set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install --yes --no-install-recommends skopeo
         command -v skopeo >/dev/null 2>&1 || {
-          echo 'Skopeo must be installed by the private JIT broker before this job starts.' >&2
+          echo 'Skopeo must be installed before inspecting the release image.' >&2
           exit 1
         }
         image="ghcr.io/snapetech-org/chaptarrng:${VERSION}"
@@ -762,9 +768,9 @@ jobs:
       always() &&
       github.ref == 'refs/heads/main' &&
       inputs.action == 'publish' &&
-      inputs.runner_pool == 'private'
+      inputs.runner_pool == 'public'
     needs: [release-target, credentials, build-aur, publish-aur, build-chocolatey, publish-chocolatey, build-legacy-ppa, publish-legacy-ppa, trigger-copr, trigger-legacy-copr, publish-legacy-helm-bridge]
-    runs-on: ${{ fromJSON(format('{{"group":"ng-shared-main-jit","labels":["self-hosted","linux","x64","ng-shared-main-chaptarrng","ng-main-run-{0}","gha-{0}-distribution-summary"]}}', github.run_id)) }}
+    runs-on: ubuntu-24.04
     steps:
     - name: Write channel results
       env:

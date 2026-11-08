@@ -123,12 +123,12 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
                     self.assertIn("fromJSON", source, str(workflow_path))
                     continue
                 if workflow_path.name == "release.yml" and line.strip() == "runs-on: windows-2025":
-                    self.assertIn("inputs.runner_pool == 'private'", job_block(source, "windows-migration-installer"))
+                    self.assertIn("inputs.runner_pool == 'public'", job_block(source, "windows-migration-installer"))
                     continue
                 if workflow_path.name == "release-distribution.yml" and line.strip() == "runs-on: windows-2025":
-                    self.assertIn("inputs.runner_pool == 'private'", source)
+                    self.assertIn("inputs.runner_pool == 'public'", source)
                     continue
-                if workflow_path.name in {"release.yml", "docker-publish.yml"} and line.strip() == "runs-on: ubuntu-24.04":
+                if workflow_path.name in {"release.yml", "release-distribution.yml", "docker-publish.yml"} and line.strip() == "runs-on: ubuntu-24.04":
                     continue
                 self.assertNotRegex(
                     line,
@@ -153,6 +153,11 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
     def test_release_builders_use_public_runners_without_changing_gates(self) -> None:
         release = (WORKFLOW.parent / "release.yml").read_text(encoding="utf-8")
         docker = (WORKFLOW.parent / "docker-publish.yml").read_text(encoding="utf-8")
+        distribution = (WORKFLOW.parent / "release-distribution.yml").read_text(encoding="utf-8")
+        for source in (release, distribution):
+            self.assertNotIn('"group":"ng-shared-main-jit"', source)
+            self.assertNotIn("inputs.runner_pool == 'private'", source)
+            self.assertIn("inputs.runner_pool == 'public'", source)
         for name in ("platform-runtime-packs", "standalone-assets", "rpm-source"):
             job = job_block(release, name)
             self.assertIn("runs-on: ubuntu-24.04", job, name)
@@ -278,7 +283,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         source = (WORKFLOW.parent / "release.yml").read_text(encoding="utf-8")
         self.assertNotRegex(source, r"(?m)^  push:")
         dispatch = event_block(source, "workflow_dispatch")
-        for field, value in (("action", "publish"), ("runner_pool", "private")):
+        for field, value in (("action", "publish"), ("runner_pool", "public")):
             input_match = re.search(
                 rf"(?ms)^      {field}:\n(?P<body>.*?)(?=^      [A-Za-z0-9_-]+:|\Z)",
                 dispatch,
@@ -296,7 +301,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         for token in (
             "github.ref == 'refs/heads/main'",
             "inputs.action == 'publish'",
-            "inputs.runner_pool == 'private'",
+            "inputs.runner_pool == 'public'",
             "RELEASE_TAG: ${{ inputs.release_tag }}",
             'TAG_VERSION="$(git show "$TAG:package.json"',
             'git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main',
@@ -326,7 +331,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         for token in (
             "github.ref == 'refs/heads/main'",
             "inputs.action == 'publish'",
-            "inputs.runner_pool == 'private'",
+            "inputs.runner_pool == 'public'",
             "needs: [preflight, release, standalone-assets]",
         ):
             self.assertIn(token, windows)
@@ -337,13 +342,13 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
 
         packages = job_block(source, "publish-packages")
         self.assertIn("action: publish", packages)
-        self.assertIn("runner_pool: private", packages)
+        self.assertIn("runner_pool: public", packages)
 
-    def test_distribution_dispatch_requires_main_private_publish_route(self) -> None:
+    def test_distribution_dispatch_requires_main_public_publish_route(self) -> None:
         source = (WORKFLOW.parent / "release-distribution.yml").read_text(encoding="utf-8")
         self.assertNotRegex(source, r"(?m)^  push:")
         dispatch = event_block(source, "workflow_dispatch")
-        for field, value in (("action", "publish"), ("runner_pool", "private")):
+        for field, value in (("action", "publish"), ("runner_pool", "public")):
             input_match = re.search(
                 rf"(?ms)^      {field}:\n(?P<body>.*?)(?=^      [A-Za-z0-9_-]+:|\Z)",
                 dispatch,
@@ -363,7 +368,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
         for token in (
             "github.ref == 'refs/heads/main'",
             "inputs.action == 'publish'",
-            "inputs.runner_pool == 'private'",
+            "inputs.runner_pool == 'public'",
             "EVENT_NAME: ${{ github.event_name }}",
             "ACTION: ${{ inputs.action }}",
             "RUNNER_POOL: ${{ inputs.runner_pool }}",
@@ -377,7 +382,7 @@ class WorkflowRunnerPolicyTests(unittest.TestCase):
             for token in (
                 "github.ref == 'refs/heads/main'",
                 "inputs.action == 'publish'",
-                "inputs.runner_pool == 'private'",
+                "inputs.runner_pool == 'public'",
                 "runs-on: windows-2025",
             ):
                 self.assertIn(token, job)
