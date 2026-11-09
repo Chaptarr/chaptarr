@@ -26,7 +26,7 @@ namespace NzbDrone.Core.Download
                                          ITrackedDownloadService trackedDownloadService,
                                          IEventAggregator eventAggregator,
                                          Logger logger,
-                                         IManageCommandQueue commandQueueManager = null)
+                                         IManageCommandQueue commandQueueManager)
         {
             _configService = configService;
             _completedDownloadService = completedDownloadService;

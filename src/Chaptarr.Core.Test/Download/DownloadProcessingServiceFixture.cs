@@ -127,7 +127,8 @@ namespace Chaptarr.Core.Test.Download
                 new NoOpFailedDownloadService(),
                 tracked,
                 new NoOpEventAggregator(),
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(),
+                null);
 
             service.Execute(new ProcessMonitoredDownloadsCommand());
 
@@ -156,7 +157,8 @@ namespace Chaptarr.Core.Test.Download
                 new NoOpFailedDownloadService(),
                 tracked,
                 new NoOpEventAggregator(),
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(),
+                null);
 
             Assert.Throws<OperationCanceledException>(() => service.Execute(new ProcessMonitoredDownloadsCommand(), cts.Token));
 

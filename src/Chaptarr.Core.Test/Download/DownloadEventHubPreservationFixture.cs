@@ -230,7 +230,7 @@ namespace Chaptarr.Core.Test.Download
                     Proxy<IDownloadClientFactory>((method, args) => clientDefinition), logger);
                 hub = BuildSubject(downloadClient, resolver);
                 var processor = new DownloadProcessingService(Proxy<IConfigService>((method, args) => false),
-                    null, null, tracker, events, logger);
+                    null, null, tracker, events, logger, null);
 
                 processor.Execute(new ProcessMonitoredDownloadsCommand());
                 Assert.That(downloadClient.RemoveCalls, Is.Zero);
