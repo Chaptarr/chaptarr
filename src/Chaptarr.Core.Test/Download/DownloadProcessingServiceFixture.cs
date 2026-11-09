@@ -187,6 +187,11 @@ namespace Chaptarr.Core.Test.Download
             {
                 return true;
             }
+
+            public bool CanRemoveDownload(TrackedDownload trackedDownload, DownloadCleanupContext cleanup = null)
+            {
+                return false;
+            }
         }
 
         private static TrackedDownload CreatePending(string downloadId)
