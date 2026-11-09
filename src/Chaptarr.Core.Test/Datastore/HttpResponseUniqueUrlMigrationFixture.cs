@@ -24,7 +24,7 @@ namespace Chaptarr.Core.Test.Datastore
                 connection.Open();
                 connection.Execute(@"
                     CREATE TABLE ""VersionInfo"" (""Version"" INTEGER PRIMARY KEY, ""AppliedOn"" TEXT NULL, ""Description"" TEXT NULL);
-                    WITH RECURSIVE versions(version) AS (SELECT 1 UNION ALL SELECT version + 1 FROM versions WHERE version < 107)
+                    WITH RECURSIVE versions(version) AS (SELECT 1 UNION ALL SELECT version + 1 FROM versions WHERE version < 129)
                     INSERT INTO ""VersionInfo"" (""Version"", ""AppliedOn"", ""Description"") SELECT version, CURRENT_TIMESTAMP, 'test baseline' FROM versions;
                     CREATE TABLE ""HttpResponse"" (""Id"" INTEGER PRIMARY KEY, ""Url"" TEXT NOT NULL, ""LastRefresh"" TEXT NOT NULL, ""Expiry"" TEXT NOT NULL, ""Value"" TEXT NOT NULL, ""StatusCode"" INTEGER NOT NULL);
                     CREATE INDEX ""IX_HttpResponse_Url"" ON ""HttpResponse"" (""Url"");
@@ -38,7 +38,7 @@ namespace Chaptarr.Core.Test.Datastore
                 ");
 
                 var migrationController = new MigrationController(LogManager.GetLogger("HttpResponseUniqueUrlMigrationFixture"), null);
-                migrationController.Migrate(connectionString, new MigrationContext(MigrationType.Cache, 109), DatabaseType.SQLite);
+                migrationController.Migrate(connectionString, new MigrationContext(MigrationType.Cache, 130), DatabaseType.SQLite);
 
                 Assert.That(connection.QuerySingle<int>(@"SELECT COUNT(*) FROM ""HttpResponse"""), Is.EqualTo(3));
                 Assert.That(connection.QuerySingle<string>(@"SELECT ""Value"" FROM ""HttpResponse"" WHERE ""Url"" = 'a'"), Is.EqualTo("newest"));
