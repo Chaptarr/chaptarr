@@ -8,7 +8,7 @@ namespace NzbDrone.Core.Datastore.Migration
     // had an index on those columns, so each lookup/delete was a sequential scan: ~5 ms against
     // MetadataFiles at ~70k rows, which made it the single most expensive statement of an author refresh
     // that prunes books (a book deletion costs ~0.1 ms everywhere else on the delete path).
-    [Migration(110)]
+    [Migration(131)]
     public class add_extra_file_author_book_indexes : NzbDroneMigrationBase
     {
         protected override void MainDbUpgrade()
