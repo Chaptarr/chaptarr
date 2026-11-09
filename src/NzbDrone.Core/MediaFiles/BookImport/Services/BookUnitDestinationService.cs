@@ -204,11 +204,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
         // no longer on disk. A file that is still there, or one in a different folder, is a real copy.
         private bool OnlyReplacedFilesRemain(IEnumerable<BookFile> existingFiles, string editionTitle, BookMediaType mediaType, string unitKey)
         {
-            var incomingFolder = FolderOfUnitKey(unitKey);
+            var incomingFolder = BookRootOfUnitKey(unitKey, mediaType);
 
             foreach (var file in existingFiles)
             {
-                var fileFolder = FolderOfUnitKey(BuildRootUnitKeyWithExtension(file.Path, editionTitle, mediaType));
+                var fileFolder = BookRootOfUnitKey(BuildRootUnitKeyWithExtension(file.Path, editionTitle, mediaType), mediaType);
                 if (!string.Equals(fileFolder, incomingFolder, StringComparison.OrdinalIgnoreCase) || IsStillOnDisk(file.Path))
                 {
                     return false;
@@ -218,19 +218,34 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             return true;
         }
 
-        // BuildRootUnitKeyWithExtension appends "|.ext" to an audio unit's key. Without it, the key names
-        // the book folder and media type, so two keys that differ only by container share a folder.
-        private static string FolderOfUnitKey(string unitKey)
+        // Every unit key starts with the book-root key "<book folder>|<media type>". Units add a suffix
+        // after it: "|.ext" from BuildRootUnitKeyWithExtension, or "|<file path>" from
+        // BookCoalescingHelper.BuildPerFileUnitKey, which a full-length single file (a standalone
+        // recording, such as an M4B that replaced a book's MP3s) is imported under. Dropping the suffix
+        // compares units by book folder. Files that are still on disk keep their own book, so separate
+        // recordings in one folder stay apart.
+        private static string BookRootOfUnitKey(string unitKey, BookMediaType mediaType)
         {
             if (string.IsNullOrEmpty(unitKey))
             {
                 return string.Empty;
             }
 
-            var separator = unitKey.LastIndexOf('|');
-            return separator >= 0 && separator + 1 < unitKey.Length && unitKey[separator + 1] == '.'
-                ? unitKey.Substring(0, separator)
-                : unitKey;
+            var marker = "|" + mediaType.ToString().ToLowerInvariant();
+            var index = unitKey.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+
+            while (index >= 0)
+            {
+                var end = index + marker.Length;
+                if (end == unitKey.Length || unitKey[end] == '|')
+                {
+                    return unitKey.Substring(0, end);
+                }
+
+                index = unitKey.IndexOf(marker, end, StringComparison.OrdinalIgnoreCase);
+            }
+
+            return unitKey;
         }
 
         private bool IsStillOnDisk(string path)

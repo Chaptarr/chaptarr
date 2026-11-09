@@ -399,8 +399,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 logger: LogManager.GetCurrentClassLogger());
         }
 
-        [Test]
-        public void should_reuse_the_book_when_another_tool_replaced_its_files_in_place()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void should_reuse_the_book_when_another_tool_replaced_its_files_in_place(bool perFileKey)
         {
             // An outside tool (Audiobookshelf's M4B encoder, say) turned the MP3s into one M4B in the same
             // folder. The rescan places the M4B before it deletes the MP3 rows, so those rows are still here.
@@ -408,7 +409,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var bookService = new InMemoryBookService(new[] { book });
             var unitDestination = DestinationService(book, edition, mp3s, bookService, isOnDisk: _ => false);
 
-            var m4bKey = unitDestination.BuildRootUnitKeyWithExtension($"{MoreauFolder}/The Island of Dr. Moreau.m4b", book.Title, book.MediaType);
+            var m4bKey = IncomingM4bKey(unitDestination, book, perFileKey);
             var destination = unitDestination.ResolveDestinationForUnit(book, edition, m4bKey);
 
             Assert.Multiple(() =>
@@ -419,22 +420,24 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             });
         }
 
-        [Test]
-        public void should_still_create_a_copy_while_any_of_the_other_container_is_on_disk()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void should_still_create_a_copy_while_any_of_the_other_container_is_on_disk(bool perFileKey)
         {
             // Three MP3s are gone but one is still next to the new M4B, so the folder really holds both.
             var (book, edition, mp3s) = BookWithMp3s();
             var bookService = new InMemoryBookService(new[] { book });
             var unitDestination = DestinationService(book, edition, mp3s, bookService, isOnDisk: path => path.EndsWith(" - 04.mp3", StringComparison.Ordinal));
 
-            var m4bKey = unitDestination.BuildRootUnitKeyWithExtension($"{MoreauFolder}/The Island of Dr. Moreau.m4b", book.Title, book.MediaType);
+            var m4bKey = IncomingM4bKey(unitDestination, book, perFileKey);
             var destination = unitDestination.ResolveDestinationForUnit(book, edition, m4bKey);
 
             Assert.That(destination.BookId, Is.Not.EqualTo(book.Id));
         }
 
-        [Test]
-        public void should_still_create_a_copy_when_the_missing_files_were_in_another_folder()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void should_still_create_a_copy_when_the_missing_files_were_in_another_folder(bool perFileKey)
         {
             // Files that are missing from a different folder (a drive that isn't mounted, say) still stand for
             // a separate copy. Only files gone from the incoming unit's own folder were replaced in place.
@@ -442,8 +445,34 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var bookService = new InMemoryBookService(new[] { book });
             var unitDestination = DestinationService(book, edition, mp3s, bookService, isOnDisk: _ => false);
 
-            var m4bKey = unitDestination.BuildRootUnitKeyWithExtension($"{MoreauFolder}/The Island of Dr. Moreau.m4b", book.Title, book.MediaType);
+            var m4bKey = IncomingM4bKey(unitDestination, book, perFileKey);
             var destination = unitDestination.ResolveDestinationForUnit(book, edition, m4bKey);
+
+            Assert.That(destination.BookId, Is.Not.EqualTo(book.Id));
+        }
+
+        // A full-length single file (an M4B whose duration matches the edition) is imported as a
+        // standalone recording with a per-file key; other units use the folder key with the extension.
+        private static string IncomingM4bKey(BookUnitDestinationService unitDestination, Book book, bool perFileKey)
+        {
+            var path = $"{MoreauFolder}/The Island of Dr. Moreau.m4b";
+            return perFileKey
+                ? BookCoalescingHelper.BuildPerFileUnitKey(path, book.Title, book.MediaType)
+                : unitDestination.BuildRootUnitKeyWithExtension(path, book.Title, book.MediaType);
+        }
+
+        [Test]
+        public void should_keep_a_second_complete_copy_in_the_same_folder_separate_while_the_first_is_on_disk()
+        {
+            // Per-file keys keep two complete recordings in one folder apart. Reusing a book for a
+            // replaced file must not merge a copy whose existing file is still there.
+            var (book, edition, _) = BookWithMp3s();
+            var first = new BookFile { Id = 900, EditionId = edition.Id, Edition = edition, Path = $"{MoreauFolder}/The Island of Dr. Moreau (Flo Gibson).m4b", MediaType = "audiobook" };
+            var bookService = new InMemoryBookService(new[] { book });
+            var unitDestination = DestinationService(book, edition, new List<BookFile> { first }, bookService, isOnDisk: _ => true);
+
+            var secondKey = BookCoalescingHelper.BuildPerFileUnitKey($"{MoreauFolder}/The Island of Dr. Moreau (Simon Prebble).m4b", book.Title, book.MediaType);
+            var destination = unitDestination.ResolveDestinationForUnit(book, edition, secondKey);
 
             Assert.That(destination.BookId, Is.Not.EqualTo(book.Id));
         }
