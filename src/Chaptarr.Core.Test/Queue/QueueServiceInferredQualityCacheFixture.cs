@@ -49,7 +49,8 @@ namespace Chaptarr.Core.Test.Queue
 
         private static QueueService CreateService()
         {
-            return new QueueService(new NullEventAggregator(), DispatchProxy.Create<IHistoryService, HistoryServiceProxy>());
+            return new QueueService(new NullEventAggregator(), DispatchProxy.Create<IHistoryService, HistoryServiceProxy>(),
+                global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.CustomFormats.ICustomFormatCalculationService>((method, args) => new List<NzbDrone.Core.CustomFormats.CustomFormat>()));
         }
 
         private static TrackedDownload CreateCompletedDownload(string downloadId, IEnumerable<string> filePaths, params Book[] books)
