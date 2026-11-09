@@ -50,13 +50,16 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             Assert.That(typeof(ConversionJobService).GetField("_outcomeRetryDelay", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(service),
                 Is.EqualTo(TimeSpan.FromSeconds(30)));
+            Assert.That(typeof(ConversionJobService).GetField("_shutdownWait", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(service),
+                Is.EqualTo(TimeSpan.FromSeconds(5)));
+            Assert.That(typeof(ConversionJobService).GetField("_heartbeatInterval", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(service),
+                Is.EqualTo(TimeSpan.FromSeconds(30)));
         }
 
         private static void RunWorker(ConversionJobService service, ConversionJobRequest request)
         {
             service.Enqueue(request);
-            typeof(ConversionJobService).GetMethod("DispatchQueuedJobs", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(service, null);
-            Assert.That(SpinWait.SpinUntil(() => !service.IsRunning(request.DownloadId), TimeSpan.FromSeconds(45)), Is.True);
+            Assert.That(DispatchWorkers(service).Wait(TimeSpan.FromSeconds(45)), Is.True);
         }
 
         private sealed class StubEventAggregator : IEventAggregator
@@ -350,7 +353,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 finally
                 {
                     converter.Release.Set();
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     Directory.Delete(root, true);
                 }
             });
@@ -430,7 +433,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 finally
                 {
                     converter.Release.Set();
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     Directory.Delete(root, true);
                 }
                 Assert.That(log.Logs.Any(line => line.StartsWith("Error|") && line.Contains("Injected conversion database outage")), Is.True);
@@ -535,7 +538,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                 }
             }
             finally
@@ -577,7 +580,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
             finally
             {
-                service.Handle(new ApplicationShutdownRequested());
+                ShutdownAndWait(service);
                 SqliteConnection.ClearAllPools();
                 if (Directory.Exists(tempDir))
                 {
@@ -645,8 +648,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 converter.Release.Set();
                 releaseTrackerCancel.Set();
-                if (cancel != null) cancel.Wait(TimeSpan.FromSeconds(5));
-                service.Handle(new ApplicationShutdownRequested());
+                if (cancel != null) Assert.That(cancel.Wait(TimeSpan.FromSeconds(5)), Is.True);
+                ShutdownAndWait(service);
                 actualTracking.Complete(request.DownloadId);
                 SqliteConnection.ClearAllPools();
                 Directory.Delete(directory, true);
@@ -713,7 +716,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     tracking.Clear(request.DownloadId);
                     Directory.Delete(directory, true);
                 }
@@ -748,7 +751,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
             finally
             {
-                service.Handle(new ApplicationShutdownRequested());
+                ShutdownAndWait(service);
                 SqliteConnection.ClearAllPools();
                 if (Directory.Exists(tempDir))
                 {
@@ -815,7 +818,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
             finally
             {
-                service.Handle(new ApplicationShutdownRequested());
+                ShutdownAndWait(service);
                 SqliteConnection.ClearAllPools();
                 if (Directory.Exists(tempDir))
                 {
@@ -890,7 +893,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
             finally
             {
-                service.Handle(new ApplicationShutdownRequested());
+                ShutdownAndWait(service);
                 SqliteConnection.ClearAllPools();
                 if (Directory.Exists(tempDir))
                 {
@@ -912,11 +915,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             var converter = new TokenRecordingConversionService();
             var service = CreateService(timing.Observe(repository), converter, concurrentConversions: 2, maxCpuThreads: 8, logger: timing.Logger);
             using var started = new CountdownEvent(2);
-            var completions = new ConcurrentBag<Task>();
             converter.OnStarted = id =>
             {
                 timing.Record("converter entered " + id);
-                completions.Add(GetWorkerCompletion(service, id));
                 started.Signal();
             };
 
@@ -937,14 +938,14 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 timing.Record("converters released");
                 converter.Release.Set();
-                Assert.That(Task.WhenAll(completions).Wait(TimeSpan.FromSeconds(2)), Is.True, timing.Details);
+                Assert.That(service.Completion.Workers.Wait(TimeSpan.FromSeconds(2)), Is.True, timing.Details);
                 Assert.That(repository.FindByDownloadId(first.DownloadId)?.Status, Is.EqualTo(ConversionJobStatus.ReadyToImport));
                 Assert.That(repository.FindByDownloadId(second.DownloadId)?.Status, Is.EqualTo(ConversionJobStatus.ReadyToImport));
             }
             finally
             {
                 converter.Release.Set();
-                service.Handle(new ApplicationShutdownRequested());
+                ShutdownAndWait(service);
                 SqliteConnection.ClearAllPools();
                 if (Directory.Exists(tempDir))
                 {
@@ -988,7 +989,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
             finally
             {
-                service.Handle(new ApplicationShutdownRequested());
+                ShutdownAndWait(service);
                 SqliteConnection.ClearAllPools();
                 if (Directory.Exists(tempDir))
                 {
@@ -1021,7 +1022,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
             finally
             {
-                service.Handle(new ApplicationShutdownRequested());
+                ShutdownAndWait(service);
                 SqliteConnection.ClearAllPools();
                 Directory.Delete(tempDir, true);
             }
@@ -1091,7 +1092,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             Logger logger = null,
             IConfigService config = null,
             IRootFolderService roots = null,
-            NzbDrone.Common.Disk.IDiskProvider disk = null)
+            NzbDrone.Common.Disk.IDiskProvider disk = null,
+            TimeSpan? shutdownWait = null,
+            TimeSpan? heartbeatInterval = null)
         {
             var eventAggregator = new StubEventAggregator();
             var tracking = new ConversionTrackingService(eventAggregator);
@@ -1103,7 +1106,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 commandQueue,
                 config ?? CreateConfig(concurrentConversions, maxCpuThreads),
                 logger ?? LogManager.GetCurrentClassLogger(),
-                outcomeRetryDelay: TimeSpan.FromSeconds(2));
+                outcomeRetryDelay: TimeSpan.FromSeconds(2), shutdownWait: shutdownWait, heartbeatInterval: heartbeatInterval);
         }
 
         internal static NzbDrone.Common.Disk.IDiskProvider TestCleanupDisk(Action beforeProbe = null) => InterfaceProxy.Proxy<NzbDrone.Common.Disk.IDiskProvider>((method, args) =>

@@ -28,13 +28,13 @@ namespace Chaptarr.Core.Test.MediaFiles
             public ConversionJobService Service { get; set; }
             public void Stop()
             {
-                Service?.Handle(new ApplicationShutdownRequested());
+                ShutdownAndWait(Service);
                 Service = null;
             }
             public void Dispose()
             {
-                try { Stop(); }
-                finally { if (Directory.Exists(Root)) Directory.Delete(Root, true); }
+                Stop();
+                if (Directory.Exists(Root)) Directory.Delete(Root, true);
             }
         }
 
@@ -118,7 +118,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     service.Enqueue(request);
                     typeof(ConversionJobService).GetMethod("DispatchQueuedJobs", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(service, null);
                     Assert.That(SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey(request.DownloadId), TimeSpan.FromSeconds(5)), Is.True);
-                    completion = GetWorkerCompletion(service, request.DownloadId);
+                    completion = service.Completion.Workers;
                     if (change == "request")
                     {
                         // Model the lifecycle writer resolving ambiguous history while encoding.
