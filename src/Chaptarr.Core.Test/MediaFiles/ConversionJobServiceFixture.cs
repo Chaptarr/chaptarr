@@ -18,6 +18,7 @@ using NUnit.Framework;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Common.Composition.Extensions;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Datastore.Migration.Framework;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.MediaFiles;
@@ -102,6 +103,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public ConcurrentDictionary<string, int> CallsByDownloadId { get; } = new(StringComparer.OrdinalIgnoreCase);
             public ManualResetEventSlim Release { get; } = new(false);
             public bool HoldCancellation { get; set; }
+            public Action<string> OnStarted { get; set; }
 
             public ConversionResult ConvertToM4b(string[] inputFiles, string outputFile, ConversionOptions options = null)
             {
@@ -110,6 +112,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 CallsByDownloadId.AddOrUpdate(downloadId, 1, (_, count) => count + 1);
                 InputsByDownloadId[downloadId] = inputFiles;
                 OptionsByDownloadId[downloadId] = options;
+                OnStarted?.Invoke(downloadId);
 
                 if (HoldCancellation) Release.Wait();
                 else WaitHandle.WaitAny(new[] { options.CancellationToken.WaitHandle, Release.WaitHandle });
@@ -903,9 +906,19 @@ namespace Chaptarr.Core.Test.MediaFiles
             Directory.CreateDirectory(tempDir);
             var first = CreateRequest(tempDir, "fair-token-first");
             var second = CreateRequest(tempDir, "fair-token-second");
+            using var timing = new WorkerTiming();
             var repository = CreateRepository(Path.Combine(tempDir, "jobs.db"));
+            timing.Record("database created");
             var converter = new TokenRecordingConversionService();
-            var service = CreateService(repository, converter, concurrentConversions: 2, maxCpuThreads: 8);
+            var service = CreateService(timing.Observe(repository), converter, concurrentConversions: 2, maxCpuThreads: 8, logger: timing.Logger);
+            using var started = new CountdownEvent(2);
+            var completions = new ConcurrentBag<Task>();
+            converter.OnStarted = id =>
+            {
+                timing.Record("converter entered " + id);
+                completions.Add(GetWorkerCompletion(service, id));
+                started.Signal();
+            };
 
             try
             {
@@ -913,8 +926,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 service.Enqueue(second);
                 service.Handle(new ApplicationStartedEvent());
                 Assert.That(
-                    SpinWait.SpinUntil(() => converter.OptionsByDownloadId.Count == 2, TimeSpan.FromSeconds(2)),
-                    Is.True);
+                    started.Wait(TimeSpan.FromSeconds(2)),
+                    Is.True, timing.Details);
 
                 Assert.That(converter.OptionsByDownloadId[first.DownloadId].FfmpegThreads, Is.EqualTo(4));
                 Assert.That(converter.OptionsByDownloadId[second.DownloadId].FfmpegThreads, Is.EqualTo(4));
@@ -922,16 +935,15 @@ namespace Chaptarr.Core.Test.MediaFiles
                     converter.OptionsByDownloadId.Values.Sum(options => options.Jobs * options.FfmpegThreads),
                     Is.LessThanOrEqualTo(8));
 
+                timing.Record("converters released");
                 converter.Release.Set();
-                Assert.That(
-                    SpinWait.SpinUntil(
-                        () => repository.FindByDownloadId(first.DownloadId)?.Status == ConversionJobStatus.ReadyToImport &&
-                              repository.FindByDownloadId(second.DownloadId)?.Status == ConversionJobStatus.ReadyToImport,
-                        TimeSpan.FromSeconds(2)),
-                    Is.True);
+                Assert.That(Task.WhenAll(completions).Wait(TimeSpan.FromSeconds(2)), Is.True, timing.Details);
+                Assert.That(repository.FindByDownloadId(first.DownloadId)?.Status, Is.EqualTo(ConversionJobStatus.ReadyToImport));
+                Assert.That(repository.FindByDownloadId(second.DownloadId)?.Status, Is.EqualTo(ConversionJobStatus.ReadyToImport));
             }
             finally
             {
+                converter.Release.Set();
                 service.Handle(new ApplicationShutdownRequested());
                 SqliteConnection.ClearAllPools();
                 if (Directory.Exists(tempDir))
@@ -1131,9 +1143,15 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Mode = SqliteOpenMode.ReadWriteCreate
             }.ToString();
 
-            using (var connection = new SqliteConnection(connectionString))
+            // Keep the small fixture schema, but use production connection initialization:
+            // rollback-journal/FULL defaults serialize readers and flush every write on Windows.
+            var connectionInfo = new DatabaseConnectionInfo(DatabaseType.SQLite, connectionString);
+            var factory = new DbFactory(
+                InterfaceProxy.Proxy<IMigrationController>((_, _) => null),
+                InterfaceProxy.Proxy<IConnectionStringFactory>((_, _) => connectionInfo), null);
+            var database = factory.Create();
+            using (var connection = database.OpenConnection())
             {
-                connection.Open();
                 connection.Execute(@"
 CREATE TABLE ""DownloadClients"" (""Id"" INTEGER PRIMARY KEY);
 CREATE TABLE ""History"" (""Id"" INTEGER PRIMARY KEY, ""DownloadId"" TEXT, ""EventType"" INTEGER);
@@ -1163,13 +1181,6 @@ CREATE TABLE ""ConversionJobs"" (
     ""CompletedAt"" TEXT
 );");
             }
-
-            var database = new Database("main", () =>
-            {
-                var connection = new SqliteConnection(connectionString);
-                connection.Open();
-                return connection;
-            });
 
             return new ConversionJobRepository(new MainDatabase(database), new StubEventAggregator());
         }

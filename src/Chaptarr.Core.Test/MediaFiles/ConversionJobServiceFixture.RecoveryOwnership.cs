@@ -47,13 +47,13 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         [Test]
         public void released_worker_settles_fresh_metadata_only_for_its_own_attempt(
-            [Values(false, true)] bool postgres, [Values("request", "retry", "replacement", "removed")] string change)
+            [Values(false, true)] bool postgres, [Values("request", "retry", "stale", "replacement", "removed")] string change)
         {
             WithRecovery(postgres, (database, scope) =>
             {
                 var request = CreateRequest(scope.Root, "fresh-settlement");
                 request.BookId = 42;
-                request.HistoryIdentityAmbiguous = change is "request" or "retry";
+                request.HistoryIdentityAmbiguous = change is "request" or "retry" or "stale";
                 var libraryPath = Path.Combine(scope.Root, "library.m4b");
                 File.WriteAllText(libraryPath, "committed recording");
                 var repository = new ConversionJobRepository(database, new StubEventAggregator());
@@ -92,11 +92,11 @@ namespace Chaptarr.Core.Test.MediaFiles
                     if (method.Name == nameof(IMediaFileService.GetFilePathOwnership)) return new List<BookFile>();
                     Assert.That(method.Name, Is.EqualTo(nameof(IMediaFileService.GetFilesByBook)));
                     AtReleasedBoundary();
-                    if (change == "retry" && Volatile.Read(ref committed) == 1 && Interlocked.CompareExchange(ref retryFailures, 1, 0) == 0)
+                    if (change is "retry" or "stale" && Volatile.Read(ref committed) == 1 && Interlocked.CompareExchange(ref retryFailures, 1, 0) == 0)
                     {
-                        // Change metadata after the first fresh read, then force the production retry.
+                        // Change metadata between the fresh read and locked settlement, with or without a database failure.
                         ResolveHistoryIdentity();
-                        throw new SqliteException("Injected post-release import evidence read failure", 1);
+                        if (change == "retry") throw new SqliteException("Injected post-release import evidence read failure", 1);
                     }
                     return Volatile.Read(ref committed) == 0 ? new List<BookFile>() : new List<BookFile>
                     {
@@ -106,8 +106,10 @@ namespace Chaptarr.Core.Test.MediaFiles
                         } }
                     };
                 });
+                using var logs = new LogFactory();
+                var sink = CaptureOrphanLogs(logs);
                 service = scope.Service = new ConversionJobService(TestCleanupDisk(), TestRootFolders(), media, proxy, converter, null,
-                    DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>(), CreateConfig(), LogManager.GetCurrentClassLogger(),
+                    DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>(), CreateConfig(), logs.GetLogger("released-settlement"),
                     outcomeRetryDelay: TimeSpan.FromMilliseconds(10));
                 Task completion = null;
                 ConversionJob replacement = null;
@@ -116,9 +118,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     service.Enqueue(request);
                     typeof(ConversionJobService).GetMethod("DispatchQueuedJobs", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(service, null);
                     Assert.That(SpinWait.SpinUntil(() => converter.OptionsByDownloadId.ContainsKey(request.DownloadId), TimeSpan.FromSeconds(5)), Is.True);
-                    var owners = (IDictionary)typeof(ConversionJobService).GetField("_activeConversions", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(service);
-                    var owner = owners[request.DownloadId];
-                    completion = ((TaskCompletionSource)owner.GetType().GetProperty("Completion").GetValue(owner)).Task;
+                    completion = GetWorkerCompletion(service, request.DownloadId);
                     if (change == "request")
                     {
                         // Model the lifecycle writer resolving ambiguous history while encoding.
@@ -149,7 +149,13 @@ namespace Chaptarr.Core.Test.MediaFiles
                         Assert.That(saved.Status, Is.EqualTo(ConversionJobStatus.Queued));
                         Assert.That(Directory.Exists(replacement.WorkFolder), Is.True);
                     }
-                    Assert.That(retryFailures, Is.EqualTo(change == "retry" ? 1 : 0));
+                    Assert.That(retryFailures, Is.EqualTo(change is "retry" or "stale" ? 1 : 0));
+                    if (change is "replacement" or "removed")
+                        Assert.That(sink.Logs.Any(line => line.StartsWith("Info|", StringComparison.Ordinal) &&
+                            line.Contains(request.DownloadId, StringComparison.Ordinal) &&
+                            line.Contains(change == "removed" ? "no longer exists" : "different attempt", StringComparison.Ordinal)), Is.True);
+                    if (change == "stale")
+                        Assert.That(sink.Logs.Any(line => line.StartsWith("Warn|Skipping recovery", StringComparison.Ordinal)), Is.True);
                     Assert.That(converter.CallsByDownloadId[request.DownloadId], Is.EqualTo(1));
                     Assert.That(File.ReadAllText(libraryPath), Is.EqualTo("committed recording"));
                     Assert.That(File.Exists(request.Sources[0].Path), Is.True);
@@ -161,6 +167,71 @@ namespace Chaptarr.Core.Test.MediaFiles
                     scope.Stop();
                     completion?.Wait(TimeSpan.FromSeconds(5));
                 }
+            });
+        }
+
+        [Test]
+        public void committed_settlement_preserves_requested_removal_scope(
+            [Values(false, true)] bool postgres, [Values("none", "current", "all")] string scopeChoice)
+        {
+            WithRecovery(postgres, (database, scope) =>
+            {
+                var request = CreateRequest(scope.Root, "settlement-scope");
+                request.DiscardRequested = scopeChoice != "none";
+                request.DiscardCurrentAttemptOnly = scopeChoice == "current";
+                request.DiscardReason = request.DiscardRequested ? "removed" : null;
+                var older = Path.Combine(request.WorkRoot, "older");
+                Directory.CreateDirectory(older);
+                var olderOutput = Path.Combine(older, "book.m4b");
+                File.WriteAllText(olderOutput, "previous attempt");
+                File.WriteAllText(Path.Combine(older, "conversion-artifact.json"), JsonSerializer.Serialize(new ConversionArtifactManifest
+                {
+                    DownloadId = request.DownloadId, OutputPath = olderOutput, Sources = request.Sources,
+                    EncoderSucceeded = true, OutputSize = new FileInfo(olderOutput).Length
+                }));
+                var repository = new ConversionJobRepository(database, new StubEventAggregator());
+                var job = repository.Insert(CreatePersistedJob(request, ConversionJobStatus.ReadyToImport, DateTime.UtcNow));
+                ConversionJobRequest settled = null;
+                var proxy = InterfaceProxy.Proxy<IConversionJobRepository>((method, args) =>
+                {
+                    if (method.Name == nameof(IConversionJobRepository.Update) && args[0] is ConversionJob row && row.Status == ConversionJobStatus.Completed)
+                        settled = JsonSerializer.Deserialize<ConversionJobRequest>(row.RequestJson);
+                    return method.Invoke(repository, args);
+                });
+                var service = scope.Service = CreateService(proxy, new UnusedConversionService());
+                typeof(ConversionJobService).GetMethod("SettleCommittedImport", BindingFlags.NonPublic | BindingFlags.Instance)
+                    .Invoke(service, new object[] { job });
+                Assert.Multiple(() =>
+                {
+                    Assert.That(settled.DiscardCurrentAttemptOnly, Is.EqualTo(scopeChoice != "all"));
+                    Assert.That(settled.DiscardReason, Is.EqualTo(scopeChoice == "none" ? "imported" : "removed"));
+                    Assert.That(Directory.Exists(request.WorkFolder), Is.False);
+                    Assert.That(File.Exists(olderOutput), Is.EqualTo(scopeChoice != "all"));
+                    Assert.That(File.Exists(request.Sources[0].Path), Is.True);
+                    Assert.That(repository.FindByDownloadId(request.DownloadId), Is.Null);
+                });
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void deleted_job_settlement_reports_absence_instead_of_newer_state(bool postgres)
+        {
+            WithRecovery(postgres, (database, scope) =>
+            {
+                var request = CreateRequest(scope.Root, "deleted-settlement");
+                var repository = new ConversionJobRepository(database, new StubEventAggregator());
+                using var logs = new LogFactory();
+                var sink = CaptureOrphanLogs(logs);
+                var service = scope.Service = CreateService(repository, new UnusedConversionService(), logger: logs.GetLogger("deleted-settlement"));
+                var job = service.Enqueue(request);
+                repository.Delete(job.Id);
+                typeof(ConversionJobService).GetMethod("SettleCommittedImport", BindingFlags.NonPublic | BindingFlags.Instance)
+                    .Invoke(service, new object[] { job });
+                Assert.That(sink.Logs.Any(line => line.StartsWith("Warn|Skipping recovery", StringComparison.Ordinal) &&
+                    line.Contains(request.DownloadId, StringComparison.Ordinal) && line.Contains("no longer exists", StringComparison.Ordinal)), Is.True);
+                Assert.That(sink.Logs.Any(line => line.Contains("preserving the newer state", StringComparison.Ordinal)), Is.False);
+                Assert.That(Directory.Exists(request.WorkFolder), Is.True);
             });
         }
 
