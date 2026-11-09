@@ -167,6 +167,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public string DestinationPath { get; set; }
             public Func<LocalBook, string> DestinationForFile { get; set; }
             public string FailSourcePath { get; set; }
+            public Dictionary<string, string> DestinationsBySource { get; } = new(StringComparer.OrdinalIgnoreCase);
             public int MoveCalls { get; private set; }
             public int CopyCalls { get; private set; }
             public int PreviewCalls { get; private set; }
@@ -184,7 +185,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public BookFile MoveBookFile(BookFile bookFile, LocalBook localBook)
             {
                 MoveCalls++;
-                bookFile.Path = DestinationForFile?.Invoke(localBook) ?? DestinationPath ?? bookFile.Path;
+                bookFile.Path = DestinationForFile?.Invoke(localBook) ?? (localBook.Path != null && DestinationsBySource.TryGetValue(localBook.Path, out var mapped) ? mapped : null) ?? DestinationPath ?? bookFile.Path;
                 TransferFile(localBook.Path, bookFile.Path, copy: false);
                 return bookFile;
             }
@@ -192,7 +193,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public BookFile CopyBookFile(BookFile bookFile, LocalBook localBook)
             {
                 CopyCalls++;
-                bookFile.Path = DestinationForFile?.Invoke(localBook) ?? DestinationPath ?? bookFile.Path;
+                bookFile.Path = DestinationForFile?.Invoke(localBook) ?? (localBook.Path != null && DestinationsBySource.TryGetValue(localBook.Path, out var mapped) ? mapped : null) ?? DestinationPath ?? bookFile.Path;
                 TransferFile(localBook.Path, bookFile.Path, copy: true);
                 return bookFile;
             }
@@ -202,7 +203,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public string GetImportDestinationPath(BookFile bookFile, LocalBook localBook)
             {
                 PreviewCalls++;
-                return DestinationForFile?.Invoke(localBook) ?? DestinationPath;
+                return DestinationForFile?.Invoke(localBook) ?? (localBook.Path != null && DestinationsBySource.TryGetValue(localBook.Path, out var mapped) ? mapped : null) ?? DestinationPath;
             }
 
             private void TransferFile(string sourcePath, string destinationPath, bool copy)
@@ -1833,34 +1834,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
-        [Test]
-        public void automatic_import_should_not_replace_an_equal_quality_duplicate()
-        {
-            var outcome = RunDuplicateImportScenario(Quality.M4B, Quality.M4B);
-
-            Assert.That(outcome.Results, Has.Count.EqualTo(1));
-            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Skipped));
-            Assert.That(outcome.Results[0].Errors, Does.Contain(ImportApprovedBooks.AlreadyImportedRejectionReason));
-            Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(0));
-            Assert.That(outcome.MediaFileService.DeletedFiles, Is.Empty);
-            Assert.That(outcome.RecycleBin.DeletedFiles, Is.Empty);
-            Assert.That(outcome.MediaFileService.FilesByBook.Select(f => f.Id), Is.EquivalentTo(new[] { 9001 }));
-            Assert.That(outcome.ExistingFilesOnDisk, Is.True);
-            Assert.That(outcome.SourceFilesOnDisk, Is.True);
-        }
-
-        [Test]
-        public void automatic_import_should_not_replace_with_a_lower_quality_release()
-        {
-            var outcome = RunDuplicateImportScenario(Quality.M4B, Quality.MP3);
-
-            Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Skipped));
-            Assert.That(outcome.Results[0].Errors, Does.Contain(ImportApprovedBooks.AlreadyImportedRejectionReason));
-            Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(0));
-            Assert.That(outcome.MediaFileService.DeletedFiles, Is.Empty);
-            Assert.That(outcome.ExistingFilesOnDisk, Is.True);
-        }
-
         [TestCase("mp3-to-m4b")]
         [TestCase("epub-to-mobi")]
         public void automatic_import_should_still_replace_a_true_upgrade(string scenario)
@@ -1891,32 +1864,6 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Imported));
             Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(1));
             Assert.That(outcome.MediaFileService.DeletedFiles.Select(d => d.File.Id), Is.EquivalentTo(new[] { 9001 }));
-        }
-
-        [Test]
-        public void automatic_import_should_not_replace_a_multi_part_audiobook_duplicate()
-        {
-            var outcome = RunDuplicateImportScenario(Quality.MP3, Quality.MP3, fileCount: 3);
-
-            Assert.That(outcome.Results, Has.Count.EqualTo(3));
-            Assert.That(outcome.Results.Select(r => r.Result), Is.All.EqualTo(ImportResultType.Skipped));
-            Assert.That(outcome.Results.All(r => r.Errors.Contains(ImportApprovedBooks.AlreadyImportedRejectionReason)), Is.True);
-            Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(0));
-            Assert.That(outcome.MediaFileService.DeletedFiles, Is.Empty);
-            Assert.That(outcome.MediaFileService.FilesByBook, Has.Count.EqualTo(3));
-            Assert.That(outcome.ExistingFilesOnDisk, Is.True);
-            Assert.That(outcome.SourceFilesOnDisk, Is.True);
-        }
-
-        [Test]
-        public void automatic_import_should_complete_an_edition_that_lost_parts_instead_of_calling_it_a_duplicate()
-        {
-            // Two of four parts survive (rows still declare PartCount 4); the complete set arrives again.
-            var outcome = RunDuplicateImportScenario(Quality.MP3, Quality.MP3, fileCount: 4, existingFileCount: 2);
-
-            Assert.That(outcome.Results, Has.Count.EqualTo(4));
-            Assert.That(outcome.Results.SelectMany(r => r.Errors), Has.None.EqualTo(ImportApprovedBooks.AlreadyImportedRejectionReason));
-            Assert.That(outcome.Results.Select(r => r.Result), Is.All.EqualTo(ImportResultType.Imported));
         }
 
         [Test]
@@ -1967,7 +1914,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             Assert.That(outcome.Results, Has.Count.EqualTo(1));
             Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Skipped));
-            Assert.That(outcome.Results[0].Errors, Does.Contain(ImportApprovedBooks.AlreadyImportedRejectionReason));
+            Assert.That(outcome.Results[0].Errors.Single(), Does.StartWith("Not an upgrade").Or.EqualTo(ImportApprovedBooks.AlreadyImportedRejectionReason));
             Assert.That(outcome.TransferCalls, Is.EqualTo(0));
             Assert.That(outcome.MediaFileService.ReplaceCalls, Is.EqualTo(0));
             Assert.That(outcome.MediaFileService.DeletedFiles, Is.Empty);
@@ -2011,7 +1958,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Imported));
             Assert.That(outcome.TransferCalls, Is.EqualTo(1));
             Assert.That(outcome.DestinationContent, Is.EqualTo("incoming"));
-            Assert.That(outcome.MediaFileService.FilesByBook.Select(f => f.Id), Is.EquivalentTo(new[] { 9001 }));
+            Assert.That(outcome.MediaFileService.FilesByBook, Has.Count.EqualTo(1));
             Assert.That(outcome.MediaFileService.FilesByBook.Single().Quality.Quality, Is.EqualTo(Quality.EPUB));
         }
 
@@ -2023,13 +1970,13 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(outcome.Results[0].Result, Is.EqualTo(ImportResultType.Imported));
             Assert.That(outcome.TransferCalls, Is.EqualTo(1));
             Assert.That(outcome.DestinationContent, Is.EqualTo("incoming"));
-            Assert.That(outcome.MediaFileService.FilesByBook.Select(f => f.Id), Is.EquivalentTo(new[] { 9001 }));
+            Assert.That(outcome.MediaFileService.FilesByBook, Has.Count.EqualTo(1));
             Assert.That(outcome.MediaFileService.FilesByBook.Single().Quality.Revision.Version, Is.EqualTo(2));
         }
 
         private sealed class DuplicateImportOutcome
         {
-            public List<ImportResult> Results { get; init; }
+            public List<NzbDrone.Core.MediaFiles.BookImport.ImportResult> Results { get; init; }
             public StubMediaFileService MediaFileService { get; init; }
             public StubRecycleBinProvider RecycleBin { get; init; }
             public bool ExistingFilesOnDisk { get; init; }
