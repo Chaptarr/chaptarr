@@ -213,7 +213,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 if (method.Name == nameof(IM4bConversionService.ConvertToM4b))
                 {
                     timing.Record("converter entered");
-                    started.SetResult(ConversionJobServiceFixture.GetWorkerCompletion(jobs, "download"));
+                    started.SetResult(jobs.Completion.Workers);
                 }
                 Assert.That(method.Name, Is.EqualTo(nameof(IM4bConversionService.ConvertToM4b)));
                 try { return _subject.ConvertToM4b((string[])args[0], (string)args[1], (ConversionOptions)args[2]); }
@@ -262,7 +262,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
             finally
             {
-                jobs.Handle(new ApplicationShutdownRequested());
+                ConversionJobServiceFixture.ShutdownAndWait(jobs);
                 SqliteConnection.ClearAllPools();
             }
         }
