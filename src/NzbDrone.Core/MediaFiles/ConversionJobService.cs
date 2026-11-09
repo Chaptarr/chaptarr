@@ -1008,6 +1008,11 @@ namespace NzbDrone.Core.MediaFiles
                     return false;
                 }
                 var current = Get(expected.DownloadId);
+                if (current == null)
+                {
+                    _logger.Warn("Skipping recovery for conversion job {0}, downloadId={1}: the job no longer exists", expected.Id, expected.DownloadId);
+                    return false;
+                }
                 if (!IsSameAttempt(current, expected) || current.Status != expected.Status || current.RequestJson != expected.RequestJson)
                 {
                     _logger.Warn("Skipping recovery for conversion job {0}, downloadId={1}: the job changed after recovery read it; preserving the newer state", expected.Id, expected.DownloadId);
@@ -1097,8 +1102,9 @@ namespace NzbDrone.Core.MediaFiles
                     return;
                 }
 
-                if (RecoverCommittedImport(job, request))
+                if (HasCommittedImport(job, request))
                 {
+                    // Proof prevents another encode; settlement waits until this worker releases ownership.
                     committedImport = true;
                     return;
                 }
@@ -1225,7 +1231,13 @@ namespace NzbDrone.Core.MediaFiles
                         {
                             var current = Get(job.DownloadId);
                             // Refresh metadata without adopting a replacement attempt after release.
-                            if (IsSameAttempt(current, job)) RecoverCommittedImport(current, DeserializeRequest(current));
+                            if (!IsSameAttempt(current, job))
+                            {
+                                _logger.Info("Skipping import settlement for conversion job {0}, downloadId={1}: {2}", job.Id, job.DownloadId,
+                                    current == null ? "the job no longer exists" : "the download belongs to a different attempt");
+                                return true;
+                            }
+                            return !HasCommittedImport(current, DeserializeRequest(current)) || SettleCommittedImport(current);
                         }, "retrying import bookkeeping after worker ownership was released");
                 }
                 finally
@@ -1252,32 +1264,35 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        private void PersistWorkerOutcome(ConversionJob job, Action persist, string retryMessage = "retaining worker ownership and retrying")
+        private void PersistWorkerOutcome(ConversionJob job, Action persist, string retryMessage = "retaining worker ownership and retrying") =>
+            PersistWorkerOutcome(job, () => { persist(); return true; }, retryMessage);
+
+        private void PersistWorkerOutcome(ConversionJob job, Func<bool> persist, string retryMessage = "retaining worker ownership and retrying")
         {
             DateTime? failureStarted = null;
             while (true)
             {
                 try
                 {
-                    persist();
-                    if (failureStarted.HasValue)
+                    if (persist())
                     {
-                        _logger.Info("Saved conversion outcome {0} for download {1} after {2:0.0}s of database failures",
-                            job.Status, job.DownloadId, (DateTime.UtcNow - failureStarted.Value).TotalSeconds);
+                        if (failureStarted.HasValue)
+                        {
+                            _logger.Info("Saved conversion outcome {0} for download {1} after {2:0.0}s of database failures",
+                                job.Status, job.DownloadId, (DateTime.UtcNow - failureStarted.Value).TotalSeconds);
+                        }
+                        return;
                     }
-
-                    return;
                 }
                 catch (DbException ex)
                 {
                     failureStarted ??= DateTime.UtcNow;
                     _logger.Error(ex, "Unable to save conversion outcome {0} for download {1}; {2}. Outcome: {3}",
                         job.Status, job.DownloadId, retryMessage, job.Error ?? job.Message);
-                    if ((_shutdown?.Token ?? CancellationToken.None).WaitHandle.WaitOne(_outcomeRetryDelay))
-                    {
-                        return;
-                    }
                 }
+                // A stale snapshot also needs a fresh read. Share the bounded, cancellable
+                // retry delay rather than spinning while lifecycle writers keep changing it.
+                if ((_shutdown?.Token ?? CancellationToken.None).WaitHandle.WaitOne(_outcomeRetryDelay)) return;
             }
         }
 
@@ -1472,6 +1487,13 @@ namespace NzbDrone.Core.MediaFiles
 
         private bool RecoverCommittedImport(ConversionJob job, ConversionJobRequest request)
         {
+            if (!HasCommittedImport(job, request)) return false;
+            SettleCommittedImport(job);
+            return true;
+        }
+
+        private bool HasCommittedImport(ConversionJob job, ConversionJobRequest request)
+        {
             if (request == null) return false;
 
             // Import source coverage is committed with BookFiles, before history or the job completion write.
@@ -1484,11 +1506,7 @@ namespace NzbDrone.Core.MediaFiles
                     string.Equals(file.MatchProvenance?.ImportDownloadId, job.DownloadId, StringComparison.OrdinalIgnoreCase) &&
                     file.MatchProvenance?.ImportSourcePaths?.Count > 0 &&
                     sources.SetEquals(file.MatchProvenance.ImportSourcePaths));
-                if (imported)
-                {
-                    SettleCommittedImport(job);
-                    return true;
-                }
+                if (imported) return true;
             }
 
             // Legacy requests lack BookId, and an approved additional-copy import may create a new
@@ -1501,16 +1519,16 @@ namespace NzbDrone.Core.MediaFiles
                 if (path.IsNullOrWhiteSpace() || !File.Exists(path)) continue;
                 var file = _mediaFileService.GetFileWithPath(path);
                 if (file == null || file.EditionId != history.EditionId || file.Quality?.Quality != Qualities.Quality.M4B) continue;
-                SettleCommittedImport(job);
                 return true;
             }
 
             return false;
         }
 
-        private void SettleCommittedImport(ConversionJob job)
+        private bool SettleCommittedImport(ConversionJob job)
         {
             ConversionLifecycleCandidate expected = null;
+            ConversionJobRequest removal = null;
             if (!TryRecover(job, current =>
             {
                 current.Status = ConversionJobStatus.Completed;
@@ -1519,28 +1537,33 @@ namespace NzbDrone.Core.MediaFiles
                 current.Error = null;
                 current.CompletedAt = current.UpdatedAt = DateTime.UtcNow;
                 var request = DeserializeRequest(current);
-                request.DiscardRequested = true;
-                request.DiscardCurrentAttemptOnly = true;
-                request.DiscardReason = "imported";
+                if (!request.DiscardRequested)
+                {
+                    request.DiscardRequested = true;
+                    request.DiscardCurrentAttemptOnly = true;
+                    request.DiscardReason = "imported";
+                }
+                removal = request;
                 current.RequestJson = JsonSerializer.Serialize(request);
                 _repository.Update(current);
                 // PostgreSQL stores timestamps at microsecond precision. Capture the
                 // persisted version, just as lifecycle-page readers do.
                 expected = ExpectedAttempt(_repository.Get(current.Id));
-            }, whenOwned: () => _logger.Info("Import is committed for conversion job {0}, download {1}; workspace cleanup waits for the active worker to finish", job.Id, job.DownloadId))) return;
+            }, whenOwned: () => _logger.Info("Import is committed for conversion job {0}, download {1}; workspace cleanup waits for the active worker to finish", job.Id, job.DownloadId))) return false;
             // The committed BookFile/source proof above, not a policy refusal, prevents
             // another encode. A cleanup refusal cannot put this job back in the queue.
             _trackingService?.Complete(job.DownloadId);
             _logger.Info("Recovered committed M4B import for conversion job {0}, download {1}; the job is completed and will not encode again", job.Id, job.DownloadId);
             try
             {
-                PrepareArtifactRemoval(job.DownloadId, currentAttemptOnly: true, reason: "imported",
+                PrepareArtifactRemoval(job.DownloadId, removal.DiscardCurrentAttemptOnly, removal.DiscardReason ?? "imported",
                     origin: ConversionRemovalOrigin.Automatic, expected: expected)();
             }
             catch (Exception ex)
             {
                 RecordCleanupFailure(job.DownloadId, ex);
             }
+            return true;
         }
 
         private ConversionJobRequest DeserializeRequest(ConversionJob job)
