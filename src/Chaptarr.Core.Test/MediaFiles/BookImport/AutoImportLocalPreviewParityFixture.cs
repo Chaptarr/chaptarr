@@ -62,8 +62,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public Author UpdateAuthor(Author author) => throw new NotImplementedException();
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
-            public Dictionary<int, string> AllAuthorPaths() => new Dictionary<int, string>();
+            public List<KeyValuePair<int, string>> AllAuthorPaths() => new List<KeyValuePair<int, string>>();
             public bool AuthorPathExists(string folder) => false;
+            public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => new List<Author> { _author };
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
+            public Author UpdateAuthor(Author author, Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new NotImplementedException();
+            public void SetAddOptions(Author author) => throw new NotImplementedException();
             public void RemoveAddOptions(Author author) => throw new NotImplementedException();
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new NotImplementedException();
             public long GetAuthorSizeForMediaType(int authorId, string mediaType) => throw new NotImplementedException();
@@ -84,7 +88,30 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public bool FtsTableExists() => true;
             public void RebuildIndex() { }
 
-            public List<EditionFtsMatch> SearchWithTwoStep(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit = 20)
+            public void EnsureIndexPopulated() { }
+
+            private List<EditionFtsMatch> _last = new();
+
+            public List<BookFtsMatch> RecallBooks(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, Action<EditionFtsTraceEvent> trace = null, int limit = 20, bool monitoredOnly = false)
+            {
+                _last = Search(authorId, tokens, mediaType, limit);
+                return _last.GroupBy(match => match.BookId).Select(group => new BookFtsMatch
+                {
+                    BookId = group.Key,
+                    AuthorId = group.First().AuthorId,
+                    AuthorName = group.First().AuthorName,
+                    BookTitle = group.First().BookTitle,
+                    MatchScore = group.Max(match => match.MatchScore)
+                }).ToList();
+            }
+
+            public List<EditionFtsMatch> RankEditions(IReadOnlyCollection<BookFtsMatch> recalledBooks, IReadOnlyCollection<EditionFtsFieldQuery> fieldQueries, BookMediaType mediaType, Action<EditionFtsTraceEvent> trace = null)
+            {
+                var ids = recalledBooks.Select(book => book.BookId).ToHashSet();
+                return _last.Where(match => ids.Contains(match.BookId)).ToList();
+            }
+
+            private List<EditionFtsMatch> Search(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit = 20)
             {
                 var tokenList = (tokens ?? Array.Empty<string>())
                     .Where(token => !string.IsNullOrWhiteSpace(token))
@@ -123,7 +150,30 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public bool FtsTableExists() => true;
             public void RebuildIndex() { }
 
-            public List<EditionFtsMatch> SearchWithTwoStep(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit = 20)
+            public void EnsureIndexPopulated() { }
+
+            private List<EditionFtsMatch> _last = new();
+
+            public List<BookFtsMatch> RecallBooks(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, Action<EditionFtsTraceEvent> trace = null, int limit = 20, bool monitoredOnly = false)
+            {
+                _last = Search(authorId, tokens, mediaType, limit);
+                return _last.GroupBy(match => match.BookId).Select(group => new BookFtsMatch
+                {
+                    BookId = group.Key,
+                    AuthorId = group.First().AuthorId,
+                    AuthorName = group.First().AuthorName,
+                    BookTitle = group.First().BookTitle,
+                    MatchScore = group.Max(match => match.MatchScore)
+                }).ToList();
+            }
+
+            public List<EditionFtsMatch> RankEditions(IReadOnlyCollection<BookFtsMatch> recalledBooks, IReadOnlyCollection<EditionFtsFieldQuery> fieldQueries, BookMediaType mediaType, Action<EditionFtsTraceEvent> trace = null)
+            {
+                var ids = recalledBooks.Select(book => book.BookId).ToHashSet();
+                return _last.Where(match => ids.Contains(match.BookId)).ToList();
+            }
+
+            private List<EditionFtsMatch> Search(int? authorId, IEnumerable<string> tokens, BookMediaType mediaType, int limit = 20)
             {
                 var tokenList = (tokens ?? Array.Empty<string>())
                     .Where(token => !string.IsNullOrWhiteSpace(token))
