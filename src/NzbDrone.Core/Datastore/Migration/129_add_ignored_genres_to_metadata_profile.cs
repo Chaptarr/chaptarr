@@ -3,7 +3,7 @@ using NzbDrone.Core.Datastore.Migration.Framework;
 
 namespace NzbDrone.Core.Datastore.Migration
 {
-    [Migration(108)]
+    [Migration(129)]
     public class add_ignored_genres_to_metadata_profile : NzbDroneMigrationBase
     {
         protected override void MainDbUpgrade()

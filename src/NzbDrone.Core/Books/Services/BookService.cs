@@ -200,7 +200,7 @@ namespace NzbDrone.Core.Books
                            Logger logger,
                            IEditionSelector editionSelector = null,
                            IProviderAliasService providerAliasService = null,
-                           Lazy<IDeleteMediaFiles> deleteMediaFiles = null)
+                           Lazy<IDeleteMediaFiles> deleteMediaFiles = null,
                            ICacheManager cacheManager = null)
         {
             _bookRepository = bookRepository;
