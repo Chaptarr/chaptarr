@@ -300,6 +300,11 @@ namespace Chaptarr.Core.Test.Download
             {
                 return true;
             }
+
+            public bool CanRemoveDownload(TrackedDownload trackedDownload, DownloadCleanupContext cleanup = null)
+            {
+                return false;
+            }
         }
 
         private static DownloadProcessingService CreateProgressingService(ProgressingCompletedDownloadService completed, List<TrackedDownload> downloads, params CommandModel[] queued)
