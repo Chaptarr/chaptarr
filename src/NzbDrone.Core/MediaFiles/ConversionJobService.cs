@@ -371,11 +371,9 @@ namespace NzbDrone.Core.MediaFiles
                     if (GetCompletedConversion(job, request) == null)
                     {
                         if (job.Status == ConversionJobStatus.Completed) return new(ConversionRetentionStatus.None, reason);
-                        if (!FailUnverifiedRetainedArtifact(job, request))
-                        {
-                            MarkFailed(job, "Completed conversion output cannot be verified. Original files are kept; retry conversion or use Manual Import.");
-                            QueueImportSweep();
-                        }
+                        MarkFailed(job, HasUnverifiedRetainedArtifact(request) ? UnverifiedRetainedOutputMessage :
+                            "Completed conversion output cannot be verified. Original files are kept; retry conversion or use Manual Import.");
+                        QueueImportSweep();
                         return new(ConversionRetentionStatus.Blocked, job.Error ?? job.Message);
                     }
 
@@ -816,8 +814,8 @@ namespace NzbDrone.Core.MediaFiles
                     var request = DeserializeRequest(job);
                     if (request?.DiscardRequested == true)
                     {
-                        if (CleanupMayRetry(job) && job.Status != ConversionJobStatus.Cancelled)
-                            MarkCancelled(job, "Download discarded; removing conversion files");
+                        if (job.Status != ConversionJobStatus.Cancelled)
+                            TryRecover(job, current => MarkCancelled(current, "Download discarded; removing conversion files"));
                         continue;
                     }
 
@@ -834,21 +832,12 @@ namespace NzbDrone.Core.MediaFiles
                     {
                         case ConversionJobStatus.Converting:
                         case ConversionJobStatus.ReadyToImport:
-                            if (request != null && HasReusableArtifact(request))
-                            {
-                                MarkReady(job, "Recovered converted M4B; waiting to import");
-                                QueueImportSweep();
-                            }
-                            else if (!FailUnverifiedRetainedArtifact(job, request))
-                            {
-                                Requeue(job, "Recovering interrupted M4B conversion");
-                            }
-
+                            RecoverInterruptedConversion(job, request, "Recovering interrupted M4B conversion");
                             break;
 
                         case ConversionJobStatus.Cancelling:
-                            MarkCancelled(job, "Conversion cancelled");
-                            CleanupWorkRoot(job.WorkFolder, downloadId: job.DownloadId, reason: DeserializeRequest(job)?.DiscardReason ?? "cancelled");
+                            if (!TryRecover(job, current => MarkCancelled(current, "Conversion cancelled"))) continue;
+                            CleanupWorkRoot(job.WorkFolder, downloadId: job.DownloadId, reason: request?.DiscardReason ?? "cancelled");
                             QueueImportSweep();
                             break;
 
@@ -979,26 +968,10 @@ namespace NzbDrone.Core.MediaFiles
 
             foreach (var job in staleJobs)
             {
+                if (IsRunning(job.DownloadId)) continue;
                 try
                 {
-                    lock (_sync)
-                    {
-                        if (_activeConversions.ContainsKey(job.DownloadId))
-                        {
-                            continue;
-                        }
-                    }
-
-                    var request = DeserializeRequest(job);
-                    if (request != null && HasReusableArtifact(request))
-                    {
-                        MarkReady(job, "Recovered converted M4B; waiting to import");
-                        QueueImportSweep();
-                    }
-                    else if (!FailUnverifiedRetainedArtifact(job, request))
-                    {
-                        Requeue(job, "Recovering expired M4B conversion lease");
-                    }
+                    RecoverInterruptedConversion(job, DeserializeRequest(job), "Recovering expired M4B conversion lease");
                 }
                 catch (Exception ex)
                 {
@@ -1006,6 +979,48 @@ namespace NzbDrone.Core.MediaFiles
                 }
             }
         }
+
+        private void RecoverInterruptedConversion(ConversionJob job, ConversionJobRequest request, string message)
+        {
+            var reusable = request != null && HasReusableArtifact(request);
+            var unverified = !reusable && HasUnverifiedRetainedArtifact(request);
+            if (!TryRecover(job, current =>
+            {
+                if (reusable) MarkReady(current, "Recovered converted M4B; waiting to import");
+                else if (unverified) MarkFailed(current, UnverifiedRetainedOutputMessage);
+                else Requeue(current, message);
+            })) return;
+            if (reusable || unverified) QueueImportSweep();
+        }
+
+        // Recovery requires no owner; an interrupted worker supplies its own identity.
+        // Compare state and the complete request snapshot, not clock precision; hold the gate through the write.
+        private bool TryRecover(ConversionJob expected, Action<ConversionJob> write, ActiveConversion owner = null, Action whenOwned = null)
+        {
+            if (expected == null) return false;
+            lock (_sync)
+            {
+                _activeConversions.TryGetValue(expected.DownloadId, out var active);
+                if (!ReferenceEquals(active, owner))
+                {
+                    whenOwned?.Invoke();
+                    _logger.Debug("Skipping recovery for conversion job {0}, downloadId={1}: worker ownership differs", expected.Id, expected.DownloadId);
+                    return false;
+                }
+                var current = Get(expected.DownloadId);
+                if (!IsSameAttempt(current, expected) || current.Status != expected.Status || current.RequestJson != expected.RequestJson)
+                {
+                    _logger.Warn("Skipping recovery for conversion job {0}, downloadId={1}: the job changed after recovery read it; preserving the newer state", expected.Id, expected.DownloadId);
+                    return false;
+                }
+                write(current);
+                return true;
+            }
+        }
+
+        private static bool IsSameAttempt(ConversionJob current, ConversionJob expected) =>
+            current?.Id == expected.Id && current.AttemptCount == expected.AttemptCount &&
+            current.WorkFolder.PathEquals(expected.WorkFolder) && current.OutputPath.PathEquals(expected.OutputPath);
 
         private void DispatchQueuedJobs()
         {
@@ -1078,7 +1093,7 @@ namespace NzbDrone.Core.MediaFiles
 
                 if (cancellation.IsCancellationRequested)
                 {
-                    PersistWorkerOutcome(job, () => HandleInterruptedConversion(job, request));
+                    PersistWorkerOutcome(job, () => HandleInterruptedConversion(job, request, active));
                     return;
                 }
 
@@ -1097,7 +1112,7 @@ namespace NzbDrone.Core.MediaFiles
                     {
                         if (!MarkReady(job, "Using retained M4B", cancellation.Token))
                         {
-                            HandleInterruptedConversion(job, request);
+                            HandleInterruptedConversion(job, request, active);
                         }
                     });
                     return;
@@ -1135,13 +1150,13 @@ namespace NzbDrone.Core.MediaFiles
                         {
                             if (!MarkReady(job, "Converted M4B ready to import", cancellation.Token))
                             {
-                                HandleInterruptedConversion(job, request);
+                                HandleInterruptedConversion(job, request, active);
                             }
                         });
                     }
                     else if (result.FailureCategory == ConversionFailureCategory.Cancelled || cancellation.IsCancellationRequested)
                     {
-                        PersistWorkerOutcome(job, () => HandleInterruptedConversion(job, request));
+                        PersistWorkerOutcome(job, () => HandleInterruptedConversion(job, request, active));
                     }
                     else
                     {
@@ -1161,7 +1176,7 @@ namespace NzbDrone.Core.MediaFiles
                 }
                 catch (OperationCanceledException)
                 {
-                    PersistWorkerOutcome(job, () => HandleInterruptedConversion(job, request));
+                    PersistWorkerOutcome(job, () => HandleInterruptedConversion(job, request, active));
                 }
                 catch (Exception ex)
                 {
@@ -1196,25 +1211,26 @@ namespace NzbDrone.Core.MediaFiles
                             if (cancellation.IsCancellationRequested &&
                                 _repository.FindByDownloadId(job.DownloadId)?.Status == ConversionJobStatus.Cancelling)
                             {
-                                HandleInterruptedConversion(job, DeserializeRequest(job));
+                                HandleInterruptedConversion(job, DeserializeRequest(job), active);
                             }
                             // Import may start as soon as this job is no longer active.
                             // Detach its stop callback before publishing that boundary.
-                            _trackingService?.UnregisterCancellation(job.DownloadId, cancellation);
-                            _activeConversions.Remove(job.DownloadId);
+                            ReleaseConversionOwnership(job.DownloadId, active);
                         }
-                        if (committedImport || job.Status == ConversionJobStatus.ReadyToImport)
-                            RecoverCommittedImport(job, DeserializeRequest(job));
                     });
+                    // Import bookkeeping can fail after ownership was released. Retrying it
+                    // must never repeat the old worker's cancellation/release operation.
+                    if (committedImport || job.Status == ConversionJobStatus.ReadyToImport)
+                        PersistWorkerOutcome(job, () =>
+                        {
+                            var current = Get(job.DownloadId);
+                            // Refresh metadata without adopting a replacement attempt after release.
+                            if (IsSameAttempt(current, job)) RecoverCommittedImport(current, DeserializeRequest(current));
+                        }, "retrying import bookkeeping after worker ownership was released");
                 }
                 finally
                 {
-                    lock (_sync)
-                    {
-                        if (_activeConversions.TryGetValue(job.DownloadId, out var owner) && ReferenceEquals(owner, active))
-                            _activeConversions.Remove(job.DownloadId);
-                    }
-                    _trackingService?.UnregisterCancellation(job.DownloadId, cancellation);
+                    ReleaseConversionOwnership(job.DownloadId, active);
                     cancellation.Dispose();
                     _signal.Set();
                     if (_shutdown?.IsCancellationRequested != true)
@@ -1226,7 +1242,17 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        private void PersistWorkerOutcome(ConversionJob job, Action persist)
+        private void ReleaseConversionOwnership(string downloadId, ActiveConversion active)
+        {
+            lock (_sync)
+            {
+                if (!_activeConversions.TryGetValue(downloadId, out var owner) || !ReferenceEquals(owner, active)) return;
+                _trackingService?.UnregisterCancellation(downloadId, active.Cancellation);
+                _activeConversions.Remove(downloadId);
+            }
+        }
+
+        private void PersistWorkerOutcome(ConversionJob job, Action persist, string retryMessage = "retaining worker ownership and retrying")
         {
             DateTime? failureStarted = null;
             while (true)
@@ -1245,8 +1271,8 @@ namespace NzbDrone.Core.MediaFiles
                 catch (DbException ex)
                 {
                     failureStarted ??= DateTime.UtcNow;
-                    _logger.Error(ex, "Unable to save conversion outcome {0} for download {1}; retaining worker ownership and retrying. Outcome: {2}",
-                        job.Status, job.DownloadId, job.Error ?? job.Message);
+                    _logger.Error(ex, "Unable to save conversion outcome {0} for download {1}; {2}. Outcome: {3}",
+                        job.Status, job.DownloadId, retryMessage, job.Error ?? job.Message);
                     if ((_shutdown?.Token ?? CancellationToken.None).WaitHandle.WaitOne(_outcomeRetryDelay))
                     {
                         return;
@@ -1255,13 +1281,13 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        private void HandleInterruptedConversion(ConversionJob job, ConversionJobRequest request)
+        private void HandleInterruptedConversion(ConversionJob job, ConversionJobRequest request, ActiveConversion owner)
         {
             var persisted = _repository.FindByDownloadId(job.DownloadId);
             if (_shutdown?.IsCancellationRequested == true &&
                 persisted?.Status != ConversionJobStatus.Cancelling)
             {
-                Requeue(job, "Conversion interrupted by application shutdown");
+                TryRecover(persisted, current => Requeue(current, "Conversion interrupted by application shutdown"), owner);
                 return;
             }
 
@@ -1366,7 +1392,7 @@ namespace NzbDrone.Core.MediaFiles
             {
                 if (_activeConversions.TryGetValue(job.DownloadId, out var active) && active.Cancellation.IsCancellationRequested)
                 {
-                    HandleInterruptedConversion(job, DeserializeRequest(job));
+                    HandleInterruptedConversion(job, DeserializeRequest(job), active);
                     return;
                 }
 
@@ -1422,7 +1448,7 @@ namespace NzbDrone.Core.MediaFiles
 
         private const string UnverifiedRetainedOutputMessage = "Retained conversion completion cannot be verified. Manual Import imports the original files; Retry starts a new conversion. The retained output has been kept.";
 
-        private bool FailUnverifiedRetainedArtifact(ConversionJob job, ConversionJobRequest request)
+        private bool HasUnverifiedRetainedArtifact(ConversionJobRequest request)
         {
             if (request?.OutputPath.IsNotNullOrWhiteSpace() != true || !File.Exists(request.OutputPath) ||
                 !File.Exists(Path.Combine(request.WorkFolder, ArtifactManifestFileName))) return false;
@@ -1436,13 +1462,11 @@ namespace NzbDrone.Core.MediaFiles
             }
             catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is JsonException)
             {
-                _logger.Warn(ex, "Unable to verify retained conversion receipt for download {0}", job.DownloadId);
+                _logger.Warn(ex, "Unable to verify retained conversion receipt for download {0}", request.DownloadId);
             }
 
             // Old manifests were also written for failed-but-readable output. Without the explicit
             // success contract, neither reuse nor automatic overwrite is justified.
-            MarkFailed(job, UnverifiedRetainedOutputMessage);
-            QueueImportSweep();
             return true;
         }
 
@@ -1486,16 +1510,9 @@ namespace NzbDrone.Core.MediaFiles
 
         private void SettleCommittedImport(ConversionJob job)
         {
-            ConversionLifecycleCandidate expected;
-            lock (_sync)
+            ConversionLifecycleCandidate expected = null;
+            if (!TryRecover(job, current =>
             {
-                var current = Get(job.DownloadId);
-                if (current?.Id != job.Id || !current.WorkFolder.PathEquals(job.WorkFolder) || !current.OutputPath.PathEquals(job.OutputPath)) return;
-                if (IsRunning(job.DownloadId))
-                {
-                    _logger.Info("Import is committed for conversion job {0}, download {1}; workspace cleanup waits for the active worker to finish", job.Id, job.DownloadId);
-                    return;
-                }
                 current.Status = ConversionJobStatus.Completed;
                 current.Progress = 100m;
                 current.Message = "Converted M4B import recovered";
@@ -1510,7 +1527,7 @@ namespace NzbDrone.Core.MediaFiles
                 // PostgreSQL stores timestamps at microsecond precision. Capture the
                 // persisted version, just as lifecycle-page readers do.
                 expected = ExpectedAttempt(_repository.Get(current.Id));
-            }
+            }, whenOwned: () => _logger.Info("Import is committed for conversion job {0}, download {1}; workspace cleanup waits for the active worker to finish", job.Id, job.DownloadId))) return;
             // The committed BookFile/source proof above, not a policy refusal, prevents
             // another encode. A cleanup refusal cannot put this job back in the queue.
             _trackingService?.Complete(job.DownloadId);
@@ -1672,23 +1689,28 @@ namespace NzbDrone.Core.MediaFiles
         {
             try
             {
-                var job = Get(downloadId);
-                if (job == null) { _logger.Warn(error, "Conversion cleanup failed for download {0}; no cleanup record exists", downloadId); return; }
-                var request = DeserializeRequest(job);
-                if (request == null)
+                ConversionJobRequest request;
+                bool changed;
+                lock (_sync)
                 {
-                    _logger.Warn(error, "Conversion cleanup failed for job {0}, downloadId={1}; its request is unreadable, so its workspace was retained", job.Id, downloadId);
-                    return;
+                    var job = Get(downloadId);
+                    if (job == null) { _logger.Warn(error, "Conversion cleanup failed for download {0}; no cleanup record exists", downloadId); return; }
+                    request = DeserializeRequest(job);
+                    if (request == null)
+                    {
+                        _logger.Warn(error, "Conversion cleanup failed for job {0}, downloadId={1}; its request is unreadable, so its workspace was retained", job.Id, downloadId);
+                        return;
+                    }
+                    changed = request.CleanupError != error.Message;
+                    request.CleanupFailureCount = Math.Min(request.CleanupFailureCount + 1, 1000);
+                    var minutes = error is ConversionCleanupRefusedException ? 60 : Math.Min(60, Math.Pow(2, Math.Min(request.CleanupFailureCount - 1, 6)));
+                    request.CleanupNotBefore = DateTime.UtcNow.AddMinutes(minutes);
+                    request.CleanupError = error.Message;
+                    job.RequestJson = JsonSerializer.Serialize(request);
+                    job.UpdatedAt = DateTime.UtcNow;
+                    // Preserve concurrent discard/completion intent as well as the encoder error.
+                    _repository.SetFields(job, value => value.RequestJson, value => value.UpdatedAt);
                 }
-                var changed = request.CleanupError != error.Message;
-                request.CleanupFailureCount = Math.Min(request.CleanupFailureCount + 1, 1000);
-                var minutes = error is ConversionCleanupRefusedException ? 60 : Math.Min(60, Math.Pow(2, Math.Min(request.CleanupFailureCount - 1, 6)));
-                request.CleanupNotBefore = DateTime.UtcNow.AddMinutes(minutes);
-                request.CleanupError = error.Message;
-                job.RequestJson = JsonSerializer.Serialize(request);
-                job.UpdatedAt = DateTime.UtcNow;
-                // Cleanup diagnostics must never erase the encoder/import failure.
-                _repository.SetFields(job, value => value.RequestJson, value => value.UpdatedAt);
                 if (changed || (request.CleanupFailureCount == 5 && error is not ConversionCleanupRefusedException))
                     _logger.Warn(error, "Conversion cleanup retained: downloadId={0}, attempt={1}, nextAttempt={2}", downloadId, request.CleanupFailureCount, request.CleanupNotBefore);
                 else
