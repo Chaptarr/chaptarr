@@ -336,7 +336,7 @@ namespace Chaptarr.Core.Test.Datastore
                 }));
                 output.Add(JArray.FromObject(connection.Query(@"SELECT ""EntityType"",""EntityId"",""Scope"",""Provider"",""NormalizedProviderId"" FROM ""ProviderAliasIndex"" ORDER BY ""EntityType"",""EntityId"",""Scope"",""Provider"",""NormalizedProviderId""")));
                 foreach (var value in output.Descendants().OfType<JValue>().Where(value => value.Type == JTokenType.String))
-                    value.Value = ((string)value.Value).Replace('\\', '/').Replace("C:/", "/");
+                    value.Value = ((string)value.Value).Replace('\\', '/').Replace("C:/", "/C/");
                 var json = output.ToString(Formatting.None);
                 var fingerprint = System.Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(json)));
                 TestContext.WriteLine("Migration 111 output: " + fingerprint);

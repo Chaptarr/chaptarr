@@ -196,7 +196,7 @@ namespace Chaptarr.Core.Test.Download
         {
             var repository = DispatchProxy.Create<IDownloadClientFileSnapshotRepository, RepositoryProxy>();
             var proxy = (RepositoryProxy)(object)repository;
-            var paths = new[] { "/downloads/book/info.nfo" };
+            var paths = new[] { @"C:\downloads\book\info.nfo".AsOsAgnostic() };
             var disk = Common.InterfaceProxy.Proxy<IDiskProvider>((method, args) => method.Name switch
             {
                 nameof(IDiskProvider.FileExists) => false,
@@ -205,24 +205,24 @@ namespace Chaptarr.Core.Test.Download
                 _ => throw new NotImplementedException(method.Name)
             });
             var service = new DownloadClientFileSnapshotService(repository, disk, LogManager.GetCurrentClassLogger());
-            var first = DownloadItem(outputPath: "/downloads/book");
+            var first = DownloadItem(outputPath: @"C:\downloads\book".AsOsAgnostic());
             service.CaptureCompletedOutput(first);
             Assert.That(first.FilePaths, Is.EqualTo(paths));
 
-            paths = new[] { "/downloads/book/Dune 01.mp3", "/downloads/book/Dune 02.mp3" };
-            var afterRestart = DownloadItem(outputPath: "/downloads/book");
+            paths = new[] { @"C:\downloads\book\Dune 01.mp3".AsOsAgnostic(), @"C:\downloads\book\Dune 02.mp3".AsOsAgnostic() };
+            var afterRestart = DownloadItem(outputPath: @"C:\downloads\book".AsOsAgnostic());
             service.CaptureCompletedOutput(afterRestart);
-            Assert.That(afterRestart.FilePaths, Is.EquivalentTo(paths.Append("/downloads/book/info.nfo")));
+            Assert.That(afterRestart.FilePaths, Is.EquivalentTo(paths.Append(@"C:\downloads\book\info.nfo".AsOsAgnostic())));
             Assert.That(afterRestart.FileListConfidence, Is.EqualTo(DownloadClientFileListConfidence.Disk));
             service.ApplySnapshot(first);
             Assert.That(first.FilePaths, Is.EquivalentTo(afterRestart.FilePaths), "Import receives the original download item after its clone refreshes the snapshot");
 
-            paths = new[] { "/downloads/book/Dune 02.mp3" };
+            paths = new[] { @"C:\downloads\book\Dune 02.mp3".AsOsAgnostic() };
             service.CaptureCompletedOutput(afterRestart);
             service.CaptureClientList(afterRestart);
             Assert.That(proxy.WriteCalls, Is.EqualTo(2));
             Assert.That(proxy.Snapshot.Confidence, Is.EqualTo(DownloadClientFileListConfidence.Disk));
-            Assert.That(afterRestart.FilePaths, Does.Contain("/downloads/book/Dune 01.mp3"));
+            Assert.That(afterRestart.FilePaths, Does.Contain(@"C:\downloads\book\Dune 01.mp3".AsOsAgnostic()));
 
             var tracked = new TrackedDownload
             {
@@ -242,13 +242,13 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(completion.Complete, Is.False, "A vanished, never-imported part must not disappear from completion evidence");
             Assert.That(completion.RequiredCount, Is.EqualTo(2));
             Assert.That(completion.Missing.Select(message => message.Title), Does.Contain("Dune 01.mp3"));
-            Assert.That(completion.Missing.Select(message => message.SourcePath), Does.Contain("/downloads/book/Dune 01.mp3"));
+            Assert.That(completion.Missing.Select(message => message.SourcePath), Does.Contain(@"C:\downloads\book\Dune 01.mp3".AsOsAgnostic()));
 
             history.Add(new EntityHistory
             {
                 DownloadId = afterRestart.DownloadId, BookId = 7, EditionId = 9,
                 EventType = EntityHistoryEventType.BookFileImported,
-                Data = new Dictionary<string, string> { ["DroppedPath"] = "/downloads/book/Dune 01.mp3" }
+                Data = new Dictionary<string, string> { ["DroppedPath"] = @"C:\downloads\book\Dune 01.mp3".AsOsAgnostic() }
             });
             Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked, history: history).Complete, Is.True,
                 "A part moved by an earlier successful import is covered by its saved source path");

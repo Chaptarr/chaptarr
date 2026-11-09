@@ -25,8 +25,7 @@ namespace Chaptarr.Core.Test.Datastore
                 using var connection = database.OpenConnection();
                 if (absent) connection.Execute("DROP TABLE book_trigrams; DROP TABLE author_trigrams;");
                 var controller = new MigrationController(LogManager.GetCurrentClassLogger(), null);
-                var migrationConnection = postgres ? new Npgsql.NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING"))
-                    { Database = connection.Database }.ConnectionString : connection.ConnectionString;
+                var migrationConnection = connection.ConnectionString;
                 controller.Migrate(migrationConnection, new MigrationContext(MigrationType.Main, 128), database.DatabaseType);
                 var tables = connection.Query<string>(postgres
                     ? "SELECT tablename FROM pg_tables WHERE schemaname=current_schema() AND tablename IN ('book_trigrams','author_trigrams')"

@@ -14,7 +14,6 @@ using DryIoc;
 using Microsoft.Data.Sqlite;
 using NLog;
 using NLog.Config;
-using NLog.Targets;
 using NUnit.Framework;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Common.Composition.Extensions;
@@ -102,6 +101,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public ConcurrentDictionary<string, string[]> InputsByDownloadId { get; } = new(StringComparer.OrdinalIgnoreCase);
             public ConcurrentDictionary<string, int> CallsByDownloadId { get; } = new(StringComparer.OrdinalIgnoreCase);
             public ManualResetEventSlim Release { get; } = new(false);
+            public bool HoldCancellation { get; set; }
 
             public ConversionResult ConvertToM4b(string[] inputFiles, string outputFile, ConversionOptions options = null)
             {
@@ -111,7 +111,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 InputsByDownloadId[downloadId] = inputFiles;
                 OptionsByDownloadId[downloadId] = options;
 
-                WaitHandle.WaitAny(new[] { options.CancellationToken.WaitHandle, Release.WaitHandle });
+                if (HoldCancellation) Release.Wait();
+                else WaitHandle.WaitAny(new[] { options.CancellationToken.WaitHandle, Release.WaitHandle });
                 if (options.CancellationToken.IsCancellationRequested)
                 {
                     return new ConversionResult
@@ -139,7 +140,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             public bool AfterWrite { get; set; }
             public Func<object[], bool> ArgumentsMatch { get; set; }
             public ManualResetEventSlim Failed { get; } = new(false);
+            public ManualResetEventSlim RecoveryRetried { get; } = new(false);
             private int _calls;
+            private int _leaseReads;
 
             protected override object Invoke(MethodInfo method, object[] args)
             {
@@ -153,6 +156,9 @@ namespace Chaptarr.Core.Test.MediaFiles
                     }
 
                     var result = method.Invoke(Repository, args);
+                    if (method.Name == nameof(IConversionJobRepository.ByStatus) &&
+                        args[0] is ConversionJobStatus.Converting && Interlocked.Increment(ref _leaseReads) == 2)
+                        RecoveryRetried.Set();
                     if (fail)
                     {
                         throw new DataException("Injected conversion database outage");
@@ -183,16 +189,17 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         private class RecordingCommandQueueProxy : DispatchProxy
         {
-            public List<Command> Commands { get; } = new();
+            private int _nextId;
+            public ConcurrentQueue<Command> Commands { get; } = new();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IManageCommandQueue.Push) && args?.FirstOrDefault() is Command command)
                 {
-                    Commands.Add(command);
+                    Commands.Enqueue(command);
                     return new CommandModel
                     {
-                        Id = Commands.Count,
+                        Id = Interlocked.Increment(ref _nextId),
                         Name = command.Name,
                         Body = command,
                         Status = CommandStatus.Queued
@@ -305,7 +312,48 @@ namespace Chaptarr.Core.Test.MediaFiles
             VerifySchedulerRecovery(postgres, nameof(IConversionJobRepository.SetFields), 2, afterWrite);
         }
 
-        private static void VerifySchedulerRecovery(bool postgres, string method, int failOnCall, bool afterWrite)
+        [TestCase(false)]
+        [TestCase(true)]
+        public void startup_recovery_retry_must_not_requeue_live_conversions(bool postgres)
+        {
+            VerifySchedulerRecovery(postgres, nameof(IConversionJobRepository.NonCompleted), 1, false, holdThroughRecovery: true);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void startup_recovers_an_unowned_conversion_without_waiting_for_its_fresh_lease(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var root = Path.Combine(TestContext.CurrentContext.WorkDirectory, Path.GetRandomFileName());
+                Directory.CreateDirectory(root);
+                var repository = new ConversionJobRepository(database, new StubEventAggregator());
+                var converter = new TokenRecordingConversionService();
+                var service = CreateService(repository, converter);
+                try
+                {
+                    var request = CreateRequest(root, "fresh-lease");
+                    repository.Insert(CreatePersistedJob(request, ConversionJobStatus.Converting, DateTime.UtcNow));
+                    service.Handle(new ApplicationStartedEvent());
+
+                    Assert.That(SpinWait.SpinUntil(() => converter.CallsByDownloadId.ContainsKey(request.DownloadId), TimeSpan.FromSeconds(5)),
+                        Is.True, "Startup must recover a previous process's job without waiting for the lease to expire");
+                    Assert.That(repository.FindByDownloadId(request.DownloadId).AttemptCount, Is.EqualTo(1));
+                    converter.Release.Set();
+                    Assert.That(SpinWait.SpinUntil(() => repository.FindByDownloadId(request.DownloadId).Status == ConversionJobStatus.ReadyToImport &&
+                        !service.IsRunning(request.DownloadId), TimeSpan.FromSeconds(5)), Is.True);
+                    Assert.That(converter.CallsByDownloadId[request.DownloadId], Is.EqualTo(1));
+                }
+                finally
+                {
+                    converter.Release.Set();
+                    service.Handle(new ApplicationShutdownRequested());
+                    Directory.Delete(root, true);
+                }
+            });
+        }
+
+        private static void VerifySchedulerRecovery(bool postgres, string method, int failOnCall, bool afterWrite, bool holdThroughRecovery = false)
         {
             DualDatabaseFixture.Run(postgres, database =>
             {
@@ -321,7 +369,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 failure.ArgumentsMatch = args => method != nameof(IConversionJobRepository.SetFields) ||
                     (args.Length > 0 && args[0] is ConversionJob { Status: ConversionJobStatus.Converting, Progress: 1m });
                 var converter = new TokenRecordingConversionService();
-                var log = new MemoryTarget { Layout = "${level}|${message}|${exception:format=Message}" };
+                var log = new ConcurrentLogTarget { Layout = "${level}|${message}|${exception:format=Message}" };
                 using var logFactory = new LogFactory();
                 var configuration = new LoggingConfiguration(logFactory);
                 configuration.AddRuleForAllLevels(log);
@@ -343,14 +391,38 @@ namespace Chaptarr.Core.Test.MediaFiles
                         repository.SetFields(interrupted, job => job.HeartbeatAt);
                     }
 
+                    if (holdThroughRecovery)
+                    {
+                        Assert.That(SpinWait.SpinUntil(() => converter.OptionsByDownloadId.Count == 2, TimeSpan.FromSeconds(5)), Is.True,
+                            "The failed startup pass must dispatch both converters before startup recovery is retried");
+                    }
+
                     service.Enqueue(CreateRequest(root, "after-outage"));
+                    if (holdThroughRecovery)
+                    {
+                        Assert.That(failure.RecoveryRetried.Wait(TimeSpan.FromSeconds(5)), Is.True,
+                            "The second lease scan follows startup recovery while both converters remain held");
+                        foreach (var downloadId in new[] { "first", "second" })
+                        {
+                            var running = repository.FindByDownloadId(downloadId);
+                            Assert.That(running.Status, Is.EqualTo(ConversionJobStatus.Converting), "Startup retry must leave a live owner's row alone");
+                            Assert.That(running.Message, Does.Not.Contain("Recovering interrupted"));
+                            Assert.That(running.AttemptCount, Is.EqualTo(1));
+
+                            running.HeartbeatAt = DateTime.UtcNow.AddMinutes(-5);
+                            repository.SetFields(running, job => job.HeartbeatAt);
+                        }
+
+                        service.RecoverExpiredLeases();
+                        Assert.That(repository.NonCompleted().Where(job => job.DownloadId != "after-outage").Select(job => job.Status),
+                            Is.All.EqualTo(ConversionJobStatus.Converting), "An expired heartbeat must not override a live owner either");
+                    }
+
                     converter.Release.Set();
                     Assert.That(SpinWait.SpinUntil(() => repository.NonCompleted().Count(job => job.Status == ConversionJobStatus.ReadyToImport) == 3,
                         TimeSpan.FromSeconds(5)), Is.True, "All durable work must resume without restarting the service");
                     Assert.That(converter.CallsByDownloadId.Values, Is.All.EqualTo(1));
                     Assert.That(converter.CallsByDownloadId.Count, Is.EqualTo(3));
-                    Assert.That(log.Logs.Any(line => line.StartsWith("Error|") && line.Contains("Injected conversion database outage")), Is.True);
-                    Assert.That(log.Logs.Any(line => line.StartsWith("Info|") && line.Contains("scheduler pass completed")), Is.True);
                 }
                 finally
                 {
@@ -358,6 +430,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                     service.Handle(new ApplicationShutdownRequested());
                     Directory.Delete(root, true);
                 }
+                Assert.That(log.Logs.Any(line => line.StartsWith("Error|") && line.Contains("Injected conversion database outage")), Is.True);
+                Assert.That(log.Logs.Any(line => line.StartsWith("Info|") && line.Contains("scheduler pass completed")), Is.True);
             });
         }
 

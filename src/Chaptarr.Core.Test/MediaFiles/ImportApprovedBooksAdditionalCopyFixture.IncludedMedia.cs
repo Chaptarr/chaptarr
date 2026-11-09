@@ -215,7 +215,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         private void RunIncludedMedia(IMainDatabase db, string root, BookMediaType requested, string scenario)
         {
             using var logFactory = new LogFactory();
-            var sink = new NLog.Targets.MemoryTarget { Layout = "${message}" };
+            var sink = new ConcurrentLogTarget { Layout = "${message}" };
             var logging = new NLog.Config.LoggingConfiguration();
             logging.AddRule(LogLevel.Debug, LogLevel.Fatal, sink);
             logFactory.Configuration = logging;

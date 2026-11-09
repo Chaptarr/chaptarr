@@ -107,7 +107,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var repository = new ConversionJobRepository(outage.Database, new StubEventAggregator());
                 var observer = new ConversionJobRepository(database, new StubEventAggregator());
                 using var converter = new OutcomeConversionService { Outcome = "failed" };
-                var log = new MemoryTarget { Layout = "${message}" };
+                var log = new ConcurrentLogTarget { Layout = "${message}" };
                 using var logs = new LogFactory();
                 var configuration = new LoggingConfiguration(logs);
                 configuration.AddRuleForAllLevels(log);
@@ -165,7 +165,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var repository = new ConversionJobRepository(outage.Database, new StubEventAggregator());
                 var observer = new ConversionJobRepository(database, new StubEventAggregator());
                 using var converter = new OutcomeConversionService { Outcome = outcome };
-                var log = new MemoryTarget { Layout = "${level}|${message}|${exception:format=Message}" };
+                var log = new ConcurrentLogTarget { Layout = "${level}|${message}|${exception:format=Message}" };
                 using var logs = new LogFactory();
                 var config = new LoggingConfiguration(logs);
                 config.AddRuleForAllLevels(log);
@@ -326,7 +326,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var repository = new ConversionJobRepository(outage.Database, new StubEventAggregator());
                 var observer = new ConversionJobRepository(database, new StubEventAggregator());
                 using var converter = new OutcomeConversionService { Outcome = "success" };
-                var log = new MemoryTarget { Layout = "${message}" };
+                var log = new ConcurrentLogTarget { Layout = "${message}" };
                 using var logs = new LogFactory();
                 var config = new LoggingConfiguration(logs);
                 config.AddRuleForAllLevels(log);

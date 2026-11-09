@@ -16,9 +16,9 @@ namespace Chaptarr.Core.Test.MediaFiles
 {
     public partial class ConversionJobServiceFixture
     {
-        private static MemoryTarget CaptureOrphanLogs(LogFactory factory)
+        private static ConcurrentLogTarget CaptureOrphanLogs(LogFactory factory)
         {
-            var sink = new MemoryTarget { Layout = "${level}|${message}" };
+            var sink = new ConcurrentLogTarget { Layout = "${level}|${message}" };
             var configuration = new LoggingConfiguration(factory);
             configuration.AddRuleForAllLevels(sink);
             factory.Configuration = configuration;

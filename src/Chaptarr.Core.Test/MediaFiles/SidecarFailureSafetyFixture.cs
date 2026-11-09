@@ -165,7 +165,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(moved.Count(), Is.EqualTo(1));
             Assert.That(File.ReadAllText(s.P(@"ebooks\Author\New\" + expected)), Is.EqualTo("owned sidecar sentinel"));
             Assert.That(File.Exists(source), Is.False);
-            Assert.That(row.RelativePath, Is.EqualTo((@"New\" + expected).AsOsAgnostic()));
+            Assert.That(row.RelativePath, Is.EqualTo("New/" + expected));
             Assert.That(writes, Is.EqualTo(1));
         }
 

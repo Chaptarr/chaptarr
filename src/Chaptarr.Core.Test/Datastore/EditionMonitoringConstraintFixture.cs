@@ -337,9 +337,7 @@ namespace Chaptarr.Core.Test.Datastore
                 var unselected = editions.Insert(NewEdition(AddLegacyBook(db), false));
                 var filesBefore = connection.Query<(int Id, int EditionId)>("SELECT \"Id\",\"EditionId\" FROM \"BookFiles\"").ToArray();
                 var migration = new MigrationController(LogManager.GetCurrentClassLogger(), null);
-                var connectionString = postgres
-                    ? new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING")) { Database = connection.Database }.ConnectionString
-                    : connection.ConnectionString;
+                var connectionString = connection.ConnectionString;
                 migration.Migrate(connectionString, new MigrationContext(MigrationType.Main, 117), db.DatabaseType);
                 Assert.That(editions.All().Where(edition => edition.Monitored).Select(edition => edition.Id), Is.EquivalentTo(expected));
                 Assert.That(connection.Query<(int Id, int EditionId)>("SELECT \"Id\",\"EditionId\" FROM \"BookFiles\""), Is.EqualTo(filesBefore));
@@ -370,9 +368,7 @@ namespace Chaptarr.Core.Test.Datastore
                 new BookRepository(db, Events).Delete(missingBook.Id);
                 using var connection = db.OpenConnection();
                 var migration = new MigrationController(LogManager.GetCurrentClassLogger(), null);
-                var connectionString = postgres
-                    ? new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING")) { Database = connection.Database }.ConnectionString
-                    : connection.ConnectionString;
+                var connectionString = connection.ConnectionString;
 
                 migration.Migrate(connectionString, new MigrationContext(MigrationType.Main, 117), db.DatabaseType);
 
