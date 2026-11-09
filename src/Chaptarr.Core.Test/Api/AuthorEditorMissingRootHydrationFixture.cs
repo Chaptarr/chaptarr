@@ -296,7 +296,7 @@ namespace Chaptarr.Core.Test.Api
             var warning = controller.Response.Headers["X-Chaptarr-Warning"].ToString();
 
             Assert.That(warning, Does.Contain("1 author(s) were skipped"));
-            Assert.That(warning, Does.Contain("Set both root folder paths"));
+            Assert.That(warning, Does.Contain("set a Root Folder"));
         }
 
         private static IAuthorService CreateAuthorService(params CoreAuthor[] authors)
