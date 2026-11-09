@@ -165,7 +165,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         {
             var lexemes = EditionFtsRepository.ExtractPostgresLexemes(new[] { "legend-of", "Drizzt", "drizzt", "..." });
 
-            Assert.That(lexemes, Is.EqualTo(new[] { "legend", "of", "Drizzt" }));
+            Assert.That(lexemes, Is.EqualTo(new[] { "legend", "of", "drizzt" }));
         }
     }
 }
