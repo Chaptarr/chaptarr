@@ -24,7 +24,7 @@ namespace NzbDrone.Core.Extras.Metadata.Files
         public CleanExtraFileService(IMetadataFileService metadataFileService,
                                     IDiskProvider diskProvider,
                                     Logger logger,
-                                    IMediaFileService mediaFileService = null)
+                                    IMediaFileService mediaFileService)
         {
             _metadataFileService = metadataFileService;
             _diskProvider = diskProvider;

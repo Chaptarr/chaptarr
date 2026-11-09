@@ -208,7 +208,7 @@ namespace Chaptarr.Core.Test.Extras
             var metadataProxy = (MetadataFileServiceProxy)(object)metadata;
             metadataProxy.Files = new List<MetadataFile> { Row(1, "Book/cover.jpg", 50), Row(2, "gone.jpg") };
             diskProxy.ExistingFiles.Add(EbookBase + "/Book/cover.jpg");
-            var sut = new CleanExtraFileService(metadata, disk, LogManager.GetCurrentClassLogger());
+            var sut = new CleanExtraFileService(metadata, disk, LogManager.GetCurrentClassLogger(), null);
 
             Assert.DoesNotThrow(() => sut.Clean(_author));
 
