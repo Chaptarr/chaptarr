@@ -40,7 +40,7 @@ namespace Chaptarr.Core.Test.Datastore
                 (
                     SELECT 1
                     UNION ALL
-                    SELECT version + 1 FROM versions WHERE version < 109
+                    SELECT version + 1 FROM versions WHERE version < 130
                 )
                 INSERT INTO ""VersionInfo"" (""Version"", ""AppliedOn"", ""Description"")
                 SELECT version, CURRENT_TIMESTAMP, 'test baseline' FROM versions;
@@ -62,7 +62,7 @@ namespace Chaptarr.Core.Test.Datastore
         private void Migrate()
         {
             var migrationController = new MigrationController(LogManager.GetLogger("ExtraFileAuthorBookIndexMigrationFixture"), null);
-            migrationController.Migrate(_connectionString, new MigrationContext(MigrationType.Main, 110), DatabaseType.SQLite);
+            migrationController.Migrate(_connectionString, new MigrationContext(MigrationType.Main, 131), DatabaseType.SQLite);
         }
 
         private string[] IndexColumns(string tableName, string indexName)
