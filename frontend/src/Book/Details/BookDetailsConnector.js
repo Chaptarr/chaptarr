@@ -11,6 +11,7 @@ import { executeCommand } from 'Store/Actions/commandActions';
 import { clearEditions, fetchEditions } from 'Store/Actions/editionActions';
 import { clearQueueDetails, fetchQueueDetails } from 'Store/Actions/queueActions';
 import { cancelFetchReleases, clearReleases } from 'Store/Actions/releaseActions';
+import { fetchNotifications } from 'Store/Actions/settingsActions';
 import createAllAuthorSelector from 'Store/Selectors/createAllAuthorsSelector';
 import createCommandsSelector from 'Store/Selectors/createCommandsSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
@@ -51,7 +52,8 @@ function createMapStateToProps() {
     createCommandsSelector(),
     createUISettingsSelector(),
     createDimensionsSelector(),
-    (bookId, bookFiles, books, editions, authors, commands, uiSettings, dimensions) => {
+    (state) => state.settings.notifications.items,
+    (bookId, bookFiles, books, editions, authors, commands, uiSettings, dimensions, notifications) => {
       try {
         const book = books.items.find((b) => b.id === bookId);
 
@@ -106,6 +108,13 @@ function createMapStateToProps() {
         isSearchingCommand.body.bookIds &&
         isSearchingCommand.body.bookIds.indexOf(book.id) > -1
         );
+        const rePushCommand = findCommand(commands, { name: commandNames.REPUSH_BOOK });
+        const isRePushing = !!(
+          rePushCommand &&
+        isCommandExecuting(rePushCommand) &&
+        rePushCommand.body &&
+        rePushCommand.body.bookId === book.id
+        );
         const isRenamingFiles = isCommandExecuting(findCommand(commands, { name: commandNames.RENAME_FILES, authorId: author.id }));
         const isRenamingAuthorCommand = findCommand(commands, { name: commandNames.RENAME_AUTHOR });
         const isRenamingAuthor = (
@@ -140,6 +149,8 @@ function createMapStateToProps() {
           author,
           isRefreshing,
           isSearching,
+          isRePushing,
+          showRePush: notifications.some((n) => n.implementation === 'CalibreContentServer'),
           isRenamingFiles,
           isRenamingAuthor,
           isFetching,
@@ -163,6 +174,7 @@ function createMapStateToProps() {
 
 const mapDispatchToProps = {
   executeCommand,
+  fetchNotifications,
   fetchBookFiles,
   clearBookFiles,
   fetchEditions,
@@ -228,6 +240,7 @@ class BookDetailsConnector extends Component {
     this.props.fetchBookFiles({ bookId });
     this.props.fetchEditions({ bookId });
     this.props.fetchQueueDetails({ bookIds: [bookId] });
+    this.props.fetchNotifications();
   };
 
   unpopulate = () => {
@@ -245,6 +258,13 @@ class BookDetailsConnector extends Component {
     this.props.toggleBooksMonitored({
       bookIds: [this.props.id],
       monitored
+    });
+  };
+
+  onRePushPress = () => {
+    this.props.executeCommand({
+      name: commandNames.REPUSH_BOOK,
+      bookId: this.props.id
     });
   };
 
@@ -271,6 +291,7 @@ class BookDetailsConnector extends Component {
         {...this.props}
         onMonitorTogglePress={this.onMonitorTogglePress}
         onRefreshPress={this.onRefreshPress}
+        onRePushPress={this.onRePushPress}
         onSearchPress={this.onSearchPress}
       />
     );
@@ -295,6 +316,7 @@ BookDetailsConnector.propTypes = {
   clearReleases: PropTypes.func.isRequired,
   cancelFetchReleases: PropTypes.func.isRequired,
   toggleBooksMonitored: PropTypes.func.isRequired,
+  fetchNotifications: PropTypes.func.isRequired,
   executeCommand: PropTypes.func.isRequired
 };
 
