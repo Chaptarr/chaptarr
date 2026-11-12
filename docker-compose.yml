@@ -1,6 +1,6 @@
 services:
   chaptarr:
-    image: chaptarr/chaptarr:latest
+    image: chaptarr/chaptarr:develop
     container_name: chaptarr
     environment:
       - PUID=1000
