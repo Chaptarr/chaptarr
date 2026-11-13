@@ -99,6 +99,11 @@ namespace NzbDrone.Core
 
         public static string Truncate(this string s, int maxLength)
         {
+            if (string.IsNullOrEmpty(s))
+            {
+                return s;
+            }
+
             if (Encoding.UTF8.GetByteCount(s) <= maxLength)
             {
                 return s;
