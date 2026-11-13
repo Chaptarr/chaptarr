@@ -1406,7 +1406,18 @@ namespace NzbDrone.Core.MediaCover
 
                 // Restore Readarr's eager child-cover lifecycle, while Chaptarr's
                 // selector restricts persistence to each book's monitored edition.
-                EnsureBookCoversForBooks(_bookService.GetBooksByAuthor(message.Author.Id));
+                // PERF (chaptarr #178): a refresh that found no changes at all (the common case for a huge
+                // already-synced catalogue being re-scanned) has no reason to touch book covers: nothing about
+                // any book's title/editions/images could have moved. AnyChanges defaults to true, so callers that
+                // do not track it keep the always-reconcile behavior.
+                if (message.AnyChanges)
+                {
+                    EnsureBookCoversForBooks(_bookService.GetBooksByAuthor(message.Author.Id));
+                }
+                else
+                {
+                    _logger.Debug("Skipping per-book cover reconciliation for author {0}: refresh found no changes", message.Author.Name);
+                }
 
 	            _eventAggregator.PublishEvent(new MediaCoversUpdatedEvent(message.Author));
 	        }
