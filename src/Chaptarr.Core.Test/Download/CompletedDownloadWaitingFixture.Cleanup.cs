@@ -84,7 +84,7 @@ namespace Chaptarr.Core.Test.Download
                     {
                         Assert.That(counters.Queue.GetQueue(false), Has.Count.EqualTo(1));
                     }
-                    new DownloadProcessingService(config, subject, null, tracker, events, LogManager.GetCurrentClassLogger())
+                    new DownloadProcessingService(config, subject, null, tracker, events, LogManager.GetCurrentClassLogger(), null)
                         .Execute(new ProcessMonitoredDownloadsCommand());
                 }
 
