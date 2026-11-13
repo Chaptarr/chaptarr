@@ -52,6 +52,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
     public class ImportApprovedBooks : IImportApprovedBooks
     {
         internal const string EbookAlternativeRejectionCategory = "EbookAlternative";
+        public const string AlreadyImportedRejectionReason = "Already imported: this edition already has files of equal or better quality";
 
         private const string ConversionArtifactManifestFileName = "conversion-artifact.json";
         private static readonly string[] SourceCoverBaseNames = { "cover", "front", "folder", "album", "albumart" };
@@ -1757,6 +1758,19 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         copyOnly = false;
                     }
 
+                    // An automatic import must not reach the transfer with an occupied destination: the
+                    // transfer only reports that as DestinationAlreadyExistsException, after staging began.
+                    if (!localBook.IsManualImport && !downloadForced && relocateExistingFile == null)
+                    {
+                        var occupiedDestinationRejection = GetOccupiedDestinationRejectionReason(bookFile, localBook, edition, filesToReplace);
+                        if (occupiedDestinationRejection != null)
+                        {
+                            _logger.Debug("[ALREADY-IMPORTED] Managed destination for '{0}' is already occupied - {1}",
+                                localBook.Path, occupiedDestinationRejection);
+                            return (new ImportResult(decision, occupiedDestinationRejection), null);
+                        }
+                    }
+
                     // A destination created after the group decision cannot acquire replacement permission.
                     {
                         var destinationPath = _bookFileMover.GetImportDestinationPath(bookFile, localBook);
@@ -2032,6 +2046,50 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             return formats;
+        }
+
+        private string GetOccupiedDestinationRejectionReason(BookFile bookFile, LocalBook localBook, Edition edition, List<BookFile> filesToReplace)
+        {
+            var destinationPath = _bookFileMover.GetImportDestinationPath(bookFile, localBook);
+
+            if (destinationPath.IsNullOrWhiteSpace() || destinationPath.PathEquals(localBook.Path))
+            {
+                return null;
+            }
+
+            // A file this import is about to stage aside is an upgrade, not a duplicate.
+            if (filesToReplace.Any(f => f.Path.IsNotNullOrWhiteSpace() && f.Path.PathEquals(destinationPath)))
+            {
+                return null;
+            }
+
+            // FileExists on a missing path falls back to enumerating each directory along it for a
+            // case/normalisation match. Nothing can occupy a destination whose folder does not exist (the usual
+            // case for a new book), so skip that cost on the ordinary success path; the transfer keeps its own check.
+            var destinationDirectory = Path.GetDirectoryName(destinationPath);
+            if (destinationDirectory.IsNotNullOrWhiteSpace() && !DestinationFolderExists(destinationDirectory))
+            {
+                return null;
+            }
+
+            if (!DestinationFileExists(destinationPath))
+            {
+                return null;
+            }
+
+            var trackedAtDestination = _mediaFileService.GetFileWithPath(destinationPath);
+
+            if (trackedAtDestination == null)
+            {
+                return $"An untracked file already occupies the managed destination: {destinationPath}";
+            }
+
+            if (trackedAtDestination.EditionId == edition.Id)
+            {
+                return AlreadyImportedRejectionReason;
+            }
+
+            return $"A file tracked for another edition already occupies the managed destination: {destinationPath}";
         }
 
         private string GetCustomFormatImportRejectionReason(LocalBook localBook, Author author, QualityProfile qualityProfile, bool downloadForced,
@@ -3293,6 +3351,23 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 return !retainedPath.IsNullOrWhiteSpace() &&
                        ConversionWorkPath.IsWorkPath(retainedPath) &&
                        File.Exists(retainedPath);
+            }
+
+            private bool DestinationFolderExists(string path)
+            {
+                if (path.IsNullOrWhiteSpace())
+                {
+                    return false;
+                }
+
+                try
+                {
+                    return _diskProvider?.FolderExists(path) ?? Directory.Exists(path);
+                }
+                catch
+                {
+                    return Directory.Exists(path);
+                }
             }
 
             private bool DestinationFileExists(string path)
