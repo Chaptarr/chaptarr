@@ -263,23 +263,20 @@ namespace NzbDrone.Core.Messaging.Commands
                 return false;
             }
 
-            var startedDiskCommands = startedCommands
-                .Where(c => c.Body.RequiresDiskAccess)
-                .ToList();
-
-            if (!startedDiskCommands.Any())
-            {
-                return false;
-            }
-
+            // Each disk access group enforces its own limit independently -- a command must never be
+            // blocked by a started command in a DIFFERENT group. (Most commands share the implicit
+            // "default" group and so remain exclusive with each other by virtue of that group's limit,
+            // matching "most disk work remains exclusive" above; only a command that explicitly opts
+            // into its own named group, e.g. RetryFailedImportCommand/DownloadedBooksScanCommand's
+            // "downloadImport", is meant to run independently of "default", e.g. a long-running
+            // ProcessMonitoredDownloads sweep.) A prior version of this check blocked a candidate
+            // whenever ANY started disk command was in a different group, which collapsed every group
+            // into one global mutex and defeated the point of naming groups at all -- see chaptarr #188.
             var candidateGroup = candidate.DiskAccessGroup ?? candidate.Name;
-            if (startedDiskCommands.Any(c => !string.Equals(c.Body.DiskAccessGroup ?? c.Name, candidateGroup, StringComparison.OrdinalIgnoreCase)))
-            {
-                return true;
-            }
-
             var limit = Math.Max(1, _getDiskAccessGroupLimit(candidateGroup));
-            var startedInGroup = startedDiskCommands.Count(c => string.Equals(c.Body.DiskAccessGroup ?? c.Name, candidateGroup, StringComparison.OrdinalIgnoreCase));
+            var startedInGroup = startedCommands.Count(c =>
+                c.Body.RequiresDiskAccess &&
+                string.Equals(c.Body.DiskAccessGroup ?? c.Name, candidateGroup, StringComparison.OrdinalIgnoreCase));
 
             return startedInGroup >= limit;
         }
