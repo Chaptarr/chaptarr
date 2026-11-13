@@ -49,6 +49,8 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public System.Collections.Generic.List<NzbDrone.Core.MediaFiles.BookFile> GetExisting(System.Collections.Generic.IEnumerable<int> ids) => throw new System.NotImplementedException();
+
             public List<BookFile> FilesByBook { get; } = new();
             public Dictionary<string, BookFile> FilesByPath { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<(BookFile File, DeleteMediaFileReason Reason)> DeletedFiles { get; } = new();
@@ -245,8 +247,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
             }
             public void SyncTags(List<Edition> books) => throw new NotImplementedException();
-            public List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId) => throw new NotImplementedException();
-            public List<RetagBookFilePreview> GetRetagPreviewsByBook(int authorId) => throw new NotImplementedException();
+            public List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId, NzbDrone.Core.Books.BookMediaType? mediaType = null) => throw new NotImplementedException();
+            public List<RetagBookFilePreview> GetRetagPreviewsByBook(int authorId, NzbDrone.Core.Books.BookMediaType? mediaType = null) => throw new NotImplementedException();
         }
 
         private sealed class FailingM4bConversionService : IM4bConversionService

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Chaptarr.Http.REST;
@@ -18,6 +19,13 @@ namespace Chaptarr.Api.V1.Books
         public List<int> TrackNumbers { get; set; }
         public int BookFileId { get; set; }
         public string Path { get; set; }
+        public bool IsFileSymlink { get; set; }
+        public bool IsCalibreFormat { get; set; }
+        public NzbDrone.Core.MediaFiles.RetagSkipReason? SkipReason { get; set; }
+        public string RootFolderPath { get; set; }
+        public string CalibreLibrary { get; set; }
+        public DateTime? RetryAfter { get; set; }
+        public bool RetryNow { get; set; }
         public List<TagDifference> Changes { get; set; }
     }
 
@@ -38,6 +46,13 @@ namespace Chaptarr.Api.V1.Books
                 TrackNumbers = model.TrackNumbers.ToList(),
                 BookFileId = model.BookFileId,
                 Path = model.Path,
+                IsFileSymlink = model.IsFileSymlink,
+                IsCalibreFormat = model.IsCalibreFormat,
+                SkipReason = model.SkipReason,
+                RootFolderPath = model.RootFolderPath,
+                CalibreLibrary = model.CalibreLibrary,
+                RetryAfter = model.RetryAfter,
+                RetryNow = model.RetryNow,
                 Changes = model.Changes.Select(x => new TagDifference
                 {
                     Field = x.Key,

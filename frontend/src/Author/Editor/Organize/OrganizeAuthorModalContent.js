@@ -8,20 +8,9 @@ import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { icons, kinds } from 'Helpers/Props';
+import getFileMediaScopeLabel from 'Utilities/Media/getFileMediaScopeLabel';
 import translate from 'Utilities/String/translate';
 import styles from './OrganizeAuthorModalContent.css';
-
-function getScopeLabel(selectedMediaType) {
-  if (selectedMediaType === 'ebook') {
-    return 'eBook files';
-  }
-
-  if (selectedMediaType === 'audiobook') {
-    return 'audiobook files';
-  }
-
-  return 'files';
-}
 
 function OrganizeAuthorModalContent(props) {
   const {
@@ -31,7 +20,7 @@ function OrganizeAuthorModalContent(props) {
     onOrganizeAuthorPress
   } = props;
 
-  const scope = getScopeLabel(selectedMediaType);
+  const scope = getFileMediaScopeLabel(selectedMediaType);
   return (
     <ModalContent onModalClose={onModalClose}>
       <ModalHeader>

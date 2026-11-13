@@ -613,6 +613,7 @@ class AuthorIndex extends Component {
         />
 
         <RetagAuthorModal
+          selectedMediaType={selectedMediaType}
           isOpen={this.state.isRetaggingAuthorModalOpen}
           authorIds={selectedAuthorIds}
           onModalClose={this.onRetagAuthorModalClose}

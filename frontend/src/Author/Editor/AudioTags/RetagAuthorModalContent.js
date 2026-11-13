@@ -9,6 +9,7 @@ import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { icons, kinds } from 'Helpers/Props';
+import getFileMediaScopeLabel from 'Utilities/Media/getFileMediaScopeLabel';
 import translate from 'Utilities/String/translate';
 import styles from './RetagAuthorModalContent.css';
 
@@ -62,7 +63,7 @@ class RetagAuthorModalContent extends Component {
           </Alert>
 
           <div className={styles.message}>
-            {translate('RetagConfirmAllFiles', { count: authorNames.length })}
+            {translate('RetagConfirmAll', { scope: getFileMediaScopeLabel(this.props.selectedMediaType), count: authorNames.length })}
           </div>
           <ul>
             {
@@ -124,6 +125,7 @@ class RetagAuthorModalContent extends Component {
 
 RetagAuthorModalContent.propTypes = {
   authorNames: PropTypes.arrayOf(PropTypes.string).isRequired,
+  selectedMediaType: PropTypes.oneOf(['all', 'audiobook', 'ebook']),
   onModalClose: PropTypes.func.isRequired,
   onRetagAuthorPress: PropTypes.func.isRequired
 };

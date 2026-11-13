@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Chaptarr.Api.V1.Commands;
@@ -11,6 +12,7 @@ using Microsoft.AspNetCore.Mvc;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Composition;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.MediaFiles.BookImport.Manual;
 using NzbDrone.Core.MediaFiles.Commands;
@@ -78,24 +80,40 @@ namespace Chaptarr.Core.Test.Commands
         }
 
         [Test]
-        public void rename_author_should_reject_unknown_media_type_before_queueing()
+        public void retag_files_response_keeps_author_identity_for_the_task_queue_label()
         {
             var queue = new StubCommandQueue();
-            var controller = CreateController(queue, """{"name":"RenameAuthor","authorIds":[1],"mediaType":"audio"}""");
+            var controller = CreateController(queue, """{"name":"RetagFiles","authorId":42,"files":[7,8]}""");
+            var result = controller.StartCommand(new CommandResource { Name = "RetagFiles" });
+            var resource = (CommandResource)((CreatedAtActionResult)result.Result).Value;
+            using var json = JsonDocument.Parse(STJson.ToJson(resource));
+            Assert.That(json.RootElement.GetProperty("body").GetProperty("authorId").GetInt32(), Is.EqualTo(42));
+            Assert.That(((RetagFilesCommand)resource.Body).Files, Is.EqualTo(new[] { 7, 8 }));
+        }
 
-            var exception = Assert.Throws<BadRequestException>(() => controller.StartCommand(new CommandResource { Name = "RenameAuthor" }));
+        [TestCase("RenameAuthor")]
+        [TestCase("RetagAuthor")]
+        [TestCase("MissingBookSearch")]
+        [TestCase("CutoffUnmetBookSearch")]
+        public void author_command_should_reject_unknown_media_type_before_queueing(string name)
+        {
+            var queue = new StubCommandQueue();
+            var controller = CreateController(queue, $"{{\"name\":\"{name}\",\"authorIds\":[1],\"mediaType\":\"audio\"}}");
+
+            var exception = Assert.Throws<BadRequestException>(() => controller.StartCommand(new CommandResource { Name = name }));
 
             Assert.That(exception.Content.ToString(), Does.Contain("mediaType"));
             Assert.That(queue.WasPushed, Is.False);
         }
 
-        [Test]
-        public void rename_author_should_accept_all_media_type()
+        [TestCase("RenameAuthor")]
+        [TestCase("RetagAuthor")]
+        public void author_command_should_accept_all_media_type(string name)
         {
             var queue = new StubCommandQueue();
-            var controller = CreateController(queue, """{"name":"RenameAuthor","authorIds":[1],"mediaType":"all"}""");
+            var controller = CreateController(queue, $"{{\"name\":\"{name}\",\"authorIds\":[1],\"mediaType\":\"all\"}}");
 
-            var result = controller.StartCommand(new CommandResource { Name = "RenameAuthor" });
+            var result = controller.StartCommand(new CommandResource { Name = name });
 
             Assert.That(queue.WasPushed, Is.True);
             Assert.That(result.Result, Is.TypeOf<CreatedAtActionResult>());
@@ -159,6 +177,8 @@ namespace Chaptarr.Core.Test.Commands
                 new KnownTypes(new List<Type>
                 {
                     typeof(RenameAuthorCommand),
+                    typeof(RetagAuthorCommand),
+                    typeof(RetagFilesCommand),
                     typeof(MissingBookSearchCommand),
                     typeof(CutoffUnmetBookSearchCommand),
                     typeof(ManualImportCommand)
