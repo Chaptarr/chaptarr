@@ -55,6 +55,7 @@ function EditMetadataProfileModalContent(props) {
     skipOmnibus,
     allowedLanguages,
     ignored,
+    ignoredGenres,
     minPages
   } = item;
   const nameField = fieldWithDefault(name, '');
@@ -69,6 +70,7 @@ function EditMetadataProfileModalContent(props) {
   const skipOmnibusField = fieldWithDefault(skipOmnibus, false);
   const allowedLanguagesField = fieldWithDefault(allowedLanguages, '');
   const ignoredField = fieldWithDefault(ignored, []);
+  const ignoredGenresField = fieldWithDefault(ignoredGenres, []);
 
   // profileType: 0=General, 1=Audiobook, 2=Ebook
   const profileTypeValue = profileType?.value ?? requestedProfileType;
@@ -273,6 +275,23 @@ function EditMetadataProfileModalContent(props) {
                   placeholder={translate('IgnoredPlaceHolder')}
                   delimiters={['Tab', 'Enter', ',']}
                   {...ignoredField}
+                  onChange={onInputChange}
+                />
+              </FormGroup>
+
+              <FormGroup>
+                <FormLabel>
+                  {translate('IgnoredGenres')}
+                </FormLabel>
+
+                <FormInputGroup
+                  type={inputTypes.GENRE_TAG}
+                  name="ignoredGenres"
+                  helpText={translate('IgnoredGenresHelpText')}
+                  kind={kinds.DANGER}
+                  placeholder={translate('IgnoredGenresPlaceHolder')}
+                  delimiters={['Tab', 'Enter', ',']}
+                  {...ignoredGenresField}
                   onChange={onInputChange}
                 />
               </FormGroup>

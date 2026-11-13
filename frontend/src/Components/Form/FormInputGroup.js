@@ -14,6 +14,7 @@ import DownloadClientSelectInputConnector from './DownloadClientSelectInputConne
 import EnhancedSelectInput from './EnhancedSelectInput';
 import EnhancedSelectInputConnector from './EnhancedSelectInputConnector';
 import FormInputHelpText from './FormInputHelpText';
+import GenreTagInputConnector from './GenreTagInputConnector';
 import IndexerFlagsSelectInput from './IndexerFlagsSelectInput';
 import IndexerSelectInputConnector from './IndexerSelectInputConnector';
 import KeyValueListInput from './KeyValueListInput';
@@ -110,6 +111,9 @@ function getComponent(type) {
 
     case inputTypes.TEXT_TAG:
       return TextTagInputConnector;
+
+    case inputTypes.GENRE_TAG:
+      return GenreTagInputConnector;
 
     case inputTypes.TAG_SELECT:
       return TagInputConnector;
