@@ -11,8 +11,8 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Configuration;
-using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Datastore.Events;
+using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Extras;
 using NzbDrone.Core.Extras.Files;
 using NzbDrone.Core.Extras.Metadata.Files;
@@ -214,9 +214,19 @@ namespace NzbDrone.Core.MediaFiles
 
         private void DeleteCalibreFormats(IEnumerable<(int BookId, string[] Formats)> books, CalibreSettings settings)
         {
-            foreach (var book in books)
+            var selected = books.ToList();
+            var completed = 0;
+            foreach (var book in selected)
             {
-                _calibre.RemoveFormats(book.BookId, book.Formats, settings);
+                try
+                {
+                    _calibre.RemoveFormats(book.BookId, book.Formats, settings);
+                    completed++;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    throw new CalibreException("Unable to remove formats for Calibre book {0} (already removed in this Calibre library: {1} of {2}): {3}", ex, book.BookId, completed, selected.Count, CalibreLibraryGate.GetFailureReason(ex));
+                }
             }
         }
 
@@ -538,11 +548,7 @@ namespace NzbDrone.Core.MediaFiles
             {
                 if (mediaType.HasValue)
                 {
-                    foreach (var book in group.GroupBy(item => item.File.CalibreId))
-                    {
-                        _calibre.RemoveFormats(book.Key, book.Select(item => Path.GetExtension(item.File.Path).TrimStart('.').ToUpperInvariant())
-                            .Distinct(StringComparer.OrdinalIgnoreCase), group.First().Root.CalibreSettings);
-                    }
+                    DeleteCalibreFormats(GetCalibreFormats(group.Select(item => item.File)), group.First().Root.CalibreSettings);
                 }
                 else
                 {
