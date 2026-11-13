@@ -7,6 +7,7 @@ import concurrent.futures
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -18,6 +19,30 @@ import xml.etree.ElementTree as ET
 
 
 TRX = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
+
+
+def fixtures_using(source, symbols):
+    """Include direct consumers and consumers of shared test helpers (including partials)."""
+    symbols = set(symbols)
+    if not symbols or any(not re.fullmatch(r"[A-Za-z_]\w*", symbol) for symbol in symbols):
+        raise ValueError("--uses requires comma-separated C# symbol names")
+    files = [(path, path.read_text(encoding="utf-8")) for path in source.rglob("*.cs")]
+    selected = set()
+    while True:
+        before = len(symbols)
+        pattern = re.compile(r"\b(?:" + "|".join(re.escape(symbol) for symbol in symbols) + r")\b")
+        for path, text in files:
+            if not pattern.search(text):
+                continue
+            namespace = re.search(r"namespace\s+([\w.]+)", text)
+            classes = re.findall(r"\bclass\s+(\w+)", text)
+            fixture = next((name for name in classes if name.endswith("Fixture")), None)
+            if namespace and fixture:
+                selected.add(namespace[1] + "." + fixture)
+            elif "Common" in path.parts:
+                symbols.update(classes)
+        if len(symbols) == before:
+            return sorted(selected)
 
 
 def write_json(path, value):
@@ -205,7 +230,16 @@ def main():
     parser.add_argument("--timings", type=Path, default=Path(__file__).with_name("core-test-times.json"),
                         help="Measured fixture durations used to balance the processes")
     parser.add_argument("--fixture", action="append", help="Exact fixture name for a targeted check")
+    parser.add_argument("--uses", help="Run fixtures using comma-separated symbols, including shared test-helper consumers")
     args = parser.parse_args()
+    if args.uses is not None:
+        try:
+            selected = fixtures_using(Path(__file__).resolve().parents[1] / "src/Chaptarr.Core.Test", [symbol.strip() for symbol in args.uses.split(",")])
+        except ValueError as error:
+            parser.error(str(error))
+        if not selected:
+            parser.error("--uses matched no fixtures")
+        args.fixture = sorted(set(args.fixture or []) | set(selected))
     assembly, output = args.assembly.resolve(), args.results.resolve()
     output.mkdir(parents=True, exist_ok=True)
     if not assembly.is_file() or args.workers < 1:

@@ -194,6 +194,13 @@ jobs:
       if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
       run: yarn lint-browser-checks
 
+    - name: Check retag preview
+      if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
+      timeout-minutes: 5
+      env:
+        TMPDIR: ${{ runner.temp }}
+      run: yarn check-retag-preview
+
     - name: Check browser route capture
       if: ${{ !cancelled() && runner.os == 'Linux' && steps.browser_deps.outcome == 'success' }}
       timeout-minutes: 1

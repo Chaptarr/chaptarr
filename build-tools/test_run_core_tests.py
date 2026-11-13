@@ -1,5 +1,7 @@
 import importlib.util
 import os
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -15,6 +17,37 @@ def fixture(name, count=1, serial=False, state="Runnable"):
 
 
 class CoreRunnerTests(unittest.TestCase):
+    def test_symbol_selector_includes_helper_consumers_and_partials(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "Common").mkdir()
+            (root / "Common/GateStub.cs").write_text("namespace Test.Common { class GateStub : IMetadataServerHealthGate {} }")
+            (root / "Direct.cs").write_text("namespace Test { class DirectFixture { HttpTransportErrors h; } }")
+            (root / "Author.Partial.cs").write_text("namespace Test { partial class AuthorFixture { GateStub h; } }")
+            (root / "Unrelated.cs").write_text("namespace Test { class UnrelatedFixture {} }")
+            self.assertEqual(runner.fixtures_using(root, ["HttpTransportErrors", "IMetadataServerHealthGate"]), ["Test.AuthorFixture", "Test.DirectFixture"])
+
+    def test_symbol_selection_rejects_empty_invalid_and_partial_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "A.cs").write_text("namespace T { class AFixture { ServiceExtra x; } }")
+            self.assertEqual(runner.fixtures_using(root, ["Service"]), [])
+            self.assertEqual(runner.fixtures_using(root, ["Absent"]), [])
+            for symbols in ([], [""], ["Service.*"]):
+                with self.assertRaises(ValueError):
+                    runner.fixtures_using(root, symbols)
+
+    def test_cli_rejects_empty_trailing_and_unmatched_symbols_without_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for value in ("", "A,", "NoSuchConsumerSymbolForThisTest"):
+                with self.subTest(value=value):
+                    result = subprocess.run([sys.executable, runner.__file__, "--uses", value, "--results", directory], capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn("error:", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    if value.startswith("NoSuch"):
+                        self.assertIn("matched no fixtures", result.stderr)
+
     def test_isolated_runtime_resolves_aliases_before_setting_child_paths(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()

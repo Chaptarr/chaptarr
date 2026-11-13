@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using Chaptarr.Core.Test.Common;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Parser;
@@ -65,22 +66,7 @@ namespace Chaptarr.Core.Test.Parser
             }
         }
 
-        private static string FindScorecardPath()
-        {
-            var directory = new DirectoryInfo(TestContext.CurrentContext.TestDirectory);
-            while (directory != null)
-            {
-                var candidate = Path.Combine(directory.FullName, ScorecardRelativePath);
-                if (File.Exists(candidate))
-                {
-                    return candidate;
-                }
-
-                directory = directory.Parent;
-            }
-
-            throw new FileNotFoundException($"Could not find {ScorecardRelativePath} from {TestContext.CurrentContext.TestDirectory}");
-        }
+        private static string FindScorecardPath() => Path.Combine(RepositorySource.FindRoot(), ScorecardRelativePath);
 
         private static Book BuildBook(ReleasePackScorecardRow row, Author author)
         {
