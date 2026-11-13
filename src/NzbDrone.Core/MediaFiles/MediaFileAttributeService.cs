@@ -18,17 +18,14 @@ namespace NzbDrone.Core.MediaFiles
     {
         private readonly IConfigService _configService;
         private readonly IDiskProvider _diskProvider;
-        private readonly IFileMutationSafetyService _fileMutationSafetyService;
         private readonly Logger _logger;
 
         public MediaFileAttributeService(IConfigService configService,
                                          IDiskProvider diskProvider,
-                                         IFileMutationSafetyService fileMutationSafetyService,
                                          Logger logger)
         {
             _configService = configService;
             _diskProvider = diskProvider;
-            _fileMutationSafetyService = fileMutationSafetyService;
             _logger = logger;
         }
 
@@ -39,7 +36,6 @@ namespace NzbDrone.Core.MediaFiles
                 //Wrapped in Try/Catch to prevent this from causing issues with remote NAS boxes
                 try
                 {
-                    _fileMutationSafetyService.EnsureMutableFile(path);
                     _diskProvider.InheritFolderPermissions(path);
                 }
                 catch (Exception ex)
@@ -88,11 +84,6 @@ namespace NzbDrone.Core.MediaFiles
 
             try
             {
-                if (_diskProvider.FileExists(path))
-                {
-                    _fileMutationSafetyService.EnsureMutableFile(path);
-                }
-
                 _diskProvider.SetPermissions(path, _configService.ChmodFolder, _configService.ChownGroup);
             }
             catch (Exception ex)

@@ -309,7 +309,8 @@ namespace Chaptarr.Core.Test.Queue
                 if (!historyOnly) context.SaveJob(ConversionJobStatus.Failed);
                 if (!rowDisappears) context.RecordOutput(context.Output);
                 var link = Path.Combine(Path.GetDirectoryName(context.Output), "late-link");
-                RequireDirectorySymbolicLinkCapability(link, Path.GetDirectoryName(context.LibraryFile));
+                SymbolicLinkTest.CreateDirectory(link, Path.GetDirectoryName(context.LibraryFile));
+                Directory.Delete(link);
                 context.AfterClientRemoval = () =>
                 {
                     if (rowDisappears) context.Repository.DeleteByDownloadId(context.DownloadId);
@@ -457,30 +458,6 @@ namespace Chaptarr.Core.Test.Queue
                 Assert.That(File.Exists(first.Source), Is.True);
                 Assert.That(File.Exists(second.Source), Is.True);
             });
-        }
-
-        private static void RequireDirectorySymbolicLinkCapability(string link, string target)
-        {
-            try
-            {
-                Directory.CreateSymbolicLink(link, target);
-            }
-            catch (UnauthorizedAccessException)
-            {
-                Assert.Ignore("This symlink-specific cleanup case requires permission to create directory symbolic links.");
-            }
-            catch (PlatformNotSupportedException)
-            {
-                Assert.Ignore("This symlink-specific cleanup case is unsupported on this platform.");
-            }
-            catch (IOException ex) when ((ex.HResult & 0xffff) is 50 or 1314)
-            {
-                Assert.Ignore("This symlink-specific cleanup case requires filesystem symbolic link support and privileges.");
-            }
-            finally
-            {
-                if (Directory.Exists(link)) Directory.Delete(link);
-            }
         }
 
         [TestCase(false, "remove", false)]

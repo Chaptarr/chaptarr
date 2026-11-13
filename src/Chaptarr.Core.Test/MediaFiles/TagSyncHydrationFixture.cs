@@ -7,7 +7,6 @@ using NzbDrone.Common.Disk;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Configuration;
-using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.TagExtraction;
 using NzbDrone.Core.Messaging.Events;
@@ -73,12 +72,11 @@ namespace Chaptarr.Core.Test.MediaFiles
             };
 
             var sut = new EBookTagService(
-                DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
                 mediaFileService,
                 DispatchProxy.Create<IRootFolderService, ThrowingProxy<IRootFolderService>>(),
                 config,
                 DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
-                DispatchProxy.Create<IFileMutationSafetyService, ThrowingProxy<IFileMutationSafetyService>>(),
+                null,
                 LogManager.GetLogger("test"));
 
             var edition = new Edition { Id = 42, BookId = 7 };
@@ -106,8 +104,6 @@ namespace Chaptarr.Core.Test.MediaFiles
                 DispatchProxy.Create<IDiskProvider, ThrowingProxy<IDiskProvider>>(),
                 DispatchProxy.Create<IRootFolderWatchingService, ThrowingProxy<IRootFolderWatchingService>>(),
                 DispatchProxy.Create<IFileMutationSafetyService, ThrowingProxy<IFileMutationSafetyService>>(),
-                DispatchProxy.Create<IAuthorService, ThrowingProxy<IAuthorService>>(),
-                DispatchProxy.Create<IMapCoversToLocal, ThrowingProxy<IMapCoversToLocal>>(),
                 DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                 DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
                 LogManager.GetLogger("test"),
