@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
     <PackageReference Include="NUnit" />
     <PackageReference Include="NUnit3TestAdapter" />
   </ItemGroup>
@@ -22,8 +23,10 @@
     <Content Include="..\Chaptarr.Api.V1\openapi.json" Link="Fixtures\openapi.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures\ProviderSearch\*.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures\Matching\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures\Audio\silence.*" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\NzbDrone.Core\Localization\Core\en.json" Link="Localization\Core\en.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\frontend\src\Utilities\String\unicodeComparisonFoldData.js" Link="Fixtures\unicodeComparisonFoldData.js" CopyToOutputDirectory="PreserveNewest" />
+    <EmbeddedResource Include="..\NzbDrone.Core\MediaFiles\TagExtraction\TagCanonicalizer.cs" LogicalName="TagSources.TagCanonicalizer.cs" />
     <EmbeddedResource Include="..\NzbDrone.Core\Datastore\Migration\*.cs" LogicalName="Migrations.Source.%(Filename)%(Extension)" />
     <EmbeddedResource Include="Fixtures\Migrations\ReleasedMigrations.sha256" LogicalName="Migrations.Released.sha256" />
   </ItemGroup>

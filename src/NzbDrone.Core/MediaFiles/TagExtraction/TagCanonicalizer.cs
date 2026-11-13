@@ -17,14 +17,14 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 ["ARTIST"] = new[] { "ID3v2:TPE1", "MP4:©ART", "XIPH:ARTIST", "APE:Artist" },
                 ["ALBUMARTIST"] = new[] { "ID3v2:TPE2", "MP4:aART", "XIPH:ALBUMARTIST", "ASF:WM/AlbumArtist", "APE:AlbumArtist" },
                 ["COMPOSER"] = new[] { "ID3v2:TCOM", "MP4:©wrt", "XIPH:COMPOSER", "ASF:WM/Composer", "APE:Composer" },
-                ["PUBLISHER"] = new[] { "ID3v2:TPUB", "MP4:©pub", "XIPH:PUBLISHER", "ASF:WM/Publisher", "APE:Publisher" },
+                ["PUBLISHER"] = new[] { "ID3v2:TPUB", "MP4:----:com.apple.iTunes:publisher", "MP4:©pub", "XIPH:PUBLISHER", "XIPH:ORGANIZATION", "XIPH:LABEL", "ASF:WM/Publisher", "APE:Publisher" },
                 ["GENRE"] = new[] { "ID3v2:TCON", "MP4:©gen", "XIPH:GENRE", "APE:Genre" },
                 ["DATE"] = new[] { "ID3v2:TDRC", "ID3v2:TYER", "ID3v2:TDAT", "MP4:©day", "XIPH:DATE", "APE:Year" },
                 ["ORIGINALDATE"] = new[] { "ID3v2:TDOR", "XIPH:ORIGINALDATE", "ASF:WM/OriginalReleaseTime" },
                 ["ORIGINALYEAR"] = new[] { "ASF:WM/OriginalReleaseYear" },
                 ["COMMENT"] = new[] { "ID3v2:COMM:*", "MP4:©cmt", "XIPH:COMMENT" },
                 ["TRACKNUMBER"] = new[] { "ID3v2:TRCK", "XIPH:TRACKNUMBER", "ASF:WM/TrackNumber", "APE:Track" },
-                ["TOTALTRACKS"] = new[] { "ID3v2:TRCK", "XIPH:TOTALTRACKS" },
+                ["TOTALTRACKS"] = new[] { "ID3v2:TRCK", "XIPH:TOTALTRACKS", "XIPH:TRACKTOTAL" },
                 ["DISCNUMBER"] = new[] { "ID3v2:TPOS", "XIPH:DISCNUMBER" },
                 ["TOTALDISCS"] = new[] { "ID3v2:TPOS", "XIPH:TOTALDISCS" },
                 ["NARRATOR"] = new[] { "ID3v2:TXXX:NARRATOR", "XIPH:NARRATOR", "ASF:WM/Narrator", "APE:Narrator" },
@@ -40,6 +40,7 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 ["ASIN"] = new[]
                 {
                     "AUDIBLE_ASIN",
+                    "ID3v2:TXXX:ASIN",
                     "MP4:----:com.pilabor.tone:AUDIBLE_ASIN",
                     "----:com.pilabor.tone:AUDIBLE_ASIN",
                     "ID3v2:TXXX:AUDIBLE_ASIN",
@@ -162,7 +163,9 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             Add("ARTIST", Get("MP4:©ART"));
             Add("ALBUMARTIST", Get("MP4:aART"));
             Add("COMPOSER", Get("MP4:©wrt"));
-            Add("PUBLISHER", Get("MP4:©pub"));
+            // Prefer the field we write and ffprobe reads; retain legacy ©pub as raw evidence.
+            var applePublisher = Get("MP4:----:com.apple.iTunes:publisher").ToList();
+            Add("PUBLISHER", applePublisher.Any() ? applePublisher : Get("MP4:©pub"));
             Add("GENRE", Get("MP4:©gen"));
             Add("DATE", Get("MP4:©day"));
             Add("COMMENT", Get("MP4:©cmt"));
@@ -178,7 +181,8 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             Add("ARTIST", Get("XIPH:ARTIST"));
             Add("ALBUMARTIST", Get("XIPH:ALBUMARTIST"));
             Add("COMPOSER", Get("XIPH:COMPOSER"));
-            Add("PUBLISHER", Get("XIPH:PUBLISHER"));
+            var xiphPublisher = Get("XIPH:PUBLISHER").Where(value => !string.IsNullOrWhiteSpace(value)).ToList();
+            Add("PUBLISHER", xiphPublisher.Any() ? xiphPublisher : Get("XIPH:ORGANIZATION").Concat(Get("XIPH:LABEL")));
             Add("GENRE", Get("XIPH:GENRE"));
             Add("DATE", Get("XIPH:DATE"));
             Add("ORIGINALDATE", Get("XIPH:ORIGINALDATE"));
@@ -192,6 +196,7 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             Add("DISCNUMBER", Get("XIPH:DISCNUMBER"));
             Add("TOTALDISCS", Get("XIPH:TOTALDISCS"));
             Add("TOTALTRACKS", Get("XIPH:TOTALTRACKS"));
+            Add("TOTALTRACKS", Get("XIPH:TRACKTOTAL"));
 
             // ASF (prefix ASF:)
             Add("ALBUM", Get("ASF:WM/AlbumTitle"));
@@ -212,7 +217,7 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             Add("ARTIST", Get("APE:Artist"));
             Add("ALBUMARTIST", Get("APE:AlbumArtist"));
             Add("COMPOSER", Get("APE:Composer"));
-            Add("PUBLISHER", Get("APE:Publisher"));
+            if (!Get("ID3v2:TPUB").Any()) Add("PUBLISHER", Get("APE:Publisher"));
             Add("GENRE", Get("APE:Genre"));
             Add("DATE", Get("APE:Year"));
             Add("NARRATOR", Get("APE:Narrator"));

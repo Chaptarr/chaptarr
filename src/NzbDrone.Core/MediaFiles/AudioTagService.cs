@@ -7,11 +7,9 @@ using NzbDrone.Common.Disk;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
-using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Events;
-using NzbDrone.Core.Parser.Model;
 using TagLib;
 
 namespace NzbDrone.Core.MediaFiles
@@ -24,8 +22,8 @@ namespace NzbDrone.Core.MediaFiles
         void SyncTags(List<Edition> tracks);
         List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId);
         List<RetagBookFilePreview> GetRetagPreviewsByBook(int bookId);
-        void RetagFiles(RetagFilesCommand message);
-        void RetagAuthor(RetagAuthorCommand message);
+        TagBatch RetagFiles(RetagFilesCommand message, List<BookFile> files, TagBatch batch);
+        TagBatch RetagAuthor(RetagAuthorCommand message, IReadOnlyList<Author> authors, TagBatch batch);
     }
 
     public class AudioTagService : IAudioTagService
@@ -35,8 +33,6 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IDiskProvider _diskProvider;
         private readonly IRootFolderWatchingService _rootFolderWatchingService;
         private readonly IFileMutationSafetyService _fileMutationSafetyService;
-        private readonly IAuthorService _authorService;
-        private readonly IMapCoversToLocal _mediaCoverService;
         private readonly IEventAggregator _eventAggregator;
         private readonly IMediaInfoExtractor _mediaInfoExtractor;
         private readonly Logger _logger;
@@ -47,8 +43,6 @@ namespace NzbDrone.Core.MediaFiles
                                IDiskProvider diskProvider,
                                IRootFolderWatchingService rootFolderWatchingService,
                                IFileMutationSafetyService fileMutationSafetyService,
-                               IAuthorService authorService,
-                               IMapCoversToLocal mediaCoverService,
                                IEventAggregator eventAggregator,
                                IMediaInfoExtractor mediaInfoExtractor,
                                Logger logger,
@@ -59,20 +53,11 @@ namespace NzbDrone.Core.MediaFiles
             _diskProvider = diskProvider;
             _rootFolderWatchingService = rootFolderWatchingService;
             _fileMutationSafetyService = fileMutationSafetyService;
-            _authorService = authorService;
-            _mediaCoverService = mediaCoverService;
             _eventAggregator = eventAggregator;
             _mediaInfoExtractor = mediaInfoExtractor;
             _logger = logger;
             _tagExtractionService = tagExtractionService;
         }
-
-        private Dictionary<string, List<string>> ReadAllTagMap(string path)
-        {
-            return _tagExtractionService.ExtractTags(path) ?? new Dictionary<string, List<string>>();
-        }
-
-        // Removed legacy ReadTags (ParsedTrackInfo) path; use ReadAllTags for field-agnostic tags
 
         public Dictionary<string, List<string>> ReadAllTags(string path)
         {
@@ -81,12 +66,6 @@ namespace NzbDrone.Core.MediaFiles
         }
 
         public (Dictionary<string, List<string>> Tags, int? DurationSeconds) ReadAllTagsAndDuration(string path)
-        {
-            // Tag extraction and duration share one primary TagLib# read.
-            return ReadAllTagsAndDurationInternal(path);
-        }
-
-        private (Dictionary<string, List<string>> Tags, int? DurationSeconds) ReadAllTagsAndDurationInternal(string path)
         {
             var (tags, durationSeconds) = _tagExtractionService.ExtractTagsAndDuration(path);
 
@@ -99,8 +78,9 @@ namespace NzbDrone.Core.MediaFiles
             return (tags ?? new Dictionary<string, List<string>>(), durationSeconds);
         }
 
-        private Dictionary<string, string> BuildDesiredTagMap(BookFile trackfile)
+        private Dictionary<string, string> BuildDesiredTagMap(BookFile trackfile, Dictionary<string, string> current, out string[] narrators)
         {
+            narrators = trackfile?.Edition?.NarratorNames?.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()).ToArray() ?? Array.Empty<string>();
             if (trackfile?.Edition == null)
             {
                 _logger.Warn($"Cannot build desired tags for file {trackfile?.Path} - no edition linked");
@@ -124,16 +104,35 @@ namespace NzbDrone.Core.MediaFiles
                 return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             }
 
-            var partCount = edition.BookFiles?.Count ?? 0;
-
             var desired = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["TITLE"] = edition.Title ?? string.Empty,
                 ["ALBUM"] = book.Title ?? string.Empty,
                 ["ARTIST"] = author.Name ?? string.Empty,
-                ["TRACKNUMBER"] = (trackfile.Part > 0 ? trackfile.Part : 1).ToString(),
-                ["TRACKCOUNT"] = (partCount > 0 ? partCount : 0).ToString(),
             };
+
+            // Existing file numbering wins; Part only supplies a missing track.
+            current.TryGetValue("TRACKNUMBER", out var storedTrack);
+            uint.TryParse(storedTrack, out var track);
+            if (track == 0 && trackfile.Part > 0)
+            {
+                track = (uint)trackfile.Part;
+            }
+
+            if (track > 0)
+            {
+                desired["TRACKNUMBER"] = track.ToString();
+            }
+
+            // Carry existing totals and disc numbering through scrub without inventing them.
+            foreach (var key in new[] { "TRACKCOUNT", "DISCNUMBER", "DISCCOUNT" })
+            {
+                current.TryGetValue(key, out var stored);
+                if (uint.TryParse(stored, out var number) && number > 0)
+                {
+                    desired[key] = stored;
+                }
+            }
 
             if (edition.ReleaseDate.HasValue)
             {
@@ -145,10 +144,9 @@ namespace NzbDrone.Core.MediaFiles
                 desired["PUBLISHER"] = edition.Publisher;
             }
 
-            if (edition.NarratorNames != null && edition.NarratorNames.Any())
+            if (narrators.Length > 0)
             {
-                desired["COMPOSER"] = string.Join("; ", edition.NarratorNames);
-                desired["NARRATOR"] = desired["COMPOSER"];
+                desired["COMPOSER"] = string.Join("; ", narrators);
             }
 
             return desired;
@@ -166,77 +164,121 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        public void RemoveAllTags(string path)
+        public void WriteTags(BookFile trackfile, bool newDownload, bool force = false)
         {
-            TagLib.File file = null;
+            var batch = new TagBatch();
             try
             {
-                file = TagLib.File.Create(path);
-                file.RemoveTags(TagLib.TagTypes.AllTags);
-                file.Save();
-            }
-            catch (CorruptFileException ex)
-            {
-                _logger.Warn(ex, $"Tag removal failed for {path}.  File is corrupt");
-            }
-            catch (Exception ex)
-            {
-                _logger.ForWarnEvent()
-                    .Exception(ex)
-                    .Message($"Tag removal failed for {path}")
-                    .WriteSentryWarn("Tag removal failed")
-                    .Log();
+                WriteTags(trackfile, newDownload, force, batch);
             }
             finally
             {
-                file?.Dispose();
+                batch.Timer.Stop();
+                LogBatch("Import", batch);
             }
         }
 
-        public void WriteTags(BookFile trackfile, bool newDownload, bool force = false)
+        private void WriteTags(BookFile trackfile, bool newDownload, bool force, TagBatch batch)
         {
-            if (MediaFileExtensions.IsMatroskaAudioExtension(Path.GetExtension(trackfile?.Path)))
-            {
-                _logger.Debug("Skipping tag write for Matroska audio file: {0}", trackfile?.Path);
-                return;
-            }
-
+            var path = trackfile.Path;
             if (!force)
             {
-                if (_configService.WriteAudioTags == WriteAudioTagsType.No ||
-                    (_configService.WriteAudioTags == WriteAudioTagsType.NewFiles && !newDownload))
+                var mode = _configService.WriteAudioTags;
+                if (mode == WriteAudioTagsType.No || (mode == WriteAudioTagsType.NewFiles && !newDownload))
                 {
+                    batch.Skipped++;
                     return;
                 }
             }
 
-            var desired = BuildDesiredTagMap(trackfile);
-            var path = trackfile.Path;
-
-            var currentFlat = Flatten(ReadAllTagMap(path));
-            var diff = ComputeDiff(currentFlat, desired);
-
-            if (!diff.Any())
+            var operation = "read audio tags";
+            var saved = false;
+            try
             {
-                _logger.Debug("No tags update for {0} due to no difference", trackfile);
-                return;
+                var scrub = _configService.ScrubAudioTags;
+                var current = ReadWritableTagMap(path, scrub, out var conflict, out var restoredTotals);
+                batch.Read++;
+                var desired = BuildDesiredTagMap(trackfile, current, out var narrators);
+                var diff = ComputeDiff(current, desired);
+                if (!diff.Any())
+                {
+                    batch.Skipped++;
+                    return;
+                }
+
+                if (conflict != null)
+                {
+                    operation = "scrub audio tags";
+                    throw new IOException(conflict);
+                }
+
+                operation = "update audio tags";
+                _rootFolderWatchingService.ReportFileSystemChangeBeginning(path);
+                if (_fileMutationSafetyService.EnsureMutableFile(path))
+                {
+                    batch.Separated++;
+                }
+
+                WriteTagMap(path, scrub ? desired : diff.ToDictionary(pair => pair.Key, pair => pair.Value.Item2), narrators, scrub);
+                saved = true;
+                batch.RestoredTotals += restoredTotals;
+                operation = "persist file statistics after saving audio tags";
+                UpdateTrackfileSizeAndModified(trackfile, path);
+                operation = "publish the audio retag event";
+                _eventAggregator.PublishEvent(new BookFileRetaggedEvent(trackfile.Author, trackfile, diff, scrub));
+                batch.Written++;
             }
-
-            _rootFolderWatchingService.ReportFileSystemChangeBeginning(path);
-            _fileMutationSafetyService.EnsureMutableFile(path);
-
-            if (_configService.ScrubAudioTags)
+            catch (FileSymlinkMutationException ex)
             {
-                _logger.Debug($"Scrubbing tags for {trackfile}");
-                RemoveAllTags(path);
+                batch.SkippedSymlinkPaths.Add(path);
+                _logger.Debug("{0}", ex.Message);
             }
+            catch (Exception ex)
+            {
+                LogFailure(ex, path, operation, batch, saved);
+            }
+        }
 
-            _logger.Debug($"Writing tags for {trackfile}");
-            WriteTagMap(path, desired);
+        private void LogFailure(Exception ex, string path, string operation, TagBatch batch, bool saved = false)
+        {
+            if (saved)
+            {
+                batch.AudioIncomplete++;
+            }
+            else
+            {
+                batch.Failed++;
+            }
+            if (ex is IOException or UnauthorizedAccessException or CorruptFileException or UnsupportedFormatException)
+            {
+                _logger.Warn(ex, "Unable to {0} for {1}", operation, path);
+            }
+            else
+            {
+                _logger.Error(ex, "Unexpected failure attempting to {0} for {1}", operation, path);
+            }
+        }
 
-            UpdateTrackfileSizeAndModified(trackfile, path);
+        private void LogBatch(string operation, TagBatch batch)
+        {
+            if (!batch.HasProblems) return;
+            _logger.Warn("Audio tags {0}: {1} read, {2} skipped, {3} failed, {4} separated, {5} written in {6} ms, {7} stored totals preserved through scrub, {8} incomplete",
+                operation, batch.Read, batch.Skipped + batch.SkippedSymlinks + batch.Unsupported, batch.Failed, batch.Separated, batch.Written, batch.Timer.ElapsedMilliseconds, batch.RestoredTotals, batch.Incomplete);
+        }
 
-            _eventAggregator.PublishEvent(new BookFileRetaggedEvent(trackfile.Author, trackfile, diff, _configService.ScrubAudioTags));
+        private void RetagBatch(List<BookFile> files, TagBatch batch)
+        {
+            foreach (var file in files)
+            {
+                if (!MediaFileExtensions.CanWriteAudioTags(Path.GetExtension(file.Path)))
+                {
+                    batch.Unsupported++;
+                    _logger.Debug("Audio tag writing is unsupported for {0}; skipping file", file.Path);
+                    continue;
+                }
+
+                WriteTags(file, false, true, batch);
+            }
         }
 
         public void SyncTags(List<Edition> editions)
@@ -246,134 +288,199 @@ namespace NzbDrone.Core.MediaFiles
                 return;
             }
 
-            var hydratedEditions = HydrateEditionBookFiles(editions);
-
-            foreach (var edition in hydratedEditions)
+            var batch = new TagBatch();
+            foreach (var edition in _mediaFileService.HydrateEditionBookFiles(editions))
             {
-                var bookFiles = edition.BookFiles ?? new List<BookFile>();
-
-                _logger.Debug($"Syncing audio tags for {bookFiles.Count} files");
-
-                foreach (var file in bookFiles.Where(x => MediaFileExtensions.CanWriteAudioTags(Path.GetExtension(x.Path))))
+                foreach (var file in (edition.BookFiles ?? new List<BookFile>()).Where(x => MediaFileExtensions.CanWriteAudioTags(Path.GetExtension(x.Path))))
                 {
-                    // populate tracks (which should also have release/book/author set) because
-                    // not all of the updates will have been committed to the database yet
                     file.Edition = edition;
-                    WriteTags(file, false);
+                    WriteTags(file, false, false, batch);
                 }
             }
-        }
 
-        private List<Edition> HydrateEditionBookFiles(List<Edition> editions)
-        {
-            var safeEditions = editions?.Where(e => e != null).ToList() ?? new List<Edition>();
-            var missingBookFiles = safeEditions.Where(e => e.BookFiles == null && e.BookId > 0).ToList();
-
-            if (!missingBookFiles.Any())
-            {
-                return safeEditions;
-            }
-
-            var bookIds = missingBookFiles.Select(e => e.BookId).Distinct().ToList();
-            var filesByEditionId = (_mediaFileService.GetFilesByBooks(bookIds) ?? new List<BookFile>())
-                .Where(file => file != null && file.EditionId > 0)
-                .GroupBy(file => file.EditionId)
-                .ToDictionary(group => group.Key, group => group.ToList());
-
-            foreach (var edition in missingBookFiles)
-            {
-                edition.BookFiles = filesByEditionId.TryGetValue(edition.Id, out var editionFiles)
-                    ? editionFiles
-                    : new List<BookFile>();
-            }
-
-            return safeEditions;
+            LogBatch("Sync", batch);
         }
 
         public List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId)
         {
-            var files = _mediaFileService.GetFilesByAuthor(authorId);
+            var files = RetagMediaScope.Select(_mediaFileService.GetFilesByAuthor(authorId), BookMediaType.Audiobook).ToList();
 
-            return GetPreviews(files).OrderBy(b => b.BookId).ThenBy(b => b.Path).ToList();
+            return GetPreviews(files).ToList();
         }
 
         public List<RetagBookFilePreview> GetRetagPreviewsByBook(int bookId)
         {
-            var files = _mediaFileService.GetFilesByBook(bookId);
+            var files = RetagMediaScope.Select(_mediaFileService.GetFilesByBook(bookId), BookMediaType.Audiobook).ToList();
 
-            return GetPreviews(files).OrderBy(b => b.BookId).ThenBy(b => b.Path).ToList();
+            return GetPreviews(files).ToList();
         }
 
         private IEnumerable<RetagBookFilePreview> GetPreviews(List<BookFile> files)
         {
-            foreach (var f in files.Where(x => MediaFileExtensions.CanWriteAudioTags(Path.GetExtension(x.Path)) && x.Edition != null).OrderBy(x => x.Edition?.Title ?? string.Empty))
+            var batch = new TagBatch();
+            var previews = new List<RetagBookFilePreview>();
+            files = files.Where(x => MediaFileExtensions.CanWriteAudioTags(Path.GetExtension(x.Path)) && x.Edition != null).ToList();
+            foreach (var file in files)
             {
-                var file = f;
-
-                var currentFlat = Flatten(ReadAllTagMap(f.Path));
-                var desired = BuildDesiredTagMap(f);
-                var diff = ComputeDiff(currentFlat, desired);
-
-                if (diff.Any())
+                try
                 {
-                    yield return new RetagBookFilePreview
+                    var current = ReadWritableTagMap(file.Path, _configService.ScrubAudioTags, out _, out _);
+                    batch.Read++;
+                    var diff = ComputeDiff(current, BuildDesiredTagMap(file, current, out _));
+                    if (diff.Any())
                     {
-                        AuthorId = file.Author.Id,
-                        BookId = file.Edition.Id,
-                        BookFileId = file.Id,
-                        Path = file.Path,
-                        Changes = diff
-                    };
+                        previews.Add(new RetagBookFilePreview
+                        {
+                            AuthorId = file.Author.Id,
+                            BookId = file.Edition.BookId,
+                            BookFileId = file.Id,
+                            Title = file.Edition.Title,
+                            Path = file.Path,
+                            IsFileSymlink = FileMutationSafetyService.IsFileSymlink(file.Path),
+                            Changes = diff
+                        });
+                    }
+                    else
+                    {
+                        batch.Skipped++;
+                    }
                 }
-            }
-        }
-
-        public void RetagFiles(RetagFilesCommand message)
-        {
-            var author = _authorService.GetAuthor(message.AuthorId);
-            var bookFiles = _mediaFileService.Get(message.Files);
-            var audioFiles = bookFiles.Where(x => MediaFileExtensions.CanWriteAudioTags(Path.GetExtension(x.Path))).ToList();
-
-            _logger.ProgressInfo("Re-tagging {0} audio files for {1}", audioFiles.Count, author.Name);
-            foreach (var file in audioFiles)
-            {
-                WriteTags(file, false, force: true);
-            }
-
-            _logger.ProgressInfo("Selected audio files re-tagged for {0}", author.Name);
-        }
-
-        public void RetagAuthor(RetagAuthorCommand message)
-        {
-            _logger.Debug("Re-tagging all audio files for selected authors");
-            var authorToRename = _authorService.GetAuthors(message.AuthorIds);
-
-            foreach (var author in authorToRename)
-            {
-                var bookFiles = _mediaFileService.GetFilesByAuthor(author.Id);
-                var audioFiles = bookFiles.Where(x => MediaFileExtensions.CanWriteAudioTags(Path.GetExtension(x.Path))).ToList();
-
-                _logger.ProgressInfo("Re-tagging all audio files for author: {0}", author.Name);
-                foreach (var file in audioFiles)
+                catch (Exception ex)
                 {
-                    WriteTags(file, false, force: true);
+                    LogFailure(ex, file.Path, "preview audio tags", batch);
+                    previews.Add(new RetagBookFilePreview
+                    {
+                        AuthorId = file.Author?.Id ?? 0,
+                        BookId = file.Edition.BookId,
+                        BookFileId = file.Id,
+                        Title = file.Edition.Title,
+                        Path = file.Path,
+                        SkipReason = RetagSkipReason.PreviewFailed
+                    });
                 }
+            }
 
-                _logger.ProgressInfo("All audio files re-tagged for {0}", author.Name);
+            return previews;
+        }
+
+        public TagBatch RetagFiles(RetagFilesCommand message, List<BookFile> files, TagBatch batch)
+        {
+            files = RetagMediaScope.Select(files, BookMediaType.Audiobook, batch).ToList();
+            _logger.ProgressInfo("Re-tagging {0} audio files", files.Count);
+            RetagBatch(files, batch);
+            return batch;
+        }
+
+        public TagBatch RetagAuthor(RetagAuthorCommand message, IReadOnlyList<Author> authors, TagBatch batch)
+        {
+            RetagMediaScope.ForEachAuthor(authors, _mediaFileService, BookMediaType.Audiobook, batch, files =>
+            {
+                _logger.ProgressInfo("Re-tagging {0} audio files for {1}", files.Count, batch.CurrentAuthor);
+                RetagBatch(files, batch);
+            });
+
+            return batch;
+        }
+
+        // Both comparisons and writes use the same fields; file values are comparison evidence,
+        // while desired metadata comes from the linked edition, book and author.
+        private static readonly (string Key, Func<TagLib.File, string> Read, Action<TagLib.File, string, string[]> Write)[] WritableFields =
+        {
+            ("TITLE", f => ReadText(f, "©nam", f.Tag.Title), (f, v, _) => f.Tag.Title = v),
+            ("ALBUM", f => ReadText(f, "©alb", f.Tag.Album), (f, v, _) => f.Tag.Album = v),
+            ("ARTIST", f => ReadText(f, "©ART", string.Join("; ", f.Tag.Performers)), (f, v, _) => f.Tag.Performers = new[] { v }),
+            // ID3v2.3 treats a slash as a list separator; preserve existing tag versions.
+            ("COMPOSER", f => ReadText(f, "©wrt", string.Join("; ", f.Tag.Composers)), (f, v, narrators) => f.Tag.Composers = narrators),
+            ("TRACKNUMBER", f => f.Tag.Track.ToString(), (f, v, _) => f.Tag.Track = uint.Parse(v)),
+            ("TRACKCOUNT", f => f.Tag.TrackCount.ToString(), (f, v, _) => f.Tag.TrackCount = uint.Parse(v)),
+            ("DISCNUMBER", f => f.Tag.Disc.ToString(), (f, v, _) => f.Tag.Disc = uint.Parse(v)),
+            ("DISCCOUNT", f => f.Tag.DiscCount.ToString(), (f, v, _) => f.Tag.DiscCount = uint.Parse(v)),
+            ("YEAR", ReadYear, (f, v, _) => f.Tag.Year = uint.Parse(v)),
+            ("PUBLISHER", ReadPublisher, (f, v, _) => WritePublisher(f, v))
+        };
+
+        private static string ReadText(TagLib.File file, string id, string fallback)
+        {
+            return file.GetTag(TagTypes.Apple) is TagLib.Mpeg4.AppleTag apple
+                ? TagExtraction.TagLibSharpExtractor.ReadAppleText(apple, id) : fallback;
+        }
+
+        private static string ReadYear(TagLib.File file)
+        {
+            // ASF's generic getter discards years shorter than four digits, although its setter saves them.
+            if (file.GetTag(TagTypes.Asf) is TagLib.Asf.Tag asf && uint.TryParse(asf.GetDescriptorString("WM/Year"), out var year))
+            {
+                return year.ToString();
+            }
+
+            return file.Tag.Year.ToString();
+        }
+
+        private static readonly (TagTypes Type, Func<Tag, string> Read, Action<Tag, string> Write)[] PublisherFields =
+        {
+            (TagTypes.Xiph, t => string.Join("; ", ((TagLib.Ogg.XiphComment)t).GetField("PUBLISHER")), (t, v) => ((TagLib.Ogg.XiphComment)t).SetField("PUBLISHER", v)),
+            (TagTypes.Apple, t => t.Publisher, (t, v) => t.Publisher = v),
+            (TagTypes.Asf, t => ((TagLib.Asf.Tag)t).GetDescriptorString("WM/Publisher"), (t, v) => ((TagLib.Asf.Tag)t).SetDescriptorString(v, "WM/Publisher")),
+            (TagTypes.Id3v2, t => t.Publisher, (t, v) => t.Publisher = v),
+            (TagTypes.Ape, t => ((TagLib.Ape.Tag)t).GetItem("Publisher")?.ToString(), (t, v) => ((TagLib.Ape.Tag)t).SetValue("Publisher", v))
+        };
+
+        private static string ReadPublisher(TagLib.File file)
+        {
+            foreach (var field in PublisherFields)
+            {
+                if (file.GetTag(field.Type) is Tag tag) return field.Read(tag);
+            }
+
+            return null;
+        }
+
+        private static void WritePublisher(TagLib.File file, string value)
+        {
+            foreach (var field in PublisherFields)
+            {
+                if (file.GetTag(field.Type) is Tag tag)
+                {
+                    field.Write(tag, value);
+                    return;
+                }
             }
         }
 
-        private static Dictionary<string, string> Flatten(Dictionary<string, List<string>> multi)
+        private static Dictionary<string, string> ReadWritableTagMap(string path, bool scrub, out string conflict, out int restoredTotals)
         {
-            var flat = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            if (multi == null) return flat;
-            foreach (var kv in multi)
+            conflict = null;
+            restoredTotals = 0;
+            using var file = TagLib.File.Create(path);
+            if (file.PossiblyCorrupt)
             {
-                if (kv.Value == null || kv.Value.Count == 0) continue;
-                var joined = string.Join("; ", kv.Value.Where(v => !string.IsNullOrWhiteSpace(v)));
-                flat[kv.Key] = joined;
+                throw new CorruptFileException("TagLib marked this file as possibly corrupt");
             }
-            return flat;
+
+            var current = WritableFields.ToDictionary(field => field.Key, field => field.Read(file), StringComparer.OrdinalIgnoreCase);
+            if (scrub && (file.Tag.TrackCount == 0 || file.Tag.DiscCount == 0))
+            {
+                // Reuse the scanner's existing interpretation, not another raw-field list or file read.
+                var stored = TagExtraction.TagLibSharpExtractor.ExtractTags(file);
+                TagExtraction.TagCanonicalizer.AddCanonicalKeys(stored);
+                foreach (var (field, canonical) in new[] { ("TRACKCOUNT", "TOTALTRACKS"), ("DISCCOUNT", "TOTALDISCS") })
+                {
+                    if (current[field] != "0" || !stored.TryGetValue(canonical, out var values)) continue;
+                    var numbers = values.Select(value => uint.TryParse(value, out var number) ? number : 0u)
+                        .Where(number => number > 0).Distinct().Take(2).ToArray();
+                    if (numbers.Length > 1)
+                    {
+                        conflict = $"Conflicting stored numbering: {canonical} {string.Join(" vs ", numbers)}; refusing to discard or guess a total";
+                    }
+                    if (numbers.Length == 1)
+                    {
+                        current[field] = numbers[0].ToString();
+                        restoredTotals++;
+                    }
+                }
+            }
+
+            return current;
         }
 
         private static Dictionary<string, Tuple<string, string>> ComputeDiff(Dictionary<string, string> current, Dictionary<string, string> desired)
@@ -391,32 +498,26 @@ namespace NzbDrone.Core.MediaFiles
             return diff;
         }
 
-        private void WriteTagMap(string path, Dictionary<string, string> desired)
+        private static void WriteTagMap(string path, Dictionary<string, string> desired, string[] narrators, bool scrub)
         {
-            TagLib.File file = null;
-            try
+            using var file = TagLib.File.Create(path);
+            if (scrub)
             {
-                file = TagLib.File.Create(path);
-                if (desired.TryGetValue("TITLE", out var title)) file.Tag.Title = title;
-                if (desired.TryGetValue("ARTIST", out var artist)) file.Tag.Performers = new[] { artist };
-                if (desired.TryGetValue("ALBUM", out var album)) file.Tag.Album = album;
-                if (desired.TryGetValue("TRACKNUMBER", out var trackStr) && uint.TryParse(trackStr, out var trackNo)) file.Tag.Track = trackNo;
-                if (desired.TryGetValue("TRACKCOUNT", out var trackCntStr) && uint.TryParse(trackCntStr, out var trackCnt)) file.Tag.TrackCount = trackCnt;
-                if (desired.TryGetValue("YEAR", out var yearStr) && uint.TryParse(yearStr, out var year)) file.Tag.Year = year;
-                if (desired.TryGetValue("COMPOSER", out var composers)) file.Tag.Composers = composers.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).ToArray();
-                if (desired.TryGetValue("PUBLISHER", out var publisher)) file.Tag.Publisher = publisher;
+                // Keep writable containers; removing them would discard subsequent assignments.
+                file.Tag.Clear();
+                // TagLib 2.2 FLAC Metadata.Clear removes pictures but leaves its Xiph fields.
+                file.GetTag(TagTypes.Xiph)?.Clear();
+            }
 
-                file.Save();
-            }
-            catch (Exception ex)
+            foreach (var field in WritableFields)
             {
-                _logger.ForWarnEvent().Exception(ex).Message($"Failed to write tags for {path}").WriteSentryWarn("Tag write failed").Log();
+                if (desired.TryGetValue(field.Key, out var value))
+                {
+                    field.Write(file, value, narrators);
+                }
             }
-            finally
-            {
-                file?.Dispose();
-            }
+
+            file.Save();
         }
-
     }
 }
