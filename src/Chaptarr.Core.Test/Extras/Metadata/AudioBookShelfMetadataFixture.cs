@@ -38,6 +38,37 @@ namespace Chaptarr.Core.Test.Extras.Metadata
         }
 
         [Test]
+        public void should_split_joined_narrator_credits_and_deduplicate_individual_names()
+        {
+            var subject = CreateSubject(new List<RootFolder> { BuildRoot(audiobookMetadata: true) });
+            var bookFile = BuildBookFile("audiobook", "/library/Matt Dinniman/A Parade of Horribles/book.m4b");
+            bookFile.Narrator = "First Narrator + Second Narrator + Third Narrator";
+            bookFile.Edition.Narrator = "FIRST NARRATOR; Fourth Narrator";
+            bookFile.Edition.NarratorNames = new List<string> { "First Narrator", "Second Narrator" };
+            bookFile.Edition.Book.Narrator = "Second Narrator, Fifth Narrator";
+
+            var metadata = JObject.Parse(subject.BookMetadata(BuildAuthor(), bookFile).Contents);
+
+            Assert.That(metadata["narrators"].Select(n => (string)n), Is.EqualTo(new[]
+            {
+                "First Narrator", "Second Narrator", "Third Narrator", "Fourth Narrator", "Fifth Narrator"
+            }));
+        }
+
+        [TestCase("C++ Narrator")]
+        [TestCase("First+Second")]
+        public void should_preserve_plus_signs_that_are_not_the_joined_narrator_separator(string narrator)
+        {
+            var subject = CreateSubject(new List<RootFolder> { BuildRoot(audiobookMetadata: true) });
+            var bookFile = BuildBookFile("audiobook", "/library/Matt Dinniman/A Parade of Horribles/book.m4b");
+            bookFile.Narrator = narrator;
+
+            var metadata = JObject.Parse(subject.BookMetadata(BuildAuthor(), bookFile).Contents);
+
+            Assert.That(metadata["narrators"].Select(n => (string)n), Is.EqualTo(new[] { narrator }));
+        }
+
+        [Test]
         public void should_not_write_sidecars_by_default()
         {
             var subject = CreateSubject(new List<RootFolder>
