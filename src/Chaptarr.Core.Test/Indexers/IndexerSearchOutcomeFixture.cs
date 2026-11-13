@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Core.Indexers;
+using NzbDrone.Common.Http;
 using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.Indexers.Newznab;
 using NzbDrone.Core.IndexerSearch.Definitions;
@@ -64,6 +65,26 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(criteria.IndexerStatistics.Failed, Is.EqualTo(1));
         }
 
+        [TestCase("0", false, 3600)]
+        [TestCase("-1", false, 3600)]
+        [TestCase("60", false, 60)]
+        [TestCase("0", true, 3600)]
+        [TestCase("Wed, 01 Jan 2020 00:00:00 GMT", true, 3600)]
+        [TestCase("Wed, 01 Jan 2020 00:00:00 GMT", false, 3600)]
+        public async Task retry_limit_uses_the_existing_caller_policy(string value, bool apiLimit, int expectedSeconds)
+        {
+            var response = new HttpResponse(new HttpRequest("http://indexer.test/"), new HttpHeader { ["Retry-After"] = value }, "", HttpStatusCode.TooManyRequests);
+            Exception error = apiLimit ? new RequestLimitReachedException("fixture", RetryAfterParser.GetDelay(response) ?? TimeSpan.Zero) : new TooManyRequestsException(response.Request, response);
+            TimeSpan? delay = null;
+            var status = Proxy<IIndexerStatusService>((method, args) =>
+            {
+                if (method.Name == nameof(IIndexerStatusService.RecordFailure)) delay = (TimeSpan)args[1];
+                return null;
+            });
+            await new Probe(1, 1, _ => throw error, status).Fetch(new BookSearchCriteria());
+            Assert.That(delay, Is.EqualTo(TimeSpan.FromSeconds(expectedSeconds)));
+        }
+
         private sealed class Probe : HttpIndexerBase<NewznabSettings>
         {
             private readonly int _queries;
@@ -72,8 +93,8 @@ namespace Chaptarr.Core.Test.Indexers
             public override string Name => "Outcome probe";
             public override DownloadProtocol Protocol => DownloadProtocol.Usenet;
 
-            public Probe(int id, int queries, Func<int, IList<ReleaseInfo>> response)
-                : base(null, Proxy<IIndexerStatusService>((_, _) => null), null, null, LogManager.GetCurrentClassLogger())
+            public Probe(int id, int queries, Func<int, IList<ReleaseInfo>> response, IIndexerStatusService status = null)
+                : base(null, status ?? Proxy<IIndexerStatusService>((_, _) => null), null, null, LogManager.GetCurrentClassLogger())
             {
                 _queries = queries;
                 _response = response;

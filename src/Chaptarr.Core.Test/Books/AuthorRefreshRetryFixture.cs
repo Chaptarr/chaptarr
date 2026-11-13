@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
+using System.Net.Sockets;
 using System.Threading;
 using Chaptarr.Core.Test.Common;
 using NLog;
@@ -9,7 +11,7 @@ using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.Datastore;
-using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.Http;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
@@ -230,7 +232,7 @@ namespace Chaptarr.Core.Test.Books
                     }
                 }
                 MakeDue();
-                var health = new MetadataServerHealthService(Logger);
+                var health = new HttpServiceHealth(Logger);
                 var config = InterfaceProxy.Proxy<NzbDrone.Core.Configuration.IConfigService>((_, _) => "https://metadata.test");
                 var gate = new MetadataServerHealthGate(config, health, Logger);
                 health.ReportFailure(gate.SourceName, new WebException("connection unavailable"));
@@ -245,7 +247,7 @@ namespace Chaptarr.Core.Test.Books
                     fetches++;
                     if (failProbe)
                     {
-                        gate.ReportException(new WebException("probe failed", WebExceptionStatus.ConnectFailure));
+                        gate.ReportException(new HttpRequestException(HttpRequestError.ConnectionError, "Connection refused", new SocketException((int)SocketError.ConnectionRefused)));
                         return RefreshResult.Error("probe failed", HttpStatusCode.ServiceUnavailable);
                     }
                     health.ReportSuccess(gate.SourceName);

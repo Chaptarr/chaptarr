@@ -6,6 +6,7 @@ using System.Data;
 using System.Diagnostics;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books.Events;
+using NzbDrone.Core.Http;
 using NzbDrone.Core.MediaCover.Commands;
 using System.Reflection;
 using System.Linq;
@@ -1041,7 +1042,7 @@ namespace Chaptarr.Core.Test.Api
                 var logger = LogManager.GetCurrentClassLogger();
                 var proxy = new BookInfoProxy(null, null, goodreads, null, null, null, null, null, config,
                     new MetadataRequestBuilder(config), logger, new CacheManager(),
-                    new MetadataServerHealthGate(config, new MetadataServerHealthService(logger), logger));
+                    new MetadataServerHealthGate(config, new HttpServiceHealth(logger), logger));
                 var controller = h.LookupController(searchProxy: proxy);
                 foreach (var type in new[] { BookMediaType.Audiobook, BookMediaType.Ebook })
                 {

@@ -18,6 +18,7 @@ using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Http;
 using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.MediaFiles;
@@ -202,7 +203,7 @@ namespace Chaptarr.Core.Test.Books
                 });
                 var config = Proxy<IConfigService>((method, _) => method.Name == "get_MetadataServerUrl" ? "https://metadata.invalid" : null);
                 var info = new BookInfoProxy(http, null, null, null, null, h.Authors, h.Books, h.Editions, config, null,
-                    h.Logger, new CacheManager(), new MetadataServerHealthGate(config, new MetadataServerHealthService(h.Logger), h.Logger));
+                    h.Logger, new CacheManager(), new MetadataServerHealthGate(config, new HttpServiceHealth(h.Logger), h.Logger));
                 HydrationRefresh(h, database, info).Execute(new BulkRefreshAuthorCommand(new List<int> { h.Author.Id, ready.Id, settled.Id }));
                 Assert.That(diffs.Single(item => item.RequestedId == "hc:123456").ETag, Is.Empty);
                 Assert.That(diffs.Single(item => item.RequestedId == "hc:654321").ETag, Is.Empty);

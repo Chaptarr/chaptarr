@@ -13,6 +13,7 @@ using NzbDrone.Common.Http;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.Http;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
 
@@ -87,7 +88,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
         private static IMetadataServerHealthGate CreateHealthGate(IConfigService configService)
         {
             var logger = LogManager.GetCurrentClassLogger();
-            return new MetadataServerHealthGate(configService, new MetadataServerHealthService(logger), logger);
+            return new MetadataServerHealthGate(configService, new HttpServiceHealth(logger), logger);
         }
 
         [Test]
@@ -274,7 +275,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             var logger = LogManager.GetCurrentClassLogger();
             var httpClient = new RecordingHttpClient(payload);
             var configService = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
-            var healthService = new MetadataServerHealthService(logger);
+            var healthService = new HttpServiceHealth(logger);
             var healthGate = new MetadataServerHealthGate(configService, healthService, logger);
             healthService.ReportFailure(healthGate.SourceName, new WebException("metadata server unavailable"));
 
@@ -311,7 +312,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             var logger = LogManager.GetCurrentClassLogger();
             var httpClient = new RecordingHttpClient(payload, executePayload: "gateway error", executeStatusCode: HttpStatusCode.ServiceUnavailable);
             var configService = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
-            var healthService = new MetadataServerHealthService(logger);
+            var healthService = new HttpServiceHealth(logger);
             var healthGate = new MetadataServerHealthGate(configService, healthService, logger);
 
             var proxy = new BookInfoProxy(httpClient,

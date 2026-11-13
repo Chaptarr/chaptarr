@@ -738,7 +738,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             {
                 throw new BookInfoException("Metadata server is temporarily unavailable for {0}; retrying in {1}",
                     operation,
-                    MetadataServerHealthGate.FormatRetryAfter(retryAfter));
+                    HttpServiceHealth.FormatRetryAfter(retryAfter));
             }
 
             try
@@ -761,7 +761,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             {
                 throw new BookInfoException("Metadata server is temporarily unavailable for {0}; retrying in {1}",
                     operation,
-                    MetadataServerHealthGate.FormatRetryAfter(retryAfter));
+                    HttpServiceHealth.FormatRetryAfter(retryAfter));
             }
 
             try
@@ -783,7 +783,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
             {
                 throw new BookInfoException("Metadata server is temporarily unavailable for {0}; retrying in {1}",
                     operation,
-                    MetadataServerHealthGate.FormatRetryAfter(retryAfter));
+                    HttpServiceHealth.FormatRetryAfter(retryAfter));
             }
 
             try
@@ -3035,10 +3035,10 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
 
         private void WaitUntilRetry(HttpResponse response)
         {
-            var retryAfter = MetadataServerHealthGate.GetRetryAfter(response) ??
-                             MetadataServerHealthService.DefaultRateLimitRetryAfter;
+            var retryAfter = HttpServiceHealth.GetRetryAfter(response) ??
+                             HttpServiceHealth.DefaultRateLimitRetryAfter;
 
-            _logger.Info("BookInfo returned 429, backing off for {0}", MetadataServerHealthGate.FormatRetryAfter(retryAfter));
+            _logger.Info("BookInfo returned 429, backing off for {0}", HttpServiceHealth.FormatRetryAfter(retryAfter));
 
             Thread.Sleep(retryAfter);
         }
