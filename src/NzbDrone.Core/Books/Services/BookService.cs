@@ -977,7 +977,12 @@ namespace NzbDrone.Core.Books
 
         public List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds)
         {
-            return _bookRepository.GetBooksForRefresh(authorId, foreignIds);
+            var books = _bookRepository.GetBooksForRefresh(authorId, foreignIds);
+            var timer = Stopwatch.StartNew();
+            var audio = books.Where(book => book.MediaType == BookMediaType.Audiobook).ToList();
+            BookSeries.LoadLinks(audio, _seriesBookLinkRepository.GetLinksByBook);
+            _logger.Debug("Author refresh loaded series links for {0} audiobook rows in {1} ms", audio.Count, timer.ElapsedMilliseconds);
+            return books;
         }
 
         public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds)

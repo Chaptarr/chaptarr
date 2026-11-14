@@ -120,6 +120,70 @@ namespace Chaptarr.Core.Test.Books
             });
         }
 
+        private sealed class BookRefresh : RefreshBookService
+        {
+            public BookRefresh() : base(null, null, null, null, null, null, null, null, null, null, null,
+                null, null, null, LogManager.GetCurrentClassLogger(), null) { }
+
+            public UpdateResult Compare(Book local, Book remote) => UpdateEntity(local, remote);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void author_refresh_lean_read_batches_audio_series_before_header_comparison(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var events = InterfaceProxy.Proxy<IEventAggregator>((_, _) => null);
+                var logger = LogManager.GetCurrentClassLogger();
+                var author = new AuthorRepository(database, events, logger).Insert(new Author
+                {
+                    Name = "Refresh author", CleanName = "refreshauthor", Path = "/refresh-series", Added = DateTime.UtcNow
+                });
+                var rows = Enumerable.Range(1, 100).Select(id => new Book
+                {
+                    AuthorId = author.Id, Title = "Book " + id, CleanTitle = "book" + id, Added = DateTime.UtcNow,
+                    MediaType = id == 100 ? BookMediaType.Ebook : BookMediaType.Audiobook
+                }).ToList();
+                new BasicRepository<Book>(database, events).InsertMany(rows);
+                var series = new BasicRepository<Series>(database, events).Insert(new Series
+                {
+                    Title = "Series", GoodreadsSeriesId = "gr:123", MediaType = BookMediaType.Audiobook
+                });
+                new SeriesBookLinkRepository(database, events).InsertMany(rows.Select(book => new SeriesBookLink
+                {
+                    BookId = book.Id, SeriesId = series.Id, Position = "2"
+                }).ToList());
+                var statements = new List<string>();
+                var observed = InterfaceProxy.Proxy<IMainDatabase>((method, args) => method.Name == nameof(IDatabase.OpenConnection)
+                    ? CommandObserver.Wrap<IDbConnection>(database.OpenConnection(), command => statements.Add(command.CommandText))
+                    : method.Invoke(database, args));
+                var service = new BookService(new BookRepository(observed, events), null, events, null, null, null,
+                    new SeriesBookLinkRepository(observed, events), null, logger);
+                var loaded = service.GetBooksForRefresh(author.Id, null);
+                Assert.That(statements, Has.Count.EqualTo(3), "One lean book read, one membership batch, one series batch");
+                Assert.That(loaded.Single(book => book.MediaType == BookMediaType.Ebook).LazySeriesLinks.IsLoaded, Is.False);
+                statements.Clear();
+                var refresh = new BookRefresh();
+                foreach (var book in loaded.Where(book => book.MediaType == BookMediaType.Audiobook))
+                {
+                    // The author-refresh hydration supplies these unrelated relationships before comparison.
+                    book.Author = author;
+                    book.Editions = new List<Edition>();
+                    book.BookFiles = new List<BookFile>();
+                    var remote = new Book
+                    {
+                        Title = book.Title, CleanTitle = book.CleanTitle, TitleSlug = book.TitleSlug, Author = author,
+                        AuthorId = author.Id, SeriesId = 123, MediaType = book.MediaType,
+                        SeriesLinks = new List<SeriesBookLink> { new() { Series = series, Position = "2" } }
+                    };
+                    Assert.That(refresh.Compare(book, remote), Is.EqualTo(RefreshEntityServiceBase<Book, Edition>.UpdateResult.Standard));
+                    Assert.That(refresh.Compare(book, remote), Is.EqualTo(RefreshEntityServiceBase<Book, Edition>.UpdateResult.None));
+                }
+                Assert.That(statements, Is.Empty, "Neither links nor each linked series may lazy-load during comparison");
+            });
+        }
+
         [Test]
         public void failed_audio_preload_does_not_mark_books_loaded_empty()
         {
