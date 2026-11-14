@@ -399,5 +399,103 @@ namespace Chaptarr.Core.Test.ImportLists
             Assert.That(repoProxy.Inserted[0].ForeignId, Is.EqualTo("gr:123"));
             Assert.That(repoProxy.Inserted[0].MediaType, Is.Null);
         }
+
+        private static (ImportListExclusionService Service, RepositoryProxy Repository) CreateServiceWithRemainingBooks(params Book[] remainingBooks)
+        {
+            var repository = DispatchProxy.Create<IImportListExclusionRepository, RepositoryProxy>();
+            var bookService = global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookService>((method, args) =>
+            {
+                if (method.Name == nameof(IBookService.GetBooksByAuthor))
+                {
+                    var authorId = (int)args[0];
+                    return remainingBooks.Where(book => book.AuthorId == authorId).ToList();
+                }
+
+                throw new NotImplementedException($"Test proxy does not implement IBookService.{method.Name}");
+            });
+
+            var service = new ImportListExclusionService(repository, LogManager.GetCurrentClassLogger(), new Lazy<IBookService>(() => bookService));
+            return (service, (RepositoryProxy)(object)repository);
+        }
+
+        private static Book AuthorBook(int id, string title, string hardcoverId, BookMediaType mediaType = BookMediaType.Audiobook, string goodreadsId = null)
+        {
+            return new Book
+            {
+                Id = id,
+                AuthorId = 7,
+                Author = new Author { Id = 7, Name = "Author A" },
+                Title = title,
+                MediaType = mediaType,
+                HardcoverBookId = hardcoverId,
+                GoodreadsWorkId = goodreadsId
+            };
+        }
+
+        [Test]
+        public void deleting_a_duplicate_should_not_exclude_ids_still_used_by_the_book_that_was_kept()
+        {
+            var kept = AuthorBook(1, "The Sixth Book", "hc:1000006", goodreadsId: "gr:1000006");
+            var duplicate = AuthorBook(2, "The Sixth Book", "hc:1000006", goodreadsId: "gr:1000006");
+            var (service, repository) = CreateServiceWithRemainingBooks(kept);
+
+            service.HandleAsync(new BookDeletedEvent(duplicate, deleteFiles: false, addImportListExclusion: true));
+
+            Assert.That(repository.Inserted, Is.Empty);
+        }
+
+        [Test]
+        public void deleting_a_book_should_still_exclude_ids_that_no_remaining_book_uses()
+        {
+            var kept = AuthorBook(1, "The Sixth Book", "hc:1000006");
+            var deleted = AuthorBook(2, "The Sixth Book (abridged)", "hc:1000006", goodreadsId: "gr:42");
+            var unrelated = AuthorBook(3, "Eighth Book", "hc:1000008");
+            var (service, repository) = CreateServiceWithRemainingBooks(kept, unrelated);
+
+            service.HandleAsync(new BookDeletedEvent(deleted, deleteFiles: false, addImportListExclusion: true));
+
+            Assert.That(repository.Inserted.Select(row => row.ForeignId), Is.EquivalentTo(new[] { "gr:42" }));
+            Assert.That(repository.Inserted.Single().MediaType, Is.EqualTo(BookMediaType.Audiobook));
+        }
+
+        [Test]
+        public void a_remaining_book_in_the_other_format_should_not_block_a_single_format_exclusion()
+        {
+            var ebook = AuthorBook(1, "Side Book One", "hc:2000001", BookMediaType.Ebook);
+            var audiobook = AuthorBook(2, "Side Book One", "hc:2000001", BookMediaType.Audiobook);
+            var (service, repository) = CreateServiceWithRemainingBooks(ebook);
+
+            service.HandleAsync(new BookDeletedEvent(audiobook, deleteFiles: false, addImportListExclusion: true));
+
+            Assert.That(repository.Inserted.Select(row => row.ForeignId), Is.EquivalentTo(new[] { "hc:2000001" }));
+            Assert.That(repository.Inserted.Single().MediaType, Is.EqualTo(BookMediaType.Audiobook));
+        }
+
+        [Test]
+        public void an_all_formats_exclusion_should_skip_ids_used_by_a_remaining_book_in_either_format()
+        {
+            var ebook = AuthorBook(1, "Side Book One", "hc:2000001", BookMediaType.Ebook);
+            var audiobook = AuthorBook(2, "Side Book One", "hc:2000001", BookMediaType.Audiobook, goodreadsId: "gr:2000001");
+            var (service, repository) = CreateServiceWithRemainingBooks(ebook);
+
+            service.HandleAsync(new BookDeletedEvent(audiobook, deleteFiles: false, addImportListExclusion: true, applyToBothFormats: true));
+
+            Assert.That(repository.Inserted.Select(row => row.ForeignId), Is.EquivalentTo(new[] { "gr:2000001" }));
+            Assert.That(repository.Inserted.Single().MediaType, Is.Null);
+        }
+
+        [Test]
+        public void a_bulk_delete_of_every_copy_should_still_exclude_the_work()
+        {
+            var first = AuthorBook(1, "Side Book Two", "hc:2000002");
+            var second = AuthorBook(2, "Side Book Two", "hc:2000002");
+
+            // The book service still returns rows that are part of the delete; they must not protect themselves.
+            var (service, repository) = CreateServiceWithRemainingBooks(first, second);
+
+            service.HandleAsync(new BookDeletedEvent(first, deleteFiles: false, addImportListExclusion: true, deletedBooks: new[] { first, second }));
+
+            Assert.That(repository.Inserted.Select(row => row.ForeignId), Is.EquivalentTo(new[] { "hc:2000002" }));
+        }
     }
 }
