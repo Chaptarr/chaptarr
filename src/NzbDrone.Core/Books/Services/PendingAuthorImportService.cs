@@ -1025,7 +1025,7 @@ namespace NzbDrone.Core.Books.Services
                 current.MaxAttempts = 0;
                 current.LastAttemptAt = DateTime.UtcNow;
                 current.LastError = error;
-                current.NextAttemptAt = AuthorRetrySchedule.NextAttempt(current.AttemptCount);
+                current.NextAttemptAt = AuthorRetrySchedule.NextPendingImportAttempt(current.AttemptCount);
                 current.OverallStatus = PendingImportStatus.Retrying;
                 current.UpdatedAt = DateTime.UtcNow;
 
@@ -1042,7 +1042,8 @@ namespace NzbDrone.Core.Books.Services
                 }
 
                 CopyMutableState(current, item);
-                _logger.Warn("Pending import {0} attempt {1} waiting until {2}: {3}", current.Id, current.AttemptCount, current.NextAttemptAt, error);
+                var level = AuthorRetrySchedule.ShouldWarn(current.AttemptCount) ? LogLevel.Warn : LogLevel.Debug;
+                _logger.Log(level, "Pending import {0} attempt {1} waiting until {2}: {3}", current.Id, current.AttemptCount, current.NextAttemptAt, error);
                 return;
             }
         }
