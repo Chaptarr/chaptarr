@@ -215,7 +215,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         private void RunIncludedMedia(IMainDatabase db, string root, BookMediaType requested, string scenario)
         {
             using var logFactory = new LogFactory();
-            var sink = new NLog.Targets.MemoryTarget { Layout = "${message}" };
+            var sink = new ConcurrentLogTarget { Layout = "${message}" };
             var logging = new NLog.Config.LoggingConfiguration();
             logging.AddRule(LogLevel.Debug, LogLevel.Fatal, sink);
             logFactory.Configuration = logging;
@@ -606,9 +606,10 @@ namespace Chaptarr.Core.Test.MediaFiles
                         entered.Set();
                         if (!release.Wait(TimeSpan.FromSeconds(15))) throw new TimeoutException("Conversion test did not release worker");
                     };
+                    var worker = System.Threading.Tasks.Task.CompletedTask;
                     try
                     {
-                        typeof(ConversionJobService).GetMethod("DispatchQueuedJobs", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(jobs, null);
+                        worker = ConversionJobServiceFixture.DispatchWorkers(jobs);
                         Assert.That(entered.Wait(TimeSpan.FromSeconds(15)), Is.True);
                         Assert.That(jobs.IsRunning(item.DownloadId), Is.True);
                         if (scenario == "conversion-running-paused") author.AudiobookMonitored = false;
@@ -633,7 +634,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     finally
                     {
                         release.Set();
-                        Assert.That(SpinWait.SpinUntil(() => !jobs.IsRunning(item.DownloadId), TimeSpan.FromSeconds(15)), Is.True);
+                        Assert.That(worker.Wait(TimeSpan.FromSeconds(15)), Is.True);
                     }
                     subject.Import(tracked);
                     if (scenario == "conversion-running-pin")
@@ -652,8 +653,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Assert.That(checkedSizes, Has.Count.EqualTo(1), "Accepted conversion does not rerun custom-format policy while running or ready");
                     return;
                 }
-                typeof(ConversionJobService).GetMethod("DispatchQueuedJobs", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(jobs, null);
-                Assert.That(SpinWait.SpinUntil(() => !jobs.IsRunning(item.DownloadId), TimeSpan.FromSeconds(15)), Is.True);
+                Assert.That(ConversionJobServiceFixture.DispatchWorkers(jobs).Wait(TimeSpan.FromSeconds(15)), Is.True);
                 if (terminalConversion && scenario.EndsWith("-paused", StringComparison.Ordinal)) author.AudiobookMonitored = false;
                 if (scenario == "conversion-finished-paused") author.AudiobookMonitored = false;
                 if (scenario == "conversion-finished-policy-change") audioProfile.MinFormatScore = 100;

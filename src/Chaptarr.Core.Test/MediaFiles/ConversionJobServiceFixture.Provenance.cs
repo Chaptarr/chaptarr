@@ -82,7 +82,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     if (Directory.Exists(directory)) Directory.Delete(directory, true);
                 }
             });
@@ -156,7 +156,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var ownership = JsonSerializer.Deserialize<ConversionArtifactManifest>(File.ReadAllText(Path.Combine(request.WorkFolder, "conversion-artifact.json")));
                     Assert.That(ownership.DownloadId, Is.EqualTo(request.DownloadId));
                     Assert.That(ownership.EncoderSucceeded, Is.False, "A readable failed output has ownership evidence, never successful provenance");
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     // Simulate losing the failure-state acknowledgement: restart sees the old lease.
                     var interrupted = repository.FindByDownloadId(request.DownloadId);
                     interrupted.Status = ConversionJobStatus.Converting;
@@ -169,7 +169,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     if (Directory.Exists(directory)) Directory.Delete(directory, true);
                 }
             });
@@ -207,7 +207,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     if (Directory.Exists(directory)) Directory.Delete(directory, true);
                 }
             });
@@ -314,7 +314,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 finally
                 {
                     converter.Release.Set();
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     if (Directory.Exists(directory)) Directory.Delete(directory, true);
                 }
             });
@@ -360,7 +360,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 finally
                 {
                     release.Set();
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     if (Directory.Exists(directory)) Directory.Delete(directory, true);
                 }
             });

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using NLog;
@@ -25,7 +26,6 @@ namespace Chaptarr.Core.Test.Download
     {
         [TestCase(false)]
         [TestCase(true)]
-        [Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
         public void other_import_failures_should_remain_for_manual_review(bool mixed)
         {
             var harness = new Harness();
@@ -47,7 +47,7 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(harness.EventAggregator.Events, Has.None.InstanceOf<DownloadCompletedEvent>());
         }
 
-        [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
+        [Test]
         public void no_files_should_keep_waiting_without_blocklisting()
         {
             var harness = new Harness();
@@ -57,7 +57,7 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(harness.EventAggregator.Events, Has.None.InstanceOf<DownloadFailedEvent>());
         }
 
-        [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
+        [Test]
         public void should_import_the_allowed_format_and_ignore_the_others_without_blocking()
         {
             // The whole point of the report: a bundle lands, one format is wanted, the rest are
@@ -77,7 +77,7 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(harness.EventAggregator.Events, Has.Some.InstanceOf<DownloadCompletedEvent>());
         }
 
-        [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
+        [Test]
         public void should_warn_when_no_downloaded_format_is_allowed()
         {
             var harness = new Harness();
@@ -97,14 +97,14 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(harness.EventAggregator.Events, Has.One.InstanceOf<BookImportIncompleteEvent>());
         }
 
-        [Test, Platform(Exclude = "Win", Reason = "Test uses Unix paths")]
+        [Test]
         public void skipped_import_keeps_the_download_in_queue_without_blocklisting()
         {
             var harness = new Harness();
             harness.TrackedDownload.DownloadItem.DownloadForced = true;
             var decision = new ImportDecision<LocalBook>(new LocalBook
             {
-                Path = "/downloads/learn-my-lesson/book.m4b",
+                Path = Path.Combine(Harness.DownloadRoot, "book.m4b"),
                 Book = harness.TrackedDownload.RemoteBook.Books.Single(),
                 Quality = new QualityModel(Quality.M4B)
             });
@@ -122,6 +122,8 @@ namespace Chaptarr.Core.Test.Download
 
         internal sealed class Harness
         {
+            internal static readonly string DownloadRoot = @"C:\downloads\learn-my-lesson".AsOsAgnostic();
+
             public RecordingEventAggregator EventAggregator { get; } = new();
             public TrackedDownload TrackedDownload { get; }
             public CompletedDownloadService Subject { get; }
@@ -148,7 +150,7 @@ namespace Chaptarr.Core.Test.Download
                     {
                         DownloadId = "learn-my-lesson",
                         Title = "Learn My Lesson, epub, please...thanks - Learn My Lesson.mobi",
-                        OutputPath = new OsPath("/downloads/learn-my-lesson")
+                        OutputPath = new OsPath(DownloadRoot)
                     },
                     RemoteBook = new RemoteBook
                     {
@@ -174,7 +176,7 @@ namespace Chaptarr.Core.Test.Download
                 Subject = new CompletedDownloadService(
                     EventAggregator,
                     historyService,
-                    new StubProvideImportItemService("/downloads/learn-my-lesson"),
+                    new StubProvideImportItemService(DownloadRoot),
                     _importService,
                     new PassthroughDownloadImportModeResolver(),
                     new TrackedDownloadAlreadyImported(LogManager.GetCurrentClassLogger()),
@@ -264,7 +266,7 @@ namespace Chaptarr.Core.Test.Download
             // The production quality gate runs after matching and retains the matched book.
             var decision = new ImportDecision<LocalBook>(new LocalBook
             {
-                Path = $"/downloads/book.{quality.Name.ToLowerInvariant()}",
+                Path = Path.Combine(Harness.DownloadRoot, $"book.{quality.Name.ToLowerInvariant()}"),
                 Quality = new QualityModel(quality),
                 Book = new Book { Id = 901, AuthorId = 7, Title = "Learn My Lesson", MediaType = BookMediaType.Ebook },
                 Author = new Author { Id = 7, Name = "Katee Robert" }

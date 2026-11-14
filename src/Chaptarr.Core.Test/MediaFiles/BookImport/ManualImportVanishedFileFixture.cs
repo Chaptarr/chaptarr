@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Chaptarr.Core.Test.Common;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Disk;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.CustomFormats;
@@ -42,7 +43,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         [SetUp]
         public void SetUp()
         {
-            _folder = Path.Combine(TestContext.CurrentContext.WorkDirectory,
+            _folder = Path.Combine(TestContext.CurrentContext.WorkDirectory.GetActualCasing(),
                 @"ManualImport\Vanished".AsOsAgnostic(), Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_folder);
             _presentPath = Path.Combine(_folder, "Disc 2.mp3");

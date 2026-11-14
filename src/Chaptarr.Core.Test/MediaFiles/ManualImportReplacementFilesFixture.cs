@@ -29,7 +29,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 InterfaceProxy.Proxy<IConfigService>((_, _) => recycleBinConfigured ? "/recycle" : string.Empty));
             var edition = new Edition { Id = 42, BookId = 7, Title = "Dark Age (Dramatized Adaptation)", Narrator = "Full Cast" };
             var result = subject.Describe(new[] { new BookFile { Id = 9, EditionId = edition.Id, Edition = edition,
-                Path = "/library/Dark Age.m4b", MediaType = "audiobook", IsGraphicAudio = true, Quality = new QualityModel(Quality.M4B),
+                Path = @"C:\library\Dark Age.m4b".AsOsAgnostic(), MediaType = "audiobook", IsGraphicAudio = true, Quality = new QualityModel(Quality.M4B),
                 AudioProductionType = AudioProductionConstants.DetectedDramatizedFullCastType } }).Single();
 
             Assert.Multiple(() =>
@@ -55,33 +55,33 @@ namespace Chaptarr.Core.Test.MediaFiles
                 InterfaceProxy.Proxy<IAuthorRepository>((_, _) => new List<Author>()),
                 InterfaceProxy.Proxy<IBookRepository>((_, _) => new List<Book>()),
                 InterfaceProxy.Proxy<IConfigService>((_, _) => string.Empty));
-            var file = new BookFile { Id = 9, EditionId = 0, Path = "/library/unknown.epub",
-                ReplicaPaths = new List<string> { "/audio/unknown.epub", "/audio/unknown.epub" } };
+            var file = new BookFile { Id = 9, EditionId = 0, Path = @"C:\library\unknown.epub".AsOsAgnostic(),
+                ReplicaPaths = new List<string> { @"C:\audio\unknown.epub".AsOsAgnostic(), @"C:\audio\unknown.epub".AsOsAgnostic() } };
 
             var result = subject.Describe(new[] { file }).Single();
             Assert.That(result.Path, Is.EqualTo(file.Path));
             Assert.That(result.BookId, Is.Zero);
-            Assert.That(result.AssociatedPaths, Is.EqualTo(new[] { "/audio/unknown.epub" }));
+            Assert.That(result.AssociatedPaths, Is.EqualTo(new[] { @"C:\audio\unknown.epub".AsOsAgnostic() }));
         }
 
         [TestCase(false)]
         [TestCase(true)]
         public void deletion_preview_lists_linked_sidecars_regardless_of_other_media_in_the_folder(bool shared)
         {
-            const string primary = "/library/Frank Herbert/Dune/Dune.m4b";
-            const string sidecar = "/library/Frank Herbert/Dune/cover.jpg";
-            const string replica = "/copies/Dune.m4b";
+            var primary = @"C:\library\Frank Herbert\Dune\Dune.m4b".AsOsAgnostic();
+            var sidecar = @"C:\library\Frank Herbert\Dune\cover.jpg".AsOsAgnostic();
+            var replica = @"C:\copies\Dune.m4b".AsOsAgnostic();
             var disk = InterfaceProxy.Proxy<IDiskProvider>((method, args) => method.Name switch
             {
                 "FileExistsCanonical" => true,
-                "GetFiles" => shared ? new[] { primary, sidecar, "/library/Frank Herbert/Dune/Other.m4b" } : new[] { primary, sidecar },
+                "GetFiles" => shared ? new[] { primary, sidecar, @"C:\library\Frank Herbert\Dune\Other.m4b".AsOsAgnostic() } : new[] { primary, sidecar },
                 _ => throw new System.NotSupportedException(method.Name)
             });
             var subject = new ManualImportReplacementFiles(disk,
                 InterfaceProxy.Proxy<IExtraFileRepository<MetadataFile>>((_, _) => new List<MetadataFile> {
                     new MetadataFile { Id = 1, BookFileId = 9, BookId = 7, RelativePath = "Dune/cover.jpg" } }),
                 InterfaceProxy.Proxy<IExtraFileRepository<OtherExtraFile>>((_, _) => new List<OtherExtraFile>()),
-                InterfaceProxy.Proxy<IAuthorRepository>((_, _) => new List<Author> { new Author { Id = 1, Path = "/library/Frank Herbert" } }),
+                InterfaceProxy.Proxy<IAuthorRepository>((_, _) => new List<Author> { new Author { Id = 1, Path = @"C:\library\Frank Herbert".AsOsAgnostic() } }),
                 InterfaceProxy.Proxy<IBookRepository>((_, _) => new List<Book> { new Book { Id = 7, AuthorId = 1 } }),
                 InterfaceProxy.Proxy<IConfigService>((_, _) => string.Empty));
             var file = new BookFile { Id = 9, EditionId = 42, Edition = new Edition { Id = 42, BookId = 7, Title = "Dune" },

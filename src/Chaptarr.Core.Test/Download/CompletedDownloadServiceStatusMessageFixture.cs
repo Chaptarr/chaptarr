@@ -13,7 +13,6 @@ using NzbDrone.Core.Qualities;
 namespace Chaptarr.Core.Test.Download
 {
     [TestFixture]
-    [Platform(Exclude = "Win", Reason = "Shared import harness uses Unix paths")]
     public class CompletedDownloadServiceStatusMessageFixture
     {
         [TestCase(BookMediaType.Ebook, false)]
@@ -22,10 +21,10 @@ namespace Chaptarr.Core.Test.Download
         public void file_failure_is_reported_once_without_a_generic_completion_warning(BookMediaType mediaType, bool converted)
         {
             var harness = CreateHarness(mediaType);
-            var result = FailedFile(harness, mediaType == BookMediaType.Ebook ? "/downloads/book.epub" : "/downloads/book.m4b");
+            var result = FailedFile(harness, mediaType == BookMediaType.Ebook ? @"C:\downloads\book.epub".AsOsAgnostic() : @"C:\downloads\book.m4b".AsOsAgnostic());
             if (converted)
             {
-                result.ImportDecision.Item.GeneratedConversionSourcePaths = new List<string> { "/downloads/book.mp3" };
+                result.ImportDecision.Item.GeneratedConversionSourcePaths = new List<string> { @"C:\downloads\book.mp3".AsOsAgnostic() };
             }
 
             harness.ImportResults = new List<ImportResult> { result };
@@ -43,8 +42,8 @@ namespace Chaptarr.Core.Test.Download
         public void separate_files_keep_their_distinct_failures_even_with_the_same_filename(bool confirmation)
         {
             var harness = CreateHarness(BookMediaType.Audiobook);
-            var first = FailedFile(harness, "/downloads/learn-my-lesson/disc-1/01.mp3");
-            var second = FailedFile(harness, "/downloads/learn-my-lesson/disc-2/01.mp3", "Import failed: No space left on device");
+            var first = FailedFile(harness, @"C:\downloads\learn-my-lesson\disc-1\01.mp3".AsOsAgnostic());
+            var second = FailedFile(harness, @"C:\downloads\learn-my-lesson\disc-2\01.mp3".AsOsAgnostic(), "Import failed: No space left on device");
             if (confirmation)
             {
                 first = new ImportResult(first.ImportDecision, ImportResultType.WaitingForConfirmation, first.Errors.ToArray());
@@ -55,7 +54,7 @@ namespace Chaptarr.Core.Test.Download
             harness.Subject.Import(harness.TrackedDownload);
 
             Assert.That(harness.TrackedDownload.StatusMessages.Select(message => message.Title),
-                Is.EquivalentTo(new[] { "disc-1/01.mp3", "disc-2/01.mp3" }));
+                Is.EquivalentTo(new[] { @"disc-1\01.mp3".AsOsAgnostic(), @"disc-2\01.mp3".AsOsAgnostic() }));
             Assert.That(harness.TrackedDownload.StatusMessages.SelectMany(message => message.Messages),
                 Is.EquivalentTo(first.Errors.Concat(second.Errors)));
             AssertBlocked(harness);
@@ -65,23 +64,23 @@ namespace Chaptarr.Core.Test.Download
         public void skipped_bonus_status_keeps_relative_directories_after_successful_import()
         {
             var harness = CreateHarness(BookMediaType.Audiobook);
-            var imported = new ImportResult(FailedFile(harness, "/downloads/learn-my-lesson/book.mp3").ImportDecision);
-            var first = ImportResult.SkipIncludedMedia(FailedFile(harness, "/downloads/learn-my-lesson/bonus-1/book.epub").ImportDecision, "Quality not allowed");
-            var second = ImportResult.SkipIncludedMedia(FailedFile(harness, "/downloads/learn-my-lesson/bonus-2/book.epub").ImportDecision, "Quality not allowed");
+            var imported = new ImportResult(FailedFile(harness, @"C:\downloads\learn-my-lesson\book.mp3".AsOsAgnostic()).ImportDecision);
+            var first = ImportResult.SkipIncludedMedia(FailedFile(harness, @"C:\downloads\learn-my-lesson\bonus-1\book.epub".AsOsAgnostic()).ImportDecision, "Quality not allowed");
+            var second = ImportResult.SkipIncludedMedia(FailedFile(harness, @"C:\downloads\learn-my-lesson\bonus-2\book.epub".AsOsAgnostic()).ImportDecision, "Quality not allowed");
             harness.ImportResults = new() { imported, first, second };
             harness.Subject.Import(harness.TrackedDownload);
             Assert.That(harness.TrackedDownload.State, Is.EqualTo(TrackedDownloadState.Imported));
             Assert.That(harness.TrackedDownload.StatusMessages.Select(message => message.Title),
-                Is.EquivalentTo(new[] { "bonus-1/book.epub", "bonus-2/book.epub" }));
+                Is.EquivalentTo(new[] { @"bonus-1\book.epub".AsOsAgnostic(), @"bonus-2\book.epub".AsOsAgnostic() }));
         }
 
         [Test]
         public void a_file_failure_does_not_hide_another_required_file_without_an_import_result()
         {
             var harness = CreateHarness(BookMediaType.Audiobook);
-            var result = FailedFile(harness, "/downloads/01.mp3");
+            var result = FailedFile(harness, @"C:\downloads\01.mp3".AsOsAgnostic());
             harness.ImportResults = new List<ImportResult> { result };
-            harness.TrackedDownload.DownloadItem.FilePaths = new List<string> { result.ImportDecision.Item.Path, "/downloads/02.mp3" };
+            harness.TrackedDownload.DownloadItem.FilePaths = new List<string> { result.ImportDecision.Item.Path, @"C:\downloads\02.mp3".AsOsAgnostic() };
 
             harness.Subject.Import(harness.TrackedDownload);
 
@@ -97,7 +96,7 @@ namespace Chaptarr.Core.Test.Download
         public void a_source_outside_the_download_folder_displays_only_its_filename()
         {
             var harness = CreateHarness(BookMediaType.Audiobook);
-            harness.ImportResults = new List<ImportResult> { FailedFile(harness, "/elsewhere/book.mp3") };
+            harness.ImportResults = new List<ImportResult> { FailedFile(harness, @"C:\elsewhere\book.mp3".AsOsAgnostic()) };
             harness.Subject.Import(harness.TrackedDownload);
             Assert.That(harness.TrackedDownload.StatusMessages.Single().Title, Is.EqualTo("book.mp3"));
         }
@@ -119,7 +118,7 @@ namespace Chaptarr.Core.Test.Download
         public void successful_retry_clears_the_previous_file_failure(BookMediaType mediaType)
         {
             var harness = CreateHarness(mediaType);
-            var result = FailedFile(harness, mediaType == BookMediaType.Ebook ? "/downloads/book.epub" : "/downloads/book.m4b");
+            var result = FailedFile(harness, mediaType == BookMediaType.Ebook ? @"C:\downloads\book.epub".AsOsAgnostic() : @"C:\downloads\book.m4b".AsOsAgnostic());
             harness.ImportResults = new List<ImportResult> { result };
             harness.Subject.Import(harness.TrackedDownload);
             AssertBlocked(harness);
