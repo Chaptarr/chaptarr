@@ -26,6 +26,8 @@ namespace Chaptarr.Core.Test.MediaFiles
     {
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public System.Collections.Generic.List<NzbDrone.Core.MediaFiles.BookFile> GetExisting(System.Collections.Generic.IEnumerable<int> ids) => throw new System.NotImplementedException();
+
             public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
                 System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
                 => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
@@ -99,8 +101,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             public string ReadAllTagsAsJson(IFileInfo file) => "{}";
             public void WriteTags(BookFile trackfile, bool newDownload, bool force = false) => throw new NotImplementedException();
             public void SyncTags(List<Edition> books) => throw new NotImplementedException();
-            public List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId) => throw new NotImplementedException();
-            public List<RetagBookFilePreview> GetRetagPreviewsByBook(int authorId) => throw new NotImplementedException();
+            public List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId, NzbDrone.Core.Books.BookMediaType? mediaType = null) => throw new NotImplementedException();
+            public List<RetagBookFilePreview> GetRetagPreviewsByBook(int authorId, NzbDrone.Core.Books.BookMediaType? mediaType = null) => throw new NotImplementedException();
         }
 
         private sealed class RecordingMatchingService : IFileMatchingService

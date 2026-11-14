@@ -474,6 +474,16 @@ namespace NzbDrone.Core.Books
                     !string.Equals(localGoogleBooksId, remoteGoogleBooksId, StringComparison.OrdinalIgnoreCase));
         }
 
+        private bool AudioSeriesChanged(Book local, Book remote)
+        {
+            if (local.MediaType != BookMediaType.Audiobook || local.SeriesId == remote.SeriesId) return false;
+            var timer = Stopwatch.StartNew();
+            var changed = BookSeries.AudioTagPairChanged(BookSeries.AudioTagPair(local), BookSeries.AudioTagPair(remote));
+            _logger.Debug("Header series comparison for book {0}: {1} stored links, {2} remote links, changed={3}, {4} ms",
+                local.Id, local.SeriesLinks?.Count ?? 0, remote.SeriesLinks?.Count ?? 0, changed, timer.ElapsedMilliseconds);
+            return changed;
+        }
+
         protected override UpdateResult UpdateEntity(Book local, Book remote)
         {
             UpdateResult result;
@@ -494,6 +504,7 @@ namespace NzbDrone.Core.Books
             }
 
             if (local.Title != (remoteForUpdate.Title ?? "Unknown") ||
+                AudioSeriesChanged(local, remoteForUpdate) ||
                 IsMerge(local, remoteForUpdate) ||
                 (local.Author != null && remoteForUpdate.Author != null &&
                  (local.Author.HardcoverAuthorId != remoteForUpdate.Author.HardcoverAuthorId ||

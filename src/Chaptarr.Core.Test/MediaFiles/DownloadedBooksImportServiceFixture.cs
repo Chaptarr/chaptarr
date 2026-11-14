@@ -114,8 +114,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             public string ReadAllTagsAsJson(IFileInfo file) => throw new NotImplementedException();
             public void WriteTags(BookFile trackfile, bool newDownload, bool force = false) => throw new NotImplementedException();
             public void SyncTags(List<Edition> books) => throw new NotImplementedException();
-            public List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId) => throw new NotImplementedException();
-            public List<RetagBookFilePreview> GetRetagPreviewsByBook(int authorId) => throw new NotImplementedException();
+            public List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId, NzbDrone.Core.Books.BookMediaType? mediaType = null) => throw new NotImplementedException();
+            public List<RetagBookFilePreview> GetRetagPreviewsByBook(int authorId, NzbDrone.Core.Books.BookMediaType? mediaType = null) => throw new NotImplementedException();
 
             private Dictionary<string, List<string>> GetTags(IFileInfo file)
             {

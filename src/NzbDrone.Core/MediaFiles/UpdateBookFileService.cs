@@ -4,6 +4,7 @@ using System.Linq;
 using NLog;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
@@ -24,22 +25,18 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IBookService _bookService;
         private readonly IConfigService _configService;
         private readonly IRootFolderWatchingService _rootFolderWatchingService;
-        private readonly IFileMutationSafetyService _fileMutationSafetyService;
         private readonly Logger _logger;
-        private static readonly DateTime EpochTime = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
         public UpdateBookFileService(IDiskProvider diskProvider,
                                       IConfigService configService,
                                       IBookService bookService,
                                       IRootFolderWatchingService rootFolderWatchingService,
-                                      IFileMutationSafetyService fileMutationSafetyService,
                                       Logger logger)
         {
             _diskProvider = diskProvider;
             _configService = configService;
             _bookService = bookService;
             _rootFolderWatchingService = rootFolderWatchingService;
-            _fileMutationSafetyService = fileMutationSafetyService;
             _logger = logger;
         }
 
@@ -62,20 +59,22 @@ namespace NzbDrone.Core.MediaFiles
                             return false;
                         }
 
-                        var relDate = book.ReleaseDate.Value;
+                        var relDate = book.ReleaseDate.Value.Kind == DateTimeKind.Local
+                            ? book.ReleaseDate.Value.ToUniversalTime()
+                            : DateTime.SpecifyKind(book.ReleaseDate.Value, DateTimeKind.Utc);
 
-                        // avoiding false +ve checks and set date skewing by not using UTC (Windows)
+                        // Compare UTC instants, including unspecified dates from in-memory imports.
                         var oldDateTime = _diskProvider.FileGetLastWrite(bookFilePath);
 
                         var clampedToEpoch = false;
 
-                        if (OsInfo.IsNotWindows && relDate < EpochTime)
+                        if (OsInfo.IsNotWindows && relDate < DateTime.UnixEpoch)
                         {
-                            relDate = EpochTime;
+                            relDate = DateTime.UnixEpoch;
                             clampedToEpoch = true;
                         }
 
-                        if (!DateTime.Equals(relDate, oldDateTime))
+                        if (!DateTime.Equals(relDate.WithoutTicks(), oldDateTime.WithoutTicks()))
                         {
                             if (clampedToEpoch)
                             {
@@ -87,9 +86,8 @@ namespace NzbDrone.Core.MediaFiles
                                 // Announce the write so RootFolderWatchingService doesn't treat it as an
                                 // external change and trigger a rescan, which would re-run this date pass.
                                 _rootFolderWatchingService.ReportFileSystemChangeBeginning(bookFilePath);
-                                _fileMutationSafetyService.EnsureMutableFile(bookFilePath);
-
-                                _diskProvider.FileSetLastWriteTime(bookFilePath, relDate);
+                                // Like Sonarr, preserve subseconds and pass local time to the disk setter.
+                                _diskProvider.FileSetLastWriteTime(bookFilePath, relDate.WithTicksFrom(oldDateTime).ToLocalTime());
                                 _logger.Debug("Date of file [{0}] changed from '{1}' to '{2}'", bookFilePath, oldDateTime, relDate);
 
                                 return true;

@@ -136,7 +136,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     Write("chapter.xhtml", "<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>Fixture</title></head><body><p>Fixture.</p></body></html>");
                 }
 
-                return new EBookTagService(null, null, null, null, null, null, LogManager.GetCurrentClassLogger())
+                return new EBookTagService(null, null, null, null, null, LogManager.GetCurrentClassLogger())
                     .ReadAllTags(new FileInfoWrapper(new FileSystem(), new FileInfo(path)));
             }
             finally

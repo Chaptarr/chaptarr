@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Abstractions;
 using System.Reflection;
+using Chaptarr.Core.Test.Common;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
@@ -44,18 +45,32 @@ namespace Chaptarr.Core.Test.MediaFiles
             Directory.Delete(_tempDirectory, true);
         }
 
-        [TestCase(1987u, 0, false, 1987u)]
-        [TestCase(0u, 0, false, 0u)]
-        [TestCase(1987u, 2024, false, 2024u)]
-        [TestCase(0u, 2024, false, 2024u)]
-        [TestCase(1987u, 0, true, 0u)]
-        [TestCase(1987u, 2024, true, 2024u)]
-        public void should_write_only_known_edition_years_and_preserve_explicit_scrubbing(
-            uint existingYear, int editionYear, bool scrub, uint expectedYear)
+        public static IEnumerable<TestCaseData> TagCases()
         {
-            var path = Path.Combine(_tempDirectory, @"Audio\Fixture.mp3".AsOsAgnostic());
-            Directory.CreateDirectory(Path.GetDirectoryName(path));
-            File.WriteAllBytes(path, BuildMp3());
+            foreach (var extension in new[] { ".mp3", ".m4b", ".flac" })
+            {
+                yield return new TestCaseData(extension, 1987u, 0, false, 1987u);
+                yield return new TestCaseData(extension, 0u, 0, false, 0u);
+                yield return new TestCaseData(extension, 1987u, 2024, false, 2024u);
+                yield return new TestCaseData(extension, 0u, 2024, false, 2024u);
+                yield return new TestCaseData(extension, 1987u, 0, true, 0u);
+                yield return new TestCaseData(extension, 1987u, 2024, true, 2024u);
+            }
+        }
+
+        [TestCaseSource(nameof(TagCases))]
+        public void should_write_only_known_edition_years_and_preserve_explicit_scrubbing(
+            string extension, uint existingYear, int editionYear, bool scrub, uint expectedYear)
+        {
+            var path = Path.Combine(_tempDirectory, "Fixture" + extension);
+            if (extension == ".mp3")
+            {
+                File.WriteAllBytes(path, BuildMp3());
+            }
+            else
+            {
+                File.Copy(Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "Audio", "silence" + extension), path);
+            }
 
             using (var audio = TagLib.File.Create(path))
             {
@@ -84,6 +99,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Id = 3,
                 Book = book,
                 Title = "Updated title",
+                Publisher = "Fixture publisher",
+                NarratorNames = new List<string> { "First narrator", "Second narrator" },
                 ReleaseDate = editionYear == 0 ? null : new DateTime(editionYear, 1, 1)
             };
             var bookFile = new BookFile { Id = 4, Path = path, Author = author, Edition = edition };
@@ -94,6 +111,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 "get_WriteAudioTags" => WriteAudioTagsType.Sync,
                 "get_ScrubAudioTags" => scrub,
+                "get_SetPermissionsLinux" => false,
                 _ => throw new NotImplementedException(method.Name)
             });
             var mediaFiles = Proxy<IMediaFileService>((method, args) => method.Name switch
@@ -107,8 +125,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 : throw new NotImplementedException(method.Name));
             var watcher = Proxy<IRootFolderWatchingService>((method, args) => method.Name == "ReportFileSystemChangeBeginning"
                 ? null : throw new NotImplementedException(method.Name));
-            var safety = Proxy<IFileMutationSafetyService>((method, args) => method.Name == "EnsureMutableFile"
-                ? null : throw new NotImplementedException(method.Name));
+            var realDisk = RealDiskProvider.Create(LogManager.GetCurrentClassLogger());
+            var safety = new FileMutationSafetyService(realDisk, new DiskTransferService(realDisk, LogManager.GetCurrentClassLogger()), new MediaFileAttributeService(config, realDisk, LogManager.GetCurrentClassLogger()), LogManager.GetCurrentClassLogger());
             var events = Proxy<IEventAggregator>((method, args) =>
             {
                 if (method.Name != "PublishEvent")
@@ -121,7 +139,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             });
             var logger = LogManager.GetCurrentClassLogger();
             var extraction = new TagExtractionService(new[] { new TagLibSharpExtractor() }, null, logger);
-            var subject = new AudioTagService(config, mediaFiles, disk, watcher, safety, null, null, events, null, logger, extraction);
+            var subject = new AudioTagService(config, mediaFiles, disk, watcher, safety, events, null, logger, extraction, null);
 
             var preview = subject.GetRetagPreviewsByBook(book.Id);
             Assert.That(preview, Has.Count.EqualTo(1));
@@ -163,6 +181,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Assert.That(retagged.Diff["YEAR"].Item2, Is.EqualTo(editionYear.ToString()));
                 }
             });
+
         }
 
         private static T Proxy<T>(Func<MethodInfo, object[], object> handler)

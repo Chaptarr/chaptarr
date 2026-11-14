@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Reflection;
 using System.Threading.Tasks;
 using FluentValidation.Results;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Http;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Common.TPL;
 using NzbDrone.Core.Books;
@@ -139,6 +141,7 @@ namespace Chaptarr.Core.Test.Download
         private sealed class RecordingIndexerStatusService : IIndexerStatusService
         {
             public int FailureCount { get; private set; }
+            public TimeSpan LastBackoff { get; private set; }
 
             public List<IndexerStatus> GetBlockedProviders() => new();
 
@@ -149,6 +152,7 @@ namespace Chaptarr.Core.Test.Download
             public void RecordFailure(int providerId, TimeSpan minimumBackOff = default)
             {
                 FailureCount++;
+                LastBackoff = minimumBackOff;
             }
 
             public void RecordConnectionFailure(int providerId)
@@ -219,6 +223,26 @@ namespace Chaptarr.Core.Test.Download
                 Assert.That(events.PublishedEvents.OfType<BookGrabbedEvent>(), Is.Empty);
                 Assert.That(indexerStatus.FailureCount, Is.Zero);
             });
+        }
+
+        [TestCase("0", 0)]
+        [TestCase("-1", 0)]
+        [TestCase("60", 60)]
+        [TestCase("Wed, 01 Jan 2020 00:00:00 GMT", 0)]
+        public void grab_failure_keeps_the_existing_retry_after_policy(string value, int expectedSeconds)
+        {
+            var remote = RemoteBook();
+            var response = new HttpResponse(new HttpRequest("http://indexer.test/"), new HttpHeader { ["Retry-After"] = value }, "", HttpStatusCode.TooManyRequests);
+            var calls = new List<string>();
+            var client = new RecordingDownloadClient(calls)
+            {
+                DownloadException = new ReleaseDownloadException(remote.Release, "fixture", new TooManyRequestsException(response.Request, response))
+            };
+            var status = new RecordingIndexerStatusService();
+            var service = CreateService(client, new RecordingSlotGuard(calls, MamUnsatisfiedSlotAvailability.Accept()), indexerStatusService: status);
+            Assert.ThrowsAsync<ReleaseDownloadException>(async () => await service.DownloadReport(remote, null));
+            Assert.That(status.FailureCount, Is.EqualTo(1));
+            Assert.That(status.LastBackoff, Is.EqualTo(TimeSpan.FromSeconds(expectedSeconds)));
         }
 
         private static DownloadService CreateService(IDownloadClient client,

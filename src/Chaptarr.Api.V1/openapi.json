@@ -22608,6 +22608,36 @@
             "type": "string",
             "nullable": true
           },
+          "isFileSymlink": {
+            "type": "boolean"
+          },
+          "isCalibreFormat": {
+            "type": "boolean"
+          },
+          "skipReason": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RetagSkipReason"
+              }
+            ],
+            "nullable": true
+          },
+          "rootFolderPath": {
+            "type": "string",
+            "nullable": true
+          },
+          "calibreLibrary": {
+            "type": "string",
+            "nullable": true
+          },
+          "retryAfter": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "retryNow": {
+            "type": "boolean"
+          },
           "changes": {
             "type": "array",
             "items": {
@@ -22617,6 +22647,19 @@
           }
         },
         "additionalProperties": false
+      },
+      "RetagSkipReason": {
+        "enum": [
+          "notInCalibre",
+          "missingCalibreBook",
+          "libraryUnavailable",
+          "missingRootFolder",
+          "invalidCalibreSettings",
+          "libraryPreviewFailed",
+          "previewFailed",
+          "rootNotLinkedToCalibre"
+        ],
+        "type": "string"
       },
       "Revision": {
         "type": "object",

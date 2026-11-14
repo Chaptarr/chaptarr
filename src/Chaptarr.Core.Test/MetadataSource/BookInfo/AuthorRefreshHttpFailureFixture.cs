@@ -1,6 +1,8 @@
 using System;
-using System.Net;
 using System.Collections.Generic;
+using System.Net;
+using System.Net.Http;
+using System.Net.Sockets;
 using Chaptarr.Core.Test.Common;
 using NLog;
 using NUnit.Framework;
@@ -8,9 +10,10 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Http;
+using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
-using NzbDrone.Core.Messaging.Events;
 using static Chaptarr.Core.Test.Common.InterfaceProxy;
 
 namespace Chaptarr.Core.Test.MetadataSource.BookInfo
@@ -35,7 +38,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 var logger = LogManager.GetCurrentClassLogger();
                 var config = Proxy<IConfigService>((method, _) => method.Name == "get_MetadataServerUrl"
                     ? "http://metadata.example" : throw new AssertionException(method.Name));
-                var health = new MetadataServerHealthService(logger);
+                var health = new HttpServiceHealth(logger);
                 var gate = new MetadataServerHealthGate(config, health, logger);
                 var requests = 0;
                 var http = Proxy<IHttpClient>((method, args) =>
@@ -44,7 +47,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                     requests++;
                     var request = (HttpRequest)args[0];
                     Assert.That(request.SuppressHttpError, Is.False);
-                    if (status == 0) throw new WebException("Connection refused", WebExceptionStatus.ConnectFailure);
+                    if (status == 0) throw new HttpRequestException(HttpRequestError.ConnectionError, "Connection refused", new SocketException((int)SocketError.ConnectionRefused));
                     var response = new HttpResponse(request, new HttpHeader { ContentType = "application/json" }, body, (HttpStatusCode)status);
                     // Same exception contract as HttpClient.ExecuteAsync, not a returned error response.
                     if (status == 429) throw new TooManyRequestsException(request, response);

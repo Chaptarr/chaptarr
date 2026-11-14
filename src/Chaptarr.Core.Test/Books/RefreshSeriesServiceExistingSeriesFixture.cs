@@ -316,7 +316,7 @@ namespace Chaptarr.Core.Test.Books
             public List<SeriesBookLink> ReadLocalChildren(Series series) => GetLocalChildren(series, null, CreateContext());
 
             public TestableRefreshSeriesService(IBookService bookService, ISeriesService seriesService, ISeriesBookLinkService linkService, IRefreshSeriesBookLinkService refreshLinkService, Logger logger)
-                : base(bookService, seriesService, linkService, refreshLinkService, logger)
+                : base(bookService, seriesService, linkService, refreshLinkService, logger, Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Configuration.IConfigService>((_, _) => NzbDrone.Core.Configuration.WriteAudioTagsType.No), null, null)
             {
                 if (seriesService is StubSeriesService stub) stub.HasLinks = id => linkService.GetLinksBySeries(id).Any();
             }

@@ -1,5 +1,5 @@
-using System;
 using System.IO;
+using Chaptarr.Core.Test.Common;
 using NUnit.Framework;
 
 namespace Chaptarr.Core.Test.MediaFiles.BookImport
@@ -43,26 +43,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
         private static string ReadSource(string relativePath)
         {
-            var root = FindRepositoryRoot();
+            var root = RepositorySource.FindRoot();
             var path = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
             return File.ReadAllText(path);
-        }
-
-        private static string FindRepositoryRoot()
-        {
-            var current = new DirectoryInfo(TestContext.CurrentContext.TestDirectory);
-
-            while (current != null)
-            {
-                if (File.Exists(Path.Combine(current.FullName, "src", "NzbDrone.Core", "MediaFiles", "BookImport", "MatchingContextPresets.cs")))
-                {
-                    return current.FullName;
-                }
-
-                current = current.Parent;
-            }
-
-            throw new InvalidOperationException("Could not locate repository root for matching context parity test.");
         }
     }
 }

@@ -4,14 +4,13 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading.Tasks;
-using System.Runtime.CompilerServices;
+using Chaptarr.Api.V1.Author;
+using Chaptarr.Http.Middleware;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Chaptarr.Http.Middleware;
-using Chaptarr.Http.REST;
-using Chaptarr.Api.V1.Author;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
@@ -25,15 +24,15 @@ using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Extras.Files;
 using NzbDrone.Core.Extras.Metadata.Files;
+using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Events;
-using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.Messaging.Events;
-using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Notifications;
-using NzbDrone.Core.Notifications.Plex.Server;
 using NzbDrone.Core.Notifications.Plex.PlexTv;
+using NzbDrone.Core.Notifications.Plex.Server;
 using NzbDrone.Core.Notifications.Subsonic;
+using NzbDrone.Core.RootFolders;
 
 namespace Chaptarr.Core.Test.MediaFiles
 {
@@ -76,6 +75,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<string> DeletedFolders { get; } = new();
             public List<(List<BookFile> Files, CalibreSettings Settings)> CalibreCalls { get; } = new();
             public bool FailCalibre { get; set; }
+            public int FailCalibreId { get; set; }
             public bool FailExclusion { get; set; }
             public bool FailAuthorDelete { get; set; }
             public bool FailExclusionValidation { get; set; }
@@ -197,7 +197,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 {
                     if (m.Name == nameof(ICalibreProxy.RemoveFormats))
                     {
-                        if (FailCalibre) throw new IOException("Synthetic Calibre failure");
+                        if (FailCalibre || (int)a[0] == FailCalibreId) throw new IOException("Synthetic Calibre failure");
                         RemovedFormats.Add(((int)a[0], ((IEnumerable<string>)a[1]).ToList()));
                         return null;
                     }
@@ -1241,6 +1241,24 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(s.CalibreCalls.Single(c => c.Settings == two.CalibreSettings).Files, Is.EqualTo(new[] { second }));
             Assert.That(File.Exists(audio.Path), Is.False);
             Assert.That(File.Exists(first.Path) && File.Exists(second.Path), Is.True, "Calibre owns physical removal, not the filesystem deleter");
+        }
+
+        [Test]
+        public void scoped_calibre_deletion_names_the_failed_book_and_completed_count()
+        {
+            using var s = new Sandbox(); s.Root("media", true);
+            var author = s.Author(@"media\A");
+            s.Track(author, @"media\A\One.epub", 7);
+            s.Track(author, @"media\A\Two.epub", 8);
+            s.Track(author, @"media\A\Three.epub", 9);
+            s.FailCalibreId = 8;
+            var error = Assert.Throws<CalibreException>(() => s.Service.DeleteAuthors(new List<int> { author.Id }, true, mediaType: BookMediaType.Ebook));
+            Assert.That(error.Message, Does.Contain("Calibre book 8").And.Contain("already removed in this Calibre library: 1 of 3").And.Contain("Synthetic Calibre failure"));
+            Assert.That(error.InnerException.Message, Is.EqualTo("Synthetic Calibre failure"));
+            Assert.That(s.RemovedFormats.Select(item => item.Item1), Is.EqualTo(new[] { 7 }));
+            Assert.That(s.Authors, Does.Contain(author));
+            Assert.That(s.Files, Has.Count.EqualTo(3));
+            Assert.That(s.Events.Published.OfType<AuthorDeletedEvent>(), Is.Empty);
         }
 
         [TestCase(false)]

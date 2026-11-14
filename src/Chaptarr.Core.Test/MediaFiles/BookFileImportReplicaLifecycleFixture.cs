@@ -104,7 +104,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Proxy<IMediaFileAttributeService>((m, a) => null),
                 Proxy<IEventAggregator>((m, a) => null),
                 Proxy<IConfigService>((m, a) => false),
-                Proxy<IFileMutationSafetyService>((m, a) => null), LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger());
             return (mover, file, local, disk, deleted, transfers);
         }
     }

@@ -16,6 +16,7 @@ using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.History;
+using NzbDrone.Core.Http;
 using NzbDrone.Core.ImportLists.Exclusions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Commands;
@@ -3459,7 +3460,7 @@ namespace NzbDrone.Core.Books
         {
             if (_metadataServerHealthGate.CanBeginRequest(out var retryAfter)) return true;
             _logger.Debug("Author refresh retry waiting for metadata server {0}; retry after {1}",
-                _metadataServerHealthGate.SourceName, MetadataServerHealthGate.FormatRetryAfter(retryAfter));
+                _metadataServerHealthGate.SourceName, HttpServiceHealth.FormatRetryAfter(retryAfter));
             return false;
         }
 

@@ -8,6 +8,7 @@ using NUnit.Framework;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Http;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
 
@@ -72,7 +73,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 new MetadataRequestBuilder(configService),
                 logger,
                 new CacheManager(),
-                new MetadataServerHealthGate(configService, new MetadataServerHealthService(logger), logger));
+                new MetadataServerHealthGate(configService, new HttpServiceHealth(logger), logger));
             var method = typeof(BookInfoProxy).GetMethod("TryGetAuthorSummaryFromV5ForSearch", BindingFlags.Instance | BindingFlags.NonPublic);
 
             Assert.That(method, Is.Not.Null);

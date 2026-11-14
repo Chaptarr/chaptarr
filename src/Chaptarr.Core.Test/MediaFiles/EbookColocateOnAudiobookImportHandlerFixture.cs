@@ -83,6 +83,8 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public System.Collections.Generic.List<NzbDrone.Core.MediaFiles.BookFile> GetExisting(System.Collections.Generic.IEnumerable<int> ids) => throw new System.NotImplementedException();
+
             public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
                 System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
                 => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
@@ -302,7 +304,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var mover = new BookFileMovingService(
                 null, null, DispatchProxy.Create<IBuildFileNames, NamingProxy>(), null,
                 DispatchProxy.Create<INamingConfigService, NamingProxy>(), planner, null, context.Disk,
-                null, null, null, context.Events, null, null, LogManager.GetCurrentClassLogger());
+                null, null, null, context.Events, null, LogManager.GetCurrentClassLogger());
             context.Mover.PlanFactory = (file, author, batch) => mover.GetOrganizeDestination(file, author, false, batch);
 
             context.Handler.Handle(context.Event);
@@ -362,7 +364,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var planner = new EbookColocationPlanner(context.Books, context.MediaFileService, context.Roots, context.Disk);
             var mover = new BookFileMovingService(null, null, DispatchProxy.Create<IBuildFileNames, NamingProxy>(), null,
                 DispatchProxy.Create<INamingConfigService, NamingProxy>(), planner, null, context.Disk,
-                null, null, null, context.Events, null, null, LogManager.GetCurrentClassLogger());
+                null, null, null, context.Events, null, LogManager.GetCurrentClassLogger());
             context.Mover.PlanFactory = (file, author, batch) => mover.GetOrganizeDestination(file, author, false, batch);
 
             context.Handler.Handle(context.Event);

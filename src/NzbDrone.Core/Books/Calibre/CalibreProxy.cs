@@ -1,14 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentValidation;
 using FluentValidation.Results;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Disk;
@@ -23,13 +26,20 @@ using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.Books.Calibre
 {
+    public enum CalibreTagUpdateResult
+    {
+        Completed,
+        Skipped,
+        Incomplete
+    }
+
     public interface ICalibreProxy
     {
         BookFile AddAndConvert(BookFile file, CalibreSettings settings);
         void DeleteBook(BookFile book, CalibreSettings settings);
         void DeleteBooks(List<BookFile> books, CalibreSettings settings);
         void RemoveFormats(int calibreId, IEnumerable<string> formats, CalibreSettings settings);
-        void SetFields(BookFile file, CalibreSettings settings, bool updateCover = true, bool embed = false);
+        CalibreTagUpdateResult SetFields(BookFile file, CalibreSettings settings, bool updateCover = true, bool embed = false, Action<string> onSymlinkSkipped = null);
         List<string> GetAllBookFilePaths(CalibreSettings settings);
         CalibreBook GetBook(int calibreId, CalibreSettings settings);
         List<CalibreBook> GetBooks(List<int> calibreId, CalibreSettings settings);
@@ -38,7 +48,7 @@ namespace NzbDrone.Core.Books.Calibre
 
     public class CalibreProxy : ICalibreProxy
     {
-        private const int PAGE_SIZE = 750;
+        public const int PageSize = 750;
 
         private readonly IHttpClient _httpClient;
         private readonly IMapCoversToLocal _mediaCoverService;
@@ -46,6 +56,8 @@ namespace NzbDrone.Core.Books.Calibre
         private readonly IRootFolderWatchingService _rootFolderWatchingService;
         private readonly IMediaFileService _mediaFileService;
         private readonly IConfigService _configService;
+        private readonly IFileMutationSafetyService _fileMutationSafetyService;
+        private readonly ICalibreLibraryGate _libraryGate;
         private readonly Logger _logger;
         private readonly ICached<CalibreBook> _bookCache;
 
@@ -56,22 +68,27 @@ namespace NzbDrone.Core.Books.Calibre
                             IMediaFileService mediaFileService,
                             IConfigService configService,
                             ICacheManager cacheManager,
+                            IFileMutationSafetyService fileMutationSafetyService,
+                            ICalibreLibraryGate libraryGate,
                             Logger logger)
         {
             _httpClient = httpClient;
+            _libraryGate = libraryGate;
             _mediaCoverService = mediaCoverService;
             _pathMapper = pathMapper;
             _rootFolderWatchingService = rootFolderWatchingService;
             _mediaFileService = mediaFileService;
             _configService = configService;
+            _fileMutationSafetyService = fileMutationSafetyService;
             _bookCache = cacheManager.GetCache<CalibreBook>(GetType());
             _logger = logger;
         }
 
-        public static string GetOriginalFormat(Dictionary<string, CalibreBookFormat> formats)
+        public static string GetOriginalFormat(Dictionary<string, CalibreBookFormat> formats, string trackedExtension = null)
         {
-            return formats
-                .Where(x => MediaFileExtensions.TextExtensions.Contains("." + x.Key))
+            return formats?
+                .Where(x => !string.IsNullOrWhiteSpace(x.Value?.Path) && MediaFileExtensions.TextExtensions.Contains("." + x.Key))
+                .Where(x => trackedExtension == null || string.Equals("." + x.Key, trackedExtension, StringComparison.OrdinalIgnoreCase))
                 .OrderBy(f => f.Value.LastModified)
                 .FirstOrDefault().Value?.Path;
         }
@@ -154,7 +171,7 @@ namespace NzbDrone.Core.Books.Calibre
             }
             catch (HttpException ex)
             {
-                throw new CalibreException("Unable to add file to Calibre library: {0}", ex, ex.Message);
+                throw new CalibreException("Unable to add file to Calibre library: {0}", ex, CalibreLibraryGate.GetFailureReason(ex));
             }
         }
 
@@ -167,7 +184,9 @@ namespace NzbDrone.Core.Books.Calibre
         public void DeleteBooks(List<BookFile> books, CalibreSettings settings)
         {
             var idString = books.Where(x => x.CalibreId != 0).Select(x => x.CalibreId).ConcatToString(",");
+            if (string.IsNullOrEmpty(idString)) return;
             var request = GetBuilder($"cdb/delete-books/{idString}/{settings.Library}", settings).Build();
+            request.RedactUrlInLogs = true;
             _httpClient.Post(request);
         }
 
@@ -206,10 +225,10 @@ namespace NzbDrone.Core.Books.Calibre
                 }
             };
 
-            ExecuteSetFields(calibreId, payload, settings);
+            ExecuteSetFields(calibreId, payload, settings, allowMissingBook: true);
         }
 
-        public void SetFields(BookFile file, CalibreSettings settings, bool updateCover = true, bool embed = false)
+        public CalibreTagUpdateResult SetFields(BookFile file, CalibreSettings settings, bool updateCover = true, bool embed = false, Action<string> onSymlinkSkipped = null)
         {
             var edition = file.Edition;
             var book = edition.Book;
@@ -271,35 +290,86 @@ namespace NzbDrone.Core.Books.Calibre
 
             ExecuteSetFields(file.CalibreId, payload, settings);
 
-            // updating the calibre metadata may have renamed the file, so track that
-            var updated = GetBook(file.CalibreId, settings);
-
-            var updatedPath = GetOriginalFormat(updated.Formats);
-
-            _logger.Trace("File path from Calibre: '{0}'", updatedPath);
-
-            if (updatedPath.IsNotNullOrWhiteSpace() && updatedPath != file.Path)
+            try
             {
-                _rootFolderWatchingService.ReportFileSystemChangeBeginning(updatedPath);
-                file.Path = updatedPath;
+                // updating the calibre metadata may have renamed the file, so track that
+                var updated = GetBook(file.CalibreId, settings);
+
+                // A format can still exist on the server while its mapped local path is unavailable.
+                // Embedding may use other visible formats, but a tracked file keeps its format identity.
+                var visibleFormats = (updated.Formats ?? new Dictionary<string, CalibreBookFormat>()).Where(format =>
+                {
+                    if (File.Exists(format.Value.Path))
+                    {
+                        return true;
+                    }
+                    _logger.Debug("Calibre format {0} is not visible at {1}; skipping format", format.Key, format.Value.Path);
+                    return false;
+                }).ToDictionary(format => format.Key, format => format.Value);
+                var updatedPath = GetOriginalFormat(visibleFormats, Path.GetExtension(file.Path));
+                if (updatedPath.IsNullOrWhiteSpace())
+                {
+                    _logger.Warn("Tracked Calibre format is not visible for {0}; skipping size and modified refresh", file.Path);
+                }
+                else
+                {
+                    _logger.Trace("File path from Calibre: '{0}'", updatedPath);
+                    if (!updatedPath.PathEquals(file.Path))
+                    {
+                        _rootFolderWatchingService.ReportFileSystemChangeBeginning(updatedPath);
+                        file.Path = updatedPath;
+                    }
+
+                    var fileInfo = new FileInfo(file.Path);
+                    file.Size = fileInfo.Length;
+                    file.Modified = fileInfo.LastWriteTimeUtc;
+
+                    if (file.Id > 0)
+                    {
+                        _mediaFileService.Update(file);
+                    }
+                }
+
+                if (embed)
+                {
+                    var result = EmbedMetadata(file, settings, visibleFormats, onSymlinkSkipped);
+                    return updatedPath.IsNullOrWhiteSpace() ? CalibreTagUpdateResult.Incomplete : result;
+                }
+
+                return updatedPath.IsNullOrWhiteSpace() ? CalibreTagUpdateResult.Incomplete : CalibreTagUpdateResult.Completed;
             }
-
-            var fileInfo = new FileInfo(file.Path);
-            file.Size = fileInfo.Length;
-            file.Modified = fileInfo.LastWriteTimeUtc;
-
-            if (file.Id > 0)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _mediaFileService.Update(file);
-            }
-
-            if (embed)
-            {
-                EmbedMetadata(file, settings);
+                throw new CalibreException("Calibre metadata was saved, but the remaining tag update failed: {0}", ex, CalibreLibraryGate.GetFailureReason(ex)) { WriteAccepted = true };
             }
         }
 
-        private void ExecuteSetFields(int id, CalibreChangesPayload payload, CalibreSettings settings)
+        private static T SendRequest<T>(Func<T> request)
+            where T : HttpResponse
+        {
+            T response;
+            try
+            {
+                try
+                {
+                    response = request();
+                }
+                catch (Exception ex) when (HttpTransportErrors.IsConnectionNotEstablished(ex))
+                {
+                    // Only this unsent request is repeated; earlier steps for the book are not.
+                    response = request();
+                }
+            }
+            catch (JsonException ex)
+            {
+                throw new CalibreInvalidResponseException("Calibre returned an invalid response", ex);
+            }
+            if (response == null) throw new CalibreInvalidResponseException("Calibre returned no response");
+            if ((int)response.StatusCode is < 200 or >= 300) throw new HttpException(response);
+            return response;
+        }
+
+        private void ExecuteSetFields(int id, CalibreChangesPayload payload, CalibreSettings settings, bool allowMissingBook = false)
         {
             var builder = GetBuilder($"cdb/set-fields/{id}/{settings.Library}", settings)
                 .Post()
@@ -309,12 +379,65 @@ namespace NzbDrone.Core.Books.Calibre
             request.SetContent(payload.ToJson());
             request.ContentSummary = payload.ToJson(Formatting.None);
 
-            _httpClient.Execute(request);
+            var response = SendRequest(() => _httpClient.Execute(request));
+            try
+            {
+                if (string.IsNullOrWhiteSpace(response?.Content))
+                {
+                    throw new JsonException("The response is empty");
+                }
+                // Confirm the requested key contains a book object; field completeness is not an acceptance receipt.
+                var confirmation = JObject.Parse(response.Content);
+                var book = confirmation[id.ToString(CultureInfo.InvariantCulture)];
+                if (book?.Type == JTokenType.Null)
+                {
+                    // Deleting an already-missing book's formats is idempotent. Other
+                    // writes still failed for this book, not for the whole library.
+                    if (!allowMissingBook) throw new CalibreException("Calibre reports this book no longer exists");
+                }
+                else if (book is not JObject)
+                {
+                    throw new JsonException("The response does not confirm the requested book");
+                }
+            }
+            catch (JsonException ex)
+            {
+                // Calibre writes before serializing its reply. An invalid reply proves
+                // neither acceptance nor rollback; do not embed or claim metadata was saved.
+                throw new CalibreInvalidResponseException("Calibre did not confirm the change", ex);
+            }
         }
 
-        private void EmbedMetadata(BookFile file, CalibreSettings settings)
+        private CalibreTagUpdateResult EmbedMetadata(BookFile file, CalibreSettings settings, Dictionary<string, CalibreBookFormat> formats, Action<string> onSymlinkSkipped)
         {
-            _rootFolderWatchingService.ReportFileSystemChangeBeginning(file.Path);
+            var readyFormats = new List<string>();
+            var trackedReady = false;
+            var trackedSkipped = false;
+            foreach (var format in formats)
+            {
+                try
+                {
+                    _rootFolderWatchingService.ReportFileSystemChangeBeginning(format.Value.Path);
+                    _fileMutationSafetyService.EnsureMutableFile(format.Value.Path);
+                    readyFormats.Add(format.Key);
+                    trackedReady |= format.Value.Path.PathEquals(file.Path);
+                }
+                catch (FileSymlinkMutationException ex)
+                {
+                    _logger.Debug("{0}", ex.Message);
+                    onSymlinkSkipped?.Invoke(format.Value.Path);
+                    trackedSkipped |= format.Value.Path.PathEquals(file.Path);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    _logger.Warn(ex, "Cannot prepare Calibre format {0} at {1}; skipping format", format.Key, format.Value.Path);
+                }
+            }
+
+            if (readyFormats.Count == 0)
+            {
+                return trackedSkipped ? CalibreTagUpdateResult.Skipped : CalibreTagUpdateResult.Incomplete;
+            }
 
             var request = GetBuilder($"cdb/cmd/embed_metadata", settings)
                 .AddQueryParam("library_id", settings.Library)
@@ -322,13 +445,41 @@ namespace NzbDrone.Core.Books.Calibre
                 .SetHeader("Content-Type", "application/json")
                 .Build();
 
-            request.SetContent($"[{file.CalibreId}, null]");
-            _httpClient.Execute(request);
+            request.SetContent(new object[] { file.CalibreId, readyFormats }.ToJson());
+            JObject response;
+            try
+            {
+                response = JObject.Parse(SendRequest(() => _httpClient.Execute(request)).Content);
+            }
+            catch (JsonException ex)
+            {
+                throw new CalibreInvalidResponseException("Calibre did not confirm embedding", ex);
+            }
+            if (response.TryGetValue("err", out var error))
+            {
+                _logger.Warn("Calibre could not embed metadata for {0}: {1}", file.Path, error);
+                return trackedSkipped ? CalibreTagUpdateResult.Skipped : CalibreTagUpdateResult.Incomplete;
+            }
 
-            PollEmbedStatus(file, settings);
+            if (!response.ContainsKey("result"))
+            {
+                throw new CalibreInvalidResponseException("Calibre did not confirm embedding");
+            }
+
+            if (trackedReady)
+            {
+                if (!PollEmbedStatus(file, settings))
+                {
+                    _logger.Warn("Calibre returned from embedding {0}, but no file modification was observed", file.Path);
+                    return CalibreTagUpdateResult.Incomplete;
+                }
+            }
+
+            return trackedReady ? CalibreTagUpdateResult.Completed
+                : trackedSkipped ? CalibreTagUpdateResult.Skipped : CalibreTagUpdateResult.Incomplete;
         }
 
-        private void PollEmbedStatus(BookFile file, CalibreSettings settings)
+        private bool PollEmbedStatus(BookFile file, CalibreSettings settings)
         {
             var previous = new FileInfo(file.Path);
             Thread.Sleep(100);
@@ -350,6 +501,9 @@ namespace NzbDrone.Core.Books.Calibre
                 Thread.Sleep(1000);
             }
 
+            // This is available evidence of a write, not proof that every tag landed.
+            // An unchanged timestamp leaves the outcome unconfirmed.
+            var changed = current.LastWriteTimeUtc != file.Modified;
             file.Size = current.Length;
             file.Modified = current.LastWriteTimeUtc;
 
@@ -357,6 +511,8 @@ namespace NzbDrone.Core.Books.Calibre
             {
                 _mediaFileService.Update(file);
             }
+
+            return changed;
         }
 
         private CalibreBookData GetBookData(int calibreId, CalibreSettings settings)
@@ -371,7 +527,7 @@ namespace NzbDrone.Core.Books.Calibre
             }
             catch (HttpException ex)
             {
-                throw new CalibreException("Unable to add file to Calibre library: {0}", ex, ex.Message);
+                throw new CalibreException("Unable to read Calibre book data: {0}", ex, CalibreLibraryGate.GetFailureReason(ex));
             }
         }
 
@@ -393,7 +549,7 @@ namespace NzbDrone.Core.Books.Calibre
             }
             catch (HttpException ex)
             {
-                throw new CalibreException("Unable to start Calibre conversion: {0}", ex, ex.Message);
+                throw new CalibreException("Unable to start Calibre conversion: {0}", ex, CalibreLibraryGate.GetFailureReason(ex));
             }
         }
 
@@ -404,39 +560,59 @@ namespace NzbDrone.Core.Books.Calibre
                 var builder = GetBuilder($"ajax/book/{calibreId}/{settings.Library}", settings);
 
                 var request = builder.Build();
-                var book = _httpClient.Get<CalibreBook>(request).Resource;
+                var book = SendRequest(() => _httpClient.Get<CalibreBook>(request)).Resource;
 
-                foreach (var format in book.Formats.Values)
+                foreach (var format in book.Formats?.Values ?? Enumerable.Empty<CalibreBookFormat>())
                 {
-                    format.Path = _pathMapper.RemapRemoteToLocal(settings.Host, new OsPath(format.Path)).FullPath;
+                    if (!string.IsNullOrWhiteSpace(format?.Path))
+                    {
+                        format.Path = _pathMapper.RemapRemoteToLocal(settings.Host, new OsPath(format.Path)).FullPath;
+                    }
                 }
 
                 return book;
             }
             catch (HttpException ex)
             {
-                throw new CalibreException("Unable to connect to Calibre library: {0}", ex, ex.Message);
+                throw new CalibreException("Unable to connect to Calibre library: {0}", ex, CalibreLibraryGate.GetFailureReason(ex));
             }
         }
 
         public List<CalibreBook> GetBooks(List<int> calibreIds, CalibreSettings settings)
         {
+            var ids = calibreIds.Distinct().ToList();
+            if (ids.Count > PageSize)
+            {
+                throw new ArgumentException($"Calibre reads accept at most {PageSize} IDs per page", nameof(calibreIds));
+            }
             var builder = GetBuilder($"ajax/books/{settings.Library}", settings);
             builder.LogResponseContent = false;
-            builder.AddQueryParam("ids", calibreIds.ConcatToString(","));
-
-            var request = builder.Build();
-
+            builder.LogHttpError = false;
+            builder.PostProcess = request => request.RedactUrlInLogs = true;
+            builder.AddQueryParam("category_urls", false);
+            builder.AddQueryParam("ids", ids.ConcatToString(","));
             try
             {
-                var response = _httpClient.Get<Dictionary<int, CalibreBook>>(request);
-                var result = response.Resource.Values.ToList();
+                var response = SendRequest(() => _httpClient.Get<Dictionary<int, CalibreBook>>(builder.Build()));
+                if (response.Resource == null || response.Resource.Count == 0)
+                {
+                    throw new CalibreInvalidResponseException("Calibre returned an empty book response");
+                }
 
+                if (ids.Count > 1 && response.Resource.Values.All(book => book == null))
+                {
+                    _logger.Warn("Calibre {0}: all {1} requested books are deleted or restricted", CalibreLibraryIdentity.GetKey(settings), ids.Count);
+                }
+
+                var result = response.Resource.Values.Where(book => book != null).ToList();
                 foreach (var book in result)
                 {
-                    foreach (var format in book.Formats.Values)
+                    foreach (var format in book.Formats?.Values ?? Enumerable.Empty<CalibreBookFormat>())
                     {
-                        format.Path = _pathMapper.RemapRemoteToLocal(settings.Host, new OsPath(format.Path)).FullPath;
+                        if (!string.IsNullOrWhiteSpace(format?.Path))
+                        {
+                            format.Path = _pathMapper.RemapRemoteToLocal(settings.Host, new OsPath(format.Path)).FullPath;
+                        }
                     }
                 }
 
@@ -444,116 +620,131 @@ namespace NzbDrone.Core.Books.Calibre
             }
             catch (HttpException ex)
             {
-                throw new CalibreException("Unable to connect to Calibre library: {0}", ex, ex.Message);
+                throw new CalibreException("Unable to connect to Calibre library: {0}", ex, CalibreLibraryGate.GetFailureReason(ex, libraryRequest: true));
             }
         }
 
         public List<string> GetAllBookFilePaths(CalibreSettings settings)
         {
-            var ids = GetAllBookIds(settings);
+            var timer = Stopwatch.StartNew();
+            var pageIndex = 0;
+            string Stage() => pageIndex == 0 ? "the ID snapshot" : $"book page {pageIndex}";
+            var bookCount = 0;
+            var completed = false;
             var result = new List<string>();
-
-            var offset = 0;
-
-            while (offset < ids.Count)
+            try
             {
-                var builder = GetBuilder($"ajax/books/{settings.Library}", settings);
-                builder.LogResponseContent = false;
-                builder.AddQueryParam("ids", ids.Skip(offset).Take(PAGE_SIZE).ConcatToString(","));
-
-                var request = builder.Build();
-                try
+                var ids = GetAllBookIds(settings);
+                foreach (var page in ids.Chunk(PageSize))
                 {
-                    var response = _httpClient.Get<Dictionary<int, CalibreBook>>(request);
-                    foreach (var book in response.Resource.Values)
+                    pageIndex++;
+                    foreach (var book in GetBooks(page.ToList(), settings))
                     {
-                        var remotePath = GetOriginalFormat(book?.Formats);
-
-                        if (remotePath == null)
-                        {
-                            continue;
-                        }
-
-                        var localPath = _pathMapper.RemapRemoteToLocal(settings.Host, new OsPath(remotePath)).FullPath;
+                        bookCount++;
+                        // GetBooks maps each format once; do not map an already-local path again.
+                        var localPath = GetOriginalFormat(book.Formats);
+                        if (localPath == null) continue;
                         result.Add(localPath);
-
+                        // The scan importer consumes this identity cache until scans resolve Calibre IDs themselves.
                         _bookCache.Set(localPath, book);
                     }
                 }
-                catch (HttpException ex)
-                {
-                    throw new CalibreException("Unable to connect to Calibre library: {0}", ex, ex.Message);
-                }
-
-                offset += PAGE_SIZE;
+                completed = true;
+                return result;
             }
-
-            return result;
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                throw new CalibreException("Unable to read Calibre catalog while reading {0}: {1}", ex,
+                    Stage(), CalibreLibraryGate.GetFailureReason(ex, libraryRequest: true));
+            }
+            finally
+            {
+                _logger.Debug("Calibre catalog: {0}; {1} book pages, {2} books, {3} paths in {4} ms",
+                    completed ? "completed" : $"failed while reading {Stage()}", pageIndex, bookCount, result.Count, timer.ElapsedMilliseconds);
+            }
         }
 
         public List<int> GetAllBookIds(CalibreSettings settings)
         {
-            // the magic string is 'allbooks' converted to hex
+            // Read IDs and their total from one Calibre read-lock snapshot. Details remain paged.
             var builder = GetBuilder($"/ajax/category/616c6c626f6f6b73/{settings.Library}", settings);
-            var offset = 0;
-
-            var ids = new List<int>();
-
-            while (true)
-            {
-                var result = GetPaged<CalibreCategory>(builder, PAGE_SIZE, offset);
-                if (!result.Resource.BookIds.Any())
-                {
-                    break;
-                }
-
-                offset += PAGE_SIZE;
-                ids.AddRange(result.Resource.BookIds);
-            }
-
-            return ids;
-        }
-
-        private HttpResponse<T> GetPaged<T>(HttpRequestBuilder builder, int count, int offset)
-            where T : new()
-        {
-            builder.AddQueryParam("num", count, replace: true);
-            builder.AddQueryParam("offset", offset, replace: true);
-
-            var request = builder.Build();
-
+            builder.AddQueryParam("num", int.MaxValue);
+            builder.AddQueryParam("offset", 0);
+            builder.LogHttpError = false;
+            builder.LogResponseContent = false;
             try
             {
-                return _httpClient.Get<T>(request);
+                var page = SendRequest(() => _httpClient.Get<CalibreCategory>(builder.Build())).Resource;
+                if (page?.BookIds == null || page.TotalNum < 0)
+                {
+                    throw new CalibreInvalidResponseException("Calibre returned an invalid book-ID snapshot");
+                }
+                var seen = new HashSet<int>();
+                var ids = page.BookIds.Where(seen.Add).ToList();
+                if (ids.Count != page.TotalNum)
+                {
+                    throw new CalibreInvalidResponseException($"Calibre returned {ids.Count} distinct book IDs but reported {page.TotalNum}");
+                }
+                return ids;
             }
             catch (HttpException ex)
             {
-                throw new CalibreException("Unable to connect to Calibre library: {0}", ex, ex.Message);
+                throw new CalibreException("Unable to connect to Calibre library: {0}", ex, CalibreLibraryGate.GetFailureReason(ex, libraryRequest: true));
             }
         }
 
         private CalibreLibraryInfo GetLibraryInfo(CalibreSettings settings)
         {
-            var builder = GetBuilder($"ajax/library-info", settings);
-            var request = builder.Build();
-            var response = _httpClient.Get<CalibreLibraryInfo>(request);
-
-            return response.Resource;
+            var builder = GetBuilder("ajax/library-info", settings);
+            builder.LogHttpError = false;
+            try
+            {
+                return _httpClient.Get<CalibreLibraryInfo>(builder.Build()).Resource;
+            }
+            catch (JsonException ex)
+            {
+                throw new CalibreInvalidResponseException("Calibre returned an invalid library list", ex);
+            }
         }
 
-        private bool HasWriteAccess(CalibreSettings settings)
+        private const string CalibreServerManualUrl = "https://manual.calibre-ebook.com/server.html";
+
+        private ValidationFailure TestWriteAccess(CalibreSettings settings)
         {
-            var request = GetBuilder($"cdb/cmd/saved_searches", settings)
+            var request = GetBuilder("cdb/cmd/saved_searches", settings)
+                .AddQueryParam("library_id", settings.Library)
                 .Post()
                 .SetHeader("Content-Type", "application/json")
                 .Build();
 
             request.SuppressHttpError = true;
             request.SetContent("[\"list\"]");
+            var response = _httpClient.Post(request);
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                const string remedy = "Configure a user or trusted IP in calibre. See " + CalibreServerManualUrl;
+                var detail = string.Empty;
+                // Calibre sends write-access failures as plain text; never display an HTML error page.
+                if (response.Headers.ContentType?.StartsWith("text/plain", StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    using var reader = new StringReader(response.Content ?? string.Empty);
+                    var line = reader.ReadLine()?.Trim() ?? string.Empty;
+                    detail = line.Truncate(300);
+                    if (detail.Length < line.Length) detail += "…";
+                }
 
-            var response = _httpClient.Get(request);
+                return new ValidationFailure("Username", HttpTransportErrors.JoinMessages(
+                    string.IsNullOrWhiteSpace(detail) ? "Chaptarr needs write access." : detail, remedy));
+            }
 
-            return response.StatusCode != HttpStatusCode.Forbidden;
+            if (response.StatusCode == HttpStatusCode.OK) return null;
+            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.ProxyAuthenticationRequired ||
+                HttpTransportErrors.IsUnavailableStatus(response.StatusCode)) throw new HttpException(response);
+
+            var advice = response.StatusCode == HttpStatusCode.NotFound
+                ? " Check the Calibre version and whether the reverse proxy permits /cdb requests."
+                : string.Empty;
+            throw new CalibreInvalidResponseException("Calibre's write API answered " + HttpTransportErrors.GetStatusMessage(response) + "." + advice);
         }
 
         private HttpRequestBuilder GetBuilder(string relativePath, CalibreSettings settings)
@@ -600,13 +791,57 @@ namespace NzbDrone.Core.Books.Calibre
 
         public void Test(CalibreSettings settings)
         {
-            var failures = new List<ValidationFailure> { TestCalibre(settings) };
+            ValidationFailure failure;
+            try
+            {
+                failure = TestCalibre(settings);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var cause = CalibreLibraryGate.Unwrap(ex);
+                var reason = CalibreLibraryGate.GetFailureReason(cause);
+                _logger.Debug(ex, "Calibre connection Test failed");
+                var status = HttpTransportErrors.GetStatusCode(exception: cause);
+                var message = reason;
+                if (cause is HttpException http)
+                {
+                    if (status.HasValue && HttpTransportErrors.IsUnavailableStatus(status.Value))
+                    {
+                        message = "Calibre is unavailable: " + HttpTransportErrors.GetStatusMessage(http.Response);
+                    }
+                    else if (!CalibreLibraryGate.HasKnownDiagnosis(cause))
+                    {
+                        message = HttpTransportErrors.GetStatusMessage(http.Response);
+                    }
+                }
+                else if (!CalibreLibraryGate.HasKnownDiagnosis(cause))
+                {
+                    message = "Unknown exception: " + reason;
+                }
+
+                failure = status == HttpStatusCode.ProxyAuthenticationRequired
+                    ? new ValidationFailure("Host", HttpTransportErrors.JoinMessages(reason, "Check the proxy settings."))
+                    : CalibreLibraryGate.IsAccessDenied(cause) && status == HttpStatusCode.Unauthorized
+                        ? new ValidationFailure("Username", "Authentication failed: check the username and password")
+                        : HttpTransportErrors.IsTransientTransportException(cause)
+                            ? new NzbDroneValidationFailure("Host", "Unable to connect") { DetailedDescription = HttpTransportErrors.JoinMessages(reason, cause is HttpRequestException { HttpRequestError: HttpRequestError.ProxyTunnelError } ? "Check the proxy settings." : "Verify the hostname and port.") }
+                            : new ValidationFailure(string.Empty, message);
+                _logger.Warn("Unable to test Calibre: {0}", failure is NzbDroneValidationFailure detailed
+                    ? HttpTransportErrors.JoinMessages(detailed.ErrorMessage, detailed.DetailedDescription)
+                    : failure.ErrorMessage);
+            }
+            var failures = new List<ValidationFailure> { failure };
             var validationResult = new ValidationResult(failures);
             var result = new NzbDroneValidationResult(validationResult.Errors);
 
             if (!result.IsValid || result.HasWarnings)
             {
                 throw new ValidationException(result.Failures);
+            }
+            var key = _libraryGate.GetKey(settings);
+            if (key != null)
+            {
+                _libraryGate.ReportSuccess(key);
             }
         }
 
@@ -621,28 +856,16 @@ namespace NzbDrone.Core.Books.Calibre
             request.LogResponseContent = false;
             HttpResponse response;
 
-            try
-            {
-                response = _httpClient.Execute(request);
-            }
-            catch (WebException ex)
-            {
-                _logger.Error(ex, "Unable to connect to Calibre");
-                if (ex.Status == WebExceptionStatus.ConnectFailure)
-                {
-                    return new NzbDroneValidationFailure("Host", "Unable to connect")
-                    {
-                        DetailedDescription = "Please verify the hostname and port."
-                    };
-                }
+            response = _httpClient.Execute(request);
 
-                return new NzbDroneValidationFailure(string.Empty, "Unknown exception: " + ex.Message);
-            }
+            if (response.StatusCode == HttpStatusCode.Unauthorized) throw new HttpException(response);
 
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
                 return new ValidationFailure("Host", "Could not connect");
             }
+
+            if (response.StatusCode != HttpStatusCode.OK) throw new HttpException(response);
 
             if (response.Content.Contains(@"guac-login"))
             {
@@ -651,32 +874,32 @@ namespace NzbDrone.Core.Books.Calibre
 
             if (response.Content.Contains("Calibre-Web"))
             {
-                return new ValidationFailure("Port", "This is a Calibre-Web server, not the required Calibre content server.  See https://manual.calibre-ebook.com/server.html");
+                return new ValidationFailure("Port", "This is a Calibre-Web server, not the required Calibre content server.  See " + CalibreServerManualUrl);
             }
 
             if (!response.Content.Contains(@"<title>calibre</title>"))
             {
-                return new ValidationFailure("Port", "Not a valid Calibre content server.  See https://manual.calibre-ebook.com/server.html");
-            }
-
-            if (!HasWriteAccess(settings))
-            {
-                return new ValidationFailure("Username", "Chaptarr needs write access. Configure a user or trusted IP in calibre. See https://manual.calibre-ebook.com/server.html");
+                return new ValidationFailure("Port", "Not a valid Calibre content server.  See " + CalibreServerManualUrl);
             }
 
             var libraryInfo = GetLibraryInfo(settings);
+
+            if (libraryInfo?.LibraryMap == null)
+            {
+                throw new CalibreInvalidResponseException("Calibre returned an invalid library list");
+            }
 
             if (settings.Library.IsNullOrWhiteSpace())
             {
                 settings.Library = libraryInfo.DefaultLibrary;
             }
 
-            if (!libraryInfo.LibraryMap.ContainsKey(settings.Library))
+            if (string.IsNullOrWhiteSpace(settings.Library) || !libraryInfo.LibraryMap.ContainsKey(settings.Library))
             {
                 return new ValidationFailure("Library", "Not a valid library in calibre");
             }
 
-            return null;
+            return TestWriteAccess(settings);
         }
     }
 }

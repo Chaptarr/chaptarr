@@ -1,12 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Configuration;
+using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MetadataSource;
 
 namespace NzbDrone.Core.Books
@@ -23,10 +26,16 @@ namespace NzbDrone.Core.Books
         private readonly ISeriesBookLinkService _linkService;
         private readonly IRefreshSeriesBookLinkService _refreshLinkService;
         private readonly Logger _logger;
+        private readonly IConfigService _configService;
+        private readonly IEditionService _editionService;
+        private readonly IAudioTagService _audioTagService;
         private readonly ConcurrentDictionary<string, object> _seriesRefreshLocks = new(StringComparer.OrdinalIgnoreCase);
 
         private sealed class AuthorScopedSeries : Series
         {
+            public Action<IEnumerable<int>> CaptureBeforeWrite { get; set; }
+            public List<SeriesBookLink> AllLinks { get; set; }
+
             public AuthorScopedSeries(Series source, List<SeriesBookLink> links)
             {
                 UseMetadataFrom(source);
@@ -39,7 +48,10 @@ namespace NzbDrone.Core.Books
                                     ISeriesService seriesService,
                                     ISeriesBookLinkService linkService,
                                     IRefreshSeriesBookLinkService refreshLinkService,
-                                    Logger logger)
+                                    Logger logger,
+                                    IConfigService configService,
+                                    IEditionService editionService,
+                                    IAudioTagService audioTagService)
         : base(logger)
         {
             _bookService = bookService;
@@ -47,6 +59,9 @@ namespace NzbDrone.Core.Books
             _linkService = linkService;
             _refreshLinkService = refreshLinkService;
             _logger = logger;
+            _configService = configService;
+            _editionService = editionService;
+            _audioTagService = audioTagService;
         }
 
         private static bool HasMatchingGoodreadsSeriesId(Series local, Series remote)
@@ -268,6 +283,11 @@ namespace NzbDrone.Core.Books
                 return UpdateResult.None;
             }
 
+            if (local.Title != remoteForUpdate.Title && local is AuthorScopedSeries scoped)
+            {
+                scoped.CaptureBeforeWrite(scoped.AllLinks.Select(link => link.BookId));
+            }
+
             local.UseMetadataFrom(remoteForUpdate);
 
             return UpdateResult.UpdateTags;
@@ -294,6 +314,7 @@ namespace NzbDrone.Core.Books
         {
             _logger.Trace($"Removing links for series {local}");
             var children = GetLocalChildren(local, null, null);
+            if (local is AuthorScopedSeries scoped) scoped.CaptureBeforeWrite(children.Select(link => link.BookId));
             _linkService.DeleteMany(children);
 
             if (_seriesService.DeleteIfUnlinked(local.Id))
@@ -495,6 +516,15 @@ namespace NzbDrone.Core.Books
             return RefreshEntityCopy.CloneSeriesBookLink(remoteChild);
         }
 
+        protected override void ProcessChildren(Series entity, SortedChildren children)
+        {
+            if (entity is AuthorScopedSeries scoped)
+            {
+                scoped.CaptureBeforeWrite(children.Added.Concat(children.Updated).Concat(children.Deleted)
+                    .Concat(children.Merged.Select(pair => pair.Item1)).Select(link => link.BookId));
+            }
+        }
+
         protected override void AddChildren(List<SeriesBookLink> children)
         {
             _logger.Trace("[SERIES-DEBUG] AddChildren called with {0} SeriesBookLink records to insert", children.Count);
@@ -579,6 +609,35 @@ namespace NzbDrone.Core.Books
                 return false;
             }
 
+            var sync = _configService.WriteAudioTags == WriteAudioTagsType.Sync;
+            var booksById = localBooks.ToDictionary(book => book.Id);
+            var seriesBefore = new Dictionary<int, (string Title, string Position)>();
+
+            // Snapshot only books whose links or shared series are about to be written.
+            // The final read checks persisted values, including partially completed refreshes.
+            void CaptureBeforeWrite(int seriesId, BookMediaType mediaType, IEnumerable<int> ids)
+            {
+                if (!sync || mediaType != BookMediaType.Audiobook) return;
+                var pending = ids.Distinct().Where(id => !seriesBefore.ContainsKey(id)).ToList();
+                if (pending.Count == 0) return;
+                var timer = Stopwatch.StartNew();
+                var missing = pending.Where(id => !booksById.ContainsKey(id)).ToList();
+                if (missing.Count > 0)
+                {
+                    foreach (var book in _bookService.GetExistingBooks(missing)) booksById[book.Id] = book;
+                }
+                var audio = pending.Select(id => booksById.TryGetValue(id, out var book) ? book : null)
+                    .Where(book => book?.MediaType == BookMediaType.Audiobook).ToList();
+                // BookService already hydrates these links; do not repeat that read.
+                foreach (var book in audio) seriesBefore[book.Id] = BookSeries.AudioTagPair(book);
+                var unavailable = missing.Count(id => !booksById.ContainsKey(id));
+                if (unavailable > 0)
+                {
+                    _logger.Warn("Series {0}: skipped {1} missing book records while preparing audio tag sync", seriesId, unavailable);
+                }
+                _logger.Debug("Series tag snapshot: {0} affected books, {1} additional books loaded, {2} missing books skipped, {3} ms",
+                    audio.Count, missing.Count - unavailable, unavailable, timer.ElapsedMilliseconds);
+            }
             var updated = false;
 
             // Discover existing series via:
@@ -642,20 +701,60 @@ namespace NzbDrone.Core.Books
                 {
                     // Scope reconciliation to the refreshing author so shared series retain other authors' links.
                     // A per-call copy also scopes removal when this author leaves a shared series.
-                    var scoped = new AuthorScopedSeries(item, _linkService.GetLinksBySeries(item.Id)
-                        .Where(link => localBookIds.Contains(link.BookId)).ToList());
+                    var timer = Stopwatch.StartNew();
+                    var allLinks = _linkService.GetLinksBySeries(item.Id);
+                    _logger.Debug("Series refresh read {0} links for series {1} in {2} ms", allLinks.Count, item.Id, timer.ElapsedMilliseconds);
+                    var scoped = new AuthorScopedSeries(item, allLinks.Where(link => localBookIds.Contains(link.BookId)).ToList())
+                    {
+                        AllLinks = allLinks,
+                        CaptureBeforeWrite = ids => CaptureBeforeWrite(item.Id, item.MediaType, ids)
+                    };
                     updated |= RefreshEntityInfo(scoped, providerBackedRemoteSeries, remoteData, forceBookRefresh, forceUpdateFileTags, lastUpdate);
                 }
 
-                return updated;
             }
             finally
             {
-                for (var i = acquired - 1; i >= 0; i--)
+                var changed = new List<int>();
+                try
                 {
-                    Monitor.Exit(seriesLocks[i]);
+                    if (seriesBefore.Count > 0)
+                    {
+                        var timer = Stopwatch.StartNew();
+                        var affected = seriesBefore.Keys.Select(id => booksById[id]).ToList();
+                        BookSeries.LoadLinks(affected, _linkService.GetLinksByBook, reload: true);
+                        _logger.Debug("Series tag reload: {0} books, {1} memberships, {2} ms", affected.Count, affected.Sum(book => book.SeriesLinks.Count), timer.ElapsedMilliseconds);
+                        changed = affected.Where(book => BookSeries.AudioTagPairChanged(seriesBefore[book.Id], BookSeries.AudioTagPair(book)))
+                            .Select(book => book.Id).ToList();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Do not replace a refresh failure with a secondary tag-sync failure.
+                    _logger.Warn(ex, "Unable to reload series tags for {0} affected books", seriesBefore.Count);
+                }
+                finally
+                {
+                    for (var i = acquired - 1; i >= 0; i--) Monitor.Exit(seriesLocks[i]);
+                }
+
+                if (changed.Count > 0)
+                {
+                    try
+                    {
+                        var timer = Stopwatch.StartNew();
+                        var editions = _editionService.GetEditionsByBook(changed);
+                        _logger.Debug("Series tag editions: {0} books, {1} editions, {2} ms", changed.Count, editions.Count, timer.ElapsedMilliseconds);
+                        _audioTagService.SyncTags(editions);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warn(ex, "Unable to sync series tags for {0} affected books", changed.Count);
+                    }
                 }
             }
+
+            return updated;
         }
     }
 }

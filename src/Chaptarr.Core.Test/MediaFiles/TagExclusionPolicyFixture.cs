@@ -21,8 +21,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void SyncTags(List<Edition> tracks) => throw new NotImplementedException();
             public List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId) => throw new NotImplementedException();
             public List<RetagBookFilePreview> GetRetagPreviewsByBook(int bookId) => throw new NotImplementedException();
-            public void RetagFiles(RetagFilesCommand message) => throw new NotImplementedException();
-            public void RetagAuthor(RetagAuthorCommand message) => throw new NotImplementedException();
+            public TagBatch RetagFiles(RetagFilesCommand message, List<BookFile> files, TagBatch batch) => throw new NotImplementedException();
+            public TagBatch RetagAuthor(RetagAuthorCommand message, IReadOnlyList<NzbDrone.Core.Books.Author> authors, TagBatch batch) => throw new NotImplementedException();
         }
 
         private sealed class StaticEBookTagService : IEBookTagService
@@ -39,8 +39,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void SyncTags(List<Edition> books) => throw new NotImplementedException();
             public List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId) => throw new NotImplementedException();
             public List<RetagBookFilePreview> GetRetagPreviewsByBook(int bookId) => throw new NotImplementedException();
-            public void RetagFiles(RetagFilesCommand message) => throw new NotImplementedException();
-            public void RetagAuthor(RetagAuthorCommand message) => throw new NotImplementedException();
+            public TagBatch RetagFiles(RetagFilesCommand message, List<BookFile> files, TagBatch batch) => throw new NotImplementedException();
+            public TagBatch RetagAuthor(RetagAuthorCommand message, IReadOnlyList<NzbDrone.Core.Books.Author> authors, TagBatch batch) => throw new NotImplementedException();
         }
 
         [Test]
@@ -95,7 +95,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     { "COPYRIGHT", new List<string> { "© 2026 Example Rights Holder" } }
                 });
 
-                var sut = new MetadataTagService(new NullAudioTagService(), ebookTagService, LogManager.GetLogger("test"));
+                var sut = TagServiceTestFactory.Metadata(new NullAudioTagService(), ebookTagService, LogManager.GetLogger("test"), null);
                 var tags = sut.ReadAllTags(fileSystem.FileInfo.FromFileName(path));
 
                 Assert.That(tags.ContainsKey("TITLE"), Is.True);

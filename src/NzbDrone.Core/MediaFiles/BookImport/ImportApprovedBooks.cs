@@ -3657,13 +3657,20 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
         private void WriteTagsForCommittedFiles(IEnumerable<PendingFileCommit> pendingFileCommits)
         {
-            foreach (var commit in pendingFileCommits ?? Enumerable.Empty<PendingFileCommit>())
+            var commits = (pendingFileCommits ?? Enumerable.Empty<PendingFileCommit>()).Where(commit => commit.DatabaseCommitted).ToList();
+            var mode = _configService?.WriteAudioTags ?? WriteAudioTagsType.No;
+            try
             {
-                if (!commit.DatabaseCommitted)
-                {
-                    continue;
-                }
-
+                AudioTagService.LoadSeries(commits.Where(commit => AudioTagService.ShouldWriteTags(mode, commit.NewDownload) &&
+                    commit.BookFile.Edition?.Book?.MediaType == BookMediaType.Audiobook)
+                    .Select(commit => commit.BookFile.Edition.Book), _seriesBookLinkService, _logger);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Unable to preload audio series after import; individual tag writes will report their outcomes");
+            }
+            foreach (var commit in commits)
+            {
                 if (commit.PublishAddedEvent)
                 {
                     _eventAggregator.PublishEvent(new BookFileAddedEvent(commit.BookFile));

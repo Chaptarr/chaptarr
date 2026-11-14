@@ -26,23 +26,17 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
         [Test]
         public void metadata_lookup_callers_and_declared_refusal_handling_require_an_outcome_gate()
         {
-            var current = new DirectoryInfo(TestContext.CurrentContext.TestDirectory);
-            while (current != null && !File.Exists(Path.Combine(current.FullName, "src", "Chaptarr.Core.Test", "Chaptarr.Core.Test.csproj")))
-            {
-                current = current.Parent;
-            }
-
-            Assert.That(current, Is.Not.Null, "The source contract needs the repository source, as do existing architecture checks.");
+            var current = RepositorySource.FindRoot();
             var callers = new Dictionary<string, int>();
             var refusals = new Dictionary<string, int>();
             var callerPattern = new Regex(@"\.(GetAuthorInfoAsync|GetAuthorInfo|RefreshAuthorInfo|RefreshAuthorInfoAsync|RefreshAuthorInfoV5BulkAsync|GetBookInfo|GetWorkInfo|GetEditionInfo|SearchForNewBook|SearchForNewAuthor|SearchForNewEntity)\s*\(");
             var refusalPattern = new Regex(@"AuthorTerminalException|WorkRescueTerminalException|InvalidProviderIdException|catch\s*\(NzbDroneClientException|is NzbDroneClientException");
             foreach (var sourceDirectory in new[] { "NzbDrone.Core", "Chaptarr.Http", "Chaptarr.Api.V1" })
             {
-                foreach (var file in Directory.EnumerateFiles(Path.Combine(current.FullName, "src", sourceDirectory), "*.cs", SearchOption.AllDirectories))
+                foreach (var file in Directory.EnumerateFiles(Path.Combine(current, "src", sourceDirectory), "*.cs", SearchOption.AllDirectories))
                 {
                     var lines = File.ReadAllLines(file);
-                    var path = Path.GetRelativePath(current.FullName, file).Replace('\\', '/');
+                    var path = Path.GetRelativePath(current, file).Replace('\\', '/');
                     var callerCount = lines.Count(line => callerPattern.IsMatch(line));
                     var refusalCount = lines.Count(line => refusalPattern.IsMatch(line));
                     if (callerCount > 0) callers.Add(path, callerCount);

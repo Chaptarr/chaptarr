@@ -91,6 +91,7 @@ namespace NzbDrone.Core.MediaFiles
         }
         BookFile Get(int id);
         List<BookFile> Get(IEnumerable<int> ids);
+        List<BookFile> GetExisting(IEnumerable<int> ids);
         List<BookFile> GetFilesWithBasePath(string path);
         List<BookFile> GetFilesWithBasePath(string path, string mediaType);
         List<BookFile> GetFileWithPath(List<string> path);
@@ -503,6 +504,14 @@ namespace NzbDrone.Core.MediaFiles
         public BookFile Get(int id)
         {
             return _mediaFileRepository.Get(id);
+        }
+
+        public List<BookFile> GetExisting(IEnumerable<int> ids)
+        {
+            var timer = Stopwatch.StartNew();
+            var files = _mediaFileRepository.GetExisting(ids);
+            _logger.Debug("Loaded {0} existing selected files in {1} ms", files.Count, timer.ElapsedMilliseconds);
+            return files;
         }
 
         public List<BookFile> Get(IEnumerable<int> ids)

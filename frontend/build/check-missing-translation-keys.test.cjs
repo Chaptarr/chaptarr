@@ -41,3 +41,41 @@ for (const [locale, expected] of Object.entries(expectedSearchWarnings)) {
     assert.equal(translations.SearchAuthorBooksConfirm, expected);
   });
 }
+
+test('finds the keys passed through count/summary helpers and conditional backend translations', () => {
+  const source = 'AddCountMessage(parts, "RetagCount", count); AddSummary(messages, "RetagEbookPass", batch); GetLocalizedString(flag ? "First" : "Second", values);';
+  assert.deepEqual(translationKeys(source, 'service.cs'), ['RetagCount', 'RetagEbookPass', 'First', 'Second']);
+});
+
+test('finds translated map values without treating unrelated values as keys', () => {
+  const source = 'const messages = { skipped: "SkipReason", failed: "FailedReason" }; const other = { value: "NotAKey" }; translate(messages[reason] || "Fallback");';
+  assert.deepEqual(translationKeys(source, 'preview.js'), ['SkipReason', 'FailedReason', 'Fallback']);
+});
+
+test('member access reads only the named property', () => {
+  const source = 'const column = { name: "title", width: "10px", label: "Title" }; translate(column.label); translate(column["label"]);';
+  assert.deepEqual(translationKeys(source, 'view.js'), ['Title']);
+});
+
+test('backend conditions may contain nested parentheses', () => {
+  assert.deepEqual(translationKeys('GetLocalizedString(Foo(a) ? "AA" : "BB")', 'service.cs'), ['AA', 'BB']);
+});
+
+test('backend argument boundaries exclude following unrelated strings and calls', () => {
+  const source = 'GetLocalizedString("One"); Log(flag ? "decoy" : "value"); GetLocalizedString(Foo(a, b) ? "Two" : "Three");';
+  assert.deepEqual(translationKeys(source, 'service.cs'), ['One', 'Two', 'Three']);
+});
+
+test('object spreads and methods do not crash literal map lookup', () => {
+  const source = 'const messages = { ...base, a: "Known", method() { return "NotAKey"; } }; translate(messages.a); translate(messages[reason]);';
+  assert.deepEqual(translationKeys(source, 'view.js'), ['Known']);
+});
+
+test('computed keys are not mistaken for identifier names', () => {
+  const source = 'const messages = { [key]: "Dynamic", ["a"]: "Known" }; translate(messages.a); translate(messages[reason]);';
+  assert.deepEqual(translationKeys(source, 'view.js'), ['Known', 'Dynamic']);
+});
+
+test('computed identifier key does not resolve as a literal property', () => {
+  assert.deepEqual(translationKeys('const m = { [a]: "X" }; translate(m.a);', 'view.js'), []);
+});

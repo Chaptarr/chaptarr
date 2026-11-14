@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using NLog;
+using NzbDrone.Common.Instrumentation;
 using TagLib;
 using TagLib.Id3v2;
 
@@ -8,90 +10,52 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
 {
     public class TagLibSharpExtractor : ITagExtractorWithDuration
     {
+        private static readonly Logger Logger = NzbDroneLogger.GetLogger(typeof(TagLibSharpExtractor));
+
         public bool IsAvailable => true; // Managed fallback
         public int Priority => 2;
         public string Name => "TagLibSharp";
 
         public Dictionary<string, List<string>> ExtractTags(string path)
         {
+            using var file = TagLib.File.Create(path, ReadStyle.None);
+            return ExtractTags(file);
+        }
+
+        // Share container interpretation with callers that already hold the file open.
+        public static Dictionary<string, List<string>> ExtractTags(TagLib.File file)
+        {
             var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-
-            TagLib.File file = null;
-            try
+            if (file.TagTypesOnDisk.HasFlag(TagTypes.Id3v2))
             {
-                file = TagLib.File.Create(path, ReadStyle.None);
-
-                // Enumerate container-specific tags and add textual values only
-                if (file.TagTypesOnDisk.HasFlag(TagTypes.Id3v2))
-                {
-                    ExtractId3v2Tags(file, result);
-                }
-                if (file.TagTypesOnDisk.HasFlag(TagTypes.Xiph))
-                {
-                    ExtractXiphTags(file, result);
-                }
-                if (file.TagTypesOnDisk.HasFlag(TagTypes.Ape))
-                {
-                    ExtractApeTags(file, result);
-                }
-                if (file.TagTypesOnDisk.HasFlag(TagTypes.Asf))
-                {
-                    ExtractAsfTags(file, result);
-                }
-                if (file.TagTypesOnDisk.HasFlag(TagTypes.Apple))
-                {
-                    ExtractAppleTags(file, result);
-                }
+                ExtractId3v2Tags(file, result);
             }
-            finally
+            if (file.TagTypesOnDisk.HasFlag(TagTypes.Xiph))
             {
-                file?.Dispose();
+                ExtractXiphTags(file, result);
             }
-
+            if (file.TagTypesOnDisk.HasFlag(TagTypes.Ape))
+            {
+                ExtractApeTags(file, result);
+            }
+            if (file.TagTypesOnDisk.HasFlag(TagTypes.Asf))
+            {
+                ExtractAsfTags(file, result);
+            }
+            if (file.TagTypesOnDisk.HasFlag(TagTypes.Apple))
+            {
+                ExtractAppleTags(file, result);
+            }
             return result;
         }
 
         public (Dictionary<string, List<string>> Tags, int? DurationSeconds) ExtractTagsAndDuration(string path)
         {
-            var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-
-            TagLib.File file = null;
-            TimeSpan duration = TimeSpan.Zero;
             var isMp3 = Mp3DurationReader.IsMp3Path(path);
-
-            try
-            {
-                // For MP3, do not ask TagLibSharp for duration: it estimates CBR
-                // duration from the first valid frame, which is the failure mode
-                // the shared AudioDurationResolver deliberately rejects.
-                file = TagLib.File.Create(path, isMp3 ? ReadStyle.None : ReadStyle.Average);
-                duration = isMp3 ? TimeSpan.Zero : file.Properties?.Duration ?? TimeSpan.Zero;
-
-                if (file.TagTypesOnDisk.HasFlag(TagTypes.Id3v2))
-                {
-                    ExtractId3v2Tags(file, result);
-                }
-                if (file.TagTypesOnDisk.HasFlag(TagTypes.Xiph))
-                {
-                    ExtractXiphTags(file, result);
-                }
-                if (file.TagTypesOnDisk.HasFlag(TagTypes.Ape))
-                {
-                    ExtractApeTags(file, result);
-                }
-                if (file.TagTypesOnDisk.HasFlag(TagTypes.Asf))
-                {
-                    ExtractAsfTags(file, result);
-                }
-                if (file.TagTypesOnDisk.HasFlag(TagTypes.Apple))
-                {
-                    ExtractAppleTags(file, result);
-                }
-            }
-            finally
-            {
-                file?.Dispose();
-            }
+            // MP3 duration comes from AudioDurationResolver, not TagLib's first-frame estimate.
+            using var file = TagLib.File.Create(path, isMp3 ? ReadStyle.None : ReadStyle.Average);
+            var duration = isMp3 ? TimeSpan.Zero : file.Properties?.Duration ?? TimeSpan.Zero;
+            var result = ExtractTags(file);
 
             // AudioDurationResolver owns MP3 duration. Returning no MP3 duration here
             // prevents both duplicate frame scans and first-frame estimates.
@@ -162,7 +126,7 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                     }
                 }
             }
-            catch { /* ignore */ }
+            catch (Exception ex) { Logger.Debug(ex, "Unable to extract Id3v2 tags from {0}", file.Name); }
         }
 
         private static void ExtractXiphTags(TagLib.File file, Dictionary<string, List<string>> result)
@@ -185,8 +149,8 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 {
                     "TITLE","VERSION","ALBUM","TRACKNUMBER","ARTIST","PERFORMER","COPYRIGHT","LICENSE","ORGANIZATION","DESCRIPTION","GENRE","DATE",
                     "LOCATION","CONTACT","ISRC","ALBUMARTIST","COMPOSER","LYRICIST","CONDUCTOR","REMIXER","ARRANGER","ENGINEER","PRODUCER","DJMIXER","MIXER","LABEL",
-                    "GROUPING","SUBTITLE","DISCNUMBER","TOTALDISCS","TOTALTRACKS","COMPILATION","COMMENT","NARRATOR","PUBLISHER","LANGUAGE","ISBN","ASIN","BARCODE",
-                    "CATALOGNUMBER","SERIES","PART","BOOK","AUTHOR","READER","ENCODED-BY","ENCODER","ENCODING","ENCODEDBY","SOURCEMEDIA","MEDIA","ORIGINALDATE","ORIGINALYEAR","RELEASEDATE",
+                    "GROUPING","SUBTITLE","DISCNUMBER","TOTALDISCS","TOTALTRACKS","TRACKTOTAL","COMPILATION","COMMENT","NARRATOR","PUBLISHER","LANGUAGE","ISBN","ASIN","BARCODE",
+                    "CATALOGNUMBER","SERIES","SERIES-PART","PART","BOOK","AUTHOR","READER","ENCODED-BY","ENCODER","ENCODING","ENCODEDBY","SOURCEMEDIA","MEDIA","ORIGINALDATE","ORIGINALYEAR","RELEASEDATE",
                     "RELEASETYPE","RELEASESTATUS","RELEASECOUNTRY","ALBUMARTISTSORT","ARTISTSORT","ALBUMSORT","TITLESORT","MOOD","BPM","KEY","CONTENTGROUP","TLEN"
                 };
 
@@ -194,15 +158,9 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 {
                     var v1 = xiph.GetField(name);
                     if (v1 != null && v1.Length > 0) Add(result, $"XIPH:{name}", v1);
-
-                    if (!name.Equals(name.ToLowerInvariant()))
-                    {
-                        var v2 = xiph.GetField(name.ToLowerInvariant());
-                        if (v2 != null && v2.Length > 0) Add(result, $"XIPH:{name.ToLowerInvariant()}", v2);
-                    }
                 }
             }
-            catch { /* ignore */ }
+            catch (Exception ex) { Logger.Debug(ex, "Unable to extract Xiph tags from {0}", file.Name); }
         }
 
         private static void ExtractApeTags(TagLib.File file, Dictionary<string, List<string>> result)
@@ -210,7 +168,7 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             try
             {
                 var ape = (TagLib.Ape.Tag)file.GetTag(TagTypes.Ape);
-                var keys = new[] { "Title","Artist","Album","Comment","Year","Track","Genre","AlbumArtist","Composer","Disc","Compilation","Lyrics","Media","Publisher","Mood","Narrator","Language","ISBN","ASIN" };
+                var keys = new[] { "Title","Artist","Album","Comment","Year","Track","Genre","AlbumArtist","Composer","Disc","Compilation","Lyrics","Media","Publisher","Mood","Narrator","Language","ISBN","ASIN","SERIES","SERIES-PART" };
                 foreach (var key in keys)
                 {
                     var item = ape.GetItem(key);
@@ -220,7 +178,7 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                     }
                 }
             }
-            catch { /* ignore */ }
+            catch (Exception ex) { Logger.Debug(ex, "Unable to extract Ape tags from {0}", file.Name); }
         }
 
         private static void ExtractAsfTags(TagLib.File file, Dictionary<string, List<string>> result)
@@ -230,14 +188,14 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 var asf = (TagLib.Asf.Tag)file.GetTag(TagTypes.Asf);
                 var descriptors = new[]
                 {
-                    "WM/AlbumTitle","WM/AlbumArtist","WM/Composer","WM/Conductor","WM/ContentDistributor","WM/Publisher","WM/Media","WM/Narrator","WM/Language","WM/PartOfSet","WM/TrackNumber","WM/SharedUserRating","WM/SubTitle","WM/Writer","WM/ISBN","WM/ASIN","WM/OriginalReleaseTime","WM/OriginalReleaseYear"
+                    "WM/AlbumTitle","WM/AlbumArtist","WM/Composer","WM/Conductor","WM/ContentDistributor","WM/Publisher","WM/Media","WM/Narrator","WM/Language","WM/PartOfSet","WM/TrackNumber","WM/SharedUserRating","WM/SubTitle","WM/Writer","WM/ISBN","WM/ASIN","WM/OriginalReleaseTime","WM/OriginalReleaseYear","SERIES","SERIES-PART"
                 };
                 foreach (var d in descriptors)
                 {
                     Add(result, $"ASF:{d}", asf.GetDescriptorString(d));
                 }
             }
-            catch { /* ignore */ }
+            catch (Exception ex) { Logger.Debug(ex, "Unable to extract Asf tags from {0}", file.Name); }
         }
 
         private static void ExtractAppleTags(TagLib.File file, Dictionary<string, List<string>> result)
@@ -245,91 +203,33 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             try
             {
                 var tag = (TagLib.Mpeg4.AppleTag)file.GetTag(TagTypes.Apple);
-                // A limited set of common boxes (field-agnostic enumeration is not available in TagLib#)
+                // Read known Apple text boxes; canonical mappings consume a subset of these fields.
                 var boxes = new[] { "©nam","©ART","©alb","©day","©cmt","©gen","©wrt","©too","©cpy","aART","©grp","©lyr","©dir","©pub","©wrk" };
                 foreach (var b in boxes)
                 {
                     try
                     {
-                        var val = tag.DataBoxes(FixAppleId(b)).FirstOrDefault()?.Text;
+                        var val = ReadAppleText(tag, b);
                         Add(result, $"MP4:{b}", val);
                     }
-                    catch { /* ignore */ }
+                    catch (Exception ex) { Logger.Debug(ex, "Unable to extract MP4 box {0} from {1}", b, file.Name); }
                 }
 
-                // Attempt to extract vendor-specific freeform atoms ("----")
-                // Using reflection for compatibility across TagLib# versions
-                try
+                Add(result, "MP4:----:com.apple.iTunes:publisher", tag.GetDashBox("com.apple.iTunes", "publisher"));
+                // Keep series identity attached to its text so the shared matching policy
+                // can distinguish collection metadata. Other freeform evidence is unchanged.
+                foreach (var field in AppleTagFields.Read(tag))
                 {
-                    var tagType = tag.GetType();
-                    var getDashBoxes = tagType.GetMethod("GetDashBoxes", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public);
-                    if (getDashBoxes != null)
-                    {
-                        var dashBoxes = getDashBoxes.Invoke(tag, null) as System.Collections.IEnumerable;
-                        if (dashBoxes != null)
-                        {
-                            foreach (var box in dashBoxes)
-                            {
-                                try
-                                {
-                                    var bt = box.GetType();
-                                    var mean = bt.GetProperty("Mean")?.GetValue(box) as string;
-                                    var name = bt.GetProperty("Name")?.GetValue(box) as string;
-
-                                    var values = new List<string>();
-                                    var textProp = bt.GetProperty("Text");
-                                    if (textProp != null)
-                                    {
-                                        var tv = textProp.GetValue(box);
-                                        if (tv is string s) values.Add(s);
-                                        else if (tv is string[] sa) values.AddRange(sa.Where(x => !string.IsNullOrWhiteSpace(x)));
-                                        else if (tv != null) values.Add(tv.ToString());
-                                    }
-                                    else
-                                    {
-                                        var dataProp = bt.GetProperty("Data");
-                                        var dv = dataProp?.GetValue(box);
-                                        if (dv != null)
-                                        {
-                                            var str = dv.ToString();
-                                            if (!string.IsNullOrWhiteSpace(str)) values.Add(str);
-                                        }
-                                    }
-
-                                    if (!string.IsNullOrWhiteSpace(mean) && !string.IsNullOrWhiteSpace(name) && values.Count > 0)
-                                    {
-                                        Add(result, $"MP4:----:{mean}:{name}", values.ToArray());
-                                    }
-                                }
-                                catch { /* per-box best effort */ }
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // Fallback: try to access DataBoxes("----") and record opaque values
-                        try
-                        {
-                            var freeform = tag.DataBoxes(FixAppleId("----"));
-                            foreach (var db in freeform)
-                            {
-                                try
-                                {
-                                    var text = db?.Text;
-                                    if (text != null && text.Length > 0)
-                                    {
-                                        Add(result, "MP4:----", text);
-                                    }
-                                }
-                                catch { }
-                            }
-                        }
-                        catch { }
-                    }
+                    var isSeries = AppleTagFields.SeriesKey(field.Mean, field.Name) != null;
+                    Add(result, isSeries ? $"MP4:----:{field.Mean}:{field.Name}" : "MP4:----", field.Value);
                 }
-                catch { /* ignore reflection errors */ }
             }
-            catch { /* ignore */ }
+            catch (Exception ex) { Logger.Debug(ex, "Unable to extract Apple tags from {0}", file.Name); }
+        }
+
+        internal static string ReadAppleText(TagLib.Mpeg4.AppleTag tag, string id)
+        {
+            return tag.DataBoxes(FixAppleId(id)).FirstOrDefault()?.Text;
         }
 
         private static ReadOnlyByteVector FixAppleId(string id)

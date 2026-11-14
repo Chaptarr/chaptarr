@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import Alert from 'Components/Alert';
 import CheckInput from 'Components/Form/CheckInput';
 import Button from 'Components/Link/Button';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
@@ -8,12 +9,24 @@ import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { kinds } from 'Helpers/Props';
+import formatDateTime from 'Utilities/Date/formatDateTime';
 import translate from 'Utilities/String/translate';
 import getSelectedIds from 'Utilities/Table/getSelectedIds';
 import selectAll from 'Utilities/Table/selectAll';
 import toggleSelected from 'Utilities/Table/toggleSelected';
 import RetagPreviewRow from './RetagPreviewRow';
 import styles from './RetagPreviewModalContent.css';
+
+const skipMessages = {
+  notInCalibre: 'RetagEbookRequiresCalibre',
+  missingCalibreBook: 'RetagMissingCalibreBook',
+  libraryUnavailable: 'RetagPreviewBackoff',
+  previewFailed: 'RetagPreviewFailed',
+  libraryPreviewFailed: 'RetagLibraryPreviewFailed',
+  missingRootFolder: 'RetagPreviewMissingRootFolder',
+  invalidCalibreSettings: 'RetagPreviewInvalidCalibreSettings',
+  rootNotLinkedToCalibre: 'RetagPreviewRootNotLinkedToCalibre'
+};
 
 function getValue(allSelected, allUnselected) {
   if (allSelected) {
@@ -47,7 +60,8 @@ class RetagPreviewModalContent extends Component {
   // Control
 
   getSelectedIds = () => {
-    return getSelectedIds(this.state.selectedState);
+    const eligible = new Set(this.props.items.filter((item) => !item.skipReason).map((item) => item.bookFileId));
+    return getSelectedIds(this.state.selectedState).filter((id) => eligible.has(id));
   };
 
   //
@@ -59,7 +73,7 @@ class RetagPreviewModalContent extends Component {
 
   onSelectedChange = ({ id, value, shiftKey = false }) => {
     this.setState((state) => {
-      return toggleSelected(state, this.props.items, id, value, shiftKey);
+      return toggleSelected(state, this.props.items.filter((item) => !item.skipReason), id, value, shiftKey);
     });
   };
 
@@ -80,16 +94,28 @@ class RetagPreviewModalContent extends Component {
       isPopulated,
       error,
       items,
+      shortDateFormat,
+      timeFormat,
       onModalClose
     } = this.props;
 
     const {
       allSelected,
       allUnselected,
+      embedMetadata,
       selectedState
     } = this.state;
 
     const selectAllValue = getValue(allSelected, allUnselected);
+    const eligibleItems = items.filter((item) => !item.skipReason);
+    const skippedGroups = Object.values(items.filter((item) => item.skipReason).reduce((groups, item) => {
+      const key = JSON.stringify([item.skipReason, item.calibreLibrary, item.rootFolderPath]);
+      const group = groups[key] || { key, reason: item.skipReason, library: item.calibreLibrary, rootFolderPath: item.rootFolderPath, retryAfter: item.retryAfter, retryNow: item.retryNow, count: 0 };
+      group.count++;
+      groups[key] = group;
+      return groups;
+    }, {}));
+    const symlinkCount = eligibleItems.filter((item) => item.isFileSymlink && (!item.isCalibreFormat || embedMetadata)).length;
 
     return (
       <ModalContent onModalClose={onModalClose}>
@@ -120,9 +146,25 @@ class RetagPreviewModalContent extends Component {
           {
             !isFetching && isPopulated && !!items.length &&
               <div>
+                {
+                  skippedGroups.map((group) => (
+                    <Alert key={group.key} kind={kinds.WARNING}>
+                      {translate(group.reason === 'libraryUnavailable' && group.retryNow ? 'RetagPreviewRetryNow' : skipMessages[group.reason] || 'RetagPreviewUnknownSkip', {
+                        ...group, library: translate('RetagCalibreLibrary', { library: group.library }), retryAfter: formatDateTime(group.retryAfter, shortDateFormat, timeFormat)
+                      })}
+                    </Alert>
+                  ))
+                }
+                {
+                  symlinkCount > 0 &&
+                    <Alert>
+                      {translate('RetagPreviewSymlinkWrites', { count: symlinkCount })}
+                    </Alert>
+                }
+
                 <div className={styles.previews}>
                   {
-                    items.map((item) => {
+                    eligibleItems.map((item) => {
                       return (
                         <RetagPreviewRow
                           key={item.bookFileId}
@@ -142,7 +184,7 @@ class RetagPreviewModalContent extends Component {
 
         <ModalFooter>
           {
-            isPopulated && !!items.length &&
+            isPopulated && !!eligibleItems.length &&
               <CheckInput
                 className={styles.selectAllInput}
                 containerClassName={styles.selectAllInputContainer}
@@ -188,6 +230,7 @@ class RetagPreviewModalContent extends Component {
 
           <Button
             kind={kinds.PRIMARY}
+            isDisabled={isFetching || !this.getSelectedIds().length}
             onPress={this.onRetagPress}
           >
             {translate('Retag')}
@@ -199,6 +242,8 @@ class RetagPreviewModalContent extends Component {
 }
 
 RetagPreviewModalContent.propTypes = {
+  shortDateFormat: PropTypes.string.isRequired,
+  timeFormat: PropTypes.string.isRequired,
   isFetching: PropTypes.bool.isRequired,
   isPopulated: PropTypes.bool.isRequired,
   error: PropTypes.object,

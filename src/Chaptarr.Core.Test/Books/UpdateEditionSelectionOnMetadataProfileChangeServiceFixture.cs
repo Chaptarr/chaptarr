@@ -164,6 +164,8 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public System.Collections.Generic.List<NzbDrone.Core.MediaFiles.BookFile> GetExisting(System.Collections.Generic.IEnumerable<int> ids) => throw new System.NotImplementedException();
+
             public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
                 System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
                 => throw new System.NotSupportedException("This test adapter does not support replacement validation.");

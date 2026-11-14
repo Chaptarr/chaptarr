@@ -108,7 +108,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     InterfaceProxy.Proxy<IMediaFileAttributeService>((_, _) => null),
                     InterfaceProxy.Proxy<IEventAggregator>((_, _) => null),
                     InterfaceProxy.Proxy<IConfigService>((_, _) => false),
-                    InterfaceProxy.Proxy<IFileMutationSafetyService>((_, _) => null), LogManager.GetCurrentClassLogger());
+                    LogManager.GetCurrentClassLogger());
                 var local = new LocalBook
                 {
                     Path = source, Author = author, Book = ebook, Edition = edition, Quality = fileToImport.Quality,

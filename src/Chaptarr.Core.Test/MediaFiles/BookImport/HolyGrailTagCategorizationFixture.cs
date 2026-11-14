@@ -172,6 +172,19 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Is.EqualTo(new[] { ("TITLE[0]", "Hugh Howey Free Short Stories") }));
         }
 
+        [Test]
+        public void generated_id3_asin_must_not_be_a_second_physical_field()
+        {
+            var tags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["TITLE"] = new() { "Fixture title" },
+                ["ID3v2:TXXX:ASIN"] = new() { "B012345678" }
+            };
+            NzbDrone.Core.MediaFiles.TagExtraction.TagCanonicalizer.AddCanonicalKeys(tags);
+            var fields = ResidualFields(CreateService(), tags, Array.Empty<string>());
+            Assert.That(fields.Select(field => field.Key), Is.EquivalentTo(new[] { "TITLE[0]", "ID3v2:TXXX:ASIN[0]" }));
+        }
+
         [TestCase("creator_aut", false)]
         [TestCase("creator_aut", true)]
         [TestCase("creator_creator", false)]
