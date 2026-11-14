@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using NUnit.Framework;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.MediaFiles.BookImport.Services;
@@ -74,7 +75,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         [TestCase("Dune Ⅱ", "Dune II", true)]
         public void multipart_root_comparison_should_keep_shared_character_identity(string folderName, string editionTitle, bool expected)
         {
-            var folder = Path.Combine(TestContext.CurrentContext.WorkDirectory, "unrelated-writer", folderName);
+            var folder = Path.Combine(TestContext.CurrentContext.WorkDirectory.GetActualCasing(), "unrelated-writer", folderName);
             var path = Path.Combine(folder, "track.mp3");
 
             Assert.That(BookCoalescingHelper.FindBookRootFolder(path, editionTitle), Is.EqualTo(expected ? folder : null));
@@ -84,7 +85,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         [TestCase("Disc 2")]
         public void author_ready_retry_should_use_the_shared_disc_root_even_when_folder_title_differs(string disc)
         {
-            var root = Path.Combine(TestContext.CurrentContext.WorkDirectory, "unrelated-writer", "Local Folder");
+            var root = Path.Combine(TestContext.CurrentContext.WorkDirectory.GetActualCasing(), "unrelated-writer", "Local Folder");
             var path = Path.Combine(root, disc, "track.mp3");
 
             Assert.That(BookCoalescingHelper.FindBookRootFolder(path, "Published Title"), Is.EqualTo(root));

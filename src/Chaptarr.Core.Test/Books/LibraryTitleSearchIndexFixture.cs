@@ -8,7 +8,6 @@ using NLog;
 using NLog.Config;
 using NLog.Targets;
 using NzbDrone.Core.Books.Commands;
-using Npgsql;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
@@ -38,10 +37,7 @@ namespace Chaptarr.Core.Test.Books
                 var before = IndexDefinitions();
                 var original = editions.GetEdition(edition.Id);
 
-                var connectionString = postgres
-                    ? new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING"))
-                        { Database = connection.Database, Pooling = false }.ConnectionString
-                    : connection.ConnectionString;
+                var connectionString = connection.ConnectionString;
                 new MigrationController(Logger, null).Migrate(connectionString,
                     new MigrationContext(MigrationType.Main, 118), database.DatabaseType);
 

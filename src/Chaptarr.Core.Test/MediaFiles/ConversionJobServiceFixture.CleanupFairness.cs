@@ -22,7 +22,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Directory.CreateDirectory(directory);
                 var rows = new ConversionJobRepository(database, new StubEventAggregator());
                 using var factory = new LogFactory();
-                var sink = new NLog.Targets.MemoryTarget { Layout = "${level}|${message}" };
+                var sink = new ConcurrentLogTarget { Layout = "${level}|${message}" };
                 var configuration = new NLog.Config.LoggingConfiguration(factory);
                 configuration.AddRuleForAllLevels(sink);
                 factory.Configuration = configuration;

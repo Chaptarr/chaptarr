@@ -65,7 +65,7 @@ namespace Chaptarr.Core.Test.Notifications
         public void distinct_paths_and_definitions_are_preserved_and_parallel_flushes_do_not_duplicate(bool synology)
         {
             var paths = new[] { "Author/Book One/part.epub", "Author/Book Two/part.epub", "Author Two/part.epub" }
-                .Select(path => Path.Combine(_root, path)).ToArray();
+                .Select(path => Path.Combine(_root, path.Replace('/', Path.DirectorySeparatorChar))).ToArray();
             foreach (var path in paths)
             {
                 DeleteBook(Create(synology), path);

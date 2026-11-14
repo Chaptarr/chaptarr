@@ -24,9 +24,7 @@ namespace Chaptarr.Core.Test.Datastore
                 void Add(string id, int? type) => connection.Execute("INSERT INTO \"ImportListExclusions\" (\"ForeignId\", \"Name\", \"MediaType\") VALUES (@id, 'Author', @type)", new { id, type });
                 Add("gr:58", null); Add(" GR:58 ", null); Add("gr:58", 0); Add("gr:58", 1);
                 Add("gr:99", 0); Add("gr:99", 0); Add("gr:99", 1);
-                var cs = postgres
-                    ? new Npgsql.NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING")) { Database = connection.Database }.ConnectionString
-                    : connection.ConnectionString;
+                var cs = connection.ConnectionString;
                 var migration = new MigrationController(LogManager.GetCurrentClassLogger(), null);
                 migration.Migrate(cs, new MigrationContext(MigrationType.Main, 128), postgres ? DatabaseType.PostgreSQL : DatabaseType.SQLite);
                 Assert.That(connection.ExecuteScalar<int>("SELECT COUNT(*) FROM \"ImportListExclusions\""), Is.EqualTo(3));
@@ -61,9 +59,7 @@ namespace Chaptarr.Core.Test.Datastore
                     connection.Execute(@"INSERT INTO ""PendingNotificationItems"" (""Id"", ""NotificationId"", ""Path"", ""PathKey"", ""IsFolder"")
                         VALUES (77, 8, '/books/Dune', '/books/Dune', @folder)", new { folder = true });
                 }
-                var connectionString = postgres
-                    ? new Npgsql.NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING")) { Database = connection.Database }.ConnectionString
-                    : connection.ConnectionString;
+                var connectionString = connection.ConnectionString;
                 new MigrationController(LogManager.GetCurrentClassLogger(), null).Migrate(connectionString,
                     new MigrationContext(MigrationType.Main, 128), postgres ? DatabaseType.PostgreSQL : DatabaseType.SQLite);
                 Assert.That(connection.ExecuteScalar<int>("SELECT COUNT(*) FROM \"PendingNotificationItems\""), Is.EqualTo(existing ? 1 : 0));
@@ -88,9 +84,7 @@ namespace Chaptarr.Core.Test.Datastore
             {
                 using var connection = database.OpenConnection();
                 connection.Execute("UPDATE \"QualityDefinitions\" SET \"Title\" = @title WHERE \"Quality\" = 0", new { title });
-                var connectionString = postgres
-                    ? new Npgsql.NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING")) { Database = connection.Database }.ConnectionString
-                    : connection.ConnectionString;
+                var connectionString = connection.ConnectionString;
                 new MigrationController(LogManager.GetCurrentClassLogger(), null).Migrate(connectionString,
                     new MigrationContext(MigrationType.Main, 128), postgres ? DatabaseType.PostgreSQL : DatabaseType.SQLite);
                 Assert.That(connection.QuerySingle<string>("SELECT \"Title\" FROM \"QualityDefinitions\" WHERE \"Quality\" = 0"),
@@ -122,9 +116,7 @@ namespace Chaptarr.Core.Test.Datastore
                 var beforeIndexes = Indexes();
                 Assert.That(beforeIndexes, Does.Contain("IX_ExtraFiles_BookId"));
                 Assert.That(beforeIndexes, Does.Contain("IX_ExtraFiles_BookFileId"));
-                var migrationConnection = postgres
-                    ? new Npgsql.NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING")) { Database = connection.Database }.ConnectionString
-                    : connection.ConnectionString;
+                var migrationConnection = connection.ConnectionString;
                 void Upgrade() => new MigrationController(LogManager.GetCurrentClassLogger(), null).Migrate(migrationConnection,
                     new MigrationContext(MigrationType.Main, 128), postgres ? DatabaseType.PostgreSQL : DatabaseType.SQLite);
                 Upgrade();

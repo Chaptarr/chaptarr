@@ -143,7 +143,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    service?.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     if (Directory.Exists(root)) Directory.Delete(root, true);
                 }
             });
