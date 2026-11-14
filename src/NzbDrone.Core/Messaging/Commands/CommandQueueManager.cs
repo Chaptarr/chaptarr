@@ -101,6 +101,13 @@ namespace NzbDrone.Core.Messaging.Commands
                         continue;
                     }
 
+                    // The snapshot above predates this batch, so also skip a command
+                    // that an earlier entry in the same batch already queued.
+                    if (commandModels.Any(c => c.Name == command.Name && CommandEqualityComparer.Instance.Equals(c.Body, command)))
+                    {
+                        continue;
+                    }
+
                     var commandModel = new CommandModel
                     {
                         Name = command.Name,
