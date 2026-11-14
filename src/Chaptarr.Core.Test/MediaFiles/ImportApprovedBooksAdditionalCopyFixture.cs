@@ -598,6 +598,11 @@ namespace Chaptarr.Core.Test.MediaFiles
                     return ProperDownloadTypes.PreferAndUpgrade;
                 }
 
+                if (targetMethod?.Name == "get_WriteAudioTags")
+                {
+                    return WriteAudioTagsType.No;
+                }
+
                 if (targetMethod?.Name == "get_MinimumFreeSpaceWhenImporting")
                 {
                     return MinimumFreeSpaceWhenImporting;

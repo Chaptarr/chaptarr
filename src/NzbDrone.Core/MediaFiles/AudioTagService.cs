@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using NLog;
@@ -37,6 +38,7 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IMediaInfoExtractor _mediaInfoExtractor;
         private readonly Logger _logger;
         private readonly TagExtraction.ITagExtractionService _tagExtractionService;
+        private readonly ISeriesBookLinkService _seriesBookLinkService;
 
         public AudioTagService(IConfigService configService,
                                IMediaFileService mediaFileService,
@@ -46,7 +48,8 @@ namespace NzbDrone.Core.MediaFiles
                                IEventAggregator eventAggregator,
                                IMediaInfoExtractor mediaInfoExtractor,
                                Logger logger,
-                               TagExtraction.ITagExtractionService tagExtractionService)
+                               TagExtraction.ITagExtractionService tagExtractionService,
+                               ISeriesBookLinkService seriesBookLinkService)
         {
             _configService = configService;
             _mediaFileService = mediaFileService;
@@ -57,6 +60,7 @@ namespace NzbDrone.Core.MediaFiles
             _mediaInfoExtractor = mediaInfoExtractor;
             _logger = logger;
             _tagExtractionService = tagExtractionService;
+            _seriesBookLinkService = seriesBookLinkService;
         }
 
         public Dictionary<string, List<string>> ReadAllTags(string path)
@@ -78,7 +82,7 @@ namespace NzbDrone.Core.MediaFiles
             return (tags ?? new Dictionary<string, List<string>>(), durationSeconds);
         }
 
-        private Dictionary<string, string> BuildDesiredTagMap(BookFile trackfile, Dictionary<string, string> current, out string[] narrators)
+        private Dictionary<string, string> BuildDesiredTagMap(BookFile trackfile, Dictionary<string, string> current, SeriesBookLink series, out string[] narrators)
         {
             narrators = trackfile?.Edition?.NarratorNames?.Where(n => !string.IsNullOrWhiteSpace(n)).Select(n => n.Trim()).ToArray() ?? Array.Empty<string>();
             if (trackfile?.Edition == null)
@@ -110,6 +114,14 @@ namespace NzbDrone.Core.MediaFiles
                 ["ALBUM"] = book.Title ?? string.Empty,
                 ["ARTIST"] = author.Name ?? string.Empty,
             };
+
+            // A confirmed header or unambiguous original membership supplies the
+            // pair. Missing evidence must not discard the file's known values.
+            desired["SERIES"] = series?.Series.Value.Title ?? current.GetValueOrDefault("SERIES") ?? string.Empty;
+            var storedSeries = current.GetValueOrDefault("SERIES");
+            var changedSeries = series != null && !string.IsNullOrEmpty(storedSeries) &&
+                !string.Equals(storedSeries, series.Series.Value.Title, StringComparison.OrdinalIgnoreCase);
+            desired["SERIES-PART"] = !string.IsNullOrEmpty(series?.Position) ? series.Position : changedSeries ? string.Empty : current.GetValueOrDefault("SERIES-PART") ?? string.Empty;
 
             // Existing file numbering wins; Part only supplies a missing track.
             current.TryGetValue("TRACKNUMBER", out var storedTrack);
@@ -183,8 +195,7 @@ namespace NzbDrone.Core.MediaFiles
             var path = trackfile.Path;
             if (!force)
             {
-                var mode = _configService.WriteAudioTags;
-                if (mode == WriteAudioTagsType.No || (mode == WriteAudioTagsType.NewFiles && !newDownload))
+                if (!ShouldWriteTags(_configService.WriteAudioTags, newDownload))
                 {
                     batch.Skipped++;
                     return;
@@ -195,10 +206,12 @@ namespace NzbDrone.Core.MediaFiles
             var saved = false;
             try
             {
+                LoadSeries(new[] { trackfile.Edition?.Book });
                 var scrub = _configService.ScrubAudioTags;
-                var current = ReadWritableTagMap(path, scrub, out var conflict, out var restoredTotals);
+                var series = BookSeries.SelectForAudioTags(trackfile.Edition?.Book);
+                var current = ReadWritableTagMap(path, scrub, series, out var conflict, out var restoredTotals);
                 batch.Read++;
-                var desired = BuildDesiredTagMap(trackfile, current, out var narrators);
+                var desired = BuildDesiredTagMap(trackfile, current, series, out var narrators);
                 var diff = ComputeDiff(current, desired);
                 if (!diff.Any())
                 {
@@ -268,6 +281,7 @@ namespace NzbDrone.Core.MediaFiles
 
         private void RetagBatch(List<BookFile> files, TagBatch batch)
         {
+            PreloadSeries(files.Select(file => file.Edition?.Book));
             foreach (var file in files)
             {
                 if (!MediaFileExtensions.CanWriteAudioTags(Path.GetExtension(file.Path)))
@@ -289,7 +303,11 @@ namespace NzbDrone.Core.MediaFiles
             }
 
             var batch = new TagBatch();
-            foreach (var edition in _mediaFileService.HydrateEditionBookFiles(editions))
+            var hydrated = _mediaFileService.HydrateEditionBookFiles(editions).ToList();
+            PreloadSeries(hydrated.Where(edition => edition.Book?.MediaType == BookMediaType.Audiobook &&
+                (edition.BookFiles ?? new List<BookFile>()).Any(file => MediaFileExtensions.CanWriteAudioTags(Path.GetExtension(file.Path))))
+                .Select(edition => edition.Book));
+            foreach (var edition in hydrated)
             {
                 foreach (var file in (edition.BookFiles ?? new List<BookFile>()).Where(x => MediaFileExtensions.CanWriteAudioTags(Path.GetExtension(x.Path))))
                 {
@@ -320,13 +338,15 @@ namespace NzbDrone.Core.MediaFiles
             var batch = new TagBatch();
             var previews = new List<RetagBookFilePreview>();
             files = files.Where(x => MediaFileExtensions.CanWriteAudioTags(Path.GetExtension(x.Path)) && x.Edition != null).ToList();
+            PreloadSeries(files.Select(file => file.Edition.Book));
             foreach (var file in files)
             {
                 try
                 {
-                    var current = ReadWritableTagMap(file.Path, _configService.ScrubAudioTags, out _, out _);
+                    var series = BookSeries.SelectForAudioTags(file.Edition.Book);
+                    var current = ReadWritableTagMap(file.Path, _configService.ScrubAudioTags, series, out _, out _);
                     batch.Read++;
-                    var diff = ComputeDiff(current, BuildDesiredTagMap(file, current, out _));
+                    var diff = ComputeDiff(current, BuildDesiredTagMap(file, current, series, out _));
                     if (diff.Any())
                     {
                         previews.Add(new RetagBookFilePreview
@@ -363,6 +383,34 @@ namespace NzbDrone.Core.MediaFiles
             return previews;
         }
 
+        internal static bool ShouldWriteTags(WriteAudioTagsType mode, bool newDownload) =>
+            mode != WriteAudioTagsType.No && (mode != WriteAudioTagsType.NewFiles || newDownload);
+
+        private void LoadSeries(IEnumerable<Book> books) => LoadSeries(books, _seriesBookLinkService, _logger);
+
+        private void PreloadSeries(IEnumerable<Book> books)
+        {
+            try
+            {
+                LoadSeries(books);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Unable to preload audio series memberships; individual files will retry the read");
+            }
+        }
+
+        internal static void LoadSeries(IEnumerable<Book> books, ISeriesBookLinkService service, Logger logger)
+        {
+            BookSeries.LoadLinks(books, ids =>
+            {
+                var timer = Stopwatch.StartNew();
+                var links = service.GetLinksByBook(ids);
+                logger.Debug("Audio tags loaded {0} series memberships for {1} books in {2} ms", links.Count, ids.Count, timer.ElapsedMilliseconds);
+                return links;
+            });
+        }
+
         public TagBatch RetagFiles(RetagFilesCommand message, List<BookFile> files, TagBatch batch)
         {
             files = RetagMediaScope.Select(files, BookMediaType.Audiobook, batch).ToList();
@@ -388,6 +436,8 @@ namespace NzbDrone.Core.MediaFiles
         {
             ("TITLE", f => ReadText(f, "©nam", f.Tag.Title), (f, v, _) => f.Tag.Title = v),
             ("ALBUM", f => ReadText(f, "©alb", f.Tag.Album), (f, v, _) => f.Tag.Album = v),
+            ("SERIES", f => ReadSeries(f, "SERIES"), (f, v, _) => WriteSeries(f, "SERIES", v)),
+            ("SERIES-PART", f => ReadSeries(f, "SERIES-PART"), (f, v, _) => WriteSeries(f, "SERIES-PART", v)),
             ("ARTIST", f => ReadText(f, "©ART", string.Join("; ", f.Tag.Performers)), (f, v, _) => f.Tag.Performers = new[] { v }),
             // ID3v2.3 treats a slash as a list separator; preserve existing tag versions.
             ("COMPOSER", f => ReadText(f, "©wrt", string.Join("; ", f.Tag.Composers)), (f, v, narrators) => f.Tag.Composers = narrators),
@@ -419,7 +469,7 @@ namespace NzbDrone.Core.MediaFiles
         private static readonly (TagTypes Type, Func<Tag, string> Read, Action<Tag, string> Write)[] PublisherFields =
         {
             (TagTypes.Xiph, t => string.Join("; ", ((TagLib.Ogg.XiphComment)t).GetField("PUBLISHER")), (t, v) => ((TagLib.Ogg.XiphComment)t).SetField("PUBLISHER", v)),
-            (TagTypes.Apple, t => t.Publisher, (t, v) => t.Publisher = v),
+            (TagTypes.Apple, t => TagExtraction.AppleTagFields.ReadPublisher((TagLib.Mpeg4.AppleTag)t), (t, v) => TagExtraction.AppleTagFields.WritePublisher((TagLib.Mpeg4.AppleTag)t, v)),
             (TagTypes.Asf, t => ((TagLib.Asf.Tag)t).GetDescriptorString("WM/Publisher"), (t, v) => ((TagLib.Asf.Tag)t).SetDescriptorString(v, "WM/Publisher")),
             (TagTypes.Id3v2, t => t.Publisher, (t, v) => t.Publisher = v),
             (TagTypes.Ape, t => ((TagLib.Ape.Tag)t).GetItem("Publisher")?.ToString(), (t, v) => ((TagLib.Ape.Tag)t).SetValue("Publisher", v))
@@ -435,6 +485,56 @@ namespace NzbDrone.Core.MediaFiles
             return null;
         }
 
+        private static IEnumerable<string> ReadSeriesValues(TagLib.File file, string key)
+        {
+            if (file.GetTag(TagTypes.Xiph) is TagLib.Ogg.XiphComment xiph) return xiph.GetField(key);
+            if (file.GetTag(TagTypes.Apple) is TagLib.Mpeg4.AppleTag apple)
+            {
+                return TagExtraction.AppleTagFields.Read(apple).Where(field =>
+                    TagExtraction.AppleTagFields.SeriesKey(field.Mean, field.Name) == key).Select(field => field.Value);
+            }
+            if (file.GetTag(TagTypes.Asf) is TagLib.Asf.Tag asf) return asf.Where(field => string.Equals(field.Name, key, StringComparison.OrdinalIgnoreCase)).Select(field => field.ToString());
+            if (file.GetTag(TagTypes.Id3v2) is TagLib.Id3v2.Tag id3) return id3.GetFrames<TagLib.Id3v2.UserTextInformationFrame>()
+                .Where(frame => string.Equals(frame.Description, key, StringComparison.OrdinalIgnoreCase)).SelectMany(frame => frame.Text);
+            if (file.GetTag(TagTypes.Ape) is TagLib.Ape.Tag ape) return new[] { ape.GetItem(key)?.ToString() };
+            return Array.Empty<string>();
+        }
+
+        private static string ReadSeries(TagLib.File file, string key) => string.Join("; ",
+            ReadSeriesValues(file, key).Where(value => !string.IsNullOrEmpty(value)).Distinct(StringComparer.Ordinal));
+
+        private static void WriteSeries(TagLib.File file, string key, string value)
+        {
+            if (file.GetTag(TagTypes.Xiph) is TagLib.Ogg.XiphComment xiph) xiph.SetField(key, value);
+            else if (file.GetTag(TagTypes.Apple) is TagLib.Mpeg4.AppleTag apple)
+            {
+                var fields = TagExtraction.AppleTagFields.Read(apple)
+                    .Where(field => TagExtraction.AppleTagFields.SeriesKey(field.Mean, field.Name) != null).ToList();
+                var mean = fields.Any(field => string.Equals(field.Mean, TagExtraction.AppleTagFields.ToneNamespace, StringComparison.OrdinalIgnoreCase))
+                    ? TagExtraction.AppleTagFields.ToneNamespace : "com.apple.iTunes";
+                foreach (var field in fields.Where(field => TagExtraction.AppleTagFields.SeriesKey(field.Mean, field.Name) == key)
+                    .Select(field => (field.Mean, field.Name)).Distinct())
+                {
+                    while (TagExtraction.AppleTagFields.Read(apple).Any(stored => stored.Mean == field.Mean && stored.Name == field.Name))
+                    {
+                        apple.SetDashBox(field.Mean, field.Name, null);
+                    }
+                }
+                if (!string.IsNullOrEmpty(value)) apple.SetDashBox(mean, TagExtraction.AppleTagFields.FieldName(mean, key), value);
+            }
+            else if (file.GetTag(TagTypes.Asf) is TagLib.Asf.Tag asf)
+            {
+                foreach (var name in asf.Where(field => string.Equals(field.Name, key, StringComparison.OrdinalIgnoreCase)).Select(field => field.Name).Distinct().ToList()) asf.RemoveDescriptors(name);
+                if (!string.IsNullOrEmpty(value)) asf.SetDescriptorString(value, key);
+            }
+            else if (file.GetTag(TagTypes.Id3v2) is TagLib.Id3v2.Tag id3)
+            {
+                foreach (var frame in id3.GetFrames<TagLib.Id3v2.UserTextInformationFrame>().Where(frame => string.Equals(frame.Description, key, StringComparison.OrdinalIgnoreCase)).ToList()) id3.RemoveFrame(frame);
+                if (!string.IsNullOrEmpty(value)) TagLib.Id3v2.UserTextInformationFrame.Get(id3, key, TagLib.Id3v2.Tag.DefaultEncoding, true).Text = new[] { value };
+            }
+            else if (file.GetTag(TagTypes.Ape) is TagLib.Ape.Tag ape) ape.SetValue(key, value);
+        }
+
         private static void WritePublisher(TagLib.File file, string value)
         {
             foreach (var field in PublisherFields)
@@ -447,7 +547,7 @@ namespace NzbDrone.Core.MediaFiles
             }
         }
 
-        private static Dictionary<string, string> ReadWritableTagMap(string path, bool scrub, out string conflict, out int restoredTotals)
+        private static Dictionary<string, string> ReadWritableTagMap(string path, bool scrub, SeriesBookLink series, out string conflict, out int restoredTotals)
         {
             conflict = null;
             restoredTotals = 0;
@@ -458,6 +558,18 @@ namespace NzbDrone.Core.MediaFiles
             }
 
             var current = WritableFields.ToDictionary(field => field.Key, field => field.Read(file), StringComparer.OrdinalIgnoreCase);
+            if (scrub)
+            {
+                foreach (var key in new[] { "SERIES", "SERIES-PART" })
+                {
+                    var preservesStored = series == null || (key == "SERIES-PART" && string.IsNullOrEmpty(series.Position) &&
+                        (string.IsNullOrEmpty(current["SERIES"]) || string.Equals(current["SERIES"], series.Series.Value.Title, StringComparison.OrdinalIgnoreCase)));
+                    if (preservesStored && ReadSeriesValues(file, key).Where(value => !string.IsNullOrEmpty(value)).Distinct(StringComparer.Ordinal).Skip(1).Any())
+                    {
+                        conflict = $"Conflicting stored {key} values; refusing to discard or guess series metadata during scrub";
+                    }
+                }
+            }
             if (scrub && (file.Tag.TrackCount == 0 || file.Tag.DiscCount == 0))
             {
                 // Reuse the scanner's existing interpretation, not another raw-field list or file read.
@@ -503,8 +615,17 @@ namespace NzbDrone.Core.MediaFiles
             using var file = TagLib.File.Create(path);
             if (scrub)
             {
+                // Preserve the existing MP4 series and publisher namespaces through scrub.
+                var apple = file.GetTag(TagTypes.Apple) as TagLib.Mpeg4.AppleTag;
+                var seriesFields = apple == null ? null : TagExtraction.AppleTagFields.Read(apple)
+                    .Where(field => TagExtraction.AppleTagFields.SeriesKey(field.Mean, field.Name) != null ||
+                        TagExtraction.AppleTagFields.IsTonePublisher(field.Mean, field.Name)).ToList();
                 // Keep writable containers; removing them would discard subsequent assignments.
                 file.Tag.Clear();
+                if (seriesFields != null)
+                {
+                    foreach (var field in seriesFields) apple.SetDashBox(field.Mean, field.Name, field.Value);
+                }
                 // TagLib 2.2 FLAC Metadata.Clear removes pictures but leaves its Xiph fields.
                 file.GetTag(TagTypes.Xiph)?.Clear();
             }

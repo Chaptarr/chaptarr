@@ -25,7 +25,7 @@ namespace NzbDrone.Core.MediaFiles
             "path", "folder", "pathcomponents", "filename",
 
             // Series/subtitle — often collection metadata and can cause false positives
-            "series", "subtitle",
+            "series", "series-part", "subtitle", TagExtraction.AppleTagFields.TonePartKey,
 
             // Duration — used for tie-breaking, not token search
             "duration", "runtime", "length", "totalduration", "total_time",

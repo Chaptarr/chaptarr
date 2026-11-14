@@ -28,7 +28,8 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 ["DISCNUMBER"] = new[] { "ID3v2:TPOS", "XIPH:DISCNUMBER" },
                 ["TOTALDISCS"] = new[] { "ID3v2:TPOS", "XIPH:TOTALDISCS" },
                 ["NARRATOR"] = new[] { "ID3v2:TXXX:NARRATOR", "XIPH:NARRATOR", "ASF:WM/Narrator", "APE:Narrator" },
-                ["SERIES"] = new[] { "ID3v2:TXXX:SERIES", "XIPH:SERIES" },
+                ["SERIES"] = new[] { "ID3v2:TXXX:SERIES", "MP4:----:com.apple.iTunes:SERIES", AppleTagFields.ToneSeriesKey, "XIPH:SERIES", "APE:SERIES", "ASF:SERIES" },
+                ["SERIES-PART"] = new[] { "ID3v2:TXXX:SERIES-PART", "MP4:----:com.apple.iTunes:SERIES-PART", AppleTagFields.TonePartKey, "XIPH:SERIES-PART", "APE:SERIES-PART", "ASF:SERIES-PART" },
                 ["LANGUAGE"] = new[] { "XIPH:LANGUAGE", "ASF:WM/Language", "APE:Language" },
                 ["ISBN"] = new[] { "ID3v2:TXXX:ISBN", "XIPH:ISBN", "ASF:WM/ISBN", "APE:ISBN" },
                 ["AUDIBLE_ASIN"] = new[]
@@ -154,10 +155,15 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             // Common TXXX custom fields
             Add("NARRATOR", Get("ID3v2:TXXX:NARRATOR"));
             Add("SERIES", Get("ID3v2:TXXX:SERIES"));
+            Add("SERIES-PART", Get("ID3v2:TXXX:SERIES-PART"));
             Add("ISBN", Get("ID3v2:TXXX:ISBN"));
             Add("ASIN", Get("ID3v2:TXXX:ASIN"));
 
             // MP4 (prefix MP4:)
+            Add("SERIES", Get("MP4:----:com.apple.iTunes:SERIES"));
+            Add("SERIES", Get(AppleTagFields.ToneSeriesKey));
+            Add("SERIES-PART", Get(AppleTagFields.TonePartKey));
+            Add("SERIES-PART", Get("MP4:----:com.apple.iTunes:SERIES-PART"));
             Add("TITLE", Get("MP4:©nam"));
             Add("ALBUM", Get("MP4:©alb"));
             Add("ARTIST", Get("MP4:©ART"));
@@ -192,6 +198,7 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             Add("ISBN", Get("XIPH:ISBN"));
             Add("ASIN", Get("XIPH:ASIN"));
             Add("SERIES", Get("XIPH:SERIES"));
+            Add("SERIES-PART", Get("XIPH:SERIES-PART"));
             Add("TRACKNUMBER", Get("XIPH:TRACKNUMBER"));
             Add("DISCNUMBER", Get("XIPH:DISCNUMBER"));
             Add("TOTALDISCS", Get("XIPH:TOTALDISCS"));
@@ -199,6 +206,8 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             Add("TOTALTRACKS", Get("XIPH:TRACKTOTAL"));
 
             // ASF (prefix ASF:)
+            Add("SERIES", Get("ASF:SERIES"));
+            Add("SERIES-PART", Get("ASF:SERIES-PART"));
             Add("ALBUM", Get("ASF:WM/AlbumTitle"));
             Add("ALBUMARTIST", Get("ASF:WM/AlbumArtist"));
             Add("COMPOSER", Get("ASF:WM/Composer"));
@@ -212,6 +221,8 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             Add("ORIGINALYEAR", Get("ASF:WM/OriginalReleaseYear"));
 
             // APE (prefix APE:)
+            Add("SERIES", Get("APE:SERIES"));
+            Add("SERIES-PART", Get("APE:SERIES-PART"));
             Add("TITLE", Get("APE:Title"));
             Add("ALBUM", Get("APE:Album"));
             Add("ARTIST", Get("APE:Artist"));

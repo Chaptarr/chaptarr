@@ -139,7 +139,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             });
             var logger = LogManager.GetCurrentClassLogger();
             var extraction = new TagExtractionService(new[] { new TagLibSharpExtractor() }, null, logger);
-            var subject = new AudioTagService(config, mediaFiles, disk, watcher, safety, events, null, logger, extraction);
+            var subject = new AudioTagService(config, mediaFiles, disk, watcher, safety, events, null, logger, extraction, null);
 
             var preview = subject.GetRetagPreviewsByBook(book.Id);
             Assert.That(preview, Has.Count.EqualTo(1));

@@ -23,7 +23,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 {
     [TestFixture]
     [NonParallelizable]
-    public class AudioTagMutationFixture
+    public partial class AudioTagMutationFixture
     {
         private string _directory;
         private LogFactory _logs;
@@ -62,6 +62,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         private int _scrubReads;
         private WriteAudioTagsType _mode;
         private Func<WriteAudioTagsType> _readMode;
+        private Func<List<int>, List<SeriesBookLink>> _seriesRead;
         private int _queries;
         private int _updates;
         private int _guards;
@@ -80,6 +81,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             Directory.CreateDirectory(_directory);
             _files.Clear();
             _events.Clear();
+            _seriesRead = null;
             _scrub = false;
             _scrubReads = 0;
             _mode = WriteAudioTagsType.Sync;
@@ -120,7 +122,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Proxy<IRootFolderWatchingService>((_, _) => null),
                 Proxy<IFileMutationSafetyService>((_, a) => { _guards++; return _prepare != null ? _prepare((string)a[0]) : safety.EnsureMutableFile((string)a[0]); }),
                 Proxy<IEventAggregator>((_, a) => { _events.Add((BookFileRetaggedEvent)a[0]); return null; }),
-                null, logger, new TagExtractionService(new[] { new TagLibSharpExtractor() }, null, logger));
+                null, logger, new TagExtractionService(new[] { new TagLibSharpExtractor() }, null, logger),
+                Proxy<ISeriesBookLinkService>((_, args) => _seriesRead != null ? _seriesRead((List<int>)args[0]) : throw new AssertionException("Fixture series must be loaded explicitly")));
         }
 
         private TagBatch RetagFiles(RetagFilesCommand command) => _service.RetagFiles(command,
@@ -150,7 +153,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
 
             var author = new Author { Id = 1, Name = "Fixture author" };
-            var book = new Book { Id = 2, Author = author, Title = "Fixture book", MediaType = BookMediaType.Audiobook };
+            var book = new Book { Id = 2, Author = author, Title = "Fixture book", MediaType = BookMediaType.Audiobook, SeriesLinks = new List<SeriesBookLink>() };
             var edition = new Edition { Id = 3, BookId = 2, Book = book, Title = "Fixture title", Publisher = "Fixture publisher", NarratorNames = new List<string> { " First narrator ", "", "Second narrator" }, ReleaseDate = new DateTime(2024, 1, 1) };
             var file = new BookFile { Id = _files.Count + 1, EditionId = 3, Edition = edition, Author = author, Path = path };
             _files.Add(file);

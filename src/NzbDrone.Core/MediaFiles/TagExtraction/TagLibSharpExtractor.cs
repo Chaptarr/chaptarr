@@ -150,7 +150,7 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                     "TITLE","VERSION","ALBUM","TRACKNUMBER","ARTIST","PERFORMER","COPYRIGHT","LICENSE","ORGANIZATION","DESCRIPTION","GENRE","DATE",
                     "LOCATION","CONTACT","ISRC","ALBUMARTIST","COMPOSER","LYRICIST","CONDUCTOR","REMIXER","ARRANGER","ENGINEER","PRODUCER","DJMIXER","MIXER","LABEL",
                     "GROUPING","SUBTITLE","DISCNUMBER","TOTALDISCS","TOTALTRACKS","TRACKTOTAL","COMPILATION","COMMENT","NARRATOR","PUBLISHER","LANGUAGE","ISBN","ASIN","BARCODE",
-                    "CATALOGNUMBER","SERIES","PART","BOOK","AUTHOR","READER","ENCODED-BY","ENCODER","ENCODING","ENCODEDBY","SOURCEMEDIA","MEDIA","ORIGINALDATE","ORIGINALYEAR","RELEASEDATE",
+                    "CATALOGNUMBER","SERIES","SERIES-PART","PART","BOOK","AUTHOR","READER","ENCODED-BY","ENCODER","ENCODING","ENCODEDBY","SOURCEMEDIA","MEDIA","ORIGINALDATE","ORIGINALYEAR","RELEASEDATE",
                     "RELEASETYPE","RELEASESTATUS","RELEASECOUNTRY","ALBUMARTISTSORT","ARTISTSORT","ALBUMSORT","TITLESORT","MOOD","BPM","KEY","CONTENTGROUP","TLEN"
                 };
 
@@ -168,7 +168,7 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             try
             {
                 var ape = (TagLib.Ape.Tag)file.GetTag(TagTypes.Ape);
-                var keys = new[] { "Title","Artist","Album","Comment","Year","Track","Genre","AlbumArtist","Composer","Disc","Compilation","Lyrics","Media","Publisher","Mood","Narrator","Language","ISBN","ASIN" };
+                var keys = new[] { "Title","Artist","Album","Comment","Year","Track","Genre","AlbumArtist","Composer","Disc","Compilation","Lyrics","Media","Publisher","Mood","Narrator","Language","ISBN","ASIN","SERIES","SERIES-PART" };
                 foreach (var key in keys)
                 {
                     var item = ape.GetItem(key);
@@ -188,7 +188,7 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 var asf = (TagLib.Asf.Tag)file.GetTag(TagTypes.Asf);
                 var descriptors = new[]
                 {
-                    "WM/AlbumTitle","WM/AlbumArtist","WM/Composer","WM/Conductor","WM/ContentDistributor","WM/Publisher","WM/Media","WM/Narrator","WM/Language","WM/PartOfSet","WM/TrackNumber","WM/SharedUserRating","WM/SubTitle","WM/Writer","WM/ISBN","WM/ASIN","WM/OriginalReleaseTime","WM/OriginalReleaseYear"
+                    "WM/AlbumTitle","WM/AlbumArtist","WM/Composer","WM/Conductor","WM/ContentDistributor","WM/Publisher","WM/Media","WM/Narrator","WM/Language","WM/PartOfSet","WM/TrackNumber","WM/SharedUserRating","WM/SubTitle","WM/Writer","WM/ISBN","WM/ASIN","WM/OriginalReleaseTime","WM/OriginalReleaseYear","SERIES","SERIES-PART"
                 };
                 foreach (var d in descriptors)
                 {
@@ -216,10 +216,12 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 }
 
                 Add(result, "MP4:----:com.apple.iTunes:publisher", tag.GetDashBox("com.apple.iTunes", "publisher"));
-                // Preserve other freeform text as raw evidence.
-                foreach (var box in tag.DataBoxes(FixAppleId("----")))
+                // Keep series identity attached to its text so the shared matching policy
+                // can distinguish collection metadata. Other freeform evidence is unchanged.
+                foreach (var field in AppleTagFields.Read(tag))
                 {
-                    Add(result, "MP4:----", box.Text);
+                    var isSeries = AppleTagFields.SeriesKey(field.Mean, field.Name) != null;
+                    Add(result, isSeries ? $"MP4:----:{field.Mean}:{field.Name}" : "MP4:----", field.Value);
                 }
             }
             catch (Exception ex) { Logger.Debug(ex, "Unable to extract Apple tags from {0}", file.Name); }

@@ -50,7 +50,7 @@ namespace Chaptarr.Core.Test.Books
                     return books.Where(book => book.AuthorId == (int)args[0]).ToList();
                 });
                 var subject = new RefreshSeriesService(catalog, seriesService, linkService,
-                    new RefreshSeriesBookLinkService(linkService, log), log);
+                    new RefreshSeriesBookLinkService(linkService, log), log, Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Configuration.IConfigService>((_, _) => NzbDrone.Core.Configuration.WriteAudioTagsType.No), null, null);
 
                 List<Series> Snapshot(Book book, string id) => new()
                 {

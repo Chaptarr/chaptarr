@@ -876,7 +876,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 var file = Add(1); file.Path = Path.Combine(directory, "wrong.mp3");
                 File.Copy(Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "Audio", "silence.mp3"), file.Path);
-                var audio = new AudioTagService(null, _media, null, null, null, null, null, _logger, null);
+                var audio = new AudioTagService(null, _media, null, null, null, null, null, _logger, null, null);
                 if (preview)
                 {
                     Assert.That(audio.GetRetagPreviewsByBook(1), Is.Empty);
@@ -904,7 +904,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         public void unsupported_audio_is_counted_and_debug_logged_without_opening_the_file()
         {
             var file = Add(1, BookMediaType.Audiobook); file.Path = Path.Combine(Root, "book.mka");
-            var audio = new AudioTagService(null, _media, null, null, null, null, null, _logger, null);
+            var audio = new AudioTagService(null, _media, null, null, null, null, null, _logger, null, null);
             var batch = audio.RetagFiles(new RetagFilesCommand(1, new() { 1 }), _files, new TagBatch());
             Assert.That(batch.Unsupported, Is.EqualTo(1)); Assert.That(batch.Skipped, Is.Zero);
             Assert.That(batch.Unsuccessful, Is.False);

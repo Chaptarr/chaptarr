@@ -182,7 +182,7 @@ namespace Chaptarr.Core.Test.Books
                 var links = new SeriesBookLinkService(linkRepository);
                 links.AddLink(new SeriesBookLink { SeriesId = 1, BookId = 303, Position = "3" });
                 var refresh = new RefreshSeriesService(bookService, new SeriesService(sut, LogManager.GetCurrentClassLogger()), links,
-                    new RefreshSeriesBookLinkService(links, LogManager.GetCurrentClassLogger()), LogManager.GetCurrentClassLogger());
+                    new RefreshSeriesBookLinkService(links, LogManager.GetCurrentClassLogger()), LogManager.GetCurrentClassLogger(), Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Configuration.IConfigService>((_, _) => NzbDrone.Core.Configuration.WriteAudioTagsType.No), null, null);
                 var snapshot = new List<Series>
                 {
                     new Series { Title = "Shared Series", GoodreadsSeriesId = "gr:12345", MediaType = BookMediaType.Audiobook,
