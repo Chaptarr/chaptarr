@@ -31,11 +31,14 @@ namespace NzbDrone.Core.ImportLists.Exclusions
                                               IHandleAsync<BookDeletedEvent>
     {
         private readonly IImportListExclusionRepository _repo;
+        private readonly Lazy<IBookService> _bookService;
         private readonly Logger _logger;
 
-        public ImportListExclusionService(IImportListExclusionRepository repo, Logger logger)
+        // IBookService is lazy: AuthorService depends on this service, and BookService depends on AuthorService.
+        public ImportListExclusionService(IImportListExclusionRepository repo, Logger logger, Lazy<IBookService> bookService = null)
         {
             _repo = repo;
+            _bookService = bookService;
             _logger = logger;
         }
 
@@ -137,7 +140,88 @@ namespace NzbDrone.Core.ImportLists.Exclusions
                 return;
             }
 
+            candidates = RemoveIdsSharedWithRemainingBooks(deletedBooks, message.Book, candidates);
+            if (!candidates.Any())
+            {
+                return;
+            }
+
             AddScopedExclusions(candidates);
+        }
+
+        // Duplicate book rows for one work carry the same provider IDs. Excluding those IDs while
+        // deleting a duplicate would also exclude the copy the user kept (and orphan its files on
+        // the next refresh), so IDs still used by a remaining book in the same scope are skipped.
+        private List<ImportListExclusion> RemoveIdsSharedWithRemainingBooks(List<Book> deletedBooks, Book eventBook, List<ImportListExclusion> candidates)
+        {
+            if (_bookService == null)
+            {
+                return candidates;
+            }
+
+            var authorIds = deletedBooks
+                .Select(book => book.AuthorId > 0 ? book.AuthorId : eventBook?.AuthorId ?? 0)
+                .Where(id => id > 0)
+                .Distinct()
+                .ToList();
+            if (!authorIds.Any())
+            {
+                return candidates;
+            }
+
+            var deletedIds = deletedBooks.Select(book => book.Id).Where(id => id > 0).ToHashSet();
+            List<Book> remainingBooks;
+            try
+            {
+                remainingBooks = authorIds
+                    .SelectMany(authorId => _bookService.Value.GetBooksByAuthor(authorId))
+                    .Where(book => book != null && !deletedIds.Contains(book.Id))
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Could not load remaining books to check shared provider IDs; excluding all IDs of the deleted book(s)");
+                return candidates;
+            }
+
+            var remainingIds = remainingBooks
+                .SelectMany(book => ImportListExclusionBookMatcher.GetCanonicalProviderIds(book)
+                    .Select(providerId => (ProviderId: providerId.Trim(), Book: book)))
+                .ToLookup(row => row.ProviderId, row => row.Book, StringComparer.OrdinalIgnoreCase);
+            if (remainingIds.Count == 0)
+            {
+                return candidates;
+            }
+
+            var kept = new List<ImportListExclusion>();
+            var skipped = new List<(ImportListExclusion Exclusion, Book SharedWith)>();
+            foreach (var candidate in candidates)
+            {
+                var sharedWith = remainingIds[candidate.ForeignId?.Trim() ?? string.Empty]
+                    .FirstOrDefault(book => !candidate.MediaType.HasValue || book.MediaType == candidate.MediaType.Value);
+
+                if (sharedWith == null)
+                {
+                    kept.Add(candidate);
+                }
+                else
+                {
+                    skipped.Add((candidate, sharedWith));
+                }
+            }
+
+            foreach (var group in skipped.GroupBy(row => row.Exclusion.Name))
+            {
+                var keptBook = group.First().SharedWith;
+                _logger.Warn("Not adding {0} import list exclusion(s) for deleted '{1}': the same provider IDs ({2}) belong to '{3}' (book {4}), which is still in the library",
+                    group.Count(),
+                    group.Key,
+                    string.Join(", ", group.Select(row => row.Exclusion.ForeignId)),
+                    keptBook.Title,
+                    keptBook.Id);
+            }
+
+            return kept;
         }
 
         private void AddScopedExclusions(IEnumerable<ImportListExclusion> candidates, IDbConnection connection = null, IDbTransaction transaction = null)
