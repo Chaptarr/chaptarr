@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.Parser.Model;
@@ -11,7 +10,6 @@ using Microsoft.Data.Sqlite;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Core.Configuration;
-using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Commands;
 
@@ -59,8 +57,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 if (worker != null && fixture.Service != worker) continue;
                 if (fixture.Service.Get(downloadClientItem.DownloadId)?.Status != ConversionJobStatus.Queued) continue;
-                typeof(ConversionJobService).GetMethod("DispatchQueuedJobs", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(fixture.Service, null);
-                Assert.That(SpinWait.SpinUntil(() => !fixture.Service.IsRunning(downloadClientItem.DownloadId), TimeSpan.FromSeconds(15)), Is.True);
+                Assert.That(ConversionJobServiceFixture.DispatchWorkers(fixture.Service).Wait(TimeSpan.FromSeconds(15)), Is.True);
             }
             return importer.Import(decisions, replaceExisting, downloadClientItem, importMode, cancellationToken);
         }
@@ -68,16 +65,22 @@ namespace Chaptarr.Core.Test.MediaFiles
         [TearDown]
         public void CleanupConversionJobFixtures()
         {
-            foreach (var fixture in WorkerJobFixtures.Value ?? new())
+            var errors = new List<Exception>();
+            try
             {
-                try { fixture.Service.Handle(new ApplicationShutdownRequested()); }
-                finally
+                foreach (var fixture in WorkerJobFixtures.Value ?? new())
                 {
-                    SqliteConnection.ClearAllPools();
-                    if (Directory.Exists(fixture.Directory)) Directory.Delete(fixture.Directory, true);
+                    try
+                    {
+                        ConversionJobServiceFixture.ShutdownAndWait(fixture.Service);
+                        SqliteConnection.ClearAllPools();
+                        if (Directory.Exists(fixture.Directory)) Directory.Delete(fixture.Directory, true);
+                    }
+                    catch (Exception ex) { errors.Add(ex); }
                 }
             }
-            WorkerJobFixtures.Value = null;
+            finally { WorkerJobFixtures.Value = null; }
+            if (errors.Count > 0) throw new AggregateException("Conversion fixture cleanup failed", errors);
         }
     }
 }

@@ -90,7 +90,7 @@ namespace Chaptarr.Core.Test.Books
             var editions = new StubEditionService(Array.Empty<Edition>());
             var add = BuildService(authors, books, editions, new StubMetadataProfileService(), library,
                 importListExclusionService: DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>(), bookInfo: metadata);
-            var root = new RootFolder { Id = 1, Path = "/books", FolderType = FolderType.Mixed };
+            var root = new RootFolder { Id = 1, Path = @"C:\books".AsOsAgnostic(), FolderType = FolderType.Mixed };
             root.SetAudiobookSettings(new MediaTypeSettings { QualityProfileId = 1, MetadataProfileId = 1 });
             root.SetEbookSettings(new MediaTypeSettings { QualityProfileId = 1, MetadataProfileId = 1 });
             var roots = Proxy<IRootFolderService>((method, args) => method.Name == nameof(IRootFolderService.All)

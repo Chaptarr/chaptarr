@@ -377,7 +377,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                             using var capturedRequest = JsonDocument.Parse(Capture(authorQuery
                                 ? "upstream-hardcover-author-request.json" : "upstream-hardcover-book-request.json"));
                             var expected = capturedRequest.RootElement;
-                            Assert.That(payload.RootElement.GetProperty("query").GetString(), Is.EqualTo(expected.GetProperty("query").GetString()));
+                            Assert.That(payload.RootElement.GetProperty("query").GetString().ReplaceLineEndings("\n"), Is.EqualTo(expected.GetProperty("query").GetString().ReplaceLineEndings("\n")));
                             foreach (var field in new[] { "q", "page", "limit" })
                                 Assert.That(variables.GetProperty(field).ToString(), Is.EqualTo(expected.GetProperty("variables").GetProperty(field).ToString()));
                             body = queryType.GetString() switch
@@ -397,7 +397,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                             var batch = Enumerable.Range(0, 2).Single(index =>
                             {
                                 using var capturedRequest = JsonDocument.Parse(Capture($"hardcover-primary-books-request-{index}.json"));
-                                return capturedRequest.RootElement.GetProperty("query").GetString() == query;
+                                return capturedRequest.RootElement.GetProperty("query").GetString().ReplaceLineEndings("\n") == query.ReplaceLineEndings("\n");
                             });
                             using var capturedPrimaryRequest = JsonDocument.Parse(Capture($"hardcover-primary-books-request-{batch}.json"));
                             Assert.That(variables.GetProperty("limit").GetInt32(),

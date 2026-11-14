@@ -16,6 +16,37 @@ namespace Chaptarr.Core.Test.Common
     [NonParallelizable]
     public class DualDatabaseFixtureFixture
     {
+        [TestCase(false)]
+        [TestCase(true)]
+        public void opened_fixture_connection_can_reopen_the_same_isolated_database(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                using var opened = database.OpenConnection();
+                if (postgres)
+                {
+                    var wrongPassword = new NpgsqlConnectionStringBuilder(opened.ConnectionString)
+                    {
+                        Password = Guid.NewGuid().ToString("N"),
+                        Pooling = false
+                    }.ConnectionString;
+                    var rejection = Assert.Throws<PostgresException>(() =>
+                    {
+                        using var rejected = new NpgsqlConnection(wrongPassword);
+                        rejected.Open();
+                    }, "Use password-authenticated PostgreSQL; trust authentication cannot prove credential retention");
+                    Assert.That(rejection.SqlState, Is.EqualTo(PostgresErrorCodes.InvalidPassword));
+                }
+
+                using IDbConnection reopened = postgres
+                    ? new NpgsqlConnection(opened.ConnectionString)
+                    : new SqliteConnection(opened.ConnectionString);
+                reopened.Open();
+                Assert.That(reopened.Database, Is.EqualTo(opened.Database));
+                Assert.That(reopened.ExecuteScalar<int>("SELECT COUNT(*) FROM \"VersionInfo\""), Is.GreaterThan(0));
+            });
+        }
+
         [Test]
         public void required_postgres_cannot_be_silently_skipped()
         {

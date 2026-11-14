@@ -107,7 +107,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var repository = new ConversionJobRepository(outage.Database, new StubEventAggregator());
                 var observer = new ConversionJobRepository(database, new StubEventAggregator());
                 using var converter = new OutcomeConversionService { Outcome = "failed" };
-                var log = new MemoryTarget { Layout = "${message}" };
+                var log = new ConcurrentLogTarget { Layout = "${message}" };
                 using var logs = new LogFactory();
                 var configuration = new LoggingConfiguration(logs);
                 configuration.AddRuleForAllLevels(log);
@@ -138,7 +138,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 {
                     outage.Unavailable = false;
                     converter.Release.Set();
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     try { worker.GetAwaiter().GetResult(); }
                     finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
                 }
@@ -165,7 +165,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var repository = new ConversionJobRepository(outage.Database, new StubEventAggregator());
                 var observer = new ConversionJobRepository(database, new StubEventAggregator());
                 using var converter = new OutcomeConversionService { Outcome = outcome };
-                var log = new MemoryTarget { Layout = "${level}|${message}|${exception:format=Message}" };
+                var log = new ConcurrentLogTarget { Layout = "${level}|${message}|${exception:format=Message}" };
                 using var logs = new LogFactory();
                 var config = new LoggingConfiguration(logs);
                 config.AddRuleForAllLevels(log);
@@ -267,7 +267,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 {
                     outage.Unavailable = false;
                     converter.Release.Set();
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     tracking.Clear(request.DownloadId);
                     Directory.Delete(root, true);
                 }
@@ -326,7 +326,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var repository = new ConversionJobRepository(outage.Database, new StubEventAggregator());
                 var observer = new ConversionJobRepository(database, new StubEventAggregator());
                 using var converter = new OutcomeConversionService { Outcome = "success" };
-                var log = new MemoryTarget { Layout = "${message}" };
+                var log = new ConcurrentLogTarget { Layout = "${message}" };
                 using var logs = new LogFactory();
                 var config = new LoggingConfiguration(logs);
                 config.AddRuleForAllLevels(log);
@@ -343,7 +343,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Assert.That(SpinWait.SpinUntil(() => log.Logs.Any(value => value.Contains("Unable to save conversion outcome")), TimeSpan.FromSeconds(5)), Is.True);
                     if (restart)
                     {
-                        service.Handle(new ApplicationShutdownRequested());
+                        ShutdownAndWait(service);
                         Assert.That(File.ReadAllText(request.OutputPath), Is.EqualTo("completed recording"));
                         outage.Unavailable = false;
                         service = CreateService(repository, new UnusedConversionService());
@@ -366,7 +366,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 {
                     outage.Unavailable = false;
                     converter.Release.Set();
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     new ConversionTrackingService(new StubEventAggregator()).Clear(request.DownloadId);
                     Directory.Delete(root, true);
                 }
