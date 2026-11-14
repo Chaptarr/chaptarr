@@ -107,7 +107,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    worker.Handle(new NzbDrone.Core.Lifecycle.ApplicationShutdownRequested());
+                    ShutdownAndWait(worker);
                     if (Directory.Exists(directory)) Directory.Delete(directory, true);
                 }
             });
