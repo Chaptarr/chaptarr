@@ -43,7 +43,7 @@ namespace Chaptarr.Core.Test.Download
 
                 context.Retry();
 
-                Assert.That(context.ImportedPaths, Is.EqualTo(context.Paths(context.Files)));
+                Assert.That(context.ImportedPaths, Is.EquivalentTo(context.Paths(context.Files)));
                 Assert.That(context.Tracked.State, Is.EqualTo(TrackedDownloadState.Imported));
                 Assert.That(context.Events.OfType<DownloadCompletedEvent>().Count(), Is.EqualTo(1));
                 context.AssertSnapshot(context.Files, DownloadClientFileListConfidence.Authoritative);
@@ -64,7 +64,7 @@ namespace Chaptarr.Core.Test.Download
 
                 context.Retry();
 
-                Assert.That(context.AttemptedPaths, Is.EqualTo(context.Paths(context.Files)));
+                Assert.That(context.AttemptedPaths, Is.EquivalentTo(context.Paths(context.Files)));
                 Assert.That(context.Tracked.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
                 Assert.That(context.Events.OfType<DownloadCompletedEvent>(), Is.Empty);
                 context.AssertSnapshot(context.Files, DownloadClientFileListConfidence.Authoritative);
@@ -89,7 +89,7 @@ namespace Chaptarr.Core.Test.Download
 
                 context.Retry();
 
-                Assert.That(context.AttemptedPaths, Is.EqualTo(context.Paths("part1.mp3", "part2.mp3")));
+                Assert.That(context.AttemptedPaths, Is.EquivalentTo(context.Paths("part1.mp3", "part2.mp3")));
                 Assert.That(context.Tracked.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
                 Assert.That(context.Events.OfType<DownloadCompletedEvent>(), Is.Empty);
                 context.AssertSnapshot(new[] { "part1.mp3", "part2.mp3" }, DownloadClientFileListConfidence.Authoritative);
@@ -100,7 +100,7 @@ namespace Chaptarr.Core.Test.Download
                 context.PutFiles(context.Files);
                 context.Retry();
 
-                Assert.That(context.AttemptedPaths, Is.EqualTo(context.Paths(context.Files)));
+                Assert.That(context.AttemptedPaths, Is.EquivalentTo(context.Paths(context.Files)));
                 Assert.That(context.Tracked.State, Is.EqualTo(TrackedDownloadState.Imported));
                 context.AssertSnapshot(context.Files, DownloadClientFileListConfidence.Authoritative);
             });
@@ -124,7 +124,7 @@ namespace Chaptarr.Core.Test.Download
 
                 context.Retry();
 
-                Assert.That(context.AttemptedPaths, Is.EqualTo(context.Paths("part1.mp3", "part2.mp3")));
+                Assert.That(context.AttemptedPaths, Is.EquivalentTo(context.Paths("part1.mp3", "part2.mp3")));
                 Assert.That(context.Tracked.State, Is.EqualTo(TrackedDownloadState.ImportBlocked));
                 Assert.That(context.Events.OfType<DownloadCompletedEvent>(), Is.Empty);
                 context.AssertSnapshot(new[] { "part1.mp3", "part2.mp3" }, confidence);
@@ -149,7 +149,7 @@ namespace Chaptarr.Core.Test.Download
 
                 context.Retry();
 
-                Assert.That(context.ImportedPaths, Is.EqualTo(context.Paths("part2.mp3")));
+                Assert.That(context.ImportedPaths, Is.EquivalentTo(context.Paths("part2.mp3")));
                 Assert.That(context.Tracked.State, Is.EqualTo(TrackedDownloadState.Imported));
                 Assert.That(context.Events.OfType<DownloadCompletedEvent>().Count(), Is.EqualTo(1));
                 context.AssertSnapshot(new[] { "part1.mp3", "part2.mp3" }, DownloadClientFileListConfidence.Authoritative);
@@ -193,7 +193,8 @@ namespace Chaptarr.Core.Test.Download
                             nameof(IDiskProvider.FileExists) => File.Exists((string)args[0]),
                             nameof(IDiskProvider.FolderExists) => Directory.Exists((string)args[0]),
                             nameof(IDiskProvider.GetFileInfos) => new System.IO.Abstractions.FileSystem().DirectoryInfo
-                                .FromDirectoryName((string)args[0]).GetFiles("*", SearchOption.AllDirectories).ToList(),
+                                .FromDirectoryName((string)args[0]).GetFiles("*", SearchOption.AllDirectories)
+                                .OrderByDescending(file => file.Name, StringComparer.Ordinal).ToList(),
                             _ => throw new NotImplementedException(method.Name)
                         };
                     }), logger);
@@ -279,7 +280,7 @@ namespace Chaptarr.Core.Test.Download
             public void AssertSnapshot(string[] names, DownloadClientFileListConfidence confidence)
             {
                 var snapshot = _repository.Find(Tracked.DownloadClient, "ABC123");
-                Assert.That(snapshot.FilePaths, Is.EqualTo(Paths(names)));
+                Assert.That(snapshot.FilePaths, Is.EquivalentTo(Paths(names)));
                 Assert.That(snapshot.Confidence, Is.EqualTo(confidence));
             }
 

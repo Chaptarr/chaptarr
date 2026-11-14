@@ -187,8 +187,9 @@ namespace NzbDrone.Core.MediaFiles
             List<RootFolder> libraryRoots = null;
             var availableRoots = new Dictionary<string, bool>(PathEqualityComparer.Instance);
             var attempted = 0;
-            foreach (var job in jobs)
+            foreach (var candidate in jobs)
             {
+                var job = candidate;
                 try
                 {
                     if (IsRunning(job.DownloadId) || !CleanupMayRetry(job)) continue;
@@ -203,16 +204,15 @@ namespace NzbDrone.Core.MediaFiles
                     {
                         EnsureCleanupRootAvailable(job.WorkFolder, ref libraryRoots, availableRoots);
                         // The workspace was removed externally; no encoder owns it now.
-                        lock (_sync)
+                        if (!TryRecover(job, current =>
                         {
-                            var current = Get(job.DownloadId);
-                            if (current?.Id != job.Id || current.UpdatedAt != job.UpdatedAt || IsRunning(job.DownloadId)) continue;
+                            job = current;
                             if (IsWaitingForOutput(job, this))
                             {
                                 MarkFailed(job, "Conversion workspace was removed before conversion completed.");
                                 job.UpdatedAt = _repository.Get(job.Id).UpdatedAt;
                             }
-                        }
+                        })) continue;
                         CleanupTerminalDownload(job.DownloadId, "workspace-removed", ConversionRemovalOrigin.Automatic,
                             expected: ExpectedAttempt(job), inventory: inventory, clientId: job.DownloadClientId, currentAttemptOnly: request.DiscardCurrentAttemptOnly);
                         continue;
@@ -231,14 +231,17 @@ namespace NzbDrone.Core.MediaFiles
 
         private void ClearCleanupAttention(string downloadId)
         {
-            var job = Get(downloadId);
-            var request = DeserializeRequest(job);
-            if (request?.CleanupError == null) return;
-            request.CleanupError = null;
-            request.CleanupFailureCount = 0;
-            request.CleanupNotBefore = null;
-            job.RequestJson = JsonSerializer.Serialize(request);
-            _repository.SetFields(job, value => value.RequestJson);
+            lock (_sync)
+            {
+                var job = Get(downloadId);
+                var request = DeserializeRequest(job);
+                if (request?.CleanupError == null) return;
+                request.CleanupError = null;
+                request.CleanupFailureCount = 0;
+                request.CleanupNotBefore = null;
+                job.RequestJson = JsonSerializer.Serialize(request);
+                _repository.SetFields(job, value => value.RequestJson);
+            }
         }
 
         private sealed class OrphanReviewProgress

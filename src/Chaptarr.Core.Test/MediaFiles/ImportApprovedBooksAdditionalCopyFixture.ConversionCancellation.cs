@@ -201,9 +201,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             public void RunQueuedWorker()
             {
-                typeof(ConversionJobService).GetMethod("DispatchQueuedJobs", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                    .Invoke(Jobs, null);
-                Assert.That(SpinWait.SpinUntil(() => !Jobs.IsRunning(DownloadId), TimeSpan.FromSeconds(15)), Is.True);
+                Assert.That(ConversionJobServiceFixture.DispatchWorkers(Jobs).Wait(TimeSpan.FromSeconds(15)), Is.True);
             }
 
             public List<ImportResult> Import(bool manual = false) => manual ? ImportSelectedOriginals() : ImportWithConversionWorker(_service, new List<ImportDecision<LocalBook>>

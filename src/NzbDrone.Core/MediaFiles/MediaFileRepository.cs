@@ -50,6 +50,16 @@ namespace NzbDrone.Core.MediaFiles
             .LeftJoin<Edition, Book>((e, b) => e.BookId == b.Id)
             .LeftJoin<Book, Author>((book, author) => book.AuthorId == author.Id);
 
+        // For lookups that filter on the book or its author. Those can only match files that
+        // have an edition and a book, so the INNER JOINs return the same rows as Builder().
+        // They also let the database start from the book or author and follow the indexes
+        // down to the files. With LEFT JOINs, SQLite has to read every BookFiles row to
+        // answer a lookup for one book or author.
+        private SqlBuilder MappedFilesBuilder() => new SqlBuilder(_database.DatabaseType)
+            .Join<BookFile, Edition>((b, e) => b.EditionId == e.Id)
+            .Join<Edition, Book>((e, b) => e.BookId == b.Id)
+            .LeftJoin<Book, Author>((book, author) => book.AuthorId == author.Id);
+
         protected override List<BookFile> Query(SqlBuilder builder) => Query(_database, builder).ToList();
 
         public static IEnumerable<BookFile> Query(IDatabase database, SqlBuilder builder)
@@ -78,7 +88,7 @@ namespace NzbDrone.Core.MediaFiles
 
         public List<BookFile> GetFilesByAuthor(int authorId)
         {
-            return Query(Builder().Where<Book>(b => b.AuthorId == authorId));
+            return Query(MappedFilesBuilder().Where<Book>(b => b.AuthorId == authorId));
         }
 
         public List<BookFile> GetFilePathOwnership(IReadOnlyCollection<int> authorIds, IReadOnlyCollection<string> folders)
@@ -157,7 +167,7 @@ namespace NzbDrone.Core.MediaFiles
         public List<BookFile> GetFilesByBook(int bookId)
         {
             // Keep the joined-book predicate for ownership semantics and add the edition predicate for selectivity.
-            return Query(Builder()
+            return Query(MappedFilesBuilder()
                 .Where<Edition>(e => e.BookId == bookId)
                 .Where<Book>(b => b.Id == bookId));
         }

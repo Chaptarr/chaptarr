@@ -1,4 +1,5 @@
 import importlib.util
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -14,6 +15,51 @@ def fixture(name, count=1, serial=False, state="Runnable"):
 
 
 class CoreRunnerTests(unittest.TestCase):
+    def test_isolated_runtime_resolves_aliases_before_setting_child_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            real = root / "Long runtime directory with spaces"
+            real.mkdir()
+            if os.name == "nt":
+                import ctypes
+                from ctypes import wintypes
+
+                short_path = ctypes.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+                short_path.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+                short_path.restype = wintypes.DWORD
+                length = short_path(str(real), None, 0)
+                if not length:
+                    raise ctypes.WinError(ctypes.get_last_error())
+                buffer = ctypes.create_unicode_buffer(length)
+                if not short_path(str(real), buffer, length):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                alias = Path(buffer.value)
+                if alias == real:
+                    self.skipTest("This volume does not provide an 8.3 alias for the test directory")
+            else:
+                alias = root / "alias"
+                alias.symlink_to(real, target_is_directory=True)
+
+            source, directory, workspace = real / "source", alias / "shard", alias / "workspace"
+            for path in (source, directory, workspace):
+                path.mkdir()
+            assembly = source / "fixture.dll"
+            assembly.write_bytes(b"independent runtime")
+            dll, work, environment = runner.isolated_runtime(assembly, directory, workspace)
+
+            self.assertEqual(dll, real / "shard" / "runtime" / assembly.name)
+            self.assertEqual(work, real / "workspace" / "work")
+            for key in ("TMPDIR", "TMP", "TEMP"):
+                self.assertEqual(environment[key], str(real / "workspace" / "temp"))
+            self.assertTrue(work.is_dir())
+            self.assertTrue(Path(environment["TEMP"]).is_dir())
+            self.assertEqual(dll.read_bytes(), assembly.read_bytes())
+            dll.write_bytes(b"changed only in the shard")
+            self.assertEqual(assembly.read_bytes(), b"independent runtime")
+            configuration = root / "tests.runsettings"
+            runner.settings(configuration, work)
+            self.assertEqual(runner.ET.parse(configuration).findtext("NUnit/WorkDirectory"), str(work))
+
     def test_nonparallel_fixtures_can_use_isolated_processes_and_are_assigned_once(self):
         fixtures = {"A": fixture("A", 100), "B": fixture("B", 80, True), "C": fixture("C", 70, True),
                     "D": fixture("D", 50), "E": fixture("E", 20)}

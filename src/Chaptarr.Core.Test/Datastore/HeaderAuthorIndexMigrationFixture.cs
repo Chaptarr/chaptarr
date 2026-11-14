@@ -24,10 +24,7 @@ namespace Chaptarr.Core.Test.Datastore
                     {overrideIdentity} VALUES (@Id, @Name, @Key, @Key, @Slug, @Path, @Monitored, @Added)",
                     new { Id = id, Name = name, Key = key, Slug = "author-" + id, Path = "/library/author-" + id, Monitored = true, Added = DateTime.UtcNow });
                 Add(1, "J.K. Rowling", "j.k. rowling");
-                var migrationConnection = postgres
-                    ? new Npgsql.NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING"))
-                        { Database = connection.Database }.ConnectionString
-                    : connection.ConnectionString;
+                var migrationConnection = connection.ConnectionString;
                 void Upgrade() => new MigrationController(LogManager.GetCurrentClassLogger(), null).Migrate(
                     migrationConnection, new MigrationContext(MigrationType.Main, 120), database.DatabaseType);
                 Upgrade();

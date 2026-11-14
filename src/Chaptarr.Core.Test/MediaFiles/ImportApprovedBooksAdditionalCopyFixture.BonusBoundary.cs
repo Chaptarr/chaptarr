@@ -5,7 +5,6 @@ using System.IO.Abstractions;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Threading;
-using System.Reflection;
 using Chaptarr.Core.Test.Common;
 using NLog;
 using NUnit.Framework;
@@ -167,8 +166,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         Sources = paths.Select(path => new ConversionArtifactSource { Path = path, Size = new FileInfo(path).Length,
                             ModifiedUtcTicks = File.GetLastWriteTimeUtc(path).Ticks }).ToList() };
                     realJobs.Enqueue(realRequest);
-                    typeof(ConversionJobService).GetMethod("DispatchQueuedJobs", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(realJobs, null);
-                    Assert.That(SpinWait.SpinUntil(() => !realJobs.IsRunning(realRequest.DownloadId), TimeSpan.FromSeconds(15)), Is.True);
+                    Assert.That(ConversionJobServiceFixture.DispatchWorkers(realJobs).Wait(TimeSpan.FromSeconds(15)), Is.True);
                     Assert.That(realJobs.Get(realRequest.DownloadId).Status, Is.EqualTo(ConversionJobStatus.ReadyToImport));
                     Assert.That(File.Exists(realRequest.OutputPath), Is.True);
                     // A dependency failure can leave a successful receipt on a Failed row; no acceptance bypass is used by this boundary test.
@@ -268,7 +266,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
             finally
             {
-                realJobs?.Handle(new NzbDrone.Core.Lifecycle.ApplicationShutdownRequested());
+                ConversionJobServiceFixture.ShutdownAndWait(realJobs);
                 Directory.Delete(root, true);
             }
         }

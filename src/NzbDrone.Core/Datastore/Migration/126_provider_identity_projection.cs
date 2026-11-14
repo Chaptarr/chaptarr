@@ -1,3 +1,7 @@
+using System.Data;
+using System.Diagnostics;
+using System.Linq;
+using Dapper;
 using FluentMigrator;
 using NzbDrone.Core.Datastore.Migration.Framework;
 
@@ -13,27 +17,8 @@ namespace NzbDrone.Core.Datastore.Migration
                 var table = entity + "s";
                 Alter.Table(table).AddColumn("ProviderIds").AsString(int.MaxValue).Nullable();
 
-                // Preserve the last known snapshot, including legacy Book/edition IDs with
-                // no retained local edition. A successful refresh replaces the entire set.
-                {
-                    IfPostgres().Execute.Sql($@"WITH scopes AS (
-                        SELECT ""EntityId"", ""Scope"", jsonb_agg(""Provider"" || ':' || ""NormalizedProviderId"" ORDER BY ""Provider"", ""NormalizedProviderId"") AS ids
-                        FROM ""ProviderAliasIndex"" WHERE ""EntityType"" = '{entity}' GROUP BY ""EntityId"", ""Scope""
-                    ), snapshots AS (
-                        SELECT ""EntityId"", jsonb_object_agg(""Scope"", ids)::text AS ids FROM scopes GROUP BY ""EntityId""
-                    ) UPDATE ""{table}"" SET ""ProviderIds"" = snapshots.ids FROM snapshots WHERE ""Id"" = snapshots.""EntityId"";");
-                }
-                {
-                    IfDatabase("SQLite").Execute.Sql($@"WITH scopes AS (
-                        SELECT ""EntityId"", ""Scope"", json_group_array(""Provider"" || ':' || ""NormalizedProviderId"") AS ids
-                        FROM ""ProviderAliasIndex"" WHERE ""EntityType"" = '{entity}' GROUP BY ""EntityId"", ""Scope""
-                    ), snapshots AS (
-                        SELECT ""EntityId"", json_group_object(""Scope"", json(ids)) AS ids FROM scopes GROUP BY ""EntityId""
-                    ) UPDATE ""{table}"" SET ""ProviderIds"" = snapshots.ids FROM snapshots WHERE ""Id"" = snapshots.""EntityId"";");
-                }
-
-                Execute.Sql($@"DELETE FROM ""ProviderAliasIndex"" WHERE ""EntityType"" = '{entity}'
-                    AND NOT EXISTS (SELECT 1 FROM ""{table}"" WHERE ""Id"" = ""EntityId"");");
+                IfPostgres().Execute.WithConnection((connection, transaction) => Backfill(connection, transaction, entity, table, true));
+                IfDatabase("SQLite").Execute.WithConnection((connection, transaction) => Backfill(connection, transaction, entity, table, false));
 
                 CreateSqliteTriggers(entity, table);
             }
@@ -43,6 +28,63 @@ namespace NzbDrone.Core.Datastore.Migration
                 ("OtherFiles", "EditionId"), ("ABSLookupHistory", "BookId") })
                 Execute.Sql($"CREATE INDEX IF NOT EXISTS \"IX_{item.Item1}_{item.Item2}\" ON \"{item.Item1}\" (\"{item.Item2}\");");
 
+        }
+
+        private void Backfill(IDbConnection connection, IDbTransaction transaction, string entity, string table, bool postgres)
+        {
+            // Preserve the released snapshot and aggregation order; restrict its input to one
+            // entity page so aggregation and indexed-row maintenance share a bounded command.
+            var ids = postgres
+                ? "jsonb_agg(\"Provider\" || ':' || \"NormalizedProviderId\" ORDER BY \"Provider\", \"NormalizedProviderId\")"
+                : "json_group_array(\"Provider\" || ':' || \"NormalizedProviderId\")";
+            var pagePredicate = postgres ? "= ANY(@Ids)" : "IN @Ids";
+            var snapshot = postgres ? "jsonb_object_agg(\"Scope\", ids)::text" : "json_group_object(\"Scope\", json(ids))";
+            RunPages(connection, transaction, entity, "snapshot",
+                $"SELECT \"Id\" FROM \"{table}\" WHERE \"Id\" > @AfterId ORDER BY \"Id\" LIMIT @BatchSize",
+                $@"WITH scopes AS (
+                    SELECT ""EntityId"", ""Scope"", {ids} AS ids FROM ""ProviderAliasIndex""
+                    WHERE ""EntityType"" = @Entity AND ""EntityId"" {pagePredicate} GROUP BY ""EntityId"", ""Scope""
+                ), snapshots AS (
+                    SELECT ""EntityId"", {snapshot} AS ids FROM scopes GROUP BY ""EntityId""
+                ) UPDATE ""{table}"" SET ""ProviderIds"" = snapshots.ids FROM snapshots WHERE ""Id"" = snapshots.""EntityId"";");
+
+            // Page the existing (EntityType, EntityId, ...) index, including absent owners.
+            // Limiting only the DELETE result would still rescan all retained aliases per page.
+            RunPages(connection, transaction, entity, "orphan cleanup",
+                @"SELECT DISTINCT ""EntityId"" FROM ""ProviderAliasIndex"" WHERE ""EntityType"" = @Entity
+                    AND ""EntityId"" > @AfterId ORDER BY ""EntityId"" LIMIT @BatchSize",
+                $@"DELETE FROM ""ProviderAliasIndex"" WHERE ""EntityType"" = @Entity AND ""EntityId"" {pagePredicate}
+                    AND NOT EXISTS (SELECT 1 FROM ""{table}"" WHERE ""Id"" = ""EntityId"");");
+        }
+
+        private void RunPages(IDbConnection connection, IDbTransaction transaction, string entity, string operation, string selectSql, string writeSql)
+        {
+            const int batchSize = SqliteVariableLimit.MaxParameters / 2;
+            var timer = Stopwatch.StartNew();
+            long afterId = long.MinValue;
+            long scanned = 0;
+            long changed = 0;
+            var reads = 0;
+            var writes = 0;
+            while (true)
+            {
+                var page = connection.Query<int>(selectSql, new { Entity = entity, AfterId = afterId, BatchSize = batchSize },
+                    transaction, commandTimeout: MigrationController.CommandTimeoutSeconds).ToArray();
+                reads++;
+                if (page.Length == 0) break;
+                changed += connection.Execute(writeSql, new { Entity = entity, Ids = page }, transaction,
+                    commandTimeout: MigrationController.CommandTimeoutSeconds);
+                writes++;
+                scanned += page.Length;
+                afterId = page[^1];
+                if (writes % 100 == 0)
+                    _logger.Info("Provider identity {0} {1} progress: scanned {2} entity IDs, changed {3} rows, pages {4}, elapsed {5} ms",
+                        entity, operation, scanned, changed, writes, timer.ElapsedMilliseconds);
+                if (page.Length < batchSize) break;
+            }
+
+            _logger.Info("Provider identity {0} {1}: scanned {2} entity IDs, changed {3} rows, read queries {4}, write batches {5}, elapsed {6} ms",
+                entity, operation, scanned, changed, reads, writes, timer.ElapsedMilliseconds);
         }
 
         private void CreateSqliteTriggers(string entity, string table)

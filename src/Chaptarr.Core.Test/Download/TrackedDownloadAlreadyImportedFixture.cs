@@ -60,18 +60,18 @@ namespace Chaptarr.Core.Test.Download
                 DownloadItem = new DownloadClientItem
                 {
                     DownloadId = "relative-inventory",
-                    OutputPath = new OsPath("/downloads/book"),
-                    FilePaths = new() { "/downloads/book/disc-1/01.mp3", "/downloads/book/disc-2/01.mp3", "/elsewhere/03.mp3" }
+                    OutputPath = new OsPath(@"C:\downloads\book".AsOsAgnostic()),
+                    FilePaths = new() { @"C:\downloads\book\disc-1\01.mp3".AsOsAgnostic(), @"C:\downloads\book\disc-2\01.mp3".AsOsAgnostic(), @"C:\elsewhere\03.mp3".AsOsAgnostic() }
                 },
                 RemoteBook = new RemoteBook { Books = new() { new Book { Id = 1, MediaType = BookMediaType.Audiobook } } }
             };
             Assert.That(new TrackedDownloadAlreadyImported(LogManager.GetCurrentClassLogger()).IsImported(tracked, new()), Is.False);
             Assert.That(tracked.StatusMessages.Select(message => message.Title),
-                Is.EquivalentTo(new[] { "disc-1/01.mp3", "disc-2/01.mp3", "03.mp3" }));
+                Is.EquivalentTo(new[] { @"disc-1\01.mp3".AsOsAgnostic(), @"disc-2\01.mp3".AsOsAgnostic(), "03.mp3" }));
             var json = System.Text.Json.JsonSerializer.Serialize(tracked.StatusMessages);
             Assert.That(json, Does.Not.Contain("SourcePath"));
-            Assert.That(json, Does.Not.Contain("/downloads/"));
-            Assert.That(json, Does.Not.Contain("/elsewhere/"));
+            Assert.That(json, Does.Not.Contain("downloads"));
+            Assert.That(json, Does.Not.Contain("elsewhere"));
         }
 
         [TestCase(false, false, false)]
@@ -159,10 +159,10 @@ namespace Chaptarr.Core.Test.Download
                 var snapshots = new DownloadClientFileSnapshotRepository(database, events);
                 var snapshotService = new DownloadClientFileSnapshotService(snapshots, null, logger);
                 var histories = new HistoryRepository(database, events);
-                var original = new DownloadClientItem { DownloadId = "restart", Title = "Parts", OutputPath = new OsPath("/downloads/book"),
+                var original = new DownloadClientItem { DownloadId = "restart", Title = "Parts", OutputPath = new OsPath(@"C:\downloads\book".AsOsAgnostic()),
                     DownloadClientInfo = new DownloadClientItemClientInfo { Id = 1 },
-                    FilePaths = new List<string> { "/downloads/book/01.mp3", "/downloads/book/02.mp3", "/downloads/book/cover.jpg", "/downloads/book/info.nfo",
-                        "/downloads/book/._01.mp3", "/downloads/book/._02.mp3" } };
+                    FilePaths = new List<string> { @"C:\downloads\book\01.mp3".AsOsAgnostic(), @"C:\downloads\book\02.mp3".AsOsAgnostic(), @"C:\downloads\book\cover.jpg".AsOsAgnostic(), @"C:\downloads\book\info.nfo".AsOsAgnostic(),
+                        @"C:\downloads\book\._01.mp3".AsOsAgnostic(), @"C:\downloads\book\._02.mp3".AsOsAgnostic() } };
                 snapshotService.CaptureClientList(original);
                 var tracked = new TrackedDownload
                 {
@@ -176,21 +176,21 @@ namespace Chaptarr.Core.Test.Download
                 Assert.That(tracked.DownloadItem.FilePaths, Is.EquivalentTo(original.FilePaths));
                 var imported = histories.Insert(new EntityHistory { DownloadId = original.DownloadId, BookId = 10, EditionId = 100,
                     EventType = EntityHistoryEventType.BookFileImported, Date = DateTime.UtcNow, Quality = new QualityModel(Quality.M4B),
-                    SourceTitle = "Parts", Data = new Dictionary<string, string> { ["DroppedPath"] = "/downloads/book/01.mp3" } });
+                    SourceTitle = "Parts", Data = new Dictionary<string, string> { ["DroppedPath"] = @"C:\downloads\book\01.mp3".AsOsAgnostic() } });
                 var subject = new TrackedDownloadAlreadyImported(logger);
                 Assert.That(subject.IsImported(tracked, histories.FindByDownloadId(original.DownloadId)), Is.False);
                 Assert.That(tracked.StatusMessages.Any(message => message.Title == "02.mp3"), Is.True);
                 if (conversion)
                 {
-                    imported.Data["DroppedPath"] = "/conversion/generated.m4b";
-                    imported.Data["SourcePaths"] = new[] { "/downloads/book/01.mp3", "/downloads/book/02.mp3" }.ToJson();
+                    imported.Data["DroppedPath"] = @"C:\conversion\generated.m4b".AsOsAgnostic();
+                    imported.Data["SourcePaths"] = new[] { @"C:\downloads\book\01.mp3".AsOsAgnostic(), @"C:\downloads\book\02.mp3".AsOsAgnostic() }.ToJson();
                     histories.Update(imported);
                 }
                 else
                 {
                     histories.Insert(new EntityHistory { DownloadId = original.DownloadId, BookId = 10, EditionId = 100,
                         EventType = EntityHistoryEventType.BookFileImported, Date = DateTime.UtcNow, Quality = new QualityModel(Quality.MP3),
-                        SourceTitle = "Parts", Data = new Dictionary<string, string> { ["DroppedPath"] = "/downloads/book/02.mp3" } });
+                        SourceTitle = "Parts", Data = new Dictionary<string, string> { ["DroppedPath"] = @"C:\downloads\book\02.mp3".AsOsAgnostic() } });
                 }
 
                 Assert.That(subject.IsImported(tracked, histories.FindByDownloadId(original.DownloadId)), Is.True);

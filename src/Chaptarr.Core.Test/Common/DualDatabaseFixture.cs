@@ -64,7 +64,8 @@ namespace Chaptarr.Core.Test.Common
         }
 
         private static string ConnectionString(bool postgres, string name, string adminString, bool pooled = false) => postgres
-            ? new NpgsqlConnectionStringBuilder(adminString) { Database = name, Pooling = false }.ConnectionString
+            // Test clones must support reopening their connections for migrations and restart checks.
+            ? new NpgsqlConnectionStringBuilder(adminString) { Database = name, Pooling = false, PersistSecurityInfo = true }.ConnectionString
             : new SqliteConnectionStringBuilder { DataSource = name, Pooling = pooled, Cache = SqliteCacheMode.Private }.ToString();
 
         private static void Migrate(bool postgres, string connectionString, MigrationType migrationType, long? desiredVersion = null)

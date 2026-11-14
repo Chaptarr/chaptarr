@@ -412,24 +412,24 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 Id = 1,
                 Name = "Jim Butcher",
-                Path = "/audiobooks/Jim Butcher",
-                AudiobookPath = "/audiobooks/Jim Butcher",
-                EbookPath = "/ebooks/Jim Butcher"
+                Path = @"C:\audiobooks\Jim Butcher".AsOsAgnostic(),
+                AudiobookPath = @"C:\audiobooks\Jim Butcher".AsOsAgnostic(),
+                EbookPath = @"C:\ebooks\Jim Butcher".AsOsAgnostic()
             };
 
-            var bookFolder = "/ebooks/Jim Butcher/Captains Fury";
-            var colocatedFolder = "/audiobooks/Jim Butcher/Captains Fury";
+            var bookFolder = @"C:\ebooks\Jim Butcher\Captains Fury".AsOsAgnostic();
+            var colocatedFolder = @"C:\audiobooks\Jim Butcher\Captains Fury".AsOsAgnostic();
 
             var diskProvider = DispatchProxy.Create<IDiskProvider, FolderCleanupDiskProviderProxy>();
             var diskProxy = (FolderCleanupDiskProviderProxy)(object)diskProvider;
-            diskProxy.ExistingFolders.Add("/ebooks");
-            diskProxy.ExistingFolders.Add("/audiobooks");
+            diskProxy.ExistingFolders.Add(@"C:\ebooks".AsOsAgnostic());
+            diskProxy.ExistingFolders.Add(@"C:\audiobooks".AsOsAgnostic());
             diskProxy.ExistingFolders.Add(author.EbookPath);
             diskProxy.ExistingFolders.Add(author.AudiobookPath);
             diskProxy.ExistingFolders.Add(bookFolder);
             diskProxy.ExistingFolders.Add(colocatedFolder);
-            diskProxy.ExistingFiles.Add(bookFolder + "/Captains Fury.epub");
-            diskProxy.ExistingFiles.Add(colocatedFolder + "/Captains Fury.epub");
+            diskProxy.ExistingFiles.Add(Path.Combine(bookFolder, "Captains Fury.epub"));
+            diskProxy.ExistingFiles.Add(Path.Combine(colocatedFolder, "Captains Fury.epub"));
 
             var recycleBinProvider = new RecordingRecycleBinProvider();
             var events = new RecordingEventAggregator();
@@ -443,7 +443,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 DispatchProxy.Create<IAuthorRepository, ThrowingProxy<IAuthorRepository>>(),
                 DispatchProxy.Create<IConfigService, DeleteEmptyFoldersConfigProxy>(),
                 events,
-                new StubRootFolderService(new RootFolder { Id = 1, Path = "/ebooks" }, new RootFolder { Id = 2, Path = "/audiobooks" }),
+                new StubRootFolderService(new RootFolder { Id = 1, Path = @"C:\ebooks".AsOsAgnostic() }, new RootFolder { Id = 2, Path = @"C:\audiobooks".AsOsAgnostic() }),
                 DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
                 LogManager.GetCurrentClassLogger(), metadataFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Metadata.Files.MetadataFile>(), otherFiles: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Repository<NzbDrone.Core.Extras.Others.OtherExtraFile>(), metadataFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Metadata(), otherFileService: Chaptarr.Core.Test.Common.EmptyDeletionExtras.Other());
 
@@ -459,18 +459,18 @@ namespace Chaptarr.Core.Test.MediaFiles
                     new()
                     {
                         Id = 1,
-                        Path = bookFolder + "/Captains Fury.epub",
+                        Path = Path.Combine(bookFolder, "Captains Fury.epub"),
                         MediaType = "ebook",
                         Author = author,
-                        ReplicaPaths = new List<string> { colocatedFolder + "/Captains Fury.epub" }
+                        ReplicaPaths = new List<string> { Path.Combine(colocatedFolder, "Captains Fury.epub") }
                     }
                 }
             };
 
             service.DeleteBookFiles(new List<Book> { book });
 
-            Assert.That(recycleBinProvider.DeletedFiles, Does.Contain(bookFolder + "/Captains Fury.epub"));
-            Assert.That(recycleBinProvider.DeletedFiles, Does.Contain(colocatedFolder + "/Captains Fury.epub"),
+            Assert.That(recycleBinProvider.DeletedFiles, Does.Contain(Path.Combine(bookFolder, "Captains Fury.epub")));
+            Assert.That(recycleBinProvider.DeletedFiles, Does.Contain(Path.Combine(colocatedFolder, "Captains Fury.epub")),
                 "whole-book deletion must remove its managed replicas directly");
 
             // Both roots are swept, so the emptied book folders are candidates for removal.
@@ -490,12 +490,12 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 Id = 1,
                 Name = "Jim Butcher",
-                Path = "/audiobooks/Jim Butcher",
-                AudiobookPath = "/audiobooks/Jim Butcher"
+                Path = @"C:\audiobooks\Jim Butcher".AsOsAgnostic(),
+                AudiobookPath = @"C:\audiobooks\Jim Butcher".AsOsAgnostic()
             };
 
             var (service, disk) = BuildFolderCleanupSubject(author.AudiobookPath);
-            var bookFolder = "/audiobooks/Jim Butcher/Captains Fury";
+            var bookFolder = @"C:\audiobooks\Jim Butcher\Captains Fury".AsOsAgnostic();
             disk.ExistingFolders.Add(bookFolder);
             disk.FoldersWithFiles.Add(author.AudiobookPath);
 
@@ -514,14 +514,14 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 Id = 1,
                 Name = "Jim Butcher",
-                Path = "/audiobooks/Jim Butcher",
-                AudiobookPath = "/audiobooks/Jim Butcher"
+                Path = @"C:\audiobooks\Jim Butcher".AsOsAgnostic(),
+                AudiobookPath = @"C:\audiobooks\Jim Butcher".AsOsAgnostic()
             };
 
             var (service, disk) = BuildFolderCleanupSubject(author.AudiobookPath);
 
             service.Handle(new BookFileDeletedEvent(
-                new BookFile { Id = 1, Path = "/audiobooks/Jim Butcher/Captains Fury/Captains Fury.m4b", Author = author },
+                new BookFile { Id = 1, Path = @"C:\audiobooks\Jim Butcher\Captains Fury\Captains Fury.m4b".AsOsAgnostic(), Author = author },
                 DeleteMediaFileReason.Manual));
 
             Assert.That(disk.DeletedFolders, Does.Contain(author.AudiobookPath));
@@ -535,18 +535,18 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 Id = 1,
                 Name = "Jim Butcher",
-                Path = "/audiobooks/Jim Butcher",
-                AudiobookPath = "/audiobooks/Jim Butcher",
-                EbookPath = "/ebooks/Jim Butcher"
+                Path = @"C:\audiobooks\Jim Butcher".AsOsAgnostic(),
+                AudiobookPath = @"C:\audiobooks\Jim Butcher".AsOsAgnostic(),
+                EbookPath = @"C:\ebooks\Jim Butcher".AsOsAgnostic()
             };
 
             var (service, disk) = BuildFolderCleanupSubject(author.AudiobookPath, author.EbookPath);
-            var ebookFolder = "/ebooks/Jim Butcher/Captains Fury";
+            var ebookFolder = @"C:\ebooks\Jim Butcher\Captains Fury".AsOsAgnostic();
             disk.ExistingFolders.Add(ebookFolder);
             disk.FoldersWithFiles.Add(author.EbookPath);
 
             service.Handle(new BookFileDeletedEvent(
-                new BookFile { Id = 1, Path = ebookFolder + "/Captains Fury.epub", Author = author },
+                new BookFile { Id = 1, Path = Path.Combine(ebookFolder, "Captains Fury.epub"), Author = author },
                 DeleteMediaFileReason.Manual));
 
             Assert.That(disk.SubfolderCleanups, Does.Contain(author.EbookPath));
@@ -690,8 +690,8 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var bookFile = new BookFile
             {
-                Path = "/books/Philosopher's Stone/Philosopher's Stone.epub",
-                ReplicaPaths = new List<string> { "/books/Philosopher’s Stone/Philosopher’s Stone.epub" }
+                Path = @"C:\books\Philosopher's Stone\Philosopher's Stone.epub".AsOsAgnostic(),
+                ReplicaPaths = new List<string> { @"C:\books\Philosopher’s Stone\Philosopher’s Stone.epub".AsOsAgnostic() }
             };
 
             Assert.DoesNotThrow(() => service.Handle(new BookFileDeletedEvent(bookFile, DeleteMediaFileReason.Upgrade)));
@@ -709,7 +709,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var bookFile = new BookFile
             {
                 Id = 1,
-                Path = "/books/Philosopher’s Stone.m4b"
+                Path = @"C:\books\Philosopher’s Stone.m4b".AsOsAgnostic()
             };
 
             var service = new MediaFileDeletionService(

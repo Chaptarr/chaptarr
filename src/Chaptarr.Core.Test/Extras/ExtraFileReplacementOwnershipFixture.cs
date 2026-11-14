@@ -32,10 +32,10 @@ namespace Chaptarr.Core.Test.Extras
         public void retained_metadata_should_follow_only_a_committed_same_book_successor(
             bool externallyModified, bool samePath, bool otherBook, bool unreadable = false, bool differentFolder = false)
         {
-            var author = new Author { Id = 1, Path = "/library/Author", AudiobookPath = "/library/Author" };
-            var old = new BookFile { Id = 10, Path = "/library/Author/Book/old.mp3", Author = author,
+            var author = new Author { Id = 1, Path = @"C:\library\Author".AsOsAgnostic(), AudiobookPath = @"C:\library\Author".AsOsAgnostic() };
+            var old = new BookFile { Id = 10, Path = @"C:\library\Author\Book\old.mp3".AsOsAgnostic(), Author = author,
                 Edition = new Edition { BookId = 2 } };
-            var successor = new BookFile { Id = 11, Path = samePath ? old.Path : differentFolder ? "/library/Author/New Book/new.m4b" : "/library/Author/Book/new.m4b",
+            var successor = new BookFile { Id = 11, Path = samePath ? old.Path : differentFolder ? @"C:\library\Author\New Book\new.m4b".AsOsAgnostic() : @"C:\library\Author\Book\new.m4b".AsOsAgnostic(),
                 Edition = new Edition { BookId = otherBook ? 3 : 2 } };
             var sidecar = new MetadataFile { Id = 20, AuthorId = 1, BookId = 2, BookFileId = 10,
                 RelativePath = "Book/metadata.json", Type = MetadataType.BookMetadata, Hash = "original".SHA256Hash() };
@@ -65,7 +65,7 @@ namespace Chaptarr.Core.Test.Extras
                     return externallyModified ? "changed bytes" : "original";
                 }
                 if (method.Name == nameof(IDiskProvider.GetFiles))
-                    return new[] { successor.Path, "/library/Author/Book/metadata.json" }
+                    return new[] { successor.Path, @"C:\library\Author\Book\metadata.json".AsOsAgnostic() }
                         .Where(path => Path.GetDirectoryName(path) == (string)args[0]).ToList();
                 if (method.Name == nameof(IDiskProvider.GetParentFolder)) return Path.GetDirectoryName((string)args[0]);
                 throw new NotImplementedException(method.Name);
@@ -80,7 +80,7 @@ namespace Chaptarr.Core.Test.Extras
             Assert.That(stored, Has.Count.EqualTo(retainOwnership ? 1 : 0));
             if (retainOwnership) Assert.That(stored[0].BookFileId, Is.EqualTo(differentFolder ? (int?)null : successor.Id));
             Assert.That(recycled, Is.EqualTo(!retainOwnership
-                ? new[] { "/library/Author/Book/metadata.json" } : Array.Empty<string>()));
+                ? new[] { @"C:\library\Author\Book\metadata.json".AsOsAgnostic() } : Array.Empty<string>()));
             if (retainOwnership)
             {
                 Assert.That(stored[0].Hash, Is.EqualTo(externallyModified || unreadable ? null : "original".SHA256Hash()));
@@ -139,9 +139,9 @@ namespace Chaptarr.Core.Test.Extras
         [Test]
         public void replacement_observers_load_extras_once_without_enumerating_unrelated_folder_contents()
         {
-            var author = new Author { Id = 1, Path = "/library/Author" };
+            var author = new Author { Id = 1, Path = @"C:\library\Author".AsOsAgnostic() };
             var files = Enumerable.Range(1, 64).Select(id => new BookFile
-                { Id = id, Author = author, Path = $"/library/Author/Book/{id}.mp3", Edition = new Edition { BookId = 2 } }).ToList();
+                { Id = id, Author = author, Path = $@"C:\library\Author\Book\{id}.mp3".AsOsAgnostic(), Edition = new Edition { BookId = 2 } }).ToList();
             var extras = files.Select(file => new MetadataFile { Id = file.Id, BookFileId = file.Id,
                 BookId = 2, RelativePath = $"Book/{file.Id}.json" }).ToList();
             var reads = 0;
@@ -157,7 +157,7 @@ namespace Chaptarr.Core.Test.Extras
             var disk = Proxy<IDiskProvider>((method, args) =>
             {
                 if (method.Name == nameof(IDiskProvider.FileExistsCanonical)) return true;
-                if (method.Name == nameof(IDiskProvider.GetFiles)) { listings++; return new List<string> { "/library/Author/Book/remaining.m4b" }; }
+                if (method.Name == nameof(IDiskProvider.GetFiles)) { listings++; return new List<string> { @"C:\library\Author\Book\remaining.m4b".AsOsAgnostic() }; }
                 throw new NotImplementedException(method.Name);
             });
             var service = new MetadataFileService(repository, Proxy<IAuthorService>((m, a) => author), disk,

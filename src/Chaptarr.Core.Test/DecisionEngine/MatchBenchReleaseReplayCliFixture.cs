@@ -126,8 +126,8 @@ namespace Chaptarr.Core.Test.DecisionEngine
                 Assert.That(result.Output.Split("[releasereplay] RSS batch").Length, Is.EqualTo(2));
                 Assert.That(result.Output, Does.Contain("APPROVED - James Hunt - Powerless (epub)"));
                 Assert.That(result.Output, Does.Contain("APPROVED - James Hunt - The Final Homestead - EMP Survival in a Powerless World (epub)"));
-                Assert.That(result.Output, Does.Contain($"James Hunt — Powerless (localBookId={TargetBookLocalId}, media=Ebook)"));
-                Assert.That(result.Output, Does.Contain($"James Hunt — The Final Homestead (localBookId={SiblingBookLocalId}, media=Ebook)"));
+                Assert.That(result.Output, Does.Contain($"James Hunt - Powerless (localBookId={TargetBookLocalId}, media=Ebook)"));
+                Assert.That(result.Output, Does.Contain($"James Hunt - The Final Homestead (localBookId={SiblingBookLocalId}, media=Ebook)"));
                 Assert.That(result.Output, Does.Contain("completed RSS batches=1, incomplete RSS batches=0, typedReports=2, decisions=2, plannedGrabs=2, pending=0, downloads=0"));
                 Assert.That(result.Output, Does.Not.Contain("Release appears to match a different book by this author"));
             });
@@ -559,12 +559,13 @@ namespace Chaptarr.Core.Test.DecisionEngine
             var output = await outputTask.ConfigureAwait(false);
             var error = await errorTask.ConfigureAwait(false);
 
-            return new CliResult(process.ExitCode, output, error);
+            // Windows console code pages may render the decorative em dash as an ASCII dash.
+            return new CliResult(process.ExitCode, output.Replace('—', '-'), error);
         }
 
         private static string GetMamBenchBookSection(string output)
         {
-            const string sectionStart = "[mambench] James Hunt — Powerless";
+            const string sectionStart = "[mambench] James Hunt - Powerless";
             const string sectionEnd = "[mambench] completed books=";
             var start = output.IndexOf(sectionStart, StringComparison.Ordinal);
             Assert.That(start, Is.GreaterThanOrEqualTo(0), "The CLI did not emit the MAM target book results." + Environment.NewLine + output);
@@ -575,7 +576,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
 
         private static string GetTargetBookSection(string output)
         {
-            const string sectionStart = "[releasereplay] James Hunt — Powerless";
+            const string sectionStart = "[releasereplay] James Hunt - Powerless";
             const string sectionEnd = "[releasereplay] completed books=";
             var start = output.IndexOf(sectionStart, StringComparison.Ordinal);
             Assert.That(start, Is.GreaterThanOrEqualTo(0), "The CLI did not emit the target book summary." + Environment.NewLine + output);

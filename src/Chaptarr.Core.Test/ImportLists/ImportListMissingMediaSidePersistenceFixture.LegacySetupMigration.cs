@@ -181,10 +181,7 @@ namespace Chaptarr.Core.Test.ImportLists
         private static void UpgradeLegacySetupDatabase(IMainDatabase database)
         {
             using var connection = database.OpenConnection();
-            var connectionString = database.DatabaseType == DatabaseType.PostgreSQL
-                ? new Npgsql.NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING"))
-                    { Database = connection.Database }.ConnectionString
-                : connection.ConnectionString;
+            var connectionString = connection.ConnectionString;
             new MigrationController(LogManager.GetCurrentClassLogger(), null)
                 .Migrate(connectionString, new MigrationContext(MigrationType.Main, 128), database.DatabaseType);
         }

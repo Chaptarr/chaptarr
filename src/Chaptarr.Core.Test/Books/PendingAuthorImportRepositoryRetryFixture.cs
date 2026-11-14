@@ -170,10 +170,7 @@ namespace Chaptarr.Core.Test.Books
                 string connectionString;
                 using (var connection = database.OpenConnection())
                 {
-                    connectionString = postgres
-                        ? new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING"))
-                            { Database = connection.Database, Pooling = false }.ConnectionString
-                        : connection.ConnectionString;
+                    connectionString = connection.ConnectionString;
                 }
                 action(repository, connectionString);
             });

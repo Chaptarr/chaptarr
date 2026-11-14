@@ -28,13 +28,13 @@ namespace NzbDrone.Core.Datastore.Migration
             while (true)
             {
                 var batch = connection.Query<ConversionIdentity>(@"SELECT ""Id"", ""DownloadId"", ""DownloadClientId"", ""RequestJson"" FROM ""ConversionJobs""
-                    WHERE ""Id"" > @afterId ORDER BY ""Id"" LIMIT 150", new { afterId }, transaction).ToList();
+                    WHERE ""Id"" > @afterId ORDER BY ""Id"" LIMIT 150", new { afterId }, transaction, commandTimeout: MigrationController.CommandTimeoutSeconds).ToList();
                 if (batch.Count == 0) break;
                 var keys = batch.Select(job => Download.DownloadIdentity.Key(job.DownloadId)).Distinct().ToArray();
                 var predicate = databaseType == DatabaseType.PostgreSQL ? "= ANY(@keys)" : "IN @keys";
                 var clients = connection.Query<ConversionIdentity>($@"SELECT ""DownloadId"", MIN(""DownloadClientId"") AS ""DownloadClientId""
                     FROM ""DownloadHistory"" WHERE ""DownloadId"" {predicate}
-                    GROUP BY ""DownloadId"" HAVING COUNT(DISTINCT ""DownloadClientId"") = 1", new { keys }, transaction)
+                    GROUP BY ""DownloadId"" HAVING COUNT(DISTINCT ""DownloadClientId"") = 1", new { keys }, transaction, commandTimeout: MigrationController.CommandTimeoutSeconds)
                     .ToDictionary(row => row.DownloadId, row => row.DownloadClientId);
                 var parameters = new DynamicParameters();
                 var keyCases = new List<string>();
@@ -203,8 +203,26 @@ namespace NzbDrone.Core.Datastore.Migration
             var timer = Stopwatch.StartNew();
             // This column previously mixed server-internal and local series IDs.
             // Fresh metadata supplies the Goodreads header identity after upgrade.
-            var count = connection.Execute("UPDATE \"Books\" SET \"SeriesId\" = NULL WHERE \"SeriesId\" IS NOT NULL",
-                transaction: transaction, commandTimeout: MigrationController.CommandTimeoutSeconds);
+            long afterId = long.MinValue;
+            var count = 0;
+            var pages = 0;
+            while (true)
+            {
+                var page = connection.Query<int>(@"SELECT ""Id"" FROM ""Books""
+                    WHERE ""Id"" > @afterId AND ""SeriesId"" IS NOT NULL ORDER BY ""Id"" LIMIT @batchSize",
+                    new { afterId, batchSize = SqliteVariableLimit.MaxParameters / 2 }, transaction,
+                    commandTimeout: MigrationController.CommandTimeoutSeconds).ToArray();
+                if (page.Length == 0) break;
+                count += connection.Execute(@"UPDATE ""Books"" SET ""SeriesId"" = NULL
+                    WHERE ""Id"" > @afterId AND ""Id"" <= @throughId AND ""SeriesId"" IS NOT NULL",
+                    new { afterId, throughId = page[^1] }, transaction,
+                    commandTimeout: MigrationController.CommandTimeoutSeconds);
+                afterId = page[^1];
+                pages++;
+                if (pages % 100 == 0)
+                    _logger.Info("Legacy book header reset progress: cleared {0} identifiers, pages {1}, elapsed {2} ms",
+                        count, pages, timer.ElapsedMilliseconds);
+            }
             _logger.Info("Cleared {0} legacy book header series identifiers in {1} ms", count, timer.ElapsedMilliseconds);
             return count;
         }

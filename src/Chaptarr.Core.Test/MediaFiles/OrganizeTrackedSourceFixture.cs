@@ -47,7 +47,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public bool DenyWrites { get; set; }
             public BookFileMovingService Mover { get; }
             public RenameBookFileService Renamer { get; }
-            public string P(string path) => Path.Combine(Temp, path);
+            public string P(string path) => Path.Combine(Temp, path.Replace('/', Path.DirectorySeparatorChar));
 
             public Sandbox(bool mixed = false)
             {

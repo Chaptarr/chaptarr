@@ -17,7 +17,6 @@ using Microsoft.Extensions.DependencyInjection;
 using NLog;
 using NLog.Config;
 using NLog.Targets;
-using Npgsql;
 using NUnit.Framework;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Datastore.Migration;
@@ -29,9 +28,9 @@ namespace Chaptarr.Core.Test.Datastore
     [NonParallelizable]
     public class MigrationRebuildBudgetFixture
     {
-        private sealed record CommandReceipt(int Version, string Sql, int Timeout, int Parameters, string Operation, long ElapsedMilliseconds);
+        internal sealed record CommandReceipt(int Version, string Sql, int Timeout, int Parameters, string Operation, long ElapsedMilliseconds);
 
-        private sealed class Capture
+        internal sealed class Capture
         {
             public int Version;
             public readonly List<CommandReceipt> Commands = new();
@@ -60,14 +59,11 @@ namespace Chaptarr.Core.Test.Datastore
             }
         }
 
-        private static void Upgrade(IMainDatabase database, bool postgres, long version, Capture capture, bool observeCommands = true)
+        internal static void Upgrade(IMainDatabase database, bool postgres, long version, Capture capture, bool observeCommands = true)
         {
             capture.Version = 0;
             using var connection = database.OpenConnection();
-            var connectionString = postgres
-                ? new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING"))
-                    { Database = connection.ExecuteScalar<string>("SELECT current_database();"), Pooling = false }.ConnectionString
-                : connection.ConnectionString;
+            var connectionString = connection.ConnectionString;
             using var provider = new ServiceCollection().AddFluentMigratorCore()
                 .ConfigureRunner(builder => builder.AddPostgres().AddSQLite().WithGlobalConnectionString(connectionString)
                     .ScanIn(typeof(rebuild_shared_comparison_keys).Assembly).For.All())

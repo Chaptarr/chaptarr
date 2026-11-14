@@ -182,6 +182,9 @@ def run_process(command, cwd, environment, log, timeout, cancelled):
 
 
 def isolated_runtime(assembly, directory, workspace):
+    # Use one real spelling for NUnit, the child process, and its temporary files,
+    # including Windows short-name aliases and macOS temporary-directory links.
+    directory, workspace = directory.resolve(strict=True), workspace.resolve(strict=True)
     runtime = directory / "runtime"
     # Independent files also isolate tests that change assembly timestamps.
     shutil.copytree(assembly.parent, runtime, ignore=shutil.ignore_patterns("Dump", "TestResults"))

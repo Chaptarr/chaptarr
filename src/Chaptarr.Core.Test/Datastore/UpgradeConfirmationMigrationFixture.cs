@@ -29,8 +29,7 @@ namespace Chaptarr.Core.Test.Datastore
             {
                 using var connection = database.OpenConnection();
                 connection.Execute(@"INSERT INTO ""QualityProfiles"" (""Name"", ""ProfileType"", ""Cutoff"", ""Items"", ""UpgradeAllowed"", ""MinFormatScore"", ""CutoffFormatScore"", ""FormatItems"") VALUES ('existing', 1, 0, '[]', @Enabled, 0, 0, '[]')", new { Enabled = true });
-                var migrationConnection = postgres ? new Npgsql.NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING"))
-                    { Database = connection.Database }.ConnectionString : connection.ConnectionString;
+                var migrationConnection = connection.ConnectionString;
                 void Upgrade() => new MigrationController(LogManager.GetCurrentClassLogger(), null).Migrate(
                     migrationConnection, new MigrationContext(MigrationType.Main, 124), database.DatabaseType);
                 Upgrade();

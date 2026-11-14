@@ -30,7 +30,8 @@ namespace NzbDrone.Common.Disk
 
         private string ResolveRealParentPath(string path)
         {
-            var parentPath = path.GetParentPath();
+            var normalizedPath = Path.GetFullPath(path).GetCleanPath();
+            var parentPath = normalizedPath.GetParentPath();
             if (!_diskProvider.FolderExists(parentPath))
             {
                 return path;
@@ -38,9 +39,10 @@ namespace NzbDrone.Common.Disk
 
             var realParentPath = parentPath.GetActualCasing();
 
-            var partialChildPath = path.Substring(parentPath.Length);
-
-            return realParentPath + partialChildPath;
+            // Derive both parts from the same normalized path so terminal dot components
+            // resolve to the selected folder. Expanding a short-name parent must not
+            // change where the child name starts.
+            return Path.Combine(realParentPath, Path.GetFileName(normalizedPath));
         }
 
         private static string DescribeMountRoot(IMount mount)

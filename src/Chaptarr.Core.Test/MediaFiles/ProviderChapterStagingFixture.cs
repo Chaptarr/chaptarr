@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using NLog;
 using NUnit.Framework;
@@ -202,8 +203,23 @@ namespace Chaptarr.Core.Test.MediaFiles
         public void worker_should_persist_chapter_failure_or_cancellation_and_clean_its_workspace(bool cancel)
         {
             if (TableMapping.Mapper.TableMap.Count == 0) TableMapping.Map();
+            using var timing = new ConversionJobServiceFixture.WorkerTiming();
             var repository = ConversionJobServiceFixture.CreateRepository(Path.Combine(_root, "jobs.db"));
-            var jobs = ConversionJobServiceFixture.CreateService(repository, _subject);
+            timing.Record("database created");
+            var started = new TaskCompletionSource<Task>(TaskCreationOptions.RunContinuationsAsynchronously);
+            ConversionJobService jobs = null;
+            var converter = Proxy<IM4bConversionService>((method, args) =>
+            {
+                if (method.Name == nameof(IM4bConversionService.ConvertToM4b))
+                {
+                    timing.Record("converter entered");
+                    started.SetResult(jobs.Completion.Workers);
+                }
+                Assert.That(method.Name, Is.EqualTo(nameof(IM4bConversionService.ConvertToM4b)));
+                try { return _subject.ConvertToM4b((string[])args[0], (string)args[1], (ConversionOptions)args[2]); }
+                finally { timing.Record("converter returned"); }
+            });
+            jobs = ConversionJobServiceFixture.CreateService(timing.Observe(repository), converter, logger: timing.Logger);
             var request = new ConversionJobRequest
             {
                 DownloadId = "download",
@@ -223,14 +239,22 @@ namespace Chaptarr.Core.Test.MediaFiles
                 TagOptions = _options.TagOptions,
                 TagSignature = "provider chapters"
             };
-            if (cancel) _afterChapterWrite = () => Assert.That(jobs.Cancel(request.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
+            if (cancel) _afterChapterWrite = () =>
+            {
+                timing.Record("chapter written; cancellation requested");
+                Assert.That(jobs.Cancel(request.DownloadId, ConversionRemovalOrigin.UserAction), Is.True);
+                timing.Record("cancellation saved");
+            };
             else Directory.CreateDirectory(Path.Combine(_metadata, "chapters.txt"));
             try
             {
                 jobs.Handle(new ApplicationStartedEvent());
                 jobs.Enqueue(request);
                 var expected = cancel ? ConversionJobStatus.Cancelled : ConversionJobStatus.Failed;
-                Assert.That(SpinWait.SpinUntil(() => repository.FindByDownloadId(request.DownloadId)?.Status == expected && !Directory.Exists(request.WorkRoot), TimeSpan.FromSeconds(10)), Is.True);
+                // One existing ten-second budget covers dispatch, persistence and cleanup.
+                Assert.That(started.Task.Unwrap().Wait(TimeSpan.FromSeconds(10)), Is.True, timing.Details);
+                Assert.That(repository.FindByDownloadId(request.DownloadId)?.Status, Is.EqualTo(expected));
+                Assert.That(Directory.Exists(request.WorkRoot), Is.False);
                 Assert.That(_toolCalls, Is.Zero);
                 Assert.That(File.Exists(_output), Is.False);
                 if (!cancel) Assert.That(repository.FindByDownloadId(request.DownloadId).Error, Does.Contain("Unable to prepare provider chapters"));
@@ -238,7 +262,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
             finally
             {
-                jobs.Handle(new ApplicationShutdownRequested());
+                ConversionJobServiceFixture.ShutdownAndWait(jobs);
                 SqliteConnection.ClearAllPools();
             }
         }

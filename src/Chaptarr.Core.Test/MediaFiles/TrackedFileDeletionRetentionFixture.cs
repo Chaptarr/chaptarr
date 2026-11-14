@@ -68,6 +68,10 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var path = Path.Combine(directory, mediaType == BookMediaType.Audiobook ? "Earthsea.m4b" : "Earthsea.epub");
                     var physicalPath = scenario == "near" ? path.Replace("Earthsea", "earthsea") : path;
                     if (scenario != "missing") File.WriteAllText(physicalPath, "keep or explicitly delete this recording");
+                    if (scenario == "near" && File.Exists(path))
+                    {
+                        Assert.Ignore("This filesystem resolves the differently cased path to the same file; the uncertain-neighbor case requires case-sensitive filenames.");
+                    }
                     var file = files.Insert(new BookFile { Path = path, EditionId = edition.Id, MediaType = mediaType.ToString().ToLowerInvariant(),
                         Quality = new QualityModel(), MediaInfo = new MediaInfoModel(), DateAdded = DateTime.UtcNow, Modified = DateTime.UtcNow });
                     var realDisk = RealDiskProvider.Create(logger);

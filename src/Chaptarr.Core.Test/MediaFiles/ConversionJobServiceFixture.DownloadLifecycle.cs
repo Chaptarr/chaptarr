@@ -71,8 +71,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    worker.Handle(new ApplicationShutdownRequested());
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(worker);
+                    ShutdownAndWait(service);
                     Directory.Delete(directory, true);
                 }
             });
@@ -115,7 +115,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    worker.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(worker);
                     Directory.Delete(directory, true);
                 }
             });
@@ -143,7 +143,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    worker.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(worker);
                     Directory.Delete(directory, true);
                 }
             });
@@ -176,7 +176,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    worker.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(worker);
                     Directory.Delete(directory, true);
                 }
             });

@@ -37,8 +37,7 @@ namespace Chaptarr.Core.Test.Datastore
                                        OnGrab = true
                                    })).ToList();
                 using var connection = database.OpenConnection();
-                var migrationConnection = postgres ? new Npgsql.NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("CHAPTARR_TEST_POSTGRES_CONNECTION_STRING"))
-                    { Database = connection.Database }.ConnectionString : connection.ConnectionString;
+                var migrationConnection = connection.ConnectionString;
                 void Upgrade() => new MigrationController(LogManager.GetCurrentClassLogger(), null).Migrate(
                     migrationConnection, new MigrationContext(MigrationType.Main, 128),
                     postgres ? DatabaseType.PostgreSQL : DatabaseType.SQLite);
