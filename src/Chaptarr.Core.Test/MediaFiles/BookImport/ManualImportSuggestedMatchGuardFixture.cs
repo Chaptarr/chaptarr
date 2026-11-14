@@ -146,6 +146,22 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
             Assert.That(accepted, Is.False);
             Assert.That(rejectionReason, Does.Contain("Edition must be selected"));
+            Assert.That(rejectionReason, Does.Contain("editionId is missing"));
+            Assert.That(rejectionReason, Does.Contain("GET /api/v1/edition?bookId=10"));
+            Assert.That(rejectionReason, Does.Not.Contain("foreignEditionId"));
+        }
+
+        [Test]
+        public void should_explain_that_foreign_edition_id_is_not_used_for_a_library_book()
+        {
+            var book = new Book { Id = 10, AuthorId = 7, Title = "Selected Book" };
+
+            var accepted = ManualImportService.ManualEditionSelectionMatchesBook(null, book, 0, out var rejectionReason, " hc:edition:30447586-audiobook ");
+
+            Assert.That(accepted, Is.False);
+            Assert.That(rejectionReason, Does.Contain("Edition must be selected"));
+            Assert.That(rejectionReason, Does.Contain("foreignEditionId 'hc:edition:30447586-audiobook' is only used for metadata suggestions"));
+            Assert.That(rejectionReason, Does.Contain("GET /api/v1/edition?bookId=10"));
         }
 
         [Test]
