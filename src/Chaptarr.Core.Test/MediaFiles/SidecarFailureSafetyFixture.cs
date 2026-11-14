@@ -121,7 +121,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     }
                     throw new NotImplementedException(m.Name);
                 });
-                var factory = Proxy<IMetadataFactory>((m, a) => m.Name == "GetAvailableProviders" ? new List<IMetadata> { new AudioBookShelfMetadata(null, null, null) } : throw new NotImplementedException(m.Name));
+                var factory = Proxy<IMetadataFactory>((m, a) => m.Name == "GetAvailableProviders" ? new List<IMetadata> { new AudioBookShelfMetadata(null, null, null, null) } : throw new NotImplementedException(m.Name));
                 var config = Proxy<IConfigService>((m, a) => m.Name == "get_CopyUsingHardlinks" ? Hardlinks : throw new NotImplementedException(m.Name));
                 new MetadataService(config, Disk, null, null, null, factory, null, null, null, metadataFiles, null, Logger).MoveFilesAfterRename(Author, files.Select(item => new RenamedBookFile
                 {

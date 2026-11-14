@@ -180,7 +180,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var events = new Events();
                 if (tracked)
                 {
-                    var consumer = new AudioBookShelfMetadata(null, null, null);
+                    var consumer = new AudioBookShelfMetadata(null, null, null, null);
                     var rows = new List<MetadataFile>
                     {
                         new MetadataFile

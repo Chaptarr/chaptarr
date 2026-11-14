@@ -157,7 +157,7 @@ namespace Chaptarr.Core.Test.Extras.Metadata
                 var root = new RootFolder { Id = 1, Path = @"C:\Library".AsOsAgnostic(), FolderType = FolderType.Mixed };
                 root.SetAudiobookSettings(new MediaTypeSettings { WriteAudioBookShelfCover = true });
                 root.SetEbookSettings(new MediaTypeSettings { WriteAudioBookShelfCover = true });
-                var consumer = new AudioBookShelfMetadata(Proxy<IRootFolderService>((method, args) => root), null, null)
+                var consumer = new AudioBookShelfMetadata(Proxy<IRootFolderService>((method, args) => root), null, null, null)
                 {
                     Definition = new MetadataDefinition { Settings = new AudioBookShelfMetadataSettings() }
                 };

@@ -264,6 +264,9 @@ class AuthorDetails extends Component {
       previousAuthor,
       nextAuthor,
       onRefreshPress,
+      onSyncFromAudioBookShelfPress,
+      audioBookShelfKeepsMetadata,
+      isSyncingFromAudioBookShelf,
       onSearchPress,
       isSaving,
       saveError,
@@ -354,6 +357,19 @@ class AuthorDetails extends Component {
               isDisabled={!hasBookFiles}
               onPress={this.onRetagPress}
             />
+
+            {
+              audioBookShelfKeepsMetadata ?
+                <PageToolbarButton
+                  label={translate('SyncFromAudioBookShelf')}
+                  title={translate('SyncFromAudioBookShelfHelpText')}
+                  iconName={icons.LINK}
+                  isDisabled={!hasBookFiles}
+                  isSpinning={isSyncingFromAudioBookShelf}
+                  onPress={onSyncFromAudioBookShelfPress}
+                /> :
+                null
+            }
 
             <PageToolbarButton
               label={translate('ManualImport')}
@@ -750,6 +766,9 @@ AuthorDetails.propTypes = {
   syncMonitoredAcrossFormats: PropTypes.bool,
   filterValue: PropTypes.string,
   onRefreshPress: PropTypes.func.isRequired,
+  onSyncFromAudioBookShelfPress: PropTypes.func,
+  audioBookShelfKeepsMetadata: PropTypes.bool,
+  isSyncingFromAudioBookShelf: PropTypes.bool,
   onMediaTypeChange: PropTypes.func.isRequired,
   onAuthorAdded: PropTypes.func.isRequired,
   onSearchPress: PropTypes.func.isRequired,
