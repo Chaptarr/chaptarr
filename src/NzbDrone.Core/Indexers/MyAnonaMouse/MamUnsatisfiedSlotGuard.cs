@@ -42,6 +42,11 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         // MAM documents a 5-20 minute lag before snatches reach account summaries. Keep counting locally through the full window.
         private static readonly TimeSpan SummaryAccountingLag = TimeSpan.FromMinutes(20);
 
+        // A retried release refreshes its accounting window (see Evaluate), so a
+        // permanently failing grab would otherwise keep its reservation alive forever
+        // and hold the account over the limit. No reservation outlives this.
+        internal static readonly TimeSpan MaximumReservationLifetime = TimeSpan.FromHours(24);
+
         private readonly IIndexerFactory _indexerFactory;
         private readonly IMamUnsatisfiedSlotReservationRepository _repository;
         private readonly Logger _logger;
@@ -83,6 +88,26 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             }
 
             var reservations = GetAccountReservations(definition, settings);
+
+            var utcNow = DateTime.UtcNow;
+            foreach (var reservation in reservations.Where(r =>
+                         utcNow - (r.FirstReservedUtc ?? r.ReservedUtc) >= MaximumReservationLifetime))
+            {
+                lock (_reservationLock)
+                {
+                    var current = _repository.Find(reservation.IndexerId, reservation.TorrentId);
+                    if (current != null &&
+                        utcNow - (current.FirstReservedUtc ?? current.ReservedUtc) >= MaximumReservationLifetime)
+                    {
+                        _repository.Delete(current.Id);
+                        _logger.Info(
+                            "Retired MAM slot reservation for torrent {0} on indexer '{1}': it exceeded the maximum reservation lifetime of {2} hours without being satisfied",
+                            current.TorrentId,
+                            definition.Name,
+                            MaximumReservationLifetime.TotalHours);
+                    }
+                }
+            }
 
             // This does not infer that a torrent became satisfied. Once MAM's own snapshot covers the
             // latest attempt plus its documented accounting lag, a served torrent is in the reported
@@ -154,6 +179,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             {
                 if (reserve && !existingReservation.ConfirmedUtc.HasValue)
                 {
+                    existingReservation.FirstReservedUtc ??= existingReservation.ReservedUtc;
                     existingReservation.ReservedUtc = DateTime.UtcNow;
                     _repository.Update(existingReservation);
                 }
@@ -190,7 +216,8 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 {
                     IndexerId = definition.Id,
                     TorrentId = torrentId,
-                    ReservedUtc = now
+                    ReservedUtc = now,
+                    FirstReservedUtc = now
                 });
             }
 
