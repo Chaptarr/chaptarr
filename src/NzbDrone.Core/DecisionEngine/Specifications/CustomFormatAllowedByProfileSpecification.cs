@@ -1,4 +1,5 @@
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Download;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.Parser.Model;
 
@@ -6,12 +7,14 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 {
     public class CustomFormatAllowedbyProfileSpecification : IDecisionEngineSpecification
     {
+        internal const string RejectionCategory = "CustomFormat";
+
         public SpecificationPriority Priority => SpecificationPriority.Default;
         public RejectionType Type => RejectionType.Permanent;
 
         public virtual Decision IsSatisfiedBy(RemoteBook subject, SearchCriteriaBase searchCriteria)
         {
-            var profile = subject.Author.GetQualityProfileForQuality(subject.ParsedBookInfo.Quality.Quality);
+            var profile = subject.GetQualityProfile();
             if (profile == null)
             {
                 return Decision.Reject("No quality profile configured for {0} files", subject.ParsedBookInfo.Quality.Quality.Name);
@@ -22,7 +25,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
             if (score < minScore)
             {
-                return Decision.Reject("Custom Formats {0} have score {1} below Author profile minimum {2}", subject.CustomFormats.ConcatToString(), score, minScore);
+                return Decision.RejectHardFilter("Custom Formats {0} have score {1} below Author profile minimum {2}", RejectionCategory, subject.CustomFormats.ConcatToString(), score, minScore);
             }
 
             return Decision.Accept();

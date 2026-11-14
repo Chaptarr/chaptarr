@@ -47,6 +47,7 @@ namespace NzbDrone.Core.Qualities
         public void UpdateMany(List<QualityDefinition> qualityDefinitions)
         {
             _repo.UpdateMany(qualityDefinitions);
+            _cache.Clear();
         }
 
         public List<QualityDefinition> All()

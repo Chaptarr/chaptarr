@@ -12,6 +12,7 @@ namespace NzbDrone.Core.Books
 
         public BookAddType AddType { get; set; }
         public bool SearchForNewBook { get; set; }
+        public bool? MonitorBook { get; set; }
     }
 
     public enum BookAddType

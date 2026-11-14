@@ -4,6 +4,7 @@ import BookFormats from 'Book/BookFormats';
 import BookQuality from 'Book/BookQuality';
 import IndexerFlags from 'Book/IndexerFlags';
 import FileDetails from 'BookFile/FileDetails';
+import AudioProductionSelectInput from 'Components/Form/AudioProductionSelectInput';
 import Icon from 'Components/Icon';
 import Label from 'Components/Label';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
@@ -50,8 +51,19 @@ class InteractiveImportRow extends Component {
       book,
       editionId,
       quality,
-      size
+      size,
+      isSelected,
+      selectByDefault
     } = this.props;
+
+    if (isSelected !== undefined) {
+      return;
+    }
+
+    if (selectByDefault === false) {
+      this.props.onSelectedChange({ id, value: false });
+      return;
+    }
 
     const hasAuthor = !!(author && author.id > 0);
     const hasBook = !!(book && book.id > 0);
@@ -59,7 +71,7 @@ class InteractiveImportRow extends Component {
     if (
       quality &&
       size > 0 &&
-      hasAuthor && hasBook && editionId
+      (selectByDefault === true || (hasAuthor && hasBook && editionId))
     ) {
       this.props.onSelectedChange({ id, value: true });
     }
@@ -389,6 +401,12 @@ class InteractiveImportRow extends Component {
         <TableRowCell
           className={styles.quality}
         >
+          {this.getMediaTypeFromQuality(quality) === 'audiobook' &&
+            <div>
+              {translate((this.props.audioProductionOverride ?? this.props.isGraphicAudio) ? 'RecordingTypeDramatized' : 'RecordingTypeStandard')}
+              <AudioProductionSelectInput value={this.props.audioProductionOverride} onChange={({ value }) => this.props.onAudioProductionChange(value)} />
+            </div>
+          }
           {
             showQualityPlaceholder &&
               <InteractiveImportRowCellPlaceholder />
@@ -557,6 +575,9 @@ class InteractiveImportRow extends Component {
 
 InteractiveImportRow.propTypes = {
   id: PropTypes.number.isRequired,
+  audioProductionOverride: PropTypes.bool,
+  isGraphicAudio: PropTypes.bool,
+  onAudioProductionChange: PropTypes.func.isRequired,
   allowAuthorChange: PropTypes.bool.isRequired,
   path: PropTypes.string.isRequired,
   author: PropTypes.object,
@@ -582,6 +603,7 @@ InteractiveImportRow.propTypes = {
   additionalFile: PropTypes.bool.isRequired,
   isReprocessing: PropTypes.bool,
   isSelected: PropTypes.bool,
+  selectByDefault: PropTypes.bool,
   onSelectedChange: PropTypes.func.isRequired,
   onValidRowChange: PropTypes.func.isRequired
 };

@@ -79,6 +79,48 @@ namespace Chaptarr.Core.Test.ImportLists.Chaptarr
             Assert.That(items.Select(item => item.BookProviderId), Is.EqualTo(new[] { "hc:book" }));
         }
 
+        [TestCase("false", "hc:book:edition", null)]
+        [TestCase("true", null, null)]
+        [TestCase("null", null, null)]
+        [TestCase("", null, null)]
+        public void should_transfer_only_the_senders_explicit_edition_selection(string anyEditionOk, string expectedEdition, int? expectedFormat)
+        {
+            var proxy = new StubProxy();
+            proxy.Authors.Add(new ChaptarrAuthor { Id = 1, ForeignAuthorId = "hc:author", AuthorName = "Remote Author", Monitored = true });
+            proxy.Books.Add(Newtonsoft.Json.JsonConvert.DeserializeObject<ChaptarrBook>(
+                "{\"title\":\"Remote Book\",\"foreignBookId\":\"hc:book\",\"foreignEditionId\":\"hc:book:edition\",\"authorId\":1,\"mediaType\":\"audiobook\",\"monitored\":true" +
+                (anyEditionOk.Length == 0 ? string.Empty : ",\"anyEditionOk\":" + anyEditionOk) + "}"));
+
+            var item = BuildImport(proxy).Fetch().Single();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(item.BookProviderId, Is.EqualTo("hc:book"));
+                Assert.That(item.EditionProviderId, Is.EqualTo(expectedEdition));
+                Assert.That(item.HardcoverReadingFormatId, Is.EqualTo(expectedFormat));
+            });
+        }
+
+        [TestCase(1, "Source Narrator", false)]
+        [TestCase(2, null, false)]
+        [TestCase(2, "Source Narrator", true)]
+        [TestCase(3, "Source Narrator", false)]
+        [TestCase(4, "Source Narrator", false)]
+        public void explicit_pin_should_preserve_actual_source_format_and_narration_evidence(int format, string narrator, bool hasNarration)
+        {
+            var proxy = new StubProxy();
+            proxy.Authors.Add(new ChaptarrAuthor { Id = 1, ForeignAuthorId = "hc:author", Monitored = true });
+            var book = BuildBook("Remote Book", "hc:book", "audiobook");
+            book.AnyEditionOk = false;
+            book.Editions = new List<ChaptarrEdition> { new() { ForeignEditionId = book.ForeignEditionId, ReadingFormatId = format, Narrator = narrator } };
+            proxy.Books.Add(book);
+            var report = BuildImport(proxy).Fetch().Single();
+            Assert.That(report.EditionProviderId, Is.EqualTo(book.ForeignEditionId));
+            Assert.That(report.HardcoverReadingFormatId, Is.EqualTo(format));
+            Assert.That(report.EditionHasNarration, Is.EqualTo(hasNarration));
+            Assert.That(report.EditionNarratorNames, Is.EqualTo(hasNarration ? new[] { narrator } : null));
+        }
+
         private static ChaptarrImport BuildImport(IChaptarrV1Proxy proxy)
         {
             return new ChaptarrImport(
@@ -86,6 +128,11 @@ namespace Chaptarr.Core.Test.ImportLists.Chaptarr
                 new StubStatusService(),
                 configService: null,
                 parsingService: null,
+                qualityProfileService: null,
+                metadataProfileService: null,
+                tagService: null,
+                rootFolderService: null,
+                rootFolderSettingsResolver: null,
                 logger: LogManager.GetCurrentClassLogger())
             {
                 Definition = new ImportListDefinition

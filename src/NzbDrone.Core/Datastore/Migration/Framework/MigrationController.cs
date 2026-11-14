@@ -19,6 +19,8 @@ namespace NzbDrone.Core.Datastore.Migration.Framework
 
     public class MigrationController : IMigrationController
     {
+        public const int CommandTimeoutSeconds = 300;
+
         private readonly Logger _logger;
         private readonly ILoggerProvider _migrationLoggerProvider;
 
@@ -55,7 +57,7 @@ namespace NzbDrone.Core.Datastore.Migration.Framework
                 .Configure<ProcessorOptions>(opt =>
                 {
                     opt.PreviewOnly = false;
-                    opt.Timeout = TimeSpan.FromMinutes(5);
+                    opt.Timeout = TimeSpan.FromSeconds(CommandTimeoutSeconds);
                 })
                 .Configure<SelectingProcessorAccessorOptions>(cfg =>
                 {

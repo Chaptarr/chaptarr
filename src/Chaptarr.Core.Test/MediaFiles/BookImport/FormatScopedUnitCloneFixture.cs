@@ -35,7 +35,18 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
 	        private sealed class StubMediaFileService : IMediaFileService
 	        {
+	            public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
+	                System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+	                => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
+
+	            public void ReplaceMany(System.Collections.Generic.List<BookFile> bookFiles, System.Collections.Generic.List<BookFile> replacedFiles,
+	                DeleteMediaFileReason reason, System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+	                System.Action<System.Action<System.Data.IDbConnection, System.Data.IDbTransaction>> persist)
+	                => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
+
             private readonly Dictionary<int, List<BookFile>> _filesByBookId;
+            public int BulkReads { get; private set; }
+            public int SingleReads { get; private set; }
 
             public StubMediaFileService(Dictionary<int, List<BookFile>> filesByBookId)
             {
@@ -44,18 +55,30 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
             public List<BookFile> GetFilesByBook(int bookId)
             {
+                SingleReads++;
                 return _filesByBookId.TryGetValue(bookId, out var files) ? files : new List<BookFile>();
             }
 
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
             public void AddMany(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Update(BookFile bookFile) => throw new NotImplementedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+
             public void Update(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public List<IFileInfo> FilterUnchangedFiles(List<IFileInfo> files, FilterFilesType filter) => files;
             public List<BookFile> GetFilesByAuthor(int authorId) => throw new NotImplementedException();
-            public List<BookFile> GetFilesByBooks(List<int> bookIds) => throw new NotImplementedException();
+            public List<BookFile> GetFilesByBooks(List<int> bookIds)
+            {
+                BulkReads++;
+                return bookIds.SelectMany(id => (_filesByBookId.GetValueOrDefault(id) ?? new List<BookFile>())
+                    .Select(file =>
+                    {
+                        file.Edition = new Edition { Id = file.EditionId, BookId = id };
+                        return file;
+                    })).ToList();
+            }
             public List<BookFile> GetFilesByEdition(int editionId) => throw new NotImplementedException();
             public List<BookFile> GetUnmappedFiles() => throw new NotImplementedException();
             public BookFile Get(int id) => throw new NotImplementedException();
@@ -70,6 +93,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
         private sealed class InMemoryBookService : IBookService
         {
+            public List<Book> GetImportListBookIdentities() => GetAllBooks();
+
+            public int CatalogReads { get; private set; }
             private readonly Dictionary<int, Book> _booksById = new Dictionary<int, Book>();
             private readonly Dictionary<string, int> _idBySlug = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             private int _nextId = 1000;
@@ -103,11 +129,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 }
             }
 
-            public Book FindBySlug(string titleSlug)
-            {
-                if (string.IsNullOrWhiteSpace(titleSlug)) return null;
-                return _idBySlug.TryGetValue(titleSlug, out var id) ? GetBook(id) : null;
-            }
+            public List<Book> FindBySlug(string titleSlug) =>
+                !string.IsNullOrWhiteSpace(titleSlug) && _idBySlug.TryGetValue(titleSlug, out var id)
+                    ? new List<Book> { GetBook(id) } : new List<Book>();
 
             public Book FindByTitle(int authorId, string title)
             {
@@ -119,8 +143,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             }
 
             public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new NotImplementedException();
-            public List<Book> GetBooksByAuthor(int authorId)
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false)
             {
+                CatalogReads++;
                 return _booksById.Values
                     .Where(b => b != null && b.AuthorId == authorId)
                     .ToList();
@@ -141,6 +166,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<Book> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false) => throw new NotImplementedException();
             public List<Book> GetAllBooks() => throw new NotImplementedException();
+	            public Book UpdateBook(Book book, List<Edition> editionUpdates, string monitoredMediaType = null, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated = null) => throw new System.NotSupportedException();
 	            public Book UpdateBook(Book book) => throw new NotImplementedException();
             public void SetBookMonitored(int bookId, bool monitored) => throw new NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
@@ -154,12 +180,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 	                InsertMany(books);
 	            }
 	            public void UpdateMany(List<Book> books) => throw new NotImplementedException();
-	            public void DeleteMany(List<Book> books) => throw new NotImplementedException();
+	            public void DeleteMany(List<Book> books, bool filesAlreadyDeleted = false, List<NzbDrone.Core.MediaFiles.BookFile> deletedBookFiles = null) => throw new NotImplementedException();
             public void SetAddOptions(IEnumerable<Book> books) => throw new NotImplementedException();
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public (Book Book, bool ExistingCopy) AddWantedEditionCopy(int bookId, int editionId) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -223,15 +249,19 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             {
                 InsertMany(editions);
             }
+            public void UpdateMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, Edition selectedEdition = null) => throw new System.NotSupportedException();
 	            public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
 	            public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
             public List<Edition> GetEditionsByBook(IEnumerable<int> bookIds) => throw new NotImplementedException();
-            public List<Edition> GetEditionsByAuthor(int authorId) => throw new NotImplementedException();
+            public List<Edition> GetEditionsByAuthor(int authorId, bool onlyMonitored = false) => throw new NotImplementedException();
             public Edition FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false) => throw new NotImplementedException();
+
+            public void RefreshProviderAliases(List<Edition> editions) { }
+            public void UpdateSelection(List<Edition> editions) => UpdateMany(editions);
         }
 
         [Test]
@@ -298,6 +328,89 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var destMp3 = unitDestination.ResolveDestinationForUnit(canonicalBook, editionMp3, BuildDestKey(mp3Path));
             Assert.That(destMp3.Item1, Is.Not.EqualTo(canonicalBook.Id));
             Assert.That(destMp3.Item2, Is.Not.EqualTo(editionMp3.Id));
+        }
+
+        [TestCase("VII")]
+        [TestCase("7")]
+        public void complete_uploads_should_keep_separate_destinations_even_when_they_match_the_same_edition(string secondNumber)
+        {
+            var book = new Book { Id = 1758, AuthorId = 32, Title = "Wild Cards VII: Dead Man's Hand",
+                TitleSlug = "wild-cards-vii-dead-mans-hand", MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
+            var edition = new Edition { Id = 4608, BookId = book.Id, Title = book.Title,
+                ForeignEditionId = "gr:constructed-upload-edition", DurationSeconds = 36000 };
+            var files = new[] { "VII", secondNumber }.SelectMany((number, upload) =>
+                Enumerable.Range(1, 12).Select(track => new BookFile
+                {
+                    Id = upload * 12 + track,
+                    Path = $"/incoming/upload-{upload + 1}/Wild Cards {number} - Dead Man's Hand - {track:00}.mp3",
+                    MediaType = "audiobook",
+                    DurationSeconds = 3000,
+                    AllTags = new Dictionary<string, List<string>>
+                    {
+                        ["ARTIST"] = new() { "George R.R. Martin" },
+                        ["ALBUM"] = new() { $"Wild Cards {number}: Dead Man's Hand" },
+                        ["TITLE"] = new() { $"Wild Cards {number}: Dead Man's Hand - Chapter {track}" },
+                        ["TRACKNUMBER"] = new() { track.ToString(System.Globalization.CultureInfo.InvariantCulture) }
+                    }
+                })).ToArray();
+            var units = BookImportUnitGroupingService.BuildUnmappedUnits(files, _ => "/incoming");
+            Assert.That(units, Has.Count.EqualTo(2));
+            Assert.That(units.All(unit => unit.Files.Count == 12 && unit.Files.Sum(file => file.DurationSeconds) == edition.DurationSeconds), Is.True);
+
+            var filesByBook = new Dictionary<int, List<BookFile>>();
+            var editions = new InMemoryEditionService(new[] { edition });
+            var service = new BookUnitDestinationService(new StubMediaFileService(filesByBook),
+                new InMemoryBookService(new[] { book }), editions, new StubMainDatabase(), LogManager.GetCurrentClassLogger());
+            var destinations = new List<(int BookId, int EditionId)>();
+            foreach (var unit in units)
+            {
+                var key = service.BuildRootUnitKeyWithExtension(unit.Files[0].Path, edition.Title, book.MediaType);
+                var destination = service.ResolveDestinationForUnit(book, edition, key);
+                destinations.Add(destination);
+                foreach (var file in unit.Files)
+                {
+                    file.EditionId = destination.EditionId;
+                    file.Edition = editions.GetEdition(destination.EditionId);
+                }
+
+                filesByBook[destination.BookId] = unit.Files.ToList();
+                Assert.That(service.ResolveDestinationForUnit(book, edition, key), Is.EqualTo(destination));
+                Assert.That(editions.GetEdition(destination.EditionId).ForeignEditionId, Is.EqualTo(edition.ForeignEditionId));
+            }
+
+            Assert.That(destinations.Select(destination => destination.BookId).Distinct().Count(), Is.EqualTo(2));
+            Assert.That(filesByBook.Values.All(copy => copy.Count == 12), Is.True);
+        }
+
+        [Test]
+        public void complete_recordings_in_one_folder_should_remain_separate_after_rescan()
+        {
+            var book = new Book { Id = 1758, AuthorId = 32, Title = "Wild Cards VII: Dead Man's Hand",
+                TitleSlug = "wild-cards-vii", BaseBookId = "gr:constructed-work", MediaType = BookMediaType.Audiobook, AnyEditionOk = true };
+            var edition = new Edition { Id = 4608, BookId = book.Id, Title = book.Title,
+                ForeignEditionId = "gr:constructed-upload-edition", DurationSeconds = 36000 };
+            var filesByBook = new Dictionary<int, List<BookFile>>();
+            var editions = new InMemoryEditionService(new[] { edition });
+            var books = new InMemoryBookService(new[] { book });
+            BookUnitDestinationService NewService() => new(new StubMediaFileService(filesByBook), books, editions,
+                new StubMainDatabase(), LogManager.GetCurrentClassLogger());
+            var service = NewService();
+            var expected = new List<(string Key, int BookId, int EditionId)>();
+            for (var copy = 1; copy <= 2; copy++)
+            {
+                var path = $"/incoming/complete/Wild Cards VII - Recording {copy}.mp3";
+                var key = BookCoalescingHelper.BuildPerFileUnitKey(path, edition.Title, book.MediaType);
+                var destination = service.ResolveDestinationForUnit(book, edition, key);
+                expected.Add((key, destination.BookId, destination.EditionId));
+                filesByBook[destination.BookId] = new List<BookFile> { new() { Path = path, DurationSeconds = 36000,
+                    EditionId = destination.EditionId, Edition = editions.GetEdition(destination.EditionId) } };
+            }
+            Assert.That(expected.Select(value => value.BookId).Distinct().Count(), Is.EqualTo(2));
+            service = NewService();
+            foreach (var value in expected)
+            {
+                Assert.That(service.ResolveDestinationForUnit(book, edition, value.Key), Is.EqualTo((value.BookId, value.EditionId)));
+            }
         }
 
         [Test]
@@ -389,8 +502,10 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(destination.Item2, Is.EqualTo(cloneEdition.Id));
         }
 
-        [Test]
-        public void should_prefer_existing_empty_targeted_clone_with_matching_edition_identity_over_fileless_generic_canonical()
+        [TestCase(true, false)]
+        [TestCase(false, false)]
+        [TestCase(true, true)]
+        public void should_reuse_empty_clone_only_when_the_matched_edition_is_eligible(bool pinned, bool otherEditionSelected)
         {
             var logger = LogManager.GetCurrentClassLogger();
 
@@ -413,8 +528,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 TitleSlug = "dune_wanted_42",
                 BaseBookId = "dune",
                 MediaType = BookMediaType.Audiobook,
-                AnyEditionOk = false,
-                WantedNarratorId = 42
+                AnyEditionOk = !pinned,
+                WantedNarratorId = pinned ? 42 : null
             };
 
             var canonicalEdition = new Edition
@@ -433,12 +548,17 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Title = "Dune",
                 TitleSlug = "dune-main-targeted",
                 ForeignEditionId = "az:ed:dune-main",
-                Monitored = true
+                Monitored = !otherEditionSelected
             };
 
             var mediaFileService = new StubMediaFileService(new Dictionary<int, List<BookFile>>());
             var bookService = new InMemoryBookService(new[] { canonicalBook, targetedClone });
-            var editionService = new InMemoryEditionService(new[] { canonicalEdition, targetedEdition });
+            var editions = new List<Edition> { canonicalEdition, targetedEdition };
+            if (otherEditionSelected)
+            {
+                editions.Add(new Edition { Id = 6002, BookId = targetedClone.Id, ForeignEditionId = "az:ed:other-recording", Monitored = true });
+            }
+            var editionService = new InMemoryEditionService(editions);
 
             var unitDestination = new BookUnitDestinationService(
                 mediaFileService: mediaFileService,
@@ -450,8 +570,18 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var unitKey = unitDestination.BuildRootUnitKeyWithExtension("/incoming/Dune/Dune.m4b", canonicalBook.Title, canonicalBook.MediaType);
             var destination = unitDestination.ResolveDestinationForUnit(canonicalBook, canonicalEdition, unitKey);
 
-            Assert.That(destination.Item1, Is.EqualTo(targetedClone.Id), "empty targeted clone should win over a fileless generic canonical row when it carries the matched edition");
-            Assert.That(destination.Item2, Is.EqualTo(targetedEdition.Id));
+            Assert.That(destination.Item1, Is.EqualTo(otherEditionSelected ? canonicalBook.Id : targetedClone.Id));
+            Assert.That(destination.Item2, Is.EqualTo(otherEditionSelected ? canonicalEdition.Id : targetedEdition.Id));
+            Assert.That(bookService.CatalogReads, Is.EqualTo(1));
+            Assert.That(mediaFileService.BulkReads, Is.EqualTo(1));
+            Assert.That(mediaFileService.SingleReads, Is.Zero);
+
+            if (!otherEditionSelected)
+            {
+                var otherUnitKey = unitDestination.BuildRootUnitKeyWithExtension("/incoming/AnotherCopy/Dune.m4b", canonicalBook.Title, canonicalBook.MediaType);
+                var otherDestination = unitDestination.ResolveDestinationForUnit(canonicalBook, canonicalEdition, otherUnitKey);
+                Assert.That(otherDestination.Item1, Is.EqualTo(canonicalBook.Id), "the empty copy already assigned to another physical unit is reserved");
+            }
         }
 
         [Test]
@@ -623,8 +753,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             Assert.That(currentEdition.ManualAdd, Is.True);
         }
 
-        [Test]
-        public void should_clone_only_the_selected_edition_for_new_unit_destinations()
+        [TestCase("hc:edition:123")]
+        [TestCase("gr:123-audiobook")]
+        public void should_clone_only_the_selected_edition_for_new_unit_destinations(string foreignEditionId)
         {
             var logger = LogManager.GetCurrentClassLogger();
 
@@ -645,8 +776,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 BookId = canonicalBook.Id,
                 Title = "Dune",
                 TitleSlug = "dune-main",
-                ForeignEditionId = "az:ed:dune-main",
-                AudibleASIN = "B000TEST01"
+                ForeignEditionId = foreignEditionId,
+                Asins = new List<string> { "B000TEST01", "B000TEST02" }
             };
 
             var siblingEdition = new Edition
@@ -685,7 +816,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
             Assert.That(destination.Item1, Is.Not.EqualTo(canonicalBook.Id));
             Assert.That(clonedBook.ForeignEditionId, Is.EqualTo(selectedEdition.ForeignEditionId));
-            Assert.That(clonedBook.AudibleASIN, Is.EqualTo(selectedEdition.AudibleASIN));
+            Assert.That(clonedEditions.Single().Asins, Is.EqualTo(selectedEdition.Asins));
+            Assert.That(clonedEditions.Single().Asins, Is.Not.SameAs(selectedEdition.Asins));
             Assert.That(clonedEditions.Select(e => e.ForeignEditionId), Is.EqualTo(new[] { selectedEdition.ForeignEditionId }));
         }
 

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Container version="2">
+  <Name>Chaptarr</Name>
+  <Repository>chaptarr/chaptarr</Repository>
+  <Branch>
+    <Tag>latest</Tag>
+    <TagDescription>Stable releases, promoted after they have run on develop</TagDescription>
+  </Branch>
+  <Branch>
+    <Tag>develop</Tag>
+    <TagDescription>Newest releases, published first</TagDescription>
+  </Branch>
+  <Registry>https://hub.docker.com/r/chaptarr/chaptarr</Registry>
+  <Network>bridge</Network>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Project>https://github.com/Chaptarr/chaptarr</Project>
+  <Support>https://github.com/Chaptarr/chaptarr/issues</Support>
+  <Discord>https://discord.gg/G9ZbgWS5rp</Discord>
+  <Overview>Chaptarr is a Readarr fork built to accommodate audiobook and eBook libraries in one instance. It helps you organize and maintain a collection of books with rich metadata, including narrator and edition information that many general-purpose media managers struggle to track. Chaptarr is an independent project and is not affiliated with the Servarr team or the Readarr, Sonarr, Radarr, Lidarr, or Prowlarr projects.</Overview>
+  <Description>Chaptarr is a Readarr fork built to accommodate audiobook and eBook libraries in one instance. It helps you organize and maintain a collection of books with rich metadata, including narrator and edition information that many general-purpose media managers struggle to track. Chaptarr is an independent project and is not affiliated with the Servarr team or the Readarr, Sonarr, Radarr, Lidarr, or Prowlarr projects.</Description>
+  <Category>Downloaders: MediaApp:Books</Category>
+  <ExtraSearchTerms>audiobooks ebooks books readarr</ExtraSearchTerms>
+  <WebUI>http://[IP]:[PORT:8789]/</WebUI>
+  <Icon>https://raw.githubusercontent.com/Chaptarr/chaptarr/main/Logo/256.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/Chaptarr/chaptarr/main/unraid/chaptarr.xml</TemplateURL>
+  <License>https://github.com/Chaptarr/chaptarr/blob/main/LICENSE</License>
+  <DonateText>Support Chaptarr development</DonateText>
+  <DonateLink>https://ko-fi.com/chaptarr</DonateLink>
+  <Config Name="Web interface" Target="8789" Default="8789" Mode="tcp" Description="Host port for the web interface. Change this if another container uses it; keep the container port at 8789." Type="Port" Display="always" Required="true" Mask="false" />
+  <Config Name="Appdata" Target="/config" Default="/mnt/user/appdata/Chaptarr" Mode="rw" Description="Persistent settings, database, and cached artwork. Unraid uses your configured appdata location by default." Type="Path" Display="always" Required="true" Mask="false" />
+  <Config Name="Media and downloads" Target="/data" Default="/mnt/user/data" Mode="rw" Description="Choose your media and downloads share, for example /mnt/user/data. Download paths must match those reported by your download client. Chaptarr can modify or delete mapped contents where filesystem permissions allow." Type="Path" Display="always" Required="true" Mask="false" />
+  <Config Name="PUID" Mode="" Target="PUID" Default="99" Description="User ID that can read and write your media, downloads, and appdata. Unraid's nobody user is 99." Type="Variable" Display="advanced" Required="true" Mask="false" />
+  <Config Name="PGID" Mode="" Target="PGID" Default="100" Description="Group ID that can read and write your media, downloads, and appdata. Unraid's users group is 100." Type="Variable" Display="advanced" Required="true" Mask="false" />
+  <Config Name="UMASK" Mode="" Target="UMASK" Default="002" Description="Permissions mask for newly created files and folders. 002 allows the shared group to write; it does not change existing file permissions." Type="Variable" Display="advanced" Required="false" Mask="false" />
+</Container>

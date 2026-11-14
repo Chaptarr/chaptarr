@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using NLog;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Utilities;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaFiles.BookImport;
@@ -754,90 +755,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
                     _logger.Debug("[READY-TRY-UNIT] folder='{0}' unitKey='{1}' files={2} authorId={3}", LeafName(folder), LeafUnitKey(unitKey), claimedSet.Count, author.Id);
 
-                    // Ensure we have usable tags for matching even when staging was tag-light.
-                    // BuildUnitTagsByKey returns either:
-                    // - unit-level tags (folder+extension) for likely-homogeneous multi-part releases (fast path), or
-                    // - per-file tags for small/multi-book flat folders (correctness path).
-                    var extractionFailedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    var unitTagsByKey = BuildUnitTagsByKey(claimedSet, extractionFailedPaths);
                     foreach (var claimed in claimedSet)
                     {
-                        if (extractionFailedPaths.Contains(claimed.Path))
+                        var (tags, durationSecondsOverride, extractionFailed) = IngestFileMetadataReader.Read(claimed, _metadataTagService, _diskProvider);
+                        if (extractionFailed)
                         {
                             CompleteTagExtractionFailure(claimed);
                             continue;
                         }
 
-                        var tags = SafeDeserializeTags(claimed.TagsJson);
-                        int? durationSecondsOverride = null;
-                        var ext = string.Empty;
-                        try { ext = Path.GetExtension(claimed.Path) ?? string.Empty; } catch { }
-                        var isAudioFile = MediaFileExtensions.AudioExtensions.Contains(ext);
-
-                        // If this file is directly under the author's root folder, do NOT use unit tags from a single
-                        // representative. Always read per-file tags to avoid cross-book contamination and to avoid
-                        // "duration-only" tagsets blocking downstream matching.
-                        var claimedDir = string.Empty;
-                        try { claimedDir = NormalizeDirectory(Path.GetDirectoryName(claimed.Path) ?? string.Empty); } catch { }
-                        if (!string.IsNullOrWhiteSpace(claimedDir) &&
-                            (authorFolderRoots.Contains(claimedDir) ||
-                             (!prefixIsFile && !string.IsNullOrWhiteSpace(normalizedPrefix) && claimedDir.PathEquals(normalizedPrefix))))
-                        {
-                            // Only hit disk when staging metadata is missing. In the common case, DiscoveryWorker has already
-                            // populated per-file tags_json + duration_seconds and we should not re-open the file.
-                            var stagingHasTags = tags != null && tags.Count > 0;
-                            var stagingHasDuration = MediaDuration.HasDuration(claimed.DurationSeconds);
-                            if (!stagingHasTags || (isAudioFile && !stagingHasDuration))
-                            {
-                                var (perFile, perFileDurationSeconds, extractionFailed) = TryReadTagsFromDisk(claimed.Path);
-                                if (extractionFailed)
-                                {
-                                    CompleteTagExtractionFailure(claimed);
-                                    continue;
-                                }
-
-                                if (perFile != null && perFile.Count > 0)
-                                {
-                                    tags = perFile;
-                                    durationSecondsOverride = perFileDurationSeconds;
-                                }
-                            }
-                        }
-                        else if (tags == null || tags.Count == 0)
-                        {
-                            // Prefer per-file tags when BuildUnitTagsByKey stored them (e.g. multi-.m4b folders),
-                            // otherwise fall back to unit-level tags.
-                            if (!string.IsNullOrWhiteSpace(claimed.Path) &&
-                                unitTagsByKey.TryGetValue(claimed.Path, out var perFileTags) &&
-                                perFileTags != null &&
-                                perFileTags.Count > 0)
-                            {
-                                tags = perFileTags;
-                            }
-                            else if (unitTagsByKey.TryGetValue(GetUnitKey(claimed.Path) ?? string.Empty, out var unitTags) &&
-                                     unitTags != null &&
-                                     unitTags.Count > 0)
-                            {
-                                tags = unitTags;
-                            }
-
-                            if (tags == null || tags.Count == 0)
-                            {
-                                var (perFile, perFileDurationSeconds, extractionFailed) = TryReadTagsFromDisk(claimed.Path);
-                                if (extractionFailed)
-                                {
-                                    CompleteTagExtractionFailure(claimed);
-                                    continue;
-                                }
-
-                                if (perFile != null && perFile.Count > 0)
-                                {
-                                    tags = perFile;
-                                    durationSecondsOverride = perFileDurationSeconds;
-                                }
-                            }
-                        }
-
+                        var isAudioFile = MediaFileExtensions.AudioExtensions.Contains(Path.GetExtension(claimed.Path) ?? string.Empty);
                         int? discoveredDurationSeconds = null;
                         if (isAudioFile)
                         {
@@ -955,7 +882,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
                     // Group matched files by (EditionId, UnitKey) where UnitKey = parent folder + extension
                     var matchedByUnit = result.MatchedFiles
-                        .GroupBy(m => new { m.AuthorId, m.EditionId, UnitKey = GetUnitKey(m.File.Path) })
+                        .GroupBy(m => new { m.AuthorId, m.EditionId, SingleFilePath = m.IsStandaloneRecording ? m.File.Path : null, UnitKey = GetUnitKey(m.File.Path) })
                         .ToList();
                     LogMemorySnapshot("[INGEST-AUTHOR-READY] after matched grouping for author '{0}' prefix '{1}' iteration {2} ({3} matched units)",
                         author.Name,
@@ -1015,13 +942,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                         var canonicalEdition = _editionService.GetEdition(sampleMatch.EditionId);
                         var canonicalBook = _bookService.GetBook(canonicalEdition.BookId);
 
-                        // Special case: multiple matched files directly under the AUTHOR ROOT folder.
-                        // These may represent either:
-                        //  - a multipart copy (tracks/parts) that should be imported together, OR
-                        //  - multiple full copies of the same edition that should be cloned, OR
-                        //  - an ambiguous case we must fail-closed on.
-                        //
-                        // User requirement: ONLY merge multipart when the summed file duration ~= edition duration.
+                        // Loose files directly in an author folder use the existing multipart duration check.
                         var unitDir = NormalizeDirectory(Path.GetDirectoryName(sampleMatch.File.Path) ?? string.Empty) ?? string.Empty;
                         var isUnderAuthorRoot = authorFolderRoots != null &&
                                                !string.IsNullOrWhiteSpace(unitDir) &&
@@ -1032,20 +953,20 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                             list.Count > 1)
                         {
                             var perFileDurations = list.Select(x => x.DurationSeconds).ToList();
-                            var decision = DecideAuthorRootDurationAction(
+                            var decision = BookCoalescingHelper.DecideRecordingDurationAction(
                                 canonicalEdition.DurationSeconds,
                                 perFileDurations,
                                 out var tol,
                                 out var sumSeconds,
                                 out var reason);
 
-                            if (decision == AuthorRootDurationDecision.MergeMultipart)
+                            if (decision == BookCoalescingHelper.RecordingDurationDecision.MergeMultipart)
                             {
                                 _logger.Debug("[AUTHOR-ROOT] MULTIPART_MERGE durationSum={0}s editionDuration={1}s tol={2}s editionId={3}",
                                     sumSeconds, canonicalEdition.DurationSeconds, tol, canonicalEdition.Id);
                                 // Fall through: import together as one multipart unit.
                             }
-                            else if (decision == AuthorRootDurationDecision.SplitDuplicates)
+                            else if (decision == BookCoalescingHelper.RecordingDurationDecision.SplitDuplicates)
                             {
                                 _logger.Debug("[AUTHOR-ROOT] DUPLICATE_FULL_COPIES editionDuration={0}s tol={1}s editionId={2} copies={3}",
                                     canonicalEdition.DurationSeconds, tol, canonicalEdition.Id, list.Count);
@@ -1054,7 +975,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                                 var splitUnitAppliedAny = false;
                                 foreach (var (p, tags, durationSeconds, provenance) in list)
                                 {
-                                    var perFileKey = BuildPerFileUnitKey(p, canonicalEdition.Title, canonicalBook.MediaType);
+                                    var perFileKey = BookCoalescingHelper.BuildPerFileUnitKey(p, canonicalEdition.Title, canonicalBook.MediaType);
                                     var fileDest = _unitDestination.ResolveDestinationForUnit(canonicalBook, canonicalEdition, perFileKey);
 
                                     var splitApplyResults = await _bookImport.ImportFilesAsync(
@@ -1123,71 +1044,76 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                         // Attempt to coalesce sibling disc folders under the detected book root and
                         // expand the import list when safe to do so.
                         var originalCount = list.Count;
-                        try
+                        if (!sampleMatch.IsStandaloneRecording)
                         {
-                            var co = BookCoalescingHelper.Coalesce(author,
-                                prefix,
-                                sampleMatch.File.Path,
-                                canonicalEdition,
-                                byPath,
-                                _ingestQueue,
-                                canonicalBook.MediaType,
-                                _logger);
-                            if (co.Coalesced && co.ExtraFiles != null && co.ExtraFiles.Count > 0)
+                            try
                             {
-                                foreach (var e in co.ExtraFiles)
+                                var co = BookCoalescingHelper.Coalesce(author,
+                                    prefix,
+                                    sampleMatch.File.Path,
+                                    canonicalEdition,
+                                    byPath,
+                                    _ingestQueue,
+                                    canonicalBook.MediaType,
+                                    _logger);
+                                if (co.Coalesced && co.ExtraFiles != null && co.ExtraFiles.Count > 0)
                                 {
-                                    if (!matchedPaths.Contains(e.Path))
+                                    foreach (var e in co.ExtraFiles)
                                     {
-                                        var extraDurationSeconds = discoveredByPath.TryGetValue(e.Path, out var extraMeta) ? extraMeta.DurationSeconds : null;
-                                        list.Add((e.Path, e.Tags, extraDurationSeconds, sampleMatch.Provenance));
-                                        matchedPaths.Add(e.Path);
+                                        if (!matchedPaths.Contains(e.Path))
+                                        {
+                                            var extraDurationSeconds = discoveredByPath.TryGetValue(e.Path, out var extraMeta) ? extraMeta.DurationSeconds : null;
+                                            list.Add((e.Path, e.Tags, extraDurationSeconds, sampleMatch.Provenance));
+                                            matchedPaths.Add(e.Path);
+                                        }
+                                    }
+                                    _logger.Debug("[BOOK-COALESCE] Import expanded from {0} to {1} files (editionId={2})", originalCount, list.Count, canonicalEdition.Id);
+                                }
+
+                                // Use helper-provided root-level unit key
+                                var coalescedDestKey = _unitDestination.BuildRootUnitKeyWithExtension(sampleMatch.File.Path, canonicalEdition.Title, canonicalBook.MediaType);
+                                var coalescedDest = _unitDestination.ResolveDestinationForUnit(canonicalBook, canonicalEdition, coalescedDestKey);
+
+                                var coalescedApplyResults = await _bookImport.ImportFilesAsync(
+                                    list.Select(file => (BuildApplyFile(file.Path, file.Tags, file.DurationSeconds), (int?)coalescedDest.EditionId, file.Provenance)).ToList(),
+                                    coalescedDest.BookId);
+
+                                // Record results and update statuses
+                                var unitAppliedAny = false;
+                                foreach (var (p, _, _, _) in list)
+                                {
+                                    if (byPath.TryGetValue(p, out var itemRef))
+                                    {
+                                        var applyResult = CompleteApplyResult(
+                                            coalescedApplyResults,
+                                            p,
+                                            itemRef,
+                                            coalescedDest.BookId,
+                                            matchedAuthorId,
+                                            ref importedCount,
+                                            ref applyFailureCount);
+                                        unitAppliedAny |= applyResult.IsApplied;
                                     }
                                 }
-                                _logger.Debug("[BOOK-COALESCE] Import expanded from {0} to {1} files (editionId={2})", originalCount, list.Count, canonicalEdition.Id);
-                            }
 
-                            // Use helper-provided root-level unit key
-                            var coalescedDestKey = _unitDestination.BuildRootUnitKeyWithExtension(sampleMatch.File.Path, canonicalEdition.Title, canonicalBook.MediaType);
-                            var coalescedDest = _unitDestination.ResolveDestinationForUnit(canonicalBook, canonicalEdition, coalescedDestKey);
-
-                            var coalescedApplyResults = await _bookImport.ImportFilesAsync(
-                                list.Select(file => (BuildApplyFile(file.Path, file.Tags, file.DurationSeconds), (int?)coalescedDest.EditionId, file.Provenance)).ToList(),
-                                coalescedDest.BookId);
-
-                            // Record results and update statuses
-                            var unitAppliedAny = false;
-                            foreach (var (p, _, _, _) in list)
-                            {
-                                if (byPath.TryGetValue(p, out var itemRef))
+                                if (unitAppliedAny && !string.IsNullOrWhiteSpace(unit.Key.UnitKey))
                                 {
-                                    var applyResult = CompleteApplyResult(
-                                        coalescedApplyResults,
-                                        p,
-                                        itemRef,
-                                        coalescedDest.BookId,
-                                        matchedAuthorId,
-                                        ref importedCount,
-                                        ref applyFailureCount);
-                                    unitAppliedAny |= applyResult.IsApplied;
+                                    importedUnitKeys.Add(unit.Key.UnitKey);
                                 }
-                            }
 
-                            if (unitAppliedAny && !string.IsNullOrWhiteSpace(unit.Key.UnitKey))
+                                continue; // handled this unit
+                            }
+                            catch (Exception cx)
                             {
-                                importedUnitKeys.Add(unit.Key.UnitKey);
+                                _logger.Debug(cx, "[BOOK-COALESCE] Skipped due to error");
                             }
-
-                            continue; // handled this unit
-                        }
-                        catch (Exception cx)
-                        {
-                            _logger.Debug(cx, "[BOOK-COALESCE] Skipped due to error");
                         }
 
                         // Use a root-level unit key (book root + media type + extension) to avoid per-disc clones
                         // while ensuring different media containers (m4b vs mp3) never collapse into the same book.
-                        var destKey = _unitDestination.BuildRootUnitKeyWithExtension(sampleMatch.File.Path, canonicalEdition.Title, canonicalBook.MediaType);
+                        var destKey = sampleMatch.IsStandaloneRecording
+                            ? BookCoalescingHelper.BuildPerFileUnitKey(sampleMatch.File.Path, canonicalEdition.Title, canonicalBook.MediaType)
+                            : _unitDestination.BuildRootUnitKeyWithExtension(sampleMatch.File.Path, canonicalEdition.Title, canonicalBook.MediaType);
                         var dest = _unitDestination.ResolveDestinationForUnit(canonicalBook, canonicalEdition, destKey);
 
                         var unitApplyResults = await _bookImport.ImportFilesAsync(
@@ -1516,282 +1442,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
         }
 
-        private string BuildRootUnitKey(string anyFilePathInUnit, string editionTitle, BookMediaType mediaType)
-        {
-            try
-            {
-                var root = FindBookRootFolder(anyFilePathInUnit, editionTitle);
-                if (string.IsNullOrWhiteSpace(root)) root = System.IO.Path.GetDirectoryName(anyFilePathInUnit) ?? string.Empty;
-                root = NormalizeDirectory(root) ?? string.Empty;
-                return (root + "|" + mediaType.ToString()).ToLowerInvariant();
-            }
-            catch { return GetUnitKey(anyFilePathInUnit); }
-        }
-
-        private (bool Coalesced, List<(string Path, Dictionary<string, List<string>> Tags)> ExtraFiles) TryCoalesceBookLevelImport(
-            Author author,
-            string authorPrefix,
-            string unitFolder,
-            Edition matchedEdition,
-            Dictionary<string, IngestQueueItem> byPath,
-            BookMediaType mediaType)
-        {
-            var result = new List<(string Path, Dictionary<string, List<string>> Tags)>();
-            try
-            {
-                var bookRoot = FindBookRootFolder(unitFolder, matchedEdition?.Title);
-                if (string.IsNullOrWhiteSpace(bookRoot))
-                {
-                    _logger.Debug("[BOOK-COALESCE][SKIP] No strict root for unitFolder='{0}'", unitFolder);
-                    return (false, result);
-                }
-
-                // Safety rail: ensure the root belongs to this author
-                var normAuthorPrefix = NormalizeDirectory(authorPrefix) ?? string.Empty;
-                var normRoot = NormalizeDirectory(bookRoot) ?? string.Empty;
-                if (!normRoot.StartsWith(normAuthorPrefix + System.IO.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(normRoot, normAuthorPrefix, StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.Debug("[BOOK-COALESCE][SKIP] Root '{0}' not under author prefix '{1}'", normRoot, normAuthorPrefix);
-                    return (false, result);
-                }
-
-                _logger.Debug("[BOOK-COALESCE][ROOT] unit='{0}' root='{1}' title='{2}'", unitFolder, normRoot, matchedEdition?.Title);
-
-                // Build sibling folder set (immediate children under root) from queued items in memory
-                var siblingFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var kv in byPath)
-                {
-                    var path = kv.Key;
-                    if (!path.StartsWith(normRoot + System.IO.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) continue;
-                    var dir = System.IO.Path.GetDirectoryName(path) ?? string.Empty;
-                    if (string.IsNullOrWhiteSpace(dir)) continue;
-                    var parent = System.IO.Path.GetDirectoryName(dir) ?? string.Empty;
-                    if (string.Equals(NormalizeDirectory(parent), normRoot, StringComparison.OrdinalIgnoreCase))
-                    {
-                        siblingFolders.Add(NormalizeDirectory(dir));
-                    }
-                }
-
-                // If no subfolders detected, treat the root as a single-folder album (nothing to coalesce)
-                if (siblingFolders.Count <= 1)
-                {
-                    return (false, result);
-                }
-
-                try
-                {
-                    var sampleNames = siblingFolders.Select(p => { try { return new System.IO.DirectoryInfo(p).Name; } catch { return p; } }).Take(5);
-                    _logger.Debug("[BOOK-COALESCE][SIBLINGS] root='{0}' count={1} samples=[{2}]", normRoot, siblingFolders.Count, string.Join(", ", sampleNames));
-                }
-                catch { }
-
-                if (!LooksLikeEnumeratedSiblings(siblingFolders))
-                {
-                    _logger.Debug("[BOOK-COALESCE][SKIP] Siblings not enumerated discs under root '{0}'", normRoot);
-                    return (false, result);
-                }
-
-                // Claim all sibling units to avoid races; gather their queued items.
-                // Prefer already-claimed items present in byPath; only call TryClaimUnit for folders not present.
-                var claimedItems = new List<IngestQueueItem>();
-                var newlyClaimedIds = new List<int>();
-                try
-                {
-                    foreach (var folder in siblingFolders)
-                    {
-                        // Collect existing claimed items for this folder from in-memory byPath
-                        var existing = byPath.Values.Where(v =>
-                        {
-                            try { return string.Equals(NormalizeDirectory(System.IO.Path.GetDirectoryName(v.Path) ?? string.Empty), folder, StringComparison.OrdinalIgnoreCase); }
-                            catch { return false; }
-                        }).ToList();
-
-                        if (existing.Any())
-                        {
-                            claimedItems.AddRange(existing);
-                            _logger.Debug("[BOOK-COALESCE][CLAIM] Using existing byPath items for '{0}' count={1}", folder, existing.Count);
-                            continue;
-                        }
-
-                        // Try to claim any remaining sibling units that weren't already in byPath
-                        var claimed = _ingestQueue.TryClaimUnit(folder) ?? new List<IngestQueueItem>();
-                        if (claimed.Count == 0)
-                        {
-                            _logger.Debug("[BOOK-COALESCE] Sibling '{0}' already claimed/processed elsewhere; skipping", folder);
-                            continue;
-                        }
-                        claimedItems.AddRange(claimed);
-                        foreach (var ci in claimed)
-                        {
-                            byPath[ci.Path] = ci; // track in-memory for later status updates
-                            newlyClaimedIds.Add(ci.Id);
-                        }
-                        _logger.Debug("[BOOK-COALESCE][CLAIM] Claimed '{0}' items={1}", folder, claimed.Count);
-                    }
-                    _logger.Debug("[BOOK-COALESCE][CLAIMS] siblings={0} totalItems={1} newlyClaimed={2}", siblingFolders.Count, claimedItems.Count, newlyClaimedIds.Count);
-                }
-                catch
-                {
-                    // Roll back any new claims we acquired in this method
-                    foreach (var id in newlyClaimedIds)
-                    {
-                        try { _ingestQueue.UpdateStatus(id, "queued"); } catch { }
-                    }
-                    return (false, result);
-                }
-
-                // Filter to current mediaType and exclude paths already included in current unit list
-                foreach (var ci in claimedItems)
-                {
-                    try
-                    {
-                        var ext = System.IO.Path.GetExtension(ci.Path) ?? string.Empty;
-                        var q = MediaFileExtensions.GetQualityForExtension(ext);
-                        var fileMedia = BookFile.DetermineMediaType(new QualityModel { Quality = q });
-                        if ((mediaType == BookMediaType.Audiobook && fileMedia != "audiobook")
-                            || (mediaType == BookMediaType.Ebook && fileMedia != "ebook"))
-                        {
-                            continue;
-                        }
-                        var tags = SafeDeserializeTags(ci.TagsJson);
-                        result.Add((ci.Path, tags));
-                    }
-                    catch { }
-                }
-
-                return (result.Count > 0, result);
-            }
-            catch (Exception ex)
-            {
-                _logger.Debug(ex, "[BOOK-COALESCE] Error during coalesce evaluation");
-                return (false, result);
-            }
-        }
-
-        private string FindBookRootFolder(string startPathOrFolder, string editionTitle)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(startPathOrFolder) || string.IsNullOrWhiteSpace(editionTitle)) return null;
-                var start = System.IO.Directory.Exists(startPathOrFolder)
-                    ? startPathOrFolder
-                    : (System.IO.Path.GetDirectoryName(startPathOrFolder) ?? string.Empty);
-                var normTitle = NormalizeTokensForCompare(editionTitle);
-                if (string.IsNullOrWhiteSpace(normTitle)) return null;
-
-                // Consider only two candidates: the unit folder itself and its parent
-                var unit = NormalizeDirectory(start);
-                var parent = NormalizeDirectory(System.IO.Path.GetDirectoryName(unit) ?? string.Empty);
-                string UnitName(string p)
-                {
-                    try { return new System.IO.DirectoryInfo(p).Name; } catch { return null; }
-                }
-                var unitName = NormalizeTokensForCompare(UnitName(unit));
-                var parentName = NormalizeTokensForCompare(UnitName(parent));
-
-                if (!string.IsNullOrWhiteSpace(unitName) && unitName.Contains(normTitle, StringComparison.Ordinal)) return unit;
-                if (!string.IsNullOrWhiteSpace(parentName) && parentName.Contains(normTitle, StringComparison.Ordinal)) return parent;
-                return null;
-            }
-            catch { return null; }
-        }
-
-        private bool LooksLikeEnumeratedSiblings(HashSet<string> siblingFolders)
-        {
-            try
-            {
-                // Extract names
-                var names = siblingFolders
-                    .Select(p =>
-                    {
-                        try { return new System.IO.DirectoryInfo(p).Name; } catch { return null; }
-                    })
-                    .Where(n => !string.IsNullOrWhiteSpace(n))
-                    .ToList();
-                if (names.Count <= 1) return false;
-
-                // Tokenize each name
-                var tokenized = names.Select(TokenizeName).ToList();
-                if (tokenized.Count == 0) return false;
-
-                // Compute common tokens among all siblings
-                var common = new HashSet<string>(tokenized[0], StringComparer.Ordinal);
-                for (int i = 1; i < tokenized.Count; i++)
-                {
-                    common.IntersectWith(tokenized[i]);
-                    if (common.Count == 0) break;
-                }
-
-                // Disallow dangerous common tokens that suggest different versions
-                var blacklist = new HashSet<string>(new[] { "version", "alt", "alternate", "remaster", "remastered", "deluxe", "extended" }, StringComparer.Ordinal);
-                if (common.Any(c => blacklist.Contains(c))) return false;
-
-                // Check if siblings look like discs: either explicit disc keywords exist OR
-                // residual tokens (after removing common) are purely numeric/roman
-                var discKeywords = new HashSet<string>(new[] { "disc", "disk", "cd", "part", "tape", "cassette", "side" }, StringComparer.Ordinal);
-                var anyDiscKeyword = tokenized.Any(tks => tks.Any(t => discKeywords.Contains(t)));
-
-                bool AllResidualNumeric()
-                {
-                    foreach (var tks in tokenized)
-                    {
-                        var residual = tks.Where(t => !common.Contains(t)).ToList();
-                        if (residual.Count == 0) return false;
-                        foreach (var r in residual)
-                        {
-                            if (!(IsDigits(r) || IsRoman(r))) return false;
-                        }
-                    }
-                    return true;
-                }
-                var residualOk = AllResidualNumeric();
-
-                _logger.Debug("[BOOK-COALESCE][ANALYZE] common=[{0}] discKeyword={1} residualNumeric={2}", string.Join(" ", common.Take(6)), anyDiscKeyword, residualOk);
-
-                if (!anyDiscKeyword && !residualOk) return false;
-                return true;
-            }
-            catch { return false; }
-        }
-
-        private static bool IsDigits(string s)
-        {
-            if (string.IsNullOrWhiteSpace(s)) return false;
-            for (int i = 0; i < s.Length; i++) if (!char.IsDigit(s[i])) return false;
-            return true;
-        }
-
-        private static bool IsRoman(string s)
-        {
-            if (string.IsNullOrWhiteSpace(s)) return false;
-            var v = s.ToUpperInvariant();
-            return Regex.IsMatch(v, "^(M{0,4}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3}))$");
-        }
-
-        private static string NormalizeTokensForCompare(string s)
-        {
-            if (string.IsNullOrWhiteSpace(s)) return string.Empty;
-            s = s.ToLowerInvariant();
-            var arr = s.ToCharArray();
-            for (int i = 0; i < arr.Length; i++)
-            {
-                var ch = arr[i];
-                if (!(char.IsLetterOrDigit(ch) || char.IsWhiteSpace(ch))) arr[i] = ' ';
-            }
-            var norm = Regex.Replace(new string(arr), "\\s+", " ").Trim();
-            return norm;
-        }
-
-        private static List<string> TokenizeName(string s)
-        {
-            var norm = NormalizeTokensForCompare(s);
-            // Split letters/numbers boundaries: e.g., CD1 -> CD 1
-            norm = Regex.Replace(norm, "([a-z]+)([0-9]+)", "$1 $2");
-            norm = Regex.Replace(norm, "([0-9]+)([a-z]+)", "$1 $2");
-            return norm.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
-        }
-
         private static string GetUnitKey(string path)
         {
             try
@@ -1883,82 +1533,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             return DateTime.UtcNow;
         }
 
-            private static int GetDurationMergeToleranceSeconds(int editionDurationSeconds)
-            {
-                // Strict: only merge when duration is a strong signal, but allow minor container rounding.
-                // 0.2% with a floor/ceiling keeps it stable across short/long audiobooks.
-            var tol = (int)Math.Round(editionDurationSeconds * 0.002);
-            if (tol < 60) tol = 60;
-            if (tol > 300) tol = 300;
-            return tol;
-        }
-
-        private enum AuthorRootDurationDecision
-        {
-            MergeMultipart,
-            SplitDuplicates,
-            Unmapped
-        }
-
-        private static AuthorRootDurationDecision DecideAuthorRootDurationAction(
-            int? editionDurationSeconds,
-            IReadOnlyList<int?> perFileDurationSeconds,
-            out int toleranceSeconds,
-            out int sumSeconds,
-            out string reason)
-        {
-            toleranceSeconds = 0;
-            sumSeconds = 0;
-            reason = null;
-
-            if (!editionDurationSeconds.HasValue || editionDurationSeconds.Value <= 0)
-            {
-                reason = "NO_EDITION_DURATION";
-                return AuthorRootDurationDecision.Unmapped;
-            }
-
-            if (perFileDurationSeconds == null ||
-                perFileDurationSeconds.Count == 0 ||
-                perFileDurationSeconds.Any(d => !d.HasValue || d.Value <= 0))
-            {
-                reason = "NO_FILE_DURATION";
-                return AuthorRootDurationDecision.Unmapped;
-            }
-
-            var edition = editionDurationSeconds.Value;
-            toleranceSeconds = GetDurationMergeToleranceSeconds(edition);
-            var tol = toleranceSeconds;
-            sumSeconds = perFileDurationSeconds.Sum(d => d.Value);
-
-            if (Math.Abs(sumSeconds - edition) <= toleranceSeconds)
-            {
-                return AuthorRootDurationDecision.MergeMultipart;
-            }
-
-            if (perFileDurationSeconds.All(d => Math.Abs(d.Value - edition) <= tol))
-            {
-                return AuthorRootDurationDecision.SplitDuplicates;
-            }
-
-            reason = "DURATION_MISMATCH";
-            return AuthorRootDurationDecision.Unmapped;
-        }
-
-        private static string BuildPerFileUnitKey(string filePath, string editionTitle, BookMediaType mediaType)
-        {
-            try
-            {
-                // Base on the book-root key, but include the full path to keep copies distinct even
-                // when they live in the same folder (author-root duplicates).
-                var baseKey = BookCoalescingHelper.BuildRootUnitKey(filePath, editionTitle, mediaType);
-                return $"{baseKey}|{NormalizeDirectory(filePath)}".ToLowerInvariant();
-            }
-            catch
-            {
-                return filePath ?? string.Empty;
-            }
-        }
-
         private bool ShouldProcessAuthorEvent(int authorId, string prefix)
         {
             try
@@ -1979,137 +1553,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 return true;
             }
         }
-
-            private Dictionary<string, Dictionary<string, List<string>>> BuildUnitTagsByKey(
-                List<IngestQueueItem> claimedSet,
-                ISet<string> extractionFailedPaths)
-            {
-                var tagsByUnit = new Dictionary<string, Dictionary<string, List<string>>>(StringComparer.OrdinalIgnoreCase);
-                if (claimedSet == null || claimedSet.Count == 0) return tagsByUnit;
-
-                var groups = claimedSet
-                    .GroupBy(i => GetUnitKey(i.Path) ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-                    .Where(g => !string.IsNullOrWhiteSpace(g.Key))
-                    .ToList();
-
-                foreach (var g in groups)
-                {
-                    var firstPath = g.FirstOrDefault()?.Path;
-                    var ext = (Path.GetExtension(firstPath ?? string.Empty) ?? string.Empty).ToLowerInvariant();
-                    var fileCount = g.Count();
-
-                    // Read per-file tags for small groups and "single-file book" containers.
-                    // This prevents representative-tag smearing in flat folders (e.g. Collected Works/*.m4b).
-                    var shouldReadPerFile =
-                        fileCount <= 5 ||
-                        MediaFileExtensions.IsSingleFileBookContainer(ext);
-
-                    if (shouldReadPerFile)
-                    {
-                        foreach (var item in g)
-                        {
-                            if (item == null || string.IsNullOrWhiteSpace(item.Path)) continue;
-
-                            Dictionary<string, List<string>> perFileTags = null;
-
-                            if (!string.IsNullOrWhiteSpace(item.TagsJson) && item.TagsJson.Trim() != "{}")
-                            {
-                                perFileTags = SafeDeserializeTags(item.TagsJson);
-                            }
-
-                            if (perFileTags == null || perFileTags.Count == 0)
-                            {
-                                var (diskTags, _, extractionFailed) = TryReadTagsFromDisk(item.Path);
-                                if (extractionFailed)
-                                {
-                                    extractionFailedPaths?.Add(item.Path);
-                                    continue;
-                                }
-
-                                perFileTags = diskTags;
-                            }
-
-                            if (perFileTags != null && perFileTags.Count > 0)
-                            {
-                                tagsByUnit[item.Path] = perFileTags;
-                            }
-                        }
-
-                        continue;
-                    }
-
-                    var unitTagCandidates = new List<Dictionary<string, List<string>>>(fileCount);
-                    foreach (var item in g)
-                    {
-                        if (item == null || string.IsNullOrWhiteSpace(item.Path))
-                        {
-                            continue;
-                        }
-
-                        Dictionary<string, List<string>> perFileTags = null;
-                        if (!string.IsNullOrWhiteSpace(item.TagsJson) && item.TagsJson.Trim() != "{}")
-                        {
-                            perFileTags = SafeDeserializeTags(item.TagsJson);
-                        }
-
-                        if (perFileTags == null || perFileTags.Count == 0)
-                        {
-                            var (diskTags, _, extractionFailed) = TryReadTagsFromDisk(item.Path);
-                            if (extractionFailed)
-                            {
-                                extractionFailedPaths?.Add(item.Path);
-                                continue;
-                            }
-
-                            perFileTags = diskTags;
-                        }
-
-                        if (perFileTags != null && perFileTags.Count > 0)
-                        {
-                            unitTagCandidates.Add(perFileTags);
-                        }
-                    }
-
-                    var consensusTags = UnitTagConsensusBuilder.BuildConsensus(unitTagCandidates, fileCount);
-                    if (consensusTags.Count > 0)
-                    {
-                        tagsByUnit[g.Key] = consensusTags;
-                    }
-                }
-
-                return tagsByUnit;
-            }
-
-            private (Dictionary<string, List<string>> Tags, int? DurationSeconds, bool ExtractionFailed) TryReadTagsFromDisk(string filePath)
-            {
-                try
-                {
-                    if (_metadataTagService == null) return (null, null, false);
-                    if (string.IsNullOrWhiteSpace(filePath)) return (null, null, false);
-
-                    var fi = _diskProvider.GetFileInfo(filePath);
-                    if (fi == null || !fi.Exists) return (null, null, false);
-
-                    var (raw, durationSeconds) = _metadataTagService.ReadAllTagsAndDuration(fi);
-                    if (raw == null || raw.Count == 0) return (null, durationSeconds, false);
-
-                    var tags = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-                    foreach (var kv in raw)
-                    {
-                        if (string.IsNullOrWhiteSpace(kv.Key)) continue;
-                        tags[kv.Key] = kv.Value ?? new List<string>();
-                    }
-                    return (tags, durationSeconds, false);
-                }
-                catch (TagExtractionException)
-                {
-                    return (null, null, true);
-                }
-                catch
-                {
-                    return (null, null, false);
-                }
-            }
 
         private BookImportFileResult CompleteApplyResult(
             IReadOnlyList<BookImportFileResult> applyResults,

@@ -9,20 +9,23 @@ import { fetchRootFolders } from 'Store/Actions/Settings/rootFolders';
 import createAuthorSelector from 'Store/Selectors/createAuthorSelector';
 import createSystemStatusSelector from 'Store/Selectors/createSystemStatusSelector';
 import selectSettings from 'Store/Selectors/selectSettings';
+import getLinkedAuthorMonitoringChanges from 'Utilities/Author/getLinkedAuthorMonitoringChanges';
+import { normalizeMonitorNewItemsOption } from 'Utilities/Author/monitorNewItemsOptions';
 import EditAuthorModalContent from './EditAuthorModalContent';
 
-function createIsPathChangingSelector() {
+function createPathChangesSelector() {
   return createSelector(
     (state) => state.authors.pendingChanges,
     createAuthorSelector(),
     (pendingChanges, author) => {
-      const path = pendingChanges.path;
-
-      if (path == null) {
-        return false;
-      }
-
-      return author.path !== path;
+      return ['audiobook', 'ebook'].filter((mediaType) => {
+        const field = `${mediaType}Folder`;
+        return pendingChanges[field] != null && pendingChanges[field] !== author[field];
+      }).map((mediaType) => ({
+        mediaType,
+        originalPath: author[`${mediaType}Folder`],
+        destinationPath: pendingChanges[`${mediaType}Folder`]
+      }));
     }
   );
 }
@@ -34,8 +37,8 @@ function createMapStateToProps() {
     (state) => state.settings.rootFolders,
     createSystemStatusSelector(),
     createAuthorSelector(),
-    createIsPathChangingSelector(),
-    (authorsState, metadataProfiles, rootFolders, systemStatus, author, isPathChanging) => {
+    createPathChangesSelector(),
+    (authorsState, metadataProfiles, rootFolders, systemStatus, author, pathChanges) => {
       const {
         isSaving,
         saveError,
@@ -54,8 +57,8 @@ function createMapStateToProps() {
         'audiobookMetadataProfileId',
         'ebookMetadataProfileId',
         'path',
-        'audiobookPath',
-        'ebookPath',
+        'audiobookFolder',
+        'ebookFolder',
         'rootFolderPath',
         'audiobookRootFolderPath',
         'ebookRootFolderPath',
@@ -66,6 +69,11 @@ function createMapStateToProps() {
 
       const settings = selectSettings(authorSettings, pendingChanges, saveError);
 
+      const item = settings.settings;
+      const hasMonitoringPolicyChange = ['syncMonitoredAcrossFormats', 'audiobookMonitorNewItems', 'ebookMonitorNewItems']
+        .some((key) => Object.prototype.hasOwnProperty.call(pendingChanges, key));
+      const hasConflictingMonitoringPolicies = hasMonitoringPolicyChange && item.syncMonitoredAcrossFormats?.value === true &&
+        normalizeMonitorNewItemsOption(item.audiobookMonitorNewItems?.value) !== normalizeMonitorNewItemsOption(item.ebookMonitorNewItems?.value);
       const rootFolderItems = rootFolders.items || [];
 
       // Global availability: do compatible root folders exist in the system?
@@ -83,8 +91,11 @@ function createMapStateToProps() {
         authorName: author.authorName,
         isSaving,
         saveError,
-        isPathChanging,
-        originalPath: author.path,
+        isPathChanging: pathChanges.length > 0,
+        pathChanges,
+        sharedFolder: Boolean(author.audiobookFolder && author.audiobookFolder === author.ebookFolder),
+        originalPath: pathChanges[0]?.originalPath || author.path,
+        hasConflictingMonitoringPolicies,
         item: settings.settings,
         showMetadataProfile: metadataProfiles.items.length > 1,
         isWindows: systemStatus.isWindows,
@@ -123,10 +134,14 @@ class EditAuthorModalContentConnector extends Component {
   // Listeners
 
   onInputChange = ({ name, value }) => {
-    this.props.dispatchSetAuthorValue({ name, value });
+    const changes = getLinkedAuthorMonitoringChanges(name, value, this.props.item.syncMonitoredAcrossFormats?.value === true);
+    Object.entries(changes).forEach(([field, fieldValue]) => this.props.dispatchSetAuthorValue({ name: field, value: fieldValue }));
   };
 
   onSavePress = (moveFiles) => {
+    if (this.props.hasConflictingMonitoringPolicies) {
+      return;
+    }
     this.props.dispatchSaveAuthor({
       id: this.props.authorId,
       moveFiles
@@ -152,6 +167,8 @@ EditAuthorModalContentConnector.propTypes = {
   authorId: PropTypes.number,
   isSaving: PropTypes.bool.isRequired,
   saveError: PropTypes.object,
+  item: PropTypes.object.isRequired,
+  hasConflictingMonitoringPolicies: PropTypes.bool.isRequired,
   dispatchSetAuthorValue: PropTypes.func.isRequired,
   dispatchSaveAuthor: PropTypes.func.isRequired,
   dispatchFetchRootFolders: PropTypes.func.isRequired,

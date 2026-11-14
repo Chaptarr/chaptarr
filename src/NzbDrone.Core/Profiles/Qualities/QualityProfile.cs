@@ -24,6 +24,7 @@ namespace NzbDrone.Core.Profiles.Qualities
         public string Name { get; set; }
         public ProfileType ProfileType { get; set; }
         public bool UpgradeAllowed { get; set; }
+        public bool ConfirmAutomaticUpgrades { get; set; }
         public bool PreferCustomFormatsOverQuality { get; set; }
         public bool ConvertMp3ToM4b { get; set; } // Only applies to audiobook profiles
         public int? ConvertToQualityId { get; set; }
@@ -32,6 +33,11 @@ namespace NzbDrone.Core.Profiles.Qualities
         public int CutoffFormatScore { get; set; }
         public List<ProfileFormatItem> FormatItems { get; set; }
         public List<QualityProfileQualityItem> Items { get; set; }
+        public bool IsQualityAllowed(int qualityId)
+        {
+            return Items?.Any(item => item.Allowed && item.GetQualities().Any(quality => quality.Id == qualityId)) == true;
+        }
+
         public Quality FirstAllowedQuality()
         {
             var firstAllowed = Items.First(q => q.Allowed);

@@ -64,7 +64,7 @@ namespace NzbDrone.Core.Notifications.Signal
 
         public override void OnImportFailure(BookDownloadMessage message)
         {
-            _proxy.SendNotification(IMPORT_FAILURE_TITLE, message.Message, Settings);
+            _proxy.SendNotification(message.ImportStatusTitle, message.Message, Settings);
         }
 
         public override void OnApplicationUpdate(ApplicationUpdateMessage updateMessage)

@@ -7,7 +7,7 @@ namespace NzbDrone.Core.Books
 {
     public interface IBookMonitoredService
     {
-        void SetBookMonitoredStatus(Author author, MonitoringOptions monitoringOptions);
+        void SetBookMonitoredStatus(Author author, MonitoringOptions monitoringOptions, bool initialSetup = false);
     }
 
     public class BookMonitoredService : IBookMonitoredService
@@ -23,13 +23,16 @@ namespace NzbDrone.Core.Books
             _logger = logger;
         }
 
-        public void SetBookMonitoredStatus(Author author, MonitoringOptions monitoringOptions)
+        public void SetBookMonitoredStatus(Author author, MonitoringOptions monitoringOptions, bool initialSetup = false)
         {
+            var initialMediaChoice = initialSetup && monitoringOptions?.MediaType.HasValue == true;
             if (monitoringOptions != null)
             {
                 _logger.Debug("[{0}] Setting book monitored status.", author.Name);
 
-                var allBooks = _bookService.GetBooksByAuthor(author.Id);
+                var allBooks = initialMediaChoice
+                    ? _bookService.GetBooksByAuthorId(author.Id)
+                    : _bookService.GetBooksByAuthor(author.Id);
                 var books = allBooks;
 
                 if (monitoringOptions.MediaType.HasValue)
@@ -39,7 +42,11 @@ namespace NzbDrone.Core.Books
                         .ToList();
                 }
 
-                var booksWithFiles = _bookService.GetAuthorBooksWithFiles(author);
+                var needsFileState = monitoringOptions.BooksToMonitor.Count == 0 &&
+                    (monitoringOptions.Monitor is MonitorTypes.Future or MonitorTypes.Missing or MonitorTypes.Existing);
+                var booksWithFiles = needsFileState
+                    ? _bookService.GetAuthorBooksWithFiles(author)
+                    : new List<Book>();
                 if (monitoringOptions.MediaType.HasValue)
                 {
                     booksWithFiles = booksWithFiles
@@ -54,6 +61,11 @@ namespace NzbDrone.Core.Books
                 var booksWithoutFilesIds = booksWithoutFiles.Select(e => e.Id).ToHashSet();
 
                 var monitoredBooks = monitoringOptions.BooksToMonitor;
+                var requestedBooks = initialSetup
+                    ? books.Where(book => book.AddOptions?.AddType == BookAddType.Manual &&
+                        (book.IsMonitored() || book.AddOptions.MonitorBook.HasValue))
+                        .Select(book => (Book: book, Monitored: book.IsMonitored())).ToList()
+                    : new List<(Book Book, bool Monitored)>();
 
                 // If specific books are passed use those instead of the monitoring options.
                 if (monitoredBooks.Any())
@@ -117,12 +129,33 @@ namespace NzbDrone.Core.Books
                     }
                 }
 
-                // Persist the monitoring decision as one batch while retaining each
-                // BookEditedEvent and the existing monitoring synchronization rules.
-                _bookService.UpdateManyWithLifecycle(books);
+                // Initial root defaults must not undo a book explicitly requested during import.
+                // Explicit monitoring edits remain authoritative even while an initial scan is owed.
+                foreach (var group in requestedBooks.GroupBy(request => request.Monitored))
+                {
+                    ToggleBooksMonitoredState(group.Select(request => request.Book), group.Key);
+                }
+
+                if (initialMediaChoice)
+                {
+                    // Apply each initial side independently; the scan handler reconciles
+                    // matching sibling rows after both sides have their final defaults.
+                    var mediaType = monitoringOptions.MediaType == BookMediaType.Ebook ? "ebook" : "audiobook";
+                    foreach (var group in books.GroupBy(book => book.IsMonitored()))
+                    {
+                        _bookService.SetMonitoredForMediaType(group.Select(book => book.Id), mediaType, group.Key);
+                    }
+                }
+                else
+                {
+                    _bookService.UpdateManyWithLifecycle(books);
+                }
             }
 
-            _authorService.UpdateAuthor(author);
+            if (!initialMediaChoice)
+            {
+                _authorService.UpdateAuthor(author);
+            }
         }
 
         private void ToggleBooksMonitoredState(IEnumerable<Book> books, bool monitored)

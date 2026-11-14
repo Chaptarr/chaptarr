@@ -17,6 +17,11 @@ namespace NzbDrone.Core.Download
         void MarkItemAsImported(DownloadClientItem downloadClientItem);
     }
 
+    public interface IRecoverDownloadClientOperations
+    {
+        void RecoverPendingOperations();
+    }
+
     public interface IPreserveDownloadClientItemAfterImport
     {
         bool ShouldPreserveItemAfterImport(DownloadClientItem downloadClientItem);

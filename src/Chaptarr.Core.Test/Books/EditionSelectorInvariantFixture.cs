@@ -14,6 +14,25 @@ namespace Chaptarr.Core.Test.Books
             return new EditionSelector(LogManager.GetCurrentClassLogger());
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void should_select_only_one_unsaved_edition(bool existingEdition)
+        {
+            var selected = new Edition { ReadingFormatId = 2, Ratings = new Ratings { Votes = 100 } };
+            var editions = new List<Edition>
+            {
+                new Edition { Id = existingEdition ? 12 : 0, ReadingFormatId = 2, Ratings = new Ratings { Votes = 10 } },
+                selected,
+                new Edition { ReadingFormatId = 3, Ratings = new Ratings { Votes = 1000 } }
+            };
+
+            var sut = CreateSut();
+            Assert.That(sut.EnsureSingleMonitoredEdition(editions, mediaType: BookMediaType.Audiobook), Is.True);
+            Assert.That(editions.Count(e => e.Monitored), Is.EqualTo(1));
+            Assert.That(editions.Single(e => e.Monitored), Is.SameAs(selected));
+            Assert.That(sut.EnsureSingleMonitoredEdition(editions, mediaType: BookMediaType.Audiobook), Is.False);
+        }
+
         [Test]
         public void should_keep_single_monitored_even_when_manual_add_exists()
         {
@@ -63,7 +82,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void should_pick_highest_file_count_when_no_monitored()
+        public void should_use_normal_ranking_within_file_bearing_editions()
         {
             var sut = CreateSut();
 
@@ -71,19 +90,31 @@ namespace Chaptarr.Core.Test.Books
             {
                 new Edition { Id = 10, Monitored = false, ManualAdd = false },
                 new Edition { Id = 11, Monitored = false, ManualAdd = false },
-                new Edition { Id = 12, Monitored = false, ManualAdd = false }
+                new Edition { Id = 12, Monitored = false, ManualAdd = false, Ratings = new Ratings { Votes = 100 } }
             };
 
             var fileCounts = new Dictionary<int, int>
             {
                 { 10, 0 },
-                { 11, 2 },
-                { 12, 5 }
+                { 11, 20 },
+                { 12, 1 }
             };
 
             sut.EnsureSingleMonitoredEdition(editions, fileCounts);
 
             Assert.That(editions.Single(e => e.Monitored).Id, Is.EqualTo(12));
+        }
+
+        [Test]
+        public void should_preserve_manual_intent_on_an_unsaved_edition()
+        {
+            var editions = new List<Edition>
+            {
+                new Edition { ReadingFormatId = 2, Ratings = new Ratings { Votes = 1000 } },
+                new Edition { ReadingFormatId = 2, ManualAdd = true, Ratings = new Ratings { Votes = 1 } }
+            };
+            CreateSut().EnsureSingleMonitoredEdition(editions, mediaType: BookMediaType.Audiobook);
+            Assert.That(editions.Single(edition => edition.Monitored), Is.SameAs(editions[1]));
         }
 
         [Test]
@@ -184,7 +215,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void should_repair_multiple_monitored_without_native_format_reselection()
+        public void should_use_native_format_ranking_to_repair_multiple_monitored()
         {
             var sut = CreateSut();
 
@@ -196,7 +227,7 @@ namespace Chaptarr.Core.Test.Books
 
             sut.EnsureSingleMonitoredEdition(editions, fileCountsByEditionId: null, mediaType: BookMediaType.Ebook);
 
-            Assert.That(editions.Single(e => e.Monitored).Id, Is.EqualTo(1));
+            Assert.That(editions.Single(e => e.Monitored).Id, Is.EqualTo(2));
         }
 
         [Test]

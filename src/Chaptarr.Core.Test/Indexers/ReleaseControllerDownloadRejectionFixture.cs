@@ -89,7 +89,8 @@ namespace Chaptarr.Core.Test.Indexers
                 parsingService: null,
                 indexerFactory: null,
                 cacheManager: cacheManager,
-                logger: LogManager.GetLogger(nameof(ReleaseControllerDownloadRejectionFixture)));
+                logger: LogManager.GetLogger(nameof(ReleaseControllerDownloadRejectionFixture)),
+                groupedAuthorSearch: null);
 
             var context = new DefaultHttpContext();
             context.Request.Method = HttpMethods.Post;
@@ -114,6 +115,7 @@ namespace Chaptarr.Core.Test.Indexers
             LogManager.ReconfigExistingLoggers();
             return memory;
         }
+
 
         private sealed class RejectingDownloadService : IDownloadService
         {

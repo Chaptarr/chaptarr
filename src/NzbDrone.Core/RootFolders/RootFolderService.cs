@@ -3,11 +3,14 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using FluentValidation;
+using FluentValidation.Results;
 using NLog;
 using NzbDrone.Common;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Datastore.Events;
 using NzbDrone.Core.MediaFiles;
@@ -103,10 +106,11 @@ namespace NzbDrone.Core.RootFolders
                 var dockerEnv = ProcessUserInfo.GetDockerUserEnvSummary();
                 var dockerHint = dockerEnv == null ? string.Empty : $" (env: {dockerEnv})";
 
-                throw new UnauthorizedAccessException(
+                throw new ValidationException(new[] { new ValidationFailure(nameof(RootFolder.Path),
                     $"Folder '{rootFolder.Path}' is not writable by user '{user}'. Permission denied - please ensure the Chaptarr process has write access to this directory and its subdirectories.{dockerHint} " +
                     "Chaptarr determines this by attempting to create and delete a temporary file in the folder. " +
-                    "If you're using Docker bind mounts, make sure the host folder exists (Docker may create missing folders as root:root) and that its ownership/permissions allow writes for this UID/GID.");
+                    "If you're using Docker bind mounts, make sure the host folder exists (Docker may create missing folders as root:root) and that its ownership/permissions allow writes for this UID/GID.")
+                    { ErrorCode = "RootFolderNotWritable" } });
             }
         }
 
@@ -150,6 +154,18 @@ namespace NzbDrone.Core.RootFolders
             // Note: FolderType.Unknown no longer exists - Mixed is now the default
             // All root folders should have a valid FolderType (Mixed, Audiobook, or Ebook)
 
+            // Default only at creation: author monitoring is on, but selecting books
+            // is opt-in. Explicit choices and settings on existing roots stay untouched.
+            if (rootFolder.FolderType is FolderType.Audiobook or FolderType.Mixed)
+            {
+                rootFolder.SetAudiobookSettings(WithCreationDefaults(rootFolder.GetAudiobookSettings()));
+            }
+
+            if (rootFolder.FolderType is FolderType.Ebook or FolderType.Mixed)
+            {
+                rootFolder.SetEbookSettings(WithCreationDefaults(rootFolder.GetEbookSettings()));
+            }
+
             _rootFolderRepository.Insert(rootFolder);
 
             _logger.Info($"Successfully inserted root folder '{rootFolder.Path}' with type {rootFolder.FolderType}");
@@ -161,6 +177,15 @@ namespace NzbDrone.Core.RootFolders
             _commandQueueManager.Push(new RescanFoldersCommand(new List<string> { rootFolder.Path }, FilterFilesType.None, null, true));
 
             return rootFolder;
+        }
+
+        private static MediaTypeSettings WithCreationDefaults(MediaTypeSettings settings)
+        {
+            settings ??= new MediaTypeSettings();
+            settings.Monitored ??= true;
+            settings.MonitorExistingMode ??= MonitorTypes.None;
+            settings.MonitorNewItems ??= NewItemMonitorTypes.None;
+            return settings;
         }
 
         public RootFolder Update(RootFolder rootFolder)
@@ -211,7 +236,7 @@ namespace NzbDrone.Core.RootFolders
 
         public List<RootFolder> AllForTag(int tagId)
         {
-            return All().Where(r => r.DefaultTags.Contains(tagId)).ToList();
+            return All().Where(r => r.GetReferencedTags().Contains(tagId)).ToList();
         }
 
         public RootFolder GetBestRootFolder(string path)

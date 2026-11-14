@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.Parser;
+using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.MediaFiles.BookImport.Services
 {
@@ -19,7 +19,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
     internal static class ExactMatchEvidenceBuilder
     {
-        private static readonly Regex ProofTokenRegex = new Regex(@"[\p{L}\p{Nd}]+", RegexOptions.Compiled);
 
         internal static ExactMatchEvidence Build(
             string authorName,
@@ -28,7 +27,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             IDictionary<string, List<string>> tags,
             IContainmentValidator containmentValidator)
         {
-            var authorTags = BuildAuthorEvidenceTags(authorName, tags, containmentValidator);
+            var authorTags = BuildAuthorEvidenceTags(authorName, tags, containmentValidator, new[] { edition?.Title, bookTitle });
             var bookTags = BuildBookEvidenceTags(edition, bookTitle, tags, containmentValidator);
             var narratorTags = edition != null
                 ? BuildNarratorEvidenceTags(edition, authorName, tags)
@@ -46,13 +45,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
         internal static Dictionary<string, List<string>> BuildAuthorEvidenceTags(
             string authorName,
             IDictionary<string, List<string>> tags,
-            IContainmentValidator containmentValidator)
+            IContainmentValidator containmentValidator,
+            IEnumerable<string> knownTitles = null)
         {
             var evidence = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             if (string.IsNullOrWhiteSpace(authorName) || tags == null || tags.Count == 0 || containmentValidator == null)
             {
                 return evidence;
             }
+
+            var titles = knownTitles?.Where(title => !string.IsNullOrWhiteSpace(title)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
             foreach (var kvp in tags)
             {
@@ -68,7 +70,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                         [kvp.Key] = new List<string> { value }
                     };
 
-                    if (!containmentValidator.ValidateAuthorInTags(authorName, singleField))
+                    var hasAuthor = titles?.Count > 0
+                        ? containmentValidator.ValidateAuthorInTags(authorName, singleField, titles)
+                        : containmentValidator.ValidateAuthorInTags(authorName, singleField);
+                    if (!hasAuthor)
                     {
                         continue;
                     }
@@ -102,12 +107,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             var evidence = !string.IsNullOrWhiteSpace(edition?.Title)
-                ? containmentValidator.GetEditionTitleEvidence(edition.Title, tags)
+                ? containmentValidator.GetEditionTitleEvidence(edition.Title, tags, knownNarrators: ReleaseNarratorEvidenceExtractor.GetKnownNarratorNames(edition))
                 : Array.Empty<EditionTitleEvidence>();
 
             if ((evidence == null || evidence.Count == 0) && !string.IsNullOrWhiteSpace(bookTitle))
             {
-                evidence = containmentValidator.GetEditionTitleEvidence(bookTitle, tags);
+                evidence = containmentValidator.GetEditionTitleEvidence(bookTitle, tags, knownNarrators: ReleaseNarratorEvidenceExtractor.GetKnownNarratorNames(edition));
             }
 
             foreach (var item in (evidence ?? Array.Empty<EditionTitleEvidence>())
@@ -145,34 +150,19 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 return evidence;
             }
 
-            foreach (var kvp in tags)
+            foreach (var narrator in narratorCandidates)
             {
-                if (TagExclusionPolicy.IsExcludedFromMatching(kvp.Key) || kvp.Value == null || kvp.Value.Count == 0)
+                foreach (var field in FindNarratorEvidenceFields(narrator, authorName, tags))
                 {
-                    continue;
-                }
-
-                foreach (var value in kvp.Value.Where(v => !string.IsNullOrWhiteSpace(v)))
-                {
-                    var singleField = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
-                    {
-                        [kvp.Key] = new List<string> { value }
-                    };
-
-                    if (!TryFindNarratorEvidence(narratorCandidates, authorName, singleField))
-                    {
-                        continue;
-                    }
-
-                    if (!evidence.TryGetValue(kvp.Key, out var values))
+                    if (!evidence.TryGetValue(field.Key, out var values))
                     {
                         values = new List<string>();
-                        evidence[kvp.Key] = values;
+                        evidence[field.Key] = values;
                     }
 
-                    if (!values.Contains(value, StringComparer.OrdinalIgnoreCase))
+                    if (!values.Contains(field.Value, StringComparer.OrdinalIgnoreCase))
                     {
-                        values.Add(value);
+                        values.Add(field.Value);
                     }
                 }
             }
@@ -227,58 +217,17 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             return output
-                .SelectMany(ExpandNarratorVariants)
                 .Select(n => n?.Trim())
                 .Where(n => !string.IsNullOrWhiteSpace(n))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
 
-        private static IEnumerable<string> ExpandNarratorVariants(string raw)
-        {
-            if (string.IsNullOrWhiteSpace(raw))
-            {
-                yield break;
-            }
-
-            yield return raw;
-
-            if (!raw.Contains(','))
-            {
-                yield break;
-            }
-
-            var parts = raw.Split(',')
-                .Select(part => part.Trim())
-                .Where(part => !string.IsNullOrWhiteSpace(part))
-                .ToArray();
-
-            if (parts.Length >= 2)
-            {
-                yield return string.Join(" ", parts.Skip(1).Concat(parts.Take(1)));
-            }
-        }
-
-        private static bool TryFindNarratorEvidence(
-            IReadOnlyList<string> narratorCandidates,
-            string authorName,
-            IDictionary<string, List<string>> tags)
-        {
-            foreach (var narrator in narratorCandidates.Where(n => !string.IsNullOrWhiteSpace(n)))
-            {
-                if (FindNarratorEvidenceFields(narrator, authorName, tags).Count > 0)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private static List<KeyValuePair<string, string>> FindNarratorEvidenceFields(
+        internal static List<KeyValuePair<string, string>> FindNarratorEvidenceFields(
             string narratorRaw,
             string authorName,
-            IDictionary<string, List<string>> tags)
+            IDictionary<string, List<string>> tags,
+            bool applySelfNarrationGate = true)
         {
             var evidence = new List<KeyValuePair<string, string>>();
             if (string.IsNullOrWhiteSpace(narratorRaw) || tags == null || tags.Count == 0)
@@ -287,18 +236,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             const int maxValueLength = 400;
-            var narrator = NormalizePersonNameForMatch(narratorRaw);
+            var narrator = UnicodeComparisonNormalizer.NormalizeWords(narratorRaw);
             if (string.IsNullOrWhiteSpace(narrator))
             {
                 return evidence;
             }
 
-            var narratorNoSpace = narrator.Replace(" ", string.Empty);
-            var narratorWords = narrator.Split(' ').Where(word => word.Length > 1).ToList();
-            var normalizedAuthor = NormalizePersonNameForMatch(authorName);
-            var selfNarrated = !string.IsNullOrWhiteSpace(normalizedAuthor) &&
-                               (string.Equals(narrator, normalizedAuthor, StringComparison.Ordinal) ||
-                                IsAuthorAsNarrator(narratorRaw, authorName));
+            var selfNarrated = AuthorNameMatcher.ContainsAuthorName(authorName, narratorRaw);
 
             foreach (var kvp in tags)
             {
@@ -309,18 +253,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
 
                 foreach (var value in kvp.Value.Where(v => !string.IsNullOrWhiteSpace(v) && v.Length <= maxValueLength))
                 {
-                    var normalizedValue = NormalizePersonNameForMatch(value);
-                    if (string.IsNullOrWhiteSpace(normalizedValue))
-                    {
-                        continue;
-                    }
-
-                    var normalizedValueNoSpace = normalizedValue.Replace(" ", string.Empty);
-                    var matchesNarrator =
-                        normalizedValueNoSpace.Contains(narratorNoSpace, StringComparison.Ordinal) ||
-                        (narratorWords.Count >= 2 && narratorWords.All(word => normalizedValueNoSpace.Contains(word, StringComparison.Ordinal)));
-
-                    if (!matchesNarrator)
+                    if (!ReleaseNarratorEvidenceExtractor.ContainsCompleteCredit(narratorRaw, value))
                     {
                         continue;
                     }
@@ -334,7 +267,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 }
             }
 
-            if (!selfNarrated)
+            if (!applySelfNarrationGate || !selfNarrated)
             {
                 return evidence;
             }
@@ -349,91 +282,5 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 : new List<KeyValuePair<string, string>>();
         }
 
-        private static string NormalizePersonNameForMatch(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return string.Empty;
-            }
-
-            var trimmed = value.Trim().ToLowerInvariant();
-            var builder = new StringBuilder(trimmed.Length);
-            foreach (var ch in trimmed)
-            {
-                builder.Append(char.IsLetterOrDigit(ch) ? ch : ' ');
-            }
-
-            return Regex.Replace(builder.ToString(), "\\s+", " ").Trim();
-        }
-
-        private static bool IsAuthorAsNarrator(string narrator, string authorName)
-        {
-            if (string.IsNullOrWhiteSpace(narrator) || string.IsNullOrWhiteSpace(authorName))
-            {
-                return false;
-            }
-
-            var normalizedNarrator = NormalizePersonNameForMatch(narrator);
-            var normalizedAuthor = NormalizePersonNameForMatch(authorName);
-            if (!string.IsNullOrWhiteSpace(normalizedNarrator) &&
-                string.Equals(normalizedNarrator, normalizedAuthor, StringComparison.Ordinal))
-            {
-                return true;
-            }
-
-            var narratorTokens = TokenizeNameTokens(narrator)
-                .Where(token => token.Length > 1)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var authorTokens = TokenizeNameTokens(authorName)
-                .Where(token => token.Length > 1)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            if (narratorTokens.Count == 0 || authorTokens.Count == 0)
-            {
-                return false;
-            }
-
-            var overlap = authorTokens.Count(token => narratorTokens.Contains(token));
-            if (authorTokens.Count == 1)
-            {
-                return overlap == 1;
-            }
-
-            var required = authorTokens.Count == 2 ? 2 : Math.Max(2, (int)Math.Ceiling(authorTokens.Count * 0.6));
-            return overlap >= required;
-        }
-
-        private static IEnumerable<string> TokenizeNameTokens(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return Enumerable.Empty<string>();
-            }
-
-            // Match TokenizeForLeftoverGate/TokenizeText behavior from FileMatchingService:
-            // 1. Normalize possessives ('s → s) before tokenizing
-            value = Regex.Replace(value, "['\\u2018\\u2019]s\\b", "s");
-
-            // 2. Strip diacritics (NFD decomposition + remove combining marks)
-            value = value.Normalize(NormalizationForm.FormD);
-            var sb = new StringBuilder(value.Length);
-            foreach (var c in value)
-            {
-                if (CharUnicodeInfo.GetUnicodeCategory(c) != UnicodeCategory.NonSpacingMark)
-                {
-                    sb.Append(c);
-                }
-            }
-
-            value = sb.ToString();
-
-            // 3. Replace dashes and dots with spaces (same as TokenizeForLeftoverGate)
-            value = Regex.Replace(value, @"[–—-]", " ");
-            value = value.Replace('.', ' ');
-
-            return ProofTokenRegex.Matches(value.ToLowerInvariant())
-                .Cast<Match>()
-                .Select(match => match.Value);
-        }
     }
 }

@@ -15,11 +15,13 @@ using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
 using NzbDrone.Core.Validation;
+using NzbDrone.Core.RootFolders;
 
 namespace NzbDrone.Core.Download.Clients.Nzbget
 {
     public class Nzbget : UsenetClientBase<NzbgetSettings>
     {
+        private readonly IRootFolderService _rootFolders;
         private readonly INzbgetProxy _proxy;
         private readonly string[] _successStatus = { "SUCCESS", "NONE" };
         private readonly string[] _deleteFailedStatus = { "HEALTH", "DUPE", "SCAN", "COPY", "BAD" };
@@ -30,9 +32,11 @@ namespace NzbDrone.Core.Download.Clients.Nzbget
                       IDiskProvider diskProvider,
                       IRemotePathMappingService remotePathMappingService,
                       IValidateNzbs nzbValidationService,
-                      Logger logger)
+                      Logger logger,
+                      IRootFolderService rootFolders)
             : base(httpClient, configService, diskProvider, remotePathMappingService, nzbValidationService, logger)
         {
+            _rootFolders = rootFolders;
             _proxy = proxy;
         }
 
@@ -208,6 +212,8 @@ namespace NzbDrone.Core.Download.Clients.Nzbget
 
         public override void RemoveItem(DownloadClientItem item, bool deleteData)
         {
+            if (deleteData) EnsureCanDeleteItemData(item, _rootFolders);
+
             if (deleteData)
             {
                 DeleteItemData(item);

@@ -14,6 +14,23 @@ namespace Chaptarr.Core.Test.Configuration
     [TestFixture]
     public class SettingsBackupServiceConnectionRestoreFixture
     {
+        [TestCase(SettingsBackupRestoreMode.Merge)]
+        [TestCase(SettingsBackupRestoreMode.Overwrite)]
+        public void case_only_connection_name_change_keeps_its_identity(SettingsBackupRestoreMode mode)
+        {
+            var factory = CreateNotificationFactory(out var proxy);
+            proxy.Definitions.Add(new NotificationDefinition
+            {
+                Id = 42, Name = "AUDIOBOOKSHELF", Implementation = "AudioBookShelf",
+                Settings = new AudioBookShelfSettings { Host = "destination" }
+            });
+            InvokeRestoreConnections(CreateService(factory), BuildPackageWithAudioBookShelfConnection(), mode, new SettingsBackupRestoreResult());
+            var restored = proxy.Definitions.Single();
+            Assert.That(restored.Id, Is.EqualTo(42));
+            Assert.That(((AudioBookShelfSettings)restored.Settings).Host,
+                Is.EqualTo(mode == SettingsBackupRestoreMode.Merge ? "destination" : "audiobookshelf"));
+        }
+
         [Test]
         public void restore_connections_should_clear_audiobookshelf_library_mappings_and_warn()
         {
@@ -29,7 +46,7 @@ namespace Chaptarr.Core.Test.Configuration
 
             Assert.That(factoryProxy.Definitions, Has.Count.EqualTo(1));
             AssertAudioBookShelfMappingsCleared(factoryProxy.Definitions[0]);
-            Assert.That(result.Warnings, Has.Some.Contains("Cleared AudioBookShelf library mappings"));
+            Assert.That(result.Warnings, Has.Some.Contains("Discarded backup AudioBookShelf library mappings"));
             Assert.That(result.Warnings, Has.Some.Contains("Root folders are not included in settings backups"));
         }
 
@@ -57,7 +74,51 @@ namespace Chaptarr.Core.Test.Configuration
             Assert.That(factoryProxy.Definitions, Has.Count.EqualTo(1));
             Assert.That(factoryProxy.Definitions[0].Id, Is.EqualTo(42));
             AssertAudioBookShelfMappingsCleared(factoryProxy.Definitions[0]);
-            Assert.That(result.Warnings, Has.Some.Contains("Cleared AudioBookShelf library mappings"));
+            Assert.That(result.Warnings, Has.Some.Contains("Discarded backup AudioBookShelf library mappings"));
+        }
+
+        [Test]
+        public void merge_connections_should_keep_destination_settings_and_library_mappings()
+        {
+            var factory = CreateNotificationFactory(out var proxy);
+            var settings = new AudioBookShelfSettings { Host = "destination", Port = 0, ApiKey = "" };
+            settings.SetLibraryMappings(new List<AudioBookShelfLibraryMapping>
+            {
+                new() { RootFolderId = 42, MediaType = "audiobook", LibraryId = "destination-library" }
+            });
+            proxy.Definitions.Add(new NotificationDefinition
+            {
+                Id = 42, Name = "AudioBookShelf", Implementation = "AudioBookShelf",
+                Settings = settings, IncludeHealthWarnings = false
+            });
+            var package = BuildPackageWithAudioBookShelfConnection();
+            package.Connections.Single().IncludeHealthWarnings = true;
+            InvokeRestoreConnections(CreateService(factory), package, SettingsBackupRestoreMode.Merge, new SettingsBackupRestoreResult());
+            var restored = (AudioBookShelfSettings)proxy.Definitions.Single().Settings;
+            Assert.That(restored.Host, Is.EqualTo("destination"));
+            Assert.That(restored.Port, Is.Zero);
+            Assert.That(restored.ApiKey, Is.EqualTo("apikey"));
+            Assert.That(restored.GetLibraryMappings().Single().RootFolderId, Is.EqualTo(42));
+            Assert.That(restored.GetLibraryMappings().Single().LibraryId, Is.EqualTo("destination-library"));
+            Assert.That(proxy.Definitions.Single().IncludeHealthWarnings, Is.False);
+        }
+
+        [Test]
+        public void an_older_backup_without_health_warnings_should_preserve_the_existing_connection_choice()
+        {
+            var factory = CreateNotificationFactory(out var proxy);
+            proxy.Definitions.Add(new NotificationDefinition
+            {
+                Id = 42,
+                Name = "AudioBookShelf",
+                Implementation = "AudioBookShelf",
+                IncludeHealthWarnings = true,
+                Settings = new AudioBookShelfSettings()
+            });
+            var package = BuildPackageWithAudioBookShelfConnection();
+            Assert.That(package.Connections.Single().IncludeHealthWarnings, Is.Null);
+            InvokeRestoreConnections(CreateService(factory), package, SettingsBackupRestoreMode.Merge, new SettingsBackupRestoreResult());
+            Assert.That(proxy.Definitions.Single().IncludeHealthWarnings, Is.True);
         }
 
         private static SettingsBackupService CreateService(INotificationFactory notificationFactory)
@@ -75,7 +136,8 @@ namespace Chaptarr.Core.Test.Configuration
                 null,
                 null,
                 null,
-                null);
+                null,
+                null, delayProfileService: null, releaseProfileService: null, qualityDefinitionService: null, mediaPaths: null, filenameValidation: SettingsBackupCoverageFixture.CreateFilenameValidation());
         }
 
         private static SettingsBackupPackage BuildPackageWithAudioBookShelfConnection()

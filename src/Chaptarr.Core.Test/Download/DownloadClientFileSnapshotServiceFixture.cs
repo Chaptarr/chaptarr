@@ -1,14 +1,19 @@
 using System;
 using System.Collections.Generic;
+using System.IO.Abstractions;
+using System.Linq;
 using System.Reflection;
 using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Disk;
+using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Datastore.Events;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Indexers;
+using NzbDrone.Core.History;
+using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
 
 namespace Chaptarr.Core.Test.Download
@@ -118,19 +123,20 @@ namespace Chaptarr.Core.Test.Download
         }
 
         [Test]
-        public void should_refresh_unchanged_snapshot_when_timestamp_is_stale()
+        public void should_preserve_unchanged_snapshot_without_timestamp_refresh()
         {
             var repository = DispatchProxy.Create<IDownloadClientFileSnapshotRepository, RepositoryProxy>();
             var proxy = (RepositoryProxy)(object)repository;
             var service = new DownloadClientFileSnapshotService(repository, null, LogManager.GetCurrentClassLogger());
 
             service.CaptureClientList(DownloadItem(new List<string> { "/downloads/book/part1.mp3" }, DownloadClientFileListConfidence.Authoritative));
-            proxy.Snapshot.LastUpdated = DateTime.UtcNow.AddHours(-7);
+            var captured = DateTime.UtcNow.AddDays(-30);
+            proxy.Snapshot.LastUpdated = captured;
 
             service.CaptureClientList(DownloadItem(new List<string> { "/downloads/book/part1.mp3" }, DownloadClientFileListConfidence.Authoritative));
 
-            Assert.That(proxy.WriteCalls, Is.EqualTo(2));
-            Assert.That(proxy.Snapshot.LastUpdated, Is.GreaterThan(DateTime.UtcNow.AddMinutes(-1)));
+            Assert.That(proxy.WriteCalls, Is.EqualTo(1));
+            Assert.That(proxy.Snapshot.LastUpdated, Is.EqualTo(captured));
         }
 
         [Test]
@@ -174,17 +180,78 @@ namespace Chaptarr.Core.Test.Download
         }
 
         [Test]
-        public void should_delete_snapshot_when_download_completed_event_fires()
+        public void should_restore_original_inventory_before_recapturing_partially_moved_download()
         {
             var repository = DispatchProxy.Create<IDownloadClientFileSnapshotRepository, RepositoryProxy>();
-            var repositoryProxy = (RepositoryProxy)(object)repository;
             var service = new DownloadClientFileSnapshotService(repository, null, LogManager.GetCurrentClassLogger());
-            var item = DownloadItem(new List<string> { "/downloads/book/part1.mp3" });
+            service.CaptureClientList(DownloadItem(new List<string> { "/downloads/book/part1.mp3", "/downloads/book/part2.mp3" }));
 
-            service.CaptureClientList(item);
-            service.Handle(new DownloadCompletedEvent(new TrackedDownload { DownloadItem = item }, 1));
+            var restarted = DownloadItem(new List<string>(), outputPath: "/downloads/book");
+            service.CaptureCompletedOutput(restarted);
+            Assert.That(restarted.FilePaths, Is.EqualTo(new[] { "/downloads/book/part1.mp3", "/downloads/book/part2.mp3" }));
+        }
 
-            Assert.That(repositoryProxy.Snapshot, Is.Null);
+        [Test]
+        public void disk_snapshot_should_see_later_media_without_forgetting_a_previously_seen_part()
+        {
+            var repository = DispatchProxy.Create<IDownloadClientFileSnapshotRepository, RepositoryProxy>();
+            var proxy = (RepositoryProxy)(object)repository;
+            var paths = new[] { @"C:\downloads\book\info.nfo".AsOsAgnostic() };
+            var disk = Common.InterfaceProxy.Proxy<IDiskProvider>((method, args) => method.Name switch
+            {
+                nameof(IDiskProvider.FileExists) => false,
+                nameof(IDiskProvider.FolderExists) => true,
+                nameof(IDiskProvider.GetFileInfos) => paths.Select(path => Common.InterfaceProxy.Proxy<IFileInfo>((property, _) => property.Name == "get_FullName" ? path : throw new NotImplementedException(property.Name))).ToList(),
+                _ => throw new NotImplementedException(method.Name)
+            });
+            var service = new DownloadClientFileSnapshotService(repository, disk, LogManager.GetCurrentClassLogger());
+            var first = DownloadItem(outputPath: @"C:\downloads\book".AsOsAgnostic());
+            service.CaptureCompletedOutput(first);
+            Assert.That(first.FilePaths, Is.EqualTo(paths));
+
+            paths = new[] { @"C:\downloads\book\Dune 01.mp3".AsOsAgnostic(), @"C:\downloads\book\Dune 02.mp3".AsOsAgnostic() };
+            var afterRestart = DownloadItem(outputPath: @"C:\downloads\book".AsOsAgnostic());
+            service.CaptureCompletedOutput(afterRestart);
+            Assert.That(afterRestart.FilePaths, Is.EquivalentTo(paths.Append(@"C:\downloads\book\info.nfo".AsOsAgnostic())));
+            Assert.That(afterRestart.FileListConfidence, Is.EqualTo(DownloadClientFileListConfidence.Disk));
+            service.ApplySnapshot(first);
+            Assert.That(first.FilePaths, Is.EquivalentTo(afterRestart.FilePaths), "Import receives the original download item after its clone refreshes the snapshot");
+
+            paths = new[] { @"C:\downloads\book\Dune 02.mp3".AsOsAgnostic() };
+            service.CaptureCompletedOutput(afterRestart);
+            service.CaptureClientList(afterRestart);
+            Assert.That(proxy.WriteCalls, Is.EqualTo(2));
+            Assert.That(proxy.Snapshot.Confidence, Is.EqualTo(DownloadClientFileListConfidence.Disk));
+            Assert.That(afterRestart.FilePaths, Does.Contain(@"C:\downloads\book\Dune 01.mp3".AsOsAgnostic()));
+
+            var tracked = new TrackedDownload
+            {
+                DownloadItem = afterRestart,
+                RemoteBook = new RemoteBook { Books = new List<Book> { new() { Id = 7, MediaType = BookMediaType.Audiobook } } }
+            };
+            var history = new List<EntityHistory>
+            {
+                new()
+                {
+                    DownloadId = afterRestart.DownloadId, BookId = 7, EditionId = 9,
+                    EventType = EntityHistoryEventType.BookFileImported,
+                    Data = new Dictionary<string, string> { ["DroppedPath"] = paths.Single() }
+                }
+            };
+            var completion = TrackedDownloadAlreadyImported.Evaluate(tracked, history: history);
+            Assert.That(completion.Complete, Is.False, "A vanished, never-imported part must not disappear from completion evidence");
+            Assert.That(completion.RequiredCount, Is.EqualTo(2));
+            Assert.That(completion.Missing.Select(message => message.Title), Does.Contain("Dune 01.mp3"));
+            Assert.That(completion.Missing.Select(message => message.SourcePath), Does.Contain(@"C:\downloads\book\Dune 01.mp3".AsOsAgnostic()));
+
+            history.Add(new EntityHistory
+            {
+                DownloadId = afterRestart.DownloadId, BookId = 7, EditionId = 9,
+                EventType = EntityHistoryEventType.BookFileImported,
+                Data = new Dictionary<string, string> { ["DroppedPath"] = @"C:\downloads\book\Dune 01.mp3".AsOsAgnostic() }
+            });
+            Assert.That(TrackedDownloadAlreadyImported.Evaluate(tracked, history: history).Complete, Is.True,
+                "A part moved by an earlier successful import is covered by its saved source path");
         }
 
         [Test]

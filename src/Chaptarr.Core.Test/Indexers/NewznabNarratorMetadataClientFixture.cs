@@ -2,11 +2,11 @@ using System;
 using System.Net;
 using System.Reflection;
 using System.Text.Json;
-using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Indexers.Newznab;
+using NzbDrone.Core.Indexers.Exceptions;
 using NzbDrone.Core.Parser.Model;
 
 namespace Chaptarr.Core.Test.Indexers
@@ -17,18 +17,45 @@ namespace Chaptarr.Core.Test.Indexers
         private class IndexerHttpClientProxy : DispatchProxy
         {
             public int ExecuteCount { get; private set; }
+            public Func<HttpRequest, HttpResponse> Response { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IIndexerHttpClient.Execute) && args?[0] is HttpRequest request)
                 {
                     ExecuteCount++;
+                    if (Response != null)
+                    {
+                        return Response(request);
+                    }
+
                     var headers = new HttpHeader { ContentType = "text/plain" };
                     return new HttpResponse(request, headers, "Narration: Steven Pacey\nLength: 22 hours", HttpStatusCode.OK);
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement {targetMethod?.Name}");
             }
+        }
+
+        [TestCase(100, "Invalid API key", typeof(ApiKeyException), HttpStatusCode.OK)]
+        [TestCase(100, "Invalid API key", typeof(ApiKeyException), HttpStatusCode.BadRequest)]
+        [TestCase(500, "Request limit reached", typeof(RequestLimitReachedException), HttpStatusCode.OK)]
+        [TestCase(500, "Request limit reached", typeof(RequestLimitReachedException), HttpStatusCode.BadRequest)]
+        public void provider_errors_should_escape_without_endpoint_fallback_or_negative_caching(
+            int code, string description, Type error, HttpStatusCode status)
+        {
+            var http = DispatchProxy.Create<IIndexerHttpClient, IndexerHttpClientProxy>();
+            var proxy = (IndexerHttpClientProxy)(object)http;
+            proxy.Response = request => new HttpResponse(request, new HttpHeader { ContentType = "application/xml" },
+                $"<error code=\"{code}\" description=\"{description}\" />", status);
+            var settings = new NewznabSettings { BaseUrl = "https://indexer.example", ApiPath = "/api", ApiKey = "test-key" };
+            var client = new NewznabNarratorMetadataClient(http, settings, 42, TimeSpan.Zero, new CacheManager());
+            var release = new ReleaseInfo { DownloadUrl = "https://indexer.example/api?t=get&id=release-123" };
+
+            Assert.Throws(error, () => client.TryPopulate(release));
+            Assert.That(proxy.ExecuteCount, Is.EqualTo(1));
+            Assert.Throws(error, () => client.TryPopulate(release));
+            Assert.That(proxy.ExecuteCount, Is.EqualTo(2));
         }
 
         [TestCase("https://api.nzb.life/getnzb/e457b6ab64a00ddf0905d70ff634c9e2.nzb&i=321976&r=abc", "e457b6ab64a00ddf0905d70ff634c9e2")]
@@ -63,6 +90,24 @@ namespace Chaptarr.Core.Test.Indexers
             var normalized = NewznabNarratorMetadataClient.NormalizeDuration(raw);
 
             Assert.That(normalized, Is.EqualTo(expected));
+        }
+
+        [TestCase("１２:３０")]
+        [TestCase("١٢ hours")]
+        [TestCase("99999999999 minutes")]
+        [TestCase("99999999 hours")]
+        [TestCase("35791394 hours 2147483647 minutes")]
+        public void should_preserve_unparseable_duration_without_losing_other_nfo_metadata(string duration)
+        {
+            var metadata = NewznabNarratorMetadataClient.ParseNfo(
+                $"Duration: {duration}\nNarration: Steven Pacey\nGraphic Audio");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(metadata.Duration, Is.EqualTo(duration));
+                Assert.That(metadata.Narrator, Is.EqualTo("Steven Pacey"));
+                Assert.That(metadata.IsGraphicAudio, Is.True);
+            });
         }
 
         [Test]
@@ -104,6 +149,19 @@ Narration > Steven Pacey
             Assert.That(metadata, Is.Not.Null);
             Assert.That(metadata.Narrator, Is.EqualTo("Steven Pacey"));
             Assert.That(metadata.Duration, Is.EqualTo("22h 37m"));
+        }
+
+        [TestCase("Publisher: Graphic.Audio", true)]
+        [TestCase("Publisher: ＧｒａｐｈｉｃＡｕｄｉｏ", true)]
+        [TestCase("Description: Graphic Audiobook", false)]
+        [TestCase("Narration: Full Cast", false)]
+        [TestCase("Narration: Karina Castillo", false)]
+        public void nfo_brand_evidence_uses_the_shared_bounded_vocabulary(string line, bool expected)
+        {
+            var metadata = NewznabNarratorMetadataClient.ParseNfo("Narration: Steven Pacey\n" + line);
+            Assert.That(metadata, Is.Not.Null);
+            Assert.That(metadata.IsGraphicAudio, Is.EqualTo(expected));
+            Assert.That(metadata.Narrator, Is.EqualTo("Steven Pacey"));
         }
 
         [Test]
@@ -168,8 +226,7 @@ Narration: Graphic Audio
                     settings,
                     indexerId: 42,
                     rateLimit: TimeSpan.Zero,
-                    cacheManager,
-                    LogManager.GetCurrentClassLogger());
+                    cacheManager);
             }
 
             ReleaseInfo CreateRelease()

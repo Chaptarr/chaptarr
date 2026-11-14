@@ -84,7 +84,6 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         private class IngestQueueRepositoryProxy : DispatchProxy
         {
             public List<IngestQueueItem> Inserted { get; } = new List<IngestQueueItem>();
-            public List<List<string>> FailedRequeueCalls { get; } = new List<List<string>>();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -94,23 +93,18 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                     return null;
                 }
 
-                if (targetMethod?.Name == nameof(IIngestQueueRepository.RequeueFailedPaths))
-                {
-                    var paths = ((IEnumerable<string>)args[0]).ToList();
-                    FailedRequeueCalls.Add(paths);
-                    return paths.Count;
-                }
-
                 return GetDefaultValue(targetMethod?.ReturnType);
             }
         }
 
-        [Test]
+        [TestCase("misplaced.m4b", FolderType.Ebook, true)]
+        [TestCase("._Dune Part 01.mp3", FolderType.Audiobook, false)]
+        [TestCase("._Dune.epub", FolderType.Ebook, false)]
 #pragma warning disable SYSLIB0050
-        public async Task stage_should_inventory_but_not_match_a_root_type_mismatched_media_file()
+        public async Task stage_should_exclude_junk_but_inventory_root_type_mismatched_media(string filename, FolderType folderType, bool inventoried)
         {
             const string rootPath = "/books";
-            const string filePath = "/books/misplaced.m4b";
+            var filePath = rootPath + "/" + filename;
             var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
             var diskProxy = (DiskProviderProxy)(object)diskProvider;
             diskProxy.RootPath = rootPath;
@@ -131,10 +125,11 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var task = (Task)method.Invoke(sut, new object[]
             {
                 rootPath,
-                new RootFolder { Path = rootPath, FolderType = FolderType.Ebook },
+                new RootFolder { Path = rootPath, FolderType = folderType },
                 null,
                 null,
-                FilterFilesType.Known
+                FilterFilesType.Known,
+                null
             });
             await task;
 
@@ -143,46 +138,9 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var seenPaths = (IEnumerable<string>)stageResult.GetType().GetProperty("SeenFilePaths")?.GetValue(stageResult);
             var stagedCount = (int)stageResult.GetType().GetProperty("StagedCount")?.GetValue(stageResult);
 
-            Assert.That(seenPaths, Is.EqualTo(new[] { filePath }));
-            Assert.That(stagedCount, Is.EqualTo(0), "Root-type mismatches must stay visible but must not enter matching/import");
+            Assert.That(seenPaths, Is.EqualTo(inventoried ? new[] { filePath } : Array.Empty<string>()));
+            Assert.That(stagedCount, Is.EqualTo(0), "Neither excluded junk nor root-type mismatches should enter matching/import");
             Assert.That(ingestProxy.Inserted, Is.Empty);
-        }
-#pragma warning restore SYSLIB0050
-
-        [Test]
-#pragma warning disable SYSLIB0050
-        public void scheduled_root_scan_should_requeue_only_observed_type_eligible_failed_paths()
-        {
-            var ingestQueue = DispatchProxy.Create<IIngestQueueRepository, IngestQueueRepositoryProxy>();
-            var ingestProxy = (IngestQueueRepositoryProxy)(object)ingestQueue;
-            var sut = (ImportOrchestratorV2)FormatterServices.GetUninitializedObject(typeof(ImportOrchestratorV2));
-            SetField(sut, "_ingestQueue", ingestQueue);
-
-            var method = typeof(ImportOrchestratorV2).GetMethod(
-                "RequeueObservedFailuresForScheduledRootScan",
-                BindingFlags.Instance | BindingFlags.NonPublic);
-            Assert.That(method, Is.Not.Null);
-
-            var requeued = (int)method.Invoke(sut, new object[]
-            {
-                false,
-                new RootFolder { Path = "/books", FolderType = FolderType.Ebook },
-                new[] { "/books/eligible.epub", "/books/misplaced.m4b" }
-            });
-
-            Assert.That(requeued, Is.EqualTo(1));
-            Assert.That(ingestProxy.FailedRequeueCalls, Has.Count.EqualTo(1));
-            Assert.That(ingestProxy.FailedRequeueCalls[0], Is.EqualTo(new[] { "/books/eligible.epub" }));
-
-            var manualRequeued = (int)method.Invoke(sut, new object[]
-            {
-                true,
-                new RootFolder { Path = "/books", FolderType = FolderType.Ebook },
-                new[] { "/books/eligible.epub" }
-            });
-
-            Assert.That(manualRequeued, Is.EqualTo(0));
-            Assert.That(ingestProxy.FailedRequeueCalls, Has.Count.EqualTo(1), "Manual scans use the existing Failed+Unmapped path-wide requeue");
         }
 #pragma warning restore SYSLIB0050
 

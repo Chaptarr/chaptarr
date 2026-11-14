@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Net;
 using System.Threading.Tasks;
 using Chaptarr.Api.V1.Author;
 using Chaptarr.Api.V1.MediaTypes;
@@ -46,6 +48,7 @@ namespace Chaptarr.Api.V1.Books
 	        IHandle<BookEditedEvent>,
 	        IHandle<BookUpdatedEvent>,
 	        IHandle<BookDeletedEvent>,
+            IHandle<LibraryIdentityChangedEvent>,
 	        IHandle<BookImportedEvent>,
 	        IHandle<ImportStageProgressEvent>,
 	        IHandle<CommandExecutedEvent>,
@@ -57,12 +60,11 @@ namespace Chaptarr.Api.V1.Books
 	        protected readonly IAddBookService _addBookService;
 	        private readonly IEditionSelector _editionSelector;
 	        protected readonly IManageCommandQueue _commandQueueManager;
-	        protected readonly IMetadataProfileService _metadataProfileService;
-	        protected readonly IQualityProfileService _qualityProfileService;
 	        protected readonly IRootFolderService _rootFolderService;
 	        private readonly IMediaFileService _mediaFileService;
 	        private readonly IEventAggregator _eventAggregator;
             private readonly IProviderAliasService _providerAliasService;
+        private readonly IQualityProfileService _qualityProfileService;
 	        private readonly Logger _logger;
 	        private readonly object _importStateLock = new object();
 	        private readonly HashSet<int> _activeImportCommands = new HashSet<int>();
@@ -83,13 +85,12 @@ namespace Chaptarr.Api.V1.Books
 	                          IBroadcastSignalRMessage signalRBroadcaster,
 	                          IManageCommandQueue commandQueueManager,
 	                          IEventAggregator eventAggregator,
-	                          IMetadataProfileService metadataProfileService,
-	                          IQualityProfileService qualityProfileService,
 	                          IRootFolderService rootFolderService,
                           QualityProfileExistsValidator qualityProfileExistsValidator,
                           MetadataProfileExistsValidator metadataProfileExistsValidator,
                           Logger logger,
-                          IProviderAliasService providerAliasService = null)
+                          IProviderAliasService providerAliasService = null,
+                            IQualityProfileService qualityProfileService = null)
 
         : base(bookService, seriesBookLinkService, authorStatisticsService, coverMapper, upgradableSpecification, signalRBroadcaster)
 	        {
@@ -98,13 +99,12 @@ namespace Chaptarr.Api.V1.Books
 	            _editionSelector = editionSelector;
 	            _addBookService = addBookService;
 	            _commandQueueManager = commandQueueManager;
-	            _metadataProfileService = metadataProfileService;
-            _qualityProfileService = qualityProfileService;
             _rootFolderService = rootFolderService;
             _mediaFileService = mediaFileService;
             _eventAggregator = eventAggregator;
             _logger = logger;
             _providerAliasService = providerAliasService;
+            _qualityProfileService = qualityProfileService;
             _bookEditBroadcastDebouncer = new Debouncer(FlushPendingBookEdits, TimeSpan.FromMilliseconds(500), executeRestartsTimer: true);
 
             PostValidator.RuleFor(s => s.Author).Must(author =>
@@ -160,16 +160,16 @@ namespace Chaptarr.Api.V1.Books
 		                         .WithMessage("At least one quality profile must be selected");
 	            PostValidator.RuleFor(s => s.Author.MetadataProfileId).SetValidator(metadataProfileExistsValidator);
 	            PostValidator.RuleFor(s => s.Author.AudiobookQualityProfileId)
-	                         .SetValidator(qualityProfileExistsValidator)
+	                         .SetValidator(qualityProfileExistsValidator.ForType(ProfileType.Audiobook))
 	                         .When(s => s.Author?.AudiobookQualityProfileId.HasValue == true && s.Author.AudiobookQualityProfileId.Value > 0);
 	            PostValidator.RuleFor(s => s.Author.EbookQualityProfileId)
-	                         .SetValidator(qualityProfileExistsValidator)
+	                         .SetValidator(qualityProfileExistsValidator.ForType(ProfileType.Ebook))
 	                         .When(s => s.Author?.EbookQualityProfileId.HasValue == true && s.Author.EbookQualityProfileId.Value > 0);
 	            PostValidator.RuleFor(s => s.Author.AudiobookMetadataProfileId)
-	                         .SetValidator(metadataProfileExistsValidator)
+	                         .SetValidator(metadataProfileExistsValidator.ForType(MetadataProfileType.Audiobook))
 	                         .When(s => s.Author?.AudiobookMetadataProfileId.HasValue == true && s.Author.AudiobookMetadataProfileId.Value > 0);
 	            PostValidator.RuleFor(s => s.Author.EbookMetadataProfileId)
-	                         .SetValidator(metadataProfileExistsValidator)
+	                         .SetValidator(metadataProfileExistsValidator.ForType(MetadataProfileType.Ebook))
 	                         .When(s => s.Author?.EbookMetadataProfileId.HasValue == true && s.Author.EbookMetadataProfileId.Value > 0);
             PostValidator.RuleFor(s => s.Author.AudiobookRootFolderPath).IsValidPath()
 		                         .When(s => s.Author.Path.IsNullOrWhiteSpace() && !s.Author.AudiobookRootFolderPath.IsNullOrWhiteSpace());
@@ -218,7 +218,7 @@ namespace Chaptarr.Api.V1.Books
                 "adding book"));
         }
 
-        private ActionResult GetBookProviderAmbiguityResult(string provider, string providerId, BookMediaType mediaType, string field)
+        private ActionResult GetBookProviderAmbiguityResult(string provider, string providerId, BookMediaType mediaType, string field, string scope = "work")
         {
             return GetProviderAmbiguityResult(ProviderAmbiguityHelper.GetBookAmbiguity(
                 _bookService,
@@ -227,7 +227,8 @@ namespace Chaptarr.Api.V1.Books
                 mediaType,
                 field,
                 _logger,
-                "importing book"));
+                "importing book",
+                scope));
         }
 
         private bool IsImportActive()
@@ -400,7 +401,7 @@ namespace Chaptarr.Api.V1.Books
 
                 if (editionId != "0")
                 {
-                    var editionAmbiguity = GetBookProviderAmbiguityResult(editionProvider, editionId, bookMediaType, "foreignEditionId");
+                    var editionAmbiguity = GetBookProviderAmbiguityResult(editionProvider, editionId, bookMediaType, "foreignEditionId", "edition");
                     if (editionAmbiguity != null)
                     {
                         return editionAmbiguity;
@@ -421,9 +422,9 @@ namespace Chaptarr.Api.V1.Books
                     EbookMonitorExistingMode = authorMonitoring?.EbookMonitorExistingMode
                 }, bookMediaType, legacySelectTargetsSpecificBook: true);
                 var monitorMode = monitoring.MonitorExistingMode ?? MonitorTypes.SpecificBook;
+                var monitorCurrentBook = monitorMode != MonitorTypes.None;
                 var authorMonitored = monitoring.Monitored;
                 var monitorNewItems = monitoring.MonitorNewItems;
-                var monitorCurrentBook = monitorMode != MonitorTypes.None;
 
                 if (editionId != "0" && !string.Equals(editionProvider, bookProvider, StringComparison.OrdinalIgnoreCase))
                 {
@@ -444,6 +445,7 @@ namespace Chaptarr.Api.V1.Books
                     // This compatibility/import endpoint is automation-facing. A supplied Edition is an
                     // initial preference, not the explicit human preservation pin used by the id-route editor.
                     AnyEditionOk = true,
+                    AddOptions = new AddBookOptions { SearchForNewBook = authorMonitoring?.SearchForMissing == true },
                     Editions = new List<Edition>()
                 };
 
@@ -487,7 +489,7 @@ namespace Chaptarr.Api.V1.Books
 
                 var author = new NzbDrone.Core.Books.Author
                 {
-                    Name = "Pending Import",
+                    Name = importResource.AuthorName,
                     Monitored = authorMonitored == true,
                     AudiobookMonitored = bookMediaType == BookMediaType.Audiobook ? authorMonitored : null,
                     AudiobookMonitorNewItems = bookMediaType == BookMediaType.Audiobook ? monitorNewItems : null,
@@ -496,6 +498,8 @@ namespace Chaptarr.Api.V1.Books
                     AddOptions = new AddAuthorOptions
                     {
                         Monitor = monitorMode,
+                        AudiobookMonitor = bookMediaType == BookMediaType.Audiobook ? monitorMode : null,
+                        EbookMonitor = bookMediaType == BookMediaType.Ebook ? monitorMode : null,
                         Monitored = authorMonitored == true,
                         SearchForMissingBooks = authorMonitoring?.SearchForMissing == true
                     }
@@ -552,14 +556,6 @@ namespace Chaptarr.Api.V1.Books
 
                 var addedBook = await _addBookService.AddBook(bookToAdd);
                 EnsureBookCover(addedBook.Id, "import");
-
-                if (authorMonitoring?.SearchForMissing == true)
-                {
-                    _commandQueueManager.Push(new BookSearchCommand
-                    {
-                        BookIds = new List<int> { addedBook.Id }
-                    });
-                }
 
                 _logger.Info("[V1-BOOK-IMPORT] Successfully added book with ID: {0}", addedBook.Id);
 
@@ -633,18 +629,7 @@ namespace Chaptarr.Api.V1.Books
                 {
                     if (monitored.Value)
                     {
-                        if (parsedMediaType == BookMediaType.Audiobook)
-                        {
-                            filteredBooks = filteredBooks.Where(b => b.AudiobookMonitored || HasFiles(b, statsByBookId)).ToList();
-                        }
-                        else if (parsedMediaType == BookMediaType.Ebook)
-                        {
-                            filteredBooks = filteredBooks.Where(b => b.EbookMonitored || HasFiles(b, statsByBookId)).ToList();
-                        }
-                        else
-                        {
-                            filteredBooks = filteredBooks.Where(b => b.IsMonitored() || HasFiles(b, statsByBookId)).ToList();
-                        }
+                        filteredBooks = filteredBooks.Where(b => b.IsMonitored() || HasFiles(b, statsByBookId)).ToList();
 
                         _logger.Debug("[API-DEBUG] Monitored view for {0} (monitored OR has files): {1} books", mediaType ?? "general", filteredBooks.Count);
                     }
@@ -682,6 +667,9 @@ namespace Chaptarr.Api.V1.Books
                 }
 
                 var filteredBooks = displayBooks;
+                var statsByBookId = BuildBookStatisticsById(displayBooks.Count == 0
+                    ? Array.Empty<AuthorStatistics>()
+                    : new[] { _authorStatisticsService.AuthorStatistics(authorId.Value, normalizedMediaType) });
 
                 _logger.Debug("[API-DEBUG] GetBooksForDisplay returned {0} books", displayBooks.Count);
 
@@ -700,21 +688,7 @@ namespace Chaptarr.Api.V1.Books
                 {
                     if (monitored.Value)
                     {
-                        // Monitored toggle ON: Show monitored books OR books with files
-                        // Check media-type specific monitoring based on current context
-                        if (parsedMediaType == BookMediaType.Audiobook)
-                        {
-                            filteredBooks = filteredBooks.Where(b => b.AudiobookMonitored || b.Editions?.Any(e => e.BookFiles?.Any() == true) == true).ToList();
-                        }
-                        else if (parsedMediaType == BookMediaType.Ebook)
-                        {
-                            filteredBooks = filteredBooks.Where(b => b.EbookMonitored || b.Editions?.Any(e => e.BookFiles?.Any() == true) == true).ToList();
-                        }
-                        else
-                        {
-                            // No mediaType specified: check either media-type monitoring
-                            filteredBooks = filteredBooks.Where(b => b.IsMonitored() || b.Editions?.Any(e => e.BookFiles?.Any() == true) == true).ToList();
-                        }
+                        filteredBooks = filteredBooks.Where(b => b.IsMonitored() || HasFiles(b, statsByBookId)).ToList();
                         _logger.Debug("[API-DEBUG] Monitored view for {0} (monitored OR has files): {1} books", mediaType ?? "general", filteredBooks.Count);
                     }
                     else
@@ -724,7 +698,7 @@ namespace Chaptarr.Api.V1.Books
                     }
                 }
 
-                var resources = MapToResource(filteredBooks, false);
+                var resources = MapToResource(filteredBooks, false, statsByBookId, includeOverview: true, includeLinks: true);
 
                 // Ensure narrator search can work client-side even when the book-level Narrator display is gated.
                 // Use the full edition set for each book, so unmonitored editions
@@ -786,14 +760,7 @@ namespace Chaptarr.Api.V1.Books
             {
                 var titleSlugBooks = ResolveTitleSlugQuery(titleSlug, mediaType);
 
-                if (monitored.HasValue && monitored.Value)
-                {
-                    titleSlugBooks = titleSlugBooks
-                        .Where(b => b.IsMonitored() || b.Editions?.Any(e => e.BookFiles?.Any() == true) == true)
-                        .ToList();
-                }
-
-                return MapToResource(titleSlugBooks, false);
+                return MapFilteredBooksToResource(titleSlugBooks, monitored);
             }
 
             if (bookId.IsNotNullOrWhiteSpace())
@@ -809,52 +776,15 @@ namespace Chaptarr.Api.V1.Books
                 {
                     var authorBooks = _bookService.GetBooksByAuthor(book.AuthorId);
 
-                    // Apply monitored filter if requested
-                    if (monitored.HasValue)
-                    {
-                        if (monitored.Value)
-                        {
-                            // Monitored toggle ON: Show monitored books OR books with files
-                            // For monitored filter, check book files via editions
-                            authorBooks = authorBooks.Where(b => b.IsMonitored() || b.Editions?.Any(e => e.BookFiles?.Any() == true) == true).ToList();
-                        }
-                        // Note: if monitored is false, we show ALL books (no additional filtering)
-                    }
-
-                    return MapToResource(authorBooks, false);
+                    return MapFilteredBooksToResource(authorBooks, monitored);
                 }
-                else
-                {
-                    var singleBookList = new List<Book> { book };
 
-                    // Apply monitored filter if requested
-                    if (monitored.HasValue && monitored.Value)
-                    {
-                        // Monitored toggle ON: Show only if monitored OR has files
-                        // Check if book has files via editions
-                        if (!book.IsMonitored() && !(book.Editions?.Any(e => e.BookFiles?.Any() == true) == true))
-                        {
-                            singleBookList = new List<Book>(); // Empty list if book doesn't match filter
-                        }
-                    }
-                    // Note: if monitored is false, we show the book regardless
-
-                    return MapToResource(singleBookList, false);
-                }
+                return MapFilteredBooksToResource(new List<Book> { book }, monitored);
             }
 
             var bookList = _bookService.GetBooks(bookIds);
 
-            // Apply monitored filter if requested
-            if (monitored.HasValue && monitored.Value)
-            {
-                // Monitored toggle ON: Show monitored books OR books with files
-                // For monitored filter, check book files via editions
-                bookList = bookList.Where(b => b.IsMonitored() || b.Editions?.Any(e => e.BookFiles?.Any() == true) == true).ToList();
-            }
-            // Note: if monitored is false, we show ALL books (no additional filtering)
-
-            return MapToResource(bookList, false);
+            return MapFilteredBooksToResource(bookList, monitored);
         }
 
         private List<Book> ResolveTitleSlugQuery(string titleSlug, string mediaType)
@@ -867,21 +797,33 @@ namespace Chaptarr.Api.V1.Books
                 var provider = facadeContext.IsGoodreads ? "gr" : "hc";
                 var providerId = provider + ":" + titleSlug.Trim();
                 var matches = scopedMediaType.HasValue
-                    ? _bookService.FindAllByProviderId(provider, providerId, scopedMediaType.Value)
+                    ? _bookService.FindAllByWorkProviderId(provider, providerId, scopedMediaType.Value)
                     : new[] { BookMediaType.Audiobook, BookMediaType.Ebook }
-                        .SelectMany(type => _bookService.FindAllByProviderId(provider, providerId, type) ?? new List<Book>())
+                        .SelectMany(type => _bookService.FindAllByWorkProviderId(provider, providerId, type) ?? new List<Book>())
                         .ToList();
 
-                if (matches?.Any() == true)
+                var books = (matches ?? new List<Book>())
+                    .Where(book => book != null)
+                    .GroupBy(book => book.Id)
+                    .Select(group => group.First())
+                    .OrderBy(book => book.Id)
+                    .ToList();
+                if (books.Count > 0)
                 {
-                    return matches
-                        .Where(book => book != null)
-                        .GroupBy(book => book.Id)
-                        .Select(group => _bookService.GetBook(group.Key))
-                        .Where(book => book != null)
-                        .OrderBy(book => book.Id)
-                        .ToList();
+                    var filesByEdition = _mediaFileService.GetFilesByBooks(books.Select(book => book.Id).ToList())
+                        .ToLookup(file => file.EditionId);
+                    foreach (var book in books)
+                    {
+                        foreach (var edition in book.Editions)
+                        {
+                            edition.BookFiles = filesByEdition[edition.Id].ToList();
+                        }
+
+                        book.BookFiles = book.Editions.SelectMany(edition => edition.BookFiles).ToList();
+                    }
                 }
+
+                return books;
             }
 
             var routeMatch = ResolveBookRouteToken(titleSlug, mediaType);
@@ -906,11 +848,7 @@ namespace Chaptarr.Api.V1.Books
             // Readarr-compatible browser links use /book/{titleSlug}. Seerr builds those links
             // from the titleSlug returned by POST /api/v1/book, so resolve slugs here without
             // changing the canonical Chaptarr route shape.
-            var allBooks = _bookService.GetAllBooks();
-            var slugMatches = allBooks
-                .Where(book => book != null &&
-                               string.Equals(book.TitleSlug, routeToken, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            var slugMatches = _bookService.FindBySlug(routeToken);
 
             var matches = slugMatches;
             if (scopedMediaType.HasValue)
@@ -925,11 +863,13 @@ namespace Chaptarr.Api.V1.Books
                 // Seerr stores one titleSlug per Readarr instance, but Chaptarr stores separate
                 // audiobook/ebook rows. If the stored slug belongs to the sibling format, resolve
                 // through provider identity rather than inventing a string/title match.
-                matches = allBooks
-                    .Where(candidate => candidate != null &&
-                                        candidate.MediaType == scopedMediaType.Value &&
-                                        slugMatches.Any(slugMatch => WorkIdMatcher.WorkProviderIdMatches(slugMatch, candidate)))
-                    .ToList();
+                var workKeys = slugMatches.SelectMany(BookIdentity.GetStableWorkProviderIdentityTokens)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Select(token => (Scope: "work", Provider: token.Split(':', 2)[0], Id: token)).ToList();
+                var candidateIds = _bookService.FindBookIdsByProviderIds(workKeys).Values.SelectMany(ids => ids).Distinct().ToList();
+                matches = _bookService.GetBooks(candidateIds)
+                    .Where(candidate => candidate != null && candidate.MediaType == scopedMediaType.Value &&
+                        slugMatches.Any(slugMatch => WorkIdMatcher.WorkProviderIdMatches(slugMatch, candidate))).ToList();
 
                 if (matches.Any())
                 {
@@ -1111,13 +1051,14 @@ namespace Chaptarr.Api.V1.Books
             [FromQuery] bool? downloaded = null,
             [FromQuery] bool? monitored = null,
             [FromQuery] bool? missing = null,
-            [FromQuery] bool? wanted = null)
+            [FromQuery] bool? wanted = null,
+            [FromQuery] bool? library = null)
         {
-            _logger.Debug("[API-INFINITE-SCROLL] GetBookBuckets called: includeUnmonitored={0}, sortKey={1}, sortDirection={2}, mediaType={3}, downloaded={4}, monitored={5}, missing={6}, wanted={7}",
-                includeUnmonitored, sortKey, sortDirection, mediaType, downloaded, monitored, missing, wanted);
+            _logger.Debug("[API-INFINITE-SCROLL] GetBookBuckets called: includeUnmonitored={0}, sortKey={1}, sortDirection={2}, mediaType={3}, downloaded={4}, monitored={5}, missing={6}, wanted={7}, library={8}",
+                includeUnmonitored, sortKey, sortDirection, mediaType, downloaded, monitored, missing, wanted, library);
             var normalizedMediaType = MediaTypeParameterParser.NormalizeOptional(mediaType);
 
-            var buckets = _bookService.GetBookBuckets(sortKey, sortDirection, includeUnmonitored, normalizedMediaType, downloaded, monitored, missing, wanted);
+            var buckets = _bookService.GetBookBuckets(sortKey, sortDirection, includeUnmonitored, normalizedMediaType, downloaded, monitored, missing, wanted, library);
 
             _logger.Debug("[API-INFINITE-SCROLL] Buckets returned: {0} total books, {1} buckets",
                 buckets.TotalCount, buckets.Buckets?.Count ?? 0);
@@ -1132,10 +1073,11 @@ namespace Chaptarr.Api.V1.Books
             [FromQuery] bool? downloaded = null,
             [FromQuery] bool? monitored = null,
             [FromQuery] bool? missing = null,
-            [FromQuery] bool? wanted = null)
+            [FromQuery] bool? wanted = null,
+            [FromQuery] bool? library = null)
         {
             var normalizedMediaType = MediaTypeParameterParser.NormalizeOptional(mediaType);
-            return Ok(_bookService.GetBookIds(includeUnmonitored, normalizedMediaType, downloaded, monitored, missing, wanted));
+            return Ok(_bookService.GetBookIds(includeUnmonitored, normalizedMediaType, downloaded, monitored, missing, wanted, library));
         }
 
         [HttpGet("paged")]
@@ -1150,10 +1092,11 @@ namespace Chaptarr.Api.V1.Books
             [FromQuery] bool? monitored = null,
             [FromQuery] bool? missing = null,
             [FromQuery] bool? wanted = null,
-            [FromQuery] string include = null)
+            [FromQuery] string include = null,
+            [FromQuery] bool? library = null)
         {
-            _logger.Debug("[API-INFINITE-SCROLL] GetBooksPaged called: offset={0}, pageSize={1}, sortKey={2}, sortDirection={3}, includeUnmonitored={4}, mediaType={5}, downloaded={6}, monitored={7}, missing={8}, wanted={9}",
-                offset, pageSize, sortKey, sortDirection, includeUnmonitored, mediaType, downloaded, monitored, missing, wanted);
+            _logger.Debug("[API-INFINITE-SCROLL] GetBooksPaged called: offset={0}, pageSize={1}, sortKey={2}, sortDirection={3}, includeUnmonitored={4}, mediaType={5}, downloaded={6}, monitored={7}, missing={8}, wanted={9}, library={10}",
+                offset, pageSize, sortKey, sortDirection, includeUnmonitored, mediaType, downloaded, monitored, missing, wanted, library);
             var normalizedMediaType = MediaTypeParameterParser.NormalizeOptional(mediaType);
 
             // Validate parameters
@@ -1167,7 +1110,7 @@ namespace Chaptarr.Api.V1.Books
                 return BadRequest("Offset must be non-negative");
             }
 
-            var pagedBooks = _bookService.GetBooksPaged(offset, pageSize, sortKey, sortDirection, includeUnmonitored, normalizedMediaType, downloaded, monitored, missing, wanted);
+            var pagedBooks = _bookService.GetBooksPaged(offset, pageSize, sortKey, sortDirection, includeUnmonitored, normalizedMediaType, downloaded, monitored, missing, wanted, library);
             var statsByBookId = BuildBookStatisticsById(_authorStatisticsService.AuthorStatistics(normalizedMediaType));
 
             // Convert Book entities to BookResource
@@ -1221,6 +1164,7 @@ namespace Chaptarr.Api.V1.Books
 
 				        [RestPostById]
 				        [ProducesResponseType(typeof(ProviderAmbiguityResource), ProviderAmbiguityHelper.StatusCode)]
+				        [ProducesResponseType(typeof(ApiErrorResource), 422)]
 				        [ProducesResponseType(typeof(PendingBookRequestResource), StatusCodes.Status202Accepted)]
 			        public async Task<ActionResult<BookResource>> AddBook([FromQuery] string mediaType, [FromBody] BookResource bookResource)
 			        {
@@ -1250,21 +1194,42 @@ namespace Chaptarr.Api.V1.Books
                                 throw new ValidationException(prefixFailures);
                             }
 
-			                if (string.IsNullOrWhiteSpace(requestedMediaType))
+			                requestedMediaType = MediaTypeParameterParser.ResolveWriteScope(requestedMediaType, facadeContext?.MediaType);
+                if (requestedMediaType == null)
+                {
+                    var explicitAudio = AuthorResourceMapper.HasAudiobookSpecificSettings(bookResource?.Author);
+                    var explicitEbook = AuthorResourceMapper.HasEbookSpecificSettings(bookResource?.Author);
+                    if (!explicitAudio && !explicitEbook)
+                    {
+                        var rootPath = bookResource?.Author?.RootFolderPath;
+                        var root = string.IsNullOrWhiteSpace(rootPath) ? null : _rootFolderService.GetBestRootFolder(rootPath);
+                        var profileId = bookResource?.Author?.QualityProfileId;
+                        var profileType = MediaTypeParameterParser.GetProfileType(profileId, _qualityProfileService);
+                        requestedMediaType = MediaTypeParameterParser.InferWriteScope(root, null, profileType)
+                            ?? MediaTypeParameterParser.InferWriteScope(null, TryGetExistingAuthor(bookResource?.Author));
+                        if (requestedMediaType == null) return BadRequest(MediaTypeParameterParser.FormatRequiredMessage);
+                    }
+                    if (explicitAudio != explicitEbook)
+                    {
+                        requestedMediaType = explicitAudio ? "audiobook" : "ebook";
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(requestedMediaType))
 			                {
-	                    // Seerr compatibility: when mediaType is omitted, attempt to monitor/add BOTH audiobook and ebook variants.
+	                    // Explicit per-format settings for both sides request both variants.
 	                    // We reuse the same payload and invoke AddBook twice with the appropriate mediaType, but only for
 	                    // media types that are actually configured (or already configured on the existing author).
-		                    _logger.Debug("[AddBook] No mediaType provided; defaulting to BOTH audiobook and ebook");
+		                    _logger.Debug("[AddBook] Explicit settings for both audiobook and ebook");
 
 	                    NormalizeReadarrSingleFields(bookResource, wantAudiobook: true, wantEbook: true);
 	                    var existingAuthor = TryGetExistingAuthor(bookResource?.Author);
 
-	                    var canCreateAudiobook = HasConfiguredMediaSettings(bookResource?.Author, BookMediaType.Audiobook);
-	                    var canCreateEbook = HasConfiguredMediaSettings(bookResource?.Author, BookMediaType.Ebook);
+	                    var canCreateAudiobook = MediaTypeParameterParser.HasConfiguredMediaSettings(bookResource?.Author, BookMediaType.Audiobook);
+	                    var canCreateEbook = MediaTypeParameterParser.HasConfiguredMediaSettings(bookResource?.Author, BookMediaType.Ebook);
 
-	                    var hasExistingAudiobook = HasConfiguredMediaSettings(existingAuthor, BookMediaType.Audiobook);
-	                    var hasExistingEbook = HasConfiguredMediaSettings(existingAuthor, BookMediaType.Ebook);
+	                    var hasExistingAudiobook = MediaTypeParameterParser.HasConfiguredMediaSettings(existingAuthor, BookMediaType.Audiobook);
+	                    var hasExistingEbook = MediaTypeParameterParser.HasConfiguredMediaSettings(existingAuthor, BookMediaType.Ebook);
 
 	                    var shouldAddAudiobook = canCreateAudiobook || hasExistingAudiobook;
 	                    var shouldAddEbook = canCreateEbook || hasExistingEbook;
@@ -1377,6 +1342,14 @@ namespace Chaptarr.Api.V1.Books
 
 			                // Apply query override (if provided) so the model maps to the correct BookMediaType.
 			                bookResource.MediaType = requestedMediaType;
+
+                        if (facadeContext != null && bookResource.Author != null)
+                        {
+                            var existingAuthor = TryGetExistingAuthor(bookResource.Author);
+                            var requestedType = string.Equals(requestedMediaType, "ebook", StringComparison.OrdinalIgnoreCase)
+                                ? BookMediaType.Ebook : BookMediaType.Audiobook;
+                            ApplyFacadeBookRequestDefaults(bookResource.Author, existingAuthor, requestedType);
+                        }
 
 			                var modelToAdd = bookResource.ToModel(facadeContext);
 			                if (IsMissingUpstreamProviderBookId(modelToAdd))
@@ -1515,7 +1488,8 @@ namespace Chaptarr.Api.V1.Books
 		                }
 		            }
 
-		            var foreignAuthorId = authorResource.ForeignAuthorId?.Trim();
+                    var foreignAuthorId = ReadarrFacadeProviderIdTranslator.NormalizeBareProviderId(
+                        authorResource.ForeignAuthorId?.Trim(), HttpContext.GetReadarrFacadeContext());
 		            if (string.IsNullOrWhiteSpace(foreignAuthorId))
 		            {
 		                return null;
@@ -1555,41 +1529,63 @@ namespace Chaptarr.Api.V1.Books
 		            return matches.Count == 1 ? matches[0] : null;
 		        }
 
-		        private static bool HasConfiguredMediaSettings(NzbDrone.Core.Books.Author author, BookMediaType mediaType)
-		        {
-		            if (author == null)
-		            {
-		                return false;
-		            }
+        internal static void ApplyFacadeBookRequestDefaults(
+            global::Chaptarr.Api.V1.Author.AuthorResource requested,
+            NzbDrone.Core.Books.Author existing,
+            BookMediaType mediaType)
+        {
+            // Book requests initialize only their selected work; established author
+            // monitoring stays unchanged on subsequent requests.
+            var configured = MediaTypeParameterParser.HasConfiguredMediaSettings(existing, mediaType);
+            var audiobook = mediaType == BookMediaType.Audiobook;
+            var monitored = configured
+                ? (audiobook ? existing.AudiobookMonitored : existing.EbookMonitored)
+                : true;
+            var newItems = configured
+                ? (audiobook ? existing.AudiobookMonitorNewItems : existing.EbookMonitorNewItems)
+                : NewItemMonitorTypes.None;
+            var initial = MonitorTypes.None;
 
-		            return mediaType == BookMediaType.Audiobook
-		                ? author.AudiobookQualityProfileId.HasValue && !string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath)
-		                : author.EbookQualityProfileId.HasValue && !string.IsNullOrWhiteSpace(author.EbookRootFolderPath);
-		        }
+            requested.Monitored = monitored == true;
+            requested.MonitorNewItems = newItems?.ToString().ToLowerInvariant();
+            requested.AddOptions ??= new AddAuthorOptions();
+            requested.AddOptions.Monitor = MonitorTypes.SpecificBook;
+            requested.AddOptions.SearchForMissingBooks = false;
+            if (audiobook)
+            {
+                requested.AudiobookMonitored = monitored;
+                requested.AudiobookMonitorNewItems = newItems;
+                requested.AddOptions.AudiobookMonitor = initial;
+            }
+            else
+            {
+                requested.EbookMonitored = monitored;
+                requested.EbookMonitorNewItems = newItems;
+                requested.AddOptions.EbookMonitor = initial;
+            }
+        }
 
-	        private static bool HasConfiguredMediaSettings(global::Chaptarr.Api.V1.Author.AuthorResource author, BookMediaType mediaType)
-	        {
-	            if (author == null)
-	            {
-	                return false;
-		            }
+        private List<BookResource> MapFilteredBooksToResource(List<Book> books, bool? monitored)
+        {
+            if (monitored != true || books.Count == 0)
+            {
+                return MapToResource(books, false);
+            }
 
-	            return mediaType == BookMediaType.Audiobook
-	                ? author.AudiobookQualityProfileId.HasValue && !string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath)
-	                : author.EbookQualityProfileId.HasValue && !string.IsNullOrWhiteSpace(author.EbookRootFolderPath);
-	        }
+            var statistics = books.All(book => book.AuthorId == books[0].AuthorId)
+                ? new[] { _authorStatisticsService.AuthorStatistics(books[0].AuthorId) }
+                : _authorStatisticsService.AuthorStatistics(books.Select(book => book.AuthorId)).ToArray();
+            var statsByBookId = BuildBookStatisticsById(statistics);
+            var libraryBooks = books.Where(book => book.IsMonitored() || HasFiles(book, statsByBookId)).ToList();
+            return MapToResource(libraryBooks, false, statsByBookId, includeOverview: true, includeLinks: true);
+        }
 
         private static bool HasFiles(Book book, IReadOnlyDictionary<int, BookStatistics> statsByBookId)
         {
-            if (book == null)
-            {
-                return false;
-	            }
-
-	            return book.HasFiles ||
-                   (statsByBookId != null &&
-                    statsByBookId.TryGetValue(book.Id, out var stats) &&
-                    stats?.BookFileCount > 0);
+            return book != null &&
+                   ((statsByBookId != null && statsByBookId.TryGetValue(book.Id, out var stats) && stats?.BookFileCount > 0) ||
+                    (book.LazyBookFiles?.IsLoaded == true && book.HasFiles) ||
+                    (book.LazyEditions?.IsLoaded == true && book.Editions?.Any(edition => edition.BookFiles?.Any() == true) == true));
         }
 
         private static bool IncludeRequested(string include, string token)
@@ -1641,6 +1637,29 @@ namespace Chaptarr.Api.V1.Books
 	            return GetMediaSettings(requestedRootFolder, siblingMediaType)?.QualityProfileId.HasValue == true;
 	        }
 
+        private static void ValidateRequestedRootFolder(string path, RootFolder rootFolder, BookMediaType mediaType)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            // An explicit destination must not be silently replaced by a usable default elsewhere.
+            var type = mediaType == BookMediaType.Audiobook ? FolderType.Audiobook : FolderType.Ebook;
+            var label = mediaType == BookMediaType.Audiobook ? "audiobook" : "ebook";
+            var error = rootFolder == null
+                ? $"Selected root folder '{path}' is not configured in Chaptarr"
+                : !RootFolderDefaultResolver.IsCompatibleRootFolder(rootFolder, type)
+                    ? $"Selected root folder '{path}' does not support {label} books"
+                    : !RootFolderSettingsResolver.HasRequiredProfiles(GetMediaSettings(rootFolder, mediaType))
+                        ? $"Selected root folder '{path}' requires both an {label} quality profile and metadata profile"
+                        : null;
+            if (error != null)
+            {
+                throw new ValidationException(new[] { new ValidationFailure($"author.{label}RootFolderPath", error) });
+            }
+        }
+
 	        private void NormalizeReadarrSingleFields(BookResource bookResource, bool wantAudiobook, bool wantEbook)
 	        {
 	            var author = bookResource?.Author;
@@ -1654,94 +1673,77 @@ namespace Chaptarr.Api.V1.Books
 		            RootFolder rootFolderByPath = null;
 		            if (!string.IsNullOrWhiteSpace(author.RootFolderPath))
 		            {
-		                rootFolderByPath = _rootFolderService.GetBestRootFolder(author.RootFolderPath, rootFolders);
+		                rootFolderByPath = rootFolders.FirstOrDefault(root => root.Path.PathEquals(author.RootFolderPath));
 		            }
 
-		            // If a client sends a single qualityProfileId, map it to the correct media type by profile type.
-		            if (author.QualityProfileId.HasValue &&
-		                !author.AudiobookQualityProfileId.HasValue &&
-		                !author.EbookQualityProfileId.HasValue)
-		            {
-		                try
-		                {
-		                    var profile = _qualityProfileService.Get(author.QualityProfileId.Value);
-		                    if (profile.ProfileType == ProfileType.Audiobook)
-		                    {
-		                        author.AudiobookQualityProfileId = author.QualityProfileId;
-		                    }
-		                    else if (profile.ProfileType == ProfileType.Ebook)
-		                    {
-		                        author.EbookQualityProfileId = author.QualityProfileId;
-		                    }
+		            if (wantAudiobook)
+            {
+                author.AudiobookQualityProfileId ??= author.QualityProfileId;
+                author.AudiobookMetadataProfileId ??= author.MetadataProfileId;
+            }
+            if (wantEbook)
+            {
+                author.EbookQualityProfileId ??= author.QualityProfileId;
+                author.EbookMetadataProfileId ??= author.MetadataProfileId;
+            }
 
-		                    // Avoid storing a type-specific profile ID in the legacy single field.
-		                    author.QualityProfileId = null;
-		                }
-		                catch
-		                {
-		                    // ignore and let downstream validation/reporting handle
-		                }
-		            }
+            RootFolder audiobookRootFolder = null;
+            if (!string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath))
+            {
+                audiobookRootFolder = rootFolders.FirstOrDefault(root => root.Path.PathEquals(author.AudiobookRootFolderPath));
+            }
 
-		            // Same idea for metadataProfileId.
-		            if (author.MetadataProfileId.HasValue &&
-		                !author.AudiobookMetadataProfileId.HasValue &&
-		                !author.EbookMetadataProfileId.HasValue)
-		            {
-		                try
-		                {
-		                    var profile = _metadataProfileService.Get(author.MetadataProfileId.Value);
-		                    if (profile.ProfileType == MetadataProfileType.Audiobook)
-		                    {
-		                        author.AudiobookMetadataProfileId = author.MetadataProfileId;
-		                        author.MetadataProfileId = null;
-		                    }
-		                    else if (profile.ProfileType == MetadataProfileType.Ebook)
-		                    {
-		                        author.EbookMetadataProfileId = author.MetadataProfileId;
-		                        author.MetadataProfileId = null;
-		                    }
-		                    // If General, keep it as a legacy fallback.
-		                }
-		                catch
-		                {
-		                    // ignore and let downstream validation/reporting handle
-		                }
-		            }
+            if (wantAudiobook)
+            {
+                ValidateRequestedRootFolder(
+                    string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath) ? author.RootFolderPath : author.AudiobookRootFolderPath,
+                    string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath) ? rootFolderByPath : audiobookRootFolder,
+                    BookMediaType.Audiobook);
+            }
 
-		            RootFolder audiobookRootFolder = null;
-		            if (!string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath))
-		            {
-		                audiobookRootFolder = _rootFolderService.GetBestRootFolder(author.AudiobookRootFolderPath, rootFolders);
-		            }
-		            if (audiobookRootFolder == null && rootFolderByPath?.GetAudiobookSettings() != null)
-		            {
-		                audiobookRootFolder = rootFolderByPath;
-		            }
-		            audiobookRootFolder ??= rootFolders.FirstOrDefault(rf => rf.GetAudiobookSettings()?.QualityProfileId.HasValue == true);
+            if (audiobookRootFolder == null && RootFolderSettingsResolver.HasRequiredProfiles(rootFolderByPath?.GetAudiobookSettings()))
+            {
+                audiobookRootFolder = rootFolderByPath;
+            }
 
-		            RootFolder ebookRootFolder = null;
-		            if (!string.IsNullOrWhiteSpace(author.EbookRootFolderPath))
-		            {
-		                ebookRootFolder = _rootFolderService.GetBestRootFolder(author.EbookRootFolderPath, rootFolders);
-		            }
-		            if (ebookRootFolder == null && rootFolderByPath?.GetEbookSettings() != null)
-		            {
-		                ebookRootFolder = rootFolderByPath;
-	            }
-	            ebookRootFolder ??= rootFolders.FirstOrDefault(rf => rf.GetEbookSettings()?.QualityProfileId.HasValue == true);
+            audiobookRootFolder ??= rootFolders.FirstOrDefault(rf =>
+                RootFolderDefaultResolver.IsCompatibleRootFolder(rf, FolderType.Audiobook) &&
+                RootFolderSettingsResolver.HasRequiredProfiles(rf.GetAudiobookSettings()));
+
+            RootFolder ebookRootFolder = null;
+            if (!string.IsNullOrWhiteSpace(author.EbookRootFolderPath))
+            {
+                ebookRootFolder = rootFolders.FirstOrDefault(root => root.Path.PathEquals(author.EbookRootFolderPath));
+            }
+
+            if (wantEbook)
+            {
+                ValidateRequestedRootFolder(
+                    string.IsNullOrWhiteSpace(author.EbookRootFolderPath) ? author.RootFolderPath : author.EbookRootFolderPath,
+                    string.IsNullOrWhiteSpace(author.EbookRootFolderPath) ? rootFolderByPath : ebookRootFolder,
+                    BookMediaType.Ebook);
+            }
+
+            if (ebookRootFolder == null && RootFolderSettingsResolver.HasRequiredProfiles(rootFolderByPath?.GetEbookSettings()))
+            {
+                ebookRootFolder = rootFolderByPath;
+            }
+
+            ebookRootFolder ??= rootFolders.FirstOrDefault(rf =>
+                RootFolderDefaultResolver.IsCompatibleRootFolder(rf, FolderType.Ebook) &&
+                RootFolderSettingsResolver.HasRequiredProfiles(rf.GetEbookSettings()));
 
 	            var requestedAudiobookRootFolder = !string.IsNullOrWhiteSpace(author.AudiobookRootFolderPath)
-	                ? _rootFolderService.GetBestRootFolder(author.AudiobookRootFolderPath, rootFolders)
+	                ? rootFolders.FirstOrDefault(root => root.Path.PathEquals(author.AudiobookRootFolderPath))
 	                : rootFolderByPath;
 	            var requestedEbookRootFolder = !string.IsNullOrWhiteSpace(author.EbookRootFolderPath)
-	                ? _rootFolderService.GetBestRootFolder(author.EbookRootFolderPath, rootFolders)
+	                ? rootFolders.FirstOrDefault(root => root.Path.PathEquals(author.EbookRootFolderPath))
 	                : rootFolderByPath;
 
 	            var fillAudiobookSettings = wantAudiobook;
 	            var fillEbookSettings = wantEbook;
 
-	            if (wantAudiobook &&
+	            if (HttpContext.GetReadarrFacadeContext() == null && wantAudiobook &&
 	                !wantEbook &&
 	                ShouldFillSiblingFromMixedRoot(author, requestedAudiobookRootFolder, BookMediaType.Ebook))
 	            {
@@ -1749,7 +1751,7 @@ namespace Chaptarr.Api.V1.Books
 	                fillEbookSettings = true;
 	            }
 
-	            if (wantEbook &&
+	            if (HttpContext.GetReadarrFacadeContext() == null && wantEbook &&
 	                !wantAudiobook &&
 	                ShouldFillSiblingFromMixedRoot(author, requestedEbookRootFolder, BookMediaType.Audiobook))
 	            {
@@ -1857,45 +1859,72 @@ namespace Chaptarr.Api.V1.Books
             }
 
             var book = _bookService.GetBook(bookResource.Id);
-            var wasMonitoredForFacadeMediaType = facadeContext != null &&
-                                                 book.IsMonitoredForMediaType(facadeContext.MediaType);
             var beforeMonitoredEditionId = book?.Editions?.SingleOrDefault(e => e != null && e.Monitored)?.Id;
+            var beforeAnyEditionOk = book.AnyEditionOk;
+            var beforeMonitoring = (book.AudiobookMonitored, book.EbookMonitored);
+            var beforeEditions = book.Editions.ToDictionary(edition => edition.Id);
+            var beforeSelection = book.Editions.ToDictionary(edition => edition.Id, edition => (edition.Monitored, edition.ManualAdd));
 
             var model = bookResource.ToModel(book, facadeContext);
-            var shouldPinExplicitEditionSelection = ShouldPinExplicitEditionSelection(pinExplicitEditionChange, beforeMonitoredEditionId, model?.Editions);
-            var shouldSkipEditionRepair = ShouldSkipEditionRepairForPartialFacadeCompat(pinExplicitEditionChange, facadeContext, beforeMonitoredEditionId, book?.Editions, model?.Editions);
+            var explicitEditionSelectionChange = ShouldPinExplicitEditionSelection(pinExplicitEditionChange, beforeMonitoredEditionId, model?.Editions);
+            var shouldPinExplicitEditionSelection = !bookResource.AnyEditionOkSpecified && explicitEditionSelectionChange;
 
-            // Preserve a single submitted edition selection. Only clean up impossible
-            // zero/multiple monitored states before persisting.
-            if (!shouldSkipEditionRepair)
-            {
-                _editionSelector.EnsureSingleMonitoredEdition(model.Editions, mediaType: model.MediaType);
-            }
+            // Repair needs the same file evidence as insertion and housekeeping, loaded once.
+            var repairFileCounts = model.Editions.Count(edition => edition.Monitored) == 1
+                ? null
+                : _mediaFileService.GetFilesByBook(model.Id).GroupBy(file => file.EditionId)
+                    .ToDictionary(group => group.Key, group => group.Count());
+            _editionSelector.EnsureSingleMonitoredEdition(model.Editions, repairFileCounts, model.MediaType, model.AnyEditionOk);
             if (shouldPinExplicitEditionSelection)
             {
                 model.AnyEditionOk = false;
             }
-            var afterMonitoredEditionId = shouldSkipEditionRepair
-                ? beforeMonitoredEditionId
-                : model?.Editions?.SingleOrDefault(e => e != null && e.Monitored)?.Id;
+            var afterMonitoredEditionId = model.Editions.SingleOrDefault(e => e != null && e.Monitored)?.Id;
 
-            if (ShouldApplyFacadeSpecificBookMonitoring(
-                    facadeContext,
-                    model.MediaType,
-                    wasMonitoredForFacadeMediaType,
-                    bookResource.Monitored))
+            var applyFacadeMonitoring = ShouldApplyFacadeSpecificBookMonitoring(
+                facadeContext, model.MediaType, bookResource.Monitored);
+            if (applyFacadeMonitoring)
             {
-                // A facade request changes only its media side. The generic update would overwrite
-                // the other side; submitted edition selection is persisted independently below.
-                _authorService.EnsureMediaTypeMonitoring(model.AuthorId, facadeContext.MediaType);
-                _bookService.SetMonitoredForMediaType(new[] { model.Id }, facadeContext.MediaType, true);
-            }
-            else
-            {
-                _bookService.UpdateBook(model);
+                // A book-row request changes only book-row selections; the author-side gate is
+                // an independent setting. Matching sibling rows follow format sync when enabled.
+                model.AddOptions ??= new AddBookOptions();
+                model.AddOptions.AddType = BookAddType.Manual;
+                // The scoped monitoring writer validates roots and applies format sync.
+                (model.AudiobookMonitored, model.EbookMonitored) = beforeMonitoring;
             }
 
-            _editionService.UpdateMany(model.Editions);
+            var editionUpdates = model.Editions.Where(edition => !edition.Equals(beforeEditions[edition.Id]) ||
+                beforeSelection[edition.Id] != (edition.Monitored, edition.ManualAdd)).ToList();
+            var relinkFiles = pinExplicitEditionChange && !model.AnyEditionOk && afterMonitoredEditionId is > 0 &&
+                (explicitEditionSelectionChange || beforeAnyEditionOk);
+            var selectedEdition = afterMonitoredEditionId.HasValue ? beforeEditions.GetValueOrDefault(afterMonitoredEditionId.Value) : null;
+            var classifyFiles = relinkFiles && model.MediaType == BookMediaType.Audiobook &&
+                EditionReadingFormat.IsAudiobook(selectedEdition?.ReadingFormatId);
+            var resetRecordingType = !beforeAnyEditionOk && model.AnyEditionOk && model.MediaType == BookMediaType.Audiobook;
+            var recordingCorrection = classifyFiles
+                ? AudioProductionDetector.IsDramatizedEdition(selectedEdition) ? AudioProductionCorrection.NonStandard : AudioProductionCorrection.Standard
+                : resetRecordingType ? AudioProductionCorrection.Automatic : AudioProductionCorrection.Unchanged;
+            var correctionElapsedMs = 0d;
+            (int Relinked, int Reclassified) correctedFiles = default;
+            _bookService.UpdateBook(model, editionUpdates, applyFacadeMonitoring ? facadeContext.MediaType : null,
+                (relinkFiles || resetRecordingType) ? (connection, transaction) =>
+                {
+                    var correctionStarted = Stopwatch.GetTimestamp();
+                    correctedFiles = _mediaFileService.RelinkAndClassifyFilesByBook(model.Id, relinkFiles ? afterMonitoredEditionId : null,
+                        model.MediaType, recordingCorrection, connection, transaction);
+                    correctionElapsedMs = Stopwatch.GetElapsedTime(correctionStarted).TotalMilliseconds;
+                } : null);
+            if (correctedFiles.Relinked > 0 || correctedFiles.Reclassified > 0)
+            {
+                _logger.Info("Edition correction: BookId={0}, EditionId={1}, filesRelinked={2}, filesReclassified={3}, recordingClass={4}, elapsedMs={5:F1}",
+                    model.Id, afterMonitoredEditionId, correctedFiles.Relinked, correctedFiles.Reclassified,
+                    recordingCorrection, correctionElapsedMs);
+            }
+            else if (relinkFiles || resetRecordingType)
+            {
+                _logger.Debug("Edition correction unchanged: BookId={0}, EditionId={1}, recordingClass={2}, elapsedMs={3:F1}",
+                    model.Id, afterMonitoredEditionId, recordingCorrection, correctionElapsedMs);
+            }
 
             if (beforeMonitoredEditionId != afterMonitoredEditionId)
             {
@@ -1910,10 +1939,9 @@ namespace Chaptarr.Api.V1.Books
         internal static bool ShouldApplyFacadeSpecificBookMonitoring(
             ReadarrFacadeContext facadeContext,
             BookMediaType bookMediaType,
-            bool wasMonitored,
             bool requestedMonitored)
         {
-            if (facadeContext == null || wasMonitored || !requestedMonitored)
+            if (facadeContext == null || !requestedMonitored)
             {
                 return false;
             }
@@ -1929,36 +1957,6 @@ namespace Chaptarr.Api.V1.Books
             return pinExplicitEditionChange && IsExplicitEditionSelectionChange(beforeMonitoredEditionId, submittedEditions);
         }
 
-        internal static bool ShouldSkipEditionRepairForPartialFacadeCompat(bool pinExplicitEditionChange, ReadarrFacadeContext facadeContext, int? beforeMonitoredEditionId, IEnumerable<Edition> storedEditions, IEnumerable<Edition> submittedEditions)
-        {
-            if (pinExplicitEditionChange || facadeContext == null || !beforeMonitoredEditionId.HasValue)
-            {
-                return false;
-            }
-
-            var storedEditionIds = new HashSet<int>((storedEditions ?? Enumerable.Empty<Edition>())
-                .Where(e => e != null && e.Id > 0)
-                .Select(e => e.Id));
-            var submitted = (submittedEditions ?? Enumerable.Empty<Edition>())
-                .Where(e => e != null)
-                .ToList();
-
-            if (storedEditionIds.Count == 0 || submitted.Count == 0)
-            {
-                return false;
-            }
-
-            var submittedEditionIds = new HashSet<int>(submitted
-                .Where(e => e.Id > 0)
-                .Select(e => e.Id));
-
-            return submittedEditionIds.Count > 0 &&
-                   submittedEditionIds.All(storedEditionIds.Contains) &&
-                   submittedEditionIds.Count < storedEditionIds.Count &&
-                   !submittedEditionIds.Contains(beforeMonitoredEditionId.Value) &&
-                   !submitted.Any(e => e.Monitored);
-        }
-
         internal static bool IsExplicitEditionSelectionChange(int? beforeMonitoredEditionId, IEnumerable<Edition> submittedEditions)
         {
             var submittedMonitoredEditionIds = submittedEditions?
@@ -1972,8 +1970,17 @@ namespace Chaptarr.Api.V1.Books
         }
 
         [RestDeleteById]
+        [ProducesResponseType(200)]
+        [ProducesResponseType(typeof(ApiErrorResource), 409)]
         public void DeleteBook(int id, bool deleteFiles = false, bool addImportListExclusion = false, bool applyToBothFormats = false)
         {
+            var scope = MediaTypeParameterParser.ParseDeletionScope(applyToBothFormats, HttpContext.GetReadarrFacadeContext()?.MediaType);
+            if (scope.HasValue && _bookService.GetBook(id).MediaType != scope.Value)
+            {
+                throw new NzbDroneClientException(HttpStatusCode.Conflict,
+                    "The book belongs to a different media type than this base URL. Nothing was changed.");
+            }
+
             _bookService.DeleteBook(id, deleteFiles, addImportListExclusion, applyToBothFormats);
         }
 
@@ -2006,33 +2013,24 @@ namespace Chaptarr.Api.V1.Books
         {
             if (request == null || request.EditionId <= 0)
             {
-                return BadRequest("EditionId is required");
+                throw new ValidationException(new[] { new ValidationFailure("EditionId", "EditionId is required") });
             }
 
-	            try
-	            {
-	                var wantedBook = _bookService.AddWantedEdition(id, request.EditionId);
-	                EnsureBookCover(wantedBook.Id, "wantedEdition");
-
-	                if (request.SearchForNewBook)
-	                {
-	                    _commandQueueManager.Push(new BookSearchCommand(new List<int> { wantedBook.Id }));
-	                }
-
-	                // Ensure the UI updates immediately without requiring a full page refresh.
-	                // SignalR's book handler treats "updated" as upsert (adds if missing).
-	                BroadcastResourceChange(ModelAction.Updated, wantedBook.Id);
-
-	                return MapToResource(_bookService.GetBook(wantedBook.Id), true);
-	            }
-            catch (ArgumentException ex)
+            var (wantedBook, existingCopy) = _bookService.AddWantedEditionCopy(id, request.EditionId);
+            if (!existingCopy)
             {
-                return BadRequest(ex.Message);
+                EnsureBookCover(wantedBook.Id, "wantedEdition");
+                if (request.SearchForNewBook)
+                {
+                    _commandQueueManager.Push(new BookSearchCommand(new List<int> { wantedBook.Id }), trigger: CommandTrigger.Manual);
+                }
+
+                BroadcastResourceChange(ModelAction.Updated, wantedBook.Id);
             }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(ex.Message);
-            }
+
+            var resource = MapToResource(_bookService.GetBook(wantedBook.Id), true);
+            resource.ExistingCopy = existingCopy;
+            return resource;
         }
 
         [NonAction]
@@ -2040,7 +2038,7 @@ namespace Chaptarr.Api.V1.Books
         {
             foreach (var book in message.Book.GetBooksMatchingReleaseMediaType())
             {
-                var resource = book.ToResource();
+                var resource = MapToResource(book, false);
                 resource.Grabbed = true;
 
                 BroadcastResourceChange(ModelAction.Updated, resource);
@@ -2058,6 +2056,17 @@ namespace Chaptarr.Api.V1.Books
         {
             // See Handle(BookEditedEvent): broadcast a fully loaded resource.
             BroadcastResourceChange(ModelAction.Updated, message.Book.Id);
+        }
+
+        [NonAction]
+        public void Handle(LibraryIdentityChangedEvent message)
+        {
+            foreach (var id in message.RemovedBookIds)
+                BroadcastResourceChange(ModelAction.Deleted, new BookResource { Id = id });
+            var survivors = message.BookIds.Except(message.RemovedBookIds).ToList();
+            if (survivors.Count > 0)
+                foreach (var resource in MapFilteredBooksToResource(_bookService.GetBooks(survivors), null))
+                    BroadcastResourceChange(ModelAction.Updated, resource);
         }
 
         [NonAction]

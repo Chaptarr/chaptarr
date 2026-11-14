@@ -1,3 +1,4 @@
+import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
@@ -9,11 +10,11 @@ import {
   setUISettingsValue
 } from 'Store/Actions/settingsActions';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
-import createRootFolderDefaultsSelector from 'Store/Selectors/createRootFolderDefaultsSelector';
+import createRootFolderDefaultsSelector, { applyRootFolderMediaDefaults, getRootDerivedDefaultsForMediaType, rootDerivedAuthorDefaults } from 'Store/Selectors/createRootFolderDefaultsSelector';
 import createSystemStatusSelector from 'Store/Selectors/createSystemStatusSelector';
 import selectSettings from 'Store/Selectors/selectSettings';
 import { normalizeMonitorNewItemsOption } from 'Utilities/Author/monitorNewItemsOptions';
-import { normalizeMonitorOption, resolveMonitorOption } from 'Utilities/Author/monitorOptions';
+import { normalizeMonitorOption } from 'Utilities/Author/monitorOptions';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import AddNewSeriesModalContent from './AddNewSeriesModalContent';
 
@@ -79,94 +80,9 @@ function createMapStateToProps() {
             value: rootFolderDefaults.ebookRootFolderPath
           };
         }
-
-        const rootFolders = rootFoldersState.items || [];
-
-        const audiobookRoot = settings.audiobookRootFolderPath?.value;
-        const ebookRoot = settings.ebookRootFolderPath?.value;
-
-        const audiobookRootFolder = rootFolders.find((f) => f.path === audiobookRoot);
-        const ebookRootFolder = rootFolders.find((f) => f.path === ebookRoot);
-
-        if (!settings.audiobookMonitor && audiobookRootFolder) {
-          settings.audiobookMonitor = {
-            ...(settings.audiobookMonitor || {}),
-            value: resolveMonitorOption(
-              audiobookRootFolder.audiobookMonitorExistingMode,
-              audiobookRootFolder.audiobookMonitorExistingBooks
-            )
-          };
-        }
-
-        if (!settings.audiobookMonitored && audiobookRootFolder) {
-          settings.audiobookMonitored = {
-            value: audiobookRootFolder.audiobookMonitored !== false
-          };
-        }
-
-        if (!settings.audiobookMonitorNewItems && audiobookRootFolder) {
-          settings.audiobookMonitorNewItems = {
-            ...(settings.audiobookMonitorNewItems || {}),
-            value: normalizeMonitorNewItemsOption(audiobookRootFolder.audiobookMonitorNewItems)
-          };
-        }
-
-        if (!settings.ebookMonitor && ebookRootFolder) {
-          settings.ebookMonitor = {
-            ...(settings.ebookMonitor || {}),
-            value: resolveMonitorOption(
-              ebookRootFolder.ebookMonitorExistingMode,
-              ebookRootFolder.ebookMonitorExistingBooks
-            )
-          };
-        }
-
-        if (!settings.ebookMonitored && ebookRootFolder) {
-          settings.ebookMonitored = {
-            value: ebookRootFolder.ebookMonitored !== false
-          };
-        }
-
-        if (!settings.ebookMonitorNewItems && ebookRootFolder) {
-          settings.ebookMonitorNewItems = {
-            ...(settings.ebookMonitorNewItems || {}),
-            value: normalizeMonitorNewItemsOption(ebookRootFolder.ebookMonitorNewItems)
-          };
-        }
-
-        const audiobookQualityFromRootFolder = audiobookRootFolder?.audiobookQualityProfileId || audiobookRootFolder?.audiobook?.qualityProfileId;
-        const audiobookMetadataFromRootFolder = audiobookRootFolder?.audiobookMetadataProfileId || audiobookRootFolder?.audiobook?.metadataProfileId;
-        const ebookQualityFromRootFolder = ebookRootFolder?.ebookQualityProfileId || ebookRootFolder?.ebook?.qualityProfileId;
-        const ebookMetadataFromRootFolder = ebookRootFolder?.ebookMetadataProfileId || ebookRootFolder?.ebook?.metadataProfileId;
-        const audiobookTagsFromRootFolder = audiobookRootFolder?.audiobookTags || audiobookRootFolder?.audiobook?.tags;
-        const ebookTagsFromRootFolder = ebookRootFolder?.ebookTags || ebookRootFolder?.ebook?.tags;
-
-        // Inherit profile defaults from the selected root folder when unset.
-        if ((!settings.audiobookQualityProfileId || settings.audiobookQualityProfileId.value === 0) && audiobookQualityFromRootFolder) {
-          settings.audiobookQualityProfileId = { ...(settings.audiobookQualityProfileId || {}), value: audiobookQualityFromRootFolder };
-        }
-
-        if ((!settings.audiobookMetadataProfileId || settings.audiobookMetadataProfileId.value === 0) && audiobookMetadataFromRootFolder) {
-          settings.audiobookMetadataProfileId = { ...(settings.audiobookMetadataProfileId || {}), value: audiobookMetadataFromRootFolder };
-        }
-
-        if ((!settings.ebookQualityProfileId || settings.ebookQualityProfileId.value === 0) && ebookQualityFromRootFolder) {
-          settings.ebookQualityProfileId = { ...(settings.ebookQualityProfileId || {}), value: ebookQualityFromRootFolder };
-        }
-
-        if ((!settings.ebookMetadataProfileId || settings.ebookMetadataProfileId.value === 0) && ebookMetadataFromRootFolder) {
-          settings.ebookMetadataProfileId = { ...(settings.ebookMetadataProfileId || {}), value: ebookMetadataFromRootFolder };
-        }
-
-        // Inherit tag defaults from the selected root folder when unset.
-        if (!settings.audiobookTags && audiobookTagsFromRootFolder != null) {
-          settings.audiobookTags = { ...(settings.audiobookTags || {}), value: audiobookTagsFromRootFolder };
-        }
-
-        if (!settings.ebookTags && ebookTagsFromRootFolder != null) {
-          settings.ebookTags = { ...(settings.ebookTags || {}), value: ebookTagsFromRootFolder };
-        }
       }
+
+      applyRootFolderMediaDefaults(settings, rootFoldersState.isPopulated ? rootFoldersState.items : []);
 
       // Set quality profile defaults to first available instead of "None"
       if (qualityProfiles.isPopulated && qualityProfiles.items.length > 0) {
@@ -276,6 +192,8 @@ class AddNewSeriesModalContentConnector extends Component {
   }
 
   componentDidMount() {
+    this.props.setAuthorAddDefault(rootDerivedAuthorDefaults);
+
     const {
       rootFoldersPopulated,
       isFetchingSettings,
@@ -346,7 +264,13 @@ class AddNewSeriesModalContentConnector extends Component {
   };
 
   onInputChange = ({ name, value }) => {
-    this.props.setAuthorAddDefault({ [name]: value });
+    const isRootFolder = name === 'audiobookRootFolderPath' || name === 'ebookRootFolderPath';
+    const mediaType = name === 'ebookRootFolderPath' ? 'ebook' : 'audiobook';
+
+    this.props.setAuthorAddDefault({
+      ...(isRootFolder ? getRootDerivedDefaultsForMediaType(mediaType) : {}),
+      [name]: value
+    });
   };
 
   onSetDefaultMediaType = (mediaType) => {
@@ -676,6 +600,10 @@ class AddNewSeriesModalContentConnector extends Component {
     );
   }
 }
+
+AddNewSeriesModalContentConnector.propTypes = {
+  setAuthorAddDefault: PropTypes.func.isRequired
+};
 
 const connectedComponent = connect(createMapStateToProps, mapDispatchToProps)(AddNewSeriesModalContentConnector);
 

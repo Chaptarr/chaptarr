@@ -13,7 +13,6 @@ namespace NzbDrone.Core.Download
     {
         void MarkAsFailed(int historyId, bool skipRedownload = false);
         void MarkAsFailed(string downloadId, bool skipRedownload = false);
-        void MarkAsFailed(TrackedDownload trackedDownload, string reason, bool skipRedownload = false);
         void Check(TrackedDownload trackedDownload);
         void ProcessFailed(TrackedDownload trackedDownload);
     }
@@ -40,12 +39,12 @@ namespace NzbDrone.Core.Download
             var downloadId = history.DownloadId;
             if (downloadId.IsNullOrWhiteSpace())
             {
-                PublishDownloadFailedEvent(new List<EntityHistory> { history }, "Manually marked as failed", skipRedownload: skipRedownload);
+                PublishDownloadFailedEvent(new List<EntityHistory> { history }, "Manually marked as failed", skipRedownload: skipRedownload, skipDownloadClientRemoval: true);
             }
             else
             {
                 var grabbedHistory = _historyService.Find(downloadId, EntityHistoryEventType.Grabbed).ToList();
-                PublishDownloadFailedEvent(grabbedHistory, "Manually marked as failed");
+                PublishDownloadFailedEvent(grabbedHistory, "Manually marked as failed", skipRedownload: skipRedownload, skipDownloadClientRemoval: true);
             }
         }
 
@@ -57,37 +56,9 @@ namespace NzbDrone.Core.Download
             {
                 var trackedDownload = _trackedDownloadService.Find(downloadId);
 
-                PublishDownloadFailedEvent(history, "Manually marked as failed", trackedDownload, skipRedownload);
+                // Queue removal is a separate, explicit action; blocklisting is not deletion consent.
+                PublishDownloadFailedEvent(history, "Manually marked as failed", trackedDownload, skipRedownload, skipDownloadClientRemoval: true);
             }
-        }
-
-        /// <summary>
-        /// Fails a tracked download for a reason Chaptarr determined itself (rather than one the
-        /// download client reported), so it is blocklisted and — subject to the usual config — a
-        /// replacement is searched for. Callers must have established the failure deterministically;
-        /// transient problems belong in ImportBlocked, not here.
-        /// </summary>
-        public void MarkAsFailed(TrackedDownload trackedDownload, string reason, bool skipRedownload = false)
-        {
-            if (trackedDownload?.DownloadItem == null)
-            {
-                return;
-            }
-
-            var grabbedItems = _historyService
-                               .Find(trackedDownload.DownloadItem.DownloadId, EntityHistoryEventType.Grabbed)
-                               .ToList();
-
-            if (grabbedItems.Empty())
-            {
-                // Not ours to fail: no grab record means no release to blocklist and no target to
-                // search again.
-                trackedDownload.Warn("Download wasn't grabbed by Chaptarr, skipping");
-                return;
-            }
-
-            trackedDownload.State = TrackedDownloadState.DownloadFailed;
-            PublishDownloadFailedEvent(grabbedItems, reason, trackedDownload, skipRedownload);
         }
 
         public void Check(TrackedDownload trackedDownload)
@@ -146,7 +117,7 @@ namespace NzbDrone.Core.Download
             PublishDownloadFailedEvent(grabbedItems, failure, trackedDownload);
         }
 
-        private void PublishDownloadFailedEvent(List<EntityHistory> historyItems, string message, TrackedDownload trackedDownload = null, bool skipRedownload = false)
+        private void PublishDownloadFailedEvent(List<EntityHistory> historyItems, string message, TrackedDownload trackedDownload = null, bool skipRedownload = false, bool skipDownloadClientRemoval = false)
         {
             var historyItem = historyItems.Last();
             Enum.TryParse(historyItem.Data.GetValueOrDefault(EntityHistory.RELEASE_SOURCE, ReleaseSourceType.Unknown.ToString()), out ReleaseSourceType releaseSource);
@@ -163,6 +134,7 @@ namespace NzbDrone.Core.Download
                 Data = historyItem.Data,
                 TrackedDownload = trackedDownload,
                 SkipRedownload = skipRedownload,
+                SkipDownloadClientRemoval = skipDownloadClientRemoval,
                 ReleaseSource = releaseSource
             };
 

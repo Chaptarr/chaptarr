@@ -25,7 +25,7 @@ namespace NzbDrone.Core.CustomFormats
 
             // Unknown media type: only applicable when the input carries an explicit
             // audio-production signal, so ambiguous releases match neither audio format.
-            return AudioProductionDetector.IsDramatizedOrFullCast(
+            return input?.EffectiveAudioProduction ?? AudioProductionDetector.IsDramatizedOrFullCast(
                 input?.IsGraphicAudio == true,
                 input?.AudioProductionType,
                 input?.AudioProductionFields);
@@ -33,7 +33,7 @@ namespace NzbDrone.Core.CustomFormats
 
         protected override bool IsSatisfiedByWithoutNegate(CustomFormatInput input)
         {
-            return AudioProductionDetector.IsDramatizedOrFullCast(
+            return input?.EffectiveAudioProduction ?? AudioProductionDetector.IsDramatizedOrFullCast(
                 input?.IsGraphicAudio == true,
                 input?.AudioProductionType,
                 input?.AudioProductionFields);

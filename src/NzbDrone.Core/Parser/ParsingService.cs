@@ -1,18 +1,16 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.IndexerSearch.Definitions;
 using NzbDrone.Core.MediaFiles;
-// using NzbDrone.Core.MediaFiles.BookImport.Identification; // Disabled - old identification system
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
-using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.Parser
 {
@@ -22,6 +20,7 @@ namespace NzbDrone.Core.Parser
         RemoteBook Map(ParsedBookInfo parsedBookInfo, SearchCriteriaBase searchCriteria = null);
         RemoteBook Map(ParsedBookInfo parsedBookInfo, int authorId, IEnumerable<int> bookIds);
         List<Book> GetBooks(ParsedBookInfo parsedBookInfo, Author author, SearchCriteriaBase searchCriteria = null);
+        List<List<Book>> GetBooks(IReadOnlyList<ParsedBookInfo> parsedBooks, Author author);
 
         // Music stuff here
         Book GetLocalBook(string filename, Author author);
@@ -29,41 +28,24 @@ namespace NzbDrone.Core.Parser
 
     public class ParsingService : IParsingService
     {
+        private const int SlowTitleLookupMilliseconds = 1000;
         private readonly IAuthorService _authorService;
         private readonly IBookService _bookService;
         private readonly IEditionService _editionService;
         private readonly IMediaFileService _mediaFileService;
-        private readonly IAudioTagService _audioTagService;
         private readonly Logger _logger;
-        // private readonly IDeterministicMatcher _deterministicMatcher; // Disabled - old identification system
-        // private readonly IExactStringMatcher _stringMatcher; // Disabled - old identification system
-
-        // Enhanced title cleaning regex for audiobook artifacts (same as DistanceCalculator)
-        private static readonly Regex CleanTitleCruft = new Regex(@"\((?:unabridged|abridged|audiobook|audio\s*book)\)|\[(?:MP3|M4B|AAC|FLAC|OGG)\]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-        // Series detection patterns
-        private static readonly Regex[] SeriesPatterns = new Regex[]
-        {
-            new Regex(@"^(.*?)\s+(?:Book|Series|Part|Vol|Volume|#)\s*(\d+(?:\.\d+)?)", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-            new Regex(@"^(.*?)\s*[:\-,]\s+(?:Book|Series|Part|Vol|Volume|#)\s*(\d+(?:\.\d+)?)", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-            new Regex(@"^(.*?)\s*\((?:Book|Series|Part|Vol|Volume|#)\s*(\d+(?:\.\d+)?)\)", RegexOptions.IgnoreCase | RegexOptions.Compiled)
-        };
 
         public ParsingService(IAuthorService authorService,
                               IBookService bookService,
                               IEditionService editionService,
                               IMediaFileService mediaFileService,
-                              IAudioTagService audioTagService,
                               Logger logger)
         {
             _bookService = bookService;
             _editionService = editionService;
             _authorService = authorService;
             _mediaFileService = mediaFileService;
-            _audioTagService = audioTagService;
             _logger = logger;
-            // _deterministicMatcher = new DeterministicMatchingService(logger); // Disabled - old identification system
-            // _stringMatcher = new ExactStringMatcher(logger); // Disabled - old identification system
         }
 
         public Author GetAuthor(string title)
@@ -75,15 +57,7 @@ namespace NzbDrone.Core.Parser
                 title = parsedBookInfo.AuthorName;
             }
 
-            var authorInfo = _authorService.FindByName(title);
-
-            if (authorInfo == null)
-            {
-                _logger.Debug("Trying inexact author match for {0}", title);
-                authorInfo = _authorService.FindByNameInexact(title);
-            }
-
-            return authorInfo;
+            return _authorService.FindByName(title);
         }
 
         public RemoteBook Map(ParsedBookInfo parsedBookInfo, SearchCriteriaBase searchCriteria = null)
@@ -108,359 +82,85 @@ namespace NzbDrone.Core.Parser
 
         public List<Book> GetBooks(ParsedBookInfo parsedBookInfo, Author author, SearchCriteriaBase searchCriteria = null)
         {
-            var bookTitle = parsedBookInfo.BookTitle;
-            var result = new List<Book>();
-            var requestedMediaType = GetRequestedMediaType(parsedBookInfo);
+            return GetBooks(parsedBookInfo, author, searchCriteria, new ReleaseTitleMatchScorer.CatalogPreparation());
+        }
 
-            if (parsedBookInfo.BookTitle == null)
+        public List<List<Book>> GetBooks(IReadOnlyList<ParsedBookInfo> parsedBooks, Author author)
+        {
+            var timer = Stopwatch.StartNew();
+            var preparation = new ReleaseTitleMatchScorer.CatalogPreparation();
+            if (author != null && parsedBooks.Any(parsed => parsed?.BookTitle != null &&
+                (!parsed.Discography || (parsed.DiscographyStart == 0 && parsed.DiscographyEnd == 0))))
+            {
+                preparation.GetAuthorCatalog(author.Id, _bookService);
+            }
+
+            var results = new List<List<Book>>(parsedBooks.Count);
+            foreach (var parsed in parsedBooks)
+            {
+                results.Add(GetBooks(parsed, author, null, preparation));
+            }
+
+            _logger.Log(timer.ElapsedMilliseconds >= SlowTitleLookupMilliseconds ? LogLevel.Warn : LogLevel.Debug, "Matched parsed title batch: authorId={0}, requests={1}, matches={2}, elapsedMs={3:F3}",
+                author?.Id ?? 0, parsedBooks.Count, results.Sum(matches => matches.Count), timer.Elapsed.TotalMilliseconds);
+            return results;
+        }
+
+        private List<Book> GetBooks(ParsedBookInfo parsedBookInfo, Author author, SearchCriteriaBase searchCriteria,
+                                    ReleaseTitleMatchScorer.CatalogPreparation preparation)
+        {
+            if (author == null || parsedBookInfo?.BookTitle == null)
             {
                 return new List<Book>();
             }
 
-            Book bookInfo = null;
-
+            var mediaType = QualityMediaTypeHelper.GetKnownMediaType(parsedBookInfo.Quality?.Quality);
             if (parsedBookInfo.Discography)
             {
+                if (parsedBookInfo.DiscographyStart < 0 || parsedBookInfo.DiscographyStart > 9999 ||
+                    parsedBookInfo.DiscographyEnd < 0 || parsedBookInfo.DiscographyEnd > 9999 ||
+                    (parsedBookInfo.DiscographyStart > 0 && parsedBookInfo.DiscographyEnd < parsedBookInfo.DiscographyStart))
+                {
+                    _logger.Warn("Cannot match collection with invalid year range {0}-{1}",
+                        parsedBookInfo.DiscographyStart, parsedBookInfo.DiscographyEnd);
+                    return new List<Book>();
+                }
+
+                List<Book> books;
                 if (parsedBookInfo.DiscographyStart > 0)
                 {
-                    return _bookService.AuthorBooksBetweenDates(author,
+                    books = _bookService.AuthorBooksBetweenDates(author,
                         new DateTime(parsedBookInfo.DiscographyStart, 1, 1),
-                        new DateTime(parsedBookInfo.DiscographyEnd, 12, 31),
-                        false);
+                        new DateTime(parsedBookInfo.DiscographyEnd, 12, 31), false);
                 }
-
-                if (parsedBookInfo.DiscographyEnd > 0)
+                else if (parsedBookInfo.DiscographyEnd > 0)
                 {
-                    return _bookService.AuthorBooksBetweenDates(author,
-                        new DateTime(1800, 1, 1),
-                        new DateTime(parsedBookInfo.DiscographyEnd, 12, 31),
-                        false);
+                    books = _bookService.AuthorBooksBetweenDates(author,
+                        new DateTime(1800, 1, 1), new DateTime(parsedBookInfo.DiscographyEnd, 12, 31), false);
                 }
-
-                return _bookService.GetBooksByAuthor(author.Id);
-            }
-
-            // Enhanced title processing with smart cleaning and author name removal
-            var originalTitle = bookTitle;
-            var cleanedTitle = CleanTitleCruft.Replace(bookTitle, "").Trim();
-            var authorRemovedTitle = RemoveAuthorFromTitle(cleanedTitle, author.Name);
-            var normalizedTitle = NormalizeForComparison(cleanedTitle);
-
-            var titleVariants = new[] { originalTitle, cleanedTitle, authorRemovedTitle, normalizedTitle }
-                .Where(t => !string.IsNullOrWhiteSpace(t))
-                .Distinct()
-                .ToList();
-
-            _logger.Debug("Searching for book with title variants: {0}", string.Join(" | ", titleVariants));
-
-            if (searchCriteria != null)
-            {
-                var candidateBooks = FilterBooksByMediaType(searchCriteria.Books, requestedMediaType).ToList();
-                var cleanTitle = Parser.CleanAuthorName(parsedBookInfo.BookTitle);
-                bookInfo = candidateBooks.ExclusiveOrDefault(e => e.Title == bookTitle || e.CleanTitle == cleanTitle);
-
-                // Enhanced search criteria matching
-                if (bookInfo == null)
+                else
                 {
-                    foreach (var variant in titleVariants)
-                    {
-                        bookInfo = candidateBooks.ExclusiveOrDefault(e =>
-                            IsEnhancedTitleMatch(e.Title, variant) ||
-                            IsEnhancedTitleMatch(e.CleanTitle, variant));
-                        if (bookInfo != null)
-                        {
-                            _logger.Debug("Found book via enhanced search criteria matching with variant: {0}", variant);
-                            break;
-                        }
-                    }
+                    books = preparation.GetAuthorCatalog(author.Id, _bookService);
                 }
+
+                return Scope(books).ToList();
             }
 
-            // Try exact matches with title variants
-            if (bookInfo == null)
-            {
-                foreach (var variant in titleVariants)
-                {
-                    bookInfo = FindExactBookMatch(author.Id, variant, requestedMediaType);
-                    if (bookInfo != null)
-                    {
-                        _logger.Debug("Found book via exact title match with variant: {0}", variant);
-                        break;
-                    }
-                }
-            }
+            var timer = Stopwatch.StartNew();
+            var catalog = Scope(searchCriteria?.AuthorCatalog ??
+                preparation.GetAuthorCatalog(author.Id, _bookService)).ToList();
+            var candidates = Scope(searchCriteria?.Books ?? catalog).ToList();
+            var matches = ReleaseTitleMatchScorer.FindBooksByTitle(parsedBookInfo.BookTitle, author.Name,
+                candidates, catalog, preparation);
+            timer.Stop();
+            _logger.Log(timer.ElapsedMilliseconds >= SlowTitleLookupMilliseconds ? LogLevel.Warn : LogLevel.Debug, "Title lookup for author {0}: catalog={1}, candidates={2}, outcome={3}, strongestMatches={4}, elapsedMs={5}",
+                author.Id, catalog.Count, candidates.Count, matches.Count == 1 ? "matched" : matches.Count == 0 ? "unmatched" : "ambiguous",
+                matches.Count, timer.Elapsed.TotalMilliseconds);
+            return matches.Count == 1 ? matches : new List<Book>();
 
-            // Try edition matches with title variants
-            if (bookInfo == null)
-            {
-                foreach (var variant in titleVariants)
-                {
-                    var edition = FindExactEditionMatch(author.Id, variant, requestedMediaType);
-                    if (edition?.Book != null)
-                    {
-                        bookInfo = edition.Book;
-                        _logger.Debug("Found book via exact edition match with variant: {0}", variant);
-                        break;
-                    }
-                }
-            }
-
-            // Try inexact book matches with enhanced logic
-            if (bookInfo == null)
-            {
-                _logger.Debug("Trying inexact book match for {0}", parsedBookInfo.BookTitle);
-                foreach (var variant in titleVariants)
-                {
-                    bookInfo = FindInexactBookMatch(author.Id, variant, requestedMediaType);
-                    if (bookInfo != null)
-                    {
-                        _logger.Debug("Found book via inexact match with variant: {0}", variant);
-                        break;
-                    }
-                }
-            }
-
-            // Try inexact edition matches with enhanced logic
-            if (bookInfo == null)
-            {
-                _logger.Debug("Trying inexact edition match for {0}", parsedBookInfo.BookTitle);
-                foreach (var variant in titleVariants)
-                {
-                    var edition = FindInexactEditionMatch(author.Id, variant, requestedMediaType);
-                    if (edition?.Book != null)
-                    {
-                        bookInfo = edition.Book;
-                        _logger.Debug("Found book via inexact edition match with variant: {0}", variant);
-                        break;
-                    }
-                }
-            }
-
-            if (bookInfo != null)
-            {
-                result.Add(bookInfo);
-                _logger.Debug("Found book via enhanced matching: {0}", bookInfo.Title);
-            }
-            else
-            {
-                _logger.Debug("Unable to find {0} with any title variant", parsedBookInfo);
-            }
-
-            return result;
-        }
-
-        private static IEnumerable<Book> FilterBooksByMediaType(IEnumerable<Book> books, BookMediaType? requestedMediaType)
-        {
-            var candidates = books?.Where(b => b != null) ?? Enumerable.Empty<Book>();
-
-            if (!requestedMediaType.HasValue)
-            {
-                return candidates;
-            }
-
-            return candidates.Where(b => b.MediaType == requestedMediaType.Value);
-        }
-
-        private Book FindExactBookMatch(int authorId, string title, BookMediaType? requestedMediaType)
-        {
-            var book = _bookService.FindByTitle(authorId, title);
-
-            if (!requestedMediaType.HasValue || book == null || book.MediaType == requestedMediaType.Value)
-            {
-                return book;
-            }
-
-            return _bookService.GetBooksByAuthorId(authorId)
-                .Where(b => b.MediaType == requestedMediaType.Value && IsExactBookTitleMatch(b, title))
-                .OrderBy(b => b.Id)
-                .FirstOrDefault();
-        }
-
-        private Edition FindExactEditionMatch(int authorId, string title, BookMediaType? requestedMediaType)
-        {
-            var edition = _editionService.FindByTitle(authorId, title);
-
-            if (!requestedMediaType.HasValue || edition?.Book == null || edition.Book.MediaType == requestedMediaType.Value)
-            {
-                return edition;
-            }
-
-            return _editionService.GetEditionsByAuthor(authorId)
-                .Where(e => e?.Book != null &&
-                            e.Monitored &&
-                            e.Book.MediaType == requestedMediaType.Value &&
-                            string.Equals(e.Title, title, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(e => e.Id)
-                .FirstOrDefault();
-        }
-
-        private Book FindInexactBookMatch(int authorId, string title, BookMediaType? requestedMediaType)
-        {
-            var book = _bookService.FindByTitleInexact(authorId, title);
-
-            if (!requestedMediaType.HasValue || book == null || book.MediaType == requestedMediaType.Value)
-            {
-                return book;
-            }
-
-            var requestedCandidates = _bookService.GetCandidates(authorId, title)
-                .Where(b => b.MediaType == requestedMediaType.Value)
-                .OrderBy(b => b.Id)
-                .ToList();
-
-            return requestedCandidates.Count == 1 ? requestedCandidates[0] : null;
-        }
-
-        private Edition FindInexactEditionMatch(int authorId, string title, BookMediaType? requestedMediaType)
-        {
-            var edition = _editionService.FindByTitleInexact(authorId, title);
-
-            if (!requestedMediaType.HasValue || edition?.Book == null || edition.Book.MediaType == requestedMediaType.Value)
-            {
-                return edition;
-            }
-
-            var requestedCandidates = _editionService.GetCandidates(authorId, title)
-                .Where(e => e?.Book != null && e.Book.MediaType == requestedMediaType.Value)
-                .OrderBy(e => e.Id)
-                .ToList();
-
-            return requestedCandidates.Count == 1 ? requestedCandidates[0] : null;
-        }
-
-        private static bool IsExactBookTitleMatch(Book book, string title)
-        {
-            if (book == null || string.IsNullOrWhiteSpace(title))
-            {
-                return false;
-            }
-
-            var cleanTitle = Parser.CleanAuthorName(title);
-            if (string.IsNullOrEmpty(cleanTitle))
-            {
-                cleanTitle = title;
-            }
-
-            return string.Equals(book.Title, title, StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(book.CleanTitle, cleanTitle, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static BookMediaType? GetRequestedMediaType(ParsedBookInfo parsedBookInfo)
-        {
-            return QualityMediaTypeHelper.GetKnownMediaType(parsedBookInfo?.Quality?.Quality);
-        }
-
-        /// <summary>
-        /// Enhanced title matching logic using deterministic matching
-        /// </summary>
-        private bool IsEnhancedTitleMatch(string dbTitle, string searchTitle)
-        {
-            if (string.IsNullOrWhiteSpace(dbTitle) || string.IsNullOrWhiteSpace(searchTitle))
-            {
-                return false;
-            }
-
-            // Use deterministic book title matching
-            return dbTitle.Equals(searchTitle, StringComparison.OrdinalIgnoreCase);
-        }
-
-        // Note: The series-aware matching logic was removed because it was unreachable after
-        // the deterministic matcher return. If series-aware matching is needed, it should be
-        // implemented within the deterministic matcher.
-
-        /// <summary>
-        /// Remove author name from title to improve matching accuracy
-        /// </summary>
-        private string RemoveAuthorFromTitle(string title, string authorName)
-        {
-            if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(authorName))
-            {
-                return title;
-            }
-
-            // Try to use existing SplitBookTitle extension if available
-            try
-            {
-                var (titlePart, _) = title.SplitBookTitle(authorName);
-                if (!string.IsNullOrWhiteSpace(titlePart) && titlePart != title)
-                {
-                    return titlePart;
-                }
-            }
-            catch
-            {
-                // Fallback to regex patterns if SplitBookTitle fails
-            }
-
-            // Fallback patterns for author name removal
-            var authorPatterns = new[]
-            {
-                $@"^{Regex.Escape(authorName)}\s*[-:]\s*(.+)$", // "Author - Title" or "Author: Title"
-                $@"^(.+?)\s+by\s+{Regex.Escape(authorName)}\s*$", // "Title by Author"
-                $@"^(.+?)\s*\({Regex.Escape(authorName)}\)\s*$" // "Title (Author)"
-            };
-
-            foreach (var pattern in authorPatterns)
-            {
-                var match = Regex.Match(title, pattern, RegexOptions.IgnoreCase);
-                if (match.Success)
-                {
-                    var extractedTitle = match.Groups[1].Value.Trim();
-                    if (!string.IsNullOrWhiteSpace(extractedTitle) && extractedTitle.Length > 3)
-                    {
-                        return extractedTitle;
-                    }
-                }
-            }
-
-            return title;
-        }
-
-        /// <summary>
-        /// Extract series information from title
-        /// </summary>
-        private (string seriesTitle, double? seriesNumber) ExtractSeriesInfo(string title)
-        {
-            if (string.IsNullOrWhiteSpace(title))
-            {
-                return (null, null);
-            }
-
-            foreach (var pattern in SeriesPatterns)
-            {
-                var match = pattern.Match(title.Trim());
-                if (match.Success)
-                {
-                    var seriesName = match.Groups[1].Value.Trim(' ', ',', '.', ':', ';', '-');
-                    var numberStr = match.Groups[2].Value;
-
-                    if (double.TryParse(numberStr, out var seriesNumber))
-                    {
-                        return (seriesName, seriesNumber);
-                    }
-                }
-            }
-
-            return (null, null);
-        }
-
-        /// <summary>
-        /// Normalize title for comparison by removing artifacts and standardizing format
-        /// </summary>
-        private string NormalizeForComparison(string title)
-        {
-            if (string.IsNullOrWhiteSpace(title))
-            {
-                return string.Empty;
-            }
-
-            var normalized = title;
-
-            // Remove common audiobook artifacts
-            normalized = Regex.Replace(normalized, @"\b(?:unabridged|abridged|audiobook|audio\s*book|complete)\b", "", RegexOptions.IgnoreCase);
-            normalized = Regex.Replace(normalized, @"\[(?:mp3|m4b|aac|flac|ogg)\]", "", RegexOptions.IgnoreCase);
-
-            return UnicodeComparisonNormalizer.NormalizeWords(normalized);
+            IEnumerable<Book> Scope(IEnumerable<Book> books) => (books ?? Enumerable.Empty<Book>())
+                .Where(book => book != null && book.AuthorId == author.Id &&
+                               (!mediaType.HasValue || book.MediaType == mediaType.Value));
         }
 
 	        public RemoteBook Map(ParsedBookInfo parsedBookInfo, int authorId, IEnumerable<int> bookIds)
@@ -498,7 +198,6 @@ namespace NzbDrone.Core.Parser
         private Author GetAuthor(ParsedBookInfo parsedBookInfo, SearchCriteriaBase searchCriteria)
         {
             Author author = null;
-            var authorCandidates = GetAuthorCandidates(parsedBookInfo?.AuthorName);
 
             _logger.Trace("[PARSING_SERVICE] ===== GetAuthor STARTED =====");
             _logger.Trace("[PARSING_SERVICE] Purpose: Find author for parsedAuthorName: '{0}'", parsedBookInfo?.AuthorName ?? "NULL");
@@ -510,8 +209,6 @@ namespace NzbDrone.Core.Parser
                 _logger.Trace("  - Author: '{0}' (ID: {1})",
                     searchCriteria.Author?.Name ?? "NULL",
                     searchCriteria.Author?.Id ?? -1);
-                _logger.Trace("  - Author CleanName: '{0}'", searchCriteria.Author?.CleanName ?? "NULL");
-                _logger.Trace("  - Parsed CleanName: '{0}'", parsedBookInfo?.AuthorName?.CleanAuthorName() ?? "NULL");
                 _logger.Trace("  - AudiobookQualityProfileId: {0}", searchCriteria.Author?.AudiobookQualityProfileId ?? -999);
                 _logger.Trace("  - EbookQualityProfileId: {0}", searchCriteria.Author?.EbookQualityProfileId ?? -999);
                 _logger.Trace("  - AudiobookQualityProfile object: {0}",
@@ -523,15 +220,7 @@ namespace NzbDrone.Core.Parser
                         ? $"LOADED ('{searchCriteria.Author.EbookQualityProfile?.Value?.Name ?? "Unknown"}')"
                         : "NULL");
 
-                var cleanNameMatch = searchCriteria.Author.CleanName == parsedBookInfo.AuthorName.CleanAuthorName();
-                var candidateCleanNameMatch = authorCandidates.Any(candidate => searchCriteria.Author.CleanName == candidate.CleanAuthorName());
-                _logger.Trace("[PARSING_SERVICE] Clean name comparison: '{0}' == '{1}' = {2} (candidate match: {3})",
-                    searchCriteria.Author.CleanName,
-                    parsedBookInfo.AuthorName.CleanAuthorName(),
-                    cleanNameMatch,
-                    candidateCleanNameMatch);
-
-                if (cleanNameMatch || candidateCleanNameMatch)
+                if (AuthorNameMatcher.ContainsAuthorName(searchCriteria.Author.Name, parsedBookInfo.AuthorName))
                 {
                     _logger.Trace("[PARSING_SERVICE] MATCH! Using author from search criteria");
                     _logger.Trace("[PARSING_SERVICE] Returning author with profiles - Audiobook: {0}, Ebook: {1}",
@@ -541,7 +230,7 @@ namespace NzbDrone.Core.Parser
                 }
                 else
                 {
-                    _logger.Trace("[PARSING_SERVICE] NO MATCH - clean names don't match, will search database");
+                    _logger.Trace("[PARSING_SERVICE] NO MATCH - author evidence doesn't match, will search database");
                 }
             }
             else
@@ -552,28 +241,6 @@ namespace NzbDrone.Core.Parser
             author = _authorService.FindByName(parsedBookInfo.AuthorName);
             _logger.Trace("[PARSING_SERVICE] FindByName result: {0}",
                 author != null ? $"'{author.Name}' (ID: {author.Id})" : "NULL");
-
-            if (author == null && authorCandidates.Count > 1)
-            {
-                author = FindUniqueAuthorCandidate(authorCandidates, candidate => _authorService.FindByName(candidate));
-                _logger.Trace("[PARSING_SERVICE] FindByName split-candidate result: {0}",
-                    author != null ? $"'{author.Name}' (ID: {author.Id})" : "NULL");
-            }
-
-            if (author == null)
-            {
-                _logger.Trace("[PARSING_SERVICE] Trying inexact author match for {0}", parsedBookInfo.AuthorName);
-                author = _authorService.FindByNameInexact(parsedBookInfo.AuthorName);
-                _logger.Trace("[PARSING_SERVICE] FindByNameInexact result: {0}",
-                    author != null ? $"'{author.Name}' (ID: {author.Id})" : "NULL");
-            }
-
-            if (author == null && authorCandidates.Count > 1)
-            {
-                author = FindUniqueAuthorCandidate(authorCandidates, candidate => _authorService.FindByNameInexact(candidate));
-                _logger.Trace("[PARSING_SERVICE] FindByNameInexact split-candidate result: {0}",
-                    author != null ? $"'{author.Name}' (ID: {author.Id})" : "NULL");
-            }
 
             if (author == null)
             {
@@ -587,43 +254,6 @@ namespace NzbDrone.Core.Parser
 
             return author;
         }
-
-        private static List<string> GetAuthorCandidates(string authorName)
-        {
-            if (string.IsNullOrWhiteSpace(authorName))
-            {
-                return new List<string>();
-            }
-
-            var candidates = new List<string> { authorName.Trim() };
-            var splitCandidates = Regex.Split(authorName, @"\s*(?:,|&|\band\b|;)\s*", RegexOptions.IgnoreCase)
-                .Where(candidate => !string.IsNullOrWhiteSpace(candidate))
-                .Select(candidate => candidate.Trim());
-
-            foreach (var candidate in splitCandidates)
-            {
-                if (!candidates.Contains(candidate, StringComparer.OrdinalIgnoreCase))
-                {
-                    candidates.Add(candidate);
-                }
-            }
-
-            return candidates;
-        }
-
-        private static Author FindUniqueAuthorCandidate(IEnumerable<string> candidates, Func<string, Author> lookup)
-        {
-            var matches = candidates
-                .Skip(1)
-                .Select(lookup)
-                .Where(author => author != null)
-                .GroupBy(author => author.Id)
-                .Select(group => group.First())
-                .ToList();
-
-            return matches.Count == 1 ? matches[0] : null;
-        }
-
 
         public Book GetLocalBook(string filename, Author author)
         {
@@ -665,37 +295,5 @@ namespace NzbDrone.Core.Parser
             return book;
         }
 
-        /// <summary>
-        /// Cross-field validation helper for use by other parsing components
-        /// </summary>
-        public bool ValidateAuthorInMetadata(string authorName, string audioFilePath)
-        {
-            if (string.IsNullOrWhiteSpace(authorName) || string.IsNullOrWhiteSpace(audioFilePath))
-            {
-                return false;
-            }
-
-            try
-            {
-                var allFields = _audioTagService.ReadAllTags(audioFilePath);
-
-                foreach (var field in allFields.Values.SelectMany(v => v))
-                {
-                    if (!string.IsNullOrWhiteSpace(field) && field.Contains(authorName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        _logger.Debug("Cross-field validation SUCCESS in ParsingService: Author '{0}' found in ID3 field: '{1}'", authorName, field);
-                        return true;
-                    }
-                }
-
-                _logger.Debug("Cross-field validation FAILED in ParsingService: Author '{0}' not found in any ID3 field", authorName);
-                return false;
-            }
-            catch (Exception ex)
-            {
-                _logger.Debug(ex, "Error during cross-field validation for author: {0}", authorName);
-                return false;
-            }
-        }
     }
 }

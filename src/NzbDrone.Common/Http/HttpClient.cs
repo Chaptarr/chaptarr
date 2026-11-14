@@ -71,7 +71,7 @@ namespace NzbDrone.Common.Http
             EnsureHttpOrHttps(request.Url);
             if (IsCloudMetadataTarget(request.Url))
             {
-                throw new WebException($"Request target '{request.Url}' is not allowed.", WebExceptionStatus.ProtocolError);
+                throw new WebException($"Request target '{request.GetLogUrl()}' is not allowed.", WebExceptionStatus.ProtocolError);
             }
 
             var cookieContainer = InitializeRequestCookies(request);
@@ -80,19 +80,19 @@ namespace NzbDrone.Common.Http
 
             if (request.AllowAutoRedirect && response.HasHttpRedirect)
             {
-                var autoRedirectChain = new List<string> { request.Url.ToString() };
+                var autoRedirectChain = new List<string> { request.GetLogUrl() };
 
                 do
                 {
                     var location = response.Headers.GetSingleValue("Location");
                     if (location.IsNullOrWhiteSpace())
                     {
-                        throw new WebException($"Redirect response from {request.Url} is missing a Location header.", WebExceptionStatus.ProtocolError);
+                        throw new WebException($"Redirect response from {request.GetLogUrl()} is missing a Location header.", WebExceptionStatus.ProtocolError);
                     }
 
                     var nextUrl = request.Url + new HttpUri(location);
 
-                    EnsureSafeRedirectTarget(nextUrl);
+                    EnsureSafeRedirectTarget(nextUrl, request.GetLogUrl(nextUrl));
 
                     // 302 or 303 should default to GET on redirect even if POST on original
                     if (RequestRequiresForceGet(response.StatusCode, response.Request.Method))
@@ -103,9 +103,9 @@ namespace NzbDrone.Common.Http
                     }
 
                     request.Url = nextUrl;
-                    autoRedirectChain.Add(request.Url.ToString());
+                    autoRedirectChain.Add(request.GetLogUrl());
 
-                    _logger.Trace("Redirected to {0}", request.Url);
+                    _logger.Trace("Redirected to {0}", request.GetLogUrl());
 
                     if (autoRedirectChain.Count > MaxRedirects)
                     {
@@ -119,7 +119,8 @@ namespace NzbDrone.Common.Http
 
             if (response.HasHttpRedirect && !RuntimeInfo.IsProduction)
             {
-                _logger.Error("Server requested a redirect to [{0}] while in developer mode. Update the request URL to avoid this redirect.", response.Headers["Location"]);
+                _logger.Error("Server requested a redirect to [{0}] while in developer mode. Update the request URL to avoid this redirect.",
+                    request.RedactUrlInLogs ? "(removed)" : response.Headers["Location"]);
             }
 
             if (!request.SuppressHttpError && response.HasHttpError && (request.SuppressHttpErrorStatusCodes == null || !request.SuppressHttpErrorStatusCodes.Contains(response.StatusCode)))
@@ -161,13 +162,13 @@ namespace NzbDrone.Common.Http
                    scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
         }
 
-        private static void EnsureSafeRedirectTarget(HttpUri url)
+        private static void EnsureSafeRedirectTarget(HttpUri url, string logUrl)
         {
             EnsureHttpOrHttps(url);
 
             if (IsCloudMetadataTarget(url))
             {
-                throw new WebException($"Redirect target '{url}' is not allowed.", WebExceptionStatus.ProtocolError);
+                throw new WebException($"Redirect target '{logUrl}' is not allowed.", WebExceptionStatus.ProtocolError);
             }
         }
 
@@ -220,9 +221,9 @@ namespace NzbDrone.Common.Http
                 response = interceptor.PostResponse(response);
             }
 
-            if (request.LogResponseContent && response.ResponseData != null)
+            if (_logger.IsTraceEnabled && (request.LogResponseContent || response.HasHttpError) && response.ResponseData != null)
             {
-                _logger.Trace("Response content ({0} bytes): {1}", response.ResponseData.Length, response.Content);
+                _logger.Trace("Response content ({0} bytes): {1}", response.ResponseData.Length, request.SanitizeLogMessage(response.Content));
             }
 
             return response;

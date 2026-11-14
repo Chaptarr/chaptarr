@@ -70,7 +70,17 @@ namespace Chaptarr.Api.V1.Books
 
         protected List<BookResource> MapToResource(List<Book> books, bool includeAuthor)
         {
-            return MapToResource(books, includeAuthor, null, includeOverview: true, includeLinks: true);
+            IReadOnlyDictionary<int, BookStatistics> statsByBookId = null;
+
+            if (books.Count > 0 && books.All(book => book.AuthorId == books[0].AuthorId))
+            {
+                statsByBookId = BuildBookStatisticsById(new[]
+                {
+                    _authorStatisticsService.AuthorStatistics(books[0].AuthorId)
+                });
+            }
+
+            return MapToResource(books, includeAuthor, statsByBookId, includeOverview: true, includeLinks: true);
         }
 
         protected List<BookResource> MapToResource(List<Book> books,
@@ -79,6 +89,11 @@ namespace Chaptarr.Api.V1.Books
                                                    bool includeOverview,
                                                    bool includeLinks)
         {
+            if (books.Count == 0)
+            {
+                return new List<BookResource>();
+            }
+
             var facadeContext = HttpContext?.GetReadarrFacadeContext();
             var seriesLinks = _seriesBookLinkService.GetLinksByBook(books.Select(x => x.Id).ToList())
                 .GroupBy(x => x.BookId)
@@ -96,7 +111,7 @@ namespace Chaptarr.Api.V1.Books
                 }
             }
 
-            var resolvedStatsByBookId = statsByBookId ?? BuildBookStatisticsById(_authorStatisticsService.AuthorStatistics());
+            var resolvedStatsByBookId = statsByBookId ?? BuildBookStatisticsById(_authorStatisticsService.AuthorStatistics(books.Select(book => book.AuthorId)));
 
             // Convert books to resources. Statistics are passed before mapping so narrator gating can
             // use file counts even when lean list endpoints intentionally skip BookFiles hydration.
@@ -168,10 +183,8 @@ namespace Chaptarr.Api.V1.Books
 
         private void MapCoversToLocal(params BookResource[] books)
         {
-            foreach (var bookResource in books)
-            {
-                _coverMapper.ConvertToLocalUrls(bookResource.Id, MediaCoverEntity.Book, bookResource.Images);
-            }
+            _coverMapper.ConvertBookCoversToLocalUrls(books.Select(bookResource =>
+                new KeyValuePair<int, List<MediaCover>>(bookResource.Id, bookResource.Images)));
         }
     }
 }

@@ -8,6 +8,7 @@ using NzbDrone.Core.Configuration.SettingsBackups;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.MyAnonaMouse;
+using NzbDrone.Core.Profiles;
 using NzbDrone.Core.Profiles.Qualities;
 
 namespace Chaptarr.Core.Test.Configuration
@@ -15,6 +16,119 @@ namespace Chaptarr.Core.Test.Configuration
     [TestFixture]
     public class SettingsBackupServiceCustomFormatRestoreFixture
     {
+        [TestCase(SettingsBackupRestoreMode.Merge)]
+        [TestCase(SettingsBackupRestoreMode.Overwrite)]
+        public void restore_mode_should_preserve_or_replace_existing_custom_format_rules(SettingsBackupRestoreMode mode)
+        {
+            var service = CreateService(out var formats);
+            formats.Formats.Add(new CustomFormat
+            {
+                Id = 42, Name = "Narration", IncludeCustomFormatWhenRenaming = false,
+                AppliesTo = CustomFormatMediaType.Audiobook,
+                Specifications = new List<ICustomFormatSpecification> { new ReleaseTitleSpecification { Value = "current" } }
+            });
+            var backup = InvokeToBackup(new CustomFormat
+            {
+                Id = 81, Name = "Narration", IncludeCustomFormatWhenRenaming = true,
+                AppliesTo = CustomFormatMediaType.Ebook,
+                Specifications = new List<ICustomFormatSpecification> { new ReleaseTitleSpecification { Value = "backup" } }
+            });
+            var map = InvokeRestoreCustomFormats(service, new SettingsBackupPackage { CustomFormats = new() { backup } }, mode, new SettingsBackupRestoreResult());
+            var restored = formats.Formats.Single();
+            Assert.That(map[81], Is.EqualTo(restored.Id));
+            Assert.That(restored.IncludeCustomFormatWhenRenaming, Is.EqualTo(mode == SettingsBackupRestoreMode.Overwrite));
+            Assert.That(restored.AppliesTo, Is.EqualTo(mode == SettingsBackupRestoreMode.Merge ? CustomFormatMediaType.Audiobook : CustomFormatMediaType.Ebook));
+            Assert.That(((ReleaseTitleSpecification)restored.Specifications.Single()).Value, Is.EqualTo(mode == SettingsBackupRestoreMode.Merge ? "current" : "backup"));
+        }
+
+        [TestCase(SettingsBackupRestoreMode.Merge)]
+        [TestCase(SettingsBackupRestoreMode.Overwrite)]
+        public void restore_mode_should_preserve_or_replace_existing_quality_choices_and_scores(SettingsBackupRestoreMode mode)
+        {
+            var format = new CustomFormat { Id = 42, Name = "Narration", AppliesTo = CustomFormatMediaType.Audiobook };
+            var current = new QualityProfile
+            {
+                Id = 5, Name = "Audio", ProfileType = ProfileType.Audiobook, UpgradeAllowed = false,
+                Items = new() { new QualityProfileQualityItem { Quality = NzbDrone.Core.Qualities.Quality.M4B, Allowed = true } },
+                FormatItems = new() { new ProfileFormatItem { Format = format, Score = 50 } }
+            };
+            QualityProfile restored = null;
+            var qualityService = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IQualityProfileService>((method, args) =>
+            {
+                if (method.Name == "All") return new List<QualityProfile> { current };
+                if (method.Name == "Update") { restored = (QualityProfile)args[0]; return null; }
+                throw new System.NotImplementedException(method.Name);
+            });
+            var formatService = new StubCustomFormatService();
+            formatService.Formats.Add(format);
+            var service = new SettingsBackupService(null, null, null, null, null, null, null, qualityService, null, formatService, null, null, null, null, delayProfileService: null, releaseProfileService: null, qualityDefinitionService: null, mediaPaths: null, filenameValidation: SettingsBackupCoverageFixture.CreateFilenameValidation());
+            var backup = InvokeToBackup(new QualityProfile
+            {
+                Name = "Audio", ProfileType = ProfileType.Audiobook, UpgradeAllowed = true,
+                Items = new() { new QualityProfileQualityItem { Quality = NzbDrone.Core.Qualities.Quality.MP3, Allowed = true } },
+                FormatItems = new() { new ProfileFormatItem { Format = new CustomFormat { Id = 81 }, Score = -50 } }
+            });
+            typeof(SettingsBackupService).GetMethod("RestoreQualityProfiles", BindingFlags.NonPublic | BindingFlags.Instance)
+                .Invoke(service, new object[] { new SettingsBackupPackage { QualityProfiles = new() { backup } }, new Dictionary<int, int> { [81] = 42 }, mode, null });
+            Assert.That(restored.Id, Is.EqualTo(5));
+            Assert.That(restored.UpgradeAllowed, Is.EqualTo(mode == SettingsBackupRestoreMode.Overwrite));
+            Assert.That(restored.Items.Single().Quality, Is.EqualTo(mode == SettingsBackupRestoreMode.Merge ? NzbDrone.Core.Qualities.Quality.M4B : NzbDrone.Core.Qualities.Quality.MP3));
+            Assert.That(restored.FormatItems.Single().Format.Id, Is.EqualTo(42));
+            Assert.That(restored.FormatItems.Single().Score, Is.EqualTo(mode == SettingsBackupRestoreMode.Merge ? 50 : -50));
+        }
+
+        [TestCase(100)]
+        [TestCase(-100)]
+        [TestCase(0)]
+        public void merge_uses_backup_score_only_for_formats_added_by_this_restore(int backupScore)
+        {
+            var existingFormat = new CustomFormat { Id = 42, Name = "Existing", AppliesTo = CustomFormatMediaType.Audiobook };
+            var current = new QualityProfile
+            {
+                Id = 5, Name = "Audio", ProfileType = ProfileType.Audiobook,
+                FormatItems = new()
+                {
+                    new ProfileFormatItem { Format = existingFormat, Score = 25 }
+                }
+            };
+            QualityProfile result = null;
+            var qualityService = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IQualityProfileService>((method, args) =>
+            {
+                if (method.Name == "All") return new List<QualityProfile> { current };
+                if (method.Name == "Update") { result = (QualityProfile)args[0]; return null; }
+                throw new System.NotImplementedException(method.Name);
+            });
+            var formats = new StubCustomFormatService();
+            formats.Formats.Add(existingFormat);
+            formats.Inserted = format => current.FormatItems.Add(new ProfileFormatItem { Format = format, Score = 0 });
+            var service = new SettingsBackupService(null, null, null, null, null, null, null, qualityService, null, formats, null, null, null, null, delayProfileService: null, releaseProfileService: null, qualityDefinitionService: null, mediaPaths: null, filenameValidation: SettingsBackupCoverageFixture.CreateFilenameValidation());
+            var backup = InvokeToBackup(new QualityProfile
+            {
+                Name = "Audio", ProfileType = ProfileType.Audiobook,
+                FormatItems = new()
+                {
+                    new ProfileFormatItem { Format = new CustomFormat { Id = 81 }, Score = -500 },
+                    new ProfileFormatItem { Format = new CustomFormat { Id = 82 }, Score = backupScore }
+                }
+            });
+            var package = new SettingsBackupPackage
+            {
+                QualityProfiles = new() { backup },
+                CustomFormats = new()
+                {
+                    InvokeToBackup(new CustomFormat { Id = 81, Name = "Existing", AppliesTo = CustomFormatMediaType.Audiobook }),
+                    InvokeToBackup(new CustomFormat { Id = 82, Name = "New", AppliesTo = CustomFormatMediaType.Audiobook })
+                }
+            };
+            var insertedIds = new HashSet<int>();
+            var map = InvokeRestoreCustomFormats(service, package, SettingsBackupRestoreMode.Merge, new SettingsBackupRestoreResult(), insertedIds);
+            Assert.That(insertedIds, Is.EquivalentTo(new[] { map[82] }));
+            typeof(SettingsBackupService).GetMethod("RestoreQualityProfiles", BindingFlags.NonPublic | BindingFlags.Instance)
+                .Invoke(service, new object[] { package, map, SettingsBackupRestoreMode.Merge, insertedIds });
+            Assert.That(result.FormatItems.Single(item => item.Format.Id == 42).Score, Is.EqualTo(25));
+            Assert.That(result.FormatItems.Single(item => item.Format.Id == map[82]).Score, Is.EqualTo(backupScore));
+        }
+
         [Test]
         public void restore_custom_formats_should_accept_legacy_interface_specification_shape()
         {
@@ -402,14 +516,15 @@ namespace Chaptarr.Core.Test.Configuration
                 customFormatService,
                 null,
                 null,
-                null);
+                null,
+                null, delayProfileService: null, releaseProfileService: null, qualityDefinitionService: null, mediaPaths: null, filenameValidation: SettingsBackupCoverageFixture.CreateFilenameValidation());
         }
 
         private static Dictionary<int, int> InvokeRestoreCustomFormats(
             SettingsBackupService service,
             SettingsBackupPackage package,
             SettingsBackupRestoreMode mode,
-            SettingsBackupRestoreResult result)
+            SettingsBackupRestoreResult result, ISet<int> insertedIds = null)
         {
             var method = typeof(SettingsBackupService).GetMethod("RestoreCustomFormats", BindingFlags.NonPublic | BindingFlags.Instance);
 
@@ -420,7 +535,8 @@ namespace Chaptarr.Core.Test.Configuration
                 package,
                 new HashSet<SettingsBackupCategory> { SettingsBackupCategory.Profiles },
                 mode,
-                result
+                result,
+                insertedIds
             });
         }
 
@@ -456,6 +572,7 @@ namespace Chaptarr.Core.Test.Configuration
         private sealed class StubCustomFormatService : ICustomFormatService
         {
             private int _nextId = 1;
+            public System.Action<CustomFormat> Inserted { get; set; }
 
             public List<CustomFormat> Formats { get; } = new();
 
@@ -472,6 +589,7 @@ namespace Chaptarr.Core.Test.Configuration
             {
                 customFormat.Id = _nextId++;
                 Formats.Add(customFormat);
+                Inserted?.Invoke(customFormat);
                 return customFormat;
             }
 

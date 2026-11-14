@@ -61,6 +61,8 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 return true;
             }
 
+            public bool CanBeginRequest(out TimeSpan retryAfter) => CanAttemptWithoutProbe(out retryAfter);
+
             public void ReportResponse(HttpResponse response)
             {
             }

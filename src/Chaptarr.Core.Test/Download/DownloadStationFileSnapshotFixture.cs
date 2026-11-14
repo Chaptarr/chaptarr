@@ -119,7 +119,7 @@ namespace Chaptarr.Core.Test.Download
                     diskProvider: null,
                     remotePathMappingService: new PassthroughRemotePathMappingService(),
                     blocklistService: null,
-                    logger: logger)
+                    logger: logger, rootFolders: DownloadClientTestRoots.Empty)
             {
             }
         }
@@ -137,7 +137,7 @@ namespace Chaptarr.Core.Test.Download
                     diskProvider: null,
                     remotePathMappingService: new PassthroughRemotePathMappingService(),
                     nzbValidationService: null,
-                    logger: logger)
+                    logger: logger, rootFolders: DownloadClientTestRoots.Empty)
             {
             }
         }

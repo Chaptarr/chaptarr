@@ -85,6 +85,7 @@ class AuthorIndexActionsCell extends Component {
         />
 
         <DeleteAuthorModal
+          selectedMediaType={this.props.selectedMediaType}
           isOpen={isDeleteAuthorModalOpen}
           authorId={id}
           onModalClose={this.onDeleteAuthorModalClose}
@@ -95,6 +96,7 @@ class AuthorIndexActionsCell extends Component {
 }
 
 AuthorIndexActionsCell.propTypes = {
+  selectedMediaType: PropTypes.string,
   id: PropTypes.number.isRequired,
   isRefreshingAuthor: PropTypes.bool.isRequired,
   onRefreshAuthorPress: PropTypes.func.isRequired

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using NLog;
+using NzbDrone.Core.Parser;
 
 namespace NzbDrone.Core.Books
 {
@@ -75,7 +76,7 @@ namespace NzbDrone.Core.Books
             _logger.Debug("Analyzing {0} books in series {1}", books.Count, series.Title);
 
             // Group books by narrator
-            var narratorGroups = new Dictionary<string, NarratorInfo>(StringComparer.OrdinalIgnoreCase);
+            var narratorGroups = new Dictionary<string, NarratorInfo>(NzbDrone.Core.Parser.Parser.NarratorNameComparer);
 
             foreach (var book in books)
             {
@@ -127,7 +128,7 @@ namespace NzbDrone.Core.Books
                 // Check if variant already exists
                 narratorInfo.HasExistingVariant = existingVariants.Any(v =>
                     v.IsNarratorVariant &&
-                    string.Equals(v.Narrator, narratorInfo.NarratorName, StringComparison.OrdinalIgnoreCase));
+                    NzbDrone.Core.Parser.Parser.NarratorNameComparer.Equals(v.Narrator, narratorInfo.NarratorName));
 
                 // Categorize narrator
                 if (narratorInfo.HasCompleteSet)
@@ -168,7 +169,7 @@ namespace NzbDrone.Core.Books
             {
                 var editions = _editionService.GetEditionsByBook(book.Id)
                     .Where(e => e.Monitored &&
-                           string.Equals(e.Narrator, narratorName, StringComparison.OrdinalIgnoreCase))
+                           NzbDrone.Core.Parser.Parser.NarratorNameComparer.Equals(e.Narrator, narratorName))
                     .ToList();
 
                 if (editions.Any())

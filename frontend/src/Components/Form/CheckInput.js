@@ -69,7 +69,8 @@ class CheckInput extends Component {
   };
 
   onClick = (event) => {
-    if (this.props.isDisabled) {
+    // Keyboard activation already toggles the native input; let onChange own that event.
+    if (this.props.isDisabled || event.target === this._checkbox) {
       return;
     }
 

@@ -5,6 +5,8 @@ namespace NzbDrone.Core.Books.Commands
 {
     public class BulkRefreshAuthorCommand : Command
     {
+        public override bool SupportsCancellation => true;
+
         public BulkRefreshAuthorCommand()
         {
             AuthorIds = new List<int>();

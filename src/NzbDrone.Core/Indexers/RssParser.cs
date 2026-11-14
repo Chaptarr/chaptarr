@@ -106,7 +106,7 @@ namespace NzbDrone.Core.Indexers
             catch (XmlException ex)
             {
                 var contentSample = indexerResponse.Content.Substring(0, Math.Min(indexerResponse.Content.Length, 512));
-                _logger.Debug("Truncated response content (originally {0} characters): {1}", indexerResponse.Content.Length, contentSample);
+                _logger.Trace("Truncated response content (originally {0} characters): {1}", indexerResponse.Content.Length, contentSample);
 
                 ex.WithData(indexerResponse.HttpResponse);
 

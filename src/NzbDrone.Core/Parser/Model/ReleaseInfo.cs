@@ -13,6 +13,7 @@ namespace NzbDrone.Core.Parser.Model
         public ReleaseInfo()
         {
             Languages = new List<Language>();
+            SeriesInfo = new List<ReleaseSeriesInfo>();
         }
 
         public string Guid { get; set; }
@@ -25,6 +26,7 @@ namespace NzbDrone.Core.Parser.Model
         public string Indexer { get; set; }
         public string Author { get; set; }
         public string Book { get; set; }
+        public List<ReleaseSeriesInfo> SeriesInfo { get; set; }
         public int IndexerPriority { get; set; }
         public DownloadProtocol DownloadProtocol { get; set; }
         public DateTime PublishDate { get; set; }
@@ -43,6 +45,8 @@ namespace NzbDrone.Core.Parser.Model
         // Narrator metadata from indexers (used for Interactive Search display and Custom Format scoring)
         public string Duration { get; set; }
         public string Narrator { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public List<string> NarratorEvidenceFields { get; set; }
         public bool IsGraphicAudio { get; set; }
 
         // Indexer-provided extended metadata hints (used to avoid extra API calls when unavailable)
@@ -55,6 +59,9 @@ namespace NzbDrone.Core.Parser.Model
         // Used to track pending releases that are being reprocessed
         [JsonIgnore]
         public PendingReleaseReason? PendingReleaseReason { get; set; }
+
+        [JsonIgnore]
+        internal PendingRelease PendingContext { get; set; }
 
         public int Age
         {
@@ -99,6 +106,13 @@ namespace NzbDrone.Core.Parser.Model
                     return ToString();
             }
         }
+    }
+
+    public sealed class ReleaseSeriesInfo
+    {
+        public string ProviderId { get; set; }
+        public string Name { get; set; }
+        public string Position { get; set; }
     }
 
     [Flags]

@@ -1,9 +1,9 @@
 import PropTypes from 'prop-types';
 import React, { useEffect, useState } from 'react';
+import AuthorMonitoringGatePopoverContent from 'AddAuthor/AuthorMonitoringGatePopoverContent';
+import AuthorMonitoringOptionsPopoverContent from 'AddAuthor/AuthorMonitoringOptionsPopoverContent';
 import AuthorMonitorNewItemsOptionsPopoverContent from 'AddAuthor/AuthorMonitorNewItemsOptionsPopoverContent';
 import Alert from 'Components/Alert';
-import DescriptionList from 'Components/DescriptionList/DescriptionList';
-import DescriptionListItem from 'Components/DescriptionList/DescriptionListItem';
 import FieldSet from 'Components/FieldSet';
 import Form from 'Components/Form/Form';
 import FormGroup from 'Components/Form/FormGroup';
@@ -24,48 +24,28 @@ import { icons, inputTypes, kinds, tooltipPositions } from 'Helpers/Props';
 import { FolderType } from 'Helpers/Props/folderTypes';
 import AdvancedSettingsButton from 'Settings/AdvancedSettingsButton';
 import HardcoverApiKeyModal from 'System/Quickstart/HardcoverApiKeyModal';
+import monitorNewItemsOptions from 'Utilities/Author/monitorNewItemsOptions';
+import monitorOptions from 'Utilities/Author/monitorOptions';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import translate from 'Utilities/String/translate';
 import styles from './EditImportListModalContent.css';
 
-function ImportListMonitoringOptionsPopoverContent() {
-  return (
-    <>
-      <Alert>
-        {translate('ShouldMonitorHelpText')}
-      </Alert>
-
-      <DescriptionList>
-        <DescriptionListItem
-          title={translate('None')}
-          data={translate('DataListMonitorNone')}
-        />
-
-        <DescriptionListItem
-          title={translate('SpecificBook')}
-          data={translate('DataListMonitorSpecificBook')}
-        />
-
-        <DescriptionListItem
-          title={translate('AllAuthorBooks')}
-          data={translate('DataListMonitorAll')}
-        />
-      </DescriptionList>
-    </>
-  );
-}
+const listMonitorOptions = monitorOptions.flatMap((option) => {
+  if (option.key === 'all') {
+    return [option, { key: 'specificBook', get value() {
+      return translate('ImportListOnlyListedBooks');
+    } }];
+  }
+  return [option];
+});
 
 function EditImportListModalContent(props) {
-
-  const monitorOptions = [
-    { key: 'none', value: translate('None') },
-    { key: 'specificBook', value: translate('SpecificBook') },
-    { key: 'entireAuthor', value: translate('AllAuthorBooks') }
-  ];
 
   const {
     advancedSettings,
     isFetching,
+    isRootFoldersPopulated,
+    rootFoldersError,
     error,
     isSaving,
     isTesting,
@@ -73,12 +53,13 @@ function EditImportListModalContent(props) {
     item,
     onInputChange,
     onFieldChange,
+    onRetryRootFolders,
     onModalClose,
     onSavePress,
     onTestPress,
     onAdvancedSettingsPress,
     onDeleteImportListPress,
-    showMetadataProfile,
+    monitoringDefaults = {},
     ...otherProps
   } = props;
 
@@ -91,32 +72,120 @@ function EditImportListModalContent(props) {
     shouldMonitor,
     shouldMonitorExisting,
     shouldSearch,
-    rootFolderPath,
-    monitorNewItems,
-    qualityProfileId,
-    metadataProfileId,
-    tags,
+    monitoringOptions,
     fields,
     message
   } = item;
 
+  const options = monitoringOptions?.value || {};
+  const addMissingAuthors = options.addMissingAuthors !== false;
+  const changeOptions = ({ name: optionName, value }) => onInputChange({
+    name: 'monitoringOptions', value: { ...options, [optionName]: value }
+  });
+
+  const renderNewAuthorMonitoring = (mediaType) => {
+    const monitor = options[`${mediaType}Monitor`] ?? monitoringDefaults[`${mediaType}Monitor`] ?? 'none';
+    const legacyMonitorListedBooks = ['specificBook', 'entireAuthor'].includes(shouldMonitor?.value);
+    const monitorListedBooks = options[`${mediaType}MonitorListedBooks`] ?? legacyMonitorListedBooks;
+    const selectedMonitor = monitorListedBooks && monitor === 'none' ? 'specificBook' : monitor;
+    const changeMonitor = ({ value }) => {
+      const includeListed = value === 'specificBook' || (value !== 'none' && monitorListedBooks);
+      onInputChange({
+        name: 'monitoringOptions',
+        value: {
+          ...options,
+          [`${mediaType}Monitor`]: value,
+          [`${mediaType}MonitorListedBooks`]: includeListed
+        }
+      });
+    };
+
+    return (
+      <>
+        <FormGroup>
+          <FormLabel>
+            {translate('ImportListMonitorWhenAdded')}
+            <Popover
+              anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
+              title={translate('ImportListMonitorWhenAdded')}
+              body={<AuthorMonitoringGatePopoverContent />}
+              position={tooltipPositions.RIGHT}
+            />
+          </FormLabel>
+          <FormInputGroup
+            type={inputTypes.CHECK}
+            name={`${mediaType}Monitored`}
+            value={options[`${mediaType}Monitored`] ?? monitoringDefaults[`${mediaType}Monitored`]}
+            onChange={changeOptions}
+          />
+        </FormGroup>
+        <FormGroup>
+          <FormLabel>
+            {translate('InitialBookMonitoring')}
+            <Popover
+              anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
+              title={translate('InitialBookMonitoring')}
+              body={
+                <>
+                  <AuthorMonitoringOptionsPopoverContent />
+                  <p>{translate('ImportListBookMonitoringOptionsHelp')}</p>
+                </>
+              }
+              position={tooltipPositions.RIGHT}
+            />
+          </FormLabel>
+          <FormInputGroup
+            type={inputTypes.SELECT}
+            name={`${mediaType}Monitor`}
+            values={listMonitorOptions}
+            value={selectedMonitor}
+            helpText={translate('ImportListInitialBooksHelp')}
+            onChange={changeMonitor}
+          />
+        </FormGroup>
+        {
+          ['all', 'missing', 'existing'].includes(selectedMonitor) &&
+            <FormGroup>
+              <FormLabel>{translate('ImportListMonitorListedBooks')}</FormLabel>
+              <FormInputGroup
+                type={inputTypes.CHECK}
+                name={`${mediaType}MonitorListedBooks`}
+                value={monitorListedBooks}
+                helpText={translate('ImportListMonitorListedBooksHelp')}
+                onChange={changeOptions}
+              />
+            </FormGroup>
+        }
+        <FormGroup>
+          <FormLabel>
+            {translate('MonitorNewBooks')}
+            <Popover
+              anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
+              title={translate('MonitorNewBooks')}
+              body={<AuthorMonitorNewItemsOptionsPopoverContent />}
+              position={tooltipPositions.RIGHT}
+            />
+          </FormLabel>
+          <FormInputGroup
+            type={inputTypes.SELECT}
+            name={`${mediaType}MonitorNewItems`}
+            values={monitorNewItemsOptions}
+            value={options[`${mediaType}MonitorNewItems`] ?? monitoringDefaults[`${mediaType}MonitorNewItems`]}
+            helpText={translate('ImportListFutureBooksHelp')}
+            onChange={changeOptions}
+          />
+        </FormGroup>
+      </>
+    );
+  };
+
   const isHardcoverLibraryImportList = (implementation?.value === 'HardcoverLibraryImportList') ||
     (implementationName === 'Hardcover Library');
 
+  const keepListedBooksHelp = isHardcoverLibraryImportList ? 'ImportListKeepHardcoverBooksHelp' : 'ImportListKeepListedBooksHelp';
+
   const isGoodreadsBookshelfImportList = (implementation?.value === 'GoodreadsBookshelf') ||
     (implementationName === 'Goodreads Bookshelves');
-
-  const isGoodreadsListImportList = (implementation?.value === 'GoodreadsListImportList') ||
-    (implementationName === 'Goodreads List');
-
-  const isGoodreadsSeriesImportList = (implementation?.value === 'GoodreadsSeriesImportList') ||
-    (implementationName === 'Goodreads Series');
-
-  const isGoodreadsDualMediaImportList = isGoodreadsBookshelfImportList ||
-    isGoodreadsListImportList ||
-    isGoodreadsSeriesImportList;
-
-  const isDualMediaImportList = isHardcoverLibraryImportList || isGoodreadsDualMediaImportList;
 
   const [hardcoverIdentity, setHardcoverIdentity] = useState(null);
   const [hardcoverIdentityReload, setHardcoverIdentityReload] = useState(0);
@@ -237,26 +306,8 @@ function EditImportListModalContent(props) {
   const getField = (fieldName) => fields?.find((f) => f.name === fieldName);
 
   const getDualMediaSelectedMediaType = () => {
-    const monitorAudiobooksField = getField('monitorAudiobooks');
-    const monitorEbooksField = getField('monitorEbooks');
-
-    const hasAudiobookSettings = !!monitorAudiobooksField;
-    const hasEbookSettings = !!monitorEbooksField;
-
-    if (!hasAudiobookSettings && hasEbookSettings) {
-      return 'ebook';
-    }
-
-    if (hasAudiobookSettings && !hasEbookSettings) {
-      return 'audiobook';
-    }
-
-    if (!hasAudiobookSettings && !hasEbookSettings) {
-      return 'audiobook';
-    }
-
-    const includesAudiobooks = monitorAudiobooksField.value == null ? true : !!monitorAudiobooksField.value;
-    const includesEbooks = monitorEbooksField.value == null ? true : !!monitorEbooksField.value;
+    const includesAudiobooks = !!getField('monitorAudiobooks')?.value;
+    const includesEbooks = !!getField('monitorEbooks')?.value;
 
     if (includesAudiobooks && includesEbooks) {
       return 'both';
@@ -266,10 +317,10 @@ function EditImportListModalContent(props) {
       return 'ebook';
     }
 
-    return 'audiobook';
+    return includesAudiobooks ? 'audiobook' : '';
   };
 
-  const dualMediaSelectedMediaType = isDualMediaImportList ? getDualMediaSelectedMediaType() : 'audiobook';
+  const dualMediaSelectedMediaType = getDualMediaSelectedMediaType();
   const dualMediaAudiobookRootFolderPath = getField('audiobookRootFolderPath')?.value;
   const dualMediaEbookRootFolderPath = getField('ebookRootFolderPath')?.value;
   const dualMediaSaveNeedsAudiobooks = dualMediaSelectedMediaType === 'audiobook' || dualMediaSelectedMediaType === 'both';
@@ -282,10 +333,11 @@ function EditImportListModalContent(props) {
   const isGoodreadsValidationDisabled = isGoodreadsMissingUserId || isGoodreadsMissingBookshelves;
 
   const isSaveDisabled =
-    (isDualMediaImportList &&
+    (addMissingAuthors && !isRootFoldersPopulated) ||
+    (addMissingAuthors &&
       ((dualMediaSaveNeedsAudiobooks && !dualMediaAudiobookRootFolderPath) ||
         (dualMediaSaveNeedsEbooks && !dualMediaEbookRootFolderPath))) ||
-    isGoodreadsValidationDisabled;
+    isGoodreadsValidationDisabled || !dualMediaSelectedMediaType;
 
   const goodreadsValidationMessage = (() => {
     if (!isGoodreadsBookshelfImportList || !isGoodreadsValidationDisabled) {
@@ -306,7 +358,7 @@ function EditImportListModalContent(props) {
   })();
 
   const saveLabel = (() => {
-    if (id || !isDualMediaImportList) {
+    if (id || !dualMediaSelectedMediaType) {
       return translate('Save');
     }
 
@@ -321,44 +373,27 @@ function EditImportListModalContent(props) {
     return translate('AddListAudiobooks');
   })();
 
+  const mediaFieldNames = new Set([
+    'monitorAudiobooks',
+    'monitorEbooks',
+    'audiobookQualityProfileId',
+    'ebookQualityProfileId',
+    'audiobookMetadataProfileId',
+    'ebookMetadataProfileId',
+    'audiobookRootFolderPath',
+    'ebookRootFolderPath',
+    'audiobookTags',
+    'ebookTags'
+  ]);
+
+  const providerSpecificFields = (fields || []).filter((field) => !mediaFieldNames.has(field.name));
+
+  const onMediaTypeChange = (mediaType) => {
+    onFieldChange({ name: 'monitorAudiobooks', value: mediaType !== 'ebook' });
+    onFieldChange({ name: 'monitorEbooks', value: mediaType !== 'audiobook' });
+  };
+
   const renderDualMediaImportListFields = () => {
-    const mediaFieldNames = new Set([
-      'monitorAudiobooks',
-      'monitorEbooks',
-      'audiobookQualityProfileId',
-      'ebookQualityProfileId',
-      'audiobookMetadataProfileId',
-      'ebookMetadataProfileId',
-      'audiobookRootFolderPath',
-      'ebookRootFolderPath',
-      'audiobookTags',
-      'ebookTags'
-    ]);
-
-    const providerSpecificFields = fields.filter((f) => !mediaFieldNames.has(f.name));
-
-    const monitorAudiobooksField = getField('monitorAudiobooks');
-    const monitorEbooksField = getField('monitorEbooks');
-
-    const hasAudiobookSettings = !!monitorAudiobooksField;
-    const hasEbookSettings = !!monitorEbooksField;
-
-    const hasMediaToggle = hasAudiobookSettings && hasEbookSettings;
-    let activeMediaType = dualMediaSelectedMediaType;
-    if (!hasMediaToggle) {
-      activeMediaType = hasAudiobookSettings ? 'audiobook' : 'ebook';
-    }
-
-    const onMediaTypeChange = (mediaType) => {
-      if (monitorAudiobooksField) {
-        onFieldChange({ name: 'monitorAudiobooks', value: mediaType !== 'ebook' });
-      }
-
-      if (monitorEbooksField) {
-        onFieldChange({ name: 'monitorEbooks', value: mediaType !== 'audiobook' });
-      }
-    };
-
     const audiobookRootFolderField = getField('audiobookRootFolderPath');
     const ebookRootFolderField = getField('ebookRootFolderPath');
 
@@ -400,26 +435,28 @@ function EditImportListModalContent(props) {
     };
 
     const renderAudiobookFields = () => {
-      if (!hasAudiobookSettings) {
+      if (!addMissingAuthors) {
         return null;
       }
 
       return (
         <div className={styles.hardcoverSubsection}>
           {renderRootFolderField(audiobookRootFolderField, FolderType.Audiobook)}
+          {renderNewAuthorMonitoring('audiobook')}
           {fields.filter((f) => f.name === 'audiobookQualityProfileId' || f.name === 'audiobookMetadataProfileId' || f.name === 'audiobookTags').map(renderProviderField)}
         </div>
       );
     };
 
     const renderEbookFields = () => {
-      if (!hasEbookSettings) {
+      if (!addMissingAuthors) {
         return null;
       }
 
       return (
         <div className={styles.hardcoverSubsection}>
           {renderRootFolderField(ebookRootFolderField, FolderType.Ebook)}
+          {renderNewAuthorMonitoring('ebook')}
           {fields.filter((f) => f.name === 'ebookQualityProfileId' || f.name === 'ebookMetadataProfileId' || f.name === 'ebookTags').map(renderProviderField)}
         </div>
       );
@@ -427,21 +464,9 @@ function EditImportListModalContent(props) {
 
     return (
       <>
-        {providerSpecificFields.map(renderProviderField)}
-
-        {
-          hasMediaToggle &&
-            <MediaTypeToggle
-              className={styles.hardcoverMediaTypeToggle}
-              selectedMediaType={activeMediaType}
-              onMediaTypeChange={onMediaTypeChange}
-              includeBoth={true}
-            />
-        }
-
-        {activeMediaType === 'audiobook' ? renderAudiobookFields() : null}
-        {activeMediaType === 'ebook' ? renderEbookFields() : null}
-        {activeMediaType === 'both' ? (
+        {dualMediaSelectedMediaType === 'audiobook' ? renderAudiobookFields() : null}
+        {dualMediaSelectedMediaType === 'ebook' ? renderEbookFields() : null}
+        {dualMediaSelectedMediaType === 'both' ? (
           <>
             {renderAudiobookFields()}
             {renderEbookFields()}
@@ -493,15 +518,8 @@ function EditImportListModalContent(props) {
             </div>
           ) : null}
 
-          <div>
-            {translate('ImportListHardcoverTrackingExplainerPrefix')} <strong>{translate('Book')}</strong> {translate('ImportListHardcoverTrackingExplainerMid')} <strong>{translate('Edition')}</strong> {translate('ImportListHardcoverTrackingExplainerSuffix')}
-          </div>
-          <div>
-            {translate('ImportListHardcoverWantToReadExplainerPrefix')} <strong>{translate('ImportListHardcoverWantToReadName')}</strong>{translate('ImportListHardcoverWantToReadExplainerMid')} <strong>{translate('ImportListHardcoverOwnedName')}</strong> {translate('ImportListHardcoverWantToReadExplainerSuffix')}
-          </div>
-          <div>
-            {translate('ImportListHardcoverOwnedExplainerPrefix')} <strong>{translate('Audiobooks')}</strong> {translate('ImportListHardcoverOwnedExplainerMid')} <strong>{translate('Ebooks')}</strong>{translate('ImportListHardcoverOwnedExplainerSuffix')}
-          </div>
+          <div>{translate('ImportListHardcoverFormatsHelp')}</div>
+          <div>{translate('ImportListHardcoverNarrationHelp')}</div>
 
           {isMissingToken ? (
             <div className={styles.hardcoverConnectActions}>
@@ -570,19 +588,19 @@ function EditImportListModalContent(props) {
               }
 
               {
-                !!goodreadsValidationMessage &&
+                (!!goodreadsValidationMessage || !dualMediaSelectedMediaType) &&
                   <Alert
                     className={styles.message}
                     kind={kinds.WARNING}
                     role="alert"
                   >
-                    {goodreadsValidationMessage}
+                    {[!dualMediaSelectedMediaType && translate('AuthorDeleteSelectFormat'), goodreadsValidationMessage].filter(Boolean).join(' ')}
                   </Alert>
               }
 
               {renderHardcoverIntro()}
 
-              <FieldSet legend={translate('ImportListSettings')} >
+              <FieldSet legend={translate('ImportListSettings')}>
                 <FormGroup>
                   <FormLabel>
                     {translate('Name')}
@@ -598,179 +616,91 @@ function EditImportListModalContent(props) {
 
                 <FormGroup>
                   <FormLabel>
-                    {translate('EnableAutomaticAdd')}
+                    {translate('ImportListEnabled')}
                   </FormLabel>
 
                   <FormInputGroup
                     type={inputTypes.CHECK}
                     name="enableAutomaticAdd"
-                    helpText={translate('EnableAutomaticAddHelpText')}
+                    helpText={translate('ImportListEnabledHelp')}
                     {...enableAutomaticAdd}
                     onChange={onInputChange}
                   />
                 </FormGroup>
 
                 <FormGroup>
-                  <FormLabel>
-                    {translate('ImportListMonitoring')}
-
-                    <Popover
-                      anchor={
-                        <Icon
-                          className={styles.labelIcon}
-                          name={icons.INFO}
-                        />
-                      }
-                      title={translate('MonitoringOptions')}
-                      body={<ImportListMonitoringOptionsPopoverContent />}
-                      position={tooltipPositions.RIGHT}
-                    />
-                  </FormLabel>
-
+                  <FormLabel>{translate('SearchForNewItems')}</FormLabel>
                   <FormInputGroup
-                    type={inputTypes.SELECT}
-                    name="shouldMonitor"
-                    values={monitorOptions}
-                    {...shouldMonitor}
+                    type={inputTypes.CHECK}
+                    name="shouldSearch"
+                    {...shouldSearch}
+                    helpText={translate('ImportListSearchHelp')}
                     onChange={onInputChange}
                   />
                 </FormGroup>
+                <MediaTypeToggle
+                  className={styles.hardcoverMediaTypeToggle}
+                  selectedMediaType={dualMediaSelectedMediaType}
+                  onMediaTypeChange={onMediaTypeChange}
+                  includeBoth={true}
+                />
+                <Alert kind={kinds.INFO}>{translate('ImportListRemovalHelp')}</Alert>
+              </FieldSet>
 
+              <FieldSet legend={translate('ImportListExistingAuthorSettings')}>
                 <FormGroup>
-                  <FormLabel>
-                    {translate('ShouldMonitorExisting')}
-
-                    <Popover
-                      anchor={
-                        <Icon
-                          className={styles.labelIcon}
-                          name={icons.INFO}
-                        />
-                      }
-                      title={translate('ShouldMonitorExisting')}
-                      body={<Alert>{translate('ShouldMonitorExistingHelpText')}</Alert>}
-                      position={tooltipPositions.RIGHT}
-                    />
-                  </FormLabel>
-
+                  <FormLabel>{translate('ImportListKeepListedBooks')}</FormLabel>
                   <FormInputGroup
                     type={inputTypes.CHECK}
                     name="shouldMonitorExisting"
                     {...shouldMonitorExisting}
+                    helpText={translate(shouldMonitorExisting?.value ?
+                      keepListedBooksHelp :
+                      'ImportListKeepListedBooksOffHelp')}
                     onChange={onInputChange}
                   />
                 </FormGroup>
-
                 <FormGroup>
-                  <FormLabel>
-                    {translate('SearchForNewItems')}
-                  </FormLabel>
-
+                  <FormLabel>{translate('ImportListResumeAuthors')}</FormLabel>
                   <FormInputGroup
                     type={inputTypes.CHECK}
-                    name="shouldSearch"
-                    helpText={translate('ShouldSearchHelpText')}
-                    {...shouldSearch}
-                    onChange={onInputChange}
-                  />
-                </FormGroup>
-
-                <FormGroup>
-                  <FormLabel>
-                    {translate('MonitorNewItems')}
-                    <Popover
-                      anchor={
-                        <Icon
-                          className={styles.labelIcon}
-                          name={icons.INFO}
-                        />
-                      }
-                      title={translate('MonitorNewItems')}
-                      body={<AuthorMonitorNewItemsOptionsPopoverContent />}
-                      position={tooltipPositions.RIGHT}
-                    />
-                  </FormLabel>
-
-                  <FormInputGroup
-                    type={inputTypes.MONITOR_NEW_ITEMS_SELECT}
-                    name="monitorNewItems"
-                    {...monitorNewItems}
-                    onChange={onInputChange}
+                    name="resumePausedAuthors"
+                    value={options.resumePausedAuthors === true}
+                    helpText={options.resumePausedAuthors === true ? undefined : translate('ImportListResumeAuthorsHelp')}
+                    onChange={changeOptions}
                   />
                 </FormGroup>
               </FieldSet>
 
-              {
-                !isDualMediaImportList &&
-                  <FieldSet legend={translate('AddedAuthorSettings')} >
-                    <FormGroup>
-                      <FormLabel>
-                        {translate('RootFolder')}
-                      </FormLabel>
-
-                      <FormInputGroup
-                        type={inputTypes.ROOT_FOLDER_SELECT}
-                        name="rootFolderPath"
-                        helpText={translate('RootFolderPathHelpText')}
-                        {...rootFolderPath}
-                        includeMissingValue={true}
-                        onChange={onInputChange}
-                      />
-                    </FormGroup>
-
-                    <FormGroup>
-                      <FormLabel>
-                        {translate('QualityProfile')}
-                      </FormLabel>
-
-                      <FormInputGroup
-                        type={inputTypes.QUALITY_PROFILE_SELECT}
-                        name="qualityProfileId"
-                        helpText={translate('QualityProfileIdHelpText')}
-                        {...qualityProfileId}
-                        onChange={onInputChange}
-                      />
-                    </FormGroup>
-
-                    <FormGroup className={showMetadataProfile ? undefined : styles.hideMetadataProfile}>
-                      <FormLabel>
-                        {translate('MetadataProfile')}
-                      </FormLabel>
-
-                      <FormInputGroup
-                        type={inputTypes.METADATA_PROFILE_SELECT}
-                        name="metadataProfileId"
-                        helpText={translate('MetadataProfileIdHelpText')}
-                        {...metadataProfileId}
-                        includeNone={true}
-                        onChange={onInputChange}
-                      />
-                    </FormGroup>
-
-                    <FormGroup>
-                      <FormLabel>
-                        {translate('ChaptarrTags')}
-                      </FormLabel>
-
-                      <FormInputGroup
-                        type={inputTypes.TAG}
-                        name="tags"
-                        helpText={translate('TagsHelpText')}
-                        {...tags}
-                        onChange={onInputChange}
-                      />
-                    </FormGroup>
-                  </FieldSet>
-              }
+              <FieldSet legend={translate('ImportListNewAuthorSettings')}>
+                <FormGroup>
+                  <FormLabel>{translate('ImportListAddMissingAuthors')}</FormLabel>
+                  <FormInputGroup
+                    type={inputTypes.CHECK}
+                    name="addMissingAuthors"
+                    value={addMissingAuthors}
+                    helpText={translate('ImportListAddMissingAuthorsHelp')}
+                    onChange={changeOptions}
+                  />
+                </FormGroup>
+                {
+                  addMissingAuthors &&
+                    <Alert kind={kinds.INFO}>{translate('ImportListRootDefaultsHelp')}</Alert>
+                }
+                {addMissingAuthors && !isRootFoldersPopulated && !rootFoldersError && <LoadingIndicator />}
+                {addMissingAuthors && !isRootFoldersPopulated && rootFoldersError && (
+                  <Alert kind={kinds.DANGER}>
+                    <div>{translate('UnableToLoadRootFolders')}</div>
+                    <Button onPress={onRetryRootFolders}>{translate('Retry')}</Button>
+                  </Alert>
+                )}
+                {(isRootFoldersPopulated || !addMissingAuthors) && renderDualMediaImportListFields()}
+              </FieldSet>
 
               {
-                !!fields && !!fields.length &&
-                  <FieldSet legend={translate('ImportListSpecificSettings')} >
-                    {
-                      isDualMediaImportList ?
-                        renderDualMediaImportListFields() :
-                        fields.map(renderProviderField)
-                    }
+                !!providerSpecificFields.length &&
+                  <FieldSet legend={translate('ImportListSpecificSettings')}>
+                    {providerSpecificFields.map(renderProviderField)}
                   </FieldSet>
               }
 
@@ -826,14 +756,17 @@ function EditImportListModalContent(props) {
 EditImportListModalContent.propTypes = {
   advancedSettings: PropTypes.bool.isRequired,
   isFetching: PropTypes.bool.isRequired,
+  isRootFoldersPopulated: PropTypes.bool.isRequired,
+  rootFoldersError: PropTypes.object,
   error: PropTypes.object,
   isSaving: PropTypes.bool.isRequired,
   isTesting: PropTypes.bool.isRequired,
   saveError: PropTypes.object,
   item: PropTypes.object.isRequired,
-  showMetadataProfile: PropTypes.bool.isRequired,
+  monitoringDefaults: PropTypes.object,
   onInputChange: PropTypes.func.isRequired,
   onFieldChange: PropTypes.func.isRequired,
+  onRetryRootFolders: PropTypes.func.isRequired,
   onModalClose: PropTypes.func.isRequired,
   onSavePress: PropTypes.func.isRequired,
   onTestPress: PropTypes.func.isRequired,

@@ -48,7 +48,9 @@ function createSaveProviderHandler(section, url, options = {}, removeStale = fal
       data: JSON.stringify(saveData)
     };
 
-    const { request, abortRequest } = createAjaxRequest(ajaxOptions);
+    const customizedOptions = options.getAjaxOptions ?
+      options.getAjaxOptions({ ajaxOptions, payload, saveData, getState }) : ajaxOptions;
+    const { request, abortRequest } = createAjaxRequest(customizedOptions);
 
     abortCurrentRequests[section] = abortRequest;
 

@@ -2,6 +2,13 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Net.Http.Headers;
+using NzbDrone.Core.Lifecycle;
 using Chaptarr.Http;
 using Chaptarr.Http.REST;
 using Microsoft.AspNetCore.Mvc;
@@ -17,22 +24,22 @@ namespace Chaptarr.Api.V1.System.Backup
     [V1ApiController("system/backup")]
     public class BackupController : Controller
     {
-        // Large enough for realistic backups (DB + config), small enough to limit resource exhaustion if the endpoint is reachable.
-        private const long RestoreUploadLimitBytes = 1L * 1024 * 1024 * 1024; // 1 GiB
-
         private readonly IBackupService _backupService;
         private readonly IAppFolderInfo _appFolderInfo;
         private readonly IDiskProvider _diskProvider;
+        private readonly ILifecycleService _lifecycleService;
 
         private static readonly HashSet<string> ValidExtensions = new(StringComparer.OrdinalIgnoreCase) { ".zip" };
 
         public BackupController(IBackupService backupService,
                             IAppFolderInfo appFolderInfo,
-                            IDiskProvider diskProvider)
+                            IDiskProvider diskProvider,
+                            ILifecycleService lifecycleService)
         {
             _backupService = backupService;
             _appFolderInfo = appFolderInfo;
             _diskProvider = diskProvider;
+            _lifecycleService = lifecycleService;
         }
 
         [HttpGet]
@@ -47,10 +54,29 @@ namespace Chaptarr.Api.V1.System.Backup
                 Path = $"/backup/{b.Type.ToString().ToLower()}/{b.Name}",
                 Type = b.Type,
                 Size = b.Size,
-                Time = b.Time
+                Time = b.Time,
+                IncludedComponents = b.IncludedComponents,
+                OmittedComponents = b.OmittedComponents
             })
                 .OrderByDescending(b => b.Time)
                 .ToList();
+        }
+
+        [HttpGet("status")]
+        public BackupStatus GetStatus() => _backupService.GetStatus();
+
+        [HttpDelete("restore")]
+        public object CancelRestore()
+        {
+            _backupService.CancelRestore();
+            return new { };
+        }
+
+        [HttpDelete("restore/failed")]
+        public object DismissFailedRestores()
+        {
+            _backupService.DismissFailedRestores();
+            return new { };
         }
 
         [RestDeleteById]
@@ -88,6 +114,7 @@ namespace Chaptarr.Api.V1.System.Backup
             var path = GetBackupPath(backup);
 
             _backupService.Restore(path);
+            _lifecycleService.Restart();
 
             return new
             {
@@ -96,45 +123,122 @@ namespace Chaptarr.Api.V1.System.Backup
         }
 
         [HttpPost("restore/upload")]
-        [RequestSizeLimit(RestoreUploadLimitBytes)]
-        [RequestFormLimits(MultipartBodyLengthLimit = RestoreUploadLimitBytes)]
-        public object UploadAndRestore()
+        [RequestSizeLimit(BackupService.RestoreUploadLimitBytes)]
+        [RequestFormLimits(MultipartBodyLengthLimit = BackupService.RestoreUploadLimitBytes)]
+        [StreamBackupUpload]
+        public async Task<object> UploadAndRestore()
         {
-            var files = Request.Form.Files;
-
-            if (files.Empty())
+            const string sizeMessage = "Backup uploads are limited to 5 GB. Copy this ZIP into the manual subfolder of your configured Backups folder, keep its original filename, and restore it from the list.";
+            if (Request.ContentLength > BackupService.RestoreUploadLimitBytes)
             {
-                throw new BadRequestException("file must be provided");
+                throw new RestoreBackupFailedException(global::System.Net.HttpStatusCode.RequestEntityTooLarge, sizeMessage);
             }
 
-            var file = files.First();
-            var extension = Path.GetExtension(file.FileName);
-
-            if (!ValidExtensions.Contains(extension))
+            if (!MediaTypeHeaderValue.TryParse(Request.ContentType, out var contentType) ||
+                !contentType.MediaType.Equals("multipart/form-data", StringComparison.OrdinalIgnoreCase) ||
+                !contentType.Boundary.HasValue)
             {
-                throw new UnsupportedMediaTypeException($"Invalid extension, must be one of: {ValidExtensions.Join(", ")}");
+                throw new BadRequestException("A multipart backup file must be provided.");
             }
 
-            var path = Path.Combine(_appFolderInfo.TempFolder, $"chaptarr_backup_restore_{Guid.NewGuid():N}{extension}");
-
+            var folder = BackupService.CreateWorkingFolder(_appFolderInfo);
+            var path = Path.Combine(folder, "backup.zip");
+            var staged = false;
             try
             {
-                _diskProvider.SaveStream(file.OpenReadStream(), path);
+                var available = _diskProvider.GetAvailableSpace(folder)
+                    ?? throw new RestoreBackupFailedException(global::System.Net.HttpStatusCode.BadRequest, "Unable to determine free disk space for the backup upload.");
+                if (Request.ContentLength > available)
+                {
+                    throw new RestoreBackupFailedException(global::System.Net.HttpStatusCode.BadRequest, $"Insufficient space for backup upload: need {Request.ContentLength} bytes, have {available} bytes.");
+                }
+                var reader = new MultipartReader(HeaderUtilities.RemoveQuotes(contentType.Boundary).Value, Request.Body)
+                {
+                    BodyLengthLimit = BackupService.RestoreUploadLimitBytes
+                };
+                var uploaded = false;
+                MultipartSection section;
+                while ((section = await reader.ReadNextSectionAsync(Request.HttpContext.RequestAborted)) != null)
+                {
+                    if (!ContentDispositionHeaderValue.TryParse(section.ContentDisposition, out var disposition) ||
+                        (!disposition.FileName.HasValue && !disposition.FileNameStar.HasValue))
+                    {
+                        continue;
+                    }
+                    if (uploaded)
+                    {
+                        throw new BadRequestException("Provide one backup file.");
+                    }
+                    var fileName = HeaderUtilities.RemoveQuotes(disposition.FileNameStar.HasValue ? disposition.FileNameStar : disposition.FileName).Value;
+                    if (!ValidExtensions.Contains(Path.GetExtension(fileName)))
+                    {
+                        throw new UnsupportedMediaTypeException("Invalid extension, must be .zip");
+                    }
+                    await using (var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
+                    {
+                        var buffer = new byte[81920];
+                        long received = 0;
+                        int read;
+                        while ((read = await section.Body.ReadAsync(buffer, Request.HttpContext.RequestAborted)) > 0)
+                        {
+                            received += read;
+                            if (received > available)
+                            {
+                                throw new RestoreBackupFailedException(global::System.Net.HttpStatusCode.BadRequest, $"Insufficient space for backup upload: need at least {received} bytes, have {available} bytes.");
+                            }
+                            await output.WriteAsync(buffer.AsMemory(0, read), Request.HttpContext.RequestAborted);
+                        }
+                    }
+                    uploaded = true;
+                }
+                if (!uploaded)
+                {
+                    throw new BadRequestException("file must be provided");
+                }
+
+                // Once staged, the restore must finish independently of the requesting browser.
                 _backupService.Restore(path);
+                staged = true;
+            }
+            catch (BadHttpRequestException ex) when (ex.StatusCode == 413)
+            {
+                throw new RestoreBackupFailedException(global::System.Net.HttpStatusCode.RequestEntityTooLarge, sizeMessage);
+            }
+            catch (InvalidDataException ex)
+            {
+                throw new BadRequestException($"Invalid backup upload: {ex.Message}");
             }
             finally
             {
-                // Cleanup restored file (it may have been moved by restore)
-                if (_diskProvider.FileExists(path))
+                try
                 {
-                    _diskProvider.DeleteFile(path);
+                    _diskProvider.DeleteFolder(folder, true);
+                }
+                finally
+                {
+                    if (staged)
+                    {
+                        _lifecycleService.Restart();
+                    }
                 }
             }
 
-            return new
+            return new { RestartRequired = true };
+        }
+
+        // Avoid MVC's disk buffering: the upload belongs in this instance's private AppData directory.
+        private sealed class StreamBackupUploadAttribute : Attribute, IResourceFilter
+        {
+            public void OnResourceExecuting(ResourceExecutingContext context)
             {
-                RestartRequired = true
-            };
+                context.ValueProviderFactories.RemoveType<FormValueProviderFactory>();
+                context.ValueProviderFactories.RemoveType<FormFileValueProviderFactory>();
+                context.ValueProviderFactories.RemoveType<JQueryFormValueProviderFactory>();
+            }
+
+            public void OnResourceExecuted(ResourceExecutedContext context)
+            {
+            }
         }
 
         private string GetBackupPath(NzbDrone.Core.Backup.Backup backup)

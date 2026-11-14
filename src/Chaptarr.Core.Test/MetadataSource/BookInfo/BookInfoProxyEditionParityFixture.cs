@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Reflection;
@@ -8,6 +9,7 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.Exceptions;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
@@ -80,6 +82,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
         {
           ""id"": ""ed1"",
           ""readingFormatId"": 2,
+          ""narratorNames"": [ ""Anna Mueller"", ""Ben Reader"" ],
           ""format"": ""audiobook"",
           ""title"": ""Test Audio"",
           ""languageCode"": ""en"",
@@ -100,8 +103,12 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
   ""series"": []
 }";
 
+            var requests = 0;
             var httpClient = new StubHttpClient(req =>
-                new HttpResponse(req, new HttpHeader { ContentType = "application/json" }, payload, HttpStatusCode.OK));
+            {
+                requests++;
+                return new HttpResponse(req, new HttpHeader { ContentType = "application/json" }, payload, HttpStatusCode.OK);
+            });
             var configService = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
 
             var proxy = new BookInfoProxy(httpClient,
@@ -130,6 +137,26 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             Assert.That(edition.Chapters[1].StartOffsetMs, Is.EqualTo(1000));
             Assert.That(edition.ReviewCount, Is.EqualTo(42));
             Assert.That(edition.Ratings.Votes, Is.EqualTo(321));
+
+            var book = author.Books.First(candidate => candidate.Editions.Contains(edition));
+            edition.ManualAdd = true;
+            var target = PreferredNarratorMatcher.BuildTarget(book, edition);
+            var input = new CustomFormatInput
+            {
+                MediaType = BookMediaType.Audiobook,
+                Narrator = "Anna Mueller; Ben Reader"
+            };
+            PreferredNarratorMatcher.ApplyTarget(input, target);
+            Assert.Multiple(() =>
+            {
+                Assert.That(edition.Narrator, Is.EqualTo("Anna Mueller"));
+                Assert.That(edition.NarratorNames, Is.EqualTo(new[] { "Anna Mueller", "Ben Reader" }));
+                Assert.That(ReleaseNarratorEvidenceExtractor.TryGetCompleteCast(edition, out var cast), Is.True);
+                Assert.That(cast, Is.EqualTo(edition.NarratorNames));
+                Assert.That(target.HasUnresolvedNames, Is.False);
+                Assert.That(PreferredNarratorMatcher.Evaluate(input).Complete, Is.True);
+                Assert.That(requests, Is.EqualTo(1));
+            });
         }
 
         [Test]
@@ -332,7 +359,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
         }
 
         [Test]
-        public void work_lookup_should_reject_an_edition_without_server_identity()
+        public void work_lookup_should_reject_an_edition_without_server_identity_as_invalid_metadata()
         {
             const string payload = @"{
   ""work"": {
@@ -368,8 +395,10 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 cacheManager: new CacheManager(),
                 metadataServerHealthGate: CreateHealthGate(configService));
 
-            Assert.Throws<BookNotFoundException>(() =>
+            var error = Assert.Throws<BookInfoException>(() =>
                 proxy.GetWorkInfo("hc:383404", BookMediaType.Audiobook));
+            Assert.That(error.StatusCode, Is.EqualTo(HttpStatusCode.ServiceUnavailable));
+            Assert.That(error.Message, Does.Contain("Invalid V5 work response"));
         }
 
         [Test]

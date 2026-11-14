@@ -13,6 +13,7 @@ namespace NzbDrone.Core.Profiles.Releases
         List<ReleaseProfile> EnabledForTags(HashSet<int> tagIds, int indexerId);
         ReleaseProfile Get(int id);
         void Delete(int id);
+        void Delete(IEnumerable<int> ids);
         ReleaseProfile Add(ReleaseProfile restriction);
         ReleaseProfile Update(ReleaseProfile restriction);
     }
@@ -61,6 +62,8 @@ namespace NzbDrone.Core.Profiles.Releases
         {
             _repo.Delete(id);
         }
+
+        public void Delete(IEnumerable<int> ids) => _repo.DeleteMany(ids);
 
         public ReleaseProfile Add(ReleaseProfile restriction)
         {

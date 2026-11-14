@@ -16,6 +16,15 @@ namespace Chaptarr.Core.Test.Books
     {
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
+                System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+                => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
+
+            public void ReplaceMany(System.Collections.Generic.List<BookFile> bookFiles, System.Collections.Generic.List<BookFile> replacedFiles,
+                DeleteMediaFileReason reason, System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+                System.Action<System.Action<System.Data.IDbConnection, System.Data.IDbTransaction>> persist)
+                => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
+
             private readonly Dictionary<int, List<BookFile>> _filesByBookId = new();
 
             public void SetFilesByBook(int bookId, params BookFile[] files)
@@ -26,6 +35,8 @@ namespace Chaptarr.Core.Test.Books
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
             public void AddMany(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Update(BookFile bookFile) => throw new NotImplementedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+
             public void Update(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason) => throw new NotImplementedException();
@@ -99,13 +110,13 @@ namespace Chaptarr.Core.Test.Books
                     editionSelector: new EditionSelector(logger),
                     editionMetadataProfileFilter: new NzbDrone.Core.Books.Services.EditionMetadataProfileFilter(new TestTermMatcherService()),
                     mediaCoverService: null,
-                    logger: logger)
+                    logger: logger, mainDatabase: null)
             {
             }
 
             public Book MatchRemote(Book local, List<Book> remote)
             {
-                return GetRemoteData(local, remote, null).Entity;
+                return GetRemoteData(local, remote, null, CreateContext()).Entity;
             }
 
             public bool ShouldDeletePublic(Book local)
@@ -139,6 +150,40 @@ namespace Chaptarr.Core.Test.Books
             var match = service.MatchRemote(local, new List<Book> { remote });
 
             Assert.That(match, Is.SameAs(remote));
+        }
+
+        [TestCase(BookMediaType.Ebook, false)]
+        [TestCase(BookMediaType.Audiobook, false)]
+        [TestCase(BookMediaType.Ebook, true)]
+        [TestCase(BookMediaType.Audiobook, true)]
+        public void overlapping_pockets_should_keep_their_own_remote_editions(BookMediaType mediaType, bool editionsChanged)
+        {
+            var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+            var format = mediaType == BookMediaType.Audiobook ? 2 : 1;
+            Book Pocket(string key) => new Book
+            {
+                Title = "Dead or Alive",
+                BaseBookId = key,
+                MediaType = mediaType,
+                RemoteProviderIds = new HashSet<string> { "gr:12502746", "hc:578022" },
+                Editions = new List<Edition>
+                {
+                    new Edition { ForeignEditionId = "gr:19053463", Title = "Dead or Alive", ReadingFormatId = format }
+                }
+            };
+            var local = Pocket("gr:12502746");
+            var sibling = Pocket("hc:578022");
+            var expected = Pocket("gr:12502746");
+            local.Editions.Add(new Edition { ForeignEditionId = "fixture-extra-edition", ReadingFormatId = format });
+            expected.Editions.Add(new Edition { ForeignEditionId = "fixture-extra-edition", ReadingFormatId = format });
+            if (editionsChanged)
+            {
+                sibling.Editions.Add(new Edition { ForeignEditionId = "fixture-extra-edition", ReadingFormatId = format });
+                expected.Editions.Add(new Edition { ForeignEditionId = "fixture-new-edition", ReadingFormatId = format });
+            }
+
+            Assert.That(service.MatchRemote(local, new List<Book> { sibling, expected }), Is.SameAs(expected));
+            Assert.That(service.MatchRemote(local, new List<Book> { expected, sibling }), Is.SameAs(expected));
         }
 
         [Test]
@@ -272,6 +317,31 @@ namespace Chaptarr.Core.Test.Books
 
             Assert.That(match, Is.Null);
             Assert.That(service.ShouldDeletePublic(local), Is.True);
+        }
+
+        [Test]
+        public void metadata_pruning_preserves_files_and_user_choices_but_not_an_empty_copy_marker(
+            [Values(BookMediaType.Ebook, BookMediaType.Audiobook)] BookMediaType mediaType,
+            [Values("none", "copy", "files", "manual", "strict", "edition")] string protection)
+        {
+            var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+            var local = new Book
+            {
+                Id = 1, MediaType = mediaType, AnyEditionOk = true,
+                AddOptions = new AddBookOptions { AddType = BookAddType.Automatic },
+                BookFiles = new List<BookFile>(), Editions = new List<Edition>()
+            };
+            switch (protection)
+            {
+                case "copy": local.UnitKeyHash = "fixture-copy"; break;
+                case "files": local.BookFiles.Add(new BookFile { Id = 10 }); break;
+                case "manual": local.AddOptions.AddType = BookAddType.Manual; break;
+                case "strict": local.AnyEditionOk = false; break;
+                case "edition": local.Editions.Add(new Edition { ManualAdd = true }); break;
+            }
+
+            Assert.That(service.MatchRemote(local, new List<Book>()), Is.Null);
+            Assert.That(service.ShouldDeletePublic(local), Is.EqualTo(protection is "none" or "copy"));
         }
 
         [Test]

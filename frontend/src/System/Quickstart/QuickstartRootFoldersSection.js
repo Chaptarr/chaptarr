@@ -44,11 +44,11 @@ class QuickstartRootFoldersSection extends Component {
 
     setRootFolderValueAction({ name: 'name', value: translate('MediaLibrary') });
     setRootFolderValueAction({ name: 'audiobookMonitored', value: true });
-    setRootFolderValueAction({ name: 'audiobookMonitorExistingMode', value: 'all' });
-    setRootFolderValueAction({ name: 'audiobookMonitorNewItems', value: 'all' });
+    setRootFolderValueAction({ name: 'audiobookMonitorExistingMode', value: 'none' });
+    setRootFolderValueAction({ name: 'audiobookMonitorNewItems', value: 'none' });
     setRootFolderValueAction({ name: 'ebookMonitored', value: true });
-    setRootFolderValueAction({ name: 'ebookMonitorExistingMode', value: 'all' });
-    setRootFolderValueAction({ name: 'ebookMonitorNewItems', value: 'all' });
+    setRootFolderValueAction({ name: 'ebookMonitorExistingMode', value: 'none' });
+    setRootFolderValueAction({ name: 'ebookMonitorNewItems', value: 'none' });
     setRootFolderValueAction({ name: 'defaultTags', value: [] });
 
     this.setState({ isAddRootFolderModalOpen: true });

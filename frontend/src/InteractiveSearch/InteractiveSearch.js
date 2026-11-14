@@ -8,6 +8,7 @@ import Table from 'Components/Table/Table';
 import TableBody from 'Components/Table/TableBody';
 import { icons, kinds, sortDirections } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
+import getNoResultsMessage from './getNoResultsMessage';
 import FilterWarning from './FilterWarning';
 import InteractiveSearchMediaTypeToggle from './InteractiveSearchMediaTypeToggle';
 import InteractiveSearchRow from './InteractiveSearchRow';
@@ -66,6 +67,7 @@ const columns = [
   },
   {
     name: 'narrator',
+    className: styles.narratorColumn,
     label: 'Narrator',
     isSortable: true,
     isVisible: true
@@ -180,9 +182,10 @@ class InteractiveSearch extends Component {
     });
   };
 
-  renderTableRows(items, preferredIndex) {
+  renderTableRows(items) {
     const {
       searchPayload,
+      showNarrator,
       longDateFormat,
       timeFormat,
       onGrabPress
@@ -192,7 +195,12 @@ class InteractiveSearch extends Component {
       <InteractiveSearchRow
         key={`${item.indexerId}-${item.guid}`}
         {...item}
-        isPreferredChoice={preferredIndex !== -1 && index === preferredIndex}
+        showNarrator={showNarrator}
+        isPreferredChoice={
+          item.isPreferredChoice === true &&
+          item.downloadAllowed === true &&
+          !(Array.isArray(item.rejections) && item.rejections.length)
+        }
         searchPayload={searchPayload}
         longDateFormat={longDateFormat}
         timeFormat={timeFormat}
@@ -204,6 +212,7 @@ class InteractiveSearch extends Component {
   render() {
     const {
       searchPayload,
+      showNarrator,
       isFetching,
       isPopulated,
       error,
@@ -222,8 +231,9 @@ class InteractiveSearch extends Component {
     } = this.props;
 
     const { showHiddenResults } = this.state;
+    const visibleColumns = showNarrator ? columns : columns.filter((column) => column.name !== 'narrator');
+    const tableClassName = showNarrator ? styles.table : styles.ebookTable;
     const selectedMediaType = searchPayload?.initialMediaType === 'ebook' ? 'ebook' : 'audiobook';
-    const preferredIndex = items.findIndex((item) => item.approved && item.downloadAllowed);
     const hiddenCount = hiddenItems.length;
     const hiddenPageCount = Math.ceil(hiddenCount / hiddenResultsPageSize);
     const hiddenResultsPage = Math.min(this.state.hiddenResultsPage, Math.max(hiddenPageCount - 1, 0));
@@ -254,7 +264,7 @@ class InteractiveSearch extends Component {
 
         {!isFetching && isPopulated && !totalReleasesCount && (!filterSummary || !filterSummary.hasSoftFilters) ?
           <Alert kind={kinds.INFO}>
-            {translate('NoResultsFound')}
+            {getNoResultsMessage(this.props, 'NoResultsFound')}
           </Alert> :
           null}
 
@@ -298,21 +308,23 @@ class InteractiveSearch extends Component {
                   size="small"
                   onPress={this.onToggleHiddenResults}
                 >
-                  {showHiddenResults ? `Hide ${hiddenCount} Hidden Results` : `Show ${hiddenCount} Hidden Results`}
+                  {showHiddenResults ?
+                    translate('FilterWarningHideHiddenResults') :
+                    translate('FilterWarningShowHiddenCount', { count: hiddenCount })}
                 </Button>
               </div> :
               null}
 
             {items.length ?
               <Table
-                className={styles.table}
-                columns={columns}
+                className={tableClassName}
+                columns={visibleColumns}
                 sortKey={sortKey}
                 sortDirection={sortDirection}
                 onSortPress={onSortPress}
               >
                 <TableBody>
-                  {this.renderTableRows(items, preferredIndex)}
+                  {this.renderTableRows(items)}
                 </TableBody>
               </Table> :
               null}
@@ -348,14 +360,14 @@ class InteractiveSearch extends Component {
                 </div>
 
                 <Table
-                  className={styles.table}
-                  columns={columns}
+                  className={tableClassName}
+                  columns={visibleColumns}
                   sortKey={sortKey}
                   sortDirection={sortDirection}
                   onSortPress={onSortPress}
                 >
                   <TableBody>
-                    {this.renderTableRows(pagedHiddenItems, -1)}
+                    {this.renderTableRows(pagedHiddenItems)}
                   </TableBody>
                 </Table>
               </div> :
@@ -368,6 +380,7 @@ class InteractiveSearch extends Component {
 }
 
 InteractiveSearch.propTypes = {
+  showNarrator: PropTypes.bool,
   searchPayload: PropTypes.object.isRequired,
   isFetching: PropTypes.bool.isRequired,
   isPopulated: PropTypes.bool.isRequired,
@@ -382,6 +395,8 @@ InteractiveSearch.propTypes = {
   timeFormat: PropTypes.string.isRequired,
   bypassFilters: PropTypes.bool,
   filterSummary: PropTypes.object,
+  indexersQueried: PropTypes.number,
+  indexersFailed: PropTypes.number,
   siblingBookId: PropTypes.number,
   siblingMediaType: PropTypes.oneOf(['audiobook', 'ebook']),
   siblingToggleEnabled: PropTypes.bool,
@@ -390,6 +405,10 @@ InteractiveSearch.propTypes = {
   onGrabPress: PropTypes.func.isRequired,
   onToggleBypass: PropTypes.func,
   onMediaTypeChange: PropTypes.func
+};
+
+InteractiveSearch.defaultProps = {
+  showNarrator: true
 };
 
 export default InteractiveSearch;

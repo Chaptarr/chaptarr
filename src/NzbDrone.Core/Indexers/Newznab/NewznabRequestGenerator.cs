@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.IndexerSearch.Definitions;
@@ -9,15 +10,19 @@ namespace NzbDrone.Core.Indexers.Newznab
 {
     public class NewznabRequestGenerator : IIndexerRequestGenerator
     {
-        protected readonly INewznabCapabilitiesProvider _capabilitiesProvider;
+        private readonly INewznabCapabilitiesProvider _capabilitiesProvider;
+        private readonly Logger _logger;
+        private readonly string _indexerName;
         public int MaxPages { get; set; }
         public int PageSize { get; set; }
         public NewznabSettings Settings { get; set; }
         public int? ProxyId { get; set; }
 
-        public NewznabRequestGenerator(INewznabCapabilitiesProvider capabilitiesProvider)
+        public NewznabRequestGenerator(INewznabCapabilitiesProvider capabilitiesProvider, Logger logger, string indexerName)
         {
             _capabilitiesProvider = capabilitiesProvider;
+            _logger = logger;
+            _indexerName = indexerName;
 
             MaxPages = 30;
             PageSize = 100;
@@ -34,7 +39,7 @@ namespace NzbDrone.Core.Indexers.Newznab
             }
         }
 
-        protected virtual bool SupportsBookSearch
+        private bool SupportsBookSearch
         {
             get
             {
@@ -67,7 +72,27 @@ namespace NzbDrone.Core.Indexers.Newznab
         public virtual IndexerPageableRequestChain GetSearchRequests(BookSearchCriteria searchCriteria)
         {
             var pageableRequests = new IndexerPageableRequestChain();
-            var searchCategories = SearchMediaTypeHelper.FilterCategoriesForMediaType(Settings.Categories, SearchMediaTypeHelper.GetRequestedMediaType(searchCriteria));
+            var mediaType = SearchMediaTypeHelper.GetRequestedMediaType(searchCriteria);
+            var searchCategories = SearchMediaTypeHelper.FilterCategoriesForMediaType(Settings.Categories, mediaType);
+
+            // Single-format indexers are valid; distinguish a skipped search from an empty response.
+            if (mediaType.HasValue && searchCategories.Count == 0)
+            {
+                _logger.Log(searchCriteria.InteractiveSearch ? LogLevel.Warn : LogLevel.Debug,
+                    "Skipping {0} search on indexer '{1}': configured categories [{2}] contain no categories for this format. No request was sent.",
+                    mediaType.Value.ToString().ToLowerInvariant(), _indexerName, string.Join(", ", Settings.Categories ?? Enumerable.Empty<int>()));
+                return pageableRequests;
+            }
+
+            var supportsSearch = SupportsSearch;
+            var narratorQuery = supportsSearch ? searchCriteria.NarratorQuery : string.Empty;
+            if (!string.IsNullOrWhiteSpace(narratorQuery))
+            {
+                pageableRequests.Add(GetPagedRequests(MaxPages,
+                    searchCategories,
+                    "search",
+                    $"&q={NewsnabifyTitle(searchCriteria.BookQuery)}+{NewsnabifyTitle(searchCriteria.AuthorQuery)}+{NewsnabifyTitle(narratorQuery)}"));
+            }
 
             if (SupportsBookSearch)
             {
@@ -80,7 +105,7 @@ namespace NzbDrone.Core.Indexers.Newznab
                     $"&title={NewsnabifyTitle(searchCriteria.BookQuery)}");
             }
 
-            if (SupportsSearch)
+            if (supportsSearch)
             {
                 pageableRequests.AddTier();
 
@@ -100,30 +125,6 @@ namespace NzbDrone.Core.Indexers.Newznab
                     searchCategories,
                     "search",
                     $"&q={NewsnabifyTitle(searchCriteria.BookQuery)}"));
-            }
-
-            return pageableRequests;
-        }
-
-        public virtual IndexerPageableRequestChain GetSearchRequests(AuthorSearchCriteria searchCriteria)
-        {
-            var pageableRequests = new IndexerPageableRequestChain();
-
-            if (SupportsBookSearch)
-            {
-                AddBookPageableRequests(pageableRequests,
-                    Settings.Categories,
-                    $"&author={NewsnabifyTitle(searchCriteria.AuthorQuery)}");
-            }
-
-            if (SupportsSearch)
-            {
-                pageableRequests.AddTier();
-
-                pageableRequests.Add(GetPagedRequests(MaxPages,
-                    Settings.Categories,
-                    "search",
-                    $"&q={NewsnabifyTitle(searchCriteria.AuthorQuery)}"));
             }
 
             return pageableRequests;
@@ -155,16 +156,23 @@ namespace NzbDrone.Core.Indexers.Newznab
 
             if (PageSize == 0)
             {
-                yield return new IndexerRequest($"{baseUrl}{parameters}", HttpAccept.Rss);
+                yield return LogResponses(new IndexerRequest($"{baseUrl}{parameters}", HttpAccept.Rss));
             }
             else
             {
                 for (var page = 0; page < maxPages; page++)
                 {
-                    yield return new IndexerRequest($"{baseUrl}&offset={page * PageSize}&limit={PageSize}{parameters}",
-                        HttpAccept.Rss);
+                    yield return LogResponses(new IndexerRequest($"{baseUrl}&offset={page * PageSize}&limit={PageSize}{parameters}",
+                        HttpAccept.Rss));
                 }
             }
+        }
+
+        // HttpClient only emits the body when this flag is set, and only at Trace.
+        private static IndexerRequest LogResponses(IndexerRequest request)
+        {
+            request.HttpRequest.LogResponseContent = true;
+            return request;
         }
 
         private static string NewsnabifyTitle(string title)

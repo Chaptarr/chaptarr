@@ -2,8 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Indexers;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Parser.Model;
 
@@ -11,12 +11,6 @@ namespace NzbDrone.Core.Qualities
 {
     public static class QualityMediaTypeHelper
     {
-        private static readonly Regex AudiobookTitleHintRegex = new(@"(?:^|[\s\[\]()_.-])(audiobook|audio\s*book|audible|graphic\s*audio|full\s*cast|mp3|m4b|m4a|mka|flac)(?:$|[\s\[\]()_.-])",
-                                                                    RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-        private static readonly Regex EbookTitleHintRegex = new(@"(?:^|[\s\[\]()_.-])(ebook|e-book|epub|kepub|mobi|azw3?|pdf)(?:$|[\s\[\]()_.-])",
-                                                                RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
         private static readonly HashSet<string> AudioExtensions = new(
             MediaFileExtensions.AudioExtensions.Select(extension => extension.TrimStart('.')),
             StringComparer.OrdinalIgnoreCase);
@@ -48,48 +42,26 @@ namespace NzbDrone.Core.Qualities
                 return knownMediaType;
             }
 
-            if (quality != Quality.Unknown && quality != Quality.UnknownAudio)
+            var fileTypes = (release as TorrentInfo)?.FileType?.Split(new[] { ' ', ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
+            var hasAudio = fileTypes?.Any(AudioExtensions.Contains) == true;
+            var hasEbooks = fileTypes?.Any(EbookExtensions.Contains) == true;
+            if (hasAudio || hasEbooks)
             {
-                return null;
+                return hasAudio == hasEbooks ? null : hasAudio ? BookMediaType.Audiobook : BookMediaType.Ebook;
             }
 
-            if (LooksLikeAudiobook(release))
-            {
-                return BookMediaType.Audiobook;
-            }
-
-            if (LooksLikeEbook(release))
-            {
-                return BookMediaType.Ebook;
-            }
-
-            return null;
+            return GetCategoryMediaType(release);
         }
 
-        public static BookMediaType? DetectMediaType(Quality quality, string title)
+        public static BookMediaType? GetCategoryMediaType(ReleaseInfo release)
         {
-            var knownMediaType = GetKnownMediaType(quality);
-            if (knownMediaType.HasValue)
+            // Native MAM parent categories are separate from its genre IDs and Newznab categories.
+            return (release as TorrentInfo)?.MainCategory switch
             {
-                return knownMediaType;
-            }
-
-            if (quality != Quality.Unknown && quality != Quality.UnknownAudio)
-            {
-                return null;
-            }
-
-            if (AudiobookTitleHintRegex.IsMatch(title ?? string.Empty))
-            {
-                return BookMediaType.Audiobook;
-            }
-
-            if (EbookTitleHintRegex.IsMatch(title ?? string.Empty))
-            {
-                return BookMediaType.Ebook;
-            }
-
-            return null;
+                13 => BookMediaType.Audiobook,
+                14 => BookMediaType.Ebook,
+                _ => SearchMediaTypeHelper.GetMediaTypeFromCategories(release?.Categories)
+            };
         }
 
         public static BookMediaType? GetMediaTypeFromPath(string path)
@@ -144,46 +116,5 @@ namespace NzbDrone.Core.Qualities
             return quality == Quality.Unknown || IsEbookQuality(quality);
         }
 
-        private static bool LooksLikeAudiobook(ReleaseInfo release)
-        {
-            var torrent = release as TorrentInfo;
-            var fileType = torrent?.FileType;
-            if (!string.IsNullOrWhiteSpace(fileType))
-            {
-                var parts = fileType.Split(new[] { ' ', ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Any(part => AudioExtensions.Contains(part)))
-                {
-                    return true;
-                }
-
-                if (parts.Any(part => EbookExtensions.Contains(part)))
-                {
-                    return false;
-                }
-            }
-
-            return AudiobookTitleHintRegex.IsMatch(release?.Title ?? string.Empty);
-        }
-
-        private static bool LooksLikeEbook(ReleaseInfo release)
-        {
-            var torrent = release as TorrentInfo;
-            var fileType = torrent?.FileType;
-            if (!string.IsNullOrWhiteSpace(fileType))
-            {
-                var parts = fileType.Split(new[] { ' ', ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Any(part => EbookExtensions.Contains(part)))
-                {
-                    return true;
-                }
-
-                if (parts.Any(part => AudioExtensions.Contains(part)))
-                {
-                    return false;
-                }
-            }
-
-            return EbookTitleHintRegex.IsMatch(release?.Title ?? string.Empty);
-        }
     }
 }

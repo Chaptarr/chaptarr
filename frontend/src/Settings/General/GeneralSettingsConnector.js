@@ -6,11 +6,11 @@ import * as commandNames from 'Commands/commandNames';
 import { clearPendingChanges } from 'Store/Actions/baseActions';
 import { executeCommand } from 'Store/Actions/commandActions';
 import { fetchGeneralSettings, saveGeneralSettings, setGeneralSettingsValue } from 'Store/Actions/settingsActions';
-import { restart } from 'Store/Actions/systemActions';
-import { testProxySettings } from 'Store/Actions/systemActions';
-import createCommandExecutingSelector from 'Store/Selectors/createCommandExecutingSelector';
+import { restart, testProxySettings } from 'Store/Actions/systemActions';
+import createCommandSelector from 'Store/Selectors/createCommandSelector';
 import createSettingsSectionSelector from 'Store/Selectors/createSettingsSectionSelector';
 import createSystemStatusSelector from 'Store/Selectors/createSystemStatusSelector';
+import { isCommandComplete, isCommandExecuting } from 'Utilities/Command';
 import GeneralSettings from './GeneralSettings';
 
 const SECTION = 'general';
@@ -19,12 +19,15 @@ function createMapStateToProps() {
   return createSelector(
     (state) => state.settings.advancedSettings,
     createSettingsSectionSelector(SECTION),
-    createCommandExecutingSelector(commandNames.RESET_API_KEY),
+    (state) => state.settings.general.item,
+    createCommandSelector(commandNames.RESET_API_KEY),
     createSystemStatusSelector(),
-    (advancedSettings, sectionSettings, isResettingApiKey, systemStatus) => {
+    (advancedSettings, sectionSettings, savedSettings, resetApiKeyCommand, systemStatus) => {
       return {
         advancedSettings,
-        isResettingApiKey,
+        isResettingApiKey: isCommandExecuting(resetApiKeyCommand),
+        resetApiKeyCommand,
+        savedSettings,
         isWindows: systemStatus.isWindows,
         isWindowsService: systemStatus.isWindows && systemStatus.mode === 'service',
         mode: systemStatus.mode,
@@ -60,16 +63,12 @@ class GeneralSettingsConnector extends Component {
   }
 
   componentDidMount() {
+    this.isPageMounted = true;
     this.props.fetchGeneralSettings();
   }
 
-  componentDidUpdate(prevProps) {
-    if (!this.props.isResettingApiKey && prevProps.isResettingApiKey) {
-      this.props.fetchGeneralSettings();
-    }
-  }
-
   componentWillUnmount() {
+    this.isPageMounted = false;
     this.props.clearPendingChanges({ section: `settings.${SECTION}` });
   }
 
@@ -85,7 +84,14 @@ class GeneralSettingsConnector extends Component {
   };
 
   onConfirmResetApiKey = () => {
-    this.props.executeCommand({ name: commandNames.RESET_API_KEY });
+    this.props.executeCommand({
+      name: commandNames.RESET_API_KEY,
+      commandFinished: (command) => {
+        if (this.isPageMounted && isCommandComplete(command)) {
+          window.location.reload();
+        }
+      }
+    });
   };
 
   onConfirmRestart = () => {
@@ -108,13 +114,13 @@ class GeneralSettingsConnector extends Component {
       proxyUsername: settings.proxyUsername?.value || '',
       proxyPassword: settings.proxyPassword?.value || ''
     }).then(() => {
-      this.setState({ 
+      this.setState({
         isTestingProxy: false,
-        proxyTestError: null 
+        proxyTestError: null
       });
     }).catch((error) => {
       const errorMessage = error.message || 'Proxy test failed';
-      this.setState({ 
+      this.setState({
         isTestingProxy: false,
         proxyTestError: {
           status: 400,
@@ -145,6 +151,7 @@ class GeneralSettingsConnector extends Component {
 
 GeneralSettingsConnector.propTypes = {
   isResettingApiKey: PropTypes.bool.isRequired,
+  resetApiKeyCommand: PropTypes.object,
   settings: PropTypes.object.isRequired,
   setGeneralSettingsValue: PropTypes.func.isRequired,
   saveGeneralSettings: PropTypes.func.isRequired,

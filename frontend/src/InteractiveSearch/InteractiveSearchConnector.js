@@ -98,13 +98,12 @@ class InteractiveSearchConnector extends Component {
   }
 
   getCacheKey(props) {
-    const { searchPayload, bypassFilters } = props;
+    const { searchPayload } = props;
 
     return [
       `book:${searchPayload.bookId ?? ''}`,
       `author:${searchPayload.authorId ?? ''}`,
-      `mediaType:${searchPayload.initialMediaType ?? ''}`,
-      `bypass:${bypassFilters ? 1 : 0}`
+      `mediaType:${searchPayload.mediaType ?? searchPayload.initialMediaType ?? ''}`
     ].join('|');
   }
 
@@ -113,6 +112,8 @@ class InteractiveSearchConnector extends Component {
       items: props.items,
       hiddenItems: props.hiddenItems,
       filterSummary: props.filterSummary,
+      indexersQueried: props.indexersQueried,
+      indexersFailed: props.indexersFailed,
       siblingBookId: props.siblingBookId,
       siblingMediaType: props.siblingMediaType,
       siblingToggleEnabled: props.siblingToggleEnabled,
@@ -129,6 +130,8 @@ class InteractiveSearchConnector extends Component {
       prevProps.items !== nextProps.items ||
       prevProps.hiddenItems !== nextProps.hiddenItems ||
       prevProps.filterSummary !== nextProps.filterSummary ||
+      prevProps.indexersQueried !== nextProps.indexersQueried ||
+      prevProps.indexersFailed !== nextProps.indexersFailed ||
       prevProps.siblingBookId !== nextProps.siblingBookId ||
       prevProps.siblingMediaType !== nextProps.siblingMediaType ||
       prevProps.siblingToggleEnabled !== nextProps.siblingToggleEnabled ||

@@ -2,8 +2,6 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <IsPackable>false</IsPackable>
-    <!-- Disable Chaptarr's implicit test-package group (it currently pulls a coverlet preview chain that fails restore). -->
-    <TestProject>false</TestProject>
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
 
@@ -16,6 +14,17 @@
   <ItemGroup>
     <ProjectReference Include="..\NzbDrone.Core\Chaptarr.Core.csproj" />
     <ProjectReference Include="..\Chaptarr.Api.V1\Chaptarr.Api.V1.csproj" />
+    <ProjectReference Include="..\NzbDrone.MatchBench\Chaptarr.MatchBench.csproj" />
+    <ProjectReference Include="..\NzbDrone.Mono\Chaptarr.Mono.csproj" />
     <ProjectReference Include="..\NzbDrone.Windows\Chaptarr.Windows.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="..\Chaptarr.Api.V1\openapi.json" Link="Fixtures\openapi.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures\ProviderSearch\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures\Matching\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\NzbDrone.Core\Localization\Core\en.json" Link="Localization\Core\en.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\frontend\src\Utilities\String\unicodeComparisonFoldData.js" Link="Fixtures\unicodeComparisonFoldData.js" CopyToOutputDirectory="PreserveNewest" />
+    <EmbeddedResource Include="..\NzbDrone.Core\Datastore\Migration\*.cs" LogicalName="Migrations.Source.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Fixtures\Migrations\ReleasedMigrations.sha256" LogicalName="Migrations.Released.sha256" />
   </ItemGroup>
 </Project>

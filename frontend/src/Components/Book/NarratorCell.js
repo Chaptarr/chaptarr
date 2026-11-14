@@ -1,10 +1,11 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import NarratorSearchModal from 'Book/Narrator/NarratorSearchModal';
-import MetadataSearchIcon from 'Components/Icon/Icons/MetadataSearchIcon';
+import Icon from 'Components/Icon';
 import SpinnerButton from 'Components/Link/SpinnerButton';
 import Tooltip from 'Components/Tooltip/Tooltip';
-import { tooltipPositions } from 'Helpers/Props';
+import { icons, tooltipPositions } from 'Helpers/Props';
+import getNarratorNamesForDisplay from 'Utilities/Book/getNarratorNamesForDisplay';
 import translate from 'Utilities/String/translate';
 import styles from './NarratorCell.css';
 
@@ -40,6 +41,8 @@ class NarratorCell extends Component {
       bookId,
       narrator,
       narratorNames,
+      narrators,
+      availableNarratorCredits,
       availableNarrators,
       authorName,
       bookTitle,
@@ -62,83 +65,19 @@ class NarratorCell extends Component {
       <div className={className}>
         <div className={styles.narratorDisplay}>
           {(() => {
-            const narratorNameCandidates = (() => {
-              if (suppressNarratorText) {
-                return [];
-              }
+            const selectedNames = getNarratorNamesForDisplay(narrators, narratorNames);
+            const availableNames = getNarratorNamesForDisplay(availableNarratorCredits, availableNarrators);
+            const candidates = selectedNames.length ? selectedNames : availableNames;
+            const names = suppressNarratorText ? [] : candidates;
+            const narratorName = names[0] || (!suppressNarratorText &&
+              (typeof narrator === 'object' ? narrator?.name || narrator?.narratorName : narrator));
 
-              if (Array.isArray(narratorNames) && narratorNames.length > 0) {
-                return narratorNames;
-              }
-
-              if (Array.isArray(availableNarrators) && availableNarrators.length > 0) {
-                return availableNarrators;
-              }
-
-              return [];
-            })();
-
-            const cleanNarratorNames = narratorNameCandidates
-              .map((name) => (typeof name === 'string' ? name.trim() : ''))
-              .filter((name) => name)
-              // Treat "Full Cast" as a display label, not a real narrator name in the list.
-              .filter((name) => name.toLowerCase() !== 'full cast');
-
-            const tooltipNames = (() => {
-              if (cleanNarratorNames.length > 0) {
-                return cleanNarratorNames;
-              }
-
-              if (!Array.isArray(availableNarrators)) {
-                return [];
-              }
-
-              return availableNarrators
-                .map((name) => (typeof name === 'string' ? name.trim() : ''))
-                .filter((name) => name)
-                .filter((name) => name.toLowerCase() !== 'full cast');
-            })();
-
-            const isMultiNarratorFromList = cleanNarratorNames.length > 1;
-            const isSingleNarratorFromList = cleanNarratorNames.length === 1;
-            const narratorIsObject = narrator && typeof narrator === 'object';
-
-            const narratorOverride = (() => {
-              if (isMultiNarratorFromList) {
-                return cleanNarratorNames[0];
-              }
-
-              if (isSingleNarratorFromList) {
-                if (narratorIsObject) {
-                  return null;
-                }
-
-                return cleanNarratorNames[0];
-              }
-
-              return null;
-            })();
-
-            const effectiveNarrator = suppressNarratorText ? null : (narratorOverride ?? narrator);
-            const showMoreIndicator = isMultiNarratorFromList;
-
-            if (!effectiveNarrator) {
-              return (
-                <span className={styles.narratorTextPlain}>
-                  {/* No narrator */}
-                </span>
-              );
+            if (!narratorName) {
+              return <span className={styles.narratorTextPlain} />;
             }
 
-            const isObject = typeof effectiveNarrator === 'object';
-            const narratorName = isObject ? (effectiveNarrator.name || effectiveNarrator.narratorName) : effectiveNarrator;
-            const normalized = typeof narratorName === 'string' ? narratorName.trim().toLowerCase() : '';
-
-            const isFullCast = normalized === 'full cast';
-
-            const title = (showMoreIndicator && tooltipNames.length > 1) ?
-              tooltipNames.join(', ') :
-              narratorName;
+            const showMoreIndicator = names.length > 1;
+            const title = showMoreIndicator ? names.join(', ') : narratorName;
 
             const nameElement = (
               <span
@@ -162,10 +101,10 @@ class NarratorCell extends Component {
               </span>
             );
 
-            if ((isFullCast || showMoreIndicator) && tooltipNames.length > 1) {
+            if (showMoreIndicator) {
               const tooltip = (
                 <div>
-                  {tooltipNames.map((name) => (
+                  {names.map((name) => (
                     <div key={name}>
                       {name}
                     </div>
@@ -191,7 +130,7 @@ class NarratorCell extends Component {
             isSpinning={false}
             onPress={this.onNarratorSearchPress}
           >
-            <MetadataSearchIcon size={12} />
+            <Icon name={icons.NARRATOR_SEARCH} size={12} />
           </SpinnerButton>
         </div>
 
@@ -220,6 +159,8 @@ NarratorCell.propTypes = {
     })
   ]),
   narratorNames: PropTypes.arrayOf(PropTypes.string),
+  narrators: PropTypes.arrayOf(PropTypes.object),
+  availableNarratorCredits: PropTypes.arrayOf(PropTypes.object),
   availableNarrators: PropTypes.arrayOf(PropTypes.string),
   authorName: PropTypes.string.isRequired,
   bookTitle: PropTypes.string.isRequired,

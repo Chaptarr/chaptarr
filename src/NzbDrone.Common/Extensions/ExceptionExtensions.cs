@@ -28,15 +28,13 @@ namespace NzbDrone.Common.Extensions
             return ex;
         }
 
-        public static T WithData<T>(this T ex, Http.HttpResponse response, int maxSampleLength = 512)
+        public static T WithData<T>(this T ex, Http.HttpResponse response)
             where T : Exception
         {
             if (response == null || response.Content == null)
             {
                 return ex;
             }
-
-            var contentSample = response.Content.Substring(0, Math.Min(response.Content.Length, maxSampleLength));
 
             if (response.Request != null)
             {
@@ -56,7 +54,6 @@ namespace NzbDrone.Common.Extensions
             }
 
             ex.AddData("ContentLength", response.Content.Length.ToString());
-            ex.AddData("ContentSample", contentSample);
 
             return ex;
         }

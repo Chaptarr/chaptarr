@@ -19,11 +19,6 @@ namespace NzbDrone.Core.ImportLists.Goodreads
     public class GoodreadsSeriesImportList : ImportListBase<GoodreadsSeriesImportListSettings>
     {
         private readonly IProvideSeriesInfo _seriesInfo;
-        private readonly Lazy<IQualityProfileService> _qualityProfileService;
-        private readonly Lazy<IMetadataProfileService> _metadataProfileService;
-        private readonly Lazy<ITagService> _tagService;
-        private readonly IRootFolderService _rootFolderService;
-        private readonly IRootFolderSettingsResolver _rootFolderSettingsResolver;
 
         public override string Name => "Goodreads Series";
         public override ImportListType ListType => ImportListType.Goodreads;
@@ -39,14 +34,9 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             IRootFolderService rootFolderService,
             IRootFolderSettingsResolver rootFolderSettingsResolver,
             Logger logger)
-            : base(importListStatusService, configService, parsingService, logger)
+            : base(importListStatusService, configService, parsingService, qualityProfileService, metadataProfileService, tagService, rootFolderService, rootFolderSettingsResolver, logger)
         {
             _seriesInfo = seriesInfo;
-            _qualityProfileService = qualityProfileService;
-            _metadataProfileService = metadataProfileService;
-            _tagService = tagService;
-            _rootFolderService = rootFolderService;
-            _rootFolderSettingsResolver = rootFolderSettingsResolver;
         }
 
         public override IList<ImportListItemInfo> Fetch()
@@ -64,14 +54,13 @@ namespace NzbDrone.Core.ImportLists.Goodreads
                     {
                         BookGoodreadsId = $"gr:{work.Id}",
                         Book = work.OriginalTitle,
-                        EditionGoodreadsId = $"gr:{work.BestBook.Id}",
                         Author = work.BestBook.AuthorName,
                         AuthorGoodreadsId = $"gr:{work.BestBook.AuthorId}"
                     };
 
                     GoodreadsImportListLimit.TryAdd(result, item, seenSourceBooks, Settings.ImportLimit);
 
-                    if (GoodreadsImportListLimit.HasReached(result.Count, Settings.ImportLimit))
+                    if (GoodreadsImportListLimit.HasReached(seenSourceBooks.Count, Settings.ImportLimit))
                     {
                         _logger.Info("Goodreads Series import list '{0}' reached import limit of {1}; remaining Goodreads items will be skipped.",
                             Definition?.Name ?? Name, Settings.ImportLimit);
@@ -81,8 +70,10 @@ namespace NzbDrone.Core.ImportLists.Goodreads
 
                 _importListStatusService.RecordSuccess(Definition.Id);
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.Warn(ex, "Error fetching Goodreads Series import list '{0}' (SeriesId={1})",
+                    Definition?.Name ?? Name, Settings.SeriesId);
                 _importListStatusService.RecordFailure(Definition.Id);
             }
 
@@ -92,13 +83,6 @@ namespace NzbDrone.Core.ImportLists.Goodreads
         protected override void Test(List<ValidationFailure> failures)
         {
             failures.AddIfNotNull(TestConnection());
-            failures.AddRange(GoodreadsDualMediaImportListActions.TestRootFolderConfig(Settings, _rootFolderService, _rootFolderSettingsResolver));
-        }
-
-        public override object RequestAction(string action, IDictionary<string, string> query)
-        {
-            return GoodreadsDualMediaImportListActions.HandleRequestAction(action, _qualityProfileService, _metadataProfileService, _tagService)
-                ?? base.RequestAction(action, query);
         }
 
         private ValidationFailure TestConnection()

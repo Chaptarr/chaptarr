@@ -4,11 +4,12 @@ import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import Alert from 'Components/Alert';
 import Form from 'Components/Form/Form';
+import FormInputButton from 'Components/Form/FormInputButton';
 import FormInputGroup from 'Components/Form/FormInputGroup';
-import SpinnerButton from 'Components/Link/SpinnerButton';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import { inputTypes, kinds } from 'Helpers/Props';
-import { fetchMediaManagementSettings, saveMediaManagementSettings, setMediaManagementSettingsValue } from 'Store/Actions/settingsActions';
+import { clearPendingChanges } from 'Store/Actions/baseActions';
+import { fetchMediaManagementSettings, saveMediaManagementSettingsFields, setMediaManagementSettingsValue } from 'Store/Actions/settingsActions';
 import createSettingsSectionSelector from 'Store/Selectors/createSettingsSectionSelector';
 import translate from 'Utilities/String/translate';
 import QuickstartSection from './QuickstartSection';
@@ -122,7 +123,8 @@ class QuickstartMatchingSection extends Component {
     super(props, context);
 
     this.state = {
-      didRequestSave: false
+      didRequestSave: false,
+      saveError: null
     };
   }
 
@@ -130,43 +132,37 @@ class QuickstartMatchingSection extends Component {
     this.props.fetchMediaManagementSettings();
   }
 
-  componentDidUpdate(prevProps) {
-    if (this.state.didRequestSave && prevProps.isSaving && !this.props.isSaving) {
-      const { markSectionInteracted, saveError } = this.props;
-
-      this.setState({ didRequestSave: false });
-
-      if (!saveError && markSectionInteracted) {
-        markSectionInteracted({ section: 'matching' });
-      }
-    }
+  componentWillUnmount() {
+    this.saveRequest = null;
+    this.props.clearPendingChanges({
+      section: 'settings.mediaManagement',
+      names: ['bookMatchingStrictness', 'usePathAsTagsFallback']
+    });
   }
 
   onInputChange = ({ name, value }) => {
-    const { setMediaManagementSettingsValue: setMediaManagementSettingsValueAction, settings } = this.props;
-
-    if (name === 'bookMatchingStrictness') {
-      setMediaManagementSettingsValueAction({ name, value });
-
-      if (value === 'strict') {
-        setMediaManagementSettingsValueAction({ name: 'usePathAsTagsFallback', value: false });
-      }
-
-      return;
-    }
-
-    if (name === 'usePathAsTagsFallback' &&
-        settings.bookMatchingStrictness?.value === 'strict' &&
-        value) {
-      return;
-    }
-
-    setMediaManagementSettingsValueAction({ name, value });
+    this.props.setMediaManagementSettingsValue({ name, value });
   };
 
   onSavePress = () => {
-    this.setState({ didRequestSave: true });
-    this.props.saveMediaManagementSettings();
+    this.setState({ didRequestSave: true, saveError: null });
+    const { settings } = this.props;
+    const request = this.props.saveMediaManagementSettings({
+      bookMatchingStrictness: settings.bookMatchingStrictness.value,
+      usePathAsTagsFallback: settings.usePathAsTagsFallback.value
+    });
+    this.saveRequest = request;
+    request.done(() => {
+      if (this.saveRequest === request) {
+        this.setState({ didRequestSave: false });
+        this.props.markSectionInteracted?.({ section: 'matching' });
+      }
+    });
+    request.fail((saveError) => {
+      if (this.saveRequest === request) {
+        this.setState({ didRequestSave: false, saveError });
+      }
+    });
   };
 
   render() {
@@ -174,17 +170,17 @@ class QuickstartMatchingSection extends Component {
       isFetching,
       error,
       hasSettings,
-      hasPendingChanges,
-      isSaving,
-      saveError,
       settings,
       quickstartState
     } = this.props;
+    const { didRequestSave: isSaving, saveError } = this.state;
 
     const interactions = quickstartState?.interactions || {};
     const bookMatchingStrictness = settings.bookMatchingStrictness || { value: 'balanced' };
     const usePathAsTagsFallback = settings.usePathAsTagsFallback || { value: true };
     const isStrictMatching = bookMatchingStrictness.value === 'strict';
+    const hasPendingChanges = [bookMatchingStrictness, usePathAsTagsFallback]
+      .some((setting) => setting.pending && setting.value !== setting.previousValue);
 
     if (isFetching && !hasSettings) {
       return (
@@ -232,6 +228,16 @@ class QuickstartMatchingSection extends Component {
                       { key: 'balanced', value: translate('BookMatchingStrictnessBalanced') },
                       { key: 'aggressive', value: translate('BookMatchingStrictnessAggressive') }
                     ]}
+                    buttons={(hasPendingChanges || isSaving) && (
+                      <FormInputButton
+                        canSpin={true}
+                        isSpinning={isSaving}
+                        isDisabled={!!error || !hasPendingChanges}
+                        onPress={this.onSavePress}
+                      >
+                        {translate('Save')}
+                      </FormInputButton>
+                    )}
                     onChange={this.onInputChange}
                     {...bookMatchingStrictness}
                   />
@@ -266,18 +272,6 @@ class QuickstartMatchingSection extends Component {
           </Form>
         )}
 
-        {hasSettings && (hasPendingChanges || isSaving) && (
-          <div className={`${styles.quickstartCardActions} ${styles.quickstartMatchingActions}`}>
-            <SpinnerButton
-              className={styles.quickstartCardButton}
-              isSpinning={isSaving}
-              isDisabled={!!error || !hasPendingChanges}
-              onPress={this.onSavePress}
-            >
-              {translate('Save')}
-            </SpinnerButton>
-          </div>
-        )}
       </QuickstartSection>
     );
   }
@@ -288,11 +282,9 @@ QuickstartMatchingSection.propTypes = {
   isPopulated: PropTypes.bool.isRequired,
   error: PropTypes.object,
   hasSettings: PropTypes.bool.isRequired,
-  hasPendingChanges: PropTypes.bool.isRequired,
-  isSaving: PropTypes.bool.isRequired,
-  saveError: PropTypes.object,
   settings: PropTypes.object.isRequired,
   quickstartState: PropTypes.object,
+  clearPendingChanges: PropTypes.func.isRequired,
   fetchMediaManagementSettings: PropTypes.func.isRequired,
   saveMediaManagementSettings: PropTypes.func.isRequired,
   setMediaManagementSettingsValue: PropTypes.func.isRequired,
@@ -311,8 +303,9 @@ function createMapStateToProps() {
 }
 
 const mapDispatchToProps = {
+  clearPendingChanges,
   fetchMediaManagementSettings,
-  saveMediaManagementSettings,
+  saveMediaManagementSettings: saveMediaManagementSettingsFields,
   setMediaManagementSettingsValue
 };
 

@@ -19,6 +19,8 @@ namespace Chaptarr.Core.Test.Books
     {
         private sealed class StubBookRepository : IBookRepository
         {
+            public List<Book> GetImportListBookIdentities() => All().ToList();
+
             private readonly Dictionary<int, Book> _booksById;
 
             public StubBookRepository(IEnumerable<Book> books)
@@ -64,16 +66,18 @@ namespace Chaptarr.Core.Test.Books
             public void Delete(int id) => throw new NotImplementedException();
             public void InsertMany(IList<Book> model) => throw new NotImplementedException();
             public void InsertMany(IList<Book> model, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
+            public void UpdateManyAtomic(IList<Book> books, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated) => throw new System.NotSupportedException();
             public void UpdateMany(IList<Book> model) => throw new NotImplementedException();
             public void SetFields(IList<Book> models, params System.Linq.Expressions.Expression<Func<Book, object>>[] properties) => throw new NotImplementedException();
             public void DeleteMany(List<Book> model) => throw new NotImplementedException();
+            public void DeleteManyAtomic(IEnumerable<int> ids, IEnumerable<int> deletedFileIds = null) => throw new NotImplementedException();
             public void DeleteMany(IEnumerable<int> ids) => throw new NotImplementedException();
             public void Purge(bool vacuum = false) => throw new NotImplementedException();
             public bool HasItems() => throw new NotImplementedException();
             public Book Single() => throw new NotImplementedException();
             public Book SingleOrDefault() => throw new NotImplementedException();
             public PagingSpec<Book> GetPaged(PagingSpec<Book> pagingSpec) => throw new NotImplementedException();
-            public List<Book> GetBooks(int authorId) => throw new NotImplementedException();
+            public List<Book> GetBooks(int authorId) => _booksById.Values.Where(book => book.AuthorId == authorId).ToList();
             public List<Book> GetLastBooks(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetNextBooks(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Book> GetBooksByAuthorId(int authorId) => throw new NotImplementedException();
@@ -85,14 +89,13 @@ namespace Chaptarr.Core.Test.Books
             public Book FindByProviderIds(string hardcoverBookId = null, string goodreadsBookId = null, string openLibraryWorkId = null) => throw new NotImplementedException();
             public Book FindByProviderIdAndMediaType(string provider, string providerId, BookMediaType mediaType) => throw new NotImplementedException();
             public List<Book> FindAllByProviderIdAndMediaType(string provider, string providerId, BookMediaType mediaType) => new List<Book>();
-            public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
+            public List<Book> FindTitleSlugConflicts(IEnumerable<string> slugs, IDbConnection connection = null, IDbTransaction transaction = null) => new List<Book>();
+            public List<Book> FindBySlug(string titleSlug) => throw new NotImplementedException();
             public PagingSpec<Book> BooksWithoutFiles(PagingSpec<Book> pagingSpec) => throw new NotImplementedException();
             public PagingSpec<Book> BooksWhereCutoffUnmet(PagingSpec<Book> pagingSpec, List<QualitiesBelowCutoff> qualitiesBelowCutoff) => throw new NotImplementedException();
             public List<Book> BooksBetweenDates(DateTime startDate, DateTime endDate, bool includeUnmonitored) => throw new NotImplementedException();
             public List<Book> AuthorBooksBetweenDates(Author author, DateTime startDate, DateTime endDate, bool includeUnmonitored) => throw new NotImplementedException();
-            public void SetMonitoredFlat(Book book, bool monitored) => throw new NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
-            public void SetMonitoredForMediaType(IEnumerable<int> ids, string mediaType, bool monitored) => throw new NotImplementedException();
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksBySeries(int seriesId) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
@@ -129,15 +132,19 @@ namespace Chaptarr.Core.Test.Books
             public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
+            public void UpdateMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, Edition selectedEdition = null) => throw new System.NotSupportedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
             public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
             public List<Edition> GetEditionsByBook(int bookId) => _editions.Where(e => e.BookId == bookId).ToList();
-            public List<Edition> GetEditionsByAuthor(int authorId) => throw new NotImplementedException();
+            public List<Edition> GetEditionsByAuthor(int authorId, bool onlyMonitored = false) => _editions.Where(edition => !onlyMonitored || edition.Monitored).ToList();
             public Edition FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false) => throw new NotImplementedException();
+
+            public void RefreshProviderAliases(List<Edition> editions) { }
+            public void UpdateSelection(List<Edition> editions) => UpdateMany(editions);
         }
 
         private sealed class StubAuthorService : IAuthorService
@@ -154,24 +161,27 @@ namespace Chaptarr.Core.Test.Books
                 return _authors.TryGetValue(authorId, out var author) ? author : null;
             }
 
+            public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => authorIds?.Distinct().Where(_authors.ContainsKey).Select(id => _authors[id]).ToList() ?? new List<Author>();
+
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public Author AddAuthor(Author newAuthor, bool doRefresh) => throw new NotImplementedException();
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new NotImplementedException();
             public Author FindByProviderId(string provider, string providerId) => throw new NotImplementedException();
             public Author FindByName(string title) => throw new NotImplementedException();
-            public Author FindByNameInexact(string title) => throw new NotImplementedException();
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
+            public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
             public Author UpdateAuthor(Author author) => throw new NotImplementedException();
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
-            public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
+            public List<KeyValuePair<int, string>> AllAuthorPaths() => throw new NotImplementedException();
             public bool AuthorPathExists(string folder) => throw new NotImplementedException();
-            public void RemoveAddOptions(Author author) => throw new NotImplementedException();
+            public void SetAddOptions(Author author) => throw new NotImplementedException();
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new NotImplementedException();
             public long GetAuthorSizeForMediaType(int authorId, string mediaType) => throw new NotImplementedException();
             public void UpdateLastSelectedMediaType(int authorId, string mediaType) => throw new NotImplementedException();
@@ -214,6 +224,15 @@ namespace Chaptarr.Core.Test.Books
 
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
+                System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+                => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
+
+            public void ReplaceMany(System.Collections.Generic.List<BookFile> bookFiles, System.Collections.Generic.List<BookFile> replacedFiles,
+                DeleteMediaFileReason reason, System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+                System.Action<System.Action<System.Data.IDbConnection, System.Data.IDbTransaction>> persist)
+                => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
+
             private readonly List<BookFile> _files;
 
             public StubMediaFileService(IEnumerable<BookFile> files)
@@ -234,6 +253,8 @@ namespace Chaptarr.Core.Test.Books
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
             public void AddMany(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Update(BookFile bookFile) => throw new NotImplementedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+
             public void Update(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason) => throw new NotImplementedException();
@@ -249,6 +270,31 @@ namespace Chaptarr.Core.Test.Books
             public BookFile GetFileWithPath(string path) => throw new NotImplementedException();
             public void UpdateMediaInfo(List<BookFile> bookFiles) => throw new NotImplementedException();
             public List<BookFile> GetFilesByAuthorAndMediaType(int authorId, string mediaType) => throw new NotImplementedException();
+        }
+
+        [Test]
+        public void search_catalog_should_load_only_displayed_editions_without_lazy_fallback()
+        {
+            var author = new Author { Id = 10, Name = "Frank Herbert" };
+            var books = new[]
+            {
+                new Book { Id = 1, AuthorId = author.Id, Title = "Dune", AnyEditionOk = true },
+                new Book { Id = 2, AuthorId = author.Id, Title = "Dune Messiah", AudiobookMonitored = false },
+                new Book { Id = 3, AuthorId = author.Id, Title = "Children of Dune" }
+            };
+            var editions = new[]
+            {
+                new Edition { Id = 1, BookId = 1, Title = "Dune", Monitored = true },
+                new Edition { Id = 2, BookId = 1, Title = "Der Wüstenplanet", Monitored = false },
+                new Edition { Id = 3, BookId = 2, Title = "Dune Messiah", Monitored = true }
+            };
+            var service = new BookService(new StubBookRepository(books), new StubEditionService(editions),
+                eventAggregator: null, new StubAuthorService(new[] { author }), mediaFileService: null,
+                rootFolderService: null, new StubSeriesBookLinkRepository(), multiCopySeriesService: null, logger: LogManager.GetCurrentClassLogger());
+            var catalog = service.GetBooksByAuthor(author.Id, onlyMonitoredEditions: true);
+
+            Assert.That(catalog.SelectMany(book => book.Editions).Select(edition => edition.Title), Is.EquivalentTo(new[] { "Dune", "Dune Messiah" }));
+            Assert.That(catalog.Single(book => book.Id == 3).Editions, Is.Empty);
         }
 
         [Test]

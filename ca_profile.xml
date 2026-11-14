@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommunityApplications>
+  <Profile>Unraid container templates for Chaptarr, an audiobook and ebook library manager. Visit the project issue tracker for support.</Profile>
+  <Icon>https://raw.githubusercontent.com/Chaptarr/chaptarr/main/Logo/256.png</Icon>
+  <WebPage>https://github.com/Chaptarr/chaptarr</WebPage>
+  <Forum>https://github.com/Chaptarr/chaptarr/issues</Forum>
+  <Discord>https://discord.gg/G9ZbgWS5rp</Discord>
+  <DonateText>Support Chaptarr development</DonateText>
+  <DonateLink>https://ko-fi.com/chaptarr</DonateLink>
+</CommunityApplications>

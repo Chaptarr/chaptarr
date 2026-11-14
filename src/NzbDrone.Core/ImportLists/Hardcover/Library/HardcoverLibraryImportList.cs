@@ -402,29 +402,13 @@ namespace NzbDrone.Core.ImportLists.Hardcover.Library
 	        }
 
 	        private readonly IHttpClient _httpClient;
-	        private readonly Lazy<IQualityProfileService> _qualityProfileService;
-	        private readonly Lazy<IMetadataProfileService> _metadataProfileService;
-	        private readonly Lazy<ITagService> _tagService;
-	        private readonly IRootFolderService _rootFolderService;
-	        private readonly IRootFolderSettingsResolver _rootFolderSettingsResolver;
 	        private readonly IHardcoverLibraryImportListStateRepository _stateRepository;
 	        private bool _useCachedContributorsFallback;
+        private HardcoverLibraryImportListState _pendingState;
 
 	        public override string Name => "Hardcover Library";
 	        public override ImportListType ListType => ImportListType.Other;
 	        public override TimeSpan MinRefreshInterval => TimeSpan.FromHours(1);
-
-        public override IEnumerable<ProviderDefinition> DefaultDefinitions
-        {
-            get
-            {
-                foreach (var definition in base.DefaultDefinitions.Cast<ImportListDefinition>())
-                {
-                    definition.ShouldMonitor = ImportListMonitorType.SpecificBook;
-                    yield return definition;
-                }
-            }
-        }
 
         public HardcoverLibraryImportList(IHttpClient httpClient,
             Lazy<IQualityProfileService> qualityProfileService,
@@ -437,14 +421,9 @@ namespace NzbDrone.Core.ImportLists.Hardcover.Library
             IConfigService configService,
             IParsingService parsingService,
             Logger logger)
-            : base(importListStatusService, configService, parsingService, logger)
+            : base(importListStatusService, configService, parsingService, qualityProfileService, metadataProfileService, tagService, rootFolderService, rootFolderSettingsResolver, logger)
         {
             _httpClient = httpClient;
-            _qualityProfileService = qualityProfileService;
-            _metadataProfileService = metadataProfileService;
-            _tagService = tagService;
-            _rootFolderService = rootFolderService;
-            _rootFolderSettingsResolver = rootFolderSettingsResolver;
             _stateRepository = stateRepository;
         }
 
@@ -453,6 +432,7 @@ namespace NzbDrone.Core.ImportLists.Hardcover.Library
 	            // Only enable the schema fallback for the current sync run. If Hardcover restores the old schema,
 	            // subsequent runs will automatically prefer the richer `contributions { author { ... } }` query.
 	            _useCachedContributorsFallback = false;
+            _pendingState = null;
 
 	            var results = new List<ImportListItemInfo>();
 
@@ -701,25 +681,47 @@ namespace NzbDrone.Core.ImportLists.Hardcover.Library
                     state.SettingsSignature = settingsSignature;
                     state.UpdatedAt = now;
 
-                    if (state.Id == 0)
-                    {
-                        _stateRepository.Insert(state);
-                    }
-                    else
-                    {
-                        _stateRepository.Update(state);
-                    }
+                    _pendingState = state;
                 }
 
                 _importListStatusService.RecordSuccess(Definition.Id);
             }
             catch (Exception ex)
             {
+                _pendingState = null;
                 _logger.Warn(ex, "Hardcover library import failed");
                 _importListStatusService.RecordFailure(Definition.Id);
             }
 
             return CleanupListItems(results);
+        }
+
+        public void CommitState()
+        {
+            if (_pendingState == null)
+            {
+                return;
+            }
+
+            // A fetched cursor becomes durable only after its list demand was accepted.
+            try
+            {
+                if (_pendingState.Id == 0)
+                {
+                    _stateRepository.Insert(_pendingState);
+                }
+                else
+                {
+                    _stateRepository.Update(_pendingState);
+                }
+
+                _pendingState = null;
+            }
+            catch
+            {
+                _importListStatusService.RecordFailure(Definition.Id);
+                throw;
+            }
         }
 
         protected override IList<ImportListItemInfo> CleanupListItems(IEnumerable<ImportListItemInfo> releases)
@@ -754,71 +756,9 @@ namespace NzbDrone.Core.ImportLists.Hardcover.Library
             return result;
         }
 
-        public override object RequestAction(string action, IDictionary<string, string> query)
-        {
-            if (action.IsNullOrWhiteSpace())
-            {
-                return base.RequestAction(action, query);
-            }
-
-            if (action == "getAudiobookQualityProfiles")
-            {
-                return new
-                {
-                    options = BuildSelectOptions(_qualityProfileService.Value.GetByType(ProfileType.Audiobook).Select(p => (p.Id, p.Name)), includeDefault: true)
-                };
-            }
-
-            if (action == "getEbookQualityProfiles")
-            {
-                return new
-                {
-                    options = BuildSelectOptions(_qualityProfileService.Value.GetByType(ProfileType.Ebook).Select(p => (p.Id, p.Name)), includeDefault: true)
-                };
-            }
-
-            if (action == "getAudiobookMetadataProfiles")
-            {
-                return new
-                {
-                    options = BuildSelectOptions(_metadataProfileService.Value.All()
-                        .Where(p => p.ProfileType == MetadataProfileType.General || p.ProfileType == MetadataProfileType.Audiobook)
-                        .Select(p => (p.Id, p.Name)), includeDefault: true)
-                };
-            }
-
-            if (action == "getEbookMetadataProfiles")
-            {
-                return new
-                {
-                    options = BuildSelectOptions(_metadataProfileService.Value.All()
-                        .Where(p => p.ProfileType == MetadataProfileType.General || p.ProfileType == MetadataProfileType.Ebook)
-                        .Select(p => (p.Id, p.Name)), includeDefault: true)
-                };
-            }
-
-            if (action == "getTags")
-            {
-                return new
-                {
-                    options = _tagService.Value.All()
-                        .OrderBy(t => t.Label)
-                        .Select(t => new
-                        {
-                            Value = t.Id,
-                            Name = t.Label
-                        })
-                        .ToList()
-                };
-            }
-
-            return base.RequestAction(action, query);
-        }
-
         protected override void Test(List<ValidationFailure> failures)
         {
             failures.AddIfNotNull(TestConnection());
-            failures.AddRange(TestRootFolderConfig());
         }
 
         private ValidationFailure TestConnection()
@@ -875,84 +815,6 @@ namespace NzbDrone.Core.ImportLists.Hardcover.Library
                 _logger.Warn(ex, "Unable to connect to Hardcover");
                 return new ValidationFailure(string.Empty, "Unable to connect to import list, check the log for more details");
             }
-        }
-
-        private IEnumerable<ValidationFailure> TestRootFolderConfig()
-        {
-            var failures = new List<ValidationFailure>();
-
-            if (Settings == null)
-            {
-                return failures;
-            }
-
-            if (Settings.MonitorAudiobooks)
-            {
-                failures.AddIfNotNull(TestRootFolder(
-                    nameof(Settings.AudiobookRootFolderPath),
-                    Settings.AudiobookRootFolderPath,
-                    BookMediaType.Audiobook,
-                    Settings.AudiobookQualityProfileId,
-                    Settings.AudiobookMetadataProfileId));
-            }
-
-            if (Settings.MonitorEbooks)
-            {
-                failures.AddIfNotNull(TestRootFolder(
-                    nameof(Settings.EbookRootFolderPath),
-                    Settings.EbookRootFolderPath,
-                    BookMediaType.Ebook,
-                    Settings.EbookQualityProfileId,
-                    Settings.EbookMetadataProfileId));
-            }
-
-            return failures;
-        }
-
-        private ValidationFailure TestRootFolder(string fieldName,
-            string rootFolderPath,
-            BookMediaType mediaType,
-            int overrideQualityProfileId,
-            int overrideMetadataProfileId)
-        {
-            if (rootFolderPath.IsNullOrWhiteSpace())
-            {
-                return new ValidationFailure(fieldName, "Root folder is required");
-            }
-
-            var rootFolder = _rootFolderService.GetBestRootFolder(rootFolderPath);
-            if (rootFolder == null)
-            {
-                return new ValidationFailure(fieldName, $"Root folder '{rootFolderPath}' is not configured in Chaptarr");
-            }
-
-            if (mediaType == BookMediaType.Audiobook && rootFolder.FolderType == FolderType.Ebook)
-            {
-                return new ValidationFailure(fieldName, "Selected root folder is Ebook-only; choose an Audiobook or Mixed root folder");
-            }
-
-            if (mediaType == BookMediaType.Ebook && rootFolder.FolderType == FolderType.Audiobook)
-            {
-                return new ValidationFailure(fieldName, "Selected root folder is Audiobook-only; choose an Ebook or Mixed root folder");
-            }
-
-            var resolved = _rootFolderSettingsResolver.ResolveSettings(rootFolder, mediaType);
-            if (resolved == null || !resolved.IsConfigured)
-            {
-                return new ValidationFailure(fieldName, $"Selected root folder '{rootFolder.Path}' does not have {mediaType} defaults configured");
-            }
-
-            if (overrideQualityProfileId <= 0 && (resolved.QualityProfileId ?? 0) <= 0)
-            {
-                return new ValidationFailure(fieldName, $"Selected root folder '{rootFolder.Path}' is missing a {mediaType} quality profile default");
-            }
-
-            if (overrideMetadataProfileId <= 0 && (resolved.MetadataProfileId ?? 0) <= 0)
-            {
-                return new ValidationFailure(fieldName, $"Selected root folder '{rootFolder.Path}' is missing a {mediaType} metadata profile default");
-            }
-
-            return null;
         }
 
         private HardcoverUser GetCurrentUser(string authHeader)
@@ -1118,8 +980,8 @@ namespace NzbDrone.Core.ImportLists.Hardcover.Library
                 AuthorProviderId = authorProviderId,
                 Book = book.Title,
                 BookProviderId = bookProviderId,
-                EditionProviderId = null,
-                HardcoverReadingFormatId = null
+                EditionProviderId = userBook.EditionId > 0 ? $"hc-ed:{userBook.EditionId.Value}" : null,
+                HardcoverReadingFormatId = InferHardcoverReadingFormatId(userBook.Edition)
             };
         }
 
@@ -1156,19 +1018,6 @@ namespace NzbDrone.Core.ImportLists.Hardcover.Library
                 return null;
             }
 
-            var inferredReadingFormatId = InferHardcoverReadingFormatId(listBook.Edition);
-            var mappedReadingFormatId = inferredReadingFormatId == 2 ? 2 : 3;
-
-            if (mappedReadingFormatId == 2 && !Settings.MonitorAudiobooks)
-            {
-                return null;
-            }
-
-            if (mappedReadingFormatId != 2 && !Settings.MonitorEbooks)
-            {
-                return null;
-            }
-
             var primaryAuthor = GetPrimaryAuthor(book.Contributions);
             if (primaryAuthor == null)
             {
@@ -1184,7 +1033,7 @@ namespace NzbDrone.Core.ImportLists.Hardcover.Library
                 Book = book.Title,
                 BookProviderId = bookProviderId,
                 EditionProviderId = editionProviderId,
-                HardcoverReadingFormatId = mappedReadingFormatId
+                HardcoverReadingFormatId = InferHardcoverReadingFormatId(listBook.Edition)
             };
         }
 
@@ -1244,7 +1093,7 @@ namespace NzbDrone.Core.ImportLists.Hardcover.Library
                     editionFormat.Contains("ebook", StringComparison.OrdinalIgnoreCase) ||
                     editionFormat.Contains("e-book", StringComparison.OrdinalIgnoreCase))
                 {
-                    return 3;
+                    return 4;
                 }
             }
 
@@ -1440,31 +1289,6 @@ namespace NzbDrone.Core.ImportLists.Hardcover.Library
 
 	            return false;
 	        }
-
-        private static List<object> BuildSelectOptions(IEnumerable<(int id, string name)> items, bool includeDefault)
-        {
-            var options = new List<object>();
-
-            if (includeDefault)
-            {
-                options.Add(new
-                {
-                    Value = 0,
-                    Name = "Use root folder defaults",
-                    LocalizationKey = "UseRootFolderDefaults"
-                });
-            }
-
-            options.AddRange(items
-                .OrderBy(i => i.name)
-                .Select(i => new
-                {
-                    Value = i.id,
-                    Name = i.name
-                }));
-
-            return options;
-        }
 
         private sealed class HardcoverGraphQLResponse<T>
         {

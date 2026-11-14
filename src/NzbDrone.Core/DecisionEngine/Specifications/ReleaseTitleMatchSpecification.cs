@@ -26,6 +26,11 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         public Decision IsSatisfiedBy(RemoteBook subject, SearchCriteriaBase searchCriteria)
         {
+            return IsSatisfiedBy(subject, searchCriteria, null);
+        }
+
+        internal Decision IsSatisfiedBy(RemoteBook subject, SearchCriteriaBase searchCriteria, ReleaseTitleMatchScorer.CatalogPreparation catalogPreparation)
+        {
             if (subject?.Release?.Title == null)
             {
                 return Decision.Accept();
@@ -51,7 +56,9 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             var best = context.ExistingMatch;
             if (best == null)
             {
-                best = ReleaseTitleMatchScorer.FindBestMatch(subject.Release.Title, context.AuthorName, context.Books, authorHint, context.AuthorCatalog);
+                // Same entry point the decision maker uses, so a caller that does not pre-populate
+                // SearchCriteriaMatch still gets sibling competition instead of the target in isolation.
+                best = ReleaseTitleMatchScorer.FindBestMatchForSearch(subject.Release, context.AuthorName, context.Books, authorHint, context.AuthorCatalog, catalogPreparation ?? new ReleaseTitleMatchScorer.CatalogPreparation());
             }
 
             if (best == null)
@@ -64,10 +71,10 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 return Decision.RejectSoftFilter("Title/Author mismatch", "Matching");
             }
 
-            var identity = ReleaseIdentityEvidence.Analyze(subject.Release, context.Author, best.Book, best);
+            var identity = ReleaseIdentityEvidence.Analyze(subject.Release, context.Author, best);
             if (identity.HasStructuredAuthorMismatch)
             {
-                return Decision.RejectSoftFilter("Title/Author mismatch", "Matching");
+                return Decision.RejectSoftFilter("Author mismatch: {0}", "Matching", subject.Release.Author);
             }
 
             if (IsAcceptedMatch(best, identity, _configService?.BookMatchingStrictness ?? BookMatchingStrictness.Balanced))
@@ -97,7 +104,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         internal static bool IsAcceptedMatch(TitleMatchResult match, ReleaseIdentityEvidence identity, BookMatchingStrictness strictness)
         {
             if (match?.IsMatch == true ||
-                (identity?.HasPositiveIdentityEvidence == true && match?.ProblemCode == TitleMatchProblemCode.None))
+                (identity?.HasAuthorIdentityEvidence == true && match?.ProblemCode == TitleMatchProblemCode.None))
             {
                 return true;
             }
@@ -108,8 +115,15 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                 return false;
             }
 
+            // A suspicious adjacent number is forgivable only once identity is actually proven.
+            // Absent that, a title token followed by an issue number is another publisher's numbered
+            // product, not a numbered edition of this book, and forgiving it would accept it outright.
+            if (identity?.HasAuthorIdentityEvidence != true)
+            {
+                return false;
+            }
+
             return match.Problems.All(problem =>
-                problem.Code == TitleMatchProblemCode.SeriesPositionMismatch ||
                 problem.Code == TitleMatchProblemCode.SuspiciousAdjacentNumber);
         }
 
@@ -161,7 +175,7 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
                     return Decision.RejectHardFilter("Release appears to match a different book by this author", "Matching");
 
                 case TitleMatchProblemCode.SuspiciousAdjacentNumber:
-                    return Decision.RejectSoftFilter("Unexplained number after matched title", "Matching");
+                    return Decision.RejectSoftFilter("Unexplained number adjacent to matched title", "Matching");
 
                 default:
                     return Decision.RejectSoftFilter("Title/Author mismatch", "Matching");

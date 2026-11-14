@@ -31,6 +31,8 @@ namespace Chaptarr.Api.V1.ManualImport
         public List<CustomFormatResource> CustomFormats { get; set; }
         public QualityModel Quality { get; set; }
         public string ReleaseGroup { get; set; }
+        public bool? AudioProductionOverride { get; set; }
+        public bool IsGraphicAudio { get; set; }
         public int QualityWeight { get; set; }
         public string DownloadId { get; set; }
         public int IndexerFlags { get; set; }
@@ -38,6 +40,7 @@ namespace Chaptarr.Api.V1.ManualImport
         public List<string> Warnings { get; set; }
         public Dictionary<string, List<string>> Tags { get; set; }
         public bool AdditionalFile { get; set; }
+        public bool? SelectByDefault { get; set; }
         public bool ReplaceExistingFiles { get; set; }
         public bool DisableReleaseSwitching { get; set; }
     }
@@ -78,6 +81,8 @@ namespace Chaptarr.Api.V1.ManualImport
                 SuggestedEditionTitle = model.SuggestedEditionTitle,
                 Quality = model.Quality,
                 ReleaseGroup = model.ReleaseGroup,
+                AudioProductionOverride = model.AudioProductionOverride,
+                IsGraphicAudio = model.IsGraphicAudio,
 
                 //QualityWeight
                 DownloadId = model.DownloadId,
@@ -87,6 +92,7 @@ namespace Chaptarr.Api.V1.ManualImport
                 Tags = model.Tags ?? new Dictionary<string, List<string>>(),
 
                 AdditionalFile = model.AdditionalFile,
+                SelectByDefault = model.SelectByDefault,
                 ReplaceExistingFiles = model.ReplaceExistingFiles,
                 DisableReleaseSwitching = model.DisableReleaseSwitching
             };

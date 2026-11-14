@@ -18,9 +18,12 @@ namespace NzbDrone.Core.Books.Commands
         }
 
         public List<int> AuthorIds { get; set; }
+        // Zero is an ordinary sync. Positive values resume initial setup; its retry count is persisted in AddOptions.
+        public int InitialSetupAttempt { get; set; }
 
         public override bool SendUpdatesToClient => true;
         public override bool UpdateScheduledTask => false;
         public override bool IsLongRunning => true;
+        public override bool IsTypeExclusive => true;
     }
 }

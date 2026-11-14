@@ -3,10 +3,15 @@ using System.Collections.Generic;
 using System.Linq;
 using FluentValidation.Results;
 using NLog;
+using NzbDrone.Core.Books;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Profiles.Metadata;
+using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.RootFolders;
+using NzbDrone.Core.Tags;
 using NzbDrone.Core.Validation;
 
 namespace NzbDrone.Core.ImportLists.Chaptarr
@@ -23,8 +28,13 @@ namespace NzbDrone.Core.ImportLists.Chaptarr
                             IImportListStatusService importListStatusService,
                             IConfigService configService,
                             IParsingService parsingService,
+                            Lazy<IQualityProfileService> qualityProfileService,
+                            Lazy<IMetadataProfileService> metadataProfileService,
+                            Lazy<ITagService> tagService,
+                            IRootFolderService rootFolderService,
+                            IRootFolderSettingsResolver rootFolderSettingsResolver,
                             Logger logger)
-            : base(importListStatusService, configService, parsingService, logger)
+            : base(importListStatusService, configService, parsingService, qualityProfileService, metadataProfileService, tagService, rootFolderService, rootFolderSettingsResolver, logger)
         {
             _chaptarrV1Proxy = chaptarrV1Proxy;
         }
@@ -98,11 +108,29 @@ namespace NzbDrone.Core.ImportLists.Chaptarr
                         continue;
                     }
 
+                    var selectedEdition = remoteBook.AnyEditionOk == false ? remoteBook.Editions?.FirstOrDefault(edition =>
+                        BookEditionIdentity.NormalizeRequestedEditionProviderId(edition.ForeignEditionId) ==
+                        BookEditionIdentity.NormalizeRequestedEditionProviderId(remoteBook.ForeignEditionId)) : null;
+                    var selected = selectedEdition == null ? null : new Edition
+                    {
+                        ReadingFormatId = selectedEdition.ReadingFormatId,
+                        Narrator = selectedEdition.Narrator,
+                        NarratorNames = selectedEdition.NarratorNames
+                    };
                     authorsAndBooks.Add(new ImportListItemInfo
                     {
                         BookProviderId = remoteBook.ForeignBookId,
                         Book = remoteBook.Title,
-                        EditionProviderId = remoteBook.ForeignEditionId,
+                        EditionProviderId = remoteBook.AnyEditionOk == false ? remoteBook.ForeignEditionId : null,
+                        EditionMediaType = remoteBook.AnyEditionOk == false ? mediaType switch
+                        {
+                            "audiobook" => BookMediaType.Audiobook,
+                            "ebook" => BookMediaType.Ebook,
+                            _ => (BookMediaType?)null
+                        } : null,
+                        HardcoverReadingFormatId = selectedEdition?.ReadingFormatId,
+                        EditionNarratorNames = BookEditionIdentity.IsNarratedAudiobookEdition(selected) ? BookEditionIdentity.GetNarratorNames(selected) : null,
+                        EditionHasNarration = selected == null ? null : BookEditionIdentity.IsNarratedAudiobookEdition(selected),
                         Author = remoteAuthor.AuthorName,
                         AuthorProviderId = remoteAuthor.ForeignAuthorId
                     });
@@ -121,6 +149,13 @@ namespace NzbDrone.Core.ImportLists.Chaptarr
 
         public override object RequestAction(string action, IDictionary<string, string> query)
         {
+            // Source tags use the connector; destination tags use the shared local action.
+            var commonOptions = action == "getTags" ? null : base.RequestAction(action, query);
+            if (commonOptions != null)
+            {
+                return commonOptions;
+            }
+
             // Return early if there is not an API key
             if (Settings.ApiKey.IsNullOrWhiteSpace())
             {

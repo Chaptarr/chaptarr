@@ -44,6 +44,7 @@ namespace NzbDrone.Core.Indexers
             definition.Protocol = provider.Protocol;
             definition.SupportsRss = provider.SupportsRss;
             definition.SupportsSearch = provider.SupportsSearch;
+            definition.SupportsNarratorMetadata = (provider as INarratorMetadataProvider)?.SupportsNarratorMetadata;
         }
 
         public List<IIndexer> RssEnabled(bool filterBlockedIndexers = true)
@@ -101,6 +102,7 @@ namespace NzbDrone.Core.Indexers
         public override ValidationResult Test(IndexerDefinition definition)
         {
             var result = base.Test(definition);
+            SetProviderCharacteristics(definition);
 
             var success = result == null || result.IsValid;
 

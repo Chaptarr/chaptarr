@@ -10,7 +10,7 @@ namespace Chaptarr.Core.Test.Download
         {
         }
 
-        public void CaptureCompletedOutput(DownloadClientItem item)
+        public void CaptureCompletedOutput(DownloadClientItem item, bool throwOnError = false, DownloadCleanupContext cleanup = null)
         {
         }
 

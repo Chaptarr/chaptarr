@@ -8,10 +8,11 @@ import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import NotFound from 'Components/NotFound';
 import PageContent from 'Components/Page/PageContent';
 import PageContentBody from 'Components/Page/PageContentBody';
-import getErrorMessage from 'Utilities/Object/getErrorMessage';
-import translate from 'Utilities/String/translate';
+import { setSelectedMediaType } from 'Store/Actions/appActions';
 import { fetchAuthor } from 'Store/Actions/authorActions';
 import { setAuthorDetailsFilterValue } from 'Store/Actions/authorDetailsActions';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
+import translate from 'Utilities/String/translate';
 import AuthorDetailsConnector from './AuthorDetailsConnector';
 import styles from './AuthorDetails.css';
 
@@ -49,6 +50,7 @@ function createMapStateToProps() {
 
 const mapDispatchToProps = {
   push,
+  setSelectedMediaType,
   fetchAuthor,
   setAuthorDetailsFilterValue
 };
@@ -59,6 +61,7 @@ class AuthorDetailsPageConnector extends Component {
   // Lifecycle
 
   componentDidMount() {
+    this.applySearchLink();
     const { authorId, isPopulated } = this.props;
 
     this.props.setAuthorDetailsFilterValue('');
@@ -71,6 +74,9 @@ class AuthorDetailsPageConnector extends Component {
   }
 
   componentDidUpdate(prevProps) {
+    if (prevProps.location !== this.props.location) {
+      this.applySearchLink();
+    }
     const { authorId } = this.props;
 
     if (!authorId) {
@@ -84,6 +90,14 @@ class AuthorDetailsPageConnector extends Component {
       this.props.fetchAuthor({ id: authorId });
     }
   }
+
+  applySearchLink = () => {
+    const query = new URLSearchParams(this.props.location?.search);
+    const mediaType = query.get('mediaType');
+    if (query.get('tab') === 'search' && ['audiobook', 'ebook'].includes(mediaType)) {
+      this.props.setSelectedMediaType({ mediaType });
+    }
+  };
 
   //
   // Render
@@ -126,6 +140,7 @@ class AuthorDetailsPageConnector extends Component {
       <AuthorDetailsConnector
         key={authorId}
         id={authorId}
+        location={this.props.location}
       />
     );
   }
@@ -133,6 +148,8 @@ class AuthorDetailsPageConnector extends Component {
 
 AuthorDetailsPageConnector.propTypes = {
   authorId: PropTypes.number,
+  location: PropTypes.object,
+  setSelectedMediaType: PropTypes.func.isRequired,
   isFetching: PropTypes.bool.isRequired,
   isPopulated: PropTypes.bool.isRequired,
   error: PropTypes.object,

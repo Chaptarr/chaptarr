@@ -16,6 +16,8 @@ import TableOptionsModalWrapper from 'Components/Table/TableOptions/TableOptions
 import TablePager from 'Components/Table/TablePager';
 import { align, icons, kinds } from 'Helpers/Props';
 import UnmappedFilesMediaTypeToggle from 'UnmappedFiles/UnmappedFilesMediaTypeToggle';
+import { shouldConfirmSearch } from 'Utilities/Author/getAuthorStatisticsForMediaType';
+import getWantedSearchCount from 'Utilities/Book/getWantedSearchCount';
 import getFilterValue from 'Utilities/Filter/getFilterValue';
 import hasDifferentItems from 'Utilities/Object/hasDifferentItems';
 import translate from 'Utilities/String/translate';
@@ -47,6 +49,9 @@ class CutoffUnmet extends Component {
       allUnselected: false,
       lastToggled: null,
       selectedState: {},
+      pendingSelectedBookIds: null,
+      pendingSearchCount: 0,
+      isCountingSearches: false,
       isConfirmSearchAllCutoffUnmetModalOpen: false,
       isInteractiveImportModalOpen: false
     };
@@ -82,6 +87,10 @@ class CutoffUnmet extends Component {
 
   onSearchSelectedPress = () => {
     const selected = this.getSelectedIds();
+    if (shouldConfirmSearch(selected.length)) {
+      this.setState({ isConfirmSearchAllCutoffUnmetModalOpen: true, pendingSelectedBookIds: selected });
+      return;
+    }
 
     this.props.onSearchSelectedPress(selected);
   };
@@ -95,17 +104,33 @@ class CutoffUnmet extends Component {
     });
   };
 
-  onSearchAllCutoffUnmetPress = () => {
-    this.setState({ isConfirmSearchAllCutoffUnmetModalOpen: true });
+  onSearchAllCutoffUnmetPress = async() => {
+    this.setState({ isCountingSearches: true });
+    try {
+      const count = await getWantedSearchCount('cutoff', this.props);
+      if (shouldConfirmSearch(count)) {
+        this.setState({ isConfirmSearchAllCutoffUnmetModalOpen: true, pendingSelectedBookIds: null, pendingSearchCount: count });
+      } else {
+        this.props.onSearchAllCutoffUnmetPress();
+      }
+    } catch (error) {
+      this.props.onSearchCountError(error);
+    } finally {
+      this.setState({ isCountingSearches: false });
+    }
   };
 
   onSearchAllCutoffUnmetConfirmed = () => {
-    this.props.onSearchAllCutoffUnmetPress();
-    this.setState({ isConfirmSearchAllCutoffUnmetModalOpen: false });
+    if (this.state.pendingSelectedBookIds) {
+      this.props.onSearchSelectedPress(this.state.pendingSelectedBookIds);
+    } else {
+      this.props.onSearchAllCutoffUnmetPress();
+    }
+    this.onConfirmSearchAllCutoffUnmetModalClose();
   };
 
   onConfirmSearchAllCutoffUnmetModalClose = () => {
-    this.setState({ isConfirmSearchAllCutoffUnmetModalOpen: false });
+    this.setState({ isConfirmSearchAllCutoffUnmetModalOpen: false, pendingSelectedBookIds: null });
   };
 
   onMediaTypeChange = (mediaType) => {
@@ -149,13 +174,15 @@ class CutoffUnmet extends Component {
 
     return (
       <PageContent title={translate('CutoffUnmet')}>
-        <PageToolbar>
-          <PageToolbarSection>
+        <PageToolbar
+          controls={
             <UnmappedFilesMediaTypeToggle
               selectedMediaType={selectedMediaType}
               onMediaTypeChange={this.onMediaTypeChange}
             />
-
+          }
+        >
+          <PageToolbarSection>
             <PageToolbarButton
               label={translate('SearchSelected')}
               iconName={icons.SEARCH}
@@ -176,8 +203,8 @@ class CutoffUnmet extends Component {
             <PageToolbarButton
               label={translate('SearchAll')}
               iconName={icons.SEARCH}
-              isDisabled={!items.length}
-              isSpinning={isSearchingForCutoffUnmetBooks}
+              isDisabled={!items.length || this.state.isCountingSearches}
+              isSpinning={isSearchingForCutoffUnmetBooks || this.state.isCountingSearches}
               onPress={this.onSearchAllCutoffUnmetPress}
             />
 
@@ -262,11 +289,11 @@ class CutoffUnmet extends Component {
                 <ConfirmModal
                   isOpen={isConfirmSearchAllCutoffUnmetModalOpen}
                   kind={kinds.DANGER}
-                  title={translate('SearchForAllCutoffUnmetBooks')}
+                  title={translate(this.state.pendingSelectedBookIds ? 'SearchSelected' : 'SearchForAllCutoffUnmetBooks')}
                   message={
                     <div>
                       <div>
-                        {translate('SearchForAllCutoffUnmetBooksConfirm', { count: totalRecords })}
+                        {translate('SearchAuthorBooksConfirm', { count: this.state.pendingSelectedBookIds?.length ?? this.state.pendingSearchCount })}
                       </div>
                       <div>
                         {translate('SearchCannotBeCancelled')}
@@ -302,6 +329,7 @@ CutoffUnmet.propTypes = {
   setCutoffUnmetMediaType: PropTypes.func.isRequired,
   onFilterSelect: PropTypes.func.isRequired,
   onSearchSelectedPress: PropTypes.func.isRequired,
+  onSearchCountError: PropTypes.func.isRequired,
   batchToggleCutoffUnmetBooks: PropTypes.func.isRequired,
   onSearchAllCutoffUnmetPress: PropTypes.func.isRequired
 };

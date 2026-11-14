@@ -127,6 +127,7 @@ class BookIndexPoster extends Component {
       ebookMonitored,
       titleSlug,
       nextAiring,
+      releaseDate,
       statistics,
       images,
       posterWidth,
@@ -152,10 +153,8 @@ class BookIndexPoster extends Component {
     } = this.props;
 
     const {
-      bookCount,
       sizeOnDisk,
-      bookFileCount,
-      totalBookCount
+      bookFileCount
     } = statistics;
 
     const {
@@ -271,9 +270,8 @@ class BookIndexPoster extends Component {
 
           <BookIndexProgressBar
             monitored={audiobookMonitored || ebookMonitored}
-            bookCount={bookCount}
             bookFileCount={bookFileCount}
-            totalBookCount={totalBookCount}
+            releaseDate={releaseDate}
             posterWidth={posterWidth}
             detailedProgressBar={detailedProgressBar}
           />
@@ -323,6 +321,7 @@ class BookIndexPoster extends Component {
           }
           <BookIndexPosterInfo
             author={author}
+            releaseDate={releaseDate}
             bookFileCount={bookFileCount}
             sizeOnDisk={sizeOnDisk}
             qualityProfile={qualityProfile}
@@ -341,6 +340,7 @@ class BookIndexPoster extends Component {
           />
 
           <DeleteAuthorModal
+            selectedMediaType={this.props.mediaType}
             isOpen={isDeleteAuthorModalOpen}
             authorId={authorId}
             onModalClose={this.onDeleteAuthorModalClose}
@@ -359,6 +359,7 @@ class BookIndexPoster extends Component {
 }
 
 BookIndexPoster.propTypes = {
+  mediaType: PropTypes.string,
   id: PropTypes.number.isRequired,
   title: PropTypes.string.isRequired,
   authorId: PropTypes.number.isRequired,
@@ -367,6 +368,7 @@ BookIndexPoster.propTypes = {
   ebookMonitored: PropTypes.bool,
   titleSlug: PropTypes.string.isRequired,
   nextAiring: PropTypes.string,
+  releaseDate: PropTypes.string,
   statistics: PropTypes.object.isRequired,
   images: PropTypes.arrayOf(PropTypes.object).isRequired,
   posterWidth: PropTypes.number.isRequired,

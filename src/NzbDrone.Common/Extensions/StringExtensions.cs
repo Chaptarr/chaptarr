@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -60,23 +59,6 @@ namespace NzbDrone.Common.Extensions
             text = text.Remove(index, length);
             text = text.Insert(index, replacement);
             return text;
-        }
-
-        public static string RemoveAccent(this string text)
-        {
-            var normalizedString = text.Normalize(NormalizationForm.FormD);
-            var stringBuilder = new StringBuilder();
-
-            foreach (var c in normalizedString)
-            {
-                var unicodeCategory = CharUnicodeInfo.GetUnicodeCategory(c);
-                if (unicodeCategory != UnicodeCategory.NonSpacingMark)
-                {
-                    stringBuilder.Append(c);
-                }
-            }
-
-            return stringBuilder.ToString().Normalize(NormalizationForm.FormC);
         }
 
         public static string TrimEnd(this string text, string postfix)
@@ -499,18 +481,5 @@ namespace NzbDrone.Common.Extensions
             return System.Text.RegularExpressions.Regex.Replace(input, pattern, replacement);
         }
 
-        public static string NormalizeAuthorNameForComparison(this string authorName)
-        {
-            if (string.IsNullOrWhiteSpace(authorName))
-            {
-                return string.Empty;
-            }
-
-            // Remove all spaces, periods, hyphens, and apostrophes
-            // Convert to lowercase for case-insensitive comparison
-            // This makes "A.F. Kay", "A. F. Kay", "AF Kay", "A F Kay" all normalize to "afkay"
-            return Regex.Replace(authorName, @"[\s\.\-\']", "", RegexOptions.Compiled)
-                .ToLowerInvariant();
-        }
     }
 }

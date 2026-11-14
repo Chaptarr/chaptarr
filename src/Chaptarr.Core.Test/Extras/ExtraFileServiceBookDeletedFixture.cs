@@ -64,6 +64,12 @@ namespace Chaptarr.Core.Test.Extras
                 Title = "Captain's Fury",
                 MediaType = BookMediaType.Audiobook
             };
+            _book.BookFiles = new List<BookFile>
+            {
+                new() { Id = 4001, Path = Path.Combine(AudiobookFolder, "book.m4b"), Edition = new Edition { BookId = _book.Id } }
+            };
+
+            _repository.BookFiles.AddRange(_book.BookFiles);
 
             var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
             ((AuthorServiceProxy)(object)authorService).Author = _author;
@@ -81,29 +87,33 @@ namespace Chaptarr.Core.Test.Extras
         {
             _repository.Files.Add(BookCover());
 
-            _subject.Handle(new BookDeletedEvent(_book, deleteFiles: true, addImportListExclusion: false));
+            _subject.DeleteBookFiles(_book);
+            _subject.Handle(new BookDeletedEvent(_book, deleteFiles: true, addImportListExclusion: false, filesAlreadyDeleted: true));
 
             Assert.That(_recycleBin.DeletedFiles, Is.EqualTo(new[] { Path.Combine(AudiobookFolder, "cover.jpg") }));
             Assert.That(_repository.DeletedForBook, Is.EqualTo(new[] { (_author.Id, _book.Id) }));
         }
 
-        [Test]
-        public void should_leave_the_shared_cover_alone_when_only_one_file_of_the_book_is_removed()
+        [TestCase(true)]
+        [TestCase(false)]
+        public void shared_cover_is_recycled_only_with_the_last_part(bool survivingPart)
         {
-            // A multi-part audiobook shares one cover across every part. Removing one part must not
-            // take the cover with it.
+            // A multi-part audiobook shares one cover; the last-file control must recycle it.
             _repository.Files.Add(BookCover());
+            if (survivingPart) _repository.BookFiles.Add(new BookFile { Id = 4002, Edition = new Edition { BookId = _book.Id } });
 
             _subject.Handle(new BookFileDeletedEvent(
                 new BookFile
                 {
                     Id = 4001,
                     Path = Path.Combine(AudiobookFolder, "Captains Fury - Part 01.m4b"),
+                    Edition = new Edition { BookId = _book.Id },
                     Author = _author
                 },
                 DeleteMediaFileReason.Manual));
 
-            Assert.That(_recycleBin.DeletedFiles, Is.Empty);
+            Assert.That(_recycleBin.DeletedFiles, Is.EqualTo(survivingPart ? Array.Empty<string>() : new[] { Path.Combine(AudiobookFolder, "cover.jpg") }));
+            Assert.That(_repository.Files.Count, Is.EqualTo(survivingPart ? 1 : 0));
             Assert.That(_repository.DeletedForBook, Is.Empty);
         }
 
@@ -120,9 +130,10 @@ namespace Chaptarr.Core.Test.Extras
         }
 
         [Test]
-        public void should_resolve_the_extra_under_the_root_matching_the_books_media_type()
+        public void should_resolve_the_extra_under_the_physical_file_folder()
         {
             _book.MediaType = BookMediaType.Ebook;
+            _book.BookFiles[0].Path = Path.Combine(EbookFolder, "book.epub");
             _repository.Files.Add(new MetadataFile
             {
                 Id = 11,
@@ -133,7 +144,8 @@ namespace Chaptarr.Core.Test.Extras
                 Extension = ".jpg"
             });
 
-            _subject.Handle(new BookDeletedEvent(_book, deleteFiles: true, addImportListExclusion: false));
+            _subject.DeleteBookFiles(_book);
+            _subject.Handle(new BookDeletedEvent(_book, deleteFiles: true, addImportListExclusion: false, filesAlreadyDeleted: true));
 
             Assert.That(_recycleBin.DeletedFiles, Is.EqualTo(new[] { Path.Combine(EbookFolder, "cover.jpg") }));
         }
@@ -167,6 +179,7 @@ namespace Chaptarr.Core.Test.Extras
         private class ExtraFileRepositoryProxy : DispatchProxy
         {
             public List<MetadataFile> Files { get; } = new();
+            public List<BookFile> BookFiles { get; } = new();
             public List<(int AuthorId, int BookId)> DeletedForBook { get; } = new();
             public List<int> DeletedForBookFile { get; } = new();
 
@@ -176,6 +189,18 @@ namespace Chaptarr.Core.Test.Extras
                 {
                     case nameof(IExtraFileRepository<MetadataFile>.GetFilesByBook):
                         return Files.Where(f => f.AuthorId == (int)args[0] && f.BookId == (int)args[1]).ToList();
+
+                    case nameof(IExtraFileRepository<MetadataFile>.GetFilesForDeletion):
+                        var selected = (IReadOnlyCollection<BookFile>)args[0];
+                        var selectedIds = selected.Select(file => file.Id).ToHashSet();
+                        var survivingBooks = BookFiles.Where(file => !selectedIds.Contains(file.Id)).Select(file => file.Edition.BookId).ToHashSet();
+                        return Files.Where(f => selected.Any(file => file.Id == f.BookFileId ||
+                            (f.BookFileId == null && file.Edition != null && file.Edition.BookId == f.BookId && !survivingBooks.Contains(file.Edition.BookId)))).ToList();
+
+                    case nameof(IExtraFileRepository<MetadataFile>.DeleteMany):
+                        var ids = (IEnumerable<int>)args[0];
+                        Files.RemoveAll(file => ids.Contains(file.Id));
+                        return null;
 
                     case nameof(IExtraFileRepository<MetadataFile>.GetFilesByBookFile):
                         return Files.Where(f => f.BookFileId == (int)args[0]).ToList();
@@ -222,9 +247,14 @@ namespace Chaptarr.Core.Test.Extras
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
-                if (targetMethod?.Name == nameof(IDiskProvider.FileExists))
+                if (targetMethod?.Name == nameof(IDiskProvider.FileExists) || targetMethod?.Name == nameof(IDiskProvider.FileExistsCanonical))
                 {
                     return true;
+                }
+
+                if (targetMethod?.Name == nameof(IDiskProvider.GetFiles))
+                {
+                    return Array.Empty<string>();
                 }
 
                 if (targetMethod?.Name == nameof(IDiskProvider.GetParentFolder))

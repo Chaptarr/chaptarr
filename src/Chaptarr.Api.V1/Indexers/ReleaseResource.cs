@@ -1,4 +1,5 @@
 using System;
+using NzbDrone.Core.Download;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Serialization;
@@ -67,6 +68,8 @@ namespace Chaptarr.Api.V1.Indexers
     // Enhanced response wrapper for interactive search with filter information
     public class ReleaseSearchResponse
     {
+        public int IndexersQueried { get; set; }
+        public int IndexersFailed { get; set; }
         [JsonPropertyName("releases")]
         public List<ReleaseResource> Releases { get; set; } = new List<ReleaseResource>();
 
@@ -89,8 +92,50 @@ namespace Chaptarr.Api.V1.Indexers
         public string SiblingToggleDisabledReason { get; set; }
     }
 
+    public class AuthorReleaseSearchStopResponse
+    {
+        public bool IsStopping { get; set; }
+        public bool IsRemoved { get; set; }
+    }
+
+    public class AuthorReleaseSearchResponse
+    {
+        public DateTime? StartedAt { get; set; }
+        public DateTime? FinishedAt { get; set; }
+        public DateTime? ExpiresAt { get; set; }
+        public int? CommandId { get; set; }
+        public string SearchId { get; set; }
+        public int AuthorId { get; set; }
+        public string MediaType { get; set; }
+        public List<BookReleaseSearchResult> BookResults { get; set; } = new();
+        public bool IsComplete { get; set; }
+        public bool IsCancelled { get; set; }
+        public bool IsFailed { get; set; }
+    }
+
+    public class BookReleaseSearchResult
+    {
+        public int IndexersQueried { get; set; }
+        public int IndexersFailed { get; set; }
+        public int BookId { get; set; }
+        public string Title { get; set; }
+        public string MediaType { get; set; }
+        public string Status { get; set; }
+        public List<ReleaseResource> Releases { get; set; } = new();
+        public List<ReleaseResource> HiddenReleases { get; set; } = new();
+    }
+
     public class ReleaseResource : RestResource
     {
+        internal ReleaseResource Copy(DateTime? expiresAt)
+        {
+            var copy = (ReleaseResource)MemberwiseClone();
+            copy.ExpiresAt = expiresAt;
+            return copy;
+        }
+
+        public bool IsGrabbed { get; set; }
+        public DateTime? ExpiresAt { get; set; }
         public string Guid { get; set; }
         public QualityModel Quality { get; set; }
         public int QualityWeight { get; set; }
@@ -185,21 +230,48 @@ namespace Chaptarr.Api.V1.Indexers
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public int? BookId { get; set; }
 
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string SearchId { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public int? SearchedBookId { get; set; }
+
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public int? DownloadClientId { get; set; }
 
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         public string DownloadClient { get; set; }
 
-        // Format type for grouping in UI (audiobook or ebook)
+        // Known release media type for UI grouping; null when unresolved.
         [JsonPropertyName("formatType")]
         public string FormatType { get; set; }
     }
 
     public static class ReleaseResourceMapper
     {
-        private static readonly Regex EbookHintRegex = new Regex(@"\b(epub|mobi|azw3|azw|pdf|djvu|cbz|cbr|fb2|ebook)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-        private static readonly Regex AudiobookHintRegex = new Regex(@"\b(audiobook|audible|mp3|m4b|m4a|flac|aac|opus|ogg|wav)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        public static ReleaseResource ToResource(this DownloadDecision decision, int initialWeight)
+        {
+            var release = decision.ToResource();
+
+            release.ReleaseWeight = initialWeight;
+            release.Rank = initialWeight + 1; // 1-based ranking (1=best, 2=second, etc.)
+            release.IsPreferredChoice = initialWeight == 0 && decision.RemoteBook.DownloadAllowed;
+
+            if (decision.RemoteBook.Author != null)
+            {
+                var qualityProfile = decision.RemoteBook.GetQualityProfile();
+                if (qualityProfile != null)
+                {
+                    release.QualityWeight = qualityProfile.GetIndex(release.Quality.Quality).Index * 100;
+                }
+            }
+
+            release.QualityWeight += release.Quality.Revision.Real * 10;
+            release.QualityWeight += release.Quality.Revision.Version;
+
+            return release;
+        }
+
 
 	        public static ReleaseResource ToResource(this DownloadDecision model)
 	        {
@@ -304,14 +376,14 @@ namespace Chaptarr.Api.V1.Indexers
 
                 // Enhanced metadata from MAM and other indexers
                 Duration = releaseInfo.Duration,
-                Narrator = releaseInfo.Narrator,
+                Narrator = releaseInfo.Narrator ?? CustomFormatCalculationService.GetKnownNarratorDisplay(remoteBook),
                 IsGraphicAudio = releaseInfo.IsGraphicAudio,
 
                 AuthorId = resolvedAuthorId > 0 ? resolvedAuthorId : null,
                 BookId = resolvedBookId,
 
                 // Format type for UI grouping
-                FormatType = GetFormatType(parsedBookInfo?.Quality?.Quality, releaseInfo, torrentInfo)
+                FormatType = GetFormatType(parsedBookInfo?.Quality?.Quality, releaseInfo)
             };
         }
 
@@ -329,7 +401,8 @@ namespace Chaptarr.Api.V1.Indexers
         private static (int? Start, int? End) GetMatchedTitleCharSpan(RemoteBook remoteBook, string releaseTitle, string displayTitle)
         {
             var match = remoteBook?.SearchCriteriaMatch;
-            if (match?.IsMatch != true || string.IsNullOrWhiteSpace(releaseTitle) || string.IsNullOrWhiteSpace(displayTitle))
+            if (match?.IsMatch != true || string.IsNullOrWhiteSpace(releaseTitle) || string.IsNullOrWhiteSpace(displayTitle) ||
+                (match.EvidenceTitle != null && !string.Equals(match.EvidenceTitle, releaseTitle, StringComparison.Ordinal)))
             {
                 return (null, null);
             }
@@ -564,160 +637,21 @@ namespace Chaptarr.Api.V1.Indexers
             return result.Trim();
         }
 
-        private static string GetFormatType(Quality quality, ReleaseInfo release, TorrentInfo torrent)
+        private static string GetFormatType(Quality quality, ReleaseInfo release)
         {
-            // Prefer explicit file type from indexers that provide it (e.g., MAM).
-            // This is the most direct indicator of "ebook vs audiobook" and avoids category mismatches.
-            var fileType = torrent?.FileType;
-            if (!string.IsNullOrWhiteSpace(fileType))
-            {
-                if (EbookHintRegex.IsMatch(fileType))
-                {
-                    return "ebook";
-                }
+            var mediaType = QualityMediaTypeHelper.DetectMediaType(quality, release);
+            if (mediaType.HasValue) return mediaType.Value.ToString().ToLowerInvariant();
 
-                if (AudiobookHintRegex.IsMatch(fileType))
-                {
-                    return "audiobook";
-                }
+            // Legacy tracker hints are display-only; acquisition uses the shared evidence rule.
+            if (release is TorrentInfo torrent)
+            {
+                if (torrent.MediaType == 1) return "audiobook";
+                if (torrent.MediaType == 2) return "ebook";
+                if (torrent.CategoryName?.StartsWith("Audiobooks", StringComparison.OrdinalIgnoreCase) == true) return "audiobook";
+                if (torrent.CategoryName?.StartsWith("Ebooks", StringComparison.OrdinalIgnoreCase) == true) return "ebook";
             }
 
-            // MyAnonaMouse provides explicit format classification in the JSON API
-            if (torrent != null)
-            {
-                if (torrent.MediaType.HasValue)
-                {
-                    if (torrent.MediaType.Value == 1)
-                    {
-                        return "audiobook";
-                    }
-
-                    if (torrent.MediaType.Value == 2)
-                    {
-                        return "ebook";
-                    }
-                }
-
-                if (torrent.MainCategory.HasValue)
-                {
-                    if (torrent.MainCategory.Value == 13)
-                    {
-                        return "audiobook";
-                    }
-
-                    if (torrent.MainCategory.Value == 14)
-                    {
-                        return "ebook";
-                    }
-                }
-
-                var categoryName = torrent.CategoryName;
-                if (!string.IsNullOrWhiteSpace(categoryName))
-                {
-                    if (categoryName.StartsWith("Audiobooks", StringComparison.OrdinalIgnoreCase))
-                    {
-                        return "audiobook";
-                    }
-
-                    if (categoryName.StartsWith("Ebooks", StringComparison.OrdinalIgnoreCase))
-                    {
-                        return "ebook";
-                    }
-                }
-            }
-
-            // Quality (container) is a strong signal and should override categories when explicit.
-            // Some Newznab indexers categorize audiobooks under general Books categories, but the quality parser can still
-            // detect MP3/M4B/FLAC/etc from the title. Prefer that so audiobooks don't land in the ebook bucket.
-            if (quality != null)
-            {
-                if (IsAudiobookFormat(quality))
-                {
-                    return "audiobook";
-                }
-
-                // Treat explicit ebook containers as ebook, but do not force Unknown into ebook until after categories.
-                if (quality != Quality.Unknown && IsEbookFormat(quality))
-                {
-                    return "ebook";
-                }
-            }
-
-            // Indexer categories are the most authoritative source for format type when available
-            // (e.g., Newznab/Torznab: 3030=Audiobook, 7000-7999=Books/Ebook/Comics/Magazines).
-            var categories = release?.Categories;
-            if (categories != null && categories.Count > 0)
-            {
-                // Prefer audiobook when both are present
-                if (categories.Any(c => c == 3030 || (c >= 3000 && c < 4000)))
-                {
-                    return "audiobook";
-                }
-
-                if (categories.Any(c => c >= 7000 && c < 8000))
-                {
-                    return "ebook";
-                }
-            }
-
-            if (quality != null)
-            {
-                // "Unknown Text" should default to ebook for UI grouping unless other signals indicate audio.
-                if (quality == Quality.Unknown)
-                {
-                    return "ebook";
-                }
-
-                if (IsEbookFormat(quality))
-                {
-                    return "ebook";
-                }
-
-                if (IsAudiobookFormat(quality))
-                {
-                    return "audiobook";
-                }
-            }
-
-            // Indexer-provided audiobook hints (MAM and other torrent sources)
-            if (torrent != null && (torrent.IsGraphicAudio || !string.IsNullOrWhiteSpace(torrent.Narrator) || !string.IsNullOrWhiteSpace(torrent.Duration)))
-            {
-                return "audiobook";
-            }
-
-            // Fallback to title inspection
-            var title = release?.Title ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(title))
-            {
-                if (EbookHintRegex.IsMatch(title))
-                {
-                    return "ebook";
-                }
-
-                if (AudiobookHintRegex.IsMatch(title))
-                {
-                    return "audiobook";
-                }
-            }
-
-            return "audiobook";
-        }
-
-        private static bool IsAudiobookFormat(Quality quality)
-        {
-            return quality.Id == Quality.MP3.Id ||
-                   quality.Id == Quality.M4B.Id ||
-                   quality.Id == Quality.FLAC.Id ||
-                   quality.Id == Quality.UnknownAudio.Id;
-        }
-
-        private static bool IsEbookFormat(Quality quality)
-        {
-            return quality.Id == Quality.Unknown.Id ||
-                   quality.Id == Quality.PDF.Id ||
-                   quality.Id == Quality.MOBI.Id ||
-                   quality.Id == Quality.EPUB.Id ||
-                   quality.Id == Quality.AZW3.Id;
+            return null;
         }
     }
 }

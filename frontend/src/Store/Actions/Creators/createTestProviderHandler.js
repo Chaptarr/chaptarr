@@ -16,7 +16,7 @@ export function createCancelTestProviderHandler(section) {
   };
 }
 
-function createTestProviderHandler(section, url) {
+function createTestProviderHandler(section, url, onSuccess) {
   return function(getState, payload, dispatch) {
     // Start test: clear any existing success messages
     dispatch(set({ section, isTesting: true, successMessages: [] }));
@@ -52,6 +52,10 @@ function createTestProviderHandler(section, url) {
 
     request.done((data) => {
       lastTestData = null;
+
+      if (onSuccess && _.isEqual(testData, getProviderState({ ...otherPayload }, getState, section))) {
+        onSuccess(data, testData, getState, dispatch);
+      }
 
       dispatch(set({
         section,

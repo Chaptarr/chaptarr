@@ -1,5 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using NLog;
+using NzbDrone.Common.Disk;
+using NzbDrone.Common.Extensions;
+using NzbDrone.Core.Books;
+using NzbDrone.Core.ImportLists;
 using System.Reflection;
 using NUnit.Framework;
 using NzbDrone.Core.HealthCheck;
@@ -56,6 +63,7 @@ namespace Chaptarr.Core.Test.HealthCheck.Checks
             audiobook.SetAudiobookSettings(CompleteSettings());
 
             var mixed = new RootFolder { Name = "Mixed", FolderType = FolderType.Mixed };
+            mixed.SetAudiobookSettings(CompleteSettings());
             mixed.SetEbookSettings(CompleteSettings());
 
             var result = CreateSubject(audiobook, mixed).Check();
@@ -84,14 +92,15 @@ namespace Chaptarr.Core.Test.HealthCheck.Checks
         }
 
         [Test]
-        public void mixed_root_should_not_require_an_unconfigured_second_side()
+        public void mixed_root_should_require_an_unconfigured_second_side()
         {
             var mixed = new RootFolder { Name = "Mixed", FolderType = FolderType.Mixed };
             mixed.SetAudiobookSettings(CompleteSettings());
 
             var result = CreateSubject(mixed).Check();
 
-            Assert.That(result.Type, Is.EqualTo(HealthCheckResult.Ok));
+            Assert.That(result.Type, Is.EqualTo(HealthCheckResult.Warning));
+            Assert.That(result.Message, Does.Contain("Mixed (Ebook)"));
         }
 
         [Test]
@@ -105,6 +114,58 @@ namespace Chaptarr.Core.Test.HealthCheck.Checks
             {
                 Assert.That(result.Type, Is.EqualTo(HealthCheckResult.Warning));
                 Assert.That(result.Message, Does.Contain("Mixed (no configured media type)"));
+            });
+        }
+
+        private class CheckDependency : DispatchProxy
+        {
+            public Func<MethodInfo, object[], object> InvokeMethod { get; set; }
+
+            public static T Create<T>(Func<MethodInfo, object[], object> invoke)
+                where T : class
+            {
+                var proxy = DispatchProxy.Create<T, CheckDependency>();
+                ((CheckDependency)(object)proxy).InvokeMethod = invoke;
+                return proxy;
+            }
+
+            protected override object Invoke(MethodInfo method, object[] args) => InvokeMethod(method, args);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void root_check_should_read_roots_once_and_check_both_media_paths(bool ebookMissing)
+        {
+            var audio = @"C:\Audiobooks".AsOsAgnostic();
+            var ebook = @"C:\Ebooks".AsOsAgnostic();
+            var roots = new List<RootFolder> { new() { Path = audio }, new() { Path = ebook } };
+            var rootReads = 0;
+            var repository = CheckDependency.Create<IRootFolderRepository>((method, args) =>
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(IRootFolderRepository.All)));
+                rootReads++;
+                return roots;
+            });
+            var rootService = new RootFolderService(repository, null, null, null, LogManager.GetCurrentClassLogger());
+            var authors = CheckDependency.Create<IAuthorService>((method, args) =>
+                new[] { "Ernest Cline", "Frank Herbert" }.SelectMany((name, index) =>
+                    new[] { audio, ebook }.Select(path => new KeyValuePair<int, string>(index + 1, Path.Combine(path, name)))).ToList());
+            var probed = new List<string>();
+            var disk = CheckDependency.Create<IDiskProvider>((method, args) =>
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(IDiskProvider.FolderExists)));
+                probed.Add((string)args[0]);
+                return !ebookMissing || !((string)args[0]).PathEquals(ebook);
+            });
+            var lists = CheckDependency.Create<IImportListFactory>((method, args) => new List<ImportListDefinition>());
+
+            var result = new RootFolderCheck(authors, lists, disk, rootService, new StubLocalizationService()).Check();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(rootReads, Is.EqualTo(1));
+                Assert.That(probed, Is.EquivalentTo(new[] { audio, ebook }));
+                Assert.That(result.Type, Is.EqualTo(ebookMissing ? HealthCheckResult.Error : HealthCheckResult.Ok));
             });
         }
 

@@ -7,6 +7,7 @@ export interface CommandBody {
   requiresDiskAccess: boolean;
   isExclusive: boolean;
   isLongRunning: boolean;
+  supportsCancellation?: boolean;
   name: string;
   lastExecutionTime: string;
   lastStartTime: string;

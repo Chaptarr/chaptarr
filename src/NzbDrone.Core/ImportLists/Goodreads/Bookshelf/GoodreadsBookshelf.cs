@@ -34,11 +34,6 @@ namespace NzbDrone.Core.ImportLists.Goodreads
         private static readonly Regex ShelfQueryRegex = new(@"[?&]shelf=(?<shelf>[^&""'<>\s]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private readonly IHttpClient _httpClient;
-        private readonly Lazy<IQualityProfileService> _qualityProfileService;
-        private readonly Lazy<IMetadataProfileService> _metadataProfileService;
-        private readonly Lazy<ITagService> _tagService;
-        private readonly IRootFolderService _rootFolderService;
-        private readonly IRootFolderSettingsResolver _rootFolderSettingsResolver;
         private DateTime _lastApiFallbackWarning;
 
         public GoodreadsBookshelf(IImportListStatusService importListStatusService,
@@ -51,14 +46,9 @@ namespace NzbDrone.Core.ImportLists.Goodreads
                                   IRootFolderService rootFolderService,
                                   IRootFolderSettingsResolver rootFolderSettingsResolver,
                                   Logger logger)
-            : base(importListStatusService, configService, parsingService, logger)
+            : base(importListStatusService, configService, parsingService, qualityProfileService, metadataProfileService, tagService, rootFolderService, rootFolderSettingsResolver, logger)
         {
             _httpClient = httpClient;
-            _qualityProfileService = qualityProfileService;
-            _metadataProfileService = metadataProfileService;
-            _tagService = tagService;
-            _rootFolderService = rootFolderService;
-            _rootFolderSettingsResolver = rootFolderSettingsResolver;
         }
 
         public override string Name => "Goodreads Bookshelves";
@@ -74,26 +64,12 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             {
                 foreach (var shelf in Settings.BookshelfIds ?? Enumerable.Empty<string>())
                 {
-                    var remainingLimit = Settings.ImportLimit > 0 ? Math.Max(Settings.ImportLimit - result.Count, 0) : 0;
-                    if (Settings.ImportLimit > 0 && remainingLimit <= 0)
-                    {
-                        break;
-                    }
+                    result.AddRange(FetchShelf(shelf, seenSourceBooks));
 
-                    foreach (var item in FetchShelf(shelf, remainingLimit))
+                    if (GoodreadsImportListLimit.HasReached(seenSourceBooks.Count, Settings.ImportLimit))
                     {
-                        GoodreadsImportListLimit.TryAdd(result, item, seenSourceBooks, Settings.ImportLimit);
-
-                        if (GoodreadsImportListLimit.HasReached(result.Count, Settings.ImportLimit))
-                        {
-                            _logger.Info("Goodreads Bookshelves import list '{0}' reached import limit of {1}; remaining Goodreads items will be skipped.",
-                                Definition?.Name ?? Name, Settings.ImportLimit);
-                            break;
-                        }
-                    }
-
-                    if (GoodreadsImportListLimit.HasReached(result.Count, Settings.ImportLimit))
-                    {
+                        _logger.Info("Goodreads Bookshelves import list '{0}' reached import limit of {1}; remaining Goodreads items will be skipped.",
+                            Definition?.Name ?? Name, Settings.ImportLimit);
                         break;
                     }
                 }
@@ -111,60 +87,10 @@ namespace NzbDrone.Core.ImportLists.Goodreads
 
         public override object RequestAction(string action, IDictionary<string, string> query)
         {
-            if (action.IsNullOrWhiteSpace())
+            var commonOptions = base.RequestAction(action, query);
+            if (commonOptions != null)
             {
-                return null;
-            }
-
-            if (action == "getAudiobookQualityProfiles")
-            {
-                return new
-                {
-                    options = BuildSelectOptions(_qualityProfileService.Value.GetByType(ProfileType.Audiobook).Select(p => (p.Id, p.Name)), includeDefault: true)
-                };
-            }
-
-            if (action == "getEbookQualityProfiles")
-            {
-                return new
-                {
-                    options = BuildSelectOptions(_qualityProfileService.Value.GetByType(ProfileType.Ebook).Select(p => (p.Id, p.Name)), includeDefault: true)
-                };
-            }
-
-            if (action == "getAudiobookMetadataProfiles")
-            {
-                return new
-                {
-                    options = BuildSelectOptions(_metadataProfileService.Value.All()
-                        .Where(p => p.ProfileType == MetadataProfileType.General || p.ProfileType == MetadataProfileType.Audiobook)
-                        .Select(p => (p.Id, p.Name)), includeDefault: true)
-                };
-            }
-
-            if (action == "getEbookMetadataProfiles")
-            {
-                return new
-                {
-                    options = BuildSelectOptions(_metadataProfileService.Value.All()
-                        .Where(p => p.ProfileType == MetadataProfileType.General || p.ProfileType == MetadataProfileType.Ebook)
-                        .Select(p => (p.Id, p.Name)), includeDefault: true)
-                };
-            }
-
-            if (action == "getTags")
-            {
-                return new
-                {
-                    options = _tagService.Value.All()
-                        .OrderBy(t => t.Label)
-                        .Select(t => new
-                        {
-                            Value = t.Id,
-                            Name = t.Label
-                        })
-                        .ToList()
-                };
+                return commonOptions;
             }
 
             if (action != "getBookshelves")
@@ -213,7 +139,6 @@ namespace NzbDrone.Core.ImportLists.Goodreads
         protected override void Test(List<ValidationFailure> failures)
         {
             failures.AddIfNotNull(TestConnection());
-            failures.AddRange(TestRootFolderConfig());
         }
 
         private ValidationFailure TestConnection()
@@ -272,84 +197,6 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             }
         }
 
-        private IEnumerable<ValidationFailure> TestRootFolderConfig()
-        {
-            var failures = new List<ValidationFailure>();
-
-            if (Settings == null)
-            {
-                return failures;
-            }
-
-            if (Settings.MonitorAudiobooks)
-            {
-                failures.AddIfNotNull(TestRootFolder(
-                    nameof(Settings.AudiobookRootFolderPath),
-                    Settings.AudiobookRootFolderPath,
-                    BookMediaType.Audiobook,
-                    Settings.AudiobookQualityProfileId,
-                    Settings.AudiobookMetadataProfileId));
-            }
-
-            if (Settings.MonitorEbooks)
-            {
-                failures.AddIfNotNull(TestRootFolder(
-                    nameof(Settings.EbookRootFolderPath),
-                    Settings.EbookRootFolderPath,
-                    BookMediaType.Ebook,
-                    Settings.EbookQualityProfileId,
-                    Settings.EbookMetadataProfileId));
-            }
-
-            return failures;
-        }
-
-        private ValidationFailure TestRootFolder(string fieldName,
-            string rootFolderPath,
-            BookMediaType mediaType,
-            int overrideQualityProfileId,
-            int overrideMetadataProfileId)
-        {
-            if (rootFolderPath.IsNullOrWhiteSpace())
-            {
-                return new ValidationFailure(fieldName, "Root folder is required");
-            }
-
-            var rootFolder = _rootFolderService.GetBestRootFolder(rootFolderPath);
-            if (rootFolder == null)
-            {
-                return new ValidationFailure(fieldName, $"Root folder '{rootFolderPath}' is not configured in Chaptarr");
-            }
-
-            if (mediaType == BookMediaType.Audiobook && rootFolder.FolderType == FolderType.Ebook)
-            {
-                return new ValidationFailure(fieldName, "Selected root folder is Ebook-only; choose an Audiobook or Mixed root folder");
-            }
-
-            if (mediaType == BookMediaType.Ebook && rootFolder.FolderType == FolderType.Audiobook)
-            {
-                return new ValidationFailure(fieldName, "Selected root folder is Audiobook-only; choose an Ebook or Mixed root folder");
-            }
-
-            var resolved = _rootFolderSettingsResolver.ResolveSettings(rootFolder, mediaType);
-            if (resolved == null || !resolved.IsConfigured)
-            {
-                return new ValidationFailure(fieldName, $"Selected root folder '{rootFolder.Path}' does not have {mediaType} defaults configured");
-            }
-
-            if (overrideQualityProfileId <= 0 && (resolved.QualityProfileId ?? 0) <= 0)
-            {
-                return new ValidationFailure(fieldName, $"Selected root folder '{rootFolder.Path}' is missing a {mediaType} quality profile default");
-            }
-
-            if (overrideMetadataProfileId <= 0 && (resolved.MetadataProfileId ?? 0) <= 0)
-            {
-                return new ValidationFailure(fieldName, $"Selected root folder '{rootFolder.Path}' is missing a {mediaType} metadata profile default");
-            }
-
-            return null;
-        }
-
         private enum ShelfFetchStatus
         {
             Success,
@@ -363,7 +210,7 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             public XDocument Document { get; set; }
         }
 
-        private IEnumerable<ImportListItemInfo> FetchShelf(string shelf, int remainingLimit)
+        private IEnumerable<ImportListItemInfo> FetchShelf(string shelf, HashSet<string> seenSourceBooks)
         {
             var userId = GetNormalizedUserId();
             if (userId.IsNullOrWhiteSpace())
@@ -372,7 +219,7 @@ namespace NzbDrone.Core.ImportLists.Goodreads
                 yield break;
             }
 
-            var apiStatus = TryFetchShelfFromReviewListApi(userId, shelf, remainingLimit, out var apiItems);
+            var apiStatus = TryFetchShelfFromReviewListApi(userId, shelf, seenSourceBooks, out var apiItems);
             if (apiStatus == ShelfFetchStatus.Success)
             {
                 foreach (var item in apiItems)
@@ -390,13 +237,13 @@ namespace NzbDrone.Core.ImportLists.Goodreads
 
             WarnApiToRssFallback(null, userId, shelf, "review/list.xml or shelf/list.xml unavailable");
 
-            foreach (var item in FetchShelfFromRss(userId, shelf))
+            foreach (var item in FetchShelfFromRss(userId, shelf, seenSourceBooks))
             {
                 yield return item;
             }
         }
 
-        private ShelfFetchStatus TryFetchShelfFromReviewListApi(string userId, string shelf, int remainingLimit, out List<ImportListItemInfo> items)
+        private ShelfFetchStatus TryFetchShelfFromReviewListApi(string userId, string shelf, HashSet<string> seenSourceBooks, out List<ImportListItemInfo> items)
         {
             items = new List<ImportListItemInfo>();
 
@@ -423,9 +270,12 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             }
 
             var page1Reviews = GetDirectReviewElements(page1).ToList();
-            items.AddRange(ParseReviewListItems(page1Reviews));
+            foreach (var item in ParseReviewListItems(page1Reviews))
+            {
+                GoodreadsImportListLimit.TryAdd(items, item, seenSourceBooks, Settings.ImportLimit);
+            }
 
-            if (page1Reviews.Count == 0 || page1Reviews.Count < ReviewsPerPage || (remainingLimit > 0 && items.Count >= remainingLimit))
+            if (page1Reviews.Count == 0 || page1Reviews.Count < ReviewsPerPage || GoodreadsImportListLimit.HasReached(seenSourceBooks.Count, Settings.ImportLimit))
             {
                 return ShelfFetchStatus.Success;
             }
@@ -436,7 +286,7 @@ namespace NzbDrone.Core.ImportLists.Goodreads
                 totalPages = Math.Min(MaxPages, (int)Math.Ceiling(total / (double)ReviewsPerPage));
             }
 
-            foreach (var page in FetchRemainingReviewListPages(userId, apiShelf, totalPages))
+            foreach (var page in FetchRemainingReviewListPages(userId, apiShelf, totalPages, seenSourceBooks))
             {
                 var reviews = GetDirectReviewElements(page.Document).ToList();
                 if (reviews.Count == 0)
@@ -444,9 +294,12 @@ namespace NzbDrone.Core.ImportLists.Goodreads
                     break;
                 }
 
-                items.AddRange(ParseReviewListItems(reviews));
+                foreach (var item in ParseReviewListItems(reviews))
+                {
+                    GoodreadsImportListLimit.TryAdd(items, item, seenSourceBooks, Settings.ImportLimit);
+                }
 
-                if (reviews.Count < ReviewsPerPage || (remainingLimit > 0 && items.Count >= remainingLimit))
+                if (reviews.Count < ReviewsPerPage)
                 {
                     break;
                 }
@@ -455,7 +308,7 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             return ShelfFetchStatus.Success;
         }
 
-        private IEnumerable<ReviewListPage> FetchRemainingReviewListPages(string userId, string shelf, int totalPages)
+        private IEnumerable<ReviewListPage> FetchRemainingReviewListPages(string userId, string shelf, int totalPages, HashSet<string> seenSourceBooks)
         {
             if (totalPages <= 1)
             {
@@ -465,6 +318,11 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             var pages = Enumerable.Range(2, totalPages - 1).ToList();
             for (var i = 0; i < pages.Count; i += ReviewListParallelism)
             {
+                if (GoodreadsImportListLimit.HasReached(seenSourceBooks.Count, Settings.ImportLimit))
+                {
+                    yield break;
+                }
+
                 var wave = pages.Skip(i).Take(ReviewListParallelism).ToList();
                 var tasks = wave
                     .Select(page => Task.Run(() => TryGetReviewListPage(userId, shelf, page)))
@@ -502,7 +360,7 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             }
         }
 
-        private IEnumerable<ImportListItemInfo> FetchShelfFromRss(string userId, string shelf)
+        private IEnumerable<ImportListItemInfo> FetchShelfFromRss(string userId, string shelf, HashSet<string> seenSourceBooks)
         {
             var page = 1;
             while (page <= MaxPages)
@@ -534,6 +392,7 @@ namespace NzbDrone.Core.ImportLists.Goodreads
                     yield break;
                 }
 
+                var pageItems = new List<ImportListItemInfo>();
                 foreach (var item in rssItems)
                 {
                     var title = item.Element("title")?.Value.CleanSpaces();
@@ -549,13 +408,23 @@ namespace NzbDrone.Core.ImportLists.Goodreads
                     }
 
                     // Goodreads RSS does not include work/author IDs; carry edition IDs forward for fallback mapping.
-                    yield return new ImportListItemInfo
+                    GoodreadsImportListLimit.TryAdd(pageItems, new ImportListItemInfo
                     {
                         Author = authorName,
                         Book = title,
                         EditionGoodreadsId = PrefixGoodreadsId(bookId),
                         ReleaseDate = releaseDate
-                    };
+                    }, seenSourceBooks, Settings.ImportLimit);
+                }
+
+                foreach (var item in pageItems)
+                {
+                    yield return item;
+                }
+
+                if (GoodreadsImportListLimit.HasReached(seenSourceBooks.Count, Settings.ImportLimit))
+                {
+                    yield break;
                 }
 
                 page++;
@@ -940,29 +809,5 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             return default;
         }
 
-        private static List<object> BuildSelectOptions(IEnumerable<(int id, string name)> items, bool includeDefault)
-        {
-            var options = new List<object>();
-
-            if (includeDefault)
-            {
-                options.Add(new
-                {
-                    Value = 0,
-                    Name = "Use root folder defaults",
-                    LocalizationKey = "UseRootFolderDefaults"
-                });
-            }
-
-            options.AddRange(items
-                .OrderBy(i => i.name)
-                .Select(i => new
-                {
-                    Value = i.id,
-                    Name = i.name
-                }));
-
-            return options;
-        }
     }
 }

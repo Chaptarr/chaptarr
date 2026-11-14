@@ -19,8 +19,8 @@ namespace Chaptarr.Core.Test.Download
         {
             public Func<string, DownloadHistory> LatestGrab { get; set; }
 
-            public bool DownloadAlreadyImported(string downloadId) => throw new NotImplementedException();
             public DownloadHistory GetLatestDownloadHistoryItem(string downloadId) => throw new NotImplementedException();
+            public List<DownloadHistory> GetLatestDownloadHistoryItems(IEnumerable<string> downloadIds) => throw new NotImplementedException();
             public DownloadHistory GetLatestGrab(string downloadId) => LatestGrab?.Invoke(downloadId);
             public PagingSpec<DownloadHistory> CurrentlyIgnored(PagingSpec<DownloadHistory> pagingSpec) => throw new NotImplementedException();
             public List<string> RemoveIgnored(int id) => throw new NotImplementedException();
@@ -89,7 +89,7 @@ namespace Chaptarr.Core.Test.Download
         }
 
         private static DownloadImportModeResolver BuildResolver(
-            StubDownloadHistoryService downloadHistory,
+            IDownloadHistoryService downloadHistory,
             Func<int, IndexerDefinition> findIndexer,
             Func<int, DownloadClientDefinition> findClient)
         {
@@ -170,6 +170,34 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(resolver.ShouldPreserveDownloadClientItem(item), Is.True);
         }
 
+        [TestCase(null, 10, DownloadProtocol.Torrent, true)]
+        [TestCase(0, 10, DownloadProtocol.Torrent, true)]
+        [TestCase(20, 10, DownloadProtocol.Torrent, false)]
+        [TestCase(10, 20, DownloadProtocol.Torrent, true)]
+        [TestCase(null, 0, DownloadProtocol.Torrent, false)]
+        [TestCase(null, 20, DownloadProtocol.Torrent, false)]
+        [TestCase(null, 10, DownloadProtocol.Usenet, false)]
+        public void should_use_retained_indexer_only_when_grab_history_has_no_indexer(
+            int? historyIndexerId, int retainedIndexerId, DownloadProtocol protocol, bool expected)
+        {
+            var history = new StubDownloadHistoryService
+            {
+                LatestGrab = _ => historyIndexerId.HasValue ? new DownloadHistory { IndexerId = historyIndexerId.Value } : null
+            };
+            var indexer = new IndexerDefinition
+            {
+                Id = 10,
+                Settings = new TestTorrentIndexerSettings
+                {
+                    SeedCriteria = new SeedCriteriaSettings { NeverMoveOnImport = true }
+                }
+            };
+            var resolver = BuildResolver(history, id => id == indexer.Id ? indexer : null, _ => null);
+            var item = DownloadItem("ABC", downloadClientId: 5, protocol: protocol, canMove: true);
+
+            Assert.That(resolver.ShouldPreserveDownloadClientItem(item, retainedIndexerId), Is.EqualTo(expected));
+        }
+
         [Test]
         public void should_return_move_for_unmanaged_download_when_client_flag_disabled()
         {
@@ -233,13 +261,19 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(resolver.Resolve(ImportMode.Auto, item), Is.EqualTo(ImportMode.Move));
         }
 
-        [Test]
-        public void should_find_grab_history_with_common_case_variants()
+        [TestCase("abc")]
+        [TestCase("ABC")]
+        public void should_use_history_service_hash_normalization(string hash)
         {
-            var history = new StubDownloadHistoryService
+            var lookups = 0;
+            var repository = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IDownloadHistoryRepository>((method, args) =>
             {
-                LatestGrab = id => id == "abc" ? new DownloadHistory { IndexerId = 10 } : null
-            };
+                Assert.That(method.Name, Is.EqualTo(nameof(IDownloadHistoryRepository.FindByDownloadId)));
+                Assert.That(args[0], Is.EqualTo("ABC"));
+                lookups++;
+                return new List<DownloadHistory> { new() { IndexerId = 10, EventType = DownloadHistoryEventType.DownloadGrabbed } };
+            });
+            var history = new DownloadHistoryService(repository, null);
 
             var indexerDefinition = new IndexerDefinition { Id = 10 };
             indexerDefinition.Settings = new TestTorrentIndexerSettings
@@ -251,9 +285,10 @@ namespace Chaptarr.Core.Test.Download
             };
 
             var resolver = BuildResolver(history, id => id == 10 ? indexerDefinition : null, _ => null);
-            var item = DownloadItem("ABC", downloadClientId: 5, protocol: DownloadProtocol.Torrent, canMove: true);
+            var item = DownloadItem(hash, downloadClientId: 5, protocol: DownloadProtocol.Torrent, canMove: true);
 
             Assert.That(resolver.Resolve(ImportMode.Auto, item), Is.EqualTo(ImportMode.Copy));
+            Assert.That(lookups, Is.EqualTo(1));
         }
     }
 }

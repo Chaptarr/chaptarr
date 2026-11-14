@@ -3,12 +3,16 @@
   align-items: center;
   justify-content: flex-end;
   flex-shrink: 0;
+  flex-wrap: wrap;
   padding: 15px 30px;
   border-top: 1px solid var(--borderColor);
+  row-gap: 10px;
 
   a,
   button {
     margin-left: 10px;
+    white-space: normal;
+    overflow-wrap: anywhere;
 
     &:first-child {
       margin-left: 0;

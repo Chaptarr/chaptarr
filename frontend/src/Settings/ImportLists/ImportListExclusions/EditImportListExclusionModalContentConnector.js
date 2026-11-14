@@ -9,7 +9,8 @@ import EditImportListExclusionModalContent from './EditImportListExclusionModalC
 
 const newImportListExclusion = {
   authorName: '',
-  foreignId: ''
+  foreignId: '',
+  mediaType: null
 };
 
 function createImportListExclusionSelector() {

@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
@@ -24,10 +24,14 @@ namespace NzbDrone.Core.MediaCover
 {
     public interface IMapCoversToLocal
     {
-        void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IEnumerable<MediaCover> covers, string selectedAuthorImageHash = null);
+        void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<MediaCover> covers, string selectedAuthorImageHash = null);
         string GetCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCoverTypes coverType, string extension, int? height = null);
         void EnsureAuthorCovers(Author author);
         void EnsureBookCovers(Book book);
+        void EnsureBookCoversForBooks(List<Book> books);
+        void EnsureBookCoversForImport(Book book);
+        void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<MediaCover>>> covers);
+        void DeleteBookCovers(int bookId);
         Task<EnsureImageResult> EnsureAuthorImage(Author author, MediaCover cover);
     }
 
@@ -54,6 +58,7 @@ namespace NzbDrone.Core.MediaCover
         private readonly string _coverRootFolder;
 
         private const int MaxImageRedirects = 5;
+        private const string CachedRenditionVerification = "cached-rendition";
         private static readonly TimeSpan ImageRequestTimeout = TimeSpan.FromSeconds(30);
 
         // ImageSharp is slow on ARM (no hardware acceleration on mono yet)
@@ -97,242 +102,7 @@ namespace NzbDrone.Core.MediaCover
 
         private bool TryGetSafeImageUrl(string url, out string safeUrl, out string reason)
         {
-            safeUrl = null;
-            reason = null;
-
-            if (string.IsNullOrWhiteSpace(url))
-            {
-                reason = "empty_url";
-                return false;
-            }
-
-            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            {
-                reason = "invalid_url";
-                return false;
-            }
-
-            if (!uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
-                !uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
-            {
-                reason = "invalid_scheme";
-                return false;
-            }
-
-            if (!string.IsNullOrWhiteSpace(uri.UserInfo))
-            {
-                reason = "userinfo_not_allowed";
-                return false;
-            }
-
-            if (string.IsNullOrWhiteSpace(uri.Host))
-            {
-                reason = "missing_host";
-                return false;
-            }
-
-            if (!IsTrustedCoverHost(uri.Host) && HostResolvesToPrivateOrLocalAddress(uri.Host, out var privateReason))
-            {
-                reason = privateReason;
-                return false;
-            }
-
-            safeUrl = uri.ToString();
-            return true;
-        }
-
-        private bool IsTrustedCoverHost(string host)
-        {
-            var metadataHost = GetMetadataServerHost();
-            if (string.IsNullOrWhiteSpace(metadataHost) || string.IsNullOrWhiteSpace(host))
-            {
-                return false;
-            }
-
-            if (host.Equals(metadataHost, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            // If the user configured the metadata server on loopback, allow loopback cover URLs as well.
-            return IsLoopbackHost(metadataHost) && IsLoopbackHost(host);
-        }
-
-        private string GetMetadataServerHost()
-        {
-            try
-            {
-                var url = _configService.MetadataServerUrl;
-                if (string.IsNullOrWhiteSpace(url))
-                {
-                    return null;
-                }
-
-                return new Uri(url).Host;
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static bool IsLoopbackHost(string host)
-        {
-            if (string.IsNullOrWhiteSpace(host))
-            {
-                return false;
-            }
-
-            host = host.Trim().Trim('[', ']');
-
-            if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-
-            return IPAddress.TryParse(host, out var ip) && IPAddress.IsLoopback(ip);
-        }
-
-        private bool HostResolvesToPrivateOrLocalAddress(string host, out string reason)
-        {
-            reason = null;
-
-            if (string.IsNullOrWhiteSpace(host))
-            {
-                reason = "missing_host";
-                return true;
-            }
-
-            host = host.Trim().Trim('[', ']');
-
-            if (host.Equals("metadata.google.internal", StringComparison.OrdinalIgnoreCase) ||
-                host.Equals("metadata.google.internal.", StringComparison.OrdinalIgnoreCase))
-            {
-                reason = "cloud_metadata_host";
-                return true;
-            }
-
-            IPAddress[] addresses;
-            if (IPAddress.TryParse(host, out var ip))
-            {
-                addresses = new[] { ip };
-            }
-            else
-            {
-                try
-                {
-                    addresses = Dns.GetHostAddresses(host);
-                }
-                catch
-                {
-                    reason = "dns_lookup_failed";
-                    return true;
-                }
-            }
-
-            if (addresses == null || addresses.Length == 0)
-            {
-                reason = "dns_no_records";
-                return true;
-            }
-
-            foreach (var address in addresses)
-            {
-                if (IsPrivateOrLocalAddress(address))
-                {
-                    reason = "private_or_local_address";
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private static bool IsPrivateOrLocalAddress(IPAddress ip)
-        {
-            if (ip == null)
-            {
-                return true;
-            }
-
-            if (IPAddress.IsLoopback(ip))
-            {
-                return true;
-            }
-
-            if (ip.IsIPv4MappedToIPv6)
-            {
-                ip = ip.MapToIPv4();
-            }
-
-            if (ip.AddressFamily == AddressFamily.InterNetwork)
-            {
-                var bytes = ip.GetAddressBytes();
-
-                // 0.0.0.0/8 is "this network" and can behave unexpectedly.
-                if (bytes[0] == 0)
-                {
-                    return true;
-                }
-
-                // 10.0.0.0/8
-                if (bytes[0] == 10)
-                {
-                    return true;
-                }
-
-                // 127.0.0.0/8
-                if (bytes[0] == 127)
-                {
-                    return true;
-                }
-
-                // 169.254.0.0/16 (link-local)
-                if (bytes[0] == 169 && bytes[1] == 254)
-                {
-                    return true;
-                }
-
-                // 172.16.0.0/12
-                if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
-                {
-                    return true;
-                }
-
-                // 192.168.0.0/16
-                if (bytes[0] == 192 && bytes[1] == 168)
-                {
-                    return true;
-                }
-
-                // 100.64.0.0/10 (carrier-grade NAT)
-                if (bytes[0] == 100 && bytes[1] >= 64 && bytes[1] <= 127)
-                {
-                    return true;
-                }
-
-                // Multicast/broadcast/reserved (224.0.0.0/4 + 240.0.0.0/4).
-                if (bytes[0] >= 224)
-                {
-                    return true;
-                }
-            }
-            else if (ip.AddressFamily == AddressFamily.InterNetworkV6)
-            {
-                if (ip.Equals(IPAddress.IPv6Loopback) || ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal || ip.IsIPv6Multicast)
-                {
-                    return true;
-                }
-
-                // Unique local addresses (fc00::/7)
-                var bytes = ip.GetAddressBytes();
-                if ((bytes[0] & 0xFE) == 0xFC)
-                {
-                    return true;
-                }
-            }
-
-            return false;
+            return MediaCoverUrlSafetyPolicy.TryGetSafeImageUrl(url, _configService, out safeUrl, out reason);
         }
 
         private HttpResponse GetImageResponse(string url, bool rangeRequest, string userAgent = null)
@@ -398,7 +168,30 @@ namespace NzbDrone.Core.MediaCover
             return Path.Combine(GetAuthorCoverPath(entityId), coverType.ToString().ToLower() + heightSuffix + GetExtension(coverType, extension));
         }
 
-        public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IEnumerable<MediaCover> covers, string selectedAuthorImageHash = null)
+        public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<MediaCover>>> covers)
+        {
+            var books = covers.ToList();
+            var eligible = LibraryCoversOnly
+                ? _bookService.GetLibraryBookIds(books.Select(book => book.Key)).ToHashSet()
+                : null;
+
+            foreach (var book in books)
+            {
+                ConvertToLocalUrls(book.Key, MediaCoverEntity.Book, book.Value, null,
+                    eligible == null || eligible.Contains(book.Key));
+            }
+        }
+
+        private bool LibraryCoversOnly => _configService?.CoverDownloadScope == CoverDownloadScope.LibraryBooks;
+
+        public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<MediaCover> covers, string selectedAuthorImageHash = null)
+        {
+            var eligible = coverEntity != MediaCoverEntity.Book || entityId <= 0 || !LibraryCoversOnly ||
+                _bookService.GetLibraryBookIds(new[] { entityId }).Contains(entityId);
+            ConvertToLocalUrls(entityId, coverEntity, covers, selectedAuthorImageHash, eligible);
+        }
+
+        private void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<MediaCover> covers, string selectedAuthorImageHash, bool cacheBookCover)
         {
             var coverList = covers?.Where(cover => cover != null).ToList() ?? new List<MediaCover>();
 
@@ -432,6 +225,14 @@ namespace NzbDrone.Core.MediaCover
 
                 var remoteUrl = mediaCover.RemoteUrl ?? mediaCover.Url;
                 mediaCover.RemoteUrl = remoteUrl;
+                mediaCover.TemporaryUrl = null;
+                if (coverEntity == MediaCoverEntity.Book && !cacheBookCover)
+                {
+                    mediaCover.TemporaryUrl = GetTemporaryBookCoverUrl(entityId, remoteUrl) ?? string.Empty;
+                    mediaCover.Url = null;
+                    continue;
+                }
+
                 string filePath = null;
                 string cacheToken = null;
 
@@ -439,7 +240,8 @@ namespace NzbDrone.Core.MediaCover
                 {
                     var coverPath = GetCoverPath(entityId, coverEntity, mediaCover.CoverType, mediaCover.Extension);
                     filePath = GetVariantPath(coverPath, ComputeHash(remoteUrl));
-                    cacheToken = selectedAuthorImageHash;
+                    // The selection hash identifies a URL, not its bytes. A fallback
+                    // rendition can be replaced by the original at this same path.
                 }
                 else if (coverEntity == MediaCoverEntity.Author)
                 {
@@ -451,7 +253,7 @@ namespace NzbDrone.Core.MediaCover
                     if (!selectedCoverOwnsType &&
                         TryReadAuthorCoverIdentity(entityId, mediaCover.CoverType, out var storedUrl, out var contentHash) &&
                         !string.IsNullOrWhiteSpace(remoteUrl) &&
-                        storedUrl.Equals(remoteUrl, StringComparison.OrdinalIgnoreCase))
+                        MediaCoverRendition.RemoteUrlsMatch(storedUrl, remoteUrl))
                     {
                         filePath = GetDeterministicLocalCoverPath(entityId, coverEntity, mediaCover);
                         cacheToken = contentHash;
@@ -477,10 +279,30 @@ namespace NzbDrone.Core.MediaCover
                 }
                 else if (!string.IsNullOrWhiteSpace(remoteUrl) && remoteUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
                 {
-                    mediaCover.Url = remoteUrl;
-                    _mediaCoverProxy.ProxyRemoteUrls(new[] { mediaCover });
+                    if (coverEntity == MediaCoverEntity.Book)
+                    {
+                        mediaCover.Url = GetTemporaryBookCoverUrl(entityId, remoteUrl);
+                    }
+                    else
+                    {
+                        mediaCover.Url = remoteUrl;
+                        _mediaCoverProxy.ProxyRemoteUrls(new[] { mediaCover });
+                    }
                 }
             }
+
+            // Selecting a local rendition must not reorder the provider list: carousel
+            // positions and navigation must survive the resource update after each save.
+        }
+
+        private string GetTemporaryBookCoverUrl(int bookId, string remoteUrl)
+        {
+            if (string.IsNullOrWhiteSpace(remoteUrl) || MediaCoverRendition.IsKnownPlaceholderImageUrl(remoteUrl))
+            {
+                return null;
+            }
+
+            return $"{_configFileProvider.UrlBase}/MediaCoverProxy/book/{bookId}/{MediaCoverProxy.GetProxyFileName(remoteUrl)}?v={remoteUrl.SHA256Hash()}";
         }
 
         private string GetDeterministicLocalCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCover mediaCover)
@@ -547,7 +369,7 @@ namespace NzbDrone.Core.MediaCover
         {
             return TryReadAuthorCoverIdentity(authorId, coverType, out var storedUrl, out _) &&
                    !string.IsNullOrWhiteSpace(remoteUrl) &&
-                   storedUrl.Equals(remoteUrl, StringComparison.OrdinalIgnoreCase);
+                   MediaCoverRendition.RemoteUrlsMatch(storedUrl, remoteUrl);
         }
 
         private void StoreAuthorCoverIdentity(int authorId, MediaCover cover, string contentHash)
@@ -835,51 +657,67 @@ namespace NzbDrone.Core.MediaCover
                         return new EnsureImageResult { State = "downloaded", Path = variantPath };
                     }
 
-                    if (TryVerifyExistingAuthorVariant(variantPath, verificationPath, cover.Url, out var existingIsPlaceholder))
-                    {
-                        return new EnsureImageResult { State = "downloaded", Path = variantPath };
-                    }
-
-                    if (existingIsPlaceholder)
+                    if (ExistingAuthorVariantIsPlaceholder(variantPath, verificationPath, cover.Url))
                     {
                         RejectPlaceholderAuthorImage(author, cover.Url);
                         return new EnsureImageResult { State = "error", ErrorCode = "placeholder_image" };
                     }
                 }
 
-                var directory = Path.GetDirectoryName(variantPath);
-                _diskProvider.EnsureFolder(directory);
-
-                HttpResponse response;
+                byte[] imageData;
+                var usedCachedRendition = false;
 
                 try
                 {
-                    response = GetImageResponse(cover.Url, rangeRequest: false);
+                    imageData = GetImageResponse(cover.Url, rangeRequest: false)?.ResponseData;
                 }
-                catch (HttpException e) when (e.Response?.StatusCode == HttpStatusCode.Forbidden || e.Response?.StatusCode == HttpStatusCode.NotFound)
+                catch (Exception ex) when (ex is HttpException || ex is WebException)
                 {
-                    _logger.Warn("On-demand author image download failed ({0}) for {1} from URL: {2}", e.Response?.StatusCode, author.Name, cover.Url);
-                    return new EnsureImageResult { State = "error", ErrorCode = "download_failed" };
+                    _logger.Warn(ex, "On-demand author image download failed for {0} from URL: {1}", author.Name, cover.Url);
+                    // Keep a URL-keyed fallback even if the canonical photo has since changed.
+                    var cachedCoverPath = MediaCoverRendition.IsUsable(variantPath, _diskProvider) ? variantPath : null;
+                    if (cachedCoverPath == null && AuthorCoverMatchesRemoteUrl(author.Id, cover.CoverType, cover.Url))
+                    {
+                        cachedCoverPath = MediaCoverRendition.FindExistingPath(
+                            height => GetCoverPath(author.Id, MediaCoverEntity.Author, cover.CoverType, cover.Extension, height),
+                            _diskProvider, cover.CoverType) ?? MediaCoverRendition.FindExistingPath(
+                            height => GetCoverPath(author.Id, MediaCoverEntity.Author, cover.CoverType, ".jpg", height),
+                            _diskProvider, cover.CoverType);
+                    }
+
+                    if (cachedCoverPath == null)
+                    {
+                        return new EnsureImageResult { State = "error", ErrorCode = "download_failed" };
+                    }
+
+                    using var cachedStream = _diskProvider.OpenReadStream(cachedCoverPath);
+                    using var buffer = new MemoryStream();
+                    cachedStream.CopyTo(buffer);
+                    imageData = buffer.ToArray();
+                    usedCachedRendition = true;
                 }
 
-                if (response?.ResponseData == null || response.ResponseData.Length == 0)
+                if (imageData == null || imageData.Length == 0)
                 {
                     return new EnsureImageResult { State = "error", ErrorCode = "empty_response" };
                 }
 
-                if (MediaCoverRendition.InspectDownloadedImage(cover.Url, response.ResponseData, out var contentHash))
+                if (MediaCoverRendition.InspectDownloadedImage(cover.Url, imageData, out var contentHash))
                 {
                     DeleteAuthorVariant(variantPath, verificationPath);
                     RejectPlaceholderAuthorImage(author, cover.Url);
                     return new EnsureImageResult { State = "error", ErrorCode = "placeholder_image" };
                 }
 
-                using (var stream = new MemoryStream(response.ResponseData))
+                _diskProvider.EnsureFolder(Path.GetDirectoryName(variantPath));
+
+                using (var stream = new MemoryStream(imageData))
                 {
                     _diskProvider.SaveStream(stream, variantPath);
                 }
 
-                _diskProvider.WriteAllText(verificationPath, contentHash);
+                // Reuse the existing sidecar, but never certify a thumbnail as the original.
+                _diskProvider.WriteAllText(verificationPath, usedCachedRendition ? CachedRenditionVerification : MediaCoverRendition.OriginalImageVerificationPrefix + contentHash);
 
                 try
                 {
@@ -903,25 +741,28 @@ namespace NzbDrone.Core.MediaCover
             }
         }
 
-        private bool TryVerifyExistingAuthorVariant(string variantPath, string verificationPath, string remoteUrl, out bool isPlaceholder)
+        private bool ExistingAuthorVariantIsPlaceholder(string variantPath, string verificationPath, string remoteUrl)
         {
-            isPlaceholder = false;
 
             try
             {
-                using var stream = _diskProvider.OpenReadStream(variantPath);
-                using var sha256 = SHA256.Create();
-                var contentHash = Convert.ToHexString(sha256.ComputeHash(stream)).ToLowerInvariant();
-                isPlaceholder = MediaCoverRendition.RegisterKnownPlaceholderImage(remoteUrl, contentHash);
-
-                if (isPlaceholder)
+                if (_diskProvider.FileExists(verificationPath) &&
+                    _diskProvider.ReadAllText(verificationPath) == CachedRenditionVerification)
                 {
-                    DeleteAuthorVariant(variantPath, verificationPath);
                     return false;
                 }
 
-                _diskProvider.WriteAllText(verificationPath, contentHash);
-                return true;
+                using var stream = _diskProvider.OpenReadStream(variantPath);
+                using var sha256 = SHA256.Create();
+                var contentHash = Convert.ToHexString(sha256.ComputeHash(stream)).ToLowerInvariant();
+                if (MediaCoverRendition.RegisterKnownPlaceholderImage(remoteUrl, contentHash))
+                {
+                    DeleteAuthorVariant(variantPath, verificationPath);
+                    return true;
+                }
+
+                // Legacy hashes certify bytes, not whether those bytes were a resized copy.
+                return false;
             }
             catch (Exception ex)
             {
@@ -952,14 +793,59 @@ namespace NzbDrone.Core.MediaCover
 
         public void EnsureBookCovers(Book book)
         {
-            if (book == null || book.Id == 0)
+            if (book == null || book.Id <= 0)
+            {
+                return;
+            }
+
+            var eligible = !LibraryCoversOnly || _bookService.GetLibraryBookIds(new[] { book.Id }).Contains(book.Id);
+            EnsureBookCovers(book, eligible, forImport: false);
+        }
+
+        public void EnsureBookCoversForImport(Book book)
+        {
+            // An import needs its cover before the first file record can be committed.
+            EnsureBookCovers(book, eligible: true, forImport: true);
+        }
+
+        public void EnsureBookCoversForBooks(List<Book> books)
+        {
+            var candidates = books?.Where(book => book?.Id > 0).DistinctBy(book => book.Id).ToList() ?? new List<Book>();
+            var timer = Stopwatch.StartNew();
+            HashSet<int> eligible = null;
+            var skipped = 0;
+            foreach (var book in candidates)
+            {
+                var libraryOnly = LibraryCoversOnly;
+                if (libraryOnly && eligible == null)
+                {
+                    eligible = _bookService.GetLibraryBookIds(candidates.Select(candidate => candidate.Id)).ToHashSet();
+                }
+
+                var keep = !libraryOnly || eligible.Contains(book.Id);
+                if (!keep)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                EnsureBookCovers(book, eligible: true, forImport: false);
+            }
+
+            _logger.Debug("Book-cover batch: {0} considered, {1} eligible, {2} skipped in {3} ms",
+                candidates.Count, candidates.Count - skipped, skipped, timer.ElapsedMilliseconds);
+        }
+
+        private void EnsureBookCovers(Book book, bool eligible, bool forImport)
+        {
+            if (book == null || book.Id <= 0 || (!forImport && LibraryCoversOnly && !eligible))
             {
                 return;
             }
 
             // Atomically queue the cover when downloads are deferred. Import callers can
             // legitimately hand us a null/unsaved book during rollback.
-            if (_deferredCoverService.MarkBookForCoverDownload(book.Id))
+            if (!forImport && _deferredCoverService.MarkBookForCoverDownload(book.Id))
             {
                 _logger.Debug("Cover download deferred for book {0}: {1}", book.Id, book.Title);
                 return;
@@ -1172,19 +1058,21 @@ namespace NzbDrone.Core.MediaCover
                    storedCoverUrl.Equals(remoteUrl, StringComparison.OrdinalIgnoreCase);
         }
 
-        private void RemoveBookCoverArtifacts(int bookId)
+        public void DeleteBookCovers(int bookId)
         {
             _bookCoverMetadataByBookId.TryRemove(bookId, out _);
-
             var coverPath = GetBookCoverPath(bookId);
-            if (!_diskProvider.FolderExists(coverPath))
-            {
-                return;
-            }
-
-            try
+            if (_diskProvider.FolderExists(coverPath))
             {
                 _diskProvider.DeleteFolder(coverPath, recursive: true);
+            }
+        }
+
+        private void RemoveBookCoverArtifacts(int bookId)
+        {
+            try
+            {
+                DeleteBookCovers(bookId);
             }
             catch (Exception ex)
             {
@@ -1300,16 +1188,7 @@ namespace NzbDrone.Core.MediaCover
             _logger.Debug("Downloading {0} for {1} {2}", cover.CoverType, book, cover.Url);
             var response = GetImageResponse(cover.Url, rangeRequest: false);
 
-            if (response?.ResponseData == null || response.ResponseData.Length == 0)
-            {
-                throw new InvalidDataException($"Cover response from '{cover.Url}' was empty");
-            }
-
-            if (response.Headers?.ContentType?.StartsWith("text/", StringComparison.OrdinalIgnoreCase) == true ||
-                response.Headers?.ContentType?.Contains("json", StringComparison.OrdinalIgnoreCase) == true)
-            {
-                throw new InvalidDataException($"Cover response from '{cover.Url}' had non-image content type '{response.Headers.ContentType}'");
-            }
+            MediaCoverRendition.ValidateImageResponse(response?.ResponseData, response?.Headers?.ContentType);
 
             var temporaryPath = fileName + ".download-" + Guid.NewGuid().ToString("N");
             try
@@ -1527,10 +1406,7 @@ namespace NzbDrone.Core.MediaCover
 
                 // Restore Readarr's eager child-cover lifecycle, while Chaptarr's
                 // selector restricts persistence to each book's monitored edition.
-                foreach (var book in _bookService.GetBooksByAuthor(message.Author.Id))
-                {
-                    EnsureBookCovers(book);
-                }
+                EnsureBookCoversForBooks(_bookService.GetBooksByAuthor(message.Author.Id));
 
 	            _eventAggregator.PublishEvent(new MediaCoversUpdatedEvent(message.Author));
 	        }
@@ -1552,29 +1428,8 @@ namespace NzbDrone.Core.MediaCover
 
         public void HandleAsync(BookDeletedEvent message)
         {
-            _bookCoverMetadataByBookId.TryRemove(message.Book.Id, out _);
-            var path = GetBookCoverPath(message.Book.Id);
-            if (_diskProvider.FolderExists(path))
-            {
-                _diskProvider.DeleteFolder(path, true);
-            }
+            DeleteBookCovers(message.Book.Id);
         }
-
-	        private static bool IsAudiobookEdition(Edition edition)
-	        {
-	            if (edition == null) return false;
-
-	            if (edition.ReadingFormatId == 2) return true;
-
-	            if (edition.DurationSeconds.HasValue && edition.DurationSeconds.Value > 0) return true;
-
-	            var format = edition.EditionFormat ?? edition.Format;
-	            if (string.IsNullOrWhiteSpace(format)) return false;
-
-	            return format.Contains("audiobook", StringComparison.OrdinalIgnoreCase) ||
-	                   format.Contains("audible", StringComparison.OrdinalIgnoreCase) ||
-	                   format.Contains("audio", StringComparison.OrdinalIgnoreCase);
-	        }
 
         private void StoreEditionCoverMetadata(Book book, BookCoverSelection coverChoice)
         {
@@ -1595,7 +1450,6 @@ namespace NzbDrone.Core.MediaCover
 	                        Title = coverChoice.Edition.Title,
 	                        LocalEditionId = coverChoice.Edition.Id,
 	                        EditionProviderId = BookEditionIdentity.GetTrustedForeignEditionId(coverChoice.Edition),
-	                        IsAudiobook = IsAudiobookEdition(coverChoice.Edition),
 	                        CoverUrl = coverChoice.Cover.Url,
 	                        DownloadedAt = downloadedAt
 	                    }

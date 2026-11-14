@@ -1,0 +1,75 @@
+name: NuGet security audit
+
+on:
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: '23 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: 10.0.x
+      # A package-list command exits successfully even when it finds advisories.
+      # Also fail when advisory data is unavailable, rather than report a clean audit.
+      - name: Restore and audit all dependencies
+        shell: bash
+        run: |
+          audit_options=(
+            --force --no-http-cache -p:EnableWindowsTargeting=true
+            -p:NuGetAudit=true -p:NuGetAuditMode=all -p:NuGetAuditLevel=low
+            -p:TreatWarningsAsErrors=false
+            -p:WarningsNotAsErrors=NU1901%3BNU1902
+            -p:WarningsAsErrors=NU1900%3BNU1903%3BNU1904%3BNU1905
+          )
+          dotnet restore src/Chaptarr.sln "${audit_options[@]}"
+          dotnet restore src/Chaptarr.Core.Test/Chaptarr.Core.Test.csproj "${audit_options[@]}"
+          # The default solution configuration excludes the Windows tray project.
+          dotnet restore src/NzbDrone/Chaptarr.csproj "${audit_options[@]}"
+
+  imagesharp-license:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: 10.0.x
+      - name: Check renewal window and the vendor's assembly scope validation
+        shell: bash
+        run: |
+          project=src/NzbDrone.Core/Chaptarr.Core.csproj
+          dotnet restore "$project"
+          frameworks=$(dotnet msbuild "$project" -getProperty:TargetFrameworks)
+          test -n "$frameworks" || { echo "No target frameworks found for $project" >&2; exit 1; }
+          for framework in ${frameworks//;/ }; do
+            dotnet msbuild "$project" -t:ValidateSixLaborsLicenseExpiry,SixLabors_ValidateLicense \
+              -p:TargetFramework="$framework" -p:Configuration=Release -p:FailOnSixLaborsRenewal=true
+          done
+      - name: Prove the renewal-window guard rejects an expiring key
+        shell: bash
+        run: |
+          project=src/NzbDrone.Core/Chaptarr.Core.csproj
+          window=$(python3 -c 'import datetime,pathlib,re; s=pathlib.Path("src/NzbDrone.Core/sixlabors.lic").read_text(); d=datetime.datetime.fromisoformat(re.search(r"ExpiryDateUtc=([^;]+)",s)[1].replace("Z","+00:00")); print((d-datetime.timedelta(days=45)).isoformat())')
+          framework=$(dotnet msbuild "$project" -getProperty:TargetFrameworks)
+          framework=${framework%%;*}
+          log=$(mktemp)
+          trap 'rm -f "$log"' EXIT
+          if dotnet msbuild "$project" -t:ValidateSixLaborsLicenseExpiry \
+              -p:TargetFramework="$framework" -p:Configuration=Release \
+              -p:FailOnSixLaborsRenewal=true -p:SixLaborsLicenseCheckTimeUtc="$window" >"$log" 2>&1; then
+            cat "$log"
+            echo "The renewal-window guard unexpectedly passed" >&2
+            exit 1
+          fi
+          cat "$log"
+          grep -F "Renew the Six Labors community key" "$log"

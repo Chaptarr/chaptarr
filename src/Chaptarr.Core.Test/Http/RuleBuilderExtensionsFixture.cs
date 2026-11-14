@@ -18,7 +18,6 @@ namespace Chaptarr.Core.Test.Http
             public TestValidator()
             {
                 RuleFor(x => x.Url).HaveHttpProtocol();
-                RuleFor(x => x.Interval).IsValidRssSyncInterval();
             }
         }
 
@@ -42,9 +41,9 @@ namespace Chaptarr.Core.Test.Http
         [TestCase(121, false)]
         public void rss_sync_interval_should_validate_expected_bounds(int interval, bool isValid)
         {
-            var result = Validator.Validate(new TestModel { Url = "https://example.com", Interval = interval });
+            var error = NzbDrone.Core.Configuration.ConfigValueValidation.Validate(new { RssSyncInterval = interval });
 
-            Assert.That(result.IsValid, Is.EqualTo(isValid));
+            Assert.That(error.Count == 0, Is.EqualTo(isValid));
         }
     }
 }

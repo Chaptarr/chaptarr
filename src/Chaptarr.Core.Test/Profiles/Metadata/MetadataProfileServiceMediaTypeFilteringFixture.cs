@@ -3,18 +3,24 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO.Abstractions;
 using System.Linq;
+using System.Reflection;
 using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Cache;
 using NzbDrone.Core.Books;
+using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MetadataSource;
+using NzbDrone.Core.MetadataSource.BookInfo;
+using NzbDrone.Core.MetadataSource.BookInfo.V5;
 using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Core.Profiles.Releases;
 
 namespace Chaptarr.Core.Test.Profiles.Metadata
 {
     [TestFixture]
-    public class MetadataProfileServiceMediaTypeFilteringFixture
+    public partial class MetadataProfileServiceMediaTypeFilteringFixture
     {
         private sealed class StubMetadataProfileRepository : IMetadataProfileRepository
         {
@@ -74,6 +80,8 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
 
         private sealed class StubAuthorService : IAuthorService
         {
+            public int CatalogReads { get; private set; }
+
             private readonly Author _author;
 
             public StubAuthorService(Author author)
@@ -81,25 +89,31 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
                 _author = author;
             }
 
-            public Author GetAuthor(int authorId) => authorId == _author.Id ? _author : null;
+            public Author GetAuthor(int authorId)
+            {
+                CatalogReads++;
+                return authorId == _author.Id ? _author : null;
+            }
+            public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public Author AddAuthor(Author newAuthor, bool doRefresh) => throw new NotImplementedException();
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new NotImplementedException();
             public Author FindByProviderId(string provider, string providerId) => throw new NotImplementedException();
             public Author FindByName(string title) => throw new NotImplementedException();
-            public Author FindByNameInexact(string title) => throw new NotImplementedException();
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
+            public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
             public Author UpdateAuthor(Author author) => throw new NotImplementedException();
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
-            public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
+            public List<KeyValuePair<int, string>> AllAuthorPaths() => throw new NotImplementedException();
             public bool AuthorPathExists(string folder) => throw new NotImplementedException();
-            public void RemoveAddOptions(Author author) => throw new NotImplementedException();
+            public void SetAddOptions(Author author) => throw new NotImplementedException();
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new NotImplementedException();
             public long GetAuthorSizeForMediaType(int authorId, string mediaType) => throw new NotImplementedException();
             public void UpdateLastSelectedMediaType(int authorId, string mediaType) => throw new NotImplementedException();
@@ -110,6 +124,10 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
 
         private sealed class StubBookService : IBookService
         {
+            public List<Book> GetImportListBookIdentities() => GetAllBooks();
+
+            public int CatalogReads { get; private set; }
+
             private readonly List<Book> _books;
 
             public StubBookService(List<Book> books)
@@ -117,7 +135,11 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
                 _books = books ?? new List<Book>();
             }
 
-            public List<Book> GetBooksByAuthor(int authorId) => _books.Where(b => b.AuthorId == authorId).ToList();
+            public List<Book> GetBooksByAuthor(int authorId, bool onlyMonitoredEditions = false)
+            {
+                CatalogReads++;
+                return _books.Where(b => b.AuthorId == authorId).ToList();
+            }
 
             public Book GetBook(int bookId) => throw new NotImplementedException();
             public List<Book> GetBooks(IEnumerable<int> bookIds) => throw new NotImplementedException();
@@ -127,7 +149,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
             public List<Book> GetBooksForRefresh(int authorId, List<string> foreignIds) => throw new NotImplementedException();
             public List<Book> GetBooksByFileIds(IEnumerable<int> fileIds) => throw new NotImplementedException();
             public Book AddBook(Book newBook, bool doRefresh = true) => throw new NotImplementedException();
-            public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
+            public List<Book> FindBySlug(string titleSlug) => throw new NotImplementedException();
             public Book FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Book FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public Book FindByGoodreadsId(string goodreadsId) => throw new NotImplementedException();
@@ -139,6 +161,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
             public List<Book> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public void DeleteBook(int bookId, bool deleteFiles, bool addImportListExclusion = false, bool applyToBothFormats = false) => throw new NotImplementedException();
             public List<Book> GetAllBooks() => throw new NotImplementedException();
+            public Book UpdateBook(Book book, List<Edition> editionUpdates, string monitoredMediaType = null, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated = null) => throw new System.NotSupportedException();
             public Book UpdateBook(Book book) => throw new NotImplementedException();
             public void SetBookMonitored(int bookId, bool monitored) => throw new NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
@@ -150,12 +173,12 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
             public void InsertMany(List<Book> books) => throw new NotImplementedException();
             public void InsertMany(List<Book> books, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
             public void UpdateMany(List<Book> books) => throw new NotImplementedException();
-            public void DeleteMany(List<Book> books) => throw new NotImplementedException();
+            public void DeleteMany(List<Book> books, bool filesAlreadyDeleted = false, List<NzbDrone.Core.MediaFiles.BookFile> deletedBookFiles = null) => throw new NotImplementedException();
             public void SetAddOptions(IEnumerable<Book> books) => throw new NotImplementedException();
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksForDisplay(int? authorId = null, string mediaType = null) => throw new NotImplementedException();
             public List<Book> GetBooksByBaseId(string baseBookId) => throw new NotImplementedException();
-            public Book AddWantedEdition(int bookId, int editionId) => throw new NotImplementedException();
+            public (Book Book, bool ExistingCopy) AddWantedEditionCopy(int bookId, int editionId) => throw new NotImplementedException();
             public bool ShouldSearchForMediaType(Book book, string mediaType) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
             public BookBucketResource GetBookBuckets(string sortKey, string sortDirection, bool includeUnmonitored = false, string mediaType = null, bool? downloaded = null) => throw new NotImplementedException();
@@ -164,6 +187,8 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
 
         private sealed class StubEditionService : IEditionService
         {
+            public int CatalogReads { get; private set; }
+
             private readonly List<Edition> _editions;
 
             public StubEditionService(List<Edition> editions)
@@ -171,7 +196,11 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
                 _editions = editions ?? new List<Edition>();
             }
 
-            public List<Edition> GetEditionsByAuthor(int authorId) => _editions;
+            public List<Edition> GetEditionsByAuthor(int authorId, bool onlyMonitored = false)
+            {
+                CatalogReads++;
+                return _editions;
+            }
 
             public Edition GetEdition(int id) => throw new NotImplementedException();
             public List<Edition> GetEditions(IEnumerable<int> ids) => throw new NotImplementedException();
@@ -185,6 +214,7 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
             public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, IDbConnection connection, IDbTransaction transaction) => throw new NotImplementedException();
+            public void UpdateMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, Edition selectedEdition = null) => throw new System.NotSupportedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
             public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
@@ -194,10 +224,24 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
             public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false) => throw new NotImplementedException();
+
+            public void RefreshProviderAliases(List<Edition> editions) { }
+            public void UpdateSelection(List<Edition> editions) => UpdateMany(editions);
         }
 
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
+                System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+                => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
+
+            public void ReplaceMany(System.Collections.Generic.List<BookFile> bookFiles, System.Collections.Generic.List<BookFile> replacedFiles,
+                DeleteMediaFileReason reason, System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+                System.Action<System.Action<System.Data.IDbConnection, System.Data.IDbTransaction>> persist)
+                => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
+
+            public int CatalogReads { get; private set; }
+
             private readonly List<BookFile> _files;
 
             public StubMediaFileService(List<BookFile> files)
@@ -205,11 +249,17 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
                 _files = files ?? new List<BookFile>();
             }
 
-            public List<BookFile> GetFilesByAuthor(int authorId) => _files;
+            public List<BookFile> GetFilesByAuthor(int authorId)
+            {
+                CatalogReads++;
+                return _files;
+            }
 
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
             public void AddMany(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Update(BookFile bookFile) => throw new NotImplementedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+
             public void Update(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason) => throw new NotImplementedException();
@@ -302,12 +352,11 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
                 "gr:1466917",
                 BookMediaType.Ebook,
                 new SeriesBookLink { IsPrimary = false, Position = "0.5" });
-            // BookInfoProxy normalizes a missing V5 isPrimary flag to true before this filter.
             var unflaggedBook = CreateSeriesBook(
                 "The World of Ice & Fire",
                 "gr:22083575",
                 BookMediaType.Ebook,
-                new SeriesBookLink { IsPrimary = true, Position = "0.4" });
+                new SeriesBookLink { IsPrimary = null, Position = "0.4" });
             var noSeriesBook = CreateSeriesBook(
                 "Fevre Dream",
                 "gr:382450",
@@ -1090,5 +1139,289 @@ namespace Chaptarr.Core.Test.Profiles.Metadata
 
             Assert.That(result, Has.Count.EqualTo(1));
         }
+        [TestCase(false)]
+        [TestCase(true)]
+        public void requested_narration_should_protect_only_its_edition_and_audio_book(bool explicitRequest)
+        {
+            var profile = CreateProfile(1, allowedLanguages: "eng");
+            profile.SkipMissingDate = true;
+            Book Remote(string work, BookMediaType mediaType) => new Book
+            {
+                Title = "Requested book", GoodreadsWorkId = work, MediaType = mediaType,
+                Editions = new List<Edition>
+                {
+                    new() { ForeignEditionId = "gr:202-audiobook", ReadingFormatId = 2, Language = "fra", Narrator = "Requested Narrator" },
+                    new() { ForeignEditionId = "gr:203-audiobook", ReadingFormatId = 2, Language = "fra", Narrator = "Other Narrator" }
+                }
+            };
+            var requested = Remote("gr:1001", BookMediaType.Audiobook);
+            var unrelated = Remote("gr:1002", BookMediaType.Audiobook);
+            unrelated.Editions.ForEach(edition => edition.ForeignEditionId += "-other");
+            var author = new Author { Books = new List<Book> { requested, unrelated, Remote("gr:1001", BookMediaType.Ebook) } };
+            var ids = explicitRequest ? new Dictionary<BookMediaType, IReadOnlySet<string>> { [BookMediaType.Audiobook] = new HashSet<string> { "gr:202-audiobook" } } : null;
+            var result = CreateService(profile).FilterBooks(author, profile.Id, ids);
+            Assert.That(result, Has.Count.EqualTo(explicitRequest ? 1 : 0));
+            if (explicitRequest)
+            {
+                Assert.That(result.Single(), Is.SameAs(requested));
+                Assert.That(result.Single().Editions.Select(edition => edition.ForeignEditionId), Is.EqualTo(new[] { "gr:202-audiobook" }));
+            }
+        }
+
+        [TestCase(2)]
+        [TestCase(1001)]
+        public void requested_narration_should_not_protect_other_amazon_only_provider_pockets(int bookCount)
+        {
+            var logger = LogManager.GetCurrentClassLogger();
+            var mapper = new BookInfoProxy(null, null, null, null, null, null, null, null, null, null,
+                logger, new CacheManager(), new MetadataServerHealthGate(null, new MetadataServerHealthService(logger), logger));
+            var convert = typeof(BookInfoProxy).GetMethod("ConvertV5BookToDomain", BindingFlags.Instance | BindingFlags.NonPublic);
+            var author = new Author { Name = "Test Author" };
+            author.Books = Enumerable.Range(0, bookCount).Select(index => (Book)convert.Invoke(mapper, new object[]
+            {
+                new V5Book
+                {
+                    Id = $"az:B{index:000000000}", Title = $"Book {index}",
+                    Editions = new List<V5Edition>
+                    {
+                        new() { Id = $"az:B{index:000000000}", Title = $"Book {index}", ReadingFormatId = 2, LanguageCode = "en" }
+                    }
+                }, author, BookMediaType.Audiobook
+            })).ToList();
+            var requested = author.Books[0];
+            Assert.That(author.Books.All(book => book.Id == 0 && !BookEditionIdentity.GetCanonicalWorkProviderIds(book).Any()), Is.True);
+            var profile = CreateProfile(1);
+            profile.SkipMissingDate = true;
+
+            var result = CreateService(profile).FilterBooks(author, profile.Id,
+                new Dictionary<BookMediaType, IReadOnlySet<string>> { [BookMediaType.Audiobook] = new HashSet<string> { requested.Editions.Single().ForeignEditionId } });
+
+            Assert.That(result, Has.Count.EqualTo(1));
+            Assert.That(result.Single(), Is.SameAs(requested));
+        }
+
+        [Test]
+        public void requested_cast_should_preserve_a_pruned_language_alternate_and_its_authoritative_parent()
+        {
+            var profile = CreateProfile(1, allowedLanguages: "eng");
+            profile.SkipMissingDate = true;
+            var matching = new Edition { ForeignEditionId = "hc:edition:203", ReadingFormatId = 2, Language = "fra",
+                NarratorNames = new List<string> { "Jane Smith", "Jim Dale" } };
+            var parent = new Book { Title = "Requested book", HardcoverBookId = "hc:1001", MediaType = BookMediaType.Audiobook,
+                Editions = new List<Edition> { matching, new() { ForeignEditionId = "hc:edition:204", ReadingFormatId = 2, Language = "fra", Narrator = "Other Narrator" } } };
+            var author = new Author { Books = new List<Book> { parent } };
+            var config = new MonitoringConfig { CreateAudiobook = true, CreateEbook = false,
+                AudiobookNarrations = new List<RequestedNarration> { new() { WorkProviderId = "hc:1001", EditionProviderId = "hc-ed:999",
+                    RequiresEdition = true, NarratorNames = new List<string> { "Jim Dale", "Jane Smith" } } } };
+
+            AuthorLibraryService.PrepareRequestedNarrations(author, config);
+            var result = CreateService(profile).FilterBooks(author, profile.Id, config.ProtectedNarrationIds, config.ProtectedNarrationWorkIds);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(config.KnownParentEditionRequests, Does.Contain((BookMediaType.Audiobook, "hc:999")));
+                Assert.That(result, Has.Count.EqualTo(1));
+                Assert.That(result.Single(), Is.SameAs(parent));
+                Assert.That(result.Single().Editions, Is.EqualTo(new[] { matching }));
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void unavailable_explicit_narration_preserves_only_its_audiobook_parent(bool explicitNarration)
+        {
+            var profile = CreateProfile(1, allowedLanguages: "eng");
+            profile.SkipMissingDate = true;
+            Book Remote(string work, BookMediaType mediaType) => new()
+            {
+                Title = "Requested work", HardcoverBookId = work, MediaType = mediaType,
+                Editions = new List<Edition>
+                {
+                    new() { ForeignEditionId = work + "-other-edition", Title = "Requested work", Language = "eng", ReadingFormatId = mediaType == BookMediaType.Audiobook ? 2 : 3 }
+                }
+            };
+            var requested = Remote("hc:1001", BookMediaType.Audiobook);
+            var remote = new[] { requested, Remote("hc:1002", BookMediaType.Audiobook), Remote("hc:1001", BookMediaType.Ebook) };
+            var result = RefreshAuthorService.NormalizeRemoteBooks(
+                new Author { AudiobookMetadataProfileId = 1, EbookMetadataProfileId = 1 }, remote, null,
+                CreateService(profile), null, LogManager.GetCurrentClassLogger(), null, null, null, true, "explicit parent regression",
+                requestedNarrationIds: new Dictionary<BookMediaType, IReadOnlySet<string>> { [BookMediaType.Audiobook] = new HashSet<string> { "gr:unavailable-edition" } },
+                requestedNarrationWorkIds: explicitNarration ? new Dictionary<BookMediaType, IReadOnlySet<string>> { [BookMediaType.Audiobook] = new HashSet<string> { "hc:1001" } } : null);
+
+            Assert.That(result, Has.Count.EqualTo(explicitNarration ? 1 : 0));
+            if (explicitNarration)
+            {
+                Assert.That(result.Single(), Is.SameAs(requested));
+                Assert.That(result.Single().Editions.Single().ForeignEditionId, Is.EqualTo("hc:1001-other-edition"));
+            }
+        }
+
+        [Test]
+        public void narration_pin_should_keep_its_book_and_edition_on_later_profile_filtering()
+        {
+            var profile = CreateProfile(1, allowedLanguages: "eng");
+            profile.SkipMissingDate = true;
+            var localEdition = new Edition { Id = 10, BookId = 1, ForeignEditionId = "gr:202", Language = "fra", ReadingFormatId = 2, Monitored = true, ManualAdd = true };
+            var localBook = new Book { Id = 1, AuthorId = 1, GoodreadsWorkId = "gr:1001", MediaType = BookMediaType.Audiobook, AnyEditionOk = false };
+            var dbAuthor = new Author { Id = 1 };
+            var remoteBook = new Book
+            {
+                GoodreadsWorkId = "gr:1001", MediaType = BookMediaType.Audiobook,
+                Editions = new List<Edition> { new() { ForeignEditionId = "gr:202", Language = "fra", ReadingFormatId = 2 }, new() { ForeignEditionId = "gr:203", Language = "fra", ReadingFormatId = 2 } }
+            };
+            var result = CreateService(profile, dbAuthor, new List<Book> { localBook }, new List<Edition> { localEdition })
+                .FilterBooks(new Author { Id = 1, Books = new List<Book> { remoteBook } }, profile.Id);
+            Assert.That(result.Single().Editions.Select(edition => edition.ForeignEditionId), Is.EqualTo(new[] { "gr:202" }));
+        }
+
+        [TestCase(BookMediaType.Ebook, false)]
+        [TestCase(BookMediaType.Audiobook, false)]
+        [TestCase(BookMediaType.Ebook, true)]
+        [TestCase(BookMediaType.Audiobook, true)]
+        public void identifier_requirements_should_filter_each_edition_and_remove_empty_books(BookMediaType mediaType, bool requireAsin)
+        {
+            var profile = CreateProfile(1);
+            profile.SkipMissingIsbn = true;
+            profile.SkipMissingAsin = requireAsin;
+
+            Book CreateBook(string title, string workId, params Edition[] editions)
+            {
+                return new Book
+                {
+                    Title = title,
+                    GoodreadsWorkId = workId,
+                    MediaType = mediaType,
+                    Editions = editions.ToList()
+                };
+            }
+
+            var asinOnlyPocket = CreateBook(
+                "ASIN only",
+                "gr:identifier-asin-only",
+                new Edition { ForeignEditionId = "gr:edition-asin-only", Asin = "B000ASIN" },
+                new Edition { ForeignEditionId = "gr:edition-unidentified" });
+            var splitIdentifierPocket = CreateBook(
+                "Identifiers split across editions",
+                "gr:identifier-split",
+                new Edition { ForeignEditionId = "gr:edition-isbn-only", Isbn10 = "0441172717" },
+                new Edition { ForeignEditionId = "gr:edition-sibling-asin-only", Asin = "B000SIBLING" });
+            var isbnOnlyPocket = CreateBook(
+                "ISBN only",
+                "gr:identifier-isbn-only",
+                new Edition { ForeignEditionId = "gr:edition-isbn-only-single", Isbn13 = "9780441172719" });
+            var unidentifiedPocket = CreateBook(
+                "No identifier",
+                "gr:identifier-empty",
+                new Edition { ForeignEditionId = "gr:edition-empty" });
+            var completeEditionPocket = CreateBook(
+                "Both identifiers on one edition",
+                "gr:identifier-complete",
+                new Edition { ForeignEditionId = "gr:edition-complete", Isbn13 = "9780441172719", Asin = "B000COMPLETE" });
+
+            var result = CreateService(profile).FilterBooks(
+                new Author { Books = new List<Book> { asinOnlyPocket, splitIdentifierPocket, isbnOnlyPocket, unidentifiedPocket, completeEditionPocket } },
+                profile.Id);
+
+            Assert.That(
+                result.Select(book => book.GoodreadsWorkId),
+                Is.EquivalentTo(requireAsin
+                    ? new[] { asinOnlyPocket.GoodreadsWorkId, splitIdentifierPocket.GoodreadsWorkId, completeEditionPocket.GoodreadsWorkId }
+                    : new[] { asinOnlyPocket.GoodreadsWorkId, splitIdentifierPocket.GoodreadsWorkId, isbnOnlyPocket.GoodreadsWorkId, completeEditionPocket.GoodreadsWorkId }));
+            Assert.That(
+                asinOnlyPocket.Editions.Select(edition => edition.ForeignEditionId),
+                Is.EqualTo(new[] { "gr:edition-asin-only" }),
+                "an ASIN is sufficient for both controls");
+            Assert.That(
+                splitIdentifierPocket.Editions.Select(edition => edition.ForeignEditionId),
+                Is.EqualTo(requireAsin
+                    ? new[] { "gr:edition-sibling-asin-only" }
+                    : new[] { "gr:edition-isbn-only", "gr:edition-sibling-asin-only" }),
+                "each sibling edition must meet the enabled requirements independently");
+            Assert.That(
+                isbnOnlyPocket.Editions.Select(edition => edition.ForeignEditionId),
+                Is.EqualTo(requireAsin ? Array.Empty<string>() : new[] { "gr:edition-isbn-only-single" }));
+            Assert.That(unidentifiedPocket.Editions, Is.Empty);
+            Assert.That(
+                completeEditionPocket.Editions.Select(edition => edition.ForeignEditionId),
+                Is.EqualTo(new[] { "gr:edition-complete" }));
+        }
+
+        [TestCase(BookMediaType.Audiobook, true)]
+        [TestCase(BookMediaType.Audiobook, false)]
+        [TestCase(BookMediaType.Ebook, true)]
+        [TestCase(BookMediaType.Ebook, false)]
+        public void manual_work_should_keep_one_ordinary_representative_without_pinning_an_edition(BookMediaType mediaType, bool requestTime)
+        {
+            var profile = CreateProfile(1, allowedLanguages: "eng");
+            profile.SkipMissingDate = true;
+            var oppositeMedia = mediaType == BookMediaType.Audiobook ? BookMediaType.Ebook : BookMediaType.Audiobook;
+            Book Remote(string workId, BookMediaType media) => new()
+            {
+                GoodreadsWorkId = workId, MediaType = media, Title = "Requested Work", AnyEditionOk = true,
+                Editions = new List<Edition>
+                {
+                    new() { ForeignEditionId = workId + "-best-" + media, Language = "fra", ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, Ratings = new Ratings { Votes = 50 } },
+                    new() { ForeignEditionId = workId + "-other-" + media, Language = "fra", ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, Ratings = new Ratings { Votes = 1 } }
+                }
+            };
+            var requested = Remote("gr:1001", mediaType);
+            var local = Remote("gr:1001", mediaType);
+            local.Id = 10;
+            local.AuthorId = 1;
+            local.AddOptions.AddType = BookAddType.Manual;
+            if (requestTime) requested.AddOptions.AddType = BookAddType.Manual;
+            var author = new Author { Id = requestTime ? 0 : 1, AudiobookMetadataProfileId = 1, EbookMetadataProfileId = 1 };
+            var filtered = RefreshAuthorService.NormalizeRemoteBooks(author,
+                new[] { requested, Remote("gr:1002", mediaType), Remote("gr:1001", oppositeMedia) }, null,
+                CreateService(profile, requestTime ? null : author, requestTime ? null : new List<Book> { local }, requestTime ? null : new List<Edition>()),
+                null, LogManager.GetCurrentClassLogger(), null, null, null, true, "manual work regression");
+            Assert.Multiple(() =>
+            {
+                Assert.That(filtered, Is.EqualTo(new[] { requested }));
+                Assert.That(requested.Editions.Select(edition => edition.ForeignEditionId), Is.EqualTo(new[] { "gr:1001-best-" + mediaType }));
+                Assert.That(requested.AnyEditionOk, Is.True);
+                Assert.That(requested.Editions.All(edition => !edition.ManualAdd), Is.True);
+            });
+        }
+
+        [TestCase(BookMediaType.Audiobook)]
+        [TestCase(BookMediaType.Ebook)]
+        public void manual_work_should_use_profile_eligible_editions_when_they_become_available(BookMediaType mediaType)
+        {
+            var profile = CreateProfile(1, allowedLanguages: "eng");
+            var remote = new Book
+            {
+                GoodreadsWorkId = "gr:1001", MediaType = mediaType, AnyEditionOk = true,
+                AddOptions = new AddBookOptions { AddType = BookAddType.Manual },
+                Editions = new List<Edition>
+                {
+                    new() { ForeignEditionId = "old-representative", Language = "fra", ReadingFormatId = mediaType == BookMediaType.Audiobook ? 2 : 3, Monitored = true, Ratings = new Ratings { Votes = 100 } },
+                    new() { ForeignEditionId = "eligible-edition", Language = "eng", ReadingFormatId = mediaType == BookMediaType.Audiobook ? 2 : 3, Ratings = new Ratings { Votes = 1 } }
+                }
+            };
+            var filtered = CreateService(profile).FilterBooks(new Author { Books = new List<Book> { remote } }, 1);
+            Assert.That(filtered.Single().Editions.Select(edition => edition.ForeignEditionId), Is.EqualTo(new[] { "eligible-edition" }));
+            Assert.That(new EditionSelector(LogManager.GetCurrentClassLogger()).SelectBestEdition(filtered.Single().Editions, mediaType).ForeignEditionId,
+                Is.EqualTo("eligible-edition"));
+            Assert.That(remote.AnyEditionOk, Is.True);
+            Assert.That(remote.Editions.All(edition => !edition.ManualAdd), Is.True);
+        }
+
+        [TestCase(BookMediaType.Audiobook)]
+        [TestCase(BookMediaType.Ebook)]
+        public void manual_work_without_any_supported_representative_should_still_be_removed(BookMediaType mediaType)
+        {
+            var profile = CreateProfile(1, allowedLanguages: "eng");
+            var author = new Author { AudiobookMetadataProfileId = 1, EbookMetadataProfileId = 1 };
+            var remote = new Book
+            {
+                GoodreadsWorkId = "gr:1001", MediaType = mediaType, AnyEditionOk = true,
+                AddOptions = new AddBookOptions { AddType = BookAddType.Manual },
+                Editions = new List<Edition> { new() { ForeignEditionId = "unsupported-format", Language = "fra", ReadingFormatId = 4 } }
+            };
+            Assert.That(RefreshAuthorService.NormalizeRemoteBooks(author, new[] { remote }, null, CreateService(profile),
+                null, LogManager.GetCurrentClassLogger(), null, null, null, true, "manual unsupported work regression"), Is.Empty);
+        }
+
     }
 }
