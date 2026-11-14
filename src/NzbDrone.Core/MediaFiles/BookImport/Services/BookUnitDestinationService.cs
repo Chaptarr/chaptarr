@@ -6,6 +6,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using NLog;
+using NzbDrone.Common.Disk;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.MediaFiles;
@@ -25,6 +26,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
         private readonly IBookService _bookService;
         private readonly IEditionService _editionService;
         private readonly IMainDatabase _mainDatabase;
+        private readonly IDiskProvider _diskProvider;
         private readonly Logger _logger;
 
         // Cache per canonical book + unit so we don't create multiple clones for the same physical unit.
@@ -36,12 +38,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             IBookService bookService,
             IEditionService editionService,
             IMainDatabase mainDatabase,
+            IDiskProvider diskProvider,
             Logger logger)
         {
             _mediaFileService = mediaFileService;
             _bookService = bookService;
             _editionService = editionService;
             _mainDatabase = mainDatabase;
+            _diskProvider = diskProvider;
             _logger = logger;
         }
 
@@ -174,6 +178,19 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 return dest1;
             }
 
+            // The book's files were replaced in place, e.g. an outside tool converted its MP3s into one M4B
+            // in the same folder. A rescan places new files before it deletes the rows of files that have
+            // disappeared, so the old rows are still here, and their extension differs from this unit's.
+            // They are not a second copy of the book: reuse it, rather than leave it monitored with no files.
+            if (OnlyReplacedFilesRemain(existingFiles, canonicalEdition.Title, canonicalBook.MediaType, unitKey))
+            {
+                _logger.Debug("[UNIT-REPLACED] BookId={0} only has rows for files gone from this unit's folder; reusing it for unitKey='{1}' instead of creating a copy",
+                    canonicalBook.Id, unitKey);
+                var dest3 = (canonicalBook.Id, canonicalEdition.Id);
+                if (!string.IsNullOrWhiteSpace(cacheKey)) _unitDestCache[cacheKey] = dest3;
+                return dest3;
+            }
+
             // Clone book + chosen edition for this unit
             var clone = CloneBookAndEdition(canonicalBook, canonicalEdition, unitKeyHash, makeAutomaticCopy: false);
             _logger.Debug("[UNIT-CLONE] Created duplicate BookId={0} EditionId={1} for unitKey='{2}' from canonical BookId={3} EditionId={4}",
@@ -181,6 +198,69 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             var dest2 = (clone.BookId, clone.EditionId);
             if (!string.IsNullOrWhiteSpace(cacheKey)) _unitDestCache[cacheKey] = dest2;
             return dest2;
+        }
+
+        // True when every file the book has rows for sits in the incoming unit's own book folder and is
+        // no longer on disk. A file that is still there, or one in a different folder, is a real copy.
+        private bool OnlyReplacedFilesRemain(IEnumerable<BookFile> existingFiles, string editionTitle, BookMediaType mediaType, string unitKey)
+        {
+            var incomingFolder = BookRootOfUnitKey(unitKey, mediaType);
+
+            foreach (var file in existingFiles)
+            {
+                var fileFolder = BookRootOfUnitKey(BuildRootUnitKeyWithExtension(file.Path, editionTitle, mediaType), mediaType);
+                if (!string.Equals(fileFolder, incomingFolder, StringComparison.OrdinalIgnoreCase) || IsStillOnDisk(file.Path))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        // Every unit key starts with the book-root key "<book folder>|<media type>". Units add a suffix
+        // after it: "|.ext" from BuildRootUnitKeyWithExtension, or "|<file path>" from
+        // BookCoalescingHelper.BuildPerFileUnitKey, which a full-length single file (a standalone
+        // recording, such as an M4B that replaced a book's MP3s) is imported under. Dropping the suffix
+        // compares units by book folder. Files that are still on disk keep their own book, so separate
+        // recordings in one folder stay apart.
+        private static string BookRootOfUnitKey(string unitKey, BookMediaType mediaType)
+        {
+            if (string.IsNullOrEmpty(unitKey))
+            {
+                return string.Empty;
+            }
+
+            var marker = "|" + mediaType.ToString().ToLowerInvariant();
+            var index = unitKey.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+
+            while (index >= 0)
+            {
+                var end = index + marker.Length;
+                if (end == unitKey.Length || unitKey[end] == '|')
+                {
+                    return unitKey.Substring(0, end);
+                }
+
+                index = unitKey.IndexOf(marker, end, StringComparison.OrdinalIgnoreCase);
+            }
+
+            return unitKey;
+        }
+
+        private bool IsStillOnDisk(string path)
+        {
+            try
+            {
+                // The same check the scan's cleanup uses to decide which rows to delete.
+                return _diskProvider.FileExistsCanonical(path);
+            }
+            catch (Exception ex)
+            {
+                // If it can't be checked, keep counting it, which is the behaviour before this check existed.
+                _logger.Debug(ex, "[UNIT-REPLACED] Could not check whether '{0}' is on disk; treating it as present", path);
+                return true;
+            }
         }
 
         private static string BuildUnitDestCacheKey(Book canonicalBook, string unitKeyOrHash)

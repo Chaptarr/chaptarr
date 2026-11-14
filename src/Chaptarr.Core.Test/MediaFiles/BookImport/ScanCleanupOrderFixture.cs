@@ -177,7 +177,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                         return Default(method.ReturnType);
                     });
                     var media = new MediaFileService(fileRows, events, queue, disk, logger);
-                    destinations = new BookUnitDestinationService(media, bookService, editionService, database, logger);
+                    destinations = new BookUnitDestinationService(media, bookService, editionService, database, disk, logger);
                     IMediaFileTableCleanupService cleanup = cleanupFails
                         ? Proxy<IMediaFileTableCleanupService>((_, _) => throw new InvalidOperationException("Cleanup database read failed"))
                         : new MediaFileTableCleanupService(media, disk, logger);
