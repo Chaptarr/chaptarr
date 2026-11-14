@@ -194,9 +194,37 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(item.OverallStatus, Is.EqualTo(PendingImportStatus.Retrying));
             Assert.That(item.AudiobookStatus, Is.EqualTo(PendingImportStatus.Pending));
             Assert.That(item.EbookStatus, Is.EqualTo(PendingImportStatus.NotRequested));
-            Assert.That(item.NextAttemptAt, Is.InRange(before.AddMinutes(3.9), DateTime.UtcNow.AddMinutes(6.1)));
+
+            // A long-running wait stays Retrying forever, but at the capped backoff rather than every five minutes.
+            Assert.That(item.NextAttemptAt, Is.InRange(before.AddHours(4.79), DateTime.UtcNow.AddHours(7.21)));
             Assert.That(repositoryProxy.Updated, Is.SameAs(item));
             Assert.That(events.Events, Has.None.InstanceOf<PendingAuthorImportFailedEvent>());
+        }
+
+        [TestCase(1, 60)]
+        [TestCase(3, 60)]
+        [TestCase(4, 300)]
+        [TestCase(15, 300)]
+        [TestCase(16, 600)]
+        [TestCase(17, 1200)]
+        [TestCase(21, 19200)]
+        [TestCase(22, 21600)]
+        [TestCase(8727, 21600)]
+        [TestCase(int.MaxValue, 21600)]
+        public void pending_import_retry_should_keep_the_first_hour_fast_then_back_off_to_a_ceiling(int attemptCount, double expectedSeconds)
+        {
+            Assert.That(AuthorRetrySchedule.PendingImportDelaySeconds(attemptCount), Is.EqualTo(expectedSeconds));
+        }
+
+        [Test]
+        public void shared_author_retry_schedule_should_keep_its_five_minute_ceiling()
+        {
+            // Metadata sync and format sync share NextAttempt; only pending imports back off further.
+            var before = DateTime.UtcNow;
+
+            var next = AuthorRetrySchedule.NextAttempt(500);
+
+            Assert.That(next, Is.InRange(before.AddSeconds(239), DateTime.UtcNow.AddSeconds(361)));
         }
 
         [Test]
