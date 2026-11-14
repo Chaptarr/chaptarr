@@ -76,6 +76,6 @@ test('computed keys are not mistaken for identifier names', () => {
   assert.deepEqual(translationKeys(source, 'view.js'), ['Known', 'Dynamic']);
 });
 
-test("computed identifier key does not resolve as a literal property", () => {
-  assert.deepEqual(translationKeys('const m = { [a]: "X" }; translate(m.a);', "view.js"), []);
+test('computed identifier key does not resolve as a literal property', () => {
+  assert.deepEqual(translationKeys('const m = { [a]: "X" }; translate(m.a);', 'view.js'), []);
 });
