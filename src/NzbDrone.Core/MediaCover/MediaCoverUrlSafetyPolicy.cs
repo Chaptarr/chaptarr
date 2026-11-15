@@ -1,22 +1,62 @@
 using System;
-using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
-using System.Threading;
-using System.Threading.Tasks;
-using NLog;
+using NzbDrone.Common.Http;
+using NzbDrone.Common.Instrumentation;
 using NzbDrone.Core.Configuration;
 
 namespace NzbDrone.Core.MediaCover
 {
+    internal sealed class UnsafeImageUrlException : WebException
+    {
+        public string Url { get; }
+        public string Reason { get; }
+
+        public UnsafeImageUrlException(string url, string reason, string noun)
+            : base($"Blocked unsafe image {noun} '{CleanseLogMessage.Cleanse(url)}': {reason}", WebExceptionStatus.ProtocolError)
+        {
+            Url = url;
+            Reason = reason;
+        }
+    }
+
     internal static class MediaCoverUrlSafetyPolicy
     {
-        private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
-
-        internal static bool TryGetSafeImageUrl(string url, IConfigService configService, out string safeUrl, out string reason,
-            CancellationToken cancellationToken = default, Func<string, CancellationToken, Task<IPAddress[]>> resolve = null)
+        internal static HttpRequestTargetPolicy CreateTargetPolicy(IConfigService configService)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            var metadataHost = GetMetadataServerHost(configService);
+            return new HttpRequestTargetPolicy("image:" + metadataHost?.ToLowerInvariant(),
+                uri =>
+                {
+                    if (!TryGetSafeImageUrl(uri.ToString(), metadataHost, out _, out var reason))
+                    {
+                        throw BlockedUrl(uri.ToString(), reason);
+                    }
+                },
+                (uri, address) =>
+                {
+                    if (CloudMetadataTargetPolicy.IsBlocked(address) ||
+                        (!IsTrustedCoverHost(uri.Host, metadataHost) && IsPrivateOrLocalAddress(address)))
+                    {
+                        throw BlockedUrl(uri.ToString(), "private_or_local_address");
+                    }
+                });
+        }
+
+        internal static UnsafeImageUrlException BlockedUrl(string url, string reason, string noun = "URL")
+        {
+            return new UnsafeImageUrlException(url, reason, noun);
+        }
+
+        // Structural checks only. DNS belongs to the selected HTTP route, not
+        // cache reuse or a separate preflight disconnected from the actual socket.
+        internal static bool TryGetSafeImageUrl(string url, IConfigService configService, out string safeUrl, out string reason)
+        {
+            return TryGetSafeImageUrl(url, GetMetadataServerHost(configService), out safeUrl, out reason);
+        }
+
+        private static bool TryGetSafeImageUrl(string url, string metadataHost, out string safeUrl, out string reason)
+        {
             safeUrl = null;
             reason = null;
 
@@ -51,9 +91,16 @@ namespace NzbDrone.Core.MediaCover
                 return false;
             }
 
-            if (!IsTrustedCoverHost(uri.Host, configService) && HostResolvesToPrivateOrLocalAddress(uri.Host, out var privateReason, cancellationToken, resolve))
+            if (CloudMetadataTargetPolicy.IsBlocked(uri.Host, resolve: false))
             {
-                reason = privateReason;
+                reason = IPAddress.TryParse(uri.Host.Trim('[', ']'), out _) ? "private_or_local_address" : "cloud_metadata_host";
+                return false;
+            }
+
+            if (!IsTrustedCoverHost(uri.Host, metadataHost) &&
+                ((IPAddress.TryParse(uri.Host.Trim('[', ']'), out var address) && IsPrivateOrLocalAddress(address)) || IsLoopbackHost(uri.Host)))
+            {
+                reason = "private_or_local_address";
                 return false;
             }
 
@@ -61,9 +108,8 @@ namespace NzbDrone.Core.MediaCover
             return true;
         }
 
-        private static bool IsTrustedCoverHost(string host, IConfigService configService)
+        private static bool IsTrustedCoverHost(string host, string metadataHost)
         {
-            var metadataHost = GetMetadataServerHost(configService);
             if (string.IsNullOrWhiteSpace(metadataHost) || string.IsNullOrWhiteSpace(host))
             {
                 return false;
@@ -111,75 +157,6 @@ namespace NzbDrone.Core.MediaCover
             }
 
             return IPAddress.TryParse(host, out var ip) && IPAddress.IsLoopback(ip);
-        }
-
-        private static bool HostResolvesToPrivateOrLocalAddress(string host, out string reason,
-            CancellationToken cancellationToken, Func<string, CancellationToken, Task<IPAddress[]>> resolve)
-        {
-            reason = null;
-
-            if (string.IsNullOrWhiteSpace(host))
-            {
-                reason = "missing_host";
-                return true;
-            }
-
-            host = host.Trim().Trim('[', ']');
-
-            if (host.Equals("metadata.google.internal", StringComparison.OrdinalIgnoreCase) ||
-                host.Equals("metadata.google.internal.", StringComparison.OrdinalIgnoreCase))
-            {
-                reason = "cloud_metadata_host";
-                return true;
-            }
-
-            IPAddress[] addresses;
-            if (IPAddress.TryParse(host, out var ip))
-            {
-                addresses = new[] { ip };
-            }
-            else
-            {
-                var elapsed = Stopwatch.StartNew();
-                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                deadline.CancelAfter(TimeSpan.FromSeconds(3));
-                try
-                {
-                    var pending = resolve == null
-                        ? Dns.GetHostAddressesAsync(host, deadline.Token)
-                        : resolve(host, deadline.Token);
-                    addresses = pending.WaitAsync(deadline.Token).GetAwaiter().GetResult();
-                }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-                {
-                    reason = "dns_lookup_timed_out";
-                    Logger.Debug("Cover DNS lookup for {0} timed out after {1} ms", host, elapsed.ElapsedMilliseconds);
-                    return true;
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    reason = "dns_lookup_failed";
-                    Logger.Debug(ex, "Cover DNS lookup for {0} failed after {1} ms", host, elapsed.ElapsedMilliseconds);
-                    return true;
-                }
-            }
-
-            if (addresses == null || addresses.Length == 0)
-            {
-                reason = "dns_no_records";
-                return true;
-            }
-
-            foreach (var address in addresses)
-            {
-                if (IsPrivateOrLocalAddress(address))
-                {
-                    reason = "private_or_local_address";
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         internal static bool IsPrivateOrLocalAddress(IPAddress ip)

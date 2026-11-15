@@ -8,7 +8,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using Chaptarr.Api.V1.Author;
+using Chaptarr.Core.Test.Common;
 using NLog;
+using NLog.Config;
+using NLog.Targets;
 using NUnit.Framework;
 using Chaptarr.Http.Frontend.Mappers;
 using NzbDrone.Common.Disk;
@@ -206,6 +209,7 @@ namespace Chaptarr.Core.Test.MediaCover
         {
             public byte[] ResponseData { get; set; } = Array.Empty<byte>();
             public HttpStatusCode? FailureStatus { get; set; }
+            public Exception Failure { get; set; }
             public Queue<byte[]> ResponseQueue { get; } = new();
             public List<string> RequestedUrls { get; } = new();
             public int Calls { get; private set; }
@@ -216,6 +220,10 @@ namespace Chaptarr.Core.Test.MediaCover
                 {
                     Calls++;
                     RequestedUrls.Add(request.Url.FullUri);
+                    if (Failure != null)
+                    {
+                        throw Failure;
+                    }
                     if (FailureStatus.HasValue)
                     {
                         throw new HttpException(new HttpResponse(request, new HttpHeader(), Array.Empty<byte>(), FailureStatus.Value));
@@ -1185,6 +1193,132 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(disk.ExistingPaths, Does.Contain(Path.Combine(ConfigRoot, "MediaCover", "900009", "poster-500.jpg")));
             Assert.That(disk.ExistingPaths, Does.Contain(Path.Combine(ConfigRoot, "MediaCover", "900009", "poster.url")));
             Assert.That(((ImageHttpClientProxy)(object)httpClient).Calls, Is.EqualTo(2));
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public async Task verified_local_author_image_does_not_need_working_DNS(bool cached)
+        {
+            var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
+            ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
+            var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var disk = (DiskProviderProxy)(object)diskProvider;
+            const string url = "https://unresolvable-cover.invalid/author.png";
+            var hash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(url))).ToLowerInvariant()[..16];
+            var path = Path.Combine(ConfigRoot, "MediaCover", "900008", $"poster-{hash}.png");
+            if (cached)
+            {
+                disk.ExistingPaths.UnionWith(new[] { path, path + ".sha256" });
+                disk.BinaryByPath[path] = BuildPngBytes(32, 48, new Rgba32(20, 120, 210));
+                disk.TextByPath[path + ".sha256"] = MediaCoverRendition.OriginalImageVerificationPrefix + MediaCoverRendition.ComputeContentSha256(disk.BinaryByPath[path]);
+            }
+
+            var httpClient = DispatchProxy.Create<IHttpClient, ImageHttpClientProxy>();
+            var http = (ImageHttpClientProxy)(object)httpClient;
+            http.Failure = new WebException("Couldn't resolve the image host.", WebExceptionStatus.NameResolutionFailure);
+            var subject = new MediaCoverService(null, null, null, httpClient, diskProvider, appFolder,
+                null, null, null, null, null, LogManager.GetCurrentClassLogger());
+            var author = new Author { Id = 900008, Name = "Cached author" };
+            var result = await subject.EnsureAuthorImage(author, new(MediaCoverTypes.Poster, url));
+            Assert.That(result.State, Is.EqualTo(cached ? "downloaded" : "error"));
+            Assert.That(http.Calls, Is.EqualTo(cached ? 0 : 1));
+            if (!cached)
+            {
+                Assert.That(result.ErrorCode, Is.EqualTo("download_failed"));
+            }
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public async Task on_demand_unsafe_target_is_Debug_but_network_failure_is_Warn(bool unsafeTarget)
+        {
+            using var logs = new LogFactory();
+            var messages = new MemoryTarget { Layout = "${level}|${message}" };
+            var logging = new LoggingConfiguration();
+            logging.AddRule(LogLevel.Debug, LogLevel.Fatal, messages);
+            logs.Configuration = logging;
+            var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
+            ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
+            var disk = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var httpClient = DispatchProxy.Create<IHttpClient, ImageHttpClientProxy>();
+            var http = (ImageHttpClientProxy)(object)httpClient;
+            const string url = "http://private-cover.invalid/author.png";
+            http.Failure = unsafeTarget
+                ? Assert.Throws<UnsafeImageUrlException>(() => MediaCoverUrlSafetyPolicy.CreateTargetPolicy(null)
+                    .ValidateAddress(new Uri(url), IPAddress.Loopback))
+                : new WebException("Couldn't resolve the image host.", WebExceptionStatus.NameResolutionFailure);
+            var subject = new MediaCoverService(null, null, null, httpClient, disk, appFolder,
+                null, null, null, null, null, logs.GetLogger("CoverFixture"));
+            var result = await subject.EnsureAuthorImage(new Author { Id = 900008, Name = "Test author" }, new(MediaCoverTypes.Poster, url));
+            Assert.That(http.Calls, Is.EqualTo(1));
+            Assert.That(result.State, Is.EqualTo("error"));
+            Assert.That(result.ErrorCode, Is.EqualTo(unsafeTarget ? "unsafe_url" : "download_failed"));
+            Assert.That(messages.Logs.Count(x => x.StartsWith("Warn|")), Is.EqualTo(unsafeTarget ? 0 : 1));
+            if (unsafeTarget)
+            {
+                Assert.That(messages.Logs, Does.Contain("Debug|Blocked unsafe image URL 'http://private-cover.invalid/author.png': private_or_local_address"));
+            }
+        }
+
+        [Test]
+        public void blocked_preferred_photo_keeps_stored_original_for_resize_instead_of_fetching_another_provider()
+        {
+            using var logFactory = new LogFactory();
+            var logs = new MemoryTarget { Layout = "${level}|${message}" };
+            var logging = new LoggingConfiguration();
+            logging.AddRule(LogLevel.Debug, LogLevel.Fatal, logs);
+            logFactory.Configuration = logging;
+            var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
+            ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
+            var diskProvider = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var disk = (DiskProviderProxy)(object)diskProvider;
+            const string preferred = "https://preferred-cover.invalid/photo.jpg";
+            const string fallback = "https://fallback-cover.invalid/photo.jpg";
+            var original = Path.Combine(ConfigRoot, "MediaCover", "900008", "poster.jpg");
+            var identity = Path.Combine(ConfigRoot, "MediaCover", "900008", "poster.url");
+            var bytes = BuildPngBytes(32, 48, new Rgba32(20, 120, 210));
+            var storedIdentity = MediaCoverRendition.BuildAuthorCoverIdentity(preferred, MediaCoverRendition.ComputeContentSha256(bytes));
+            disk.ExistingPaths.UnionWith(new[] { original, identity });
+            disk.BinaryByPath[original] = bytes;
+            disk.TextByPath[identity] = storedIdentity;
+            var requested = new List<string>();
+            var http = InterfaceProxy.Proxy<IHttpClient>((_, args) =>
+            {
+                var request = (HttpRequest)args[0];
+                requested.Add(request.Url.FullUri);
+                if (request.Url.FullUri == preferred)
+                {
+                    request.TargetPolicy.ValidateAddress((Uri)request.Url, IPAddress.Any);
+                }
+
+                return new HttpResponse(request, new HttpHeader(), bytes);
+            });
+            var resized = new List<int>();
+            var resizer = InterfaceProxy.Proxy<IImageResizer>((_, args) =>
+            {
+                Assert.That(args[0], Is.EqualTo(original));
+                Assert.That(disk.BinaryByPath[original], Is.EqualTo(bytes));
+                resized.Add((int)args[2]);
+                disk.ExistingPaths.Add((string)args[1]);
+                disk.BinaryByPath[(string)args[1]] = bytes;
+                return null;
+            });
+            var subject = new MediaCoverService(null, resizer, null, http, diskProvider, appFolder,
+                null, null, null, null, null, logFactory.GetLogger("StoredCoverFixture"));
+            subject.EnsureAuthorCovers(new Author { Id = 900008, Name = "Stored photo", Images = new()
+            {
+                new(MediaCoverTypes.Poster, preferred), new(MediaCoverTypes.Poster, fallback)
+            } });
+
+            Assert.That(requested, Is.EqualTo(new[] { preferred }));
+            Assert.That(resized, Is.EqualTo(MediaCoverRendition.GetHeights(MediaCoverTypes.Poster)));
+            Assert.That(disk.TextByPath[identity], Is.EqualTo(storedIdentity));
+            Assert.That(disk.ExistingPaths, Does.Not.Contain(original), "Normal successful resizing removes the original afterward");
+            foreach (var height in resized)
+            {
+                Assert.That(disk.BinaryByPath[Path.Combine(Path.GetDirectoryName(original), $"poster-{height}.jpg")], Is.EqualTo(bytes));
+            }
+            Assert.That(logs.Logs.Where(line => line.StartsWith("Warn|") || line.StartsWith("Error|")), Is.Empty);
         }
 
         [Test]

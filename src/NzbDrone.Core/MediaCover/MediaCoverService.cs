@@ -57,9 +57,7 @@ namespace NzbDrone.Core.MediaCover
 
         private readonly string _coverRootFolder;
 
-        private const int MaxImageRedirects = 5;
         private const string CachedRenditionVerification = "cached-rendition";
-        private static readonly TimeSpan ImageRequestTimeout = TimeSpan.FromSeconds(30);
 
         // ImageSharp is slow on ARM (no hardware acceleration on mono yet)
         // So limit the number of concurrent resizing tasks
@@ -107,53 +105,7 @@ namespace NzbDrone.Core.MediaCover
 
         private HttpResponse GetImageResponse(string url, bool rangeRequest, string userAgent = null)
         {
-            if (!TryGetSafeImageUrl(url, out var currentUrl, out var reason))
-            {
-                throw new WebException($"Blocked unsafe image URL '{url}': {reason}", WebExceptionStatus.ProtocolError);
-            }
-
-            userAgent ??= ExternalImageRequestHeaders.GetRandomUserAgent();
-
-            for (var i = 0; i <= MaxImageRedirects; i++)
-            {
-                var request = new HttpRequest(currentUrl)
-                {
-                    AllowAutoRedirect = false,
-                    RequestTimeout = ImageRequestTimeout
-                };
-
-                ExternalImageRequestHeaders.ApplyExternalImageRequestHeaders(request, currentUrl, userAgent, rangeRequest);
-
-                var response = _httpClient.Get(request);
-
-                if (!response.HasHttpRedirect)
-                {
-                    return response;
-                }
-
-                var location = response.Headers.GetSingleValue("Location");
-                if (location.IsNullOrWhiteSpace())
-                {
-                    throw new WebException($"Redirect response from {currentUrl} is missing a Location header.", WebExceptionStatus.ProtocolError);
-                }
-
-                Uri nextUri;
-                try
-                {
-                    nextUri = new Uri(new Uri(currentUrl), location);
-                }
-                catch (Exception ex)
-                {
-                    throw new WebException($"Invalid redirect location '{location}' from '{currentUrl}'.", ex, WebExceptionStatus.ProtocolError, null);
-                }
-
-                if (!TryGetSafeImageUrl(nextUri.ToString(), out currentUrl, out var nextReason))
-                {
-                    throw new WebException($"Blocked unsafe image redirect target '{nextUri}': {nextReason}", WebExceptionStatus.ProtocolError);
-                }
-            }
-
-            throw new WebException($"Too many redirects while downloading image from '{url}'.", WebExceptionStatus.ProtocolError);
+            return MediaCoverHttpRequest.Get(_httpClient, _configService, url, rangeRequest, userAgent);
         }
 
         public string GetCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCoverTypes coverType, string extension, int? height = null)
@@ -482,6 +434,10 @@ namespace NzbDrone.Core.MediaCover
                     {
                         _logger.Warn("HTTP error downloading author cover for {0}. Status: {1}, URL: {2}", author.Name, e.Response?.StatusCode, cover.Url);
                     }
+                    catch (UnsafeImageUrlException e)
+                    {
+                        _logger.Debug("Skipping unsafe author cover for {0} (ID: {1}): {2}", author.Name, author.Id, e.Message);
+                    }
                     catch (WebException e)
                     {
                         _logger.Warn("Network error downloading author cover for {0}. Error: {1}, URL: {2}", author.Name, e.Message, cover.Url);
@@ -670,6 +626,11 @@ namespace NzbDrone.Core.MediaCover
                 try
                 {
                     imageData = GetImageResponse(cover.Url, rangeRequest: false)?.ResponseData;
+                }
+                catch (UnsafeImageUrlException ex)
+                {
+                    _logger.Debug(ex.Message);
+                    return new EnsureImageResult { State = "error", ErrorCode = "unsafe_url" };
                 }
                 catch (Exception ex) when (ex is HttpException || ex is WebException)
                 {
@@ -906,6 +867,10 @@ namespace NzbDrone.Core.MediaCover
                     catch (HttpException e)
                     {
                         _logger.Warn("Couldn't download media cover for {0} from {1}. {2}", book, candidate.Cover.Url, e.Message);
+                    }
+                    catch (UnsafeImageUrlException e)
+                    {
+                        _logger.Debug("Skipping unsafe monitored-edition cover for book {0}: {1}", book.Title, e.Message);
                     }
                     catch (WebException e)
                     {

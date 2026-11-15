@@ -21,7 +21,8 @@ namespace NzbDrone.Common.Http.Dispatchers
             bool useCookies,
             ICredentials credentials,
             bool preAuthenticate,
-            int maxConnectionsPerServer);
+            int maxConnectionsPerServer,
+            HttpRequestTargetPolicy targetPolicy = null);
     }
 
     public class ManagedSocketsHttpHandlerFactory : ICreateManagedSocketsHttpHandler
@@ -48,7 +49,8 @@ namespace NzbDrone.Common.Http.Dispatchers
             bool useCookies,
             ICredentials credentials,
             bool preAuthenticate,
-            int maxConnectionsPerServer)
+            int maxConnectionsPerServer,
+            HttpRequestTargetPolicy targetPolicy = null)
         {
             var handler = new SocketsHttpHandler
             {
@@ -71,7 +73,76 @@ namespace NzbDrone.Common.Http.Dispatchers
                 handler.Proxy = _createManagedWebProxy.GetWebProxy(proxySettings);
             }
 
+            if (targetPolicy != null)
+            {
+                ApplyTargetPolicy(handler, targetPolicy);
+            }
+
             return handler;
+        }
+
+        internal void ApplyTargetPolicy(SocketsHttpHandler handler, HttpRequestTargetPolicy policy,
+            Func<string, CancellationToken, Task<IPAddress[]>> resolve = null)
+        {
+            var connect = handler.ConnectCallback;
+            var proxy = handler.UseProxy ? handler.Proxy ?? System.Net.Http.HttpClient.DefaultProxy : null;
+            handler.ConnectCallback = async (context, token) =>
+            {
+                // .NET builds the CONNECT request object with the proxy URI and
+                // the origin authority in Host (sent as the CONNECT target).
+                // This socket connects to the proxy; the image URL is checked before dispatch.
+                if (proxy != null && context.InitialRequestMessage.Method == HttpMethod.Connect)
+                {
+                    return await connect(context, token).ConfigureAwait(false);
+                }
+
+                var uri = context.InitialRequestMessage.RequestUri;
+                policy.ValidateUrl(uri);
+
+                async Task<IPAddress[]> ResolveDestination(string host)
+                {
+                    context.InitialRequestMessage.Options.TryGetValue(HttpRequestTargetPolicy.DnsResolutionKey, out var dns);
+                    dns?.Start(host);
+                    var addresses = IPAddress.TryParse(host, out var literal)
+                        ? new[] { literal }
+                        : await (resolve == null
+                            ? Dns.GetHostAddressesAsync(host, token)
+                            : resolve(host, token)).WaitAsync(token).ConfigureAwait(false);
+                    if (addresses == null || addresses.Length == 0)
+                    {
+                        throw new SocketException((int)SocketError.HostNotFound);
+                    }
+
+                    dns?.Complete();
+
+                    foreach (var address in addresses)
+                    {
+                        policy.ValidateAddress(uri, address);
+                    }
+
+                    return addresses;
+                }
+
+                if (proxy != null && !proxy.IsBypassed(uri) && proxy.GetProxy(uri) is Uri proxyUri && proxyUri != uri)
+                {
+                    if (proxyUri.Scheme.Equals("socks4", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // SOCKS4 has no remote-name resolution. Preserve its local
+                        // address check; HTTP/SOCKS5 rely on the configured proxy.
+                        await ResolveDestination(uri.IdnHost).ConfigureAwait(false);
+                    }
+
+                    return await connect(context, token).ConfigureAwait(false);
+                }
+
+                // Direct requests connect to these exact validated addresses, without
+                // a second hostname lookup or an unchecked DNS fallback.
+                var addresses = await ResolveDestination(context.DnsEndPoint.Host).ConfigureAwait(false);
+
+                return await ConnectWithFallback((family, attemptToken) => ConnectAddresses(family,
+                    addresses.Where(address => address.AddressFamily == family).ToArray(),
+                    context.DnsEndPoint.Port, context.DnsEndPoint.Host, attemptToken), token).ConfigureAwait(false);
+            };
         }
 
         private bool HasRoutableIPv4Address()
@@ -93,7 +164,13 @@ namespace NzbDrone.Common.Http.Dispatchers
             }
         }
 
-        private async ValueTask<Stream> OnConnectAsync(SocketsHttpConnectionContext context, CancellationToken cancellationToken)
+        private ValueTask<Stream> OnConnectAsync(SocketsHttpConnectionContext context, CancellationToken cancellationToken)
+        {
+            return ConnectWithFallback((family, token) => AttemptConnection(family, context, token), cancellationToken);
+        }
+
+        internal async ValueTask<Stream> ConnectWithFallback(Func<AddressFamily, CancellationToken, ValueTask<Stream>> connect,
+            CancellationToken cancellationToken)
         {
             if (_useIPv6)
             {
@@ -103,10 +180,10 @@ namespace NzbDrone.Common.Http.Dispatchers
                     {
                         using var quickFailCts = new CancellationTokenSource(ConnectionEstablishTimeoutMs);
                         using var linkedTokenSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, quickFailCts.Token);
-                        return await AttemptConnection(AddressFamily.InterNetworkV6, context, linkedTokenSource.Token);
+                        return await connect(AddressFamily.InterNetworkV6, linkedTokenSource.Token);
                     }
 
-                    return await AttemptConnection(AddressFamily.InterNetworkV6, context, cancellationToken);
+                    return await connect(AddressFamily.InterNetworkV6, cancellationToken);
                 }
                 catch
                 {
@@ -120,7 +197,7 @@ namespace NzbDrone.Common.Http.Dispatchers
                 }
             }
 
-            return await AttemptConnection(AddressFamily.InterNetwork, context, cancellationToken);
+            return await connect(AddressFamily.InterNetwork, cancellationToken);
         }
 
         private static async ValueTask<Stream> AttemptConnection(AddressFamily addressFamily, SocketsHttpConnectionContext context, CancellationToken cancellationToken)
@@ -162,14 +239,20 @@ namespace NzbDrone.Common.Http.Dispatchers
                 return await ConnectSocket(addressFamily, dnsEndPoint, cancellationToken).ConfigureAwait(false);
             }
 
+            return await ConnectAddresses(addressFamily, candidates, dnsEndPoint.Port, dnsEndPoint.Host, cancellationToken).ConfigureAwait(false);
+        }
+
+        private static async ValueTask<Stream> ConnectAddresses(AddressFamily addressFamily, IPAddress[] candidates,
+            int port, string host, CancellationToken cancellationToken)
+        {
             Exception lastException = null;
             foreach (var address in candidates)
             {
-                EnsureAllowedTarget(address, dnsEndPoint.Host);
+                EnsureAllowedTarget(address, host);
 
                 try
                 {
-                    return await ConnectSocket(addressFamily, new IPEndPoint(address, dnsEndPoint.Port), cancellationToken).ConfigureAwait(false);
+                    return await ConnectSocket(addressFamily, new IPEndPoint(address, port), cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
