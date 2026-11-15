@@ -36,6 +36,8 @@ namespace NzbDrone.Core.Notifications
 
         public abstract string Name { get; }
 
+        public virtual bool NotifyOnLibraryImports => false;
+
         public Type ConfigContract => typeof(TSettings);
 
         public virtual ProviderMessage Message => null;
@@ -91,6 +93,10 @@ namespace NzbDrone.Core.Notifications
         {
         }
 
+        public virtual void OnLibraryFileAdded(BookFile bookFile, Book book)
+        {
+        }
+
         public virtual void OnBookRetag(BookRetagMessage message)
         {
         }
@@ -119,6 +125,7 @@ namespace NzbDrone.Core.Notifications
         public bool SupportsOnDownloadFailure => HasConcreteImplementation("OnDownloadFailure");
         public bool SupportsOnImportFailure => HasConcreteImplementation("OnImportFailure");
         public bool SupportsOnBookRetag => HasConcreteImplementation("OnBookRetag");
+        public bool SupportsOnLibraryFileAdded => HasConcreteImplementation("OnLibraryFileAdded");
         public bool SupportsOnApplicationUpdate => HasConcreteImplementation("OnApplicationUpdate");
 
         protected TSettings Settings => (TSettings)Definition.Settings;
