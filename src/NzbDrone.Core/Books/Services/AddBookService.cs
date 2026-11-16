@@ -163,23 +163,7 @@ namespace NzbDrone.Core.Books
                         requestedAuthorRecord.Id == siblingAuthor.Id &&
                         matchingEditions.Count > 0)
                     {
-                        book.Id = 0;
-                        book.Author = siblingAuthor;
-                        book.AuthorId = siblingAuthor.Id;
-                        book.Title ??= sibling.Title;
-                        book.TitleSlug = string.IsNullOrWhiteSpace(book.TitleSlug) ? sibling.TitleSlug : book.TitleSlug;
-                        book.PageCount ??= sibling.PageCount;
-                        book.Editions = matchingEditions;
-                        foreach (var edition in book.Editions)
-                        {
-                            // These are detached editions from the sibling row.
-                            // Reinsert them under the new format-specific book;
-                            // never update or move the original edition records.
-                            edition.Id = 0;
-                            edition.BookId = 0;
-                            edition.Monitored = false;
-                            edition.ManualAdd = false;
-                        }
+                        PrepareAutomaticSiblingFormatAdd(book, sibling, siblingAuthor, matchingEditions);
                         materializingFormatSibling = true;
                         _logger.Info("Creating missing {0} record for existing work '{1}' from {2} matching local edition(s)",
                             requestedIsEbook ? "ebook" : "audiobook", book.Title, matchingEditions.Count);
@@ -1009,6 +993,28 @@ namespace NzbDrone.Core.Books
             return (editions ?? Enumerable.Empty<Edition>())
                 .Where(edition => edition != null && edition.IsEbook == isEbook)
                 .ToList();
+        }
+
+        internal static void PrepareAutomaticSiblingFormatAdd(Book book, Book sibling, Author siblingAuthor, List<Edition> editions)
+        {
+            book.Id = 0;
+            book.Author = siblingAuthor;
+            book.AuthorId = siblingAuthor.Id;
+            book.Title ??= sibling.Title;
+            book.TitleSlug = string.IsNullOrWhiteSpace(book.TitleSlug) ? sibling.TitleSlug : book.TitleSlug;
+            book.PageCount ??= sibling.PageCount;
+            book.AnyEditionOk = true;
+            book.Editions = editions;
+            foreach (var edition in book.Editions)
+            {
+                // These are detached editions from the sibling row.
+                // Reinsert them under the new format-specific book;
+                // never update or move the original edition records.
+                edition.Id = 0;
+                edition.BookId = 0;
+                edition.Monitored = false;
+                edition.ManualAdd = false;
+            }
         }
 
         private Author FindExistingAuthorForAdd(Book book)
