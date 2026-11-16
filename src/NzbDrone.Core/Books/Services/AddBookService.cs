@@ -960,28 +960,32 @@ namespace NzbDrone.Core.Books
                 return null;
             }
 
+            var siblingMediaType = book.MediaType == BookMediaType.Ebook
+                ? BookMediaType.Audiobook
+                : BookMediaType.Ebook;
+
             var candidates = new List<Book>();
             if (!string.IsNullOrWhiteSpace(book.HardcoverBookId))
             {
-                candidates.Add(_bookService.FindByProviderId("hc", ProviderIdHelper.Canonicalize(book.HardcoverBookId, "hc")));
+                candidates.Add(_bookService.FindByProviderId("hc", ProviderIdHelper.Canonicalize(book.HardcoverBookId, "hc"), siblingMediaType));
             }
             if (!string.IsNullOrWhiteSpace(book.GoodreadsWorkId))
             {
-                candidates.Add(_bookService.FindByProviderId("gr", ProviderIdHelper.Canonicalize(book.GoodreadsWorkId, "gr")));
+                candidates.Add(_bookService.FindByProviderId("gr", ProviderIdHelper.Canonicalize(book.GoodreadsWorkId, "gr"), siblingMediaType));
             }
             if (BookEditionIdentity.GetGoodreadsEditionProviderId(book, _logger, "AddBookService.SiblingLookup") is string goodreadsEditionId &&
                 !string.IsNullOrWhiteSpace(goodreadsEditionId))
             {
-                candidates.Add(_bookService.FindByProviderId("gr", goodreadsEditionId));
+                candidates.Add(_bookService.FindByProviderId("gr", goodreadsEditionId, siblingMediaType));
             }
             if (!string.IsNullOrWhiteSpace(book.OpenLibraryWorkId))
             {
-                candidates.Add(_bookService.FindByProviderId("ol", ProviderIdHelper.Canonicalize(book.OpenLibraryWorkId, "ol")));
+                candidates.Add(_bookService.FindByProviderId("ol", ProviderIdHelper.Canonicalize(book.OpenLibraryWorkId, "ol"), siblingMediaType));
             }
             if (BookEditionIdentity.GetGoogleBooksEditionId(book, _logger, "AddBookService.SiblingLookup") is string googleBooksEditionId &&
                 !string.IsNullOrWhiteSpace(googleBooksEditionId))
             {
-                candidates.Add(_bookService.FindByProviderId("gb", googleBooksEditionId));
+                candidates.Add(_bookService.FindByProviderId("gb", googleBooksEditionId, siblingMediaType));
             }
 
             return candidates.FirstOrDefault(candidate => candidate != null && candidate.MediaType != book.MediaType);
