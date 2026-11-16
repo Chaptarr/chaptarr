@@ -161,7 +161,8 @@ namespace NzbDrone.Core.Books
                     if (requestedAuthorRecord != null &&
                         siblingAuthor != null &&
                         requestedAuthorRecord.Id == siblingAuthor.Id &&
-                        matchingEditions.Count > 0)
+                        matchingEditions.Count > 0 &&
+                        GetRequestedNarration(book) == null)
                     {
                         PrepareAutomaticSiblingFormatAdd(book, sibling, siblingAuthor, matchingEditions);
                         materializingFormatSibling = true;
@@ -334,18 +335,27 @@ namespace NzbDrone.Core.Books
                 }
                 
                 if (monitorRequested || searchRequested ||
-                    isSpecificBookIntentForExistingAuthor ||
-                    isAllBooksIntentForExistingAuthor)
+                    (!materializingFormatSibling &&
+                     (isSpecificBookIntentForExistingAuthor || isAllBooksIntentForExistingAuthor)))
                 {
                     book.Author = dbAuthor;
                     book.AuthorId = dbAuthor.Id;
-                    book.SetMonitored(true);
-                    book.Monitored = true;
+                    if (!materializingFormatSibling || monitorRequested)
+                    {
+                        book.SetMonitored(true);
+                        book.Monitored = true;
+                    }
+                }
+
+                if (materializingFormatSibling && !monitorRequested)
+                {
+                    book.SetMonitored(false);
                 }
 
                 // Handle "None, except this one book" when author already exists
                 // Using CAPTURED monitorMode instead of book.Author.AddOptions which is now NULL
-                    if (isSpecificBookIntentForExistingAuthor)
+                    if (isSpecificBookIntentForExistingAuthor &&
+                        (!materializingFormatSibling || monitorRequested))
                     {
                     _logger.Debug("[SPECIFIC-BOOK-FIX] Setting monitoring for specific book '{0}' of media type {1} (existing author)",
                         book.Title, bookMediaType);
@@ -377,7 +387,8 @@ namespace NzbDrone.Core.Books
             _bookService.AddBook(book, doRefresh);
             RemoveMatchingImportListExclusions(book);
 
-            if (isAllBooksIntentForExistingAuthor)
+            if (isAllBooksIntentForExistingAuthor &&
+                (!materializingFormatSibling || monitorRequested))
             {
                 _bookMonitoredService.SetBookMonitoredStatus(dbAuthor, new MonitoringOptions
                 {
