@@ -316,7 +316,17 @@ namespace NzbDrone.Core.MediaFiles
                 ?? candidates.FirstOrDefault();
         }
 
-        private string GetIsbnChars(string input)
+        // StripIsbn returns null for an unparseable/invalid ISBN; a null tag value must never be stored.
+        internal static void AddIsbnTag(Dictionary<string, string> tags, string rawIsbn)
+        {
+            var strippedIsbn = StripIsbn(rawIsbn);
+            if (!string.IsNullOrWhiteSpace(strippedIsbn))
+            {
+                tags["isbn"] = strippedIsbn;
+            }
+        }
+
+        private static string GetIsbnChars(string input)
         {
             if (input == null)
             {
@@ -326,7 +336,7 @@ namespace NzbDrone.Core.MediaFiles
             return new string(input.Where(c => char.IsDigit(c) || c == 'X' || c == 'x').ToArray());
         }
 
-        private string StripIsbn(string input)
+        internal static string StripIsbn(string input)
         {
             var isbn = GetIsbnChars(input);
 
@@ -617,10 +627,7 @@ namespace NzbDrone.Core.MediaFiles
                     tags["authors"] = authors;
                 }
 
-                if (!string.IsNullOrWhiteSpace(book.Isbn))
-                {
-                    tags["isbn"] = StripIsbn(book.Isbn);
-                }
+                AddIsbnTag(tags, book.Isbn);
 
                 if (!string.IsNullOrWhiteSpace(book.Asin))
                 {
