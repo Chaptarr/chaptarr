@@ -110,7 +110,7 @@ namespace Chaptarr.Core.Test.Download
                 {
                     if (args[0] is DownloadCanBeRemovedEvent removable) contexts.Add(removable.Cleanup);
                     return null;
-                }), LogManager.GetCurrentClassLogger());
+                }), LogManager.GetCurrentClassLogger(), null);
             service.Execute(new ProcessMonitoredDownloadsCommand());
             service.Execute(new ProcessMonitoredDownloadsCommand());
             Assert.That(contexts, Has.Count.EqualTo(4));
