@@ -21,6 +21,7 @@ const section = 'settings.metadataProfiles';
 
 export const FETCH_METADATA_PROFILES = 'settings/metadataProfiles/fetchMetadataProfiles';
 export const FETCH_METADATA_PROFILE_SCHEMA = 'settings/metadataProfiles/fetchMetadataProfileSchema';
+export const FETCH_METADATA_PROFILE_GENRES = 'settings/metadataProfiles/fetchMetadataProfileGenres';
 export const SAVE_METADATA_PROFILE = 'settings/metadataProfiles/saveMetadataProfile';
 export const DELETE_METADATA_PROFILE = 'settings/metadataProfiles/deleteMetadataProfile';
 export const SET_METADATA_PROFILE_VALUE = 'settings/metadataProfiles/setMetadataProfileValue';
@@ -31,6 +32,7 @@ export const CLONE_METADATA_PROFILE = 'settings/metadataProfiles/cloneMetadataPr
 
 export const fetchMetadataProfiles = createThunk(FETCH_METADATA_PROFILES);
 export const fetchMetadataProfileSchema = createThunk(FETCH_METADATA_PROFILE_SCHEMA);
+export const fetchMetadataProfileGenres = createThunk(FETCH_METADATA_PROFILE_GENRES);
 export const saveMetadataProfile = createThunk(SAVE_METADATA_PROFILE);
 export const deleteMetadataProfile = createThunk(DELETE_METADATA_PROFILE);
 
@@ -64,7 +66,11 @@ export default {
     isSaving: false,
     saveError: null,
     items: [],
-    pendingChanges: {}
+    pendingChanges: {},
+    isGenresFetching: false,
+    isGenresPopulated: false,
+    genresError: null,
+    availableGenres: []
   },
 
   //
@@ -111,6 +117,32 @@ export default {
       return abortRequest;
     },
     [FETCH_METADATA_PROFILE_SCHEMA]: createFetchSchemaHandler(section, '/metadataprofile/schema'),
+    [FETCH_METADATA_PROFILE_GENRES]: function(getState, payload, dispatch) {
+      dispatch(set({ section, isGenresFetching: true }));
+
+      const { request } = createAjaxRequest({
+        url: '/metadataprofile/genres'
+      });
+
+      request.done((data) => {
+        dispatch(set({
+          section,
+          isGenresFetching: false,
+          isGenresPopulated: true,
+          genresError: null,
+          availableGenres: data
+        }));
+      });
+
+      request.fail((xhr) => {
+        dispatch(set({
+          section,
+          isGenresFetching: false,
+          isGenresPopulated: false,
+          genresError: xhr.aborted ? null : xhr
+        }));
+      });
+    },
     [SAVE_METADATA_PROFILE]: createSaveProviderHandler(section, '/metadataprofile'),
     [DELETE_METADATA_PROFILE]: createRemoveItemHandler(section, '/metadataprofile')
   },

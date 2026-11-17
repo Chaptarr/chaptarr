@@ -26,10 +26,12 @@ namespace Chaptarr.Api.V1.Profiles.Metadata
         public string AllowedLanguages { get; set; }
         public int MinPages { get; set; }
         public List<string> Ignored { get; set; }
+        public List<string> IgnoredGenres { get; set; }
 
         public MetadataProfileResource()
         {
             Ignored = new List<string>();
+            IgnoredGenres = new List<string>();
             AllowedLanguages = string.Empty;
         }
     }
@@ -94,7 +96,8 @@ namespace Chaptarr.Api.V1.Profiles.Metadata
                 SkipMissingAsin = model.SkipMissingAsin,
                 AllowedLanguages = model.AllowedLanguages,
                 MinPages = model.MinPages,
-                Ignored = model.Ignored
+                Ignored = model.Ignored,
+                IgnoredGenres = model.IgnoredGenres
             };
         }
 
@@ -125,7 +128,8 @@ namespace Chaptarr.Api.V1.Profiles.Metadata
                 SkipMissingAsin = resource.SkipMissingAsin,
                 AllowedLanguages = resource.AllowedLanguages,
                 MinPages = resource.MinPages,
-                Ignored = resource.Ignored ?? new List<string>()
+                Ignored = resource.Ignored ?? new List<string>(),
+                IgnoredGenres = resource.IgnoredGenres ?? new List<string>()
             };
         }
 
