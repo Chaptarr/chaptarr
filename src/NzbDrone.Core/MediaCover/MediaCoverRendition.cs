@@ -90,6 +90,14 @@ namespace NzbDrone.Core.MediaCover
             };
         }
 
+        public static bool IsCanonicalCoverFile(string path, MediaCoverTypes type)
+        {
+            var stem = Path.GetFileNameWithoutExtension(path);
+            return IsSupportedImagePath(path) &&
+                (stem.Equals(type.ToString(), StringComparison.OrdinalIgnoreCase) ||
+                 GetHeights(type).Any(height => stem.Equals($"{type}-{height}", StringComparison.OrdinalIgnoreCase)));
+        }
+
         public static string ComputeStableAuthorImageHash(string url, MediaCoverTypes coverType)
         {
             if (string.IsNullOrWhiteSpace(url))
@@ -202,7 +210,10 @@ namespace NzbDrone.Core.MediaCover
                 : Convert.ToHexString(SHA256.HashData(imageData)).ToLowerInvariant();
         }
 
-        public static string BuildAuthorCoverIdentity(string remoteUrl, string contentHash)
+        public static string ComputeContentSha256(System.IO.Stream imageData) =>
+            Convert.ToHexString(SHA256.HashData(imageData)).ToLowerInvariant();
+
+        public static string BuildAuthorCoverIdentity(string remoteUrl, string contentHash, string publishedVersion = null)
         {
             var normalizedHash = contentHash?.Trim().ToLowerInvariant();
             if (string.IsNullOrWhiteSpace(remoteUrl) || !IsVerifiedNonPlaceholderImageHash(normalizedHash))
@@ -210,11 +221,16 @@ namespace NzbDrone.Core.MediaCover
                 throw new ArgumentException("A verified non-placeholder image hash and remote URL are required.");
             }
 
-            return string.Join('\n', AuthorCoverIdentityVersion, normalizedHash, remoteUrl.Trim());
+            return string.Join('\n', AuthorCoverIdentityVersion, normalizedHash, remoteUrl.Trim()) +
+                (publishedVersion == null ? string.Empty : "\n" + publishedVersion);
         }
 
-        public static bool TryParseAuthorCoverIdentity(string value, out string remoteUrl, out string contentHash)
+        public static bool TryParseAuthorCoverIdentity(string value, out string remoteUrl, out string contentHash) =>
+            TryParseAuthorCoverIdentity(value, out remoteUrl, out contentHash, out _);
+
+        public static bool TryParseAuthorCoverIdentity(string value, out string remoteUrl, out string contentHash, out string publishedVersion)
         {
+            publishedVersion = null;
             remoteUrl = null;
             contentHash = null;
 
@@ -223,8 +239,8 @@ namespace NzbDrone.Core.MediaCover
                 return false;
             }
 
-            var lines = value.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n', 3);
-            if (lines.Length != 3 ||
+            var lines = value.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n', 4);
+            if ((lines.Length != 3 && lines.Length != 4) ||
                 !lines[0].Equals(AuthorCoverIdentityVersion, StringComparison.Ordinal) ||
                 string.IsNullOrWhiteSpace(lines[2]) ||
                 !IsVerifiedNonPlaceholderImageHash(lines[1]))
@@ -234,6 +250,7 @@ namespace NzbDrone.Core.MediaCover
 
             contentHash = lines[1].Trim().ToLowerInvariant();
             remoteUrl = lines[2].Trim();
+            publishedVersion = lines.Length == 4 && !string.IsNullOrWhiteSpace(lines[3]) ? lines[3].Trim() : contentHash;
             return true;
         }
 
@@ -272,27 +289,6 @@ namespace NzbDrone.Core.MediaCover
                    first.Port == second.Port &&
                    first.UserInfo.Equals(second.UserInfo, StringComparison.Ordinal) &&
                    first.PathAndQuery.Equals(second.PathAndQuery, StringComparison.Ordinal);
-        }
-
-        public static bool StoredRemoteUrlMatches(string identityPath, string remoteUrl, IDiskProvider diskProvider)
-        {
-            if (string.IsNullOrWhiteSpace(identityPath) ||
-                string.IsNullOrWhiteSpace(remoteUrl) ||
-                diskProvider == null ||
-                !diskProvider.FileExists(identityPath))
-            {
-                return false;
-            }
-
-            try
-            {
-                return TryParseAuthorCoverIdentity(diskProvider.ReadAllText(identityPath), out var storedUrl, out _) &&
-                       RemoteUrlsMatch(storedUrl, remoteUrl);
-            }
-            catch
-            {
-                return false;
-            }
         }
 
         public static bool HasAllGeneratedRenditions(

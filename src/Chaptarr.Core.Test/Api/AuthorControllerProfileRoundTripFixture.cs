@@ -43,6 +43,132 @@ namespace Chaptarr.Core.Test.Api
     [TestFixture]
     public partial class AuthorControllerProfileRoundTripFixture
     {
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        public void delayed_cover_event_broadcasts_the_stored_photo_choice(bool postgres, bool downloadCommand)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database, false, false, connected: true);
+                const string oldUrl = "https://images.example/old-choice.png";
+                const string newUrl = "https://images.example/new-choice.png";
+                h.Author.Images = new() { new(MediaCoverTypes.Poster, oldUrl), new(MediaCoverTypes.Poster, newUrl) };
+                h.AuthorService.UpdateAuthor(h.Author);
+                var oldHash = MediaCoverRendition.ComputeStableAuthorImageHash(oldUrl, MediaCoverTypes.Poster);
+                var newHash = MediaCoverRendition.ComputeStableAuthorImageHash(newUrl, MediaCoverTypes.Poster);
+                h.AuthorService.UpdateSelectedPosterHash(h.Author.Id, oldHash);
+                var stale = h.Authors.Get(h.Author.Id);
+                h.Broadcasts.Clear();
+                if (downloadCommand)
+                {
+                    var covers = Proxy<IMapCoversToLocal>((method, _) =>
+                    {
+                        if (method.Name == nameof(IMapCoversToLocal.EnsureAuthorCovers))
+                        {
+                            h.AuthorService.UpdateSelectedPosterHash(h.Author.Id, newHash);
+                            return true;
+                        }
+                        return null;
+                    });
+                    var events = Proxy<IEventAggregator>((_, args) => { h.Controller.Handle((MediaCoversUpdatedEvent)args[0]); return null; });
+                    var download = new DownloadMediaService(h.AuthorService, Proxy<IBookService>((_, _) => new List<Book>()),
+                        Proxy<IDeferredCoverService>((_, _) => false), covers, events, LogManager.GetCurrentClassLogger());
+                    download.Execute(new NzbDrone.Core.MediaCover.Commands.DownloadAuthorMediaCommand { AuthorId = h.Author.Id });
+                }
+                else
+                {
+                    h.AuthorService.UpdateSelectedPosterHash(h.Author.Id, newHash);
+                    h.Controller.Handle(new MediaCoversUpdatedEvent(stale));
+                }
+                var resource = ((ResourceChangeMessage<AuthorResource>)h.Broadcasts.Single().Body).Resource;
+                Assert.That(resource.SelectedPosterHash, Is.EqualTo(newHash));
+            });
+        }
+
+        [TestCase(false, "single")]
+        [TestCase(true, "single")]
+        [TestCase(false, "many")]
+        [TestCase(true, "many")]
+        [TestCase(false, "transaction")]
+        [TestCase(true, "transaction")]
+        public void stale_author_save_cannot_overwrite_a_new_photo_choice(bool postgres, string route)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database, false, false, connected: true);
+                h.AuthorService.UpdateSelectedPosterHash(h.Author.Id, "old-photo");
+                var stale = h.Authors.Get(h.Author.Id);
+                h.AuthorService.UpdateSelectedPosterHash(h.Author.Id, "new-photo");
+                stale.Name = "Refreshed metadata";
+                if (route == "many") h.Authors.UpdateMany(new[] { stale });
+                else if (route == "transaction") h.AuthorService.UpdateAuthor(stale, (_, _) => { });
+                else h.AuthorService.UpdateAuthor(stale);
+                var saved = h.Authors.Get(stale.Id);
+                Assert.That(saved.Name, Is.EqualTo("Refreshed metadata"));
+                Assert.That(saved.SelectedPosterHash, Is.EqualTo("new-photo"));
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void rejected_photo_notifies_the_ui_even_when_download_already_removed_it(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database, false, false, connected: true);
+                const string url = "https://images.example/rejected-pick.png";
+                h.Author.Images = new() { new(MediaCoverTypes.Poster, url) };
+                h.AuthorService.UpdateAuthor(h.Author);
+                h.PhotoResult = author =>
+                {
+                    h.AuthorService.RemoveImageUrls(author.Id, new[] { url });
+                    author.Images.Clear();
+                    return new EnsureImageResult { State = "error", ErrorCode = "placeholder_image" };
+                };
+                h.Broadcasts.Clear();
+                var result = h.Controller.SetPrimaryPhoto(h.Author.Id, new SetPrimaryPhotoRequest { PhotoUrl = url }).GetAwaiter().GetResult();
+                Assert.That(result, Is.TypeOf<BadRequestObjectResult>());
+                Assert.That(h.Broadcasts, Has.Count.EqualTo(1));
+                Assert.That(h.Authors.Get(h.Author.Id).Images, Is.Empty);
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void photo_selection_preserves_a_concurrent_author_refresh_and_notifies_the_ui(bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var h = new Harness(database, false, false, connected: true);
+                const string url = "https://images.example/choice.png";
+                h.Author.Images = new() { new(MediaCoverTypes.Poster, url) };
+                h.AuthorService.UpdateAuthor(h.Author);
+                h.BeforePhotoDownloaded = () =>
+                {
+                    var newer = h.Authors.Get(h.Author.Id);
+                    newer.Name = "Concurrent author refresh";
+                    newer.AudiobookMonitored = false;
+                    h.Authors.SetFields(newer, a => a.Name, a => a.AudiobookMonitored);
+                };
+                h.Events.Clear();
+                var result = h.Controller.SetPrimaryPhoto(h.Author.Id, new SetPrimaryPhotoRequest { PhotoUrl = url }).GetAwaiter().GetResult();
+                Assert.That(result, Is.TypeOf<OkResult>());
+                var saved = h.Authors.Get(h.Author.Id);
+                Assert.That(saved.Name, Is.EqualTo("Concurrent author refresh"));
+                Assert.That(saved.AudiobookMonitored, Is.False);
+                Assert.That(saved.SelectedPosterHash, Is.EqualTo(AuthorImageHashHelper.ComputeStableImageHash(url, MediaCoverTypes.Poster)));
+                Assert.That(h.Broadcasts, Has.Count.EqualTo(1));
+                Assert.That(h.AuthorService.UpdateSelectedPosterHash(saved.Id, null, "another-selection"), Is.False);
+                Assert.That(h.AuthorService.UpdateSelectedPosterHash(saved.Id, saved.SelectedPosterHash), Is.False);
+                Assert.That(h.AuthorService.UpdateSelectedPosterHash(saved.Id, null, saved.SelectedPosterHash), Is.True);
+                h.Events.Clear();
+                Assert.That(h.AuthorService.RemoveImageUrls(saved.Id, new[] { url }), Is.True);
+                Assert.That(h.Events.OfType<MediaCoversUpdatedEvent>(), Is.Empty);
+            });
+        }
+
         [Test]
         public void author_edit_payload_retains_required_path_and_omits_unchanged_format_folders(
             [Values] bool postgres, [Values] bool ebook, [Values] bool folderEdit)
@@ -208,11 +334,14 @@ namespace Chaptarr.Core.Test.Api
             public List<MonitoringConfig> Adds { get; } = new();
             public IRootFolderService Roots { get; }
             public IAuthorService AuthorService { get; }
+            public Action BeforePhotoDownloaded;
+            public Func<Author, EnsureImageResult> PhotoResult;
+            public List<object> Events { get; } = new();
 
             public Harness(IMainDatabase database, bool ebook, bool generalLegacyProfile, bool connected = false, bool? initialSync = null)
             {
                 var logger = LogManager.GetCurrentClassLogger();
-                var events = Proxy<IEventAggregator>((method, args) => null);
+                var events = Proxy<IEventAggregator>((method, args) => { Events.Add(args[0]); return null; });
                 var formats = Proxy<ICustomFormatService>((method, args) =>
                     method.Name == "All" ? new List<CustomFormat>() : throw new NotImplementedException(method.Name));
                 var quality = new QualityProfileService(new QualityProfileRepository(database, events, formats),
@@ -302,7 +431,12 @@ namespace Chaptarr.Core.Test.Api
                 var statistics = Proxy<IAuthorStatisticsService>((method, args) =>
                     method.Name == nameof(IAuthorStatisticsService.AuthorStatistics)
                         ? new AuthorStatistics { AuthorId = Author.Id } : throw new NotImplementedException(method.Name));
-                var covers = Proxy<IMapCoversToLocal>((method, args) => null);
+                var covers = Proxy<IMapCoversToLocal>((method, args) =>
+                {
+                    if (method.Name != nameof(IMapCoversToLocal.EnsureAuthorImage)) return null;
+                    BeforePhotoDownloaded?.Invoke();
+                    return Task.FromResult(PhotoResult?.Invoke((Author)args[0]) ?? new EnsureImageResult { State = "downloaded", Path = "verified.png" });
+                });
                 var config = Proxy<IConfigService>((method, args) =>
                     method.Name == "get_RecycleBin" ? string.Empty : throw new NotImplementedException(method.Name));
                 var runtime = Proxy<IRuntimeInfo>((method, args) =>

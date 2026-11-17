@@ -80,7 +80,7 @@ namespace Chaptarr.Core.Test.MediaCover
             var received = new List<string>();
             var serving = Task.Run(async () =>
             {
-                for (var i = 0; i < (authorRefresh ? 2 : 1) + (redirect ? 1 : 0); i++)
+                for (var i = 0; i < 1 + (redirect ? 1 : 0); i++)
                 {
                     using var socket = await server.Listener.AcceptTcpClientAsync(server.Deadline.Token);
                     received.Add(await ReadHeaders(socket.GetStream(), server.Deadline.Token));
@@ -104,6 +104,11 @@ namespace Chaptarr.Core.Test.MediaCover
                     case nameof(IDiskProvider.FileExists):
                     case nameof(IDiskProvider.FolderExists):
                         return false;
+                    case nameof(IDiskProvider.GetFiles):
+                        return Array.Empty<string>();
+                    case nameof(IDiskProvider.WriteFileAtomically):
+                        ((Action<string>)args[1])((string)args[0]);
+                        return null;
                     case nameof(IDiskProvider.SaveStream):
                         using (var bytes = new MemoryStream())
                         {
@@ -111,6 +116,7 @@ namespace Chaptarr.Core.Test.MediaCover
                             saved.Add(bytes.ToArray());
                         }
                         return null;
+                    case nameof(IDiskProvider.WriteAllText):
                     case nameof(IDiskProvider.EnsureFolder):
                     case nameof(IDiskProvider.MoveFile):
                     case nameof(IDiskProvider.FileSetLastWriteTime):
@@ -121,8 +127,7 @@ namespace Chaptarr.Core.Test.MediaCover
             });
             var appFolder = InterfaceProxy.Proxy<IAppFolderInfo>((_, _) => Path.GetTempPath());
             var deferred = InterfaceProxy.Proxy<IDeferredCoverService>((_, _) => false);
-            var subject = new MediaCoverService(null, null, null, Client(factory: factory), disk, appFolder,
-                null, config, null, null, deferred, logs.GetLogger("RefreshCoverFixture"));
+            var subject = new MediaCoverService(null, null, null, Client(factory: factory), disk, appFolder, config, null, null, deferred, logs.GetLogger("RefreshCoverFixture"));
             var author = new Author { Id = 123, Name = "Test author", Images = new()
             {
                 new(MediaCoverTypes.Poster, redirect ? server.Url + "?redirect" : blocked), new(MediaCoverTypes.Banner, server.Url)
@@ -142,7 +147,7 @@ namespace Chaptarr.Core.Test.MediaCover
             }
 
             await serving;
-            Assert.That(received, Has.Count.EqualTo((authorRefresh ? 2 : 1) + (redirect ? 1 : 0)));
+            Assert.That(received, Has.Count.EqualTo(1 + (redirect ? 1 : 0)));
             Assert.That(received, Has.All.StartWith($"GET {new Uri(server.Url).PathAndQuery}"));
             Assert.That(received.Last(), Does.StartWith($"GET {new Uri(server.Url).PathAndQuery} HTTP/1.1"));
             Assert.That(factory.Resolved, Is.EqualTo(new[] { "blocked-cover.invalid" }));

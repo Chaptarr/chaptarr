@@ -438,12 +438,12 @@ namespace Chaptarr.Core.Test.MediaCover
                 }
             });
             var client = Client(new HttpProxySettings(ProxyType.Http, "127.0.0.1", server.Port, "", false));
-            Assert.That(MediaCoverHttpRequest.Get(client, null, "http://cover.invalid/image", userAgent: "Mozilla/5.0 Fixture", rangeRequest: true).ResponseData, Is.EqualTo(Image));
+            Assert.That(MediaCoverHttpRequest.Get(client, null, "http://cover.invalid/image", userAgent: "Mozilla/5.0 Fixture").ResponseData, Is.EqualTo(Image));
             await serving;
             for (var i = 0; i < requests.Count; i++)
             {
                 Assert.That(requests[i].Contains("Referer: https://www.goodreads.com/"), Is.EqualTo(i % 2 == 1), requests[i]);
-                Assert.That(requests[i], Does.Contain("Range: bytes=0-0"));
+                Assert.That(requests[i], Does.Not.Contain("Range:"));
                 Assert.That(requests[i].Contains("Sec-Fetch-"), Is.EqualTo(i % 2 == 0), requests[i]);
                 Assert.That(requests[i], Does.Contain(i % 2 == 1 ? "User-Agent: Dalvik/" : "User-Agent: Mozilla/5.0 Fixture"));
                 Assert.That(requests[i].Split("\r\n").Where(line => line.StartsWith("Accept:")),

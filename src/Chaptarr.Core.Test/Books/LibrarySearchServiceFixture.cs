@@ -86,6 +86,24 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void search_carries_the_native_monitored_edition_identity_without_exposing_it()
+        {
+            using var connection = OpenConnection();
+            var id = connection.ExecuteScalar<int>("SELECT MIN(\"Id\") FROM \"Editions\" WHERE \"Title\" = 'Dune Messiah'");
+            connection.Execute("UPDATE \"Editions\" SET \"Monitored\" = true, \"ForeignEditionId\" = 'gr:cover-owner' WHERE \"Id\" = @id", new { id });
+            try
+            {
+                var result = _service.Search("Dune Messiah", 1).Books.Single();
+                Assert.That(result.CoverEditionId, Is.EqualTo("gr:cover-owner"));
+                Assert.That(NzbDrone.Common.Serializer.STJson.ToJson(result), Does.Not.Contain("coverEditionId"));
+            }
+            finally
+            {
+                connection.Execute("UPDATE \"Editions\" SET \"Monitored\" = false, \"ForeignEditionId\" = NULL WHERE \"Id\" = @id", new { id });
+            }
+        }
+
+        [Test]
         public void production_book_search_should_remain_eligible_for_the_postgres_title_index()
         {
             if (!_postgres)
@@ -534,7 +552,7 @@ namespace Chaptarr.Core.Test.Books
             var boolean = _postgres ? "BOOLEAN DEFAULT TRUE" : "INTEGER DEFAULT 1";
             connection.Execute($"CREATE TABLE \"Authors\" (\"Id\" INTEGER PRIMARY KEY, {string.Join(", ", authorColumns.Select(column => $"\"{column}\" TEXT NULL"))});");
             connection.Execute($"CREATE TABLE \"Books\" (\"Id\" INTEGER PRIMARY KEY, \"AuthorId\" INTEGER, \"MediaType\" INTEGER, \"SeriesId\" INTEGER NULL, \"AudiobookMonitored\" {boolean}, \"EbookMonitored\" {boolean}, {string.Join(", ", bookColumns.Select(column => $"\"{column}\" TEXT NULL"))});");
-            connection.Execute("CREATE TABLE \"Editions\" (\"Id\" INTEGER PRIMARY KEY, \"BookId\" INTEGER, \"Title\" TEXT, \"MatchingTitle\" TEXT, \"Subtitle\" TEXT, \"Narrator\" TEXT, \"Monitored\" BOOLEAN DEFAULT FALSE);");
+            connection.Execute("CREATE TABLE \"Editions\" (\"Id\" INTEGER PRIMARY KEY, \"BookId\" INTEGER, \"Title\" TEXT, \"MatchingTitle\" TEXT, \"ForeignEditionId\" TEXT, \"Subtitle\" TEXT, \"Narrator\" TEXT, \"Monitored\" BOOLEAN DEFAULT FALSE);");
             connection.Execute("CREATE TABLE \"BookFiles\" (\"Id\" INTEGER PRIMARY KEY, \"EditionId\" INTEGER);");
             connection.Execute("CREATE TABLE \"Series\" (\"Id\" INTEGER PRIMARY KEY, \"Title\" TEXT, \"GoodreadsSeriesId\" TEXT, \"MediaType\" INTEGER);");
             connection.Execute("CREATE TABLE \"SeriesBookLink\" (\"BookId\" INTEGER, \"SeriesId\" INTEGER, \"Position\" TEXT);");

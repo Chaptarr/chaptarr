@@ -34,6 +34,7 @@ namespace Chaptarr.Api.V1.Books
         public string ForeignBookId { get; set; }  // Chaptarr-native IDs are prefixed; Readarr facades emit bare IDs in the requested dialect.
         public string LocalBookId { get; set; }
         public string ForeignEditionId { get; set; }
+        internal string CoverEditionId { get; set; }
         public string BaseBookId { get; set; }
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         [SwaggerSchema("An existing copy of this provider edition (on any audiobook row of the same work) was returned unchanged; nothing was changed or searched.", ReadOnly = true)]
@@ -189,6 +190,14 @@ namespace Chaptarr.Api.V1.Books
 
     public static class BookResourceMapper
     {
+        public static void MapCoversToLocal(this IMapCoversToLocal mapper, IEnumerable<BookResource> resources)
+        {
+            var books = resources.ToList();
+            mapper.ConvertBookCoversToLocalUrls(books.Select(book =>
+                new KeyValuePair<int, List<MediaCover>>(book.Id, book.Images)),
+                books.GroupBy(book => book.Id).ToDictionary(group => group.Key, group => group.First().CoverEditionId));
+        }
+
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
 
         private static List<MediaCover> CloneImages(IEnumerable<MediaCover> images)
@@ -254,6 +263,7 @@ namespace Chaptarr.Api.V1.Books
                 ForeignBookId = foreignBookId,
                 LocalBookId = model.Id.ToString(),
                 ForeignEditionId = ReadarrFacadeEditionIdentity.BuildForeignEditionId(selectedEdition, options.FacadeContext),
+                CoverEditionId = BookEditionIdentity.GetTrustedForeignEditionId(selectedEdition),
                 BaseBookId = model.BaseBookId,
 
                 // Map individual provider IDs from the model

@@ -12,14 +12,14 @@ namespace NzbDrone.Core.MediaCover
     {
         internal static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
 
-        internal static HttpResponse Get(IHttpClient client, IConfigService config, string url, bool rangeRequest = false,
+        internal static HttpResponse Get(IHttpClient client, IConfigService config, string url,
             string userAgent = null, Stream responseStream = null, CancellationToken cancellationToken = default, TimeSpan? timeout = null, bool logHttpError = true)
         {
             return Execute(config, url, request =>
             {
                 request.ResponseStream = responseStream;
                 return client.Get(request);
-            }, cancellationToken, timeout, userAgent, rangeRequest, logHttpError);
+            }, cancellationToken, timeout, userAgent, logHttpError);
         }
 
         internal static void Download(IHttpClient client, IConfigService config, string url, string path, TimeSpan timeout)
@@ -33,7 +33,7 @@ namespace NzbDrone.Core.MediaCover
 
         private static T Execute<T>(IConfigService config, string url, Func<HttpRequest, T> fetch,
             CancellationToken cancellationToken = default, TimeSpan? timeout = null,
-            string userAgent = null, bool rangeRequest = false, bool logHttpError = true)
+            string userAgent = null, bool logHttpError = true)
         {
             if (!MediaCoverUrlSafetyPolicy.TryGetSafeImageUrl(url, config, out var safeUrl, out var reason))
             {
@@ -47,7 +47,7 @@ namespace NzbDrone.Core.MediaCover
             var goodreadsUserAgent = GoodreadsAndroidUserAgent.GetRandom();
             void ApplyHeaders(HttpRequest current) => ExternalImageRequestHeaders.ApplyExternalImageRequestHeaders(current,
                 ExternalImageRequestHeaders.IsGoodreadsUrl(current.Url.FullUri)
-                    ? goodreadsUserAgent : userAgent, rangeRequest);
+                    ? goodreadsUserAgent : userAgent);
 
             var request = new HttpRequest(safeUrl)
             {

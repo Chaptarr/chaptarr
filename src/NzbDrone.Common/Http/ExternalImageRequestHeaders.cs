@@ -58,7 +58,7 @@ namespace NzbDrone.Common.Http
             }
         }
 
-        public static void ApplyExternalImageRequestHeaders(HttpRequest request, string userAgent, bool rangeRequest)
+        public static void ApplyExternalImageRequestHeaders(HttpRequest request, string userAgent)
         {
             request.Headers["User-Agent"] = userAgent;
             request.Headers["Accept"] = "image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8";
@@ -83,11 +83,6 @@ namespace NzbDrone.Common.Http
             }
 
             UpdateReferer(request);
-
-            if (rangeRequest)
-            {
-                request.Headers["Range"] = "bytes=0-0";
-            }
         }
     }
 }

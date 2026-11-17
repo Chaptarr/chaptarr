@@ -61,15 +61,20 @@ namespace Chaptarr.Http.Frontend.Mappers
                     return null;
                 }
 
-                return new FileStreamResult(contentStream, new MediaTypeHeaderValue(contentType)
-                {
-                    Encoding = contentType == "text/plain" ? Encoding.UTF8 : null
-                });
+                return CreateFileResult(resourceUrl, filePath, contentStream, contentType);
             }
 
             _logger.Warn("File {0} not found", filePath);
 
             return null;
+        }
+
+        protected virtual FileStreamResult CreateFileResult(string resourceUrl, string filePath, Stream contentStream, string contentType)
+        {
+            return new FileStreamResult(contentStream, new MediaTypeHeaderValue(contentType)
+            {
+                Encoding = contentType == "text/plain" ? Encoding.UTF8 : null
+            });
         }
 
         private string GetSafeFilePath(string resourceUrl, string mappedPath)
