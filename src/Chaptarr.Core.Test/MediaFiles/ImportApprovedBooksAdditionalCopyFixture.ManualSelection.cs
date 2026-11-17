@@ -375,7 +375,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     else if (failing)
                     {
                         var error = Assert.Catch(() => subject.Execute(command));
-                        Assert.That(error.Message, Does.Contain(scenario == "database-conflict" ? "another book" : persistenceFailure ? "file write refused" : "Import failed"));
+                        Assert.That(error.Message, Does.Contain(scenario == "database-conflict" ? "another book" : persistenceFailure ? "file write refused" : scenario == "combine-collision" ? "already occupies the managed destination" : "Import failed"));
                         Assert.That(books.Get(book.Id).AnyEditionOk, Is.True, "Failed imports cannot pin a book");
                         Assert.That(editions.Get(oldEdition.Id).Monitored, Is.True, "Failed persistence cannot change the selected edition");
                         Assert.That(files.Get(oldFile.Id).EditionId, Is.EqualTo(oldEdition.Id));
