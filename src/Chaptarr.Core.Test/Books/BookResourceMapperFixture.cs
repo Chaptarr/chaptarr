@@ -390,6 +390,33 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(resource.ForeignEditionId, Is.EqualTo(foreignEditionId));
         }
 
+        [TestCase(null)]
+        [TestCase("gr")]
+        [TestCase("hc")]
+        public void cover_mapping_keeps_native_receipt_identity_through_facade_projection(string dialect)
+        {
+            var edition = new Edition { Id = 8, Monitored = true, ForeignEditionId = "gr:199400410-ebook",
+                GoodreadsEditionId = 199400410, HardcoverEditionId = "12345",
+                Images = new List<CoreMediaCover> { new(MediaCoverTypes.Cover, "https://images.example/book.png") } };
+            var book = new Book { Id = 10, Title = "Book", MediaType = BookMediaType.Ebook, Author = new Author(),
+                Editions = new List<Edition> { edition } };
+            var resource = book.ToResource(new BookResourceMappingOptions {
+                FacadeContext = dialect == null ? null : new ReadarrFacadeContext(dialect, "ebook", "/readarr/" + dialect + "/ebook") });
+            var calls = 0;
+            var mapper = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IMapCoversToLocal>((method, args) =>
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(IMapCoversToLocal.ConvertBookCoversToLocalUrls)));
+                Assert.That(((IReadOnlyDictionary<int, string>)args[1])[10], Is.EqualTo("hc:edition:12345"));
+                Assert.That(((IEnumerable<KeyValuePair<int, List<CoreMediaCover>>>)args[0]).Single().Value.Single().Url,
+                    Is.EqualTo("https://images.example/book.png"));
+                calls++;
+                return null;
+            });
+            mapper.MapCoversToLocal(new[] { resource });
+            Assert.That(calls, Is.EqualTo(1));
+            Assert.That(NzbDrone.Common.Serializer.STJson.ToJson(resource), Does.Not.Contain("coverEditionId"));
+        }
+
         [Test]
         public void should_expose_bare_foreign_book_id_for_readarr_facades()
         {

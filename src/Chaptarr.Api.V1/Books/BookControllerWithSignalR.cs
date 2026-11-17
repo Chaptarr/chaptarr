@@ -183,8 +183,7 @@ namespace Chaptarr.Api.V1.Books
 
         private void MapCoversToLocal(params BookResource[] books)
         {
-            _coverMapper.ConvertBookCoversToLocalUrls(books.Select(bookResource =>
-                new KeyValuePair<int, List<MediaCover>>(bookResource.Id, bookResource.Images)));
+            _coverMapper.MapCoversToLocal(books);
         }
     }
 }

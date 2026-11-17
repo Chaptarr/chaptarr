@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Threading;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation;
@@ -46,6 +47,8 @@ namespace NzbDrone.Common.Http
         public IEnumerable<HttpStatusCode> SuppressHttpErrorStatusCodes { get; set; }
         public bool UseSimplifiedUserAgent { get; set; }
         public bool AllowAutoRedirect { get; set; }
+        public int? RedirectLimit { get; set; }
+        public Action<HttpRequest> OnRedirect { get; set; }
         public bool ConnectionKeepAlive { get; set; }
         public bool LogResponseContent { get; set; }
         public bool LogHttpError { get; set; }
@@ -55,6 +58,8 @@ namespace NzbDrone.Common.Http
         public bool StoreRequestCookie { get; set; }
         public bool StoreResponseCookie { get; set; }
         public TimeSpan RequestTimeout { get; set; }
+        public CancellationToken CancellationToken { get; set; }
+        public HttpRequestTargetPolicy TargetPolicy { get; set; }
         public TimeSpan RateLimit { get; set; }
         public string RateLimitKey { get; set; }
         public Stream ResponseStream { get; set; }

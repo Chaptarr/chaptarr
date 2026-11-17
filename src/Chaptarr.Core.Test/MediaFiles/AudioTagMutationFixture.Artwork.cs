@@ -306,8 +306,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             file.Edition.ForeignEditionId = "hc:edition:123";
             file.Edition.Images = new() { new(MediaCoverTypes.Cover, "https://images.example/old.png") };
             var logger = _logs.GetLogger("RefreshArtwork");
-            var covers = new MediaCoverService(null, null, null, null, _disk,
-                Proxy<IAppFolderInfo>((_, _) => _directory), null, null, null, null, null, logger, imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(NLog.LogManager.GetCurrentClassLogger()));
+            var covers = new MediaCoverService(null, null, null, null, _disk, Proxy<IAppFolderInfo>((_, _) => _directory), null, null, null, null, logger, imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(NLog.LogManager.GetCurrentClassLogger()));
             var original = CreateCover("stored", 47);
             var path = covers.GetCoverPath(file.Edition.BookId, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".png");
             Directory.CreateDirectory(Path.GetDirectoryName(path));

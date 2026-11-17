@@ -22,9 +22,9 @@ namespace Chaptarr.Core.Test.Api
         {
             public (bool Ready, byte[] Data) ReadLocalBookCover(Edition edition) => (false, null);
 
-            public void EnsureBookCoversForBooks(List<Book> books) => throw new NotImplementedException();
+            public void EnsureBookCoversForBooks(List<Book> books, bool forceDownload = false) => throw new NotImplementedException();
             public void EnsureBookCoversForImport(Book book) => EnsureBookCovers(book);
-            public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers)
+            public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers, IReadOnlyDictionary<int, string> editionIds = null)
             {
                 foreach (var book in covers)
                 {
@@ -39,8 +39,8 @@ namespace Chaptarr.Core.Test.Api
             }
 
             public string GetCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCoverTypes coverType, string extension, int? height = null) => throw new NotImplementedException();
-            public void EnsureAuthorCovers(Author author) => throw new NotImplementedException();
-            public void EnsureBookCovers(Book book) => throw new NotImplementedException();
+            public bool EnsureAuthorCovers(Author author, bool forceDownload = false) => throw new NotImplementedException();
+            public void EnsureBookCovers(Book book, bool forceDownload = false) => throw new NotImplementedException();
             public Task<EnsureImageResult> EnsureAuthorImage(Author author, NzbDrone.Core.MediaCover.MediaCover cover) => throw new NotImplementedException();
         }
 

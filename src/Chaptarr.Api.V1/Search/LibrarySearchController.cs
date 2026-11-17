@@ -37,8 +37,9 @@ namespace Chaptarr.Api.V1.Search
 
             if (results.Books.Count > 0)
             {
-                _coverMapper.ConvertBookCoversToLocalUrls(results.Books.Select(book =>
-                    new KeyValuePair<int, List<MediaCover>>(book.Id, book.Images)));
+                _coverMapper.ConvertBookCoversToLocalUrls(
+                    results.Books.Select(book => new KeyValuePair<int, List<MediaCover>>(book.Id, book.Images)),
+                    results.Books.ToDictionary(book => book.Id, book => book.CoverEditionId));
             }
 
             return results;

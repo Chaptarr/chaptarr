@@ -546,9 +546,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             public (bool Ready, byte[] Data) ReadLocalBookCover(Edition edition) =>
                 System.IO.File.Exists(CoverPath) ? (true, System.IO.File.ReadAllBytes(CoverPath)) : (false, null);
 
-            public void EnsureBookCoversForBooks(List<Book> books) => throw new NotImplementedException();
+            public void EnsureBookCoversForBooks(List<Book> books, bool forceDownload = false) => throw new NotImplementedException();
             public void EnsureBookCoversForImport(Book book) => EnsureBookCovers(book);
-            public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers)
+            public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers, IReadOnlyDictionary<int, string> editionIds = null)
             {
                 foreach (var book in covers)
                 {
@@ -571,12 +571,10 @@ namespace Chaptarr.Core.Test.MediaFiles
                 return EnsureBookCoversCalls > 0 ? CoverPath : null;
             }
 
-            public void EnsureAuthorCovers(Author author)
-            {
-            }
+            public bool EnsureAuthorCovers(Author author, bool forceDownload = false) => false;
 
             public bool HadMonitoredEdition;
-            public void EnsureBookCovers(Book book)
+            public void EnsureBookCovers(Book book, bool forceDownload = false)
             {
                 HadMonitoredEdition = book.Editions?.Any(edition => edition.Monitored) == true;
                 EnsureBookCoversCalls++;

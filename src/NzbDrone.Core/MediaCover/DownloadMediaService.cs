@@ -1,9 +1,6 @@
-using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using NLog;
-using NzbDrone.Common.Disk;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MediaCover.Commands;
 using NzbDrone.Core.Datastore;
@@ -19,7 +16,6 @@ namespace NzbDrone.Core.MediaCover
         private readonly IBookService _bookService;
         private readonly IDeferredCoverService _deferredCoverService;
         private readonly IMapCoversToLocal _mediaCoverService;
-        private readonly IDiskProvider _diskProvider;
         private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
 
@@ -27,7 +23,6 @@ namespace NzbDrone.Core.MediaCover
                                   IBookService bookService,
                                   IDeferredCoverService deferredCoverService,
                                   IMapCoversToLocal mediaCoverService,
-                                  IDiskProvider diskProvider,
                                   IEventAggregator eventAggregator,
                                   Logger logger)
         {
@@ -35,7 +30,6 @@ namespace NzbDrone.Core.MediaCover
             _bookService = bookService;
             _deferredCoverService = deferredCoverService;
             _mediaCoverService = mediaCoverService;
-            _diskProvider = diskProvider;
             _eventAggregator = eventAggregator;
             _logger = logger;
         }
@@ -55,21 +49,8 @@ namespace NzbDrone.Core.MediaCover
 
             _logger.Debug("Downloading media for author {0}: {1}", author.Id, author.Name);
 
-            if (message.ForceDownload)
-            {
-                // Delete existing covers to force re-download
-                var authorCoverPath = Path.Combine(_diskProvider.GetParentFolder(_mediaCoverService.GetCoverPath(author.Id, MediaCoverEntity.Author, MediaCoverTypes.Poster, ".jpg")));
-                if (_diskProvider.FolderExists(authorCoverPath))
-                {
-                    _logger.Debug("Deleting existing covers for forced download");
-                    _diskProvider.DeleteFolder(authorCoverPath, true);
-                }
-            }
+            _mediaCoverService.EnsureAuthorCovers(author, message.ForceDownload);
 
-            // Directly download author covers instead of publishing event
-            // This ensures covers are downloaded immediately on import
-            _mediaCoverService.EnsureAuthorCovers(author);
-            
             // Also download covers for all books by this author
             var books = _bookService.GetBooksByAuthor(author.Id);
             if (!_deferredCoverService.MarkBooksForCoverDownload(books.Select(book => book.Id)))
@@ -92,16 +73,8 @@ namespace NzbDrone.Core.MediaCover
                     _logger.Warn("Skipping cover downloads for {0} deleted books", bookIds.Count - books.Count);
                 }
 
-                if (message.ForceDownload)
-                {
-                    foreach (var selectedBook in books)
-                    {
-                        _mediaCoverService.DeleteBookCovers(selectedBook.Id);
-                    }
-                }
-
                 _logger.Debug("Downloading media for {0} books", books.Count);
-                _mediaCoverService.EnsureBookCoversForBooks(books);
+                _mediaCoverService.EnsureBookCoversForBooks(books, message.ForceDownload);
                 return;
             }
 
@@ -118,12 +91,7 @@ namespace NzbDrone.Core.MediaCover
 
             _logger.Debug("Downloading media for book {0}: {1}", book.Id, book.Title);
 
-            if (message.ForceDownload)
-            {
-                _mediaCoverService.DeleteBookCovers(book.Id);
-            }
-
-            _mediaCoverService.EnsureBookCovers(book);
+            _mediaCoverService.EnsureBookCovers(book, message.ForceDownload);
         }
 
     }

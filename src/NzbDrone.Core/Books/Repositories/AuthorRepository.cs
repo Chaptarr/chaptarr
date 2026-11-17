@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
 using System.Linq;
+using System.Reflection;
 using Dapper;
 using NLog;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
 
@@ -14,6 +16,8 @@ namespace NzbDrone.Core.Books
     public interface IAuthorRepository : IBasicRepository<Author>
     {
         Author Update(Author author, IDbConnection connection, IDbTransaction transaction);
+        bool RemoveImageUrls(int authorId, IReadOnlyCollection<string> urls);
+        bool UpdateSelectedPosterHash(int authorId, string hash, string expectedHash = null);
         List<Author> FindExisting(IEnumerable<int> ids);
         List<int> GetDueInitialFormatSync(DateTime now);
         bool AuthorPathExists(string path);
@@ -36,6 +40,7 @@ namespace NzbDrone.Core.Books
     public class AuthorRepository : BasicRepository<Author>, IAuthorRepository
     {
         private readonly Logger _logger;
+        private List<PropertyInfo> _updatePropertiesWithoutPosterChoice;
 
         public AuthorRepository(IMainDatabase database,
                                 IEventAggregator eventAggregator,
@@ -44,6 +49,12 @@ namespace NzbDrone.Core.Books
         {
             _logger = logger;
         }
+
+        // Photo selection has its own conditional writer. A metadata refresh or author
+        // edit must never save an older selection over a newer user choice.
+        protected override List<PropertyInfo> GetUpdateProperties() =>
+            _updatePropertiesWithoutPosterChoice ??= base.GetUpdateProperties()
+                .Where(property => property.Name != nameof(Author.SelectedPosterHash)).ToList();
 
         protected override SqlBuilder Builder() => new SqlBuilder(_database.DatabaseType);
 
@@ -58,6 +69,46 @@ namespace NzbDrone.Core.Books
         {
             UpdateMany(new[] { author }, connection, transaction);
             return author;
+        }
+
+        public bool UpdateSelectedPosterHash(int authorId, string hash, string expectedHash = null)
+        {
+            var timer = Stopwatch.StartNew();
+            using var connection = _database.OpenConnection();
+            var written = connection.Execute("UPDATE \"Authors\" SET \"SelectedPosterHash\" = @hash WHERE \"Id\" = @authorId " +
+                "AND (@expectedHash IS NULL OR \"SelectedPosterHash\" = @expectedHash) " +
+                "AND COALESCE(\"SelectedPosterHash\", '') <> COALESCE(@hash, '')", new { authorId, hash, expectedHash });
+            _logger.Debug("Author photo selection: author {0}, {1} rows updated in {2} ms", authorId, written, timer.ElapsedMilliseconds);
+            return written != 0;
+        }
+
+        public bool RemoveImageUrls(int authorId, IReadOnlyCollection<string> urls)
+        {
+            if (urls == null || urls.Count == 0) return false;
+            var timer = Stopwatch.StartNew();
+            using var connection = _database.OpenConnection();
+            var read = 0;
+            var removed = 0;
+            var written = 0;
+            try
+            {
+                var before = connection.QuerySingleOrDefault<string>("SELECT \"Images\" FROM \"Authors\" WHERE \"Id\" = @authorId", new { authorId });
+                var images = before == null ? null : STJson.Deserialize<List<MediaCover.MediaCover>>(before);
+                if (images == null) return false;
+                read = images.Count;
+                var kept = images.Where(image => image == null || !urls.Contains(image.Url)).ToList();
+                removed = images.Count - kept.Count;
+                if (removed == 0) return false;
+                // Update only this field, and never overwrite a newer image list read during repair.
+                written = connection.Execute("UPDATE \"Authors\" SET \"Images\" = @after WHERE \"Id\" = @authorId AND \"Images\" = @before",
+                    new { authorId, before, after = STJson.ToJson(kept) });
+                return written != 0;
+            }
+            finally
+            {
+                _logger.Debug("Author image cleanup: author {0}, {1} images read, {2} removals requested, {3} rows updated in {4} ms",
+                    authorId, read, removed, written, timer.ElapsedMilliseconds);
+            }
         }
 
         public List<Author> FindExisting(IEnumerable<int> ids) => FindMany(ids);

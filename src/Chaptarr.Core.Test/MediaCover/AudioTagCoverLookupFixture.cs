@@ -72,9 +72,7 @@ namespace Chaptarr.Core.Test.MediaCover
                     BeforeDownload?.Invoke();
                     return new HttpResponse((HttpRequest)args[0], new HttpHeader { ContentType = "image/png" }, Replacement);
                 });
-                Service = new MediaCoverService(null, Proxy<IImageResizer>((_, _) => null), null, http, disk,
-                    Proxy<IAppFolderInfo>((_, _) => _directory), null,
-                    Proxy<IConfigService>((method, _) => method.Name switch
+                Service = new MediaCoverService(null, Proxy<IImageResizer>((_, _) => null), null, http, disk, Proxy<IAppFolderInfo>((_, _) => _directory), Proxy<IConfigService>((method, _) => method.Name switch
                     {
                         "get_MetadataServerUrl" => "https://images.example",
                         "get_CoverDownloadScope" => CoverDownloadScope.AllBooks,
@@ -357,8 +355,7 @@ namespace Chaptarr.Core.Test.MediaCover
             try
             {
                 var logger = LogManager.GetCurrentClassLogger();
-                var service = new MediaCoverService(null, null, null, null, RealDiskProvider.Create(logger),
-                    Proxy<IAppFolderInfo>((_, _) => directory), null, null, null, null, null, logger, imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
+                var service = new MediaCoverService(null, null, null, null, RealDiskProvider.Create(logger), Proxy<IAppFolderInfo>((_, _) => directory), null, null, null, null, logger, imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
                 var edition = new Edition { Id = 3, BookId = 2, Monitored = scenario != "unmonitored", ForeignEditionId = "hc:edition:123", Images = new List<NzbDrone.Core.MediaCover.MediaCover>() };
                 edition.Book = new Book { Id = 2, Editions = new List<Edition> { edition } };
                 var cover = new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Cover, "https://example.test/edition.jpg");

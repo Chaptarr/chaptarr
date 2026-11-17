@@ -31,6 +31,9 @@ namespace NzbDrone.Core.Books.Services
 
     public class LibrarySearchBook
     {
+        [System.Text.Json.Serialization.JsonIgnore]
+        public string CoverEditionId { get; set; }
+
         public int Id { get; set; }
         public bool ExactMatch { get; set; }
         public string Title { get; set; }
@@ -76,6 +79,7 @@ namespace NzbDrone.Core.Books.Services
         public string Title { get; set; }
         public string DisplayTitle { get; set; }
         public string MonitoredEditionTitle { get; set; }
+        public string CoverEditionId { get; set; }
         public string MatchedEditionTitle { get; set; }
         public string TitleSlug { get; set; }
         public int MediaTypeInt { get; set; }
@@ -275,6 +279,7 @@ SELECT
     b.""Id"" AS Id,
     b.""Title"" AS Title,
     me.""Title"" AS MonitoredEditionTitle,
+    me.""ForeignEditionId"" AS CoverEditionId,
     r.EditionTitle AS MatchedEditionTitle,
     b.""TitleSlug"" AS TitleSlug,
     b.""MediaType"" AS MediaTypeInt,
@@ -376,6 +381,7 @@ LIMIT @rowLimit";
                         AuthorName = primary.AuthorName,
                         Monitored = primary.Monitored,
                         Images = primary.Images ?? new List<MediaCoverModel>(),
+                        CoverEditionId = primary.CoverEditionId,
                         ForeignBookId = FirstProviderId(
                             ("hc", primary.HardcoverBookId),
                             ("gr", primary.GoodreadsWorkId),

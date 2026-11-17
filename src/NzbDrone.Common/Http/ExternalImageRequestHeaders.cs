@@ -37,34 +37,52 @@ namespace NzbDrone.Common.Http
 
         public static bool IsGoodreadsUrl(string url)
         {
-            return url.Contains("goodreads.com", StringComparison.OrdinalIgnoreCase) ||
-                   url.Contains("gr-assets.com", StringComparison.OrdinalIgnoreCase);
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            {
+                return false;
+            }
+
+            var host = uri.IdnHost.TrimEnd('.');
+            return host.Equals("goodreads.com", StringComparison.OrdinalIgnoreCase) ||
+                   host.EndsWith(".goodreads.com", StringComparison.OrdinalIgnoreCase) ||
+                   host.Equals("gr-assets.com", StringComparison.OrdinalIgnoreCase) ||
+                   host.EndsWith(".gr-assets.com", StringComparison.OrdinalIgnoreCase);
         }
 
-        public static void ApplyExternalImageRequestHeaders(HttpRequest request, string url, string userAgent, bool rangeRequest)
+        public static void UpdateReferer(HttpRequest request)
         {
-            request.Headers.Add("User-Agent", userAgent);
-            request.Headers.Add("Accept", "image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8");
+            request.Headers.Remove("Referer");
+            if (IsGoodreadsUrl(request.Url.FullUri))
+            {
+                request.Headers["Referer"] = "https://www.goodreads.com/";
+            }
+        }
+
+        public static void ApplyExternalImageRequestHeaders(HttpRequest request, string userAgent)
+        {
+            request.Headers["User-Agent"] = userAgent;
+            request.Headers["Accept"] = "image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8";
 
             if (ShouldSendBrowserLikeHeaders(userAgent))
             {
-                request.Headers.Add("Accept-Language", "en-US,en;q=0.9");
-                request.Headers.Add("Cache-Control", "no-cache");
-                request.Headers.Add("Pragma", "no-cache");
-                request.Headers.Add("Sec-Fetch-Dest", "image");
-                request.Headers.Add("Sec-Fetch-Mode", "no-cors");
-                request.Headers.Add("Sec-Fetch-Site", "cross-site");
+                request.Headers["Accept-Language"] = "en-US,en;q=0.9";
+                request.Headers["Cache-Control"] = "no-cache";
+                request.Headers["Pragma"] = "no-cache";
+                request.Headers["Sec-Fetch-Dest"] = "image";
+                request.Headers["Sec-Fetch-Mode"] = "no-cors";
+                request.Headers["Sec-Fetch-Site"] = "cross-site";
+            }
+            else
+            {
+                request.Headers.Remove("Accept-Language");
+                request.Headers.Remove("Cache-Control");
+                request.Headers.Remove("Pragma");
+                request.Headers.Remove("Sec-Fetch-Dest");
+                request.Headers.Remove("Sec-Fetch-Mode");
+                request.Headers.Remove("Sec-Fetch-Site");
             }
 
-            if (IsGoodreadsUrl(url))
-            {
-                request.Headers.Add("Referer", "https://www.goodreads.com/");
-            }
-
-            if (rangeRequest)
-            {
-                request.Headers.Add("Range", "bytes=0-0");
-            }
+            UpdateReferer(request);
         }
     }
 }

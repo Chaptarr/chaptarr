@@ -59,6 +59,7 @@ namespace NzbDrone.Common.Disk
         List<IFileInfo> GetFileInfos(string path, bool recursive = false);
         void RemoveEmptySubfolders(string path);
         void SaveStream(Stream stream, string path);
+        void WriteFileAtomically(string path, Action<string> write);
         bool IsValidFolderPermissionMask(string mask);
     }
 }

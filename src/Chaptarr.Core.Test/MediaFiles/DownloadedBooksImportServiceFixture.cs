@@ -228,6 +228,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     .ToList();
             }
             public void RemoveEmptySubfolders(string path) => throw new NotImplementedException();
+            public void WriteFileAtomically(string path, Action<string> write) => throw new NotSupportedException();
             public void SaveStream(Stream stream, string path) => throw new NotImplementedException();
             public bool IsValidFolderPermissionMask(string mask) => throw new NotImplementedException();
         }

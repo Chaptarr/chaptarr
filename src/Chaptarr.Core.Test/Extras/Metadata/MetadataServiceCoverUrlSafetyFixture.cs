@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Reflection;
 using Chaptarr.Core.Test.Common;
 using NLog;
@@ -70,23 +71,24 @@ namespace Chaptarr.Core.Test.Extras.Metadata
         {
             var urls = new[]
             {
-                ("http://8.8.8.8/cover.jpg", (string)null),
-                ("https://[2001:4860:4860::8888]/cover.jpg", (string)null),
-                ("http://10.0.0.1/cover.jpg", "http://10.0.0.1:8080"),
-                ("http://127.0.0.1/cover.jpg", "http://localhost:8080")
+                ("http://8.8.8.8/cover.jpg", (string)null, false),
+                ("https://i.gr-assets.com/cover.jpg", (string)null, true),
+                ("https://[2001:4860:4860::8888]/cover.jpg", (string)null, false),
+                ("http://10.0.0.1/cover.jpg", "http://10.0.0.1:8080", false),
+                ("http://127.0.0.1/cover.jpg", "http://localhost:8080", false)
             };
             foreach (var media in new[] { BookMediaType.Audiobook, BookMediaType.Ebook })
             {
                 for (var index = 0; index < urls.Length; index++)
-                    yield return new TestCaseData(media, urls[index].Item1, urls[index].Item2)
+                    yield return new TestCaseData(media, urls[index].Item1, urls[index].Item2, urls[index].Item3)
                         .SetName($"ABS_cover_allows_{media}_{index}");
             }
         }
 
         [TestCaseSource(nameof(AllowedCovers))]
-        public void abs_cover_writer_should_retain_public_and_configured_metadata_hosts(BookMediaType media, string url, string metadataServer)
+        public void abs_cover_writer_should_retain_public_and_configured_metadata_hosts(BookMediaType media, string url, string metadataServer, bool goodreads)
         {
-            using var harness = new CoverWriter(media, url, metadataServer);
+            using var harness = new CoverWriter(media, url, metadataServer, goodreads);
             var result = harness.Subject.CreateAfterBookImport(harness.Author, harness.File).ToList();
 
             Assert.Multiple(() =>
@@ -122,22 +124,45 @@ namespace Chaptarr.Core.Test.Extras.Metadata
             });
         }
 
+        [Test]
+        public void sidecar_private_address_warns_once_without_attaching_an_exception()
+        {
+            using var harness = new CoverWriter(BookMediaType.Ebook, "https://blocked-cover.invalid/cover.jpg", null,
+                resolvedAddress: IPAddress.Any);
+            var result = harness.Subject.CreateAfterBookImport(harness.Author, harness.File).ToList();
+            Assert.That(result, Is.Empty);
+            Assert.That(harness.Files, Is.Empty);
+            var warning = harness.Events.Entries.Single(entry => entry.Level == LogLevel.Warn);
+            Assert.That(warning.Exception, Is.Null);
+            Assert.That(warning.FormattedMessage, Does.StartWith("Skipping unsafe metadata image for ")
+                .And.Contains("Blocked unsafe image URL 'https://blocked-cover.invalid/cover.jpg': private_or_local_address"));
+            Assert.That(harness.Events.Entries.Any(entry => entry.Level >= LogLevel.Error), Is.False);
+        }
+
+        private sealed class EventTarget : Target
+        {
+            public readonly List<LogEventInfo> Entries = new();
+            protected override void Write(LogEventInfo logEvent) => Entries.Add(logEvent);
+        }
+
         private sealed class CoverWriter : IDisposable
         {
             public readonly Dictionary<string, byte[]> Files = new();
             public readonly List<string> Downloads = new();
             public readonly MemoryTarget Logs = new() { Layout = "${level}|${message}" };
             public readonly LogFactory LogFactory = new();
+            public readonly EventTarget Events = new();
             public readonly Author Author;
             public readonly BookFile File;
             public readonly string CoverPath;
             public readonly MetadataService Subject;
             public int CopyCount;
 
-            public CoverWriter(BookMediaType media, string url, string metadataServer)
+            public CoverWriter(BookMediaType media, string url, string metadataServer, bool goodreads = false, IPAddress resolvedAddress = null)
             {
                 var logging = new LoggingConfiguration();
                 logging.AddRule(LogLevel.Debug, LogLevel.Fatal, Logs);
+                logging.AddRule(LogLevel.Warn, LogLevel.Fatal, Events);
                 LogFactory.Configuration = logging;
                 var authorPath = @"C:\Library\A Author".AsOsAgnostic();
                 Author = new Author { Id = 10, Name = "A Author", Path = authorPath, AudiobookPath = authorPath, EbookPath = authorPath };
@@ -172,7 +197,24 @@ namespace Chaptarr.Core.Test.Extras.Metadata
                 {
                     if (method.Name == nameof(IHttpClient.DownloadFile))
                     {
-                        Downloads.Add((string)args[0]);
+                        var request = (HttpRequest)args[0];
+                        request.TargetPolicy.ValidateUrl((Uri)request.Url);
+                        if (resolvedAddress != null)
+                        {
+                            request.TargetPolicy.ValidateAddress((Uri)request.Url, resolvedAddress);
+                        }
+                        Assert.That(request.CancellationToken.CanBeCanceled, Is.True);
+                        Assert.That(request.RequestTimeout, Is.EqualTo(TimeSpan.FromSeconds(300)));
+                        Assert.That(request.LogHttpError, Is.True);
+                        Assert.That(request.Headers.GetSingleValue("User-Agent"), Is.Not.Null.And.Not.Empty.And.Not.Contains("Chaptarr"));
+                        Assert.That(request.Headers.GetSingleValue("Accept"), Does.Contain("image/"));
+                        if (goodreads)
+                        {
+                            Assert.That(request.Headers.GetSingleValue("Referer"), Is.EqualTo("https://www.goodreads.com/"));
+                            Assert.That(request.Headers.GetSingleValue("User-Agent"), Does.StartWith("Dalvik/").And.Contains("Android"));
+                            Assert.That(request.Headers.AllKeys, Has.None.StartsWith("Sec-Fetch-"));
+                        }
+                        Downloads.Add(request.Url.ToString());
                         Files[(string)args[1]] = new byte[] { 1, 2, 3 };
                     }
                     return DefaultResult(method);
