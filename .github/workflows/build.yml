@@ -1,23 +1,16 @@
 name: Build Chaptarr
 
 on:
-  push:
-    branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
   workflow_call:
   workflow_dispatch:
 
-# Tests only, never publishes. PRs and merges are both validated automatically, but
-# nothing reaches users until release.yml is run by hand; docker-publish.yml is
-# workflow_call-only, so no run started here can push an image.
-
-# One live run per PR and per branch: a newer push supersedes the older run, so a
-# batch of merges costs one build of the combined result rather than one each.
-# Release-called runs are never cancelled - that would silently drop the gate.
+# Tests only, never publishes. Runs on PRs, not again after merge.
+# Release-called runs are never cancelled.
 concurrency:
   group: build-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref_name }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

@@ -80,7 +80,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     if (Directory.Exists(directory)) Directory.Delete(directory, true);
                 }
             });
@@ -120,7 +120,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     if (Directory.Exists(directory)) Directory.Delete(directory, true);
                 }
             });
@@ -164,7 +164,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     if (Directory.Exists(directory)) Directory.Delete(directory, true);
                 }
             });
@@ -204,7 +204,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 finally
                 {
                     converter.Release.Set();
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     if (Directory.Exists(directory)) Directory.Delete(directory, true);
                 }
             });
@@ -239,7 +239,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     if (Directory.Exists(directory)) Directory.Delete(directory, true);
                 }
             });
@@ -276,7 +276,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     if (Directory.Exists(directory)) Directory.Delete(directory, true);
                 }
             });
@@ -324,7 +324,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
                 finally
                 {
-                    worker.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(worker);
                     if (Directory.Exists(directory)) Directory.Delete(directory, true);
                 }
             });

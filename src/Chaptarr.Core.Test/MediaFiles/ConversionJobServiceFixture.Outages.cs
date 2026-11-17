@@ -138,7 +138,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 {
                     outage.Unavailable = false;
                     converter.Release.Set();
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     try { worker.GetAwaiter().GetResult(); }
                     finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
                 }
@@ -267,7 +267,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 {
                     outage.Unavailable = false;
                     converter.Release.Set();
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     tracking.Clear(request.DownloadId);
                     Directory.Delete(root, true);
                 }
@@ -343,7 +343,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Assert.That(SpinWait.SpinUntil(() => log.Logs.Any(value => value.Contains("Unable to save conversion outcome")), TimeSpan.FromSeconds(5)), Is.True);
                     if (restart)
                     {
-                        service.Handle(new ApplicationShutdownRequested());
+                        ShutdownAndWait(service);
                         Assert.That(File.ReadAllText(request.OutputPath), Is.EqualTo("completed recording"));
                         outage.Unavailable = false;
                         service = CreateService(repository, new UnusedConversionService());
@@ -366,7 +366,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 {
                     outage.Unavailable = false;
                     converter.Release.Set();
-                    service.Handle(new ApplicationShutdownRequested());
+                    ShutdownAndWait(service);
                     new ConversionTrackingService(new StubEventAggregator()).Clear(request.DownloadId);
                     Directory.Delete(root, true);
                 }

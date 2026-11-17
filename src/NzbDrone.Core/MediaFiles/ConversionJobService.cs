@@ -61,6 +61,8 @@ namespace NzbDrone.Core.MediaFiles
         private readonly object _sync = new();
         private readonly AutoResetEvent _signal = new(false);
         private readonly Dictionary<string, ActiveConversion> _activeConversions = new(StringComparer.OrdinalIgnoreCase);
+        // Encode ownership can end before import bookkeeping. Shutdown tracks the whole worker.
+        private readonly Dictionary<Task, string> _workers = new();
         private readonly IConversionJobRepository _repository;
         private readonly IM4bConversionService _conversionService;
         private readonly IConversionTrackingService _trackingService;
@@ -72,7 +74,9 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IRootFolderService _rootFolderService;
         private readonly IDiskProvider _diskProvider;
         private readonly TimeSpan _outcomeRetryDelay;
-        private CancellationTokenSource _shutdown;
+        private readonly TimeSpan _shutdownWait;
+        private readonly TimeSpan _heartbeatInterval;
+        private readonly CancellationTokenSource _shutdown = new();
         private Task _scheduler;
 
         public ConversionJobService(
@@ -86,7 +90,9 @@ namespace NzbDrone.Core.MediaFiles
             IConfigService configService,
             Logger logger,
             IHistoryService historyService = null,
-            TimeSpan? outcomeRetryDelay = null)
+            TimeSpan? outcomeRetryDelay = null,
+            TimeSpan? shutdownWait = null,
+            TimeSpan? heartbeatInterval = null)
         {
             _diskProvider = diskProvider ?? throw new ArgumentNullException(nameof(diskProvider));
             _rootFolderService = rootFolderService ?? throw new ArgumentNullException(nameof(rootFolderService));
@@ -99,6 +105,8 @@ namespace NzbDrone.Core.MediaFiles
             _historyService = historyService;
             _mediaFileService = mediaFileService ?? throw new ArgumentNullException(nameof(mediaFileService));
             _outcomeRetryDelay = outcomeRetryDelay ?? SchedulerPollInterval;
+            _shutdownWait = shutdownWait ?? TimeSpan.FromSeconds(5);
+            _heartbeatInterval = heartbeatInterval ?? TimeSpan.FromSeconds(30);
         }
 
         public int WorkerConcurrency => Clamp(_configService?.AudiobookConversionConcurrentConversions ?? 1, 1, 16);
@@ -760,7 +768,7 @@ namespace NzbDrone.Core.MediaFiles
 
         public void Handle(ApplicationStartedEvent message)
         {
-            _shutdown = new CancellationTokenSource();
+            if (_shutdown.IsCancellationRequested) return;
             _scheduler = Task.Factory.StartNew(
                 SchedulerLoop,
                 _shutdown.Token,
@@ -769,30 +777,42 @@ namespace NzbDrone.Core.MediaFiles
             _signal.Set();
         }
 
+        // Snapshot both lifetimes: encode ownership may end before a worker finishes.
+        internal (Task Scheduler, Task Workers) Completion
+        {
+            get
+            {
+                lock (_sync) return (_scheduler ?? Task.CompletedTask, Task.WhenAll(_workers.Keys));
+            }
+        }
+
         public void Handle(ApplicationShutdownRequested message)
         {
             _logger.Info("Shutting down detached audiobook conversion worker");
-            _shutdown?.Cancel();
-            Task[] activeTasks;
+            _shutdown.Cancel();
+            KeyValuePair<Task, string>[] workers;
             lock (_sync)
             {
-                foreach (var active in _activeConversions.Values)
-                {
-                    active.Cancellation.Cancel();
-                }
-
-                activeTasks = _activeConversions.Values.Select(active => active.Completion.Task).ToArray();
+                workers = _workers.ToArray();
             }
 
             _signal.Set();
+            var completion = Completion;
             try
             {
-                _scheduler?.Wait(TimeSpan.FromSeconds(5));
-                Task.WaitAll(activeTasks, TimeSpan.FromSeconds(5));
+                if (!completion.Scheduler.Wait(_shutdownWait))
+                    _logger.Warn("Conversion scheduler is still running after the {0}s shutdown wait", _shutdownWait.TotalSeconds);
             }
             catch (AggregateException ex) when (ex.InnerExceptions.All(inner => inner is OperationCanceledException))
             {
-                // Expected during shutdown.
+                // A cancelled scheduler must not skip the separate worker wait.
+            }
+            if (!completion.Workers.Wait(_shutdownWait))
+            {
+                var pending = workers.Where(worker => !worker.Key.IsCompleted).ToArray();
+                if (pending.Length > 0)
+                    _logger.Warn("Shutdown timed out after {0}s waiting for {1} conversion worker(s) still running: {2}",
+                        _shutdownWait.TotalSeconds, pending.Length, string.Join(", ", pending.Select(worker => worker.Value)));
             }
         }
 
@@ -947,7 +967,7 @@ namespace NzbDrone.Core.MediaFiles
                 action();
                 return true;
             }
-            catch (OperationCanceledException) when (_shutdown?.IsCancellationRequested == true)
+            catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
             {
                 throw;
             }
@@ -1008,6 +1028,11 @@ namespace NzbDrone.Core.MediaFiles
                     return false;
                 }
                 var current = Get(expected.DownloadId);
+                if (current == null)
+                {
+                    _logger.Warn("Skipping recovery for conversion job {0}, downloadId={1}: the job no longer exists", expected.Id, expected.DownloadId);
+                    return false;
+                }
                 if (!IsSameAttempt(current, expected) || current.Status != expected.Status || current.RequestJson != expected.RequestJson)
                 {
                     _logger.Warn("Skipping recovery for conversion job {0}, downloadId={1}: the job changed after recovery read it; preserving the newer state", expected.Id, expected.DownloadId);
@@ -1026,6 +1051,7 @@ namespace NzbDrone.Core.MediaFiles
         {
             lock (_sync)
             {
+                if (_shutdown.IsCancellationRequested) return;
                 var processLimit = WorkerConcurrency;
                 var tokenLimit = Clamp(_configService?.AudiobookConversionMaxCpuThreads ?? 4, processLimit, 64);
                 var availableProcesses = processLimit - _activeConversions.Count;
@@ -1053,7 +1079,19 @@ namespace NzbDrone.Core.MediaFiles
                     var job = queued[index];
                     var tokenBudget = baseTokens + (index < extraTokens ? 1 : 0);
                     var active = StartJob(job, tokenBudget);
-                    _ = Task.Run(() => ExecuteJob(job, active));
+                    _ = Task.Run(() =>
+                    {
+                        try { ExecuteJob(job, active); }
+                        catch (Exception ex) { _logger.Error(ex, "Conversion worker finalization failed for download {0}", job.DownloadId); }
+                        finally
+                        {
+                            lock (_sync)
+                            {
+                                active.Completion.TrySetResult();
+                                _workers.Remove(active.Completion.Task);
+                            }
+                        }
+                    });
                 }
             }
         }
@@ -1070,8 +1108,9 @@ namespace NzbDrone.Core.MediaFiles
             job.UpdatedAt = job.StartedAt.Value;
             job.AttemptCount++;
             SaveState(job);
-            var active = new ActiveConversion(CancellationTokenSource.CreateLinkedTokenSource(_shutdown?.Token ?? CancellationToken.None), tokenBudget);
+            var active = new ActiveConversion(CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token), tokenBudget);
             _activeConversions.Add(job.DownloadId, active);
+            _workers.Add(active.Completion.Task, job.DownloadId);
             return active;
         }
 
@@ -1097,8 +1136,9 @@ namespace NzbDrone.Core.MediaFiles
                     return;
                 }
 
-                if (RecoverCommittedImport(job, request))
+                if (HasCommittedImport(job, request))
                 {
+                    // Proof prevents another encode; settlement waits until this worker releases ownership.
                     committedImport = true;
                     return;
                 }
@@ -1119,7 +1159,7 @@ namespace NzbDrone.Core.MediaFiles
                 }
 
                 var threadPlan = GetThreadPlan(request.Sources.Count, active.TokenBudget);
-                using var heartbeat = new Timer(_ => TouchHeartbeat(job), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+                var heartbeat = new Timer(_ => TouchHeartbeat(job), null, _heartbeatInterval, _heartbeatInterval);
 
                 var encoderSucceeded = false;
                 try
@@ -1139,7 +1179,7 @@ namespace NzbDrone.Core.MediaFiles
                             FfmpegThreads = threadPlan.FfmpegThreads,
                             TagOptions = request.TagOptions,
                             CancellationToken = cancellation.Token,
-                            ProgressHandler = update => UpdateProgress(job, update)
+                            ProgressHandler = update => UpdateProgress(job, active, update)
                         });
 
                     if (result.Success)
@@ -1187,6 +1227,11 @@ namespace NzbDrone.Core.MediaFiles
                         if (!encoderSucceeded) CleanupWorkRoot(request.WorkFolder, downloadId: job.DownloadId, reason: "failed");
                     });
                 }
+                finally
+                {
+                    // Disposal must drain queued/running callbacks before releasing ownership.
+                    heartbeat.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                }
             }
             catch (Exception ex)
             {
@@ -1225,7 +1270,13 @@ namespace NzbDrone.Core.MediaFiles
                         {
                             var current = Get(job.DownloadId);
                             // Refresh metadata without adopting a replacement attempt after release.
-                            if (IsSameAttempt(current, job)) RecoverCommittedImport(current, DeserializeRequest(current));
+                            if (!IsSameAttempt(current, job))
+                            {
+                                _logger.Info("Skipping import settlement for conversion job {0}, downloadId={1}: {2}", job.Id, job.DownloadId,
+                                    current == null ? "the job no longer exists" : "the download belongs to a different attempt");
+                                return true;
+                            }
+                            return !HasCommittedImport(current, DeserializeRequest(current)) || SettleCommittedImport(current);
                         }, "retrying import bookkeeping after worker ownership was released");
                 }
                 finally
@@ -1233,58 +1284,64 @@ namespace NzbDrone.Core.MediaFiles
                     ReleaseConversionOwnership(job.DownloadId, active);
                     cancellation.Dispose();
                     _signal.Set();
-                    if (_shutdown?.IsCancellationRequested != true)
+                    if (!_shutdown.IsCancellationRequested)
                     {
                         QueueImportSweep();
                     }
-                    active.Completion.TrySetResult();
                 }
             }
         }
+
+        // Call under _sync so checking ownership and changing state are one operation.
+        private bool OwnsConversion(string downloadId, ActiveConversion owner) =>
+            _activeConversions.TryGetValue(downloadId, out var current) && ReferenceEquals(current, owner);
 
         private void ReleaseConversionOwnership(string downloadId, ActiveConversion active)
         {
             lock (_sync)
             {
-                if (!_activeConversions.TryGetValue(downloadId, out var owner) || !ReferenceEquals(owner, active)) return;
+                if (!OwnsConversion(downloadId, active)) return;
                 _trackingService?.UnregisterCancellation(downloadId, active.Cancellation);
                 _activeConversions.Remove(downloadId);
             }
         }
 
-        private void PersistWorkerOutcome(ConversionJob job, Action persist, string retryMessage = "retaining worker ownership and retrying")
+        private void PersistWorkerOutcome(ConversionJob job, Action persist, string retryMessage = "retaining worker ownership and retrying") =>
+            PersistWorkerOutcome(job, () => { persist(); return true; }, retryMessage);
+
+        private void PersistWorkerOutcome(ConversionJob job, Func<bool> persist, string retryMessage = "retaining worker ownership and retrying")
         {
             DateTime? failureStarted = null;
             while (true)
             {
                 try
                 {
-                    persist();
-                    if (failureStarted.HasValue)
+                    if (persist())
                     {
-                        _logger.Info("Saved conversion outcome {0} for download {1} after {2:0.0}s of database failures",
-                            job.Status, job.DownloadId, (DateTime.UtcNow - failureStarted.Value).TotalSeconds);
+                        if (failureStarted.HasValue)
+                        {
+                            _logger.Info("Saved conversion outcome {0} for download {1} after {2:0.0}s of database failures",
+                                job.Status, job.DownloadId, (DateTime.UtcNow - failureStarted.Value).TotalSeconds);
+                        }
+                        return;
                     }
-
-                    return;
                 }
                 catch (DbException ex)
                 {
                     failureStarted ??= DateTime.UtcNow;
                     _logger.Error(ex, "Unable to save conversion outcome {0} for download {1}; {2}. Outcome: {3}",
                         job.Status, job.DownloadId, retryMessage, job.Error ?? job.Message);
-                    if ((_shutdown?.Token ?? CancellationToken.None).WaitHandle.WaitOne(_outcomeRetryDelay))
-                    {
-                        return;
-                    }
                 }
+                // A stale snapshot also needs a fresh read. Share the bounded, cancellable
+                // retry delay rather than spinning while lifecycle writers keep changing it.
+                if (_shutdown.Token.WaitHandle.WaitOne(_outcomeRetryDelay)) return;
             }
         }
 
         private void HandleInterruptedConversion(ConversionJob job, ConversionJobRequest request, ActiveConversion owner)
         {
             var persisted = _repository.FindByDownloadId(job.DownloadId);
-            if (_shutdown?.IsCancellationRequested == true &&
+            if (_shutdown.IsCancellationRequested &&
                 persisted?.Status != ConversionJobStatus.Cancelling)
             {
                 TryRecover(persisted, current => Requeue(current, "Conversion interrupted by application shutdown"), owner);
@@ -1297,7 +1354,7 @@ namespace NzbDrone.Core.MediaFiles
             CleanupWorkRoot(request?.WorkFolder ?? job.WorkFolder, downloadId: job.DownloadId, reason: DeserializeRequest(job)?.DiscardReason ?? "cancelled");
         }
 
-        private void UpdateProgress(ConversionJob job, ConversionProgressUpdate update)
+        private void UpdateProgress(ConversionJob job, ActiveConversion owner, ConversionProgressUpdate update)
         {
             if (update == null)
             {
@@ -1306,14 +1363,14 @@ namespace NzbDrone.Core.MediaFiles
 
             lock (_sync)
             {
+                if (!OwnsConversion(job.DownloadId, owner) || job.Status != ConversionJobStatus.Converting || owner.Cancellation.IsCancellationRequested) return;
                 job.Progress = update.Progress;
                 job.Message = update.Message ?? job.Message;
                 job.HeartbeatAt = DateTime.UtcNow;
                 job.UpdatedAt = job.HeartbeatAt.Value;
                 _repository.SetFields(job, j => j.Progress, j => j.Message, j => j.HeartbeatAt, j => j.UpdatedAt);
+                _trackingService?.Progress(job.DownloadId, update.Progress, update.Message);
             }
-
-            _trackingService?.Progress(job.DownloadId, update.Progress, update.Message);
         }
 
         private void TouchHeartbeat(ConversionJob job)
@@ -1472,6 +1529,13 @@ namespace NzbDrone.Core.MediaFiles
 
         private bool RecoverCommittedImport(ConversionJob job, ConversionJobRequest request)
         {
+            if (!HasCommittedImport(job, request)) return false;
+            SettleCommittedImport(job);
+            return true;
+        }
+
+        private bool HasCommittedImport(ConversionJob job, ConversionJobRequest request)
+        {
             if (request == null) return false;
 
             // Import source coverage is committed with BookFiles, before history or the job completion write.
@@ -1484,11 +1548,7 @@ namespace NzbDrone.Core.MediaFiles
                     string.Equals(file.MatchProvenance?.ImportDownloadId, job.DownloadId, StringComparison.OrdinalIgnoreCase) &&
                     file.MatchProvenance?.ImportSourcePaths?.Count > 0 &&
                     sources.SetEquals(file.MatchProvenance.ImportSourcePaths));
-                if (imported)
-                {
-                    SettleCommittedImport(job);
-                    return true;
-                }
+                if (imported) return true;
             }
 
             // Legacy requests lack BookId, and an approved additional-copy import may create a new
@@ -1501,16 +1561,16 @@ namespace NzbDrone.Core.MediaFiles
                 if (path.IsNullOrWhiteSpace() || !File.Exists(path)) continue;
                 var file = _mediaFileService.GetFileWithPath(path);
                 if (file == null || file.EditionId != history.EditionId || file.Quality?.Quality != Qualities.Quality.M4B) continue;
-                SettleCommittedImport(job);
                 return true;
             }
 
             return false;
         }
 
-        private void SettleCommittedImport(ConversionJob job)
+        private bool SettleCommittedImport(ConversionJob job)
         {
             ConversionLifecycleCandidate expected = null;
+            ConversionJobRequest removal = null;
             if (!TryRecover(job, current =>
             {
                 current.Status = ConversionJobStatus.Completed;
@@ -1519,28 +1579,33 @@ namespace NzbDrone.Core.MediaFiles
                 current.Error = null;
                 current.CompletedAt = current.UpdatedAt = DateTime.UtcNow;
                 var request = DeserializeRequest(current);
-                request.DiscardRequested = true;
-                request.DiscardCurrentAttemptOnly = true;
-                request.DiscardReason = "imported";
+                if (!request.DiscardRequested)
+                {
+                    request.DiscardRequested = true;
+                    request.DiscardCurrentAttemptOnly = true;
+                    request.DiscardReason = "imported";
+                }
+                removal = request;
                 current.RequestJson = JsonSerializer.Serialize(request);
                 _repository.Update(current);
                 // PostgreSQL stores timestamps at microsecond precision. Capture the
                 // persisted version, just as lifecycle-page readers do.
                 expected = ExpectedAttempt(_repository.Get(current.Id));
-            }, whenOwned: () => _logger.Info("Import is committed for conversion job {0}, download {1}; workspace cleanup waits for the active worker to finish", job.Id, job.DownloadId))) return;
+            }, whenOwned: () => _logger.Info("Import is committed for conversion job {0}, download {1}; workspace cleanup waits for the active worker to finish", job.Id, job.DownloadId))) return false;
             // The committed BookFile/source proof above, not a policy refusal, prevents
             // another encode. A cleanup refusal cannot put this job back in the queue.
             _trackingService?.Complete(job.DownloadId);
             _logger.Info("Recovered committed M4B import for conversion job {0}, download {1}; the job is completed and will not encode again", job.Id, job.DownloadId);
             try
             {
-                PrepareArtifactRemoval(job.DownloadId, currentAttemptOnly: true, reason: "imported",
+                PrepareArtifactRemoval(job.DownloadId, removal.DiscardCurrentAttemptOnly, removal.DiscardReason ?? "imported",
                     origin: ConversionRemovalOrigin.Automatic, expected: expected)();
             }
             catch (Exception ex)
             {
                 RecordCleanupFailure(job.DownloadId, ex);
             }
+            return true;
         }
 
         private ConversionJobRequest DeserializeRequest(ConversionJob job)
