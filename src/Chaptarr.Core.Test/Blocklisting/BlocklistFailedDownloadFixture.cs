@@ -75,6 +75,32 @@ namespace Chaptarr.Core.Test.Blocklisting
             Assert.That(_subject.Blocklisted(AuthorId, BuildTorrentRelease(TorrentHash)), Is.True);
         }
 
+        [Test]
+        public void should_block_a_failed_usenet_release_when_the_indexer_changes_its_published_timestamp()
+        {
+            _repositoryProxy.Inserted = new Blocklist
+            {
+                AuthorProviderIds = new List<string> { "hc:9689" },
+                SourceTitle = SourceTitle,
+                Protocol = DownloadProtocol.Usenet,
+                Indexer = "NZBgeek (Prowlarr)",
+                PublishedDate = new DateTime(2022, 4, 30, 10, 26, 30),
+                Size = 361219000
+            };
+
+            var repeatedRelease = new ReleaseInfo
+            {
+                Title = SourceTitle,
+                DownloadProtocol = DownloadProtocol.Usenet,
+                Indexer = "NZBgeek (Prowlarr)",
+                PublishDate = new DateTime(2022, 3, 31, 10, 18, 00),
+                Size = 361219000
+            };
+
+            Assert.That(_subject.Blocklisted(AuthorId, repeatedRelease), Is.True,
+                "the same named NZB must not be retried merely because its timestamp changed");
+        }
+
         private static DownloadFailedEvent BuildFailedEvent()
         {
             return new DownloadFailedEvent
@@ -107,7 +133,7 @@ namespace Chaptarr.Core.Test.Blocklisting
 
         private class BlocklistRepositoryProxy : DispatchProxy
         {
-            public Blocklist Inserted { get; private set; }
+            public Blocklist Inserted { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -123,6 +149,15 @@ namespace Chaptarr.Core.Test.Blocklisting
                     var hash = (string)args[1];
                     return Inserted == null || Inserted.AuthorProviderIds.Count == 0 ||
                            Inserted.TorrentInfoHash?.IndexOf(hash, StringComparison.InvariantCultureIgnoreCase) < 0
+                        ? new List<Blocklist>()
+                        : new List<Blocklist> { Inserted };
+                }
+
+                if (targetMethod?.Name == nameof(IBlocklistRepository.BlocklistedByTitle))
+                {
+                    var sourceTitle = (string)args[1];
+                    return Inserted == null || Inserted.AuthorProviderIds.Count == 0 ||
+                           Inserted.SourceTitle?.IndexOf(sourceTitle, StringComparison.InvariantCultureIgnoreCase) < 0
                         ? new List<Blocklist>()
                         : new List<Blocklist> { Inserted };
                 }
