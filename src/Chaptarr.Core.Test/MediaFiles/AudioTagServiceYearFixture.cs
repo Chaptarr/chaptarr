@@ -9,6 +9,7 @@ using NUnit.Framework;
 using NzbDrone.Common.Disk;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Localization;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.MediaFiles.TagExtraction;
@@ -59,7 +60,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [TestCaseSource(nameof(TagCases))]
-        public void should_write_only_known_edition_years_and_preserve_explicit_scrubbing(
+        public void should_write_known_years_and_remove_unknown_year_only_when_scrubbing(
             string extension, uint existingYear, int editionYear, bool scrub, uint expectedYear)
         {
             var path = Path.Combine(_tempDirectory, "Fixture" + extension);
@@ -111,6 +112,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 "get_WriteAudioTags" => WriteAudioTagsType.Sync,
                 "get_ScrubAudioTags" => scrub,
+                "get_EmbedCoverArt" => true,
                 "get_SetPermissionsLinux" => false,
                 _ => throw new NotImplementedException(method.Name)
             });
@@ -139,7 +141,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             });
             var logger = LogManager.GetCurrentClassLogger();
             var extraction = new TagExtractionService(new[] { new TagLibSharpExtractor() }, null, logger);
-            var subject = new AudioTagService(config, mediaFiles, disk, watcher, safety, events, null, logger, extraction, null);
+            var subject = new AudioTagService(config, mediaFiles, disk, watcher, safety, events, null, logger, extraction, null, Proxy<ILocalizationService>((_, args) => (string)args[0]), Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.MediaCover.IMapCoversToLocal>((_, _) => (true, (byte[])null)));
 
             var preview = subject.GetRetagPreviewsByBook(book.Id);
             Assert.That(preview, Has.Count.EqualTo(1));

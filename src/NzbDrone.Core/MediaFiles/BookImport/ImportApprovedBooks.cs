@@ -3669,6 +3669,23 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             {
                 _logger.Warn(ex, "Unable to preload audio series after import; individual tag writes will report their outcomes");
             }
+            // Do this before any per-file events can queue another cover request. A failed
+            // host is attempted once for the book, not once for each audio part.
+            foreach (var group in commits.Where(commit => commit.NewDownload && commit.BookFile.Edition != null &&
+                (commit.BookFile.CalibreId > 0 || (AudioTagService.ShouldWriteTags(mode, true) &&
+                    _configService.EmbedCoverArt && MediaFileExtensions.CanWriteAudioTags(Path.GetExtension(commit.BookFile.Path))))).GroupBy(commit => commit.BookFile.Edition.BookId))
+            {
+                var file = group.First().BookFile;
+                try
+                {
+                    EnsureCoverEditionsLoaded(file.Edition.Book, file.Edition);
+                    _coverMapper?.EnsureBookCoversForImport(file.Edition.Book);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug(ex, "Unable to ensure the imported book cover for book {0}; keeping existing embedded art", group.Key);
+                }
+            }
             foreach (var commit in commits)
             {
                 if (commit.PublishAddedEvent)
@@ -3809,18 +3826,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         {
             try
             {
-                if (newDownload && bookFile?.CalibreId > 0 && bookFile.Edition?.Book != null)
-                {
-                    try
-                    {
-                        _coverMapper?.EnsureBookCoversForImport(bookFile.Edition.Book);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Debug(ex, "[{0}] Unable to ensure the imported Calibre book cover", route);
-                    }
-                }
-
                 _metadataTagService.WriteTags(bookFile, newDownload);
             }
             catch (Exception ex)

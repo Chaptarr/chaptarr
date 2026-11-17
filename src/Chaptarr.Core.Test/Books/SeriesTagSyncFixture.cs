@@ -61,6 +61,10 @@ namespace Chaptarr.Core.Test.Books
                 });
                 var synced = new List<int>();
                 var changedPhase = false;
+                var observedMedia = new List<BookMediaType>();
+                var observedPositions = new List<string>();
+                var observedTitles = new List<string>();
+                var observedMethods = new List<string>();
                 var catalog = InterfaceProxy.Proxy<IBookService>((method, _) =>
                 {
                     Assert.That(method.Name, Is.EqualTo(nameof(IBookService.GetBooksByAuthor)));
@@ -75,14 +79,14 @@ namespace Chaptarr.Core.Test.Books
                 });
                 var audio = InterfaceProxy.Proxy<IAudioTagService>((method, args) =>
                 {
-                    Assert.That(method.Name, Is.EqualTo(nameof(IAudioTagService.SyncTags)));
+                    observedMethods.Add(method.Name);
                     var requested = (List<Edition>)args[0];
                     synced.AddRange(requested.Select(edition => edition.BookId));
-                    Assert.That(requested.Select(edition => edition.Book.MediaType), Is.All.EqualTo(BookMediaType.Audiobook));
+                    observedMedia.AddRange(requested.Select(edition => edition.Book.MediaType));
                     if (changedPhase && change == "position")
-                        Assert.That(links.GetLinksByBook(new List<int> { books[0].Id }).Single().Position, Is.EqualTo("9"), "Sync must observe the saved link");
+                        observedPositions.Add(links.GetLinksByBook(new List<int> { books[0].Id }).Single().Position);
                     if (changedPhase && change == "title")
-                        Assert.That(series.GetByAuthorId(author.Id).Single(row => row.MediaType == BookMediaType.Audiobook).Title, Is.EqualTo("Renamed series"), "Sync must observe the saved title");
+                        observedTitles.Add(series.GetByAuthorId(author.Id).Single(row => row.MediaType == BookMediaType.Audiobook).Title);
                     return null;
                 });
                 var subject = new RefreshSeriesService(catalog, series, countedLinks, new RefreshSeriesBookLinkService(links, logger), logger, config, editions, audio);
@@ -102,6 +106,10 @@ namespace Chaptarr.Core.Test.Books
                 var expected = mode == WriteAudioTagsType.Sync && change is "position" or "title"
                     ? books.Take(change == "title" ? 2 : 1).Select(book => book.Id).ToArray() : Array.Empty<int>();
                 Assert.That(synced, Is.EquivalentTo(expected));
+                Assert.That(observedMethods, Is.All.EqualTo(nameof(IAudioTagService.SyncTags)));
+                Assert.That(observedMedia, Is.All.EqualTo(BookMediaType.Audiobook));
+                Assert.That(observedPositions, Is.EqualTo(expected.Length > 0 && change == "position" ? new[] { "9" } : Array.Empty<string>()), "Sync must observe the saved link");
+                Assert.That(observedTitles, Is.EqualTo(expected.Length > 0 && change == "title" ? new[] { "Renamed series" } : Array.Empty<string>()), "Sync must observe the saved title");
                 Assert.That(linkReadIds.Count, Is.EqualTo(expected.Length > 0 ? 1 : 0));
                 foreach (var ids in linkReadIds) Assert.That(ids, Is.EquivalentTo(expected), "Only affected audiobooks are reloaded, in one batch");
                 synced.Clear();

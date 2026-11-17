@@ -153,6 +153,16 @@ namespace Chaptarr.Core.Test.MediaFiles
             _files.Add(file); return file;
         }
 
+        [TestCase("isbn:9780593135204", "9780593135204")]
+        [TestCase("System.Collections.Generic.List`1[System.String]", "0593135202")]
+        public void ebook_preview_uses_cleaned_isbn_from_the_edition(string raw, string expected)
+        {
+            var file = Add(1); file.Edition.Isbn13 = raw; file.Edition.Isbn10 = "0593135202";
+            var row = _ebooks.GetRetagPreviewsByBook(1).Single();
+            Assert.That(row.Changes["Identifiers"].Item2, Does.Contain(expected));
+            Assert.That(row.Changes["Identifiers"].Item2, Does.Not.Contain(raw));
+        }
+
         private MetadataTagService Service(Action<BookFile> audioWrite = null, IEBookTagService ebooks = null, int restoredTotals = 0)
         {
             var audio = Proxy<IAudioTagService>((method, args) =>
@@ -876,7 +886,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 var file = Add(1); file.Path = Path.Combine(directory, "wrong.mp3");
                 File.Copy(Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "Audio", "silence.mp3"), file.Path);
-                var audio = new AudioTagService(null, _media, null, null, null, null, null, _logger, null, null);
+                var audio = new AudioTagService(null, _media, null, null, null, null, null, _logger, null, null, null, null);
                 if (preview)
                 {
                     Assert.That(audio.GetRetagPreviewsByBook(1), Is.Empty);
@@ -904,7 +914,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         public void unsupported_audio_is_counted_and_debug_logged_without_opening_the_file()
         {
             var file = Add(1, BookMediaType.Audiobook); file.Path = Path.Combine(Root, "book.mka");
-            var audio = new AudioTagService(null, _media, null, null, null, null, null, _logger, null, null);
+            var audio = new AudioTagService(null, _media, null, null, null, null, null, _logger, null, null, null, null);
             var batch = audio.RetagFiles(new RetagFilesCommand(1, new() { 1 }), _files, new TagBatch());
             Assert.That(batch.Unsupported, Is.EqualTo(1)); Assert.That(batch.Skipped, Is.Zero);
             Assert.That(batch.Unsuccessful, Is.False);

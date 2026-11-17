@@ -117,6 +117,8 @@ namespace Chaptarr.Core.Test.Api.Wanted
 
         private sealed class StubCoverMapper : IMapCoversToLocal
         {
+            public (bool Ready, byte[] Data) ReadLocalBookCover(Edition edition) => (false, null);
+
             public void EnsureBookCoversForBooks(List<Book> books) => throw new NotImplementedException();
             public void EnsureBookCoversForImport(Book book) => EnsureBookCovers(book);
             public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers)

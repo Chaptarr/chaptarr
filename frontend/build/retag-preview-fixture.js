@@ -17,6 +17,7 @@ const scenario = new URLSearchParams(window.location.search).get('scenario');
 const skipped = { id: 2, bookFileId: 2, path: '/library/unregistered.epub', skipReason: 'notInCalibre', changes: [] };
 const row = (id) => ({ id, bookFileId: id, path: `/library/${id}.mp3`, changes: [{ field: 'Title', oldValue: 'Old', newValue: 'New' }] });
 const items = scenario === 'unregistered' ? [skipped] : [row(1), skipped, { ...row(3), isFileSymlink: true },
+  { ...row(15), path: '/library/scrub-only.m4b', changes: [{ field: 'SCRUB', oldValue: null, newValue: 'Rebuilds tags from the matched edition' }] },
   { id: 4, bookFileId: 4, path: '/library/offline.epub', changes: [], skipReason: 'libraryUnavailable', calibreLibrary: 'http://server:8080/ [books]', retryAfter: '2000-11-11T12:01:00Z', retryNow: false },
   { ...row(5), skipReason: 'previewFailed' },
   { ...row(7), path: '/library/ebook.epub', isCalibreFormat: true, skipReason: 'previewFailed' },

@@ -23,6 +23,7 @@
     <Content Include="..\Chaptarr.Api.V1\openapi.json" Link="Fixtures\openapi.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures\ProviderSearch\*.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures\Matching\*.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures\Audio\chapters.*" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures\Audio\silence.*" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\NzbDrone.Core\Localization\Core\en.json" Link="Localization\Core\en.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\frontend\src\Utilities\String\unicodeComparisonFoldData.js" Link="Fixtures\unicodeComparisonFoldData.js" CopyToOutputDirectory="PreserveNewest" />

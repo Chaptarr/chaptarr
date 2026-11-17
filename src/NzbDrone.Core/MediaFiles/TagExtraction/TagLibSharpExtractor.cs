@@ -221,7 +221,14 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 foreach (var field in AppleTagFields.Read(tag))
                 {
                     var isSeries = AppleTagFields.SeriesKey(field.Mean, field.Name) != null;
-                    Add(result, isSeries ? $"MP4:----:{field.Mean}:{field.Name}" : "MP4:----", field.Value);
+                    var rawKey = $"MP4:----:{field.Mean}:{field.Name}";
+                    Add(result, isSeries ? rawKey : "MP4:----", field.Value);
+                    // Keep existing freeform evidence and expose the same native identity keys
+                    // used by the canonical reader and writer.
+                    if (string.Equals(field.Mean, AppleTagFields.ToneNamespace, StringComparison.OrdinalIgnoreCase) &&
+                        (string.Equals(field.Name, AppleTagFields.ToneAsinName, StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(field.Name, AppleTagFields.ToneIsbnName, StringComparison.OrdinalIgnoreCase)))
+                        Add(result, rawKey, field.Value);
                 }
             }
             catch (Exception ex) { Logger.Debug(ex, "Unable to extract Apple tags from {0}", file.Name); }

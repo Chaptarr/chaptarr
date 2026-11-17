@@ -53,12 +53,20 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         private IDiskProvider _disk;
         private AudioTagService _service;
+        private ILocalizationService _localization;
         private IMediaFileService _media;
         private IConfigService _config;
         private readonly List<BookFile> _files = new List<BookFile>();
         private readonly List<BookFileRetaggedEvent> _events = new List<BookFileRetaggedEvent>();
         private Func<string, bool> _prepare;
+        private string _scrubDescription;
+        private string _coverPath;
+        private bool _coverReady;
+        private Func<Edition, string> _coverRead;
+        private Func<Edition, (bool Ready, byte[] Data)> _coverSnapshot;
+        private int _coverLookups;
         private bool _scrub;
+        private bool _embedCover;
         private int _scrubReads;
         private WriteAudioTagsType _mode;
         private Func<WriteAudioTagsType> _readMode;
@@ -83,6 +91,13 @@ namespace Chaptarr.Core.Test.MediaFiles
             _events.Clear();
             _seriesRead = null;
             _scrub = false;
+            _embedCover = true;
+            _coverPath = null;
+            _coverReady = true;
+            _scrubDescription = null;
+            _coverLookups = 0;
+            _coverRead = null;
+            _coverSnapshot = null;
             _scrubReads = 0;
             _mode = WriteAudioTagsType.Sync;
             _readMode = () => _mode;
@@ -105,6 +120,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 "get_WriteAudioTags" => _readMode(),
                 "get_ScrubAudioTags" => ReadScrubSetting(),
+                "get_EmbedCoverArt" => _embedCover,
                 "get_SetPermissionsLinux" => false,
                 _ => throw new NotImplementedException(m.Name)
             });
@@ -118,12 +134,20 @@ namespace Chaptarr.Core.Test.MediaFiles
             });
             _media = media;
             var safety = new FileMutationSafetyService(_disk, new DiskTransferService(_disk, logger), new MediaFileAttributeService(config, _disk, logger), logger);
+            _localization = new LocalizationService(Proxy<IConfigService>((_, _) => 1),
+                Proxy<NzbDrone.Common.EnvironmentInfo.IAppFolderInfo>((_, _) => TestContext.CurrentContext.TestDirectory), new NzbDrone.Common.Cache.CacheManager(), logger);
             _service = new AudioTagService(config, media, _disk,
                 Proxy<IRootFolderWatchingService>((_, _) => null),
                 Proxy<IFileMutationSafetyService>((_, a) => { _guards++; return _prepare != null ? _prepare((string)a[0]) : safety.EnsureMutableFile((string)a[0]); }),
                 Proxy<IEventAggregator>((_, a) => { _events.Add((BookFileRetaggedEvent)a[0]); return null; }),
                 null, logger, new TagExtractionService(new[] { new TagLibSharpExtractor() }, null, logger),
-                Proxy<ISeriesBookLinkService>((_, args) => _seriesRead != null ? _seriesRead((List<int>)args[0]) : throw new AssertionException("Fixture series must be loaded explicitly")));
+                Proxy<ISeriesBookLinkService>((_, args) => _seriesRead != null ? _seriesRead((List<int>)args[0]) : throw new AssertionException("Fixture series must be loaded explicitly")), Proxy<ILocalizationService>((_, args) => (string)args[0] == "AudioTagsScrubChanges" && _scrubDescription != null ? _scrubDescription : _localization.GetLocalizedString((string)args[0])), Proxy<NzbDrone.Core.MediaCover.IMapCoversToLocal>((_, args) =>
+                {
+                    _coverLookups++;
+                    if (_coverSnapshot != null) return _coverSnapshot((Edition)args[0]);
+                    var path = _coverRead == null ? _coverPath : _coverRead((Edition)args[0]);
+                    return (_coverReady, path == null ? (byte[])null : File.ReadAllBytes(path));
+                }));
         }
 
         private TagBatch RetagFiles(RetagFilesCommand command) => _service.RetagFiles(command,
@@ -167,6 +191,167 @@ namespace Chaptarr.Core.Test.MediaFiles
                 yield return new TestCaseData(extension, false);
                 yield return new TestCaseData(extension, true);
             }
+        }
+
+        public static IEnumerable<TestCaseData> ScrubOnlyCases()
+        {
+            foreach (var extension in TagFormats)
+                foreach (var extra in new[] { "comment", "art", "custom" })
+                    foreach (var scrub in new[] { false, true })
+                        yield return new TestCaseData(extension, extra, scrub);
+        }
+
+        private static void AddScrubExtra(TagLib.File audio, string extra)
+        {
+            if (extra == "comment") audio.Tag.Comment = "Ripped by fixture";
+            else if (extra == "art") audio.Tag.Pictures = new[] { new TagLib.Picture(new TagLib.ByteVector(new byte[] { 1, 2, 3 })) { MimeType = "image/png", Type = TagLib.PictureType.FrontCover } };
+            else if (audio.GetTag(TagLib.TagTypes.Xiph) is TagLib.Ogg.XiphComment xiph) xiph.SetField("UNMODELLED_FIXTURE", "remove me");
+            else if (audio.GetTag(TagLib.TagTypes.Apple) is TagLib.Mpeg4.AppleTag apple) apple.SetDashBox("fixture.namespace", "unmodelled", "remove me");
+            else if (audio.GetTag(TagLib.TagTypes.Asf) is TagLib.Asf.Tag asf) asf.SetDescriptorString("remove me", "Fixture/Unmodelled");
+            else if (audio.GetTag(TagLib.TagTypes.Id3v2) is TagLib.Id3v2.Tag id3) TagLib.Id3v2.UserTextInformationFrame.Get(id3, "UNMODELLED_FIXTURE", true).Text = new[] { "remove me" };
+            else if (audio.GetTag(TagLib.TagTypes.Ape) is TagLib.Ape.Tag ape) ape.SetValue("UNMODELLED_FIXTURE", "remove me");
+            else Assert.Fail("Fixture format must support a custom field");
+        }
+
+        private static bool HasScrubExtra(TagLib.File audio, string extra)
+        {
+            if (extra == "comment") return !string.IsNullOrEmpty(audio.Tag.Comment);
+            if (extra == "art") return audio.Tag.Pictures.Length > 0;
+            if (audio.GetTag(TagLib.TagTypes.Xiph) is TagLib.Ogg.XiphComment xiph) return xiph.GetField("UNMODELLED_FIXTURE").Length > 0;
+            if (audio.GetTag(TagLib.TagTypes.Apple) is TagLib.Mpeg4.AppleTag apple) return !string.IsNullOrEmpty(apple.GetDashBox("fixture.namespace", "unmodelled"));
+            if (audio.GetTag(TagLib.TagTypes.Asf) is TagLib.Asf.Tag asf) return !string.IsNullOrEmpty(asf.GetDescriptorString("Fixture/Unmodelled"));
+            if (audio.GetTag(TagLib.TagTypes.Id3v2) is TagLib.Id3v2.Tag id3) return id3.GetFrames<TagLib.Id3v2.UserTextInformationFrame>().Any(frame => frame.Description == "UNMODELLED_FIXTURE");
+            if (audio.GetTag(TagLib.TagTypes.Ape) is TagLib.Ape.Tag ape) return ape.GetItem("UNMODELLED_FIXTURE") != null;
+            throw new AssertionException("Fixture format must support a custom field");
+        }
+
+        [TestCaseSource(nameof(ScrubOnlyCases))]
+        public void scrub_only_changes_are_previewed_written_once_and_leave_clean_files_unchanged(string extension, string extra, bool scrub)
+        {
+            var file = Add(extension, track: 3, count: 14);
+            _service.WriteTags(file, false);
+            using (var audio = TagLib.File.Create(file.Path))
+            {
+                audio.Tag.Disc = 2;
+                audio.Tag.DiscCount = 4;
+                AddScrubExtra(audio, extra);
+                audio.Save();
+            }
+            using (var audio = TagLib.File.Create(file.Path)) Assert.That(HasScrubExtra(audio, extra), Is.True);
+            _events.Clear();
+            _updates = _guards = 0;
+            _scrub = scrub;
+            var before = File.ReadAllBytes(file.Path);
+            var preview = _service.GetRetagPreviewsByBook(2);
+            var previewEligible = MediaFileExtensions.CanWriteAudioTags(extension);
+            Assert.That(preview, Has.Count.EqualTo(scrub && previewEligible ? 1 : 0));
+            if (scrub && previewEligible)
+            {
+                Assert.That(preview.Single().SkipReason, Is.Null);
+                var resource = preview.Single().ToResource();
+                Assert.That(resource.BookFileId, Is.EqualTo(file.Id));
+                Assert.That(resource.SkipReason, Is.Null);
+                Assert.That(resource.Changes.Select(change => change.Field), Is.EquivalentTo(extra == "art" ? new[] { "SCRUB", "COVER" } : new[] { "SCRUB" }));
+                Assert.That(resource.Changes.Single(change => change.Field == "SCRUB").NewValue, Is.EqualTo(_localization.GetLocalizedString("AudioTagsScrubChanges")));
+            }
+            Assert.That(File.ReadAllBytes(file.Path), Is.EqualTo(before), "Preview must never save tags");
+
+            _service.WriteTags(file, false);
+            using (var audio = TagLib.File.Create(file.Path))
+            {
+                Assert.That(HasScrubExtra(audio, extra), Is.EqualTo(!scrub));
+                Assert.That((audio.Tag.Track, audio.Tag.TrackCount, audio.Tag.Disc, audio.Tag.DiscCount), Is.EqualTo((3u, 14u, 2u, 4u)));
+            }
+            var after = File.ReadAllBytes(file.Path);
+            Assert.That(_service.GetRetagPreviewsByBook(2), Is.Empty);
+            _service.WriteTags(file, false);
+            Assert.Multiple(() =>
+            {
+                Assert.That(File.ReadAllBytes(file.Path), Is.EqualTo(after));
+                if (!scrub) Assert.That(after, Is.EqualTo(before));
+                Assert.That(_events, Has.Count.EqualTo(scrub ? 1 : 0));
+                Assert.That(_guards, Is.EqualTo(scrub ? 1 : 0));
+                Assert.That(_updates, Is.EqualTo(scrub ? 1 : 0));
+                Assert.That(_warnings.Logs, Is.Empty);
+            });
+        }
+
+        [TestCase(TagLib.StringType.Latin1)]
+        [TestCase(TagLib.StringType.UTF16BE)]
+        public void scrub_does_not_rewrite_only_for_id3_text_encoding(TagLib.StringType encoding)
+        {
+            var file = Add();
+            _scrub = true;
+            _service.WriteTags(file, false);
+            using (var audio = TagLib.File.Create(file.Path))
+            {
+                var id3 = (TagLib.Id3v2.Tag)audio.GetTag(TagLib.TagTypes.Id3v2);
+                foreach (var text in id3.GetFrames<TagLib.Id3v2.TextInformationFrame>()) text.TextEncoding = encoding;
+                audio.Save();
+            }
+            var before = File.ReadAllBytes(file.Path);
+            Assert.That(_service.GetRetagPreviewsByBook(2), Is.Empty);
+            _service.WriteTags(file, false);
+            Assert.That(File.ReadAllBytes(file.Path), Is.EqualTo(before));
+            Assert.That(_events, Has.Count.EqualTo(1));
+            Assert.That(_guards, Is.EqualTo(1));
+            Assert.That(_warnings.Logs, Is.Empty);
+        }
+
+        private BookFile AddWave()
+        {
+            var file = Add();
+            File.Delete(file.Path);
+            file.Path = Path.ChangeExtension(file.Path, ".wav");
+            using (var writer = new BinaryWriter(File.Create(file.Path)))
+            {
+                writer.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+                writer.Write(88236);
+                writer.Write(System.Text.Encoding.ASCII.GetBytes("WAVEfmt "));
+                writer.Write(16); writer.Write((short)1); writer.Write((short)1);
+                writer.Write(44100); writer.Write(88200); writer.Write((short)2); writer.Write((short)16);
+                writer.Write(System.Text.Encoding.ASCII.GetBytes("data"));
+                writer.Write(88200); writer.Write(new byte[88200]);
+            }
+            file.Edition.Publisher = null;
+            return file;
+        }
+
+        [Test]
+        public void scrub_removes_unmodelled_riff_fields_once()
+        {
+            var file = AddWave();
+            _scrub = true;
+            _service.WriteTags(file, false);
+            using (var audio = TagLib.File.Create(file.Path))
+            {
+                ((TagLib.Riff.InfoTag)audio.GetTag(TagLib.TagTypes.RiffInfo, true)).SetValue("XTRA", "remove me");
+                audio.Save();
+            }
+            Assert.That(_service.GetRetagPreviewsByBook(2).Single().SkipReason, Is.Null);
+            _service.WriteTags(file, false);
+            using (var audio = TagLib.File.Create(file.Path))
+                Assert.That(((TagLib.Riff.InfoTag)audio.GetTag(TagLib.TagTypes.RiffInfo)).GetValuesAsStrings("XTRA"), Is.Empty);
+            var written = File.ReadAllBytes(file.Path);
+            Assert.That(_service.GetRetagPreviewsByBook(2), Is.Empty);
+            _service.WriteTags(file, false);
+            Assert.That(File.ReadAllBytes(file.Path), Is.EqualTo(written));
+            Assert.That(_events, Has.Count.EqualTo(2));
+            Assert.That(_guards, Is.EqualTo(2));
+            Assert.That(_warnings.Logs, Is.Empty);
+        }
+
+        [Test]
+        public void scrub_cannot_erase_tags_without_linked_metadata()
+        {
+            var file = Add();
+            _service.WriteTags(file, false);
+            file.Edition.Book = null;
+            _scrub = true;
+            var before = File.ReadAllBytes(file.Path);
+            _service.WriteTags(file, false);
+            Assert.That(File.ReadAllBytes(file.Path), Is.EqualTo(before));
+            Assert.That(_events, Has.Count.EqualTo(1));
         }
 
         [TestCaseSource(nameof(FormatCases))]
@@ -411,8 +596,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var batch = RetagFiles(new RetagFilesCommand { Files = new List<int> { file.Id } });
                 Assert.That((batch.Skipped, batch.Failed, batch.Written), Is.EqualTo((1, 0, 0)));
             }
-            Assert.That(File.ReadAllBytes(file.Path), Is.EqualTo(original));
             Assert.That(_warnings.Logs, Is.Empty);
+            Assert.That(File.ReadAllBytes(file.Path), Is.EqualTo(original));
             Assert.That(_events, Has.Count.EqualTo(1));
         }
 
@@ -426,7 +611,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 ((TagLib.Ogg.XiphComment)audio.GetTag(TagLib.TagTypes.Xiph)).SetField("TOTALTRACKS", new[] { "14", "15" });
                 audio.Save();
             }
-            Assert.That(_service.GetRetagPreviewsByBook(2), Has.Count.EqualTo(1));
+            Assert.That(_service.GetRetagPreviewsByBook(2).Single().SkipReason, Is.EqualTo(RetagSkipReason.PreviewFailed));
+            Assert.That(_allLogs.Logs, Has.Some.StartsWith("Info: Unable to preview audio scrub"));
             Assert.That(_warnings.Logs, Is.Empty);
             Assert.That(_events, Is.Empty);
         }

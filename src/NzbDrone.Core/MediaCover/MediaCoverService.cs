@@ -26,6 +26,7 @@ namespace NzbDrone.Core.MediaCover
     {
         void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<MediaCover> covers, string selectedAuthorImageHash = null);
         string GetCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCoverTypes coverType, string extension, int? height = null);
+        (bool Ready, byte[] Data) ReadLocalBookCover(Edition edition);
         void EnsureAuthorCovers(Author author);
         void EnsureBookCovers(Book book);
         void EnsureBookCoversForBooks(List<Book> books);
@@ -54,6 +55,7 @@ namespace NzbDrone.Core.MediaCover
         private readonly IEventAggregator _eventAggregator;
         private readonly IDeferredCoverService _deferredCoverService;
         private readonly Logger _logger;
+        private readonly NzbDrone.Core.Http.IHttpServiceHealth _imageHostHealth;
 
         private readonly string _coverRootFolder;
 
@@ -82,6 +84,7 @@ namespace NzbDrone.Core.MediaCover
                                  IEventAggregator eventAggregator,
                                  IDeferredCoverService deferredCoverService,
                                  Logger logger,
+                                 NzbDrone.Core.Http.IHttpServiceHealth imageHostHealth,
                                  IAuthorService authorService = null)
         {
             _mediaCoverProxy = mediaCoverProxy;
@@ -96,6 +99,7 @@ namespace NzbDrone.Core.MediaCover
             _eventAggregator = eventAggregator;
             _deferredCoverService = deferredCoverService;
             _logger = logger;
+            _imageHostHealth = imageHostHealth;
 
             _coverRootFolder = appFolderInfo.GetMediaCoverPath();
         }
@@ -105,11 +109,52 @@ namespace NzbDrone.Core.MediaCover
             return MediaCoverUrlSafetyPolicy.TryGetSafeImageUrl(url, _configService, out safeUrl, out reason);
         }
 
+        private HttpResponse GetBookImageResponse(int bookId, string url, out (string Origin, bool Attempted)? retry)
+        {
+            retry = null;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            {
+                _logger.Debug("Skipping invalid book cover URL for book {0}: {1}", bookId, url);
+                return null;
+            }
+            var key = "image:" + uri.GetLeftPart(UriPartial.Authority).ToLowerInvariant();
+            var label = "Cover host " + uri.Host;
+            if (!_imageHostHealth.TryBeginRequest(key, out var retryAfter, label))
+            {
+                retry = (key, false);
+                _logger.Debug("Skipping cover host {0} for book {1}; retry after {2}", uri.Host, bookId, retryAfter);
+                return null;
+            }
+            try
+            {
+                var response = GetImageResponse(url, rangeRequest: false);
+                var result = _imageHostHealth.ReportResult(key, response: response, label: label);
+                if (!NzbDrone.Core.Http.HttpServiceHealth.OpensBackoff(result)) return response;
+                retry = (key, true);
+                return null;
+            }
+            catch (OperationCanceledException)
+            {
+                _imageHostHealth.ReportInconclusive(key);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                var result = _imageHostHealth.ReportResult(key, exception: ex, label: label);
+                if (NzbDrone.Core.Http.HttpServiceHealth.OpensBackoff(result))
+                {
+                    retry = (key, true);
+                    return null;
+                }
+                throw;
+            }
+        }
+
         private HttpResponse GetImageResponse(string url, bool rangeRequest, string userAgent = null)
         {
             if (!TryGetSafeImageUrl(url, out var currentUrl, out var reason))
             {
-                throw new WebException($"Blocked unsafe image URL '{url}': {reason}", WebExceptionStatus.ProtocolError);
+                throw new UnsafeImageUrlException($"Blocked unsafe image URL '{url}': {reason}");
             }
 
             userAgent ??= ExternalImageRequestHeaders.GetRandomUserAgent();
@@ -149,7 +194,7 @@ namespace NzbDrone.Core.MediaCover
 
                 if (!TryGetSafeImageUrl(nextUri.ToString(), out currentUrl, out var nextReason))
                 {
-                    throw new WebException($"Blocked unsafe image redirect target '{nextUri}': {nextReason}", WebExceptionStatus.ProtocolError);
+                    throw new UnsafeImageUrlException($"Blocked unsafe image redirect target '{nextUri}': {nextReason}");
                 }
             }
 
@@ -166,6 +211,47 @@ namespace NzbDrone.Core.MediaCover
             }
 
             return Path.Combine(GetAuthorCoverPath(entityId), coverType.ToString().ToLower() + heightSuffix + GetExtension(coverType, extension));
+        }
+
+        // Ready with no bytes means the selected edition has no artwork. Not ready
+        // means preserve the file's current artwork while its other tags are updated.
+        public (bool Ready, byte[] Data) ReadLocalBookCover(Edition edition)
+        {
+            if (edition == null || !edition.Monitored || edition.BookId <= 0 || _inFlightBookCovers.ContainsKey(edition.BookId))
+                return (false, null);
+            try
+            {
+                // The file already carries its edition. The receipt proves ownership of
+                // stored pixels; do not load the book's entire edition list to read them.
+                var candidates = MediaCoverRendition.SelectMonitoredEditionCovers(edition);
+                var before = TryReadBookCoverMetadata(edition.BookId);
+                var selected = before?.SelectedEdition;
+                if (selected != null && !BookEditionIdentity.GetEditionProviderIds(edition)
+                    .Contains(selected.EditionProviderId, StringComparer.OrdinalIgnoreCase)) return (false, null);
+                if (candidates.Count == 0)
+                    return (edition.Images != null && !edition.Images.Any(cover => cover?.CoverType == MediaCoverTypes.Cover && MediaCoverRendition.HasImageUrl(cover)), null);
+                if (selected == null) return (false, null);
+                foreach (var candidate in candidates)
+                {
+                    var cover = candidate.Cover;
+                    if (!BookCoverMatchesRemoteUrl(edition.BookId, cover.Url)) continue;
+                    var path = GetCoverPath(edition.BookId, MediaCoverEntity.Book, cover.CoverType, cover.Extension);
+                    if (!MediaCoverRendition.IsUsable(path, _diskProvider)) continue;
+                    using var input = _diskProvider.OpenReadStream(path);
+                    using var output = new MemoryStream();
+                    input.CopyTo(output);
+                    // Do not reserve the writer's slot. Recheck its receipt so a completed
+                    // edition switch during the read cannot attach the other edition's art.
+                    if (_inFlightBookCovers.ContainsKey(edition.BookId) ||
+                        !ReferenceEquals(before, TryReadBookCoverMetadata(edition.BookId))) return (false, null);
+                    return (true, output.ToArray());
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.Debug(ex, "Unable to read local artwork for edition {0}; keeping the file's artwork", edition.Id);
+            }
+            return (false, null);
         }
 
         public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<MediaCover>>> covers)
@@ -854,6 +940,7 @@ namespace NzbDrone.Core.MediaCover
             // Avoid duplicate in-flight downloads for the same book (can be triggered by multiple events/UI requests).
             if (!_inFlightBookCovers.TryAdd(book.Id, 0))
             {
+                _deferredCoverService.RequeueBooksForCoverDownload(new[] { book.Id });
                 _logger.Trace("Book cover download already in-flight for book {0}: {1}", book.Id, book.Title);
                 return;
             }
@@ -884,19 +971,20 @@ namespace NzbDrone.Core.MediaCover
                     return;
                 }
 
+                var retryOrigins = new HashSet<string>();
+                var attempted = false;
                 foreach (var candidate in candidates)
                 {
-                    if (!TryGetSafeImageUrl(candidate.Cover.Url, out _, out var unsafeReason))
-                    {
-                        _logger.Debug("Skipping unsafe monitored-edition cover URL for book {0}: {1} ({2})", book.Title, candidate.Cover.Url, unsafeReason);
-                        continue;
-                    }
-
                     try
                     {
-                        if (EnsureMonitoredBookCover(book, candidate))
+                        if (EnsureMonitoredBookCover(book, candidate, out var retry))
                         {
                             return;
+                        }
+                        if (retry.HasValue)
+                        {
+                            retryOrigins.Add(retry.Value.Origin);
+                            attempted |= retry.Value.Attempted;
                         }
                     }
                     catch (HttpException e) when (e.Response?.StatusCode == HttpStatusCode.Forbidden)
@@ -907,6 +995,10 @@ namespace NzbDrone.Core.MediaCover
                     {
                         _logger.Warn("Couldn't download media cover for {0} from {1}. {2}", book, candidate.Cover.Url, e.Message);
                     }
+                    catch (UnsafeImageUrlException e)
+                    {
+                        _logger.Debug(e.Message);
+                    }
                     catch (WebException e)
                     {
                         _logger.Warn("Couldn't download media cover for {0} from {1}. {2}", book, candidate.Cover.Url, e.Message);
@@ -916,6 +1008,9 @@ namespace NzbDrone.Core.MediaCover
                         _logger.Error(e, "Couldn't download media cover for {0} from {1}", book, candidate.Cover.Url);
                     }
                 }
+
+                if (retryOrigins.Count > 0)
+                    _deferredCoverService.RequeueBooksForCoverDownload(new[] { book.Id }, retryOrigins, attempted);
 
                 // A provider/CDN failure is not evidence that the selected edition
                 // changed. Keep the last usable cover for the same edition; delete it
@@ -928,8 +1023,9 @@ namespace NzbDrone.Core.MediaCover
             }
         }
 
-        private bool EnsureMonitoredBookCover(Book book, BookCoverSelection selection)
+        private bool EnsureMonitoredBookCover(Book book, BookCoverSelection selection, out (string Origin, bool Attempted)? retry)
         {
+            retry = null;
             var cover = selection.Cover;
             var fileName = GetCoverPath(book.Id, MediaCoverEntity.Book, cover.CoverType, cover.Extension, null);
             var selectedUrlAlreadyStored = BookCoverMatchesRemoteUrl(book.Id, cover.Url);
@@ -959,7 +1055,7 @@ namespace NzbDrone.Core.MediaCover
                 }
                 else
                 {
-                    DownloadBookCover(book, cover, DateTime.Now);
+                    if (!DownloadBookCover(book, cover, DateTime.Now, out retry)) return false;
                     downloadedOrReused = true;
                 }
             }
@@ -994,35 +1090,34 @@ namespace NzbDrone.Core.MediaCover
 	            public DateTime? DownloadedAt { get; set; }
 	        }
 
-	        private BookCoverMetadata TryReadBookCoverMetadata(int bookId)
-	        {
-	            if (_bookCoverMetadataByBookId.TryGetValue(bookId, out var cachedMetadata))
-	            {
-	                return cachedMetadata.SelectedEdition == null ? null : cachedMetadata;
-	            }
-
-	            try
-	            {
-	                var metadataPath = Path.Combine(GetBookCoverPath(bookId), "cover-metadata.json");
-	                if (!_diskProvider.FileExists(metadataPath))
-	                {
-	                    _bookCoverMetadataByBookId[bookId] = new BookCoverMetadata();
-	                    return null;
-	                }
-
-	                var json = _diskProvider.ReadAllText(metadataPath);
-	                var metadata = string.IsNullOrWhiteSpace(json)
-	                    ? null
-	                    : Json.Deserialize<BookCoverMetadata>(json);
-	                _bookCoverMetadataByBookId[bookId] = metadata ?? new BookCoverMetadata();
-	                return metadata;
-	            }
-	            catch
-	            {
-	                _bookCoverMetadataByBookId[bookId] = new BookCoverMetadata();
-	                return null;
-	            }
-	        }
+        private BookCoverMetadata TryReadBookCoverMetadata(int bookId)
+        {
+            try
+            {
+                var metadata = _bookCoverMetadataByBookId.GetOrAdd(bookId, id =>
+                {
+                    var path = Path.Combine(GetBookCoverPath(id), "cover-metadata.json");
+                    if (!_diskProvider.FileExists(path)) return new BookCoverMetadata();
+                    var json = _diskProvider.ReadAllText(path);
+                    try
+                    {
+                        return Json.Deserialize<BookCoverMetadata>(json) ?? throw new Newtonsoft.Json.JsonException("Empty cover receipt");
+                    }
+                    catch (Newtonsoft.Json.JsonException ex)
+                    {
+                        _logger.Warn("Invalid cover metadata for book {0}; ignoring the receipt: {1}", id, ex.Message);
+                        return new BookCoverMetadata();
+                    }
+                });
+                return metadata.SelectedEdition == null ? null : metadata;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // A transient read failure is not evidence that the receipt is absent.
+                _logger.Debug(ex, "Unable to read cover metadata for book {0}", bookId);
+                return null;
+            }
+        }
 
         private void RemoveBookCoverArtifactsForProvenEditionChange(Book book)
         {
@@ -1177,7 +1272,7 @@ namespace NzbDrone.Core.MediaCover
             return contentHash;
         }
 
-        private void DownloadBookCover(Book book, MediaCover cover, DateTime lastModified)
+        private bool DownloadBookCover(Book book, MediaCover cover, DateTime lastModified, out (string Origin, bool Attempted)? retry)
         {
             var fileName = GetCoverPath(book.Id, MediaCoverEntity.Book, cover.CoverType, cover.Extension, null);
 
@@ -1186,7 +1281,8 @@ namespace NzbDrone.Core.MediaCover
             _diskProvider.EnsureFolder(directory);
 
             _logger.Debug("Downloading {0} for {1} {2}", cover.CoverType, book, cover.Url);
-            var response = GetImageResponse(cover.Url, rangeRequest: false);
+            var response = GetBookImageResponse(book.Id, cover.Url, out retry);
+            if (response == null) return false;
 
             MediaCoverRendition.ValidateImageResponse(response?.ResponseData, response?.Headers?.ContentType);
 
@@ -1232,6 +1328,7 @@ namespace NzbDrone.Core.MediaCover
             {
                 _logger.Debug(ex, "Unable to set modified date for {0} image for book {1}", cover.CoverType, book);
             }
+            return true;
         }
 
         private void ReplaceFileWithCopy(string source, string destination)

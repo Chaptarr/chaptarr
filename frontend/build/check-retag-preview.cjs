@@ -88,8 +88,10 @@ for (const rule of config.module.rules) {
           if (scenario === 'unregistered') {
             assert.equal(await button.isDisabled(), true);
           } else {
-            await page.waitForFunction(() => window.retag.getSelectedIds().length === 2);
-            assert.deepEqual(await page.evaluate(() => window.retag.getSelectedIds()), [1, 3]);
+            await page.waitForFunction(() => window.retag.getSelectedIds().length === 3);
+            assert.deepEqual(await page.evaluate(() => window.retag.getSelectedIds()), [1, 3, 15]);
+            assert.equal(await page.getByText('/library/scrub-only.m4b', { exact: true }).count(), 1);
+            assert.equal(await page.getByText(translations.AudioTagsScrubChanges, { exact: true }).count(), 1);
             assert.equal(await page.getByText(/Files not previewed while Calibre library http/).count(), 1);
             assert.equal(await page.getByText(/retrying after 2000-11-11 12:01/).count(), 1);
             assert.equal(await page.getByText(/Files unable to preview: 2/).count(), 1);
@@ -111,9 +113,11 @@ for (const rule of config.module.rules) {
               window.retag.onSelectedChange({ id: 3, value: true, shiftKey: true });
             });
             assert.deepEqual(await page.evaluate(() => window.retag.getSelectedIds()), [1, 3]);
+            await page.evaluate(() => window.retag.onSelectedChange({ id: 15, value: true }));
+            assert.deepEqual(await page.evaluate(() => window.retag.getSelectedIds()), [1, 3, 15]);
             await button.focus();
             await page.keyboard.press('Enter');
-            assert.deepEqual(await page.evaluate(() => window.calls), [[[1, 3], false, false]]);
+            assert.deepEqual(await page.evaluate(() => window.calls), [[[1, 3, 15], false, false]]);
           }
           assert.deepEqual(errors, []);
           console.log(`PASS ${scenario} ${width}px ${theme}`);

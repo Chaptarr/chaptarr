@@ -130,7 +130,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         [TestCase(false, true)]
         [TestCase(true, false)]
         [TestCase(true, true)]
-        public void tone_publisher_stays_in_its_namespace_and_second_write_is_a_noop(bool scrub, bool change)
+        public void tone_publisher_uses_canonical_namespace_only_when_scrubbed_and_then_converges(bool scrub, bool change)
         {
             var file = Add(".m4b");
             using (var audio = TagLib.File.Create(file.Path))
@@ -138,7 +138,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var apple = (TagLib.Mpeg4.AppleTag)audio.GetTag(TagTypes.Apple);
                 while (AppleTagFields.Read(apple).Any(field => field.Mean == "com.apple.iTunes" && field.Name == "publisher"))
                     apple.SetDashBox("com.apple.iTunes", "publisher", null);
-                apple.SetDashBox("com.pilabor.tone", "PUBLISHER", file.Edition.Publisher);
+                apple.SetDashBox(scrub ? "com.apple.iTunes" : "com.pilabor.tone", scrub ? "publisher" : "PUBLISHER", file.Edition.Publisher);
                 audio.Save();
             }
             var preview = _service.GetRetagPreviewsByAuthor(file.Author.Id).Single();
@@ -150,7 +150,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 var apple = (TagLib.Mpeg4.AppleTag)audio.GetTag(TagTypes.Apple);
                 Assert.That(AppleTagFields.Read(apple).Where(field => string.Equals(field.Name, "publisher", StringComparison.OrdinalIgnoreCase)),
-                    Is.EquivalentTo(new[] { ("com.pilabor.tone", "PUBLISHER", file.Edition.Publisher) }));
+                    Is.EquivalentTo(new[] { (scrub ? "com.apple.iTunes" : "com.pilabor.tone", scrub ? "publisher" : "PUBLISHER", file.Edition.Publisher) }));
             }
             var bytes = File.ReadAllBytes(file.Path);
             _service.WriteTags(file, false);
@@ -206,7 +206,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         [TestCase(false, true)]
         [TestCase(true, false)]
         [TestCase(true, true)]
-        public void tone_series_namespace_survives_scrub_and_updates_without_a_second_pair(bool scrub, bool authoritative)
+        public void scrub_rebuilds_only_authoritative_series_while_normal_writes_preserve_namespace(bool scrub, bool authoritative)
         {
             var file = Add(".m4b");
             using (var audio = TagLib.File.Create(file.Path))
@@ -224,9 +224,10 @@ namespace Chaptarr.Core.Test.MediaFiles
             using (var audio = TagLib.File.Create(file.Path))
             {
                 var fields = AppleTagFields.Read((TagLib.Mpeg4.AppleTag)audio.GetTag(TagTypes.Apple)).Where(f => AppleTagFields.SeriesKey(f.Mean, f.Name) != null).ToList();
-                Assert.That(fields, Is.EquivalentTo(new[] {
-                    ("com.pilabor.tone", "SERIES", authoritative ? "Confirmed series" : "Divine Apostasy"),
-                    ("com.pilabor.tone", "PART", authoritative ? "13" : "12") }));
+                if (scrub && !authoritative) Assert.That(fields, Is.Empty);
+                else Assert.That(fields, Is.EquivalentTo(new[] {
+                    (scrub ? "com.apple.iTunes" : "com.pilabor.tone", "SERIES", authoritative ? "Confirmed series" : "Divine Apostasy"),
+                    (scrub ? "com.apple.iTunes" : "com.pilabor.tone", scrub ? "SERIES-PART" : "PART", authoritative ? "13" : "12") }));
             }
             var bytes = File.ReadAllBytes(file.Path);
             _service.WriteTags(file, false);
@@ -237,7 +238,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         [TestCase(false)]
         [TestCase(true)]
-        public void conflicting_tone_and_itunes_series_require_authority_before_scrub(bool authoritative)
+        public void scrub_replaces_conflicting_series_with_database_values_only(bool authoritative)
         {
             var file = Add(".m4b");
             using (var audio = TagLib.File.Create(file.Path))
@@ -251,20 +252,16 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
             if (authoritative) file.Edition.Book.SeriesLinks = new List<SeriesBookLink> { SeriesLink("Confirmed series", "13") };
             _scrub = true;
-            var before = File.ReadAllBytes(file.Path);
             _service.WriteTags(file, false);
-            if (!authoritative)
+            using (var audio = TagLib.File.Create(file.Path))
             {
-                Assert.That(File.ReadAllBytes(file.Path), Is.EqualTo(before));
-                Assert.That(_events, Is.Empty);
-                Assert.That(_warnings.Logs.Any(line => line.Contains("Conflicting stored SERIES-PART values")), Is.True);
-            }
-            else
-            {
-                using var audio = TagLib.File.Create(file.Path);
                 var fields = AppleTagFields.Read((TagLib.Mpeg4.AppleTag)audio.GetTag(TagTypes.Apple)).Where(f => AppleTagFields.SeriesKey(f.Mean, f.Name) != null).ToList();
-                Assert.That(fields, Is.EquivalentTo(new[] { ("com.pilabor.tone", "SERIES", "Confirmed series"), ("com.pilabor.tone", "PART", "13") }));
+                if (authoritative) Assert.That(fields, Is.EquivalentTo(new[] { ("com.apple.iTunes", "SERIES", "Confirmed series"), ("com.apple.iTunes", "SERIES-PART", "13") }));
+                else Assert.That(fields, Is.Empty);
             }
+            Assert.That(_events, Has.Count.EqualTo(1));
+            Assert.That(_warnings.Logs, Is.Empty);
+            AssertSecondScrubIsNoop(file);
         }
 
         [Test]
@@ -318,7 +315,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             if (MediaFileExtensions.CanWriteAudioTags(extension))
             {
                 var preview = _service.GetRetagPreviewsByBook(2).Single();
-                Assert.That(preview.Changes.Keys, Is.EquivalentTo(new[] { "SERIES", "SERIES-PART" }));
+                Assert.That(preview.Changes.Keys, Is.EquivalentTo(scrub ? new[] { "SERIES", "SERIES-PART", "SCRUB" } : new[] { "SERIES", "SERIES-PART" }));
                 Assert.That(preview.Changes["SERIES"].Item2, Is.EqualTo("星の物語; 第二部"));
                 Assert.That(preview.Changes["SERIES-PART"].Item2, Is.EqualTo("2.5–3"));
             }
@@ -428,8 +425,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             file.Edition.Publisher = "Updated publisher";
             _scrub = true;
             _service.WriteTags(file, false);
-            Assert.That(StoredSeries(file.Path, "SERIES"), Is.EqualTo("A Song of Ice and Fire"));
-            Assert.That(StoredSeries(file.Path, "SERIES-PART"), Is.EqualTo("2"));
+            Assert.That(StoredSeries(file.Path, "SERIES"), Is.Null.Or.Empty);
+            Assert.That(StoredSeries(file.Path, "SERIES-PART"), Is.Null.Or.Empty);
             Assert.That(_events, Has.Count.EqualTo(2));
         }
 
@@ -450,7 +447,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [TestCaseSource(nameof(FormatCases))]
-        public void lowercase_stored_series_should_survive_when_catalog_is_ambiguous(string extension, bool scrub)
+        public void ambiguous_catalog_keeps_file_series_only_without_scrub(string extension, bool scrub)
         {
             var file = Add(extension);
             SetSeriesTag(file, "series", "Known series");
@@ -461,8 +458,11 @@ namespace Chaptarr.Core.Test.MediaFiles
             var values = extension is ".mp3" or ".m4b" or ".wma"
                 ? new[] { StoredSeries(file.Path, "series"), StoredSeries(file.Path, "SERIES") }
                 : new[] { StoredSeries(file.Path, "SERIES") };
-            Assert.That(values, Does.Contain("Known series"));
-            Assert.That(new[] { StoredSeries(file.Path, "series-part"), StoredSeries(file.Path, "SERIES-PART") }, Does.Contain("7"));
+            Assert.That(values.Any(value => !string.IsNullOrEmpty(value)), Is.EqualTo(!scrub));
+            if (!scrub) Assert.That(values, Does.Contain("Known series"));
+            var positions = new[] { StoredSeries(file.Path, "series-part"), StoredSeries(file.Path, "SERIES-PART") };
+            Assert.That(positions.Any(value => !string.IsNullOrEmpty(value)), Is.EqualTo(!scrub));
+            if (!scrub) Assert.That(positions, Does.Contain("7"));
             var bytes = File.ReadAllBytes(file.Path);
             _service.WriteTags(file, false);
             Assert.That(File.ReadAllBytes(file.Path), Is.EqualTo(bytes));
@@ -473,18 +473,19 @@ namespace Chaptarr.Core.Test.MediaFiles
         [TestCase(".mp3")]
         [TestCase(".m4b")]
         [TestCase(".wma")]
-        public void scrub_must_not_merge_conflicting_stored_series_without_authority(string extension)
+        public void scrub_removes_conflicting_stored_series_without_authority(string extension)
         {
             var file = Add(extension);
             SetSeriesTag(file, "series", "First series");
             SetSeriesTag(file, "SERIES", "Other series");
             _scrub = true;
-            var before = File.ReadAllBytes(file.Path);
+            Assert.That(_service.GetRetagPreviewsByBook(2).Single().SkipReason, Is.Null);
             _service.WriteTags(file, false);
-            Assert.That(File.ReadAllBytes(file.Path), Is.EqualTo(before));
-            Assert.That(_events, Is.Empty);
-            Assert.That(_guards, Is.Zero);
-            Assert.That(_warnings.Logs.Any(line => line.Contains("Conflicting stored SERIES values")), Is.True);
+            Assert.That(new[] { StoredSeries(file.Path, "series"), StoredSeries(file.Path, "SERIES") }.All(string.IsNullOrEmpty), Is.True);
+            Assert.That(_events, Has.Count.EqualTo(1));
+            Assert.That(_guards, Is.EqualTo(1));
+            Assert.That(_warnings.Logs, Is.Empty);
+            AssertSecondScrubIsNoop(file);
         }
 
         [TestCase(".mp3")]
@@ -537,23 +538,30 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(_events, Has.Count.EqualTo(1));
         }
 
-        [TestCaseSource(nameof(TagFormats))]
-        public void missing_catalog_position_should_keep_the_same_series_stored_position(string extension)
+        [TestCaseSource(nameof(FormatCases))]
+        public void missing_catalog_position_keeps_stored_position_only_without_scrub(string extension, bool scrub)
         {
             var file = Add(extension);
             SetSeriesTag(file, "series", "Known series");
             SetSeriesTag(file, "series-part", "7");
             file.Edition.Book.SeriesId = 1;
             file.Edition.Book.SeriesLinks = new List<SeriesBookLink> { SeriesLink("Known series", null) };
-            _scrub = true;
+            _scrub = scrub;
             _service.WriteTags(file, false);
-            Assert.That(StoredSeries(file.Path, "SERIES-PART"), Is.EqualTo("7"));
+            Assert.That(StoredSeries(file.Path, scrub ? "SERIES-PART" : "series-part") ?? string.Empty, Is.EqualTo(scrub ? string.Empty : "7"));
+            if (!scrub && extension is ".mp3" or ".m4b" or ".wma")
+                Assert.That(StoredSeries(file.Path, "SERIES-PART"), Is.Null.Or.Empty, "An unchanged native key stays in place");
+            var extracted = _service.ReadAllTags(file.Path);
+            // Existing ASF extraction omits lowercase descriptors; raw preservation above
+            // and the repeated writer below still verify the non-scrub contract.
+            if (scrub || extension != ".wma")
+                Assert.That(extracted.GetValueOrDefault("SERIES-PART") ?? new List<string>(), scrub ? Is.Empty : Does.Contain("7"));
             _service.WriteTags(file, false);
             Assert.That(_events, Has.Count.EqualTo(1));
         }
 
         [TestCaseSource(nameof(FormatCases))]
-        public void missing_membership_should_keep_stored_series_even_when_other_tags_are_scrubbed(string extension, bool scrub)
+        public void missing_membership_keeps_stored_series_only_without_scrub(string extension, bool scrub)
         {
             var file = Add(extension);
             file.Edition.Book.SeriesLinks = new List<SeriesBookLink> { SeriesLink("Known series", "4.5") };
@@ -563,8 +571,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             file.Edition.Publisher = "Changed publisher";
             _scrub = scrub;
             _service.WriteTags(file, false);
-            Assert.That(StoredSeries(file.Path, "SERIES"), Is.EqualTo("Known series"));
-            Assert.That(StoredSeries(file.Path, "SERIES-PART"), Is.EqualTo("4.5"));
+            Assert.That(StoredSeries(file.Path, "SERIES") ?? string.Empty, Is.EqualTo(scrub ? string.Empty : "Known series"));
+            Assert.That(StoredSeries(file.Path, "SERIES-PART") ?? string.Empty, Is.EqualTo(scrub ? string.Empty : "4.5"));
             Assert.That(_events, Has.Count.EqualTo(2));
             Assert.That(_warnings.Logs, Is.Empty);
         }

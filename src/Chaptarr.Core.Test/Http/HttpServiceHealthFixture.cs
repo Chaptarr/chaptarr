@@ -100,8 +100,10 @@ namespace Chaptarr.Core.Test.Http
         [Test]
         public void padded_asctime_uses_the_http_calendar()
         {
-            var response = RateLimitedResponse("Tue Jan  5 12:00:00 2027");
-            var expected = new DateTimeOffset(2027, 1, 5, 12, 0, 0, TimeSpan.Zero) - DateTimeOffset.UtcNow;
+            var nextMonth = DateTimeOffset.UtcNow.AddMonths(1);
+            var future = new DateTimeOffset(nextMonth.Year, nextMonth.Month, 5, 12, 0, 0, TimeSpan.Zero);
+            var response = RateLimitedResponse(future.ToString("ddd MMM  d HH:mm:ss yyyy", CultureInfo.InvariantCulture));
+            var expected = future - DateTimeOffset.UtcNow;
             Assert.That(RetryAfterParser.GetDelay(response).Value.TotalSeconds, Is.EqualTo(expected.TotalSeconds).Within(2));
         }
 

@@ -463,6 +463,12 @@ namespace NzbDrone.Core.Configuration
             set { SetValue("WriteAudioTags", value); }
         }
 
+        public bool EmbedCoverArt
+        {
+            get { return GetValueBoolean("EmbedCoverArt", true); }
+            set { SetValue("EmbedCoverArt", value); }
+        }
+
         public bool ScrubAudioTags
         {
             get { return GetValueBoolean("ScrubAudioTags", false); }

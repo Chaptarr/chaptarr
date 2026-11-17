@@ -232,8 +232,8 @@ namespace NzbDrone.Core.Extras.Metadata.Consumers.AudioBookShelf
             AddString(metadata, "publishedDate", releaseDate?.ToString("yyyy-MM-dd"));
             AddString(metadata, "publisher", FirstNotEmpty(edition.Publisher, book.Publisher));
             AddString(metadata, "description", FirstNotEmpty(edition.Overview, book.Overview));
-            AddString(metadata, "isbn", FirstNotEmpty(edition.Isbn13, edition.Isbn10, book.ISBN13, book.ISBN10));
-            AddString(metadata, "asin", FirstNotEmpty(edition.AudibleASIN, edition.Asin, book.AudibleASIN, book.ASIN));
+            AddString(metadata, "isbn", BookEditionIdentity.GetTagIsbn(edition));
+            AddString(metadata, "asin", BookEditionIdentity.GetTagAsin(edition));
             AddString(metadata, "language", FirstNotEmpty(edition.Language, book.LanguageCode, book.LanguageName));
 
             var chapters = GetChapters(edition);

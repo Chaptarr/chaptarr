@@ -263,11 +263,13 @@ namespace NzbDrone.Core.MediaFiles
                     catch (Exception ex)
                     {
                         var accepted = ex is CalibreException { WriteAccepted: true };
+                        var protectedSkip = accepted && ex is not CalibreException { FormatPreparationFailed: true } &&
+                            batch.SkippedSymlinkPaths.Contains(file.Path);
                         _logger.Debug(ex, "Calibre write failed for {0}", file.Path);
                         var outcome = _libraryGate.ReportException(key, ex, file.Path);
-                        if (accepted && batch.SkippedSymlinkPaths.Contains(file.Path))
+                        if (protectedSkip)
                         {
-                            // A sibling's failure does not change this tracked file's protected outcome.
+                            // A protected file remains skipped unless a sibling had a known preparation failure.
                         }
                         else if (accepted)
                         {
@@ -289,7 +291,7 @@ namespace NzbDrone.Core.MediaFiles
 
                         if (!HttpServiceHealth.OpensBackoff(outcome))
                         {
-                            if (accepted && batch.SkippedSymlinkPaths.Contains(file.Path))
+                            if (protectedSkip)
                             {
                                 _logger.Warn("Calibre metadata follow-up failed for protected symlink {0}: {1}", file.Path,
                                     CalibreLibraryGate.GetFailureReason(ex));
@@ -517,7 +519,7 @@ namespace NzbDrone.Core.MediaFiles
                 Rating = (int)(edition.Ratings.Value * 2) / 2.0,
                 Identifiers = new Dictionary<string, string>
                 {
-                    { "isbn", edition.Isbn13 },
+                    { "isbn", BookEditionIdentity.GetTagIsbn(edition) },
                     { "asin", edition.Asin },
                     { "goodreads", edition.ForeignEditionId }
                 },

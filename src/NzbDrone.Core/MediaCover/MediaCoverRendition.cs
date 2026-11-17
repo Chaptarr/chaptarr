@@ -144,12 +144,13 @@ namespace NzbDrone.Core.MediaCover
                 .ToList();
         }
 
+        public static bool HasImageUrl(MediaCover cover) => cover != null &&
+            cover.CoverType != MediaCoverTypes.Unknown && !string.IsNullOrWhiteSpace(cover.Url);
+
         public static IReadOnlyList<MediaCover> SelectCandidates(IEnumerable<MediaCover> covers)
         {
             return (covers ?? Enumerable.Empty<MediaCover>())
-                .Where(cover => cover != null &&
-                                cover.CoverType != MediaCoverTypes.Unknown &&
-                                !string.IsNullOrWhiteSpace(cover.Url) &&
+                .Where(cover => HasImageUrl(cover) &&
                                 !IsKnownPlaceholderImageUrl(cover.Url))
                 .ToList();
         }
@@ -317,15 +318,15 @@ namespace NzbDrone.Core.MediaCover
                 .Where(edition => edition != null && edition.Monitored)
                 .OrderBy(edition => edition.Id)
                 .FirstOrDefault();
+            return SelectMonitoredEditionCovers(monitoredEdition);
+        }
 
-            if (monitoredEdition == null)
-            {
-                return Array.Empty<BookCoverSelection>();
-            }
-
-            return SelectCandidates(monitoredEdition.Images)
+        public static IReadOnlyList<BookCoverSelection> SelectMonitoredEditionCovers(Edition edition)
+        {
+            if (edition?.Monitored != true) return Array.Empty<BookCoverSelection>();
+            return SelectCandidates(edition.Images)
                 .Where(cover => cover.CoverType == MediaCoverTypes.Cover)
-                .Select(cover => new BookCoverSelection(monitoredEdition, cover))
+                .Select(cover => new BookCoverSelection(edition, cover))
                 .ToList();
         }
 

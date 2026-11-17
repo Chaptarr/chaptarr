@@ -316,6 +316,8 @@ namespace Chaptarr.Core.Test.MediaCover
 
         private sealed class CoverMapperStub : IMapCoversToLocal
         {
+            public (bool Ready, byte[] Data) ReadLocalBookCover(Edition edition) => (false, null);
+
             public void EnsureBookCoversForBooks(List<Book> books) => throw new NotImplementedException();
             public void EnsureBookCoversForImport(Book book) => EnsureBookCovers(book);
             public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers)
@@ -411,7 +413,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 configFile,
                 null,
                 deferredService ?? deferredApi,
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
         }
 
         [TestCase(CoverDownloadScope.AllBooks, false)]
@@ -420,7 +422,7 @@ namespace Chaptarr.Core.Test.MediaCover
         [TestCase(CoverDownloadScope.LibraryBooks, true)]
         public void overlapping_import_should_keep_covers_redeferred_by_the_real_cover_service(CoverDownloadScope scope, bool commandCompletion)
         {
-            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var covers = CreateBookCoverSubject(scope, new[] { 1, 2 }, out var books, out _, out var http, out _, deferredService: deferred);
             books.Books = new List<Book>
             {
@@ -661,7 +663,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 config,
                 null,
                 null,
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var cover = new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Poster, $"https://images.example/author{extension}");
 
             subject.ConvertToLocalUrls(12, MediaCoverEntity.Author, new[] { cover });
@@ -708,7 +710,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 config,
                 null,
                 null,
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var cover = new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Poster, "https://images.example/real-author.jpg");
 
             subject.ConvertToLocalUrls(12, MediaCoverEntity.Author, new[] { cover });
@@ -739,7 +741,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 configFileProvider: null,
                 eventAggregator: null,
                 deferredCoverService: null,
-                logger: LogManager.GetCurrentClassLogger());
+                logger: LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var author = new Author
             {
                 Id = 12,
@@ -779,7 +781,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 config,
                 null,
                 null,
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var selectedCover = new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Poster, remoteUrl);
             var otherCover = new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Poster, "https://images.example/other-author.jpg");
 
@@ -810,7 +812,7 @@ namespace Chaptarr.Core.Test.MediaCover
             disk.TextByPath[identityPath] = MediaCoverRendition.BuildAuthorCoverIdentity(
                 "https://images.example/fallback.jpg", VerifiedRealImageHash);
             var subject = new MediaCoverService(new MediaCoverProxyStub(), null, null, null,
-                diskProvider, appFolder, null, null, config, null, null, LogManager.GetCurrentClassLogger());
+                diskProvider, appFolder, null, null, config, null, null, LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var failed = new NzbDrone.Core.MediaCover.MediaCover(coverType, "https://images.example/failed.jpg");
             var fallback = new NzbDrone.Core.MediaCover.MediaCover(coverType, "https://images.example/fallback.jpg");
             var alternate = new NzbDrone.Core.MediaCover.MediaCover(coverType, "https://images.example/alternate.jpg");
@@ -880,7 +882,7 @@ namespace Chaptarr.Core.Test.MediaCover
             disk.ExistingPaths.Add(metadataPath);
             disk.TextByPath[metadataPath] = "{\"selectedEdition\":{\"coverUrl\":\"https://images.example/second.jpg\",\"downloadedAt\":\"2026-08-07T01:02:03Z\"}}";
             var subject = new MediaCoverService(new MediaCoverProxyStub(), null, null, null,
-                diskProvider, appFolder, null, null, config, null, null, LogManager.GetCurrentClassLogger());
+                diskProvider, appFolder, null, null, config, null, null, LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var type = entity == MediaCoverEntity.Book ? MediaCoverTypes.Cover : MediaCoverTypes.Poster;
             var first = new NzbDrone.Core.MediaCover.MediaCover(type, "https://images.example/first.jpg");
             var second = new NzbDrone.Core.MediaCover.MediaCover(type, "https://images.example/second.jpg");
@@ -998,7 +1000,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 eventAggregator: null,
                 deferredCoverService: null,
                 logger: LogManager.GetCurrentClassLogger(),
-                authorService: authorService);
+                authorService: authorService, imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
 
             var placeholderUrl = "https://assets.hardcover.app/author/900002/extension-lies.jpg";
             var author = new Author
@@ -1050,7 +1052,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 eventAggregator: null,
                 deferredCoverService: null,
                 logger: LogManager.GetCurrentClassLogger(),
-                authorService: authorService);
+                authorService: authorService, imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var author = new Author
             {
                 Id = 900006,
@@ -1098,7 +1100,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 eventAggregator: null,
                 deferredCoverService: null,
                 logger: LogManager.GetCurrentClassLogger(),
-                authorService: authorService);
+                authorService: authorService, imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             const string mascotUrl = "https://assets.hardcover.app/author/900007/provider-default.jpg";
             const string realUrl = "https://assets.hardcover.app/author/900007/real-fallback.jpg";
             var author = new Author
@@ -1157,7 +1159,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 eventAggregator: null,
                 deferredCoverService: null,
                 logger: LogManager.GetCurrentClassLogger(),
-                authorService: authorService);
+                authorService: authorService, imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var author = new Author
             {
                 Id = 900009,
@@ -1206,7 +1208,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 configFileProvider: null,
                 eventAggregator: null,
                 deferredCoverService: null,
-                logger: LogManager.GetCurrentClassLogger());
+                logger: LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var author = new Author
             {
                 Id = 900008,
@@ -1284,7 +1286,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 configFileProvider: config,
                 eventAggregator: null,
                 deferredCoverService: null,
-                logger: LogManager.GetCurrentClassLogger());
+                logger: LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var author = new Author
             {
                 Id = authorId,
@@ -1332,7 +1334,7 @@ namespace Chaptarr.Core.Test.MediaCover
 
             // A fallback survives a restart and a canonical-photo change, but is never promoted.
             subject = new MediaCoverService(proxy, null, null, httpClient, diskProvider, appFolder,
-                null, null, config, null, null, LogManager.GetCurrentClassLogger());
+                null, null, config, null, null, LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             disk.ExistingPaths.ExceptWith(new[] { originalPath, cached250Path, cached500Path, identityPath });
             if (providerFails)
             {
@@ -1404,7 +1406,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 configFileProvider: null,
                 eventAggregator: null,
                 deferredCoverService: null,
-                logger: LogManager.GetCurrentClassLogger());
+                logger: LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var author = new Author
             {
                 Id = authorId,
@@ -1466,7 +1468,7 @@ namespace Chaptarr.Core.Test.MediaCover
 
             var proxy = new MediaCoverProxyStub();
             var subject = new MediaCoverService(proxy, null, null, null, diskProvider, appFolder,
-                null, null, DispatchProxy.Create<IConfigFileProvider, ConfigFileProxy>(), null, null, LogManager.GetCurrentClassLogger());
+                null, null, DispatchProxy.Create<IConfigFileProvider, ConfigFileProxy>(), null, null, LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var covers = new[] { new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Poster, requestedUrl) };
             subject.ConvertToLocalUrls(12, MediaCoverEntity.Author, covers);
             Assert.That(covers[0].Url.StartsWith("/MediaCover/", StringComparison.Ordinal), Is.EqualTo(matches));
@@ -1558,7 +1560,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 config,
                 null,
                 deferred,
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var book = new Book
             {
                 Id = 12,
@@ -1606,7 +1608,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 config,
                 null,
                 deferred,
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var book = new Book
             {
                 Id = 12,
@@ -1723,7 +1725,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 config,
                 null,
                 null,
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var cover = new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Poster, "https://images.example/author.jpg");
 
             subject.ConvertToLocalUrls(12, MediaCoverEntity.Author, new[] { cover });
@@ -1757,7 +1759,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 config,
                 null,
                 null,
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var cover = new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Cover, "https://images.example/new.jpg");
 
             subject.ConvertToLocalUrls(12, MediaCoverEntity.Book, new[] { cover });
@@ -1787,7 +1789,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 config,
                 null,
                 null,
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var firstCover = new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Cover, "https://images.example/current.jpg");
 
             subject.ConvertToLocalUrls(12, MediaCoverEntity.Book, new[] { firstCover });
@@ -1830,7 +1832,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 config,
                 null,
                 null,
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var cover = new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Cover, "https://images.example/current.jpg");
 
             subject.ConvertToLocalUrls(12, MediaCoverEntity.Book, new[] { cover });
@@ -2015,7 +2017,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 configFileProvider: null,
                 eventAggregator: eventAggregator,
                 deferredCoverService: deferredCoverService,
-                logger: LogManager.GetCurrentClassLogger());
+                logger: LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var author = new Author
             {
                 Id = 42,

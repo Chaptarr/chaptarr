@@ -246,9 +246,9 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         [TestCase(true)]
         [TestCase(false)]
+        [Platform(Exclude = "Win", Reason = "Unix permissions contract; the body uses Mono.Posix, which does not load on Windows")]
         public void separation_should_apply_only_configured_permissions_to_the_copy(bool managePermissions)
         {
-            if (OperatingSystem.IsWindows()) Assert.Ignore("Unix permissions contract");
             Link();
             var originalMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.GroupWrite;
             File.SetUnixFileMode(_source, originalMode);

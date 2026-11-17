@@ -279,7 +279,7 @@ namespace NzbDrone.Core.Books.Calibre
                     Rating = (int)(edition.Ratings.Value * 2),
                     Identifiers = new Dictionary<string, string>
                     {
-                        { "isbn", edition.Isbn13 },
+                        { "isbn", BookEditionIdentity.GetTagIsbn(edition) },
                         { "asin", edition.Asin },
                         { "goodreads", edition.ForeignEditionId }
                     },
@@ -290,6 +290,7 @@ namespace NzbDrone.Core.Books.Calibre
 
             ExecuteSetFields(file.CalibreId, payload, settings);
 
+            var preparationFailed = false;
             try
             {
                 // updating the calibre metadata may have renamed the file, so track that
@@ -332,7 +333,7 @@ namespace NzbDrone.Core.Books.Calibre
 
                 if (embed)
                 {
-                    var result = EmbedMetadata(file, settings, visibleFormats, onSymlinkSkipped);
+                    var result = EmbedMetadata(file, settings, visibleFormats, onSymlinkSkipped, out preparationFailed);
                     return updatedPath.IsNullOrWhiteSpace() ? CalibreTagUpdateResult.Incomplete : result;
                 }
 
@@ -340,7 +341,11 @@ namespace NzbDrone.Core.Books.Calibre
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                throw new CalibreException("Calibre metadata was saved, but the remaining tag update failed: {0}", ex, CalibreLibraryGate.GetFailureReason(ex)) { WriteAccepted = true };
+                throw new CalibreException("Calibre metadata was saved, but the remaining tag update failed: {0}", ex, CalibreLibraryGate.GetFailureReason(ex))
+                {
+                    WriteAccepted = true,
+                    FormatPreparationFailed = preparationFailed
+                };
             }
         }
 
@@ -408,11 +413,12 @@ namespace NzbDrone.Core.Books.Calibre
             }
         }
 
-        private CalibreTagUpdateResult EmbedMetadata(BookFile file, CalibreSettings settings, Dictionary<string, CalibreBookFormat> formats, Action<string> onSymlinkSkipped)
+        private CalibreTagUpdateResult EmbedMetadata(BookFile file, CalibreSettings settings, Dictionary<string, CalibreBookFormat> formats, Action<string> onSymlinkSkipped, out bool preparationFailed)
         {
             var readyFormats = new List<string>();
             var trackedReady = false;
             var trackedSkipped = false;
+            preparationFailed = false;
             foreach (var format in formats)
             {
                 try
@@ -430,13 +436,14 @@ namespace NzbDrone.Core.Books.Calibre
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
+                    preparationFailed = true;
                     _logger.Warn(ex, "Cannot prepare Calibre format {0} at {1}; skipping format", format.Key, format.Value.Path);
                 }
             }
 
             if (readyFormats.Count == 0)
             {
-                return trackedSkipped ? CalibreTagUpdateResult.Skipped : CalibreTagUpdateResult.Incomplete;
+                return trackedSkipped && !preparationFailed ? CalibreTagUpdateResult.Skipped : CalibreTagUpdateResult.Incomplete;
             }
 
             var request = GetBuilder($"cdb/cmd/embed_metadata", settings)
@@ -458,7 +465,7 @@ namespace NzbDrone.Core.Books.Calibre
             if (response.TryGetValue("err", out var error))
             {
                 _logger.Warn("Calibre could not embed metadata for {0}: {1}", file.Path, error);
-                return trackedSkipped ? CalibreTagUpdateResult.Skipped : CalibreTagUpdateResult.Incomplete;
+                return trackedSkipped && !preparationFailed ? CalibreTagUpdateResult.Skipped : CalibreTagUpdateResult.Incomplete;
             }
 
             if (!response.ContainsKey("result"))
@@ -475,7 +482,8 @@ namespace NzbDrone.Core.Books.Calibre
                 }
             }
 
-            return trackedReady ? CalibreTagUpdateResult.Completed
+            return preparationFailed ? CalibreTagUpdateResult.Incomplete
+                : trackedReady ? CalibreTagUpdateResult.Completed
                 : trackedSkipped ? CalibreTagUpdateResult.Skipped : CalibreTagUpdateResult.Incomplete;
         }
 

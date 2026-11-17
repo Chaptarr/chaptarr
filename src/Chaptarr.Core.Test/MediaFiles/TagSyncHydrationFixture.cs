@@ -108,7 +108,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
                 LogManager.GetLogger("test"),
                 DispatchProxy.Create<ITagExtractionService, ThrowingProxy<ITagExtractionService>>(),
-                DispatchProxy.Create<ISeriesBookLinkService, ThrowingProxy<ISeriesBookLinkService>>());
+                DispatchProxy.Create<ISeriesBookLinkService, ThrowingProxy<ISeriesBookLinkService>>(), null, null);
 
             var edition = new Edition { Id = 84, BookId = 9 };
 

@@ -15,6 +15,7 @@ namespace NzbDrone.Core.Books.Calibre
     public class CalibreException : NzbDroneException
     {
         public bool WriteAccepted { get; set; }
+        public bool FormatPreparationFailed { get; set; }
 
         public CalibreException(string message)
             : base(message)

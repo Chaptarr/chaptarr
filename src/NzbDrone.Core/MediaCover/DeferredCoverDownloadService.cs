@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using NLog;
 using NzbDrone.Core.Books;
@@ -20,11 +21,12 @@ namespace NzbDrone.Core.MediaCover
                                                 IHandleAsync<ImportStageProgressEvent>,
                                                 IHandle<CommandExecutedEvent>,
                                                 IHandle<BookDeletedEvent>,
-        IHandle<LibraryIdentityChangedEvent>,
+                                                IHandle<LibraryIdentityChangedEvent>,
                                                 IHandle<BookFileAddedEvent>,
                                                 IHandle<BookFilesAddedEvent>,
                                                 IHandle<ConfigSavedEvent>,
-                                                IHandle<BooksEditedEvent>
+                                                IHandle<BooksEditedEvent>,
+                                                IExecute<RetryBookCoversCommand>
     {
         private const int CompletedCommandLimit = 1024;
 
@@ -126,43 +128,43 @@ namespace NzbDrone.Core.MediaCover
 
             if (unresolvedFileIds.Count > 0)
             {
+                  try
+                  {
+                      bookIds.UnionWith(_bookService.GetBooksByFileIds(unresolvedFileIds)
+                          .Where(book => book?.Id > 0)
+                          .Select(book => book.Id));
+                  }
+                  catch (Exception ex)
+                  {
+                      _logger.Error(ex, "Unable to resolve books for {0} added files", unresolvedFileIds.Count);
+                  }
+                }
+
+                return bookIds.OrderBy(bookId => bookId).ToList();
+            }
+
+            private void QueueOrDeferBookCovers(IEnumerable<int> bookIds)
+            {
+                var ids = bookIds?.Where(bookId => bookId > 0).Distinct().ToList() ?? new List<int>();
+                if (ids.Count == 0)
+                {
+                  return;
+                }
+
                 try
                 {
-                    bookIds.UnionWith(_bookService.GetBooksByFileIds(unresolvedFileIds)
-                        .Where(book => book?.Id > 0)
-                        .Select(book => book.Id));
+                  if (_deferredCoverService.MarkBooksForCoverDownload(ids))
+                  {
+                      return;
+                  }
+
+                  _commandQueueManager.Push(new DownloadBookMediaCommand(ids));
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error(ex, "Unable to resolve books for {0} added files", unresolvedFileIds.Count);
+                  _logger.Error(ex, "Unable to queue cover downloads for {0} books", ids.Count);
                 }
             }
-
-            return bookIds.OrderBy(bookId => bookId).ToList();
-        }
-
-        private void QueueOrDeferBookCovers(IEnumerable<int> bookIds)
-        {
-            var ids = bookIds?.Where(bookId => bookId > 0).Distinct().ToList() ?? new List<int>();
-            if (ids.Count == 0)
-            {
-                return;
-            }
-
-            try
-            {
-                if (_deferredCoverService.MarkBooksForCoverDownload(ids))
-                {
-                    return;
-                }
-
-                _commandQueueManager.Push(new DownloadBookMediaCommand(ids));
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "Unable to queue cover downloads for {0} books", ids.Count);
-            }
-        }
 
         public void HandleAsync(ImportStageProgressEvent message)
         {
@@ -244,53 +246,64 @@ namespace NzbDrone.Core.MediaCover
 
         public void Handle(LibraryIdentityChangedEvent message)
         {
-            foreach (var bookId in message.RemovedBookIds) _deferredCoverService.RemovePendingBook(bookId);
+            _deferredCoverService.RemovePendingBooks(message.RemovedBookIds);
         }
 
         public void Handle(BookDeletedEvent message)
         {
             var bookId = message?.Book?.Id ?? 0;
-
             if (bookId <= 0)
             {
                 return;
             }
 
-            _deferredCoverService.RemovePendingBook(bookId);
+            _deferredCoverService.RemovePendingBooks(new[] { bookId });
+        }
+
+        public void Execute(RetryBookCoversCommand message)
+        {
+            if (!_deferredCoverService.IsCoverDownloadDeferred)
+            {
+                FlushPendingBookCovers("Retrying deferred covers for {0} books");
+            }
         }
 
         private void FlushPendingBookCovers(string logMessageTemplate)
         {
             // Claim before processing so a later import can re-defer the same books.
             var pendingBookIds = _deferredCoverService.TakePendingBookIds();
-
             if (pendingBookIds.Count == 0)
             {
                 return;
             }
 
             _logger.Info(logMessageTemplate, pendingBookIds.Count);
-
-            try
+            foreach (var page in pendingBookIds.Chunk(250))
             {
-                var books = _bookService.GetExistingBooks(pendingBookIds);
-                var missingCount = pendingBookIds.Count - books.Count;
-                if (missingCount > 0)
+                try
                 {
-                    _logger.Debug("Skipping deferred cover downloads for {0} deleted books", missingCount);
-                }
+                    var timer = Stopwatch.StartNew();
+                    // GetExistingBooks preserves claim order, including the unattempted-first rule.
+                    var books = _bookService.GetExistingBooks(page);
+                    _logger.Debug("Loaded {0} of {1} pending cover books in {2}ms", books.Count, page.Length, timer.ElapsedMilliseconds);
+                    var missingCount = page.Length - books.Count;
+                    if (missingCount > 0)
+                    {
+                        _logger.Debug("Skipping deferred cover downloads for {0} deleted books", missingCount);
+                    }
 
-                if (books.Count > 0)
+                    if (books.Count > 0)
+                    {
+                        _mediaCoverService.EnsureBookCoversForBooks(books);
+                    }
+
+                    _logger.Debug("[PERF] Processed deferred cover batch for {0} books", books.Count);
+                }
+                catch (Exception ex)
                 {
-                    _mediaCoverService.EnsureBookCoversForBooks(books);
+                    _deferredCoverService.RequeueBooksForCoverDownload(page);
+                    _logger.Error(ex, "Deferred cover batch failed; retained {0} book IDs for a later flush", page.Length);
                 }
-
-                _logger.Debug("[PERF] Processed deferred cover batch for {0} books", books.Count);
-            }
-            catch (Exception ex)
-            {
-                _deferredCoverService.RequeueBooksForCoverDownload(pendingBookIds);
-                _logger.Error(ex, "Deferred cover batch failed; retained {0} book IDs for a later flush", pendingBookIds.Count);
             }
         }
     }

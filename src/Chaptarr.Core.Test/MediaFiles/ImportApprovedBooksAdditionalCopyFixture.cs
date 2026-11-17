@@ -24,6 +24,7 @@ using NzbDrone.Core.Extras;
 using NzbDrone.Core.History;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.MediaFiles.BookImport.Manual;
 using NzbDrone.Core.Messaging.Commands;
@@ -234,6 +235,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             public List<(BookFile File, bool NewDownload)> Writes { get; } = new();
             public bool ThrowOnWrite { get; set; }
+            public Action<BookFile, bool> OnWrite;
 
             public Dictionary<string, List<string>> ReadAllTags(System.IO.Abstractions.IFileInfo file) => new();
             public (Dictionary<string, List<string>> Tags, int? DurationSeconds) ReadAllTagsAndDuration(System.IO.Abstractions.IFileInfo file) => (new Dictionary<string, List<string>>(), null);
@@ -241,6 +243,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void WriteTags(BookFile trackfile, bool newDownload, bool force = false)
             {
                 Writes.Add((trackfile, newDownload));
+                OnWrite?.Invoke(trackfile, newDownload);
                 if (ThrowOnWrite)
                 {
                     throw new InvalidOperationException("synthetic tag write failure");
@@ -540,6 +543,9 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         private sealed class StubCoverMapper : IMapCoversToLocal
         {
+            public (bool Ready, byte[] Data) ReadLocalBookCover(Edition edition) =>
+                System.IO.File.Exists(CoverPath) ? (true, System.IO.File.ReadAllBytes(CoverPath)) : (false, null);
+
             public void EnsureBookCoversForBooks(List<Book> books) => throw new NotImplementedException();
             public void EnsureBookCoversForImport(Book book) => EnsureBookCovers(book);
             public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers)
@@ -554,6 +560,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             public string CoverPath { get; set; }
             public int EnsureBookCoversCalls { get; private set; }
+            public Action OnEnsure;
 
             public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<NzbDrone.Core.MediaCover.MediaCover> covers, string selectedAuthorImageHash = null)
             {
@@ -568,9 +575,12 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
             }
 
+            public bool HadMonitoredEdition;
             public void EnsureBookCovers(Book book)
             {
+                HadMonitoredEdition = book.Editions?.Any(edition => edition.Monitored) == true;
                 EnsureBookCoversCalls++;
+                OnEnsure?.Invoke();
             }
 
             public System.Threading.Tasks.Task<EnsureImageResult> EnsureAuthorImage(Author author, NzbDrone.Core.MediaCover.MediaCover cover)
@@ -581,6 +591,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         private class ConfigServiceProxy : DispatchProxy
         {
+            public WriteAudioTagsType TagMode { get; set; } = WriteAudioTagsType.No;
             public bool SkipFreeSpaceCheckWhenImporting { get; set; }
             public int MinimumFreeSpaceWhenImporting { get; set; } = 100;
             public int AudiobookConversionConcurrentConversions { get; set; } = 1;
@@ -598,9 +609,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     return ProperDownloadTypes.PreferAndUpgrade;
                 }
 
+                if (targetMethod?.Name == "get_ScrubAudioTags") return false;
+                if (targetMethod?.Name == "get_EmbedCoverArt") return true;
+
                 if (targetMethod?.Name == "get_WriteAudioTags")
                 {
-                    return WriteAudioTagsType.No;
+                    return TagMode;
                 }
 
                 if (targetMethod?.Name == "get_MinimumFreeSpaceWhenImporting")
@@ -1067,6 +1081,20 @@ namespace Chaptarr.Core.Test.MediaFiles
                 expectSeparateCopy: true);
         }
 
+        [TestCase(WriteAudioTagsType.NewFiles)]
+        [TestCase(WriteAudioTagsType.Sync)]
+        [TestCase(WriteAudioTagsType.No)]
+        public void new_audio_download_gets_cover_before_its_first_tag_write(WriteAudioTagsType mode) =>
+            AssertSelectedAudiobookEditionRemainsFinal(true, false, true, tagMode: mode);
+
+        [Test]
+        public void multipart_import_attempts_an_unavailable_cover_only_once_per_book() =>
+            AssertSelectedAudiobookEditionRemainsFinal(true, false, true, tagMode: WriteAudioTagsType.NewFiles, parts: 3, failingCover: true);
+
+        [Test]
+        public void additional_narrator_copy_loads_its_edition_before_the_first_cover_and_tag_write() =>
+            AssertSelectedAudiobookEditionRemainsFinal(false, false, false, selectedNarrator: "Second Narrator", expectSeparateCopy: true, tagMode: WriteAudioTagsType.NewFiles);
+
         private static void AssertSelectedAudiobookEditionRemainsFinal(
             bool anyEditionOk,
             bool isManualImport,
@@ -1074,13 +1102,15 @@ namespace Chaptarr.Core.Test.MediaFiles
             string selectedNarrator = null,
             string unrelatedNarrator = "Unrelated Narrator",
             bool expectSeparateCopy = false,
-            bool includeTrackedReleaseEvidence = false)
+            bool includeTrackedReleaseEvidence = false,
+            WriteAudioTagsType? tagMode = null, int parts = 1, bool failingCover = false)
         {
             var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"edition-finality-{Guid.NewGuid():N}");
             var sourcePath = Path.Combine(tempDir, "incoming.m4b");
             var destinationPath = Path.Combine(tempDir, "Example Book.m4b");
             Directory.CreateDirectory(tempDir);
-            File.WriteAllText(sourcePath, "fake m4b");
+            if (tagMode.HasValue) File.Copy(Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "Audio", "silence.m4b"), sourcePath);
+            else File.WriteAllText(sourcePath, "fake m4b");
 
             try
             {
@@ -1147,20 +1177,43 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 book.Editions = new List<Edition> { selectedEdition, unrelatedNarratorEdition };
 
-                var mediaFileService = new StubMediaFileService();
+                var mediaFileService = new StubMediaFileService { AllowUpdates = tagMode.HasValue };
                 var (bookService, bookProxy) = CreateBookService(new List<Book> { book });
                 var editionService = CreateEditionService(new List<Edition> { selectedEdition, unrelatedNarratorEdition });
                 var editionProxy = (EditionServiceProxy)(object)editionService;
+                var metadata = new StubMetadataTagService();
+                var config = DispatchProxy.Create<IConfigService, ConfigServiceProxy>();
+                ((ConfigServiceProxy)(object)config).TagMode = tagMode ?? WriteAudioTagsType.No;
+                var cover = new StubCoverMapper { CoverPath = Path.Combine(tempDir, "downloaded.png") };
+                var tagEvents = new List<BookFileRetaggedEvent>();
+                if (tagMode.HasValue)
+                {
+                    book.SeriesLinks = new List<SeriesBookLink>();
+                    cover.OnEnsure = () =>
+                    {
+                        if (failingCover) throw new System.Net.WebException("Fixture cover unavailable");
+                        using var image = new SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgb24>(2, 2);
+                        SixLabors.ImageSharp.ImageExtensions.SaveAsPng(image, cover.CoverPath);
+                    };
+                    var audio = new AudioTagService(config, mediaFileService, RealDiskProvider.Create(LogManager.GetCurrentClassLogger()),
+                        Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IRootFolderWatchingService>((_, _) => null),
+                        Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IFileMutationSafetyService>((_, _) => false),
+                        Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IEventAggregator>((_, args) => { tagEvents.Add((BookFileRetaggedEvent)args[0]); return null; }),
+                        null, LogManager.GetCurrentClassLogger(), null, null,
+                        Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Localization.ILocalizationService>((_, args) => (string)args[0]), cover);
+                    metadata.OnWrite = (file, isNew) => audio.WriteTags(file, isNew);
+                }
                 var service = new ImportApprovedBooks(
                     mediaFileService,
-                    new StubMetadataTagService(),
+                    metadata,
                     new StubMediaInfoExtractor(),
                     Proxy<IAuthorService>(),
                     bookService,
                     editionService,
                     Proxy<IRecycleBinProvider>(),
                     Proxy<IExtraService>(),
-                    new StubMoveBookFiles { DestinationPath = destinationPath },
+                    new StubMoveBookFiles { DestinationPath = destinationPath, TransferFilesOnDisk = tagMode.HasValue,
+                        DestinationForFile = local => parts == 1 ? destinationPath : Path.Combine(tempDir, "out", Path.GetFileName(local.Path)) },
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
                     new NoOpEventAggregator(),
@@ -1169,7 +1222,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(),
                     Proxy<IM4bConversionService>(),
-                    LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+                    LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"), configService: config, coverMapper: cover);
 
                 var localBook = new LocalBook
                 {
@@ -1190,16 +1243,34 @@ namespace Chaptarr.Core.Test.MediaFiles
                     AudioProductionType = includeTrackedReleaseEvidence ? "Full Cast" : null
                 };
 
+                var decisions = new List<ImportDecision<LocalBook>> { new(localBook) };
+                for (var part = 2; part <= parts; part++)
+                {
+                    var path = Path.Combine(tempDir, "part-" + part + ".m4b");
+                    File.Copy(sourcePath, path);
+                    decisions.Add(new(new LocalBook { Path = path, Book = book, Author = author, Edition = selectedEdition,
+                        Quality = localBook.Quality, Size = new FileInfo(path).Length, Modified = File.GetLastWriteTimeUtc(path), Part = part }));
+                }
                 var results = service.Import(
-                    new List<ImportDecision<LocalBook>> { new(localBook) },
+                    decisions,
                     replaceExisting: false,
-                    downloadClientItem: null,
+                    downloadClientItem: tagMode.HasValue ? new DownloadClientItem { DownloadId = "cover-import" } : null,
                     importMode: ImportMode.Copy,
                     cancellationToken: CancellationToken.None);
 
-                Assert.That(results, Has.Count.EqualTo(1));
+                Assert.That(results, Has.Count.EqualTo(parts));
                 Assert.That(results[0].Result, Is.EqualTo(ImportResultType.Imported));
-                var importedFile = mediaFileService.FilesByBook.Single();
+                var importedFile = mediaFileService.FilesByBook.First();
+                if (tagMode.HasValue)
+                {
+                    var enabled = tagMode != WriteAudioTagsType.No;
+                    Assert.That(cover.EnsureBookCoversCalls, Is.EqualTo(enabled ? 1 : 0));
+                    if (enabled) Assert.That(cover.HadMonitoredEdition, Is.True);
+                    Assert.That(tagEvents, Has.Count.EqualTo(enabled ? parts : 0));
+                    using var tagged = TagLib.File.Create(importedFile.Path);
+                    Assert.That(tagged.Tag.Pictures, Has.Length.EqualTo(enabled && !failingCover ? 1 : 0));
+                    if (enabled && !failingCover) Assert.That(tagged.Tag.Pictures[0].Data.Data, Is.EqualTo(File.ReadAllBytes(cover.CoverPath)));
+                }
                 if (expectSeparateCopy)
                 {
                     var copyBook = bookProxy.InsertedBooks.Single();

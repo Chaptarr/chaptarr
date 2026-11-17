@@ -10,6 +10,10 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
     {
         internal const string ToneNamespace = "com.pilabor.tone";
         private const string TonePartName = "PART";
+        internal const string ToneAsinName = "AUDIBLE_ASIN";
+        internal const string ToneIsbnName = "ISBN";
+        internal const string ToneAsinKey = "MP4:----:" + ToneNamespace + ":" + ToneAsinName;
+        internal const string ToneIsbnKey = "MP4:----:" + ToneNamespace + ":" + ToneIsbnName;
         internal const string ToneSeriesKey = "MP4:----:" + ToneNamespace + ":SERIES";
         internal const string TonePartKey = "MP4:----:" + ToneNamespace + ":" + TonePartName;
 
@@ -42,13 +46,20 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 return;
             }
 
-            foreach (var field in tone)
-            {
-                while (Read(tag).Any(stored => stored.Mean == field.Mean && stored.Name == field.Name)) tag.SetDashBox(field.Mean, field.Name, null);
-            }
-            while (Read(tag).Any(field => field.Mean == "com.apple.iTunes" && field.Name == "publisher"))
-                tag.SetDashBox("com.apple.iTunes", "publisher", null);
-            if (!string.IsNullOrEmpty(value)) tag.SetDashBox(ToneNamespace, "PUBLISHER", value);
+            foreach (var field in tone) SetText(tag, field.Mean, field.Name, null);
+            SetText(tag, "com.apple.iTunes", "publisher", null);
+            if (!string.IsNullOrEmpty(value)) SetText(tag, ToneNamespace, "PUBLISHER", value);
+        }
+
+        internal static void SetText(AppleTag tag, string mean, string name, string value)
+        {
+            var count = Read(tag).Count(field => field.Mean == mean && field.Name == name);
+            for (var i = 0; i < count; i++) tag.SetDashBox(mean, name, null);
+            // Malformed shadow boxes can prevent TagLib from removing the real field.
+            // Fail this file rather than loop forever or add a competing value.
+            if (Read(tag).Any(field => field.Mean == mean && field.Name == name))
+                throw new TagLib.CorruptFileException("Unable to replace malformed MP4 custom tag");
+            if (!string.IsNullOrEmpty(value)) tag.SetDashBox(mean, name, value);
         }
 
         internal static IEnumerable<(string Mean, string Name, string Value)> Read(AppleTag tag)

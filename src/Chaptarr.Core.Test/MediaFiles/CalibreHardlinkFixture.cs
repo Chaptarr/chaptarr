@@ -84,11 +84,19 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
+        [Test]
+        public void tracked_symlink_and_preparation_failure_remain_incomplete_when_embedding_times_out()
+        {
+            only_embedding_should_separate_all_formats_after_calibre_renames_and_remote_mapping(true, "file-symlink-tracked-timeout-preparation-failure");
+        }
+
         [TestCase(false, "normal")]
         [TestCase(true, "normal")]
         [TestCase(false, "missing-older")]
         [TestCase(true, "missing-older")]
         [TestCase(true, "failed-separation")]
+        [TestCase(true, "file-symlink-tracked-preparation-failure")]
+        [TestCase(true, "file-symlink-tracked-partial-preparation-failure")]
         [TestCase(true, "file-symlink-single")]
         [TestCase(false, "file-symlink-single")]
         [TestCase(true, "file-symlink-hardlinked")]
@@ -121,7 +129,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 logs.Configuration = logging;
                 var logger = logs.GetLogger("calibre-fixture");
                 var disk = RealDiskProvider.Create(logger);
-                var formats = scenario == "tracked-format-absent" ? new[] { "fb2", "cbz" } : new[] { "epub", "azw3" };
+                var formats = scenario == "tracked-format-absent" ? new[] { "fb2", "cbz" } : scenario is "file-symlink-tracked-partial-preparation-failure" or "file-symlink-tracked-timeout-preparation-failure" ? new[] { "epub", "azw3", "fb2" } : new[] { "epub", "azw3" };
                 foreach (var format in formats)
                 {
                     File.WriteAllText(Path.Combine(directory, "download." + format), "original");
@@ -133,7 +141,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 if (scenario.StartsWith("file-symlink"))
                 {
-                    var linkedFormat = scenario is "file-symlink-tracked-timeout" or "file-symlink-tracked-error" ? "epub" : "azw3";
+                    var linkedFormat = scenario.StartsWith("file-symlink-tracked-") ? "epub" : "azw3";
                     var oldFormat = Path.Combine(directory, "old." + linkedFormat);
                     var target = Path.Combine(directory, "download." + linkedFormat);
                     File.Delete(oldFormat);
@@ -150,7 +158,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var file = new BookFile
                 {
                     Path = Path.Combine(directory, "old.epub"), CalibreId = 7, Author = author,
-                    Edition = new Edition { Book = book, Title = "Renamed", Language = "en" }
+                    Edition = new Edition { Book = book, Title = "Renamed", Language = "en", Isbn13 = "System.Collections.Generic.List`1[System.String]", Isbn10 = "isbn:0593135202" }
                 };
                 var settings = new CalibreSettings { Host = "calibre.invalid", Library = "test" };
                 var config = Proxy<IConfigService>((method, _) => method.Name switch
@@ -193,6 +201,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                     if (request.Url.ToString().Contains("set-fields"))
                     {
                         calls.Add("set");
+                        var changes = JObject.Parse(Encoding.UTF8.GetString(request.ContentData));
+                        Assert.That((string)changes["changes"]["identifiers"]["isbn"], Is.EqualTo("0593135202"));
                         foreach (var format in formats)
                         {
                             if (scenario == "all-missing" || (scenario == "missing-older" && format == "azw3") || (scenario == "missing-tracked" && format == "epub"))
@@ -218,12 +228,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                             return new HttpResponse(request, new HttpHeader(), "{\"err\":\"fixture embed failure\"}");
                         }
                         var selected = JArray.Parse(Encoding.UTF8.GetString(request.ContentData))[1].ToObject<string[]>();
-                        Assert.That(selected, Is.EquivalentTo(scenario is "normal" or "tracked-format-absent" or "embed-invalid-response" ? formats : scenario is "missing-tracked" or "file-symlink-tracked-timeout" or "file-symlink-tracked-error" ? new[] { "azw3" } : new[] { "epub" }));
+                        Assert.That(selected, Is.EquivalentTo(formats.Length == 3 ? new[] { "fb2" } : scenario is "normal" or "tracked-format-absent" or "embed-invalid-response" ? formats : scenario is "missing-tracked" or "file-symlink-tracked-timeout" or "file-symlink-tracked-error" ? new[] { "azw3" } : new[] { "epub" }));
                         if (scenario == "file-symlink-tracked-error")
                         {
                             throw RetagMediaScopeFixture.ResponseError(500);
                         }
-                        if (scenario == "file-symlink-tracked-timeout")
+                        if (scenario is "file-symlink-tracked-timeout" or "file-symlink-tracked-timeout-preparation-failure")
                         {
                             throw new WebException("fixture embed timeout", new TaskCanceledException(), WebExceptionStatus.Timeout, null);
                         }
@@ -255,7 +265,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         {
                             throw new InvalidOperationException("fixture unexpected failure");
                         }
-                        if (scenario == "failed-separation" && Path.GetExtension(path) == ".azw3")
+                        if ((scenario == "failed-separation" || scenario.EndsWith("preparation-failure")) && Path.GetExtension(path) == ".azw3")
                         {
                             throw new IOException("simulated copy failure");
                         }
@@ -277,6 +287,24 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Proxy<IRootFolderService>((method, _) => method.Name == nameof(IRootFolderService.All)
                         ? new List<RootFolder> { new RootFolder { Path = directory, CalibreSettings = settings } }
                         : new RootFolder { Path = directory, CalibreSettings = settings }), config, observedCalibre, new CalibreLibraryGate(tagHealth), logger);
+
+                if (scenario.EndsWith("preparation-failure"))
+                {
+                    var batch = tags.RetagFiles(new RetagFilesCommand { EmbedMetadata = true }, new List<BookFile> { file }, new TagBatch());
+                    Assert.That((batch.Written, batch.Failed, batch.Incomplete, batch.SkippedSymlinks), Is.EqualTo((0, 0, 1, 1)));
+                    var timedOut = scenario == "file-symlink-tracked-timeout-preparation-failure";
+                    Assert.That(outcomes, Is.EqualTo(timedOut ? Array.Empty<CalibreTagUpdateResult>() : new[] { CalibreTagUpdateResult.Incomplete }));
+                    Assert.That((batch.CalibreIncomplete, batch.Unconfirmed, batch.Unavailable), Is.EqualTo((1, 0, 0)));
+                    Assert.That(tagHealth.CanBeginRequest(CalibreLibraryIdentity.GetKey(settings), out _), Is.EqualTo(!timedOut));
+                    if (timedOut) Assert.That(allLogs.Logs, Has.Some.Contains("fixture embed timeout"));
+                    Assert.That(calls, Is.EqualTo(formats.Length == 3 ? new[] { "set", "get", "embed" } : new[] { "set", "get" }));
+                    foreach (var format in formats) Assert.That(File.ReadAllText(Path.Combine(directory, "download." + format)), Is.EqualTo("original"));
+                    Assert.That(new FileInfo(Path.Combine(directory, "renamed.epub")).LinkTarget, Is.EqualTo(Path.Combine(directory, "download.epub")));
+                    Assert.That(File.ReadAllText(Path.Combine(directory, "renamed.azw3")), Is.EqualTo("original"));
+                    if (formats.Length == 3) Assert.That(File.ReadAllText(Path.Combine(directory, "renamed.fb2")), Is.EqualTo(timedOut ? "original" : "embedded"));
+                    Assert.That(allLogs.Logs, Has.Some.Contains("simulated copy failure"));
+                    return;
+                }
 
                 if (scenario == "embed-invalid-response")
                 {
@@ -347,6 +375,11 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Assert.That(batch.SkippedSymlinks, Is.EqualTo(embed ? 1 : 0));
                     Assert.That(batch.Failed, Is.Zero);
                 }
+                else if (scenario == "failed-separation")
+                {
+                    var batch = tags.RetagFiles(new RetagFilesCommand { EmbedMetadata = embed }, new List<BookFile> { file }, new TagBatch());
+                    Assert.That((batch.Written, batch.Failed, batch.Incomplete), Is.EqualTo((0, 0, 1)));
+                }
                 else
                 {
                     tags.WriteTags(file, false);
@@ -355,7 +388,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 if (scenario is not "file-symlink-embed-transport-failure" and not "file-symlink-tracked-timeout")
                 {
                     var expected = scenario is "missing-tracked" or "tracked-format-absent" ? CalibreTagUpdateResult.Incomplete
-                        : !embed || scenario is "normal" or "missing-older" or "failed-separation" || scenario.StartsWith("file-symlink") ? CalibreTagUpdateResult.Completed
+                        : !embed || scenario is "normal" or "missing-older" || scenario.StartsWith("file-symlink") ? CalibreTagUpdateResult.Completed
                         : CalibreTagUpdateResult.Incomplete;
                     Assert.That(outcomes, Is.EqualTo(new[] { expected }), "Requested work must not be reported completed when formats were skipped or embedding failed");
                 }

@@ -99,6 +99,7 @@ namespace NzbDrone.Core.Configuration
         string MatchingLogsUploadToken { get; set; }
         WriteAudioTagsType WriteAudioTags { get; set; }
         bool ScrubAudioTags { get; set; }
+        bool EmbedCoverArt { get; set; }
         WriteBookTagsType WriteBookTags { get; set; }
         bool UpdateCovers { get; set; }
         bool EmbedMetadata { get; set; }

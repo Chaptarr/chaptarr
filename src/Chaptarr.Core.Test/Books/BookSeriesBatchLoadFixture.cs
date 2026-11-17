@@ -74,8 +74,8 @@ namespace Chaptarr.Core.Test.Books
                 if (retag)
                 {
                     foreach (var file in loaded) file.Path = Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "Audio", "silence.mp3");
-                    var config = InterfaceProxy.Proxy<IConfigService>((method, _) => method.Name == "get_ScrubAudioTags" ? false : throw new AssertionException(method.Name));
-                    var audio = new AudioTagService(config, media, null, null, null, null, null, LogManager.GetCurrentClassLogger(), null, new SeriesBookLinkService(repository));
+                    var config = InterfaceProxy.Proxy<IConfigService>((method, _) => method.Name == "get_ScrubAudioTags" ? false : method.Name == "get_EmbedCoverArt" ? true : throw new AssertionException(method.Name));
+                    var audio = new AudioTagService(config, media, null, null, null, null, null, LogManager.GetCurrentClassLogger(), null, new SeriesBookLinkService(repository), null, Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.MediaCover.IMapCoversToLocal>((_, _) => (true, (byte[])null)));
                     var previews = audio.GetRetagPreviewsByAuthor(author.Id);
                     Assert.That(previews, Has.Count.EqualTo(101));
                     Assert.That(previews.Select(p => p.Changes["SERIES"].Item2), Is.All.EqualTo("Series"));

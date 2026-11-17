@@ -9,6 +9,11 @@ using NzbDrone.Core.Configuration;
 
 namespace NzbDrone.Core.MediaCover
 {
+    internal sealed class UnsafeImageUrlException : WebException
+    {
+        public UnsafeImageUrlException(string message) : base(message, WebExceptionStatus.ProtocolError) { }
+    }
+
     internal static class MediaCoverUrlSafetyPolicy
     {
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();

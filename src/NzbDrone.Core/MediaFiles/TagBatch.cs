@@ -14,6 +14,12 @@ namespace NzbDrone.Core.MediaFiles
         public readonly HashSet<int> UnlinkedFiles = new HashSet<int>();
         public readonly Dictionary<string, (int Count, DateTime RetryAfter, string TriggerFile)> UnavailableLibraries = new();
         public int Read;
+        internal (int BookId, int EditionId)? AudioCoverEdition;
+        internal (bool Ready, TagLib.IPicture Picture) AudioCover;
+        public int AudioCoverConversions;
+        public double AudioCoverConversionMilliseconds;
+        public int AudioComparisons;
+        public double AudioComparisonMilliseconds;
         public int CalibrePages;
         public int CalibreIds;
         public int Written;

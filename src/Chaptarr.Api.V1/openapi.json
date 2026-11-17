@@ -20096,6 +20096,9 @@
           "scrubAudioTags": {
             "type": "boolean"
           },
+          "embedCoverArt": {
+            "type": "boolean"
+          },
           "writeBookTags": {
             "allOf": [
               {

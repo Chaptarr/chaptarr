@@ -31,10 +31,10 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 ["SERIES"] = new[] { "ID3v2:TXXX:SERIES", "MP4:----:com.apple.iTunes:SERIES", AppleTagFields.ToneSeriesKey, "XIPH:SERIES", "APE:SERIES", "ASF:SERIES" },
                 ["SERIES-PART"] = new[] { "ID3v2:TXXX:SERIES-PART", "MP4:----:com.apple.iTunes:SERIES-PART", AppleTagFields.TonePartKey, "XIPH:SERIES-PART", "APE:SERIES-PART", "ASF:SERIES-PART" },
                 ["LANGUAGE"] = new[] { "XIPH:LANGUAGE", "ASF:WM/Language", "APE:Language" },
-                ["ISBN"] = new[] { "ID3v2:TXXX:ISBN", "XIPH:ISBN", "ASF:WM/ISBN", "APE:ISBN" },
+                ["ISBN"] = new[] { AppleTagFields.ToneIsbnKey, "ID3v2:TXXX:ISBN", "XIPH:ISBN", "ASF:WM/ISBN", "APE:ISBN" },
                 ["AUDIBLE_ASIN"] = new[]
                 {
-                    "MP4:----:com.pilabor.tone:AUDIBLE_ASIN",
+                    AppleTagFields.ToneAsinKey,
                     "----:com.pilabor.tone:AUDIBLE_ASIN",
                     "ID3v2:TXXX:AUDIBLE_ASIN"
                 },
@@ -42,7 +42,7 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
                 {
                     "AUDIBLE_ASIN",
                     "ID3v2:TXXX:ASIN",
-                    "MP4:----:com.pilabor.tone:AUDIBLE_ASIN",
+                    AppleTagFields.ToneAsinKey,
                     "----:com.pilabor.tone:AUDIBLE_ASIN",
                     "ID3v2:TXXX:AUDIBLE_ASIN",
                     "XIPH:ASIN",
@@ -87,6 +87,21 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             }
 
             return false;
+        }
+
+        internal static IReadOnlyList<string> AudioIdentityKeys(TagLib.TagTypes type, string canonical)
+        {
+            var prefix = type switch
+            {
+                TagLib.TagTypes.Xiph => "XIPH:",
+                TagLib.TagTypes.Apple => "MP4:----:",
+                TagLib.TagTypes.Asf => "ASF:",
+                TagLib.TagTypes.Id3v2 => "ID3v2:TXXX:",
+                TagLib.TagTypes.Ape => "APE:",
+                _ => throw new ArgumentOutOfRangeException(nameof(type))
+            };
+            return CanonicalAliasSources[canonical].Where(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .Select(key => key[prefix.Length..]).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         }
 
         private static bool SourceKeyMatches(string pattern, string key)
@@ -175,8 +190,9 @@ namespace NzbDrone.Core.MediaFiles.TagExtraction
             Add("GENRE", Get("MP4:©gen"));
             Add("DATE", Get("MP4:©day"));
             Add("COMMENT", Get("MP4:©cmt"));
+            Add("ISBN", Get(AppleTagFields.ToneIsbnKey));
             // Vendor atoms (custom): surface Audible ASIN
-            Add("AUDIBLE_ASIN", Get("MP4:----:com.pilabor.tone:AUDIBLE_ASIN"));
+            Add("AUDIBLE_ASIN", Get(AppleTagFields.ToneAsinKey));
             Add("AUDIBLE_ASIN", Get("----:com.pilabor.tone:AUDIBLE_ASIN"));
             // Mirror into ASIN for convenience
             Add("ASIN", Get("AUDIBLE_ASIN"));

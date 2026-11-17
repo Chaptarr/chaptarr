@@ -30,12 +30,16 @@ namespace Chaptarr.Core.Test.Http
             var dispatcher = new ManagedHttpDispatcher(
                 Proxy<IHttpProxySettingsProvider>((_, _) => HttpProxySettings.DirectConnection), factory,
                 Proxy<IUserAgentBuilder>((_, _) => "ChaptarrTest/1.0"), cache, logger);
-            using var reservedPort = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            reservedPort.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+            // A port with nothing bound to it is refused on every platform. A bound socket that is not
+            // listening is refused on Linux and Windows but silently times out on macOS.
+            var probe = new TcpListener(IPAddress.Loopback, 0);
+            probe.Start();
+            var closedPort = ((IPEndPoint)probe.LocalEndpoint).Port;
+            probe.Stop();
             var listener = new TcpListener(IPAddress.Loopback, 0);
             try
             {
-                var url = $"http://127.0.0.1:{((IPEndPoint)reservedPort.LocalEndPoint).Port}/";
+                var url = $"http://127.0.0.1:{closedPort}/";
                 if (failure == "dns") url = "http://chaptarr-transport-test.invalid/";
                 if (failure is "timeout" or "tls-drop" or "tls-reset")
                 {
