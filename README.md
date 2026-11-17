@@ -76,7 +76,7 @@ No dates; priorities can change. Feature requests and votes on GitHub issues hel
 
 Pull the image:
 ```bash
-docker pull chaptarr/chaptarr:latest
+docker pull chaptarr/chaptarr:develop
 ```
 
 Image tags: `latest` is the stable release, promoted after it has run on `develop`. `develop` gets new releases first; use `chaptarr/chaptarr:develop` for the most recent updates. Exact versions (for example `chaptarr/chaptarr:0.9.965`) are also published.
@@ -91,7 +91,7 @@ docker run -d \
   -v /path/to/config:/config \
   -v /path/to/data:/data \
   --restart unless-stopped \
-  chaptarr/chaptarr:latest
+  chaptarr/chaptarr:develop
 ```
 
 Note: if `PUID`/`PGID` are not set, the image defaults to `99:100`. If `/path/to/config` doesn't exist, Docker will create it as `root:root`. Create it first (or fix ownership) so it matches `PUID`/`PGID`. Avoid setting `user:` in Compose; it bypasses the entrypoint permission setup. On Unraid, media folders commonly use `99:100`, so use `PUID=99` and `PGID=100` unless your share is owned differently. If multiple containers/users share the same media group, add `-e UMASK=002`. When testing permissions with `docker exec`, test as the app user, not root, for example: `docker exec -u 99:100 chaptarr sh -c 'id; touch /data/media/books/audiobooks/.chaptarr-write-test && rm /data/media/books/audiobooks/.chaptarr-write-test'`.
