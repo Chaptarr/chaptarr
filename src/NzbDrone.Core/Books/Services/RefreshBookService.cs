@@ -1153,7 +1153,8 @@ namespace NzbDrone.Core.Books
 
         protected override void PublishEntityUpdatedEvent(Book entity)
         {
-            // Fetch fresh from DB so all lazy loads are available
+            // Fetch fresh from DB so all lazy loads are available. The refresh persists edition selection
+            // separately, so the in-memory Editions/BookFiles can be stale here and must not be reused.
             _eventAggregator.PublishEvent(new BookUpdatedEvent(_bookService.GetBook(entity.Id)));
         }
 
@@ -1224,6 +1225,15 @@ namespace NzbDrone.Core.Books
                 // This ensures audiobook and ebook with same provider ID update together
                 foreach (var book in group)
                 {
+                    // PERF (chaptarr #163): Book.Author is lazy-loaded, so the first read of it anywhere below would
+                    // fire a per-book "Authors JOIN Books WHERE Books.Id = $1" query. remoteData already is this
+                    // book's author, identical for every book in this author-scoped call, so assign it up front.
+                    // Check LazyAuthor.IsLoaded, never book.Author itself, which would trigger the load.
+                    if (book != null && book.LazyAuthor?.IsLoaded != true && remoteData != null && remoteData.Id > 0 && remoteData.Id == book.AuthorId)
+                    {
+                        book.Author = remoteData;
+                    }
+
                     _logger.Debug("Refreshing book {0} (ID: {1}) in group {2}", book.Title, book.Id, groupKey);
                     updated |= RefreshEntityInfo(book, remoteBooks, remoteData, true, forceUpdateFileTags, lastUpdate,
                         titleSlugs == null ? null : saved =>
