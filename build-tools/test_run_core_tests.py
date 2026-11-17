@@ -25,17 +25,80 @@ class CoreRunnerTests(unittest.TestCase):
             (root / "Direct.cs").write_text("namespace Test { class DirectFixture { HttpTransportErrors h; } }")
             (root / "Author.Partial.cs").write_text("namespace Test { partial class AuthorFixture { GateStub h; } }")
             (root / "Unrelated.cs").write_text("namespace Test { class UnrelatedFixture {} }")
-            self.assertEqual(runner.fixtures_using(root, ["HttpTransportErrors", "IMetadataServerHealthGate"]), ["Test.AuthorFixture", "Test.DirectFixture"])
+            discovered = ["Test.AuthorFixture", "Test.DirectFixture", "Test.UnrelatedFixture"]
+            self.assertEqual(runner.fixtures_using(root, ["HttpTransportErrors", "IMetadataServerHealthGate"], discovered), ["Test.AuthorFixture", "Test.DirectFixture"])
+
+    def test_symbol_selector_includes_all_fixture_declarations_and_deduplicates_partials(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Multiple.cs").write_text("namespace Test { class FirstFixture { Service s; } partial class SecondFixture { Service s; } }")
+            (root / "Second.Partial.cs").write_text("namespace Test { partial class FirstFixture { Service s; } }")
+            (root / "Unrelated.cs").write_text("namespace Test { class UnrelatedFixture {} }")
+            discovered = ["Test.FirstFixture", "Test.SecondFixture", "Test.UnrelatedFixture"]
+            self.assertEqual(runner.fixtures_using(root, ["Service"], discovered), ["Test.FirstFixture", "Test.SecondFixture"])
+
+    def test_symbol_selector_follows_helpers_named_like_fixtures_wherever_they_live(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Common").mkdir()
+            (root / "Common/DualDatabaseFixture.cs").write_text("namespace T.Common { static class DualDatabaseFixture { DbFactory f; } }")
+            (root / "Uses.cs").write_text("namespace T { class UsesFixture { void M() { DualDatabaseFixture.Run(); } } }")
+            # A nested helper inside another fixture's file, used by a third fixture.
+            (root / "Owner.cs").write_text("namespace T { class OwnerFixture { internal sealed class SnapshotFixture { Rendition r; } } }")
+            (root / "Consumer.cs").write_text("namespace T { class ConsumerFixture { OwnerFixture.SnapshotFixture s; } }")
+            (root / "Unrelated.cs").write_text("namespace T { class UnrelatedFixture {} }")
+            discovered = ["T.UsesFixture", "T.OwnerFixture", "T.ConsumerFixture", "T.UnrelatedFixture"]
+            self.assertEqual(runner.fixtures_using(root, ["DbFactory"], discovered), ["T.UsesFixture"])
+            self.assertEqual(runner.fixtures_using(root, ["Rendition"], discovered), ["T.ConsumerFixture", "T.OwnerFixture"])
+
+    def test_symbol_selector_matches_discovered_fixtures_across_namespaces(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Mixed.cs").write_text(
+                "namespace Test.Books { partial class BookFixture { Service s; } }\n"
+                "namespace Test.Lists { partial class ListFixture { Service s; } }")
+            discovered = ["Test.Books.BookFixture", "Test.Lists.ListFixture"]
+            self.assertEqual(runner.fixtures_using(root, ["Service"], discovered), ["Test.Books.BookFixture", "Test.Lists.ListFixture"])
+
+    def test_symbol_selector_does_not_follow_private_helpers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "A.cs").write_text("namespace T { class AFixture { private sealed class Stub { Service s; } } }")
+            (root / "B.cs").write_text("namespace T { class BFixture { private sealed class Stub {} } }")
+            discovered = ["T.AFixture", "T.BFixture"]
+            self.assertEqual(runner.fixtures_using(root, ["Service"], discovered), ["T.AFixture"])
+
+    def test_symbol_selector_ignores_constraint_keywords(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Generic.cs").write_text("namespace T { class GenericFixture { void M<X>() where X : class\n public Service s; } }")
+            (root / "Other.cs").write_text("namespace T { public class OtherFixture {} }")
+            discovered = ["T.GenericFixture", "T.OtherFixture"]
+            self.assertEqual(runner.fixtures_using(root, ["Service"], discovered), ["T.GenericFixture"])
+
+    def test_stale_assembly_is_detected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            assembly = root / "Tests.dll"
+            assembly.write_text("")
+            source = root / "src"
+            source.mkdir()
+            (source / "Old.cs").write_text("class OldFixture {}")
+            os.utime(source / "Old.cs", (1, 1))
+            self.assertIsNone(runner.newest_source_after(assembly, source))
+            (source / "New.cs").write_text("class NewFixture {}")
+            os.utime(source / "New.cs", (assembly.stat().st_mtime + 60,) * 2)
+            self.assertEqual(runner.newest_source_after(assembly, source), source / "New.cs")
 
     def test_symbol_selection_rejects_empty_invalid_and_partial_names(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "A.cs").write_text("namespace T { class AFixture { ServiceExtra x; } }")
-            self.assertEqual(runner.fixtures_using(root, ["Service"]), [])
-            self.assertEqual(runner.fixtures_using(root, ["Absent"]), [])
+            self.assertEqual(runner.fixtures_using(root, ["Service"], ["T.AFixture"]), [])
+            self.assertEqual(runner.fixtures_using(root, ["Absent"], ["T.AFixture"]), [])
             for symbols in ([], [""], ["Service.*"]):
                 with self.assertRaises(ValueError):
-                    runner.fixtures_using(root, symbols)
+                    runner.fixtures_using(root, symbols, ["T.AFixture"])
 
     def test_cli_rejects_empty_trailing_and_unmatched_symbols_without_traceback(self):
         with tempfile.TemporaryDirectory() as directory:

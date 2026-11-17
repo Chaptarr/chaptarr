@@ -21,28 +21,48 @@ import xml.etree.ElementTree as ET
 TRX = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
 
 
-def fixtures_using(source, symbols):
-    """Include direct consumers and consumers of shared test helpers (including partials)."""
-    symbols = set(symbols)
+# Type declarations in test sources; group 1 marks private (file-local) helpers.
+# Keywords that can follow "class" in a generic constraint are not types.
+TYPE_DECLARATION = re.compile(r"\b(private\s+(?:(?:static|sealed|abstract|partial|readonly|unsafe|new)\s+)*)?(?:class|struct|interface)\s+(\w+)")
+NOT_A_TYPE = {"public", "private", "protected", "internal", "static", "sealed", "abstract", "partial", "readonly", "new", "where", "unsafe", "file"}
+
+
+def validate_symbols(symbols):
     if not symbols or any(not re.fullmatch(r"[A-Za-z_]\w*", symbol) for symbol in symbols):
         raise ValueError("--uses requires comma-separated C# symbol names")
-    files = [(path, path.read_text(encoding="utf-8")) for path in source.rglob("*.cs")]
+
+
+def fixtures_using(source, symbols, discovered):
+    """Select discovered fixtures whose source uses the symbols, directly or through test helpers.
+    Discovery decides what is a test: a type it lists is selected, and any other non-private type
+    declared in a matching file is a helper whose users are followed too, wherever that helper lives.
+    Private helpers cannot be used from another file, so following them would only over-select."""
+    symbols = set(symbols)
+    validate_symbols(symbols)
+    by_type = collections.defaultdict(list)
+    for name in discovered:
+        by_type[name.rsplit(".", 1)[-1]].append(name)
+    files = [path.read_text(encoding="utf-8") for path in source.rglob("*.cs")]
     selected = set()
     while True:
         before = len(symbols)
         pattern = re.compile(r"\b(?:" + "|".join(re.escape(symbol) for symbol in symbols) + r")\b")
-        for path, text in files:
+        for text in files:
             if not pattern.search(text):
                 continue
-            namespace = re.search(r"namespace\s+([\w.]+)", text)
-            classes = re.findall(r"\bclass\s+(\w+)", text)
-            fixture = next((name for name in classes if name.endswith("Fixture")), None)
-            if namespace and fixture:
-                selected.add(namespace[1] + "." + fixture)
-            elif "Common" in path.parts:
-                symbols.update(classes)
+            for private, name in TYPE_DECLARATION.findall(text):
+                if name in by_type:
+                    selected.update(by_type[name])
+                elif not private and name not in NOT_A_TYPE:
+                    symbols.add(name)
         if len(symbols) == before:
             return sorted(selected)
+
+
+def newest_source_after(assembly, source):
+    """Return a C# source file newer than the built assembly, if any (a targeted run would test stale code)."""
+    built = assembly.stat().st_mtime
+    return next((path for path in source.rglob("*.cs") if path.stat().st_mtime > built), None)
 
 
 def write_json(path, value):
@@ -232,24 +252,31 @@ def main():
     parser.add_argument("--fixture", action="append", help="Exact fixture name for a targeted check")
     parser.add_argument("--uses", help="Run fixtures using comma-separated symbols, including shared test-helper consumers")
     args = parser.parse_args()
+    repo = Path(__file__).resolve().parents[1]
+    test_source = repo / "src/Chaptarr.Core.Test"
+    symbols = None
     if args.uses is not None:
+        symbols = [symbol.strip() for symbol in args.uses.split(",")]
         try:
-            selected = fixtures_using(Path(__file__).resolve().parents[1] / "src/Chaptarr.Core.Test", [symbol.strip() for symbol in args.uses.split(",")])
+            validate_symbols(symbols)
         except ValueError as error:
             parser.error(str(error))
-        if not selected:
+        pattern = re.compile(r"\b(?:" + "|".join(re.escape(symbol) for symbol in symbols) + r")\b")
+        if not any(pattern.search(path.read_text(encoding="utf-8")) for path in test_source.rglob("*.cs")):
             parser.error("--uses matched no fixtures")
-        args.fixture = sorted(set(args.fixture or []) | set(selected))
     assembly, output = args.assembly.resolve(), args.results.resolve()
     output.mkdir(parents=True, exist_ok=True)
     if not assembly.is_file() or args.workers < 1:
         parser.error("A built test assembly and a positive worker count are required")
+    if symbols is not None:
+        stale = newest_source_after(assembly, repo / "src")
+        if stale is not None:
+            parser.error(f"{stale.relative_to(repo)} is newer than the test assembly; rebuild before a --uses run")
     baseline = read_results(args.baseline) if args.baseline else None
     timings = json.loads(args.timings.read_text(encoding="utf-8"))
     cancelled = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: cancelled.set())
-    repo = Path(__file__).resolve().parents[1]
     scratch_parent = repo / "_temp"
     scratch_parent.mkdir(exist_ok=True)
     started = time.monotonic()
@@ -270,8 +297,17 @@ def main():
                 raise RuntimeError("Test discovery failed; see discovery.log")
             shutil.copyfile(dll.parent / "Dump" / ("D_" + dll.name + ".dump"), output / "discovery.xml")
         fixtures = discover_fixtures(output / "discovery.xml")
-        if args.fixture:
-            fixtures = {fixture_name(name): fixtures[fixture_name(name)] for name in args.fixture}
+        if args.fixture or symbols is not None:
+            unknown = [name for name in args.fixture or [] if fixture_name(name) not in fixtures]
+            if unknown:
+                parser.error("Not a discovered test fixture: " + ", ".join(unknown))
+            names = {fixture_name(name) for name in args.fixture or []}
+            if symbols is not None:
+                used = fixtures_using(test_source, symbols, fixtures)
+                if not used:
+                    parser.error("--uses matched no fixtures")
+                names.update(used)
+            fixtures = {name: fixtures[name] for name in sorted(names)}
             baseline = [case for case in baseline or [] if fixture_name(case["fixture"]) in fixtures] if baseline else None
         groups = partition(fixtures, args.workers, timings)
         write_json(output / "plan.json", {"fixtures": fixtures, "groups": groups})
