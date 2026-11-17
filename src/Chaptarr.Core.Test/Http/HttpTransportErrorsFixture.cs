@@ -111,6 +111,15 @@ namespace Chaptarr.Core.Test.Http
             return error;
         }
 
+        [TestCase(WebExceptionStatus.NameResolutionFailure, true)]
+        [TestCase(WebExceptionStatus.ConnectFailure, false)]
+        [TestCase(WebExceptionStatus.Timeout, false)]
+        [TestCase(WebExceptionStatus.ProtocolError, false)]
+        public void image_host_web_exceptions_that_never_connected_are_connection_failures(WebExceptionStatus status, bool unsent)
+        {
+            Assert.That(HttpTransportErrors.IsConnectionNotEstablished(new WebException("fixture", status)), Is.EqualTo(unsent));
+        }
+
         [TestCase("tls-drop")]
         [TestCase("tls-reset")]
         [TestCase("closed-port")]

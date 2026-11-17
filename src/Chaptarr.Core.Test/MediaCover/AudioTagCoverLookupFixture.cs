@@ -43,6 +43,7 @@ namespace Chaptarr.Core.Test.MediaCover
             public Action AfterReceiptRead;
             public Action BeforeReceiptRead;
             public Action BeforeDownload;
+            public byte[] Response;
             public int Downloads;
             public readonly DeferredCoverService Deferred;
             public string ReceiptPath => Path.Combine(Path.GetDirectoryName(Service.GetCoverPath(Book.Id, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".png")), "cover-metadata.json");
@@ -70,7 +71,7 @@ namespace Chaptarr.Core.Test.MediaCover
                     if (method.Name != nameof(IHttpClient.Get)) throw new AssertionException(method.Name);
                     Downloads++;
                     BeforeDownload?.Invoke();
-                    return new HttpResponse((HttpRequest)args[0], new HttpHeader { ContentType = "image/png" }, Replacement);
+                    return new HttpResponse((HttpRequest)args[0], new HttpHeader { ContentType = "image/png" }, Response ?? Replacement);
                 });
                 Service = new MediaCoverService(null, Proxy<IImageResizer>((_, _) => null), null, http, disk, Proxy<IAppFolderInfo>((_, _) => _directory), Proxy<IConfigService>((method, _) => method.Name switch
                     {
@@ -155,6 +156,38 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(h.Downloads, Is.Zero);
         }
 
+        [TestCase("png", 32)]
+        [TestCase("jpeg", 32)]
+        [TestCase("jpeg", -1)]
+        public void damaged_download_is_never_stored_or_embedded(string format, int length)
+        {
+            using var h = new CoverSnapshotFixture();
+            var full = MediaCoverImageValidationFixture.Encode(format);
+            h.Response = MediaCoverImageValidationFixture.Truncate(full, length > 0 ? length : full.Length * 3 / 5);
+            h.Replace();
+            Assert.That(h.Downloads, Is.EqualTo(1));
+            Assert.That(h.Service.ReadLocalBookCover(h.ReplacementEdition).Ready, Is.False);
+            // An edition switch whose download fails removes the old edition's folder.
+            var folder = Path.GetDirectoryName(h.ReceiptPath);
+            var stored = Directory.Exists(folder) ? Directory.GetFiles(folder, "cover*.*").Where(path => !path.EndsWith(".json")).ToList() : new List<string>();
+            Assert.That(stored.Select(File.ReadAllBytes), Has.None.EqualTo(h.Response), "A damaged download is never stored");
+        }
+
+        [Test]
+        public void damaged_stored_cover_is_refused_with_one_warning()
+        {
+            using var h = new CoverSnapshotFixture();
+            var path = h.Service.GetCoverPath(2, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".png");
+            var full = MediaCoverImageValidationFixture.Encode("png");
+            File.WriteAllBytes(path, MediaCoverImageValidationFixture.Truncate(full, full.Length * 3 / 5));
+            var receipt = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(h.ReceiptPath));
+            receipt["selectedEdition"]["contentHash"] = null;
+            File.WriteAllText(h.ReceiptPath, receipt.ToString());
+            Assert.That(h.Service.ReadLocalBookCover(h.OriginalEdition).Ready, Is.False);
+            Assert.That(h.Service.ReadLocalBookCover(h.OriginalEdition).Ready, Is.False);
+            Assert.That(h.Warnings.Logs.Count(line => line.Contains("damaged image")), Is.EqualTo(1));
+        }
+
         [TestCase("current", true)]
         [TestCase("stale", false)]
         [TestCase("placeholder", false)]
@@ -231,6 +264,35 @@ namespace Chaptarr.Core.Test.MediaCover
             h.Replace();
             Assert.That(h.Downloads, Is.EqualTo(2));
             Assert.That(h.Service.ReadLocalBookCover(h.ReplacementEdition).Data, Is.EqualTo(h.Replacement));
+        }
+
+        [Test]
+        public void dns_failure_pauses_that_image_host_but_not_another()
+        {
+            var health = new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger());
+            using var h = new CoverSnapshotFixture(health);
+            h.BeforeDownload = () => throw new WebException("Couldn't resolve the image host 'images.example'.", WebExceptionStatus.NameResolutionFailure);
+            h.Replace();
+            Assert.That(h.Downloads, Is.EqualTo(1));
+            h.Replace();
+            Assert.That(h.Downloads, Is.EqualTo(1), "The next book on the same host waits for the back-off instead of another lookup");
+            Assert.That(h.Deferred.GetPendingBookIds(), Is.EqualTo(new[] { h.Book.Id }), "The paused book is kept for retry");
+            h.BeforeDownload = null;
+            h.ReplacementEdition.Images[0].Url = "https://other.example/replacement.png";
+            h.Replace();
+            Assert.That(h.Downloads, Is.EqualTo(2), "Another host is not paused");
+        }
+
+        [Test]
+        public void blocked_address_does_not_pause_a_healthy_host()
+        {
+            var health = new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger());
+            using var h = new CoverSnapshotFixture(health);
+            h.BeforeDownload = () => throw MediaCoverUrlSafetyPolicy.BlockedUrl("https://images.example/replacement.png", "private_address");
+            h.Replace();
+            h.BeforeDownload = null;
+            h.Replace();
+            Assert.That(h.Downloads, Is.EqualTo(2), "A deliberately blocked address is not a host outage");
         }
 
         [Test]
@@ -446,15 +508,16 @@ namespace Chaptarr.Core.Test.MediaCover
                 if (scenario == "null-images") edition.Images = null;
                 if (scenario == "placeholder") cover.Url = "https://example.test/nophoto.jpg";
                 var original = service.GetCoverPath(2, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".jpg");
+                var storedImage = MediaCoverImageValidationFixture.Encode("jpeg");
                 Directory.CreateDirectory(Path.GetDirectoryName(original));
-                if (scenario != "no-original" && scenario != "rendition-only") File.WriteAllBytes(original, scenario == "empty-original" ? Array.Empty<byte>() : new byte[] { 1, 2, 3 });
-                if (scenario == "rendition-only") File.WriteAllBytes(service.GetCoverPath(2, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".jpg", 500), new byte[] { 1, 2, 3 });
+                if (scenario != "no-original" && scenario != "rendition-only") File.WriteAllBytes(original, scenario == "empty-original" ? Array.Empty<byte>() : storedImage);
+                if (scenario == "rendition-only") File.WriteAllBytes(service.GetCoverPath(2, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".jpg", 500), storedImage);
                 if (scenario != "no-receipt") File.WriteAllText(Path.Combine(Path.GetDirectoryName(original), "cover-metadata.json"), new
                 {
                     SelectedEdition = new
                     {
                         LocalEditionId = scenario is "other-edition" or "no-cover-other-receipt" ? 4 : 3,
-                        ContentHash = scenario == "unverified" ? null : MediaCoverRendition.ComputeContentSha256(new byte[] { 1, 2, 3 }),
+                        ContentHash = scenario == "unverified" ? null : MediaCoverRendition.ComputeContentSha256(storedImage),
                         EditionProviderId = scenario == "no-provider-id" ? null : scenario is "other-edition" or "no-cover-other-receipt" ? "hc:edition:456" : "hc:edition:123",
                         CoverUrl = scenario == "other-url" ? "https://example.test/other.jpg" : cover.Url,
                         DownloadedAt = DateTime.UtcNow
@@ -462,7 +525,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 }.ToJson());
                 var result = service.ReadLocalBookCover(edition);
                 Assert.That(result.Ready, Is.EqualTo(expected));
-                Assert.That(result.Data, Is.EqualTo(expected && !scenario.StartsWith("no-cover") ? new byte[] { 1, 2, 3 } : null));
+                Assert.That(result.Data, Is.EqualTo(expected && !scenario.StartsWith("no-cover") ? storedImage : null));
             }
             finally { Directory.Delete(directory, true); }
         }

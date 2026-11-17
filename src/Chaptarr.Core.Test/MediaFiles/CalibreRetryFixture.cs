@@ -566,6 +566,24 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(attempts, Is.EqualTo(retry ? 2 : 1));
         }
 
+        [TestCase(WebExceptionStatus.NameResolutionFailure, 2)]
+        [TestCase(WebExceptionStatus.Timeout, 1)]
+        public void request_that_never_connected_is_retried_once_but_a_timeout_is_not(WebExceptionStatus status, int expected)
+        {
+            var attempts = 0;
+            var proxy = Reader(Proxy<IHttpClient>((_, args) =>
+            {
+                if (++attempts == 1) throw new WebException("fixture", status);
+                return new HttpResponse<Dictionary<int, CalibreBook>>(new HttpResponse((HttpRequest)args[0], new HttpHeader(),
+                    "{\"7\":{\"application_id\":7,\"format_metadata\":null}}"));
+            }));
+            if (expected == 2)
+                Assert.That(proxy.GetBooks(new() { 7 }, new CalibreSettings { Host = "localhost" }).Single().Id, Is.EqualTo(7));
+            else
+                Assert.Catch(() => proxy.GetBooks(new() { 7 }, new CalibreSettings { Host = "localhost" }));
+            Assert.That(attempts, Is.EqualTo(expected));
+        }
+
         [Test]
         public void missing_format_map_is_safe_to_inspect()
         {

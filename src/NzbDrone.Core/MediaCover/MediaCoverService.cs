@@ -70,6 +70,7 @@ namespace NzbDrone.Core.MediaCover
         private readonly ConcurrentDictionary<int, byte> _inFlightAuthorCovers = new();
         private readonly ConcurrentDictionary<string, (int BookId, string Path)> _bookCoverUrlToPath = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<int, BookCoverMetadata> _bookCoverMetadataByBookId = new();
+        private readonly ConcurrentDictionary<int, byte> _damagedBookCovers = new();
         private readonly ConcurrentDictionary<int, byte> _unreadableBookFingerprints = new();
         private readonly ConcurrentDictionary<string, string> _authorCoverUrlByAuthorAndType = new(StringComparer.OrdinalIgnoreCase);
 
@@ -190,8 +191,17 @@ namespace NzbDrone.Core.MediaCover
                     if (_inFlightBookCovers.ContainsKey(edition.BookId) ||
                         !ReferenceEquals(stored, TryReadBookCoverMetadata(edition.BookId)?.SelectedEdition)) return (false, null);
                     var bytes = output.ToArray();
-                    return MediaCoverRendition.IsKnownPlaceholderImageHash(MediaCoverRendition.ComputeContentSha256(bytes))
-                        ? (false, null) : (true, bytes);
+                    if (MediaCoverRendition.IsKnownPlaceholderImageHash(MediaCoverRendition.ComputeContentSha256(bytes)))
+                        return (false, null);
+                    // A stored original can predate the complete-image check; never write a
+                    // damaged image over the file's current art.
+                    if (!MediaCoverRendition.IsCompleteImage(bytes))
+                    {
+                        if (_damagedBookCovers.TryAdd(edition.BookId, 0))
+                            _logger.Warn("The stored cover for book {0} is a damaged image ({1}); keeping each file's current artwork", edition.BookId, path);
+                        return (false, null);
+                    }
+                    return (true, bytes);
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -821,7 +831,7 @@ namespace NzbDrone.Core.MediaCover
                     return new EnsureImageResult { State = "error", ErrorCode = "empty_response" };
                 }
 
-                MediaCoverRendition.ValidateImageResponse(imageData, contentType);
+                MediaCoverRendition.ValidateCompleteImage(imageData, contentType);
                 if (MediaCoverRendition.InspectDownloadedImage(cover.Url, imageData, out var contentHash))
                 {
                     DeleteAuthorVariant(variantPath, verificationPath);
@@ -1170,6 +1180,10 @@ namespace NzbDrone.Core.MediaCover
                     {
                         _logger.Warn("Couldn't download media cover for {0} from {1}. {2}", book, candidate.Cover.Url, e.Message);
                     }
+                    catch (InvalidDataException e)
+                    {
+                        _logger.Warn("Not storing the cover for {0} from {1}: {2}", book, candidate.Cover.Url, e.Message);
+                    }
                     catch (Exception e) when (e is IOException or UnauthorizedAccessException)
                     {
                         _logger.Warn(e, "Unable to publish book cover for {0}", book);
@@ -1452,7 +1466,7 @@ namespace NzbDrone.Core.MediaCover
             var response = GetImageResponse(cover.Url, out _);
             if (response == null) return (null, false);
 
-            MediaCoverRendition.ValidateImageResponse(response?.ResponseData, response?.Headers?.ContentType);
+            MediaCoverRendition.ValidateCompleteImage(response?.ResponseData, response?.Headers?.ContentType);
 
             var contentHash = MediaCoverRendition.ComputeContentSha256(response.ResponseData);
             if (MediaCoverRendition.IsKnownPlaceholderImageHash(contentHash))
@@ -1477,7 +1491,7 @@ namespace NzbDrone.Core.MediaCover
             var response = GetImageResponse(cover.Url, out retry);
             if (response == null) return (null, false);
 
-            MediaCoverRendition.ValidateImageResponse(response?.ResponseData, response?.Headers?.ContentType);
+            MediaCoverRendition.ValidateCompleteImage(response?.ResponseData, response?.Headers?.ContentType);
 
             var contentHash = MediaCoverRendition.ComputeContentSha256(response.ResponseData);
             if (MediaCoverRendition.IsKnownPlaceholderImageHash(contentHash))

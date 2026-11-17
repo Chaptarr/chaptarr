@@ -127,7 +127,8 @@ namespace Chaptarr.Core.Test.MediaCover
             });
             var appFolder = InterfaceProxy.Proxy<IAppFolderInfo>((_, _) => Path.GetTempPath());
             var deferred = InterfaceProxy.Proxy<IDeferredCoverService>((_, _) => false);
-            var subject = new MediaCoverService(null, null, null, Client(factory: factory), disk, appFolder, config, null, null, deferred, logs.GetLogger("RefreshCoverFixture"), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
+            // A failed lookup pauses that image host; the back-off service reports it.
+            var subject = new MediaCoverService(null, null, null, Client(factory: factory), disk, appFolder, config, null, null, deferred, logs.GetLogger("RefreshCoverFixture"), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(logs.GetLogger("CoverHostHealth")));
             var author = new Author { Id = 123, Name = "Test author", Images = new()
             {
                 new(MediaCoverTypes.Poster, redirect ? server.Url + "?redirect" : blocked), new(MediaCoverTypes.Banner, server.Url)
@@ -165,7 +166,9 @@ namespace Chaptarr.Core.Test.MediaCover
             }
             else
             {
-                Assert.That(messages.Logs.Single(line => line.StartsWith("Warn|")), Does.Contain("Couldn't resolve the image host"));
+                var warning = messages.Logs.Single(line => line.StartsWith("Warn|"));
+                Assert.That(warning, Does.Contain("Cover host blocked-cover.invalid is unavailable"));
+                Assert.That(warning, Does.Contain("Couldn't resolve the image host"));
             }
         }
 

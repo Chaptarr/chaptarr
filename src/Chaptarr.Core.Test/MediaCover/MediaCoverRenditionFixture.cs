@@ -1451,7 +1451,8 @@ namespace Chaptarr.Core.Test.MediaCover
                 ? Assert.Throws<UnsafeImageUrlException>(() => MediaCoverUrlSafetyPolicy.CreateTargetPolicy(null)
                     .ValidateAddress(new Uri(url), IPAddress.Any))
                 : new WebException("Couldn't resolve the image host.", WebExceptionStatus.NameResolutionFailure);
-            var subject = new MediaCoverService(null, null, null, httpClient, disk, appFolder, null, null, null, null, logs.GetLogger("CoverFixture"), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
+            // A failed lookup pauses the host; the back-off service reports it.
+            var subject = new MediaCoverService(null, null, null, httpClient, disk, appFolder, null, null, null, null, logs.GetLogger("CoverFixture"), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(logs.GetLogger("CoverHostHealth")));
             var result = await subject.EnsureAuthorImage(new Author { Id = 900008, Name = "Test author" }, new(MediaCoverTypes.Poster, url));
             Assert.That(http.Calls, Is.EqualTo(1));
             Assert.That(result.State, Is.EqualTo(cached ? "downloaded" : "error"));
@@ -1468,6 +1469,10 @@ namespace Chaptarr.Core.Test.MediaCover
                 Assert.That(result.ErrorCode, Is.EqualTo(unsafeTarget ? "unsafe_url" : "download_failed"));
             }
             Assert.That(messages.Logs.Count(x => x.StartsWith("Warn|")), Is.EqualTo(unsafeTarget ? 0 : 1));
+            if (!unsafeTarget)
+            {
+                Assert.That(messages.Logs.Single(x => x.StartsWith("Warn|")), Does.Contain("Cover host private-cover.invalid is unavailable"));
+            }
             if (unsafeTarget)
             {
                 Assert.That(messages.Logs, Does.Contain("Debug|Blocked unsafe image URL 'http://private-cover.invalid/author.png': private_or_local_address"));

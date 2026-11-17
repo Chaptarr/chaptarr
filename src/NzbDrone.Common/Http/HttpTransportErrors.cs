@@ -61,12 +61,14 @@ namespace NzbDrone.Common.Http
         }
 
         // Retry only requests which never connected, not a write with an unknown outcome.
+        // Image-host requests report a failed name lookup as a WebException.
         public static bool IsConnectionNotEstablished(Exception exception) =>
             exception is HttpRequestException
             {
                 HttpRequestError: HttpRequestError.NameResolutionError or
                 HttpRequestError.ConnectionError or HttpRequestError.SecureConnectionError or HttpRequestError.ProxyTunnelError
-            };
+            } ||
+            exception is WebException { Status: WebExceptionStatus.NameResolutionFailure };
 
         public static bool IsAccessDeniedStatus(HttpStatusCode status) =>
             status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden;

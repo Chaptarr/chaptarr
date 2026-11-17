@@ -24,8 +24,7 @@ namespace NzbDrone.Core.MediaCover
 
             // ImageSharp cannot decode these ISO-BMFF formats. Retain the originals;
             // the cover route serves AVIF; HEIC-family originals are retained but not served.
-            if (data.Length >= 16 && data.AsSpan(4, 4).SequenceEqual("ftyp"u8) &&
-                Encoding.ASCII.GetString(data, 8, 4) is "avif" or "avis" or "heic" or "heix" or "mif1" or "msf1")
+            if (IsIsoBmffImage(data))
             {
                 return;
             }
@@ -39,6 +38,136 @@ namespace NzbDrone.Core.MediaCover
                 throw new InvalidDataException($"Cover response is not a supported image (content type '{contentType}')", ex);
             }
         }
+
+        // The header check above accepts the first bytes of an image. Anything stored as a
+        // cover, or written into a user's files, must decode completely.
+        public static void ValidateCompleteImage(byte[] data, string contentType)
+        {
+            ValidateImageResponse(data, contentType);
+            if (!IsIsoBmffImage(data) && !IsCompleteImage(data))
+            {
+                throw new InvalidDataException($"Cover response is an incomplete or damaged image (content type '{contentType}')");
+            }
+        }
+
+        public static bool IsCompleteImage(byte[] data)
+        {
+            if (data == null || data.Length == 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                // ImageSharp fills in the missing part of a cut-off JPEG or WebP instead of
+                // failing, so each format must also reach its own structural end.
+                var complete = SixLabors.ImageSharp.Image.DetectFormat(data) switch
+                {
+                    SixLabors.ImageSharp.Formats.Jpeg.JpegFormat => JpegReachesEndOfImage(data),
+                    SixLabors.ImageSharp.Formats.Png.PngFormat => PngReachesEnd(data),
+                    SixLabors.ImageSharp.Formats.Webp.WebpFormat => RiffIsComplete(data),
+                    _ => true
+                };
+                if (!complete)
+                {
+                    return false;
+                }
+
+                using var image = SixLabors.ImageSharp.Image.Load(data);
+                return image.Width > 0 && image.Height > 0;
+            }
+            catch (Exception ex) when (ex is SixLabors.ImageSharp.UnknownImageFormatException or SixLabors.ImageSharp.InvalidImageContentException or
+                SixLabors.ImageSharp.ImageFormatException or NotSupportedException or EndOfStreamException)
+            {
+                return false;
+            }
+        }
+
+        // Walks the JPEG segments (skipping each by its length, so an EXIF thumbnail's own
+        // markers are not read) and the entropy-coded data after each scan header.
+        private static bool JpegReachesEndOfImage(byte[] data)
+        {
+            var i = 2;
+            while (i + 1 < data.Length)
+            {
+                if (data[i] != 0xFF)
+                {
+                    return false;
+                }
+
+                var marker = data[i + 1];
+                if (marker == 0xFF)
+                {
+                    i++;
+                    continue;
+                }
+
+                if (marker == 0xD9)
+                {
+                    return true;
+                }
+
+                if (marker == 0x01 || marker is >= 0xD0 and <= 0xD7)
+                {
+                    i += 2;
+                    continue;
+                }
+
+                if (i + 3 >= data.Length)
+                {
+                    return false;
+                }
+
+                var length = (data[i + 2] << 8) | data[i + 3];
+                if (length < 2)
+                {
+                    return false;
+                }
+
+                i += 2 + length;
+                if (marker == 0xDA)
+                {
+                    while (i + 1 < data.Length && !(data[i] == 0xFF && data[i + 1] != 0x00 && data[i + 1] is not (>= 0xD0 and <= 0xD7)))
+                    {
+                        i++;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        // PNG chunks are length, type, data and CRC; a complete file ends with IEND.
+        private static bool PngReachesEnd(byte[] data)
+        {
+            var i = 8;
+            while (i + 12 <= data.Length)
+            {
+                var length = ((long)data[i] << 24) | ((long)data[i + 1] << 16) | ((long)data[i + 2] << 8) | data[i + 3];
+                if (data[i + 4] == (byte)'I' && data[i + 5] == (byte)'E' && data[i + 6] == (byte)'N' && data[i + 7] == (byte)'D')
+                {
+                    return true;
+                }
+
+                // A chunk cannot be longer than what is left of the file.
+                if (length > data.Length - i - 12)
+                {
+                    return false;
+                }
+
+                i += 12 + (int)length;
+            }
+
+            return false;
+        }
+
+        // WebP is a RIFF file: bytes 4-7 give the size of everything after the first 8 bytes.
+        private static bool RiffIsComplete(byte[] data) =>
+            data.Length >= 12 && data.Length >= 8L + System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(4, 4));
+
+        private static bool IsIsoBmffImage(byte[] data) =>
+            data != null && data.Length >= 16 && data.AsSpan(4, 4).SequenceEqual("ftyp"u8) &&
+            Encoding.ASCII.GetString(data, 8, 4) is "avif" or "avis" or "heic" or "heix" or "mif1" or "msf1";
 
         private static readonly HashSet<string> SupportedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
         {

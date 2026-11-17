@@ -516,6 +516,17 @@ namespace Chaptarr.Core.Test.MediaCover
         }
 
         [Test]
+        public void caller_cancellation_during_the_lookup_is_not_a_failed_lookup()
+        {
+            var pending = new TaskCompletionSource<IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var factory = new ResolvingFactory((_, _) => pending.Task);
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+            Assert.Catch<OperationCanceledException>(() => MediaCoverHttpRequest.Get(Client(factory: factory), null,
+                "http://slow-lookup.invalid/", cancellationToken: cancellation.Token));
+            pending.SetResult(Array.Empty<IPAddress>());
+        }
+
+        [Test]
         public void caller_cancellation_is_not_labelled_as_unsafe_or_timeout()
         {
             using var cancellation = new CancellationTokenSource();

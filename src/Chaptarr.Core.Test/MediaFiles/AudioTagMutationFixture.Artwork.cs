@@ -347,6 +347,43 @@ namespace Chaptarr.Core.Test.MediaFiles
             AssertSecondScrubIsNoop(file);
         }
 
+        [TestCase(".mp3", "png")]
+        [TestCase(".mp3", "jpeg")]
+        [TestCase(".m4b", "jpeg")]
+        public void damaged_stored_cover_never_replaces_good_embedded_art(string extension, string format)
+        {
+            var file = Add(extension);
+            file.Edition.Monitored = true;
+            file.Edition.ForeignEditionId = "hc:edition:123";
+            file.Edition.Images = new() { new(MediaCoverTypes.Cover, "https://images.example/cover" + (format == "png" ? ".png" : ".jpg")) };
+            var good = CreateCover("good", 53);
+            using (var audio = TagLib.File.Create(file.Path))
+            {
+                audio.Tag.Pictures = new[] { new TagLib.Picture(good) { Type = TagLib.PictureType.FrontCover } };
+                audio.Save();
+            }
+
+            var logger = _logs.GetLogger("DamagedArtwork");
+            var covers = new MediaCoverService(null, null, null, null, _disk, Proxy<IAppFolderInfo>((_, _) => _directory), null, null, null, null, logger, imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(NLog.LogManager.GetCurrentClassLogger()));
+            var full = Chaptarr.Core.Test.MediaCover.MediaCoverImageValidationFixture.Encode(format);
+            var damaged = Chaptarr.Core.Test.MediaCover.MediaCoverImageValidationFixture.Truncate(full, full.Length * 3 / 5);
+            var path = covers.GetCoverPath(file.Edition.BookId, MediaCoverEntity.Book, MediaCoverTypes.Cover, file.Edition.Images[0].Extension);
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            File.WriteAllBytes(path, damaged);
+            File.WriteAllText(Path.Combine(Path.GetDirectoryName(path), "cover-metadata.json"), new
+            {
+                SelectedEdition = new { EditionProviderId = file.Edition.ForeignEditionId, CoverUrl = file.Edition.Images[0].Url, DownloadedAt = DateTime.UtcNow, ContentHash = MediaCoverRendition.ComputeContentSha256(damaged) }
+            }.ToJson());
+            _coverSnapshot = covers.ReadLocalBookCover;
+            Assert.That(covers.ReadLocalBookCover(file.Edition).Ready, Is.False, "A damaged stored cover is never ready to embed");
+
+            file.Edition.Title = "Corrected title";
+            _service.WriteTags(file, false);
+            using var written = TagLib.File.Create(file.Path);
+            Assert.That(written.Tag.Title, Is.EqualTo("Corrected title"), "The title correction still saves");
+            Assert.That(written.Tag.Pictures.Single().Data.Data, Is.EqualTo(File.ReadAllBytes(good)), "The file keeps its good art");
+        }
+
         [Test]
         public void invalid_webp_does_not_block_metadata_or_erase_embedded_art()
         {
