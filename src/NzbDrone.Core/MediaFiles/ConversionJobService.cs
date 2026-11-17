@@ -56,6 +56,7 @@ namespace NzbDrone.Core.MediaFiles
         private const string ArtifactManifestFileName = "conversion-artifact.json";
         private static readonly TimeSpan LeaseTimeout = TimeSpan.FromMinutes(2);
         private static readonly TimeSpan SchedulerPollInterval = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan SchedulerErrorBackoff = TimeSpan.FromSeconds(5);
         private static readonly TimeSpan QueueCoalesceDelay = TimeSpan.FromMilliseconds(100);
         private static readonly TimeSpan CompletedRetention = TimeSpan.FromDays(7);
         private readonly object _sync = new();
@@ -946,6 +947,21 @@ namespace NzbDrone.Core.MediaFiles
                 {
                     failureStarted ??= DateTime.UtcNow;
                     _logger.Error(ex, "Detached audiobook conversion scheduler pass failed; durable jobs will be retried");
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception error)
+                {
+                    // The scheduler thread is only ever started from `ApplicationStartedEvent`,
+                    // so letting an exception escape the loop kills it for the lifetime of the
+                    // process and would strand every queued job behind it until a restart.
+                    //
+                    // Handle w/ back off so a persistent fault can only cause slow progress
+                    // instead of thrashing.
+                    _logger.Error(error, "Detached audiobook conversion scheduler iteration failed");
+                    _shutdown.Token.WaitHandle.WaitOne(SchedulerErrorBackoff);
                 }
             }
 
