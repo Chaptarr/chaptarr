@@ -39,7 +39,7 @@ namespace NzbDrone.Core.ProgressMessaging
 
             try
             {
-                _commandQueueManager.SetMessage(command, message);
+                _commandQueueManager.SetProgressMessage(command, message);
                 _eventAggregator.PublishEvent(new CommandUpdatedEvent(command));
             }
             finally

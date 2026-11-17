@@ -30,7 +30,7 @@ namespace Chaptarr.Core.Test.Indexers
             public int Writes { get; private set; }
             protected override object Invoke(MethodInfo method, object[] args)
             {
-                if (method.Name != nameof(IManageCommandQueue.SetMessage)) throw new NotImplementedException(method.Name);
+                if (method.Name != nameof(IManageCommandQueue.SetMessage) && method.Name != nameof(IManageCommandQueue.SetProgressMessage)) throw new NotImplementedException(method.Name);
                 Writes++;
                 ((CommandModel)args[0]).Message = (string)args[1];
                 return null;
