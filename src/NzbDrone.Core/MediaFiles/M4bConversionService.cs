@@ -468,6 +468,7 @@ namespace NzbDrone.Core.MediaFiles
                 ChaptersTxtContent = source.ChaptersTxtContent,
                 ProviderChapterCount = source.ProviderChapterCount,
                 CoverPolicySignature = source.CoverPolicySignature,
+                MatchedCoverContentHash = source.MatchedCoverContentHash,
                 ManifestJson = source.ManifestJson
             };
         }
@@ -1262,6 +1263,7 @@ namespace NzbDrone.Core.MediaFiles
         public string ChaptersTxtContent { get; set; }
         public int? ProviderChapterCount { get; set; }
         public string CoverPolicySignature { get; set; }
+        public string MatchedCoverContentHash { get; set; }
         public string ManifestJson { get; set; }
     }
 

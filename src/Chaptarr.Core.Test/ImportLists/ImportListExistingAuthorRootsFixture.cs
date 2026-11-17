@@ -322,7 +322,7 @@ namespace Chaptarr.Core.Test.ImportLists
                         .Handle(new AuthorScanSkippedEvent(scannedAuthor, AuthorScanSkippedReason.NoFolderEvidence));
                     initialScanTargets.AddRange(bookRows.GetMissingBookSearchTargets(null, scannedAuthor.Id).Select(target => target.BookId));
                 };
-                new ProcessPendingImportsCommandHandler(pending, library, books, workInfo,
+                new ProcessPendingImportsCommandHandler(pending, library, books, workInfo, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     queue, events, logger, aliases).Execute(new ProcessPendingImportsCommand());
                 var retainedSearch = true;
                 if (emptyCatalogReads > 1)
@@ -334,7 +334,7 @@ namespace Chaptarr.Core.Test.ImportLists
                         retained.NextAttemptAt = DateTime.UtcNow.AddMinutes(-1);
                         requests.Update(retained);
                         var notReadyPending = new PendingAuthorImportService(requests, authorService, events, logger, aliases);
-                        new ProcessPendingImportsCommandHandler(notReadyPending, library, books, workInfo,
+                        new ProcessPendingImportsCommandHandler(notReadyPending, library, books, workInfo, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                             queue, events, logger, aliases).Execute(new ProcessPendingImportsCommand());
                         retained = notReadyPending.GetByProviderId(author.GoodreadsAuthorId);
                         Assert.That(retained, Is.Not.Null);
@@ -357,7 +357,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     retained.NextAttemptAt = DateTime.UtcNow.AddMinutes(-1);
                     requests.Update(retained);
                     var restartedPending = new PendingAuthorImportService(requests, authorService, events, logger, aliases);
-                    new ProcessPendingImportsCommandHandler(restartedPending, library, books, workInfo,
+                    new ProcessPendingImportsCommandHandler(restartedPending, library, books, workInfo, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                         queue, events, logger, aliases).Execute(new ProcessPendingImportsCommand());
                 }
 

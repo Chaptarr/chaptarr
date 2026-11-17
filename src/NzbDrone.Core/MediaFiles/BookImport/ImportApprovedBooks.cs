@@ -37,6 +37,7 @@ using NzbDrone.Core.MediaFiles.BookImport.Manual;
 using NzbDrone.Core.MediaCover;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
+using NzbDrone.Core.MediaCover.Commands;
     using NzbDrone.Core.Parser;
     using NzbDrone.Core.Parser.Model;
     using NzbDrone.Core.Profiles.Qualities;
@@ -103,6 +104,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         private readonly NzbDrone.Core.Download.History.IDownloadHistoryService _downloadHistoryService;
         private readonly IEventAggregator _eventAggregator;
         private readonly IManageCommandQueue _commandQueueManager;
+        private readonly IDeferredCoverService _deferredCoverService;
         private readonly ISeriesBookLinkService _seriesBookLinkService;
             private readonly ISeriesService _seriesService;
             private readonly IQualityProfileService _qualityProfileService;
@@ -129,6 +131,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             IHistoryService historyService,
             NzbDrone.Core.Download.History.IDownloadHistoryService downloadHistoryService,
             IEventAggregator eventAggregator,
+            IDeferredCoverService deferredCoverService,
             IManageCommandQueue commandQueueManager,
                 ISeriesBookLinkService seriesBookLinkService,
                 ISeriesService seriesService,
@@ -156,6 +159,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             _downloadHistoryService = downloadHistoryService;
             _eventAggregator = eventAggregator;
             _commandQueueManager = commandQueueManager;
+            _deferredCoverService = deferredCoverService;
                 _seriesBookLinkService = seriesBookLinkService;
                 _seriesService = seriesService;
                 _qualityProfileService = qualityProfileService;
@@ -176,6 +180,21 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             DownloadClientItem downloadClientItem = null,
             ImportMode importMode = ImportMode.Auto,
             CancellationToken cancellationToken = default)
+        {
+            var changedBookIds = new List<int>();
+            try
+            {
+                return Import(decisions, replaceExisting, downloadClientItem, importMode, cancellationToken, changedBookIds);
+            }
+            finally
+            {
+                DownloadBookMediaCommand.NotifyBookSelectionsChanged(changedBookIds, _commandQueueManager, _deferredCoverService, _logger);
+            }
+        }
+
+        private List<ImportResult> Import(List<ImportDecision<LocalBook>> decisions, bool replaceExisting,
+            DownloadClientItem downloadClientItem, ImportMode importMode, CancellationToken cancellationToken,
+            ICollection<int> changedBookIds)
         {
             _logger.Debug("[CLEAN-IMPORT] Starting import of {0} files", decisions.Count);
             var downloadForced = downloadClientItem?.DownloadForced == true;
@@ -594,7 +613,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     // The requested association is already durable; finish settings once per edition without retransferring files or replaying import events.
                     var item = group.First().Item;
                     var error = item.IsManualImport
-                        ? SelectImportedEdition(item, book, item.Edition)
+                        ? SelectImportedEdition(item, book, item.Edition, changedBookIds)
                         : "Source file was already imported from this download";
                     foreach (var decision in group)
                     {
@@ -1076,7 +1095,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             .GroupBy(result => result.ImportDecision.Item.Edition.Id))
                         {
                             var imported = group.First().ImportDecision.Item;
-                            var error = SelectImportedEdition(imported, imported.Book ?? book, imported.Edition);
+                            var error = SelectImportedEdition(imported, imported.Book ?? book, imported.Edition, changedBookIds);
                             if (error != null)
                             {
                                 foreach (var result in group)
@@ -1939,7 +1958,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 !(edition.Monitored && edition.Id == localBook.Edition.Id && (!explicitMetadataSelection || edition.ManualAdd));
         }
 
-        private string SelectImportedEdition(LocalBook localBook, Book book, Edition edition)
+        private string SelectImportedEdition(LocalBook localBook, Book book, Edition edition, ICollection<int> changedBookIds)
         {
             var explicitMetadataSelection = localBook.IsManualImport && localBook.MatchProvenance?.SelectionSource == "user_metadata";
             if (!RequiresImportedEditionSelection(localBook, edition))
@@ -1950,6 +1969,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             try
             {
                 book.Editions = _editionService.SetMonitored(edition, explicitMetadataSelection);
+                changedBookIds.Add(book.Id);
             }
             catch (Exception ex)
             {
@@ -2245,7 +2265,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     var sourceDuration = GetAudiobookConversionSourceDuration(inputFiles);
                     TryApplyMatchedEditionChapters(tagOptions, first.Edition, sourceDuration, book);
                     TryApplySourceSidecarCover(tagOptions, inputFiles, book, first.Edition);
-                    ApplyConversionCoverFallback(tagOptions, book, first.Edition);
+                    var matchedCover = ApplyConversionCoverFallback(tagOptions, book, first.Edition);
                     ConversionTagProposalBuilder.RefreshManifestJson(tagOptions, bookDecisions.Select(d => d.Item));
                     var audioBitrate = GetAudiobookConversionBitrate(inputFiles);
                     var audioChannels = GetAudiobookConversionAudioChannels();
@@ -2282,6 +2302,13 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                     // Previous successful attempts remain available until replacement/import/discard succeeds.
                     Directory.CreateDirectory(workFolder);
+                    if (matchedCover.Data != null)
+                    {
+                        // Keep the verified bytes with this job. The library cover may change
+                        // while conversion waits; do not hand the encoder a mutable cache path.
+                        tagOptions.Cover = Path.Combine(workFolder, "matched-cover" + matchedCover.Extension);
+                        File.WriteAllBytes(tagOptions.Cover, matchedCover.Data);
+                    }
 
                     if (_conversionJobService != null)
                     {
@@ -2407,26 +2434,34 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 _logger.Debug("[CONVERSION] Matched provider chapters will be stamped into converted M4B for '{0}' ({1} chapters).", book?.Title ?? edition.Title, chapters.Count);
             }
 
-            private void ApplyConversionCoverFallback(ConversionTagOptions tagOptions, Book book, Edition matchedEdition)
+            private (byte[] Data, string Extension) ApplyConversionCoverFallback(ConversionTagOptions tagOptions, Book book, Edition matchedEdition)
             {
-                if (tagOptions == null)
+                if (tagOptions == null) return (null, null);
+                tagOptions.CoverPolicySignature = BuildConversionCoverPolicySignature(tagOptions.Cover);
+                if (tagOptions.Cover.IsNotNullOrWhiteSpace() || _coverMapper == null || book == null || book.Id <= 0 || matchedEdition == null)
+                    return (null, null);
+
+                try
                 {
-                    return;
+                    var cover = _coverMapper.ReadLocalBookCover(matchedEdition);
+                    if (!cover.Ready)
+                    {
+                        EnsureCoverEditionsLoaded(book, matchedEdition);
+                        _coverMapper.EnsureBookCoversForImport(book);
+                        cover = _coverMapper.ReadLocalBookCover(matchedEdition);
+                    }
+                    if (!cover.Ready || cover.Data == null) return (null, null);
+                    var mime = SixLabors.ImageSharp.Image.DetectFormat(cover.Data).DefaultMimeType;
+                    var extension = mime == "image/jpeg" ? ".jpg" : mime == "image/png" ? ".png" : null;
+                    if (extension == null) return (null, null);
+                    tagOptions.MatchedCoverContentHash = MediaCoverRendition.ComputeContentSha256(cover.Data);
+                    return (cover.Data, extension);
                 }
-
-                var fallbackPath = tagOptions.Cover.IsNotNullOrWhiteSpace()
-                    ? tagOptions.Cover
-                    : TryResolveMatchedBookCoverPath(book, matchedEdition);
-
-                tagOptions.CoverPolicySignature = BuildConversionCoverPolicySignature(fallbackPath);
-
-                if (fallbackPath.IsNullOrWhiteSpace() || tagOptions.Cover.IsNotNullOrWhiteSpace())
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    return;
+                    _logger.Debug(ex, "[CONVERSION] Unable to read matched edition artwork for '{0}'; source artwork is still preferred", book?.Title);
+                    return (null, null);
                 }
-
-                tagOptions.Cover = fallbackPath;
-                _logger.Debug("[CONVERSION] Using matched book cover as fallback for '{0}': {1}", book?.Title ?? matchedEdition?.Title ?? "unknown book", fallbackPath);
             }
 
             private void TryApplySourceSidecarCover(ConversionTagOptions tagOptions, string[] inputFiles, Book book, Edition matchedEdition)
@@ -2565,52 +2600,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
             }
 
-            private string TryResolveMatchedBookCoverPath(Book book, Edition matchedEdition)
-            {
-                if (_coverMapper == null || book == null || book.Id <= 0)
-                {
-                    return null;
-                }
-
-                EnsureCoverEditionsLoaded(book, matchedEdition);
-
-                foreach (var cover in EnumerateConversionCoverCandidates(book, matchedEdition))
-                {
-                    var coverPath = GetExistingBookCoverPath(book.Id, cover.Extension);
-                    if (coverPath.IsNotNullOrWhiteSpace())
-                    {
-                        return coverPath;
-                    }
-                }
-
-                var existingCoverPath = TryFindAnyExistingBookCoverPath(book.Id);
-                if (existingCoverPath.IsNotNullOrWhiteSpace())
-                {
-                    return existingCoverPath;
-                }
-
-                try
-                {
-                    _coverMapper.EnsureBookCoversForImport(book);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Debug(ex, "[CONVERSION] Unable to ensure matched book cover before M4B conversion for '{0}'", book.Title);
-                }
-
-                foreach (var cover in EnumerateConversionCoverCandidates(book, matchedEdition))
-                {
-                    var coverPath = GetExistingBookCoverPath(book.Id, cover.Extension);
-                    if (coverPath.IsNotNullOrWhiteSpace())
-                    {
-                        return coverPath;
-                    }
-                }
-
-                // Last-resort sweep for sparse rows where image metadata is missing but a cached cover exists.
-                return TryFindAnyExistingBookCoverPath(book.Id);
-            }
-
             private void EnsureCoverEditionsLoaded(Book book, Edition matchedEdition)
             {
                 var editions = book.Editions?.Where(e => e != null).ToList() ?? new List<Edition>();
@@ -2640,86 +2629,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 book.Editions = editions;
             }
 
-            private IEnumerable<NzbDrone.Core.MediaCover.MediaCover> EnumerateConversionCoverCandidates(Book book, Edition matchedEdition)
-            {
-                foreach (var cover in GetUsableCoverImages(matchedEdition?.Images))
-                {
-                    yield return cover;
-                }
-
-                foreach (var cover in GetUsableCoverImages(book?.Images))
-                {
-                    yield return cover;
-                }
-
-                foreach (var edition in book?.Editions ?? new List<Edition>())
-                {
-                    if (matchedEdition != null && edition.Id == matchedEdition.Id)
-                    {
-                        continue;
-                    }
-
-                    foreach (var cover in GetUsableCoverImages(edition.Images))
-                    {
-                        yield return cover;
-                    }
-                }
-            }
-
-            private static IEnumerable<NzbDrone.Core.MediaCover.MediaCover> GetUsableCoverImages(IEnumerable<NzbDrone.Core.MediaCover.MediaCover> covers)
-            {
-                return covers?
-                    .Where(c => c != null &&
-                                c.CoverType == MediaCoverTypes.Cover &&
-                                c.Url.IsNotNullOrWhiteSpace() &&
-                                IsM4bToolCoverExtension(c.Extension))
-                    .GroupBy(c => c.Url, StringComparer.OrdinalIgnoreCase)
-                    .Select(g => g.First()) ?? Enumerable.Empty<NzbDrone.Core.MediaCover.MediaCover>();
-            }
-
-            private string TryFindAnyExistingBookCoverPath(int bookId)
-            {
-                foreach (var extension in new[] { ".jpg", ".jpeg", ".png" })
-                {
-                    var coverPath = GetExistingBookCoverPath(bookId, extension);
-                    if (coverPath.IsNotNullOrWhiteSpace())
-                    {
-                        return coverPath;
-                    }
-                }
-
-                return null;
-            }
-
             private static bool IsM4bToolCoverExtension(string extension)
             {
                 return extension.IsNotNullOrWhiteSpace() &&
                        (extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
                        extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
                        extension.Equals(".png", StringComparison.OrdinalIgnoreCase));
-            }
-
-            private string GetExistingBookCoverPath(int bookId, string extension)
-            {
-                if (extension.IsNullOrWhiteSpace())
-                {
-                    return null;
-                }
-
-                try
-                {
-                    var coverPath = _coverMapper.GetCoverPath(bookId, MediaCoverEntity.Book, MediaCoverTypes.Cover, extension);
-                    if (coverPath.IsNotNullOrWhiteSpace() && File.Exists(coverPath) && new FileInfo(coverPath).Length > 0)
-                    {
-                        return coverPath;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Debug(ex, "[CONVERSION] Unable to resolve local book cover path for book {0}", bookId);
-                }
-
-                return null;
             }
 
             private static string BuildConversionCoverPolicySignature(string fallbackPath)
@@ -3054,13 +2969,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     tagOptions.Grouping,
                     tagOptions.Series,
                     tagOptions.SeriesPart,
-                    tagOptions.Cover,
+                    tagOptions.MatchedCoverContentHash != null ? null : tagOptions.Cover,
                     tagOptions.CoverIsSource.ToString(CultureInfo.InvariantCulture),
                     tagOptions.EncodedBy,
                     tagOptions.UseFilenamesAsChapters.ToString(CultureInfo.InvariantCulture),
                     tagOptions.IgnoreSourceTags.ToString(CultureInfo.InvariantCulture),
                     tagOptions.ProviderChapterCount?.ToString(CultureInfo.InvariantCulture),
                     tagOptions.CoverPolicySignature,
+                    tagOptions.MatchedCoverContentHash,
                     HashString(tagOptions.ChaptersTxtContent));
             }
 

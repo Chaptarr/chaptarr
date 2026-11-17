@@ -238,7 +238,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     {
                         var importer = new ImportApprovedBooks(media, new StubMetadataTagService(), new StubMediaInfoExtractor(),
                             authorService, bookService, editionService, new StubRecycleBinProvider(), extras, mover,
-                            history, Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, Proxy<IManageCommandQueue>(),
+                            history, Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  Proxy<IManageCommandQueue>(),
                             new SeriesBookLinkService(new SeriesBookLinkRepository(database, events)), Proxy<ISeriesService>(), Proxy<NzbDrone.Core.Profiles.Qualities.IQualityProfileService>(),
                             Proxy<IM4bConversionService>(), logger);
                         var dependencies = new Dictionary<Type, object>

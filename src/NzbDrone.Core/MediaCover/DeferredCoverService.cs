@@ -13,15 +13,46 @@ namespace NzbDrone.Core.MediaCover
         void RequeueBooksForCoverDownload(IEnumerable<int> bookIds, IReadOnlyCollection<string> origins = null, bool attempted = false);
         List<int> TakePendingBookIds();
         bool IsCoverDownloadDeferred { get; set; }
+        bool DeferRepairIfImporting();
+        bool TakePendingRepair();
+        void RequeueRepair();
     }
 
     public class DeferredCoverService : IDeferredCoverService
     {
+        internal const int BookBatchSize = 250;
+
         private OrderedDictionary<int, (IReadOnlyCollection<string> Origins, bool Attempted)> _pendingBookIds = new();
         private readonly IHttpServiceHealth _imageHostHealth;
         private readonly object _stateLock = new object();
         private readonly Logger _logger;
         private bool _isCoverDownloadDeferred;
+        private bool _repairPending;
+
+        public bool DeferRepairIfImporting()
+        {
+            lock (_stateLock)
+            {
+                if (!_isCoverDownloadDeferred) return false;
+                _repairPending = true;
+                return true;
+            }
+        }
+
+        public bool TakePendingRepair()
+        {
+            lock (_stateLock)
+            {
+                if (_isCoverDownloadDeferred || !_repairPending) return false;
+                _repairPending = false;
+                return true;
+            }
+        }
+
+        public void RequeueRepair()
+        {
+            lock (_stateLock) _repairPending = true;
+        }
 
         public bool IsCoverDownloadDeferred
         {

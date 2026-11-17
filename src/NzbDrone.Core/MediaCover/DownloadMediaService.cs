@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Diagnostics;
 using NLog;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.MediaCover.Commands;
@@ -65,33 +67,51 @@ namespace NzbDrone.Core.MediaCover
         public void Execute(DownloadBookMediaCommand message)
         {
             var bookIds = message.BookIds?.Where(id => id > 0).Distinct().ToList() ?? new List<int>();
-            if (bookIds.Count > 0)
-            {
-                var books = _bookService.GetExistingBooks(bookIds);
-                if (books.Count != bookIds.Count)
-                {
-                    _logger.Warn("Skipping cover downloads for {0} deleted books", bookIds.Count - books.Count);
-                }
-
-                _logger.Debug("Downloading media for {0} books", books.Count);
-                _mediaCoverService.EnsureBookCoversForBooks(books, message.ForceDownload);
-                return;
-            }
-
-            Book book;
+            var timer = Stopwatch.StartNew();
+            var loaded = 0;
             try
             {
-                book = _bookService.GetBook(message.BookId);
+                if (bookIds.Count > 0)
+                {
+                    List<Book> books;
+                    try
+                    {
+                        books = _bookService.GetExistingBooks(bookIds);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _deferredCoverService.RequeueBooksForCoverDownload(bookIds);
+                        throw;
+                    }
+                    if (books.Count != bookIds.Count)
+                    {
+                        _logger.Warn("Skipping cover downloads for {0} deleted books", bookIds.Count - books.Count);
+                    }
+
+                    loaded = books.Count;
+                    _mediaCoverService.EnsureBookCoversForBooks(books, message.ForceDownload);
+                    return;
+                }
+
+                Book book;
+                try
+                {
+                    book = _bookService.GetBook(message.BookId);
+                }
+                catch (ModelNotFoundException)
+                {
+                    _logger.Warn("Book {0} not found", message.BookId);
+                    return;
+                }
+
+                loaded = 1;
+
+                _mediaCoverService.EnsureBookCovers(book, message.ForceDownload);
             }
-            catch (ModelNotFoundException)
+            finally
             {
-                _logger.Warn("Book {0} not found", message.BookId);
-                return;
+                _logger.Debug("Cover request: {0}/{1} books loaded, {2}ms", loaded, bookIds.Count > 0 ? bookIds.Count : 1, timer.ElapsedMilliseconds);
             }
-
-            _logger.Debug("Downloading media for book {0}: {1}", book.Id, book.Title);
-
-            _mediaCoverService.EnsureBookCovers(book, message.ForceDownload);
         }
 
     }

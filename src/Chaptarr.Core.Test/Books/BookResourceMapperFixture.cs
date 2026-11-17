@@ -393,7 +393,7 @@ namespace Chaptarr.Core.Test.Books
         [TestCase(null)]
         [TestCase("gr")]
         [TestCase("hc")]
-        public void cover_mapping_keeps_native_receipt_identity_through_facade_projection(string dialect)
+        public void cover_mapping_uses_book_and_images_without_edition_identity(string dialect)
         {
             var edition = new Edition { Id = 8, Monitored = true, ForeignEditionId = "gr:199400410-ebook",
                 GoodreadsEditionId = 199400410, HardcoverEditionId = "12345",
@@ -406,7 +406,7 @@ namespace Chaptarr.Core.Test.Books
             var mapper = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IMapCoversToLocal>((method, args) =>
             {
                 Assert.That(method.Name, Is.EqualTo(nameof(IMapCoversToLocal.ConvertBookCoversToLocalUrls)));
-                Assert.That(((IReadOnlyDictionary<int, string>)args[1])[10], Is.EqualTo("hc:edition:12345"));
+                Assert.That(args.Length, Is.EqualTo(1));
                 Assert.That(((IEnumerable<KeyValuePair<int, List<CoreMediaCover>>>)args[0]).Single().Value.Single().Url,
                     Is.EqualTo("https://images.example/book.png"));
                 calls++;

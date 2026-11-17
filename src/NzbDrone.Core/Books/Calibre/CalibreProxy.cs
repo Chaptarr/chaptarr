@@ -244,19 +244,13 @@ namespace NzbDrone.Core.Books.Calibre
 
             _logger.Trace("Book: {0} Series: {1}, Position: {2}", book, series?.Title, seriesIndex);
 
-            var cover = edition.Images.FirstOrDefault(x => x.CoverType == MediaCoverTypes.Cover);
             string image = null;
-            if (cover != null)
+            if (updateCover)
             {
-                var imageFile = _mediaCoverService.GetCoverPath(edition.BookId, MediaCoverEntity.Book, cover.CoverType, cover.Extension, null);
-
-                if (File.Exists(imageFile))
+                var cover = _mediaCoverService.ReadLocalBookCover(edition);
+                if (cover.Ready && cover.Data != null && CalibreImageValidator.IsValidImage(cover.Data))
                 {
-                    var imageData = File.ReadAllBytes(imageFile);
-                    if (CalibreImageValidator.IsValidImage(imageData))
-                    {
-                        image = Convert.ToBase64String(imageData);
-                    }
+                    image = Convert.ToBase64String(cover.Data);
                 }
             }
 

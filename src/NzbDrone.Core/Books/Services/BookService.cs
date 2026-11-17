@@ -1107,7 +1107,7 @@ namespace NzbDrone.Core.Books
                    book.EbookMonitored != snapshot.EbookMonitored;
         }
 
-        private static Book CloneStoredBook(Book book)
+        internal static Book CloneStoredBook(Book book)
         {
             if (book == null)
             {

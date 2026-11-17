@@ -53,12 +53,14 @@ namespace Chaptarr.Core.Test.Books
         private class CommandRepositoryProxy : DispatchProxy
         {
             public List<Command> Commands { get; } = new();
+            public bool FailSearch { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod.Name == nameof(ICommandRepository.Insert))
                 {
                     var model = (CommandModel)args[0];
+                    if (FailSearch && model.Body is BookSearchCommand) throw new InvalidOperationException("Fixture search queue unavailable");
                     model.Id = Commands.Count + 1;
                     Commands.Add(model.Body);
                     return model;
@@ -423,7 +425,7 @@ namespace Chaptarr.Core.Test.Books
                 new EditionSelector(LogManager.GetCurrentClassLogger()),
                 new EditionMetadataProfileFilter(new TestTermMatcherService()),
                 metadataProfileService,
-                LogManager.GetCurrentClassLogger(),
+                LogManager.GetCurrentClassLogger(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 commandQueue);
         }
 
@@ -1399,7 +1401,7 @@ namespace Chaptarr.Core.Test.Books
 
         [Test]
         public async Task explicit_narration_on_readded_book_must_use_the_wanted_writer(
-            [Values(false, true)] bool compatiblePin, [Values(false, true)] bool monitor)
+            [Values(false, true)] bool compatiblePin, [Values(false, true)] bool monitor, [Values(false, true)] bool failSearch)
         {
             var author = new Author { Id = 42, Name = "Requested Author", HardcoverAuthorId = "hc:777" };
             var current = new Edition { Id = 301, BookId = 101, ForeignEditionId = "hc:edition:301", Title = "Requested Work",
@@ -1418,9 +1420,16 @@ namespace Chaptarr.Core.Test.Books
             if (!compatiblePin) books.AuthorBooks.Add(wanted);
             var queueRepository = DispatchProxy.Create<ICommandRepository, CommandRepositoryProxy>();
             var queue = new CommandQueueManager(queueRepository, null, null, LogManager.GetCurrentClassLogger());
+            var coverPushes = 0;
+            var recordingQueue = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IManageCommandQueue>((method, args) =>
+            {
+                if (args.FirstOrDefault() is NzbDrone.Core.MediaCover.Commands.DownloadBookMediaCommand) coverPushes++;
+                try { return method.Invoke(queue, args); }
+                catch (TargetInvocationException ex) { throw ex.InnerException; }
+            });
             var service = BuildService(new StubAuthorService(author, (_, _) => author), books,
                 new StubEditionService(stored.Editions), new StubMetadataProfileService(),
-                importListExclusionService: DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>(), commandQueue: queue);
+                importListExclusionService: DispatchProxy.Create<IImportListExclusionService, ImportListExclusionServiceProxy>(), commandQueue: recordingQueue);
             var requestEdition = RefreshEntityCopy.CloneEdition(narration);
             requestEdition.Monitored = requestEdition.ManualAdd = true;
             var request = new Book { HardcoverBookId = stored.HardcoverBookId, MediaType = stored.MediaType,
@@ -1428,14 +1437,31 @@ namespace Chaptarr.Core.Test.Books
                     AddOptions = new AddAuthorOptions { Monitor = monitor ? MonitorTypes.SpecificBook : MonitorTypes.None } },
                 Editions = new List<Edition> { requestEdition },
                 AddOptions = new AddBookOptions { SearchForNewBook = true, MonitorBook = monitor } };
-            var result = await service.AddBook(request);
-            Assert.That(result.Id, Is.EqualTo(wanted.Id));
-            Assert.That(result.IsMonitored(), Is.EqualTo(monitor));
+            current.Images = new() { new(NzbDrone.Core.MediaCover.MediaCoverTypes.Cover, "https://images.example/old.png") };
+            foreach (var edition in wanted.Editions.Where(e => e.Id != current.Id))
+                edition.Images = new() { new(NzbDrone.Core.MediaCover.MediaCoverTypes.Cover, "https://images.example/new.png") };
+            ((CommandRepositoryProxy)queueRepository).FailSearch = failSearch;
+            if (failSearch)
+            {
+                Assert.ThrowsAsync<InvalidOperationException>(() => service.AddBook(request));
+            }
+            else
+            {
+                var result = await service.AddBook(request);
+                Assert.That(result.Id, Is.EqualTo(wanted.Id));
+                Assert.That(result.IsMonitored(), Is.EqualTo(monitor));
+            }
+            Assert.That(coverPushes, Is.EqualTo(1), "One cover notification per AddBook operation, including partial failure");
             Assert.That(books.WantedRequest, Is.EqualTo((wanted.Id, compatiblePin ? current.Id : wanted.Editions.Single().Id)));
             Assert.That(current.Monitored && current.ManualAdd, Is.True);
             Assert.That(books.AddedBook, Is.Null);
-            Assert.That(((CommandRepositoryProxy)queueRepository).Commands.OfType<BookSearchCommand>().Single().BookIds,
-                Is.EqualTo(new[] { wanted.Id }));
+            var coverCommands = ((CommandRepositoryProxy)queueRepository).Commands.OfType<NzbDrone.Core.MediaCover.Commands.DownloadBookMediaCommand>().ToList();
+            Assert.That(coverCommands, Has.Count.EqualTo(1));
+            var coverCommand = coverCommands[0];
+            if (compatiblePin) Chaptarr.Core.Test.MediaCover.AudioTagCoverLookupFixture.AssertSelectionCommandReachesDeferredWriter(coverCommand, wanted, current, expectReplaced: false);
+            var searches = ((CommandRepositoryProxy)queueRepository).Commands.OfType<BookSearchCommand>().ToList();
+            Assert.That(searches, Has.Count.EqualTo(failSearch ? 0 : 1));
+            if (!failSearch) Assert.That(searches[0].BookIds, Is.EqualTo(new[] { wanted.Id }));
         }
 
         [TestCase(false, false, false, false)]
@@ -1620,7 +1646,9 @@ namespace Chaptarr.Core.Test.Books
             var request = new Book { MediaType = source.MediaType, Editions = new List<Edition> { RefreshEntityCopy.CloneEdition(edition) } };
             var complete = typeof(AddBookService).GetMethod("CompleteRequestedNarration", BindingFlags.Instance | BindingFlags.NonPublic);
 
-            var result = (Book)complete.Invoke(service, new object[] { request, source });
+            var changedBookIds = new List<int>();
+            var result = (Book)complete.Invoke(service, new object[] { request, source, changedBookIds });
+            Assert.That(changedBookIds, Is.EqualTo(new[] { source.Id }));
 
             Assert.That(BookIdentity.GetStableWorkProviderIdentityTokens(source), Is.Empty);
             Assert.That(result, Is.SameAs(source));

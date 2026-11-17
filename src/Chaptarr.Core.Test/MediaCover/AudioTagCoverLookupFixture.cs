@@ -28,7 +28,7 @@ namespace Chaptarr.Core.Test.MediaCover
             public override void LazyLoad() => throw new AssertionException("Reading local artwork must not load a book or its edition catalog");
         }
 
-        private sealed class CoverSnapshotFixture : IDisposable
+        internal sealed class CoverSnapshotFixture : IDisposable
         {
             private readonly string _directory = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
             private readonly LogFactory _logs = new();
@@ -45,9 +45,9 @@ namespace Chaptarr.Core.Test.MediaCover
             public Action BeforeDownload;
             public int Downloads;
             public readonly DeferredCoverService Deferred;
-            public string ReceiptPath => Path.Combine(Path.GetDirectoryName(Service.GetCoverPath(2, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".png")), "cover-metadata.json");
+            public string ReceiptPath => Path.Combine(Path.GetDirectoryName(Service.GetCoverPath(Book.Id, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".png")), "cover-metadata.json");
 
-            public CoverSnapshotFixture(NzbDrone.Core.Http.IHttpServiceHealth health = null)
+            public CoverSnapshotFixture(NzbDrone.Core.Http.IHttpServiceHealth health = null, int bookId = 2, Book selectedBook = null, Edition storedEdition = null)
             {
                 Directory.CreateDirectory(_directory);
                 var logging = new NLog.Config.LoggingConfiguration();
@@ -78,17 +78,19 @@ namespace Chaptarr.Core.Test.MediaCover
                         "get_CoverDownloadScope" => CoverDownloadScope.AllBooks,
                         _ => throw new AssertionException(method.Name)
                     }), null, null, Deferred, logger, imageHostHealth: health);
-                OriginalEdition = Edition(3, "hc:edition:123", "original.png");
-                ReplacementEdition = Edition(4, "hc:edition:456", "replacement.png");
-                Book = new Book { Id = 2, Title = "Cover snapshot", Editions = new List<Edition> { ReplacementEdition } };
-                OriginalEdition.Book = new Book { Id = 2, Editions = new List<Edition> { OriginalEdition } };
+                OriginalEdition = storedEdition ?? Edition(3, "hc:edition:123", "original.png");
+                ReplacementEdition = selectedBook?.Editions.Single(edition => edition.Monitored) ?? Edition(4, "hc:edition:456", "replacement.png");
+                Book = selectedBook ?? new Book { Id = bookId, Title = "Cover snapshot", Editions = new List<Edition> { ReplacementEdition } };
+                bookId = Book.Id;
+                OriginalEdition.Book = new Book { Id = bookId, Editions = new List<Edition> { OriginalEdition } };
                 ReplacementEdition.Book = Book;
-                var path = Service.GetCoverPath(2, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".png");
+                OriginalEdition.BookId = ReplacementEdition.BookId = bookId;
+                var path = Service.GetCoverPath(Book.Id, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".png");
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
                 File.WriteAllBytes(path, Original);
                 File.WriteAllText(Path.Combine(Path.GetDirectoryName(path), "cover-metadata.json"), new
                 {
-                    SelectedEdition = new { EditionProviderId = OriginalEdition.ForeignEditionId, CoverUrl = OriginalEdition.Images[0].Url, DownloadedAt = DateTime.UtcNow }
+                    SelectedEdition = new { LocalEditionId = OriginalEdition.Id, EditionProviderId = BookEditionIdentity.GetTrustedForeignEditionId(OriginalEdition), CoverUrl = OriginalEdition.Images[0].Url, DownloadedAt = DateTime.UtcNow, ContentHash = MediaCoverRendition.ComputeContentSha256(Original) }
                 }.ToJson());
             }
 
@@ -106,16 +108,94 @@ namespace Chaptarr.Core.Test.MediaCover
                 return data.ToArray();
             }
 
+            public IBookService Books => Proxy<IBookService>((method, _) => method.Name switch
+            {
+                nameof(IBookService.GetBook) => Book,
+                nameof(IBookService.GetExistingBooks) => new List<Book> { Book },
+                _ => throw new AssertionException(method.Name)
+            });
+            public void Execute(DownloadBookMediaCommand command) => new DownloadMediaService(null, Books, Deferred, Service,
+                null, LogManager.GetCurrentClassLogger()).Execute(command);
             public void Replace() => Service.EnsureBookCoversForImport(Book);
             public void Dispose() { _logs.Dispose(); Directory.Delete(_directory, true); }
         }
 
 
+        internal static void AssertSelectionCommandReachesDeferredWriter(DownloadBookMediaCommand command, Book selectedBook, Edition storedEdition, bool expectReplaced)
+        {
+            var bookId = selectedBook.Id;
+            Assert.That(command.BookId > 0 ? new[] { command.BookId } : command.BookIds.ToArray(), Does.Contain(bookId));
+            using var h = new CoverSnapshotFixture(selectedBook: selectedBook, storedEdition: storedEdition);
+            h.Deferred.IsCoverDownloadDeferred = true;
+            h.Execute(command);
+            var replaced = BookEditionIdentity.GetTrustedForeignEditionId(storedEdition) != BookEditionIdentity.GetTrustedForeignEditionId(h.ReplacementEdition);
+            Assert.That(replaced, Is.EqualTo(expectReplaced), "The fixture must exercise the stated edition replacement");
+            Assert.That(File.Exists(h.ReceiptPath), Is.EqualTo(!expectReplaced), "Remove the proven old edition locally before the import ends");
+            Assert.That(File.Exists(h.Service.GetCoverPath(bookId, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".png")), Is.EqualTo(!expectReplaced));
+            Assert.That(h.Downloads, Is.Zero, "No network while importing");
+            var flush = new DeferredCoverDownloadService(h.Deferred, h.Books, null, h.Service, LogManager.GetCurrentClassLogger());
+            flush.HandleAsync(new NzbDrone.Core.MediaFiles.Events.ImportStageProgressEvent(
+                NzbDrone.Core.MediaFiles.Events.ImportStage.ImportComplete, "done") { CommandId = 77 });
+            Assert.That(h.Downloads, Is.EqualTo(expectReplaced ? 1 : 0));
+            Assert.That(h.Service.ReadLocalBookCover(h.ReplacementEdition).Ready, Is.True);
+        }
+
+        [Test]
+        public void embedding_rejects_placeholder_bytes_under_an_ordinary_legacy_cover_url()
+        {
+            using var h = new CoverSnapshotFixture();
+            var path = h.Service.GetCoverPath(2, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".png");
+            File.WriteAllBytes(path, Convert.FromBase64String(MediaCoverRenditionFixture.MascotWebpBase64));
+            var receipt = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(h.ReceiptPath));
+            receipt["selectedEdition"]["contentHash"] = null;
+            File.WriteAllText(h.ReceiptPath, receipt.ToString());
+            var cover = h.Service.ReadLocalBookCover(h.OriginalEdition);
+            Assert.That(cover.Ready, Is.False, "Keep the audio file's art instead of embedding a silhouette");
+            Assert.That(cover.Data, Is.Null);
+            Assert.That(h.Downloads, Is.Zero);
+        }
+
+        [TestCase("current", true)]
+        [TestCase("stale", false)]
+        [TestCase("placeholder", false)]
+        [TestCase("disabled", false)]
+        public void calibre_uses_the_same_current_cover_reader(string scenario, bool expected)
+        {
+            using var h = new CoverSnapshotFixture();
+            if (scenario == "placeholder")
+            {
+                // Captured Amazon shared silhouette, SHA-256 a5efe6ec..., a valid PNG.
+                var png = Convert.FromBase64String("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");
+                Assert.That(NzbDrone.Core.Books.Calibre.CalibreImageValidator.IsValidImage(png), Is.True);
+                Assert.That(MediaCoverRendition.IsKnownPlaceholderImageHash(MediaCoverRendition.ComputeContentSha256(png)), Is.True);
+                File.WriteAllBytes(h.Service.GetCoverPath(2, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".png"), png);
+            }
+            if (scenario == "stale") h.OriginalEdition.Images[0].Url = "https://images.example/new.png";
+            Newtonsoft.Json.Linq.JObject payload = null;
+            var http = Proxy<IHttpClient>((_, args) =>
+            {
+                var request = (HttpRequest)args[0];
+                payload = Newtonsoft.Json.Linq.JObject.Parse(System.Text.Encoding.UTF8.GetString(request.ContentData));
+                return new HttpResponse(request, new HttpHeader(), "{}"); // Stop after capturing the real outbound write.
+            });
+            var logger = LogManager.GetCurrentClassLogger();
+            var calibre = new NzbDrone.Core.Books.Calibre.CalibreProxy(http, h.Service, null, null, null, null,
+                new NzbDrone.Common.Cache.CacheManager(), null,
+                new NzbDrone.Core.Books.Calibre.CalibreLibraryGate(new NzbDrone.Core.Http.HttpServiceHealth(logger)), logger);
+            var file = new NzbDrone.Core.MediaFiles.BookFile { CalibreId = 1, Author = new Author { Name = "Author" }, Edition = h.OriginalEdition };
+            Assert.Catch<NzbDrone.Core.Books.Calibre.CalibreException>(() => calibre.SetFields(file,
+                new NzbDrone.Core.Books.Calibre.CalibreSettings { Host = "localhost" }, scenario != "disabled"));
+            Assert.That(payload, Is.Not.Null);
+            Assert.That((string)payload["changes"]["cover"], Is.EqualTo(expected ? Convert.ToBase64String(h.Original) : null));
+        }
+
         [Test]
         public void request_claimed_while_an_older_download_runs_is_requeued()
         {
             using var h = new CoverSnapshotFixture();
-            h.BeforeDownload = () => h.Service.EnsureBookCoversForImport(h.Book);
+            var newer = new Book { Id = h.Book.Id, Editions = new List<Edition> { h.OriginalEdition } };
+            Assert.That(newer.Editions.Single().Id, Is.Not.EqualTo(h.Book.Editions.Single().Id));
+            h.BeforeDownload = () => h.Service.EnsureBookCoversForImport(newer);
             h.Replace();
             Assert.That(h.Downloads, Is.EqualTo(1));
             Assert.That(h.Deferred.TakePendingBookIds(), Is.EqualTo(new[] { h.Book.Id }));
@@ -232,6 +312,7 @@ namespace Chaptarr.Core.Test.MediaCover
             var health = new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger());
             using var fixture = new CoverSnapshotFixture(health);
             fixture.ReplacementEdition.ForeignEditionId = fixture.OriginalEdition.ForeignEditionId;
+            fixture.ReplacementEdition.Id = fixture.OriginalEdition.Id;
             var path = fixture.Service.GetCoverPath(2, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".png");
             fixture.BeforeDownload = () =>
             {
@@ -338,7 +419,9 @@ namespace Chaptarr.Core.Test.MediaCover
 
         [TestCase("match", true)]
         [TestCase("unmonitored", false)]
-        [TestCase("other-edition", false)]
+        [TestCase("other-edition", true)]
+        [TestCase("unverified", true)]
+        [TestCase("no-provider-id", true)]
         [TestCase("other-url", false)]
         [TestCase("no-receipt", false)]
         [TestCase("no-original", false)]
@@ -347,8 +430,8 @@ namespace Chaptarr.Core.Test.MediaCover
         [TestCase("no-cover", true)]
         [TestCase("placeholder", false)]
         [TestCase("null-images", false)]
-        [TestCase("no-cover-other-receipt", false)]
-        public void local_cover_requires_this_monitored_edition_receipt_and_usable_original(string scenario, bool expected)
+        [TestCase("no-cover-other-receipt", true)]
+        public void local_cover_requires_current_url_and_usable_original(string scenario, bool expected)
         {
             var directory = Path.Combine(Path.GetTempPath(), "audio-cover-lookup-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
@@ -370,14 +453,16 @@ namespace Chaptarr.Core.Test.MediaCover
                 {
                     SelectedEdition = new
                     {
-                        EditionProviderId = scenario is "other-edition" or "no-cover-other-receipt" ? "hc:edition:456" : "hc:edition:123",
+                        LocalEditionId = scenario is "other-edition" or "no-cover-other-receipt" ? 4 : 3,
+                        ContentHash = scenario == "unverified" ? null : MediaCoverRendition.ComputeContentSha256(new byte[] { 1, 2, 3 }),
+                        EditionProviderId = scenario == "no-provider-id" ? null : scenario is "other-edition" or "no-cover-other-receipt" ? "hc:edition:456" : "hc:edition:123",
                         CoverUrl = scenario == "other-url" ? "https://example.test/other.jpg" : cover.Url,
                         DownloadedAt = DateTime.UtcNow
                     }
                 }.ToJson());
                 var result = service.ReadLocalBookCover(edition);
                 Assert.That(result.Ready, Is.EqualTo(expected));
-                Assert.That(result.Data, Is.EqualTo(expected && scenario != "no-cover" ? new byte[] { 1, 2, 3 } : null));
+                Assert.That(result.Data, Is.EqualTo(expected && !scenario.StartsWith("no-cover") ? new byte[] { 1, 2, 3 } : null));
             }
             finally { Directory.Delete(directory, true); }
         }

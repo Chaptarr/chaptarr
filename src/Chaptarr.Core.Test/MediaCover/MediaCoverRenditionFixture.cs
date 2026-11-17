@@ -99,15 +99,22 @@ namespace Chaptarr.Core.Test.MediaCover
         private class CoverScopeConfigProxy : DispatchProxy
         {
             public CoverDownloadScope Scope { get; set; }
+            public Action OnRead;
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 return targetMethod?.Name switch
                 {
-                    "get_CoverDownloadScope" => Scope,
+                    "get_CoverDownloadScope" => ReadScope(),
                     "get_MetadataServerUrl" => "https://images.example",
                     _ => throw new NotImplementedException(targetMethod?.Name)
                 };
+            }
+
+            private CoverDownloadScope ReadScope()
+            {
+                OnRead?.Invoke();
+                return Scope;
             }
         }
 
@@ -119,14 +126,15 @@ namespace Chaptarr.Core.Test.MediaCover
             public List<string> DeletedFolders { get; } = new();
             public Dictionary<string, int> CallCounts { get; } = new(StringComparer.Ordinal);
             public bool RefusePublication;
-            public HashSet<string> MissingFolders = new(StringComparer.OrdinalIgnoreCase);
-            public Action<string> OnFolderExists;
+            public HashSet<string> MissingFolders { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Action<string> OnFolderExists { get; set; }
             private bool FolderExistsWithHook(string path)
             {
                 var exists = !MissingFolders.Contains(path);
                 OnFolderExists?.Invoke(path);
                 return exists;
             }
+            public Action<string> BeforeOpen;
             public Action<string> BeforeDelete;
             public Action<string> BeforeReadText;
             public Action<string> BeforeWriteText;
@@ -186,6 +194,7 @@ namespace Chaptarr.Core.Test.MediaCover
 
             private FileStream Open(string path)
             {
+                BeforeOpen?.Invoke(path);
                 var temporaryPath = Path.GetTempFileName();
                 File.WriteAllBytes(temporaryPath, BinaryByPath.TryGetValue(path, out var bytes) ? bytes : Array.Empty<byte>());
                 return new FileStream(
@@ -210,6 +219,7 @@ namespace Chaptarr.Core.Test.MediaCover
             {
                 ExistingPaths.Remove(source);
                 ExistingPaths.Add(destination);
+                if (TextByPath.Remove(source, out var text)) TextByPath[destination] = text;
                 if (BinaryByPath.Remove(source, out var bytes))
                 {
                     BinaryByPath[destination] = bytes;
@@ -245,7 +255,8 @@ namespace Chaptarr.Core.Test.MediaCover
             private object DeleteFolder(string path)
             {
                 DeletedFolders.Add(path);
-                ExistingPaths.RemoveWhere(existing => existing.StartsWith(path + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+                foreach (var existing in ExistingPaths.Where(existing => existing.StartsWith(path + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)).ToArray())
+                    Delete(existing);
                 return null;
             }
         }
@@ -286,7 +297,8 @@ namespace Chaptarr.Core.Test.MediaCover
 
         private class DeferredCoverProxy : DispatchProxy
         {
-            public bool ShouldDefer { get; set; }
+            public readonly DeferredCoverService State = new(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
+            public bool ShouldDefer { get => State.IsCoverDownloadDeferred; set => State.IsCoverDownloadDeferred = value; }
             public List<int> MarkedBookIds { get; } = new();
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
@@ -294,11 +306,19 @@ namespace Chaptarr.Core.Test.MediaCover
                 return targetMethod?.Name switch
                 {
                     "get_IsCoverDownloadDeferred" => ShouldDefer,
+                    "set_IsCoverDownloadDeferred" => SetDeferred((bool)args[0]),
+                    nameof(IDeferredCoverService.DeferRepairIfImporting) => State.DeferRepairIfImporting(),
+                    nameof(IDeferredCoverService.TakePendingRepair) => State.TakePendingRepair(),
+                    nameof(IDeferredCoverService.RequeueRepair) => RequeueRepair(),
+                    nameof(IDeferredCoverService.TakePendingBookIds) => State.TakePendingBookIds(),
                     nameof(IDeferredCoverService.MarkBookForCoverDownload) => Mark((int)args[0]),
                     nameof(IDeferredCoverService.RequeueBooksForCoverDownload) => RecordRequeue((IEnumerable<int>)args[0]),
                     _ => throw new NotImplementedException(targetMethod?.Name)
                 };
             }
+
+            private object SetDeferred(bool value) { ShouldDefer = value; return null; }
+            private object RequeueRepair() { State.RequeueRepair(); return null; }
 
             private object RecordRequeue(IEnumerable<int> ids)
             {
@@ -428,7 +448,7 @@ namespace Chaptarr.Core.Test.MediaCover
             }
             public void EnsureBookCoversForBooks(List<Book> books, bool forceDownload = false) => throw new NotImplementedException();
             public void EnsureBookCoversForImport(Book book) => EnsureBookCovers(book);
-            public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers, IReadOnlyDictionary<int, string> editionIds = null)
+            public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers)
             {
                 foreach (var book in covers)
                 {
@@ -460,6 +480,7 @@ namespace Chaptarr.Core.Test.MediaCover
             public List<int> RequestedAuthorIds { get; } = new();
             public List<int> EligibleLibraryBookIds { get; } = new();
             public List<List<int>> LibraryBookIdQueries { get; } = new();
+            public Action OnLibraryBookIds;
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -480,6 +501,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 {
                     var requestedIds = (args?.FirstOrDefault() as IEnumerable<int>)?.Distinct().ToList() ?? new List<int>();
                     LibraryBookIdQueries.Add(requestedIds);
+                    OnLibraryBookIds?.Invoke();
                     return requestedIds.Where(EligibleLibraryBookIds.Contains).ToList();
                 }
 
@@ -493,13 +515,14 @@ namespace Chaptarr.Core.Test.MediaCover
             out BookServiceProxy bookService,
             out DiskProviderProxy disk,
             out ImageHttpClientProxy httpClient,
-            out DeferredCoverProxy deferred, MediaCoverProxyStub proxy = null, IDeferredCoverService deferredService = null)
+            out DeferredCoverProxy deferred, MediaCoverProxyStub proxy = null, IDeferredCoverService deferredService = null, Action onReadScope = null, Logger logger = null)
         {
             var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
             ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
             var configFile = DispatchProxy.Create<IConfigFileProvider, ConfigFileProxy>();
             var configService = DispatchProxy.Create<IConfigService, CoverScopeConfigProxy>();
             ((CoverScopeConfigProxy)(object)configService).Scope = scope;
+            ((CoverScopeConfigProxy)(object)configService).OnRead = onReadScope;
             var bookServiceApi = DispatchProxy.Create<IBookService, BookServiceProxy>();
             bookService = (BookServiceProxy)(object)bookServiceApi;
             bookService.EligibleLibraryBookIds.AddRange(eligibleBookIds ?? Enumerable.Empty<int>());
@@ -521,7 +544,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 configFile,
                 null,
                 deferredService ?? deferredApi,
-                LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
+                logger ?? LogManager.GetCurrentClassLogger(), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
         }
 
         [TestCase(CoverDownloadScope.AllBooks, false)]
@@ -606,6 +629,87 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(bookService.LibraryBookIdQueries.Single(), Is.EqualTo(new[] { 1, 2, 3 }));
             Assert.That(httpClient.RequestedUrls, Is.EqualTo(new[] { "https://images.example/monitored.jpg" }));
             Assert.That(deferred.MarkedBookIds, Is.EqualTo(new[] { 2 }));
+        }
+
+        [TestCase(false, false)]
+        [TestCase(true, false)]
+        [TestCase(false, true)]
+        [TestCase(true, true)]
+        public void failed_batch_eligibility_is_read_once_and_retained_unless_cancelled(bool cancelled, bool failConfig)
+        {
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger(), null);
+            var failure = cancelled ? (Exception)new OperationCanceledException("Fixture cancelled") : new TimeoutException("Fixture eligibility timeout");
+            var subject = CreateBookCoverSubject(CoverDownloadScope.LibraryBooks, new[] { 1, 2 },
+                out var bookService, out _, out var http, out _, deferredService: deferred,
+                onReadScope: failConfig ? () => throw failure : null);
+            bookService.OnLibraryBookIds = () => throw failure;
+            var books = new[] { 1, 2 }.Select(id => CreateBookWithCover(id, true, $"https://images.example/{id}.jpg")).ToList();
+            Assert.That(Assert.Catch(() => subject.EnsureBookCoversForBooks(books)), Is.SameAs(failure));
+            Assert.That(bookService.LibraryBookIdQueries, Has.Count.EqualTo(failConfig ? 0 : 1));
+            Assert.That(http.RequestedUrls, Is.Empty);
+            Assert.That(deferred.GetPendingBookIds(), Is.EqualTo(cancelled ? Array.Empty<int>() : new[] { 1, 2 }));
+        }
+
+        [TestCase("io")]
+        [TestCase("access")]
+        [TestCase("unexpected")]
+        [TestCase("cancelled")]
+        public void legacy_fingerprint_failure_does_not_queue_file_errors_or_hide_other_failures(string kind)
+        {
+            using var logs = new LogFactory();
+            var messages = new MemoryTarget { Layout = "${level}|${message}" };
+            var logging = new NLog.Config.LoggingConfiguration();
+            logging.AddRule(LogLevel.Debug, LogLevel.Fatal, messages);
+            logs.Configuration = logging;
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger(), null);
+            var subject = CreateBookCoverSubject(CoverDownloadScope.AllBooks, Array.Empty<int>(),
+                out _, out var disk, out var http, out _, deferredService: deferred);
+            var bad = CreateBookWithCover(1, true, "https://images.example/old.jpg");
+            http.ResponseData = BuildPngBytes(24, 32, new Rgba32(20, 100, 200));
+            subject.EnsureBookCovers(bad);
+            var receipt = disk.TextByPath.Keys.Single();
+            var json = Newtonsoft.Json.Linq.JObject.Parse(disk.TextByPath[receipt]);
+            json["selectedEdition"]["contentHash"] = null;
+            disk.TextByPath[receipt] = json.ToString();
+            // Re-open the saved legacy receipt, then fail its image read outside the HTTP catch.
+            subject = CreateBookCoverSubject(CoverDownloadScope.AllBooks, Array.Empty<int>(),
+                out _, out var newDisk, out var newHttp, out _, deferredService: deferred, logger: logs.GetLogger("CoverFixture"));
+            newHttp.ResponseData = http.ResponseData;
+            foreach (var path in disk.ExistingPaths) newDisk.ExistingPaths.Add(path);
+            foreach (var entry in disk.TextByPath) newDisk.TextByPath[entry.Key] = entry.Value;
+            foreach (var entry in disk.BinaryByPath) newDisk.BinaryByPath[entry.Key] = entry.Value;
+            bad.Editions.Single().Images.Clear();
+            Exception failure = kind switch
+            {
+                "io" => new IOException("Fixture legacy image locked"),
+                "access" => new UnauthorizedAccessException("Fixture legacy image denied"),
+                "cancelled" => new OperationCanceledException("Fixture cancelled"),
+                _ => new InvalidOperationException("Fixture unexpected cover failure")
+            };
+            newDisk.BeforeOpen = _ => throw failure;
+            var cancelled = kind == "cancelled";
+            var unreadable = kind is "io" or "access";
+            var good = CreateBookWithCover(2, true, "https://images.example/good.jpg");
+            if (cancelled) Assert.That(Assert.Catch(() => subject.EnsureBookCoversForBooks(new() { bad, good })), Is.SameAs(failure));
+            else subject.EnsureBookCoversForBooks(new() { bad, good });
+            Assert.That(newHttp.RequestedUrls, Is.EqualTo(cancelled ? Array.Empty<string>() : new[] { "https://images.example/good.jpg" }));
+            Assert.That(deferred.GetPendingBookIds(), Is.EqualTo(kind == "unexpected" ? new[] { 1 } : Array.Empty<int>()));
+            if (cancelled) return;
+            if (unreadable)
+            {
+                for (var i = 0; i < 5; i++) subject.EnsureBookCoversForBooks(new() { bad });
+                Assert.That(deferred.TakePendingBookIds(), Is.Empty, "Optional fingerprint reads must not schedule retries");
+                Assert.That(messages.Logs.Where(line => line.StartsWith("Warn|")),
+                    Is.EqualTo(new[] { $"Warn|Unable to read cover fingerprint for book 1 at {newDisk.BinaryByPath.Keys.First(path => Path.GetFileName(path) == "cover.jpg")}: {failure.Message}" }));
+                Assert.That(newDisk.TextByPath[receipt], Is.EqualTo(json.ToString()), "An unknown fingerprint must not rewrite the receipt");
+            }
+            newDisk.BeforeOpen = null;
+            var retry = deferred.TakePendingBookIds();
+            subject.EnsureBookCoversForBooks(unreadable ? new() { bad } : new[] { bad, good }.Where(book => retry.Contains(book.Id)).ToList());
+            Assert.That(newHttp.RequestedUrls, Has.Count.EqualTo(1), "Successful book is not retried");
+            Assert.That(deferred.GetPendingBookIds(), Is.Empty);
+            Assert.That((string)Newtonsoft.Json.Linq.JObject.Parse(newDisk.TextByPath[receipt])["selectedEdition"]["contentHash"],
+                Is.EqualTo(MediaCoverRendition.ComputeContentSha256(http.ResponseData)), "A later successful read still upgrades the receipt");
         }
 
         [Test]
@@ -1507,7 +1611,8 @@ namespace Chaptarr.Core.Test.MediaCover
                 disk.BinaryByPath[(string)args[1]] = disk.BinaryByPath[(string)args[0]];
                 return null;
             });
-            var subject = new MediaCoverService(null, resizer, null, http, diskProvider, appFolder, null, null, null, null, logFactory.GetLogger("StoredRenditionFixture"), imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
+            var health = new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger());
+            var subject = new MediaCoverService(null, resizer, null, http, diskProvider, appFolder, null, null, null, null, logFactory.GetLogger("StoredRenditionFixture"), imageHostHealth: health);
             var author = new Author { Id = 900012, Name = "Stored rendition", Images = new()
             {
                 new(MediaCoverTypes.Poster, preferred), new(MediaCoverTypes.Poster, fallback)
@@ -1532,6 +1637,12 @@ namespace Chaptarr.Core.Test.MediaCover
 
             unavailable = false;
             requested.Clear();
+            if (failure != "unsafe")
+            {
+                subject.EnsureAuthorCovers(author);
+                Assert.That(requested, Is.Empty, "Recovery must wait for the shared host pause");
+                health.GetStatus("image:https://preferred-cover.invalid").RateLimitedUntil = DateTime.UtcNow.AddSeconds(-1);
+            }
             subject.EnsureAuthorCovers(author);
             Assert.That(requested, Is.EqualTo(new[] { preferred }));
             Assert.That(resized, Is.EqualTo(MediaCoverRendition.GetHeights(MediaCoverTypes.Poster)));
@@ -1981,7 +2092,7 @@ namespace Chaptarr.Core.Test.MediaCover
             disk.ExistingPaths.Add(Path.Combine(ConfigRoot, "MediaCover", "Books", "12", "cover.jpg"));
             disk.ExistingPaths.Add(Path.Combine(ConfigRoot, "MediaCover", "Books", "12", "cover-metadata.json"));
             disk.TextByPath[Path.Combine(ConfigRoot, "MediaCover", "Books", "12", "cover-metadata.json")] =
-                "{\"SelectedEdition\":{\"EditionProviderId\":\"gr:edition:old\",\"CoverUrl\":\"https://images.example/old.jpg\"}}";
+                "{\"SelectedEdition\":{\"LocalEditionId\":1,\"EditionProviderId\":\"gr:edition:old\",\"CoverUrl\":\"https://images.example/old.jpg\"}}";
             var deferred = DispatchProxy.Create<IDeferredCoverService, DeferredCoverProxy>();
             var subject = new MediaCoverService(
                 null,
@@ -2322,6 +2433,7 @@ namespace Chaptarr.Core.Test.MediaCover
 
             public List<Book> RepairBooks;
             public int RepairPageReads;
+            public int RepairIdReads;
             public Exception RepairIdFailure;
             public Action BeforeRepairPage;
             public bool LibraryOnly;
@@ -2330,7 +2442,7 @@ namespace Chaptarr.Core.Test.MediaCover
             {
                 var books = InterfaceProxy.Proxy<IBookService>((method, args) => method.Name switch
                 {
-                    nameof(IBookService.GetBookIds) => RepairIdFailure != null ? throw RepairIdFailure : (RepairBooks ?? new() { Book }).Select(book => book.Id).ToList(),
+                    nameof(IBookService.GetBookIds) => ReadRepairIds(),
                     nameof(IBookService.GetLibraryBookIds) => ((IEnumerable<int>)args[0] ?? LibraryIds).Where(LibraryIds.Contains).ToList(),
                     nameof(IBookService.GetExistingBooks) => ReadRepairPage((IEnumerable<int>)args[0]),
                     _ => throw new NotImplementedException(method.Name)
@@ -2342,6 +2454,13 @@ namespace Chaptarr.Core.Test.MediaCover
                     _ => throw new NotImplementedException(method.Name)
                 });
                 Subject = new MediaCoverService(new MediaCoverProxyStub(), _resizer, books, Http, DiskProvider, AppFolder, config, DispatchProxy.Create<IConfigFileProvider, ConfigFileProxy>(), null, Deferred, _logs.GetLogger("CoverRefreshFixture"), authorService: DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(), imageHostHealth: HostHealth);
+            }
+
+            private List<int> ReadRepairIds()
+            {
+                RepairIdReads++;
+                if (RepairIdFailure != null) throw RepairIdFailure;
+                return (RepairBooks ?? new() { Book }).Select(book => book.Id).ToList();
             }
 
             private List<Book> ReadRepairPage(IEnumerable<int> ids)
@@ -2526,9 +2645,9 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(h.Disk.BinaryByPath.Keys, Is.EquivalentTo(pixels.Keys));
             foreach (var pair in pixels) Assert.That(h.Disk.BinaryByPath[pair.Key], Is.EqualTo(pair.Value));
             h.Responses.FailureStatus = null;
-            if (!authorCover)
             {
-                h.Subject.EnsureBookCovers(h.Book, true);
+                if (authorCover) h.Subject.EnsureAuthorCovers(h.Author, true);
+                else h.Subject.EnsureBookCovers(h.Book, true);
                 Assert.That(h.Responses.Calls, Is.EqualTo(2), "Force respects the host pause and keeps the old cover");
                 h.HostHealth.GetStatus("image:https://images.example").RateLimitedUntil = DateTime.UtcNow.AddSeconds(-1);
             }
@@ -2651,6 +2770,187 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(h.Disk.ExistingPaths, Does.Contain(h.Sized(500)));
         }
 
+
+        [Test]
+        public void display_uses_the_stored_cover_without_edition_identity()
+        {
+            using var h = new CoverRefreshHarness(false);
+            h.Book.Editions.Single().Asin = "B07HPDQ9SS";
+            h.Refresh();
+            var expected = h.LocalUrl();
+            var covers = new List<NzbDrone.Core.MediaCover.MediaCover> { new(MediaCoverTypes.Cover, h.Cover.Url) };
+            h.Subject.ConvertBookCoversToLocalUrls(new[] { new KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>(12, covers) });
+            Assert.That(covers[0].Url, Is.EqualTo(expected).And.Contain("/MediaCover/Books/12/"));
+        }
+
+        [Test]
+        public void same_edition_stale_cover_is_not_a_banner_or_fanart()
+        {
+            using var h = new CoverRefreshHarness(false);
+            h.Book.Editions.Single().Asin = "B07HPDQ9SS";
+            h.Refresh();
+            var covers = new List<NzbDrone.Core.MediaCover.MediaCover>
+            {
+                new(MediaCoverTypes.Banner, "https://images.example/banner.png"),
+                new(MediaCoverTypes.Fanart, "https://images.example/fanart.png")
+            };
+            h.Subject.ConvertBookCoversToLocalUrls(new[] { new KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>(12, covers) });
+            Assert.That(covers.Select(c => c.Url), Has.All.Not.Contains("/MediaCover/Books/"));
+        }
+
+        [Test]
+        public void invalid_edition_switch_never_certifies_the_previous_editions_pixels()
+        {
+            using var h = new CoverRefreshHarness(false);
+            h.Book.Editions.Single().Asin = "B07HPDQ9SS";
+            h.Refresh();
+            h.Book.Editions.Single().Asin = "B002V0QUOC";
+            h.Book.Editions.Single().GoodreadsEditionId = 999;
+            h.Book.Editions.Single().ForeignEditionId = "gr:edition:999";
+            h.Book.Editions.Single().Id = 14;
+            h.Cover.Url = "not-an-absolute-url.png";
+            h.Refresh();
+            var receipt = Path.Combine(Path.GetDirectoryName(h.Original), "cover-metadata.json");
+            Assert.That(h.Disk.TextByPath.GetValueOrDefault(receipt), Is.Null,
+                "Failed edition B must not take ownership of edition A's image");
+            Assert.That(h.Responses.Calls, Is.EqualTo(1));
+            Assert.That(h.Disk.ExistingPaths, Does.Not.Contain(h.Original), "Do not retain the proven different edition image");
+        }
+
+        [Test]
+        public void paused_author_repair_and_on_demand_use_the_stored_photo_without_requests()
+        {
+            using var h = new CoverRefreshHarness(true);
+            h.Refresh();
+            var bytes = h.Disk.BinaryByPath[h.Sized(500)].ToArray();
+            h.Disk.ExistingPaths.Remove(h.Sized(250));
+            h.Disk.BinaryByPath.Remove(h.Sized(250));
+            h.HostHealth.ReportRateLimited("image:https://images.example", TimeSpan.FromMinutes(1));
+            var authors = InterfaceProxy.Proxy<IAuthorService>((method, _) => method.Name switch
+            {
+                nameof(IAuthorService.GetAllAuthors) or nameof(IAuthorService.GetExistingAuthors) => new List<Author> { h.Author },
+                nameof(IAuthorService.RemoveKnownPlaceholderImages) => false,
+                _ => throw new AssertionException(method.Name)
+            });
+            var repair = new RepairAuthorMediaCoversService(authors, h.Subject, h.DiskProvider,
+                DispatchProxy.Create<IManageCommandQueue, CommandQueueProxy>(), LogManager.GetCurrentClassLogger(),
+                DispatchProxy.Create<IEventAggregator, EventAggregatorProxy>());
+            repair.Execute(new RepairAuthorMediaCoversCommand());
+            var result = h.Subject.EnsureAuthorImage(h.Author, h.Cover).GetAwaiter().GetResult();
+            Assert.That(result.State, Is.EqualTo("downloaded"));
+            Assert.That(h.Responses.Calls, Is.EqualTo(1), "Repair and on-demand must respect the shared host pause");
+            Assert.That(h.Disk.BinaryByPath[result.Path], Is.EqualTo(bytes));
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void paused_or_rejected_downloads_do_not_create_empty_book_folders(bool paused)
+        {
+            using var h = new CoverRefreshHarness(false);
+            if (paused) h.HostHealth.ReportRateLimited("image:https://images.example", TimeSpan.FromMinutes(1));
+            else h.Responses.FailureStatus = HttpStatusCode.NotFound;
+            h.Refresh();
+            Assert.That(h.Disk.GetCallCount(nameof(IDiskProvider.EnsureFolder)), Is.Zero);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void legacy_hash_is_saved_atomically_once_and_survives_restart(bool refuseSave)
+        {
+            using var h = new CoverRefreshHarness(false);
+            h.Refresh();
+            var path = h.Disk.TextByPath.Keys.Single();
+            var json = Newtonsoft.Json.Linq.JObject.Parse(h.Disk.TextByPath[path]);
+            json["selectedEdition"]["contentHash"] = null;
+            var legacy = json.ToString();
+            h.Disk.TextByPath[path] = legacy;
+            h.Restart();
+            h.Disk.RefusePublication = refuseSave;
+            var writes = h.Disk.GetCallCount(nameof(IDiskProvider.WriteFileAtomically));
+            h.Subject.RepairBookCovers();
+            Assert.That(h.Disk.GetCallCount(nameof(IDiskProvider.WriteFileAtomically)), Is.EqualTo(writes + 1));
+            if (refuseSave)
+            {
+                Assert.That(h.Disk.TextByPath[path], Is.EqualTo(legacy), "A failed swap keeps the complete old receipt");
+                Assert.That(h.Logs.Logs, Has.Some.Contains("Unable to save the cover fingerprint"));
+                h.Disk.RefusePublication = false;
+                h.Subject.RepairBookCovers();
+            }
+            var updated = Newtonsoft.Json.Linq.JObject.Parse(h.Disk.TextByPath[path]);
+            Assert.That((string)updated["selectedEdition"]["contentHash"], Is.EqualTo(MediaCoverRendition.ComputeContentSha256(h.Responses.ResponseData)));
+            updated["selectedEdition"]["contentHash"] = null;
+            Assert.That(Newtonsoft.Json.Linq.JToken.DeepEquals(updated, json), Is.True, "Preserve every receipt field and the browser version");
+            writes = h.Disk.GetCallCount(nameof(IDiskProvider.WriteFileAtomically));
+            h.Restart();
+            var reads = h.Disk.GetCallCount(nameof(IDiskProvider.OpenReadStream));
+            h.Subject.RepairBookCovers();
+            Assert.That(h.Disk.GetCallCount(nameof(IDiskProvider.OpenReadStream)), Is.EqualTo(reads));
+            Assert.That(h.Disk.GetCallCount(nameof(IDiskProvider.WriteFileAtomically)), Is.EqualTo(writes));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void legacy_receipt_repairs_missing_provider_identity_only_for_the_same_url(bool sameUrl)
+        {
+            using var h = new CoverRefreshHarness(false);
+            h.Book.Editions.Single().Asin = "B07HPDQ9SS";
+            h.Refresh();
+            var path = h.Disk.TextByPath.Keys.Single();
+            var receipt = Newtonsoft.Json.Linq.JObject.Parse(h.Disk.TextByPath[path]);
+            var version = receipt["selectedEdition"]["downloadedAt"].ToString();
+            receipt["selectedEdition"]["editionProviderId"] = null;
+            ((Newtonsoft.Json.Linq.JObject)receipt["selectedEdition"]).Remove("editionProviderIds");
+            h.Disk.TextByPath[path] = receipt.ToString();
+            h.Restart();
+            if (!sameUrl) h.Cover.Url = "https://images.example/new.png";
+            h.Responses.FailureStatus = HttpStatusCode.InternalServerError;
+            h.Subject.RepairBookCovers();
+            receipt = Newtonsoft.Json.Linq.JObject.Parse(h.Disk.TextByPath[path]);
+            Assert.That((string)receipt["selectedEdition"]["editionProviderId"], Is.EqualTo(sameUrl ? "az:B07HPDQ9SS" : null));
+            Assert.That(receipt["selectedEdition"]["downloadedAt"].ToString(), Is.EqualTo(version));
+            Assert.That(h.Logs.Logs, Has.Some.Contains($"Info|[BOOK-COVER-REPAIR] 1 checked, {(sameUrl ? 0 : 1)} candidates, 0 repaired, {(sameUrl ? 0 : 1)} incomplete, 0 unreadable, {(sameUrl ? 0 : 1)} retained with unknown edition"));
+            var writes = h.Disk.GetCallCount(nameof(IDiskProvider.WriteFileAtomically));
+            h.Restart(); h.Subject.RepairBookCovers();
+            Assert.That(h.Disk.GetCallCount(nameof(IDiskProvider.WriteFileAtomically)), Is.EqualTo(writes));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void failed_publication_keeps_only_the_current_editions_cover(bool editionChanged)
+        {
+            using var h = new CoverRefreshHarness(false);
+            h.Book.Editions.Single().Asin = "B07HPDQ9SS";
+            h.Refresh();
+            if (editionChanged)
+            {
+                h.Book.Editions.Single().Asin = "B002V0QUOC";
+                h.Book.Editions.Single().ForeignEditionId = "gr:edition:14";
+            }
+            h.SetPhoto("publication-failure.jpg", h.Responses.ResponseData);
+            h.Disk.RefusePublication = true;
+            h.Refresh();
+            var receipt = h.Disk.TextByPath.Keys.Any(path => path.EndsWith("cover-metadata.json"));
+            Assert.That(receipt, Is.EqualTo(!editionChanged));
+        }
+
+        [Test]
+        public void provider_equivalent_merge_keeps_the_cover_during_an_outage()
+        {
+            using var h = new CoverRefreshHarness(false);
+            h.Book.Editions.Single().Asin = "B07HPDQ9SS";
+            h.Book.Editions.Single().HardcoverEditionId = "123";
+            h.Refresh();
+            var before = h.LocalUrl();
+            h.Book.Editions.Single().Id = 61000;
+            h.Book.Editions.Single().HardcoverEditionId = "456";
+            h.Book.Editions.Single().ForeignEditionId = "hc:edition:456";
+            h.SetPhoto("new-provider-url.jpg", h.Responses.ResponseData);
+            h.Responses.FailureStatus = HttpStatusCode.InternalServerError;
+            h.Refresh();
+            Assert.That(h.LocalUrl(), Is.EqualTo(before));
+            Assert.That(h.Subject.ReadLocalBookCover(h.Book.Editions.Single()).Ready, Is.False);
+        }
+
         [Test]
         public void repair_bounds_large_catalog_hydration_in_existing_batches()
         {
@@ -2691,11 +2991,50 @@ namespace Chaptarr.Core.Test.MediaCover
         {
             using var h = new CoverRefreshHarness(false);
             ((DeferredCoverProxy)(object)h.Deferred).ShouldDefer = true;
-            h.RepairIdFailure = new AssertionException("Catalog read during import");
             h.Subject.RepairBookCovers();
+            Assert.That(h.RepairIdReads, Is.Zero, "Import pause must prevent the ID query itself");
             Assert.That(h.RepairPageReads, Is.Zero);
             Assert.That(((DeferredCoverProxy)(object)h.Deferred).MarkedBookIds, Is.Empty);
-            Assert.That(h.Logs.Logs, Has.Some.Contains("import running; the next run retries"));
+            Assert.That(h.Logs.Logs, Has.Some.Contains("import running; repair resumes after the import"));
+        }
+
+        [TestCase("none")]
+        [TestCase("error")]
+        [TestCase("running")]
+        public void import_completion_resumes_a_paused_repair_once_even_with_no_pending_books(string queueResult)
+        {
+            using var h = new CoverRefreshHarness(false);
+            var deferred = (DeferredCoverProxy)(object)h.Deferred;
+            deferred.ShouldDefer = true;
+            h.Subject.RepairBookCovers();
+            h.Subject.RepairBookCovers();
+            Assert.That(h.RepairIdReads, Is.Zero);
+            var queued = new List<NzbDrone.Core.Messaging.Commands.Command>();
+            var attempts = 0;
+            var queue = InterfaceProxy.Proxy<NzbDrone.Core.Messaging.Commands.IManageCommandQueue>((_, args) =>
+            {
+                attempts++;
+                Assert.That(args[1], Is.EqualTo(NzbDrone.Core.Messaging.Commands.CommandPriority.Low));
+                if (attempts == 1 && queueResult == "error") throw new IOException("Fixture queue save unavailable");
+                if (attempts == 1 && queueResult == "running") return new NzbDrone.Core.Messaging.Commands.CommandModel { Status = NzbDrone.Core.Messaging.Commands.CommandStatus.Started };
+                queued.Add((NzbDrone.Core.Messaging.Commands.Command)args[0]);
+                return new NzbDrone.Core.Messaging.Commands.CommandModel();
+            });
+            var service = new DeferredCoverDownloadService(h.Deferred, null, queue, h.Subject, LogManager.GetCurrentClassLogger());
+            service.HandleAsync(new NzbDrone.Core.MediaFiles.Events.ImportStageProgressEvent(
+                NzbDrone.Core.MediaFiles.Events.ImportStage.ImportComplete, "done") { CommandId = 77 });
+            if (queueResult != "none") Assert.That(queued, Is.Empty);
+            service.Execute(new RetryBookCoversCommand());
+            service.Execute(new RetryBookCoversCommand());
+            service.Handle(new NzbDrone.Core.Messaging.Events.CommandExecutedEvent(new NzbDrone.Core.Messaging.Commands.CommandModel { Id = 77 }));
+            Assert.That(queued, Has.Count.EqualTo(1));
+            Assert.That(queued[0], Is.TypeOf<RepairAuthorMediaCoversCommand>());
+            Assert.That(attempts, Is.EqualTo(queueResult == "none" ? 1 : 2));
+            var authors = InterfaceProxy.Proxy<IAuthorService>((_, _) => new List<Author>());
+            new RepairAuthorMediaCoversService(authors, h.Subject, h.DiskProvider, queue, LogManager.GetCurrentClassLogger(), null)
+                .Execute((RepairAuthorMediaCoversCommand)queued[0]);
+            Assert.That(h.RepairIdReads, Is.EqualTo(1));
+            Assert.That(h.Responses.Calls, Is.EqualTo(1), "The skipped startup work now actually downloads");
         }
 
         [Test]
@@ -2741,15 +3080,20 @@ namespace Chaptarr.Core.Test.MediaCover
             h.SetPhoto("same-edition-new.jpg", h.Responses.ResponseData);
             h.Responses.FailureStatus = HttpStatusCode.InternalServerError;
             h.Refresh();
-            string Mapped(string edition)
+            string Mapped()
             {
                 var images = new List<NzbDrone.Core.MediaCover.MediaCover> { new(MediaCoverTypes.Cover, h.Cover.Url) };
-                h.Subject.ConvertBookCoversToLocalUrls(new[] { new KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>(h.Book.Id, images) },
-                    new Dictionary<int, string> { [h.Book.Id] = edition });
+                h.Subject.ConvertBookCoversToLocalUrls(new[] { new KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>(h.Book.Id, images) });
                 return images[0].Url;
             }
-            Assert.That(Mapped(BookEditionIdentity.GetTrustedForeignEditionId(h.Book.Editions.Single())), Is.EqualTo(before));
-            Assert.That(Mapped("gr:edition:another"), Does.Not.Contain("/MediaCover/Books/"));
+            Assert.That(Mapped(), Is.EqualTo(before));
+            h.Book.Editions.Single().BookId = h.Book.Id;
+            Assert.That(h.Subject.ReadLocalBookCover(h.Book.Editions.Single()).Ready, Is.False,
+                "Showing the old image must not permit embedding it for the new URL");
+            h.Book.Editions.Single().GoodreadsEditionId = 999;
+            h.Book.Editions.Single().ForeignEditionId = "gr:edition:999";
+            h.Refresh();
+            Assert.That(Mapped(), Does.Not.Contain("/MediaCover/Books/"), "The writer removes a proven old-edition cover");
         }
 
         [Test]
@@ -2922,6 +3266,7 @@ namespace Chaptarr.Core.Test.MediaCover
             h.Book.Editions.Single().GoodreadsEditionId = 13;
             h.Refresh();
             h.Book.Editions.Single().GoodreadsEditionId = 99;
+            h.Book.Editions.Single().Id = 99;
             h.Book.Editions.Single().ForeignEditionId = "gr:99";
             h.SetPhoto("placeholder-next-edition.png", Convert.FromBase64String(MascotWebpBase64));
             h.Subject.EnsureBookCovers(h.Book, true);
@@ -2945,6 +3290,28 @@ namespace Chaptarr.Core.Test.MediaCover
             h.Responses.FailureForRequest = _ => throw new AssertionException("No HTTP call for stored complete cover");
             h.Refresh();
             Assert.That(h.Responses.Calls, Is.EqualTo(1));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void deferred_switch_removes_only_a_proven_different_editions_cover(bool sameEdition)
+        {
+            using var h = new CoverRefreshHarness(false);
+            h.Refresh();
+            var calls = h.Responses.Calls;
+            var edition = h.Book.Editions.Single();
+            if (!sameEdition) edition.ForeignEditionId = "gr:edition:14";
+            edition.Images.Single().Url = "https://images.example/new.png";
+            var deferred = (DeferredCoverProxy)(object)h.Deferred;
+            deferred.ShouldDefer = true;
+            h.Subject.EnsureBookCovers(h.Book);
+            Assert.That(h.Responses.Calls, Is.EqualTo(calls));
+            Assert.That(h.Disk.ExistingPaths.Contains(h.Original), Is.EqualTo(sameEdition));
+            Assert.That(deferred.MarkedBookIds, Does.Contain(h.Book.Id));
+            deferred.ShouldDefer = false;
+            h.Subject.EnsureBookCovers(h.Book);
+            Assert.That(h.Responses.Calls, Is.EqualTo(calls + 1));
+            Assert.That(h.Disk.ExistingPaths, Does.Contain(h.Original));
         }
 
         [Test]
@@ -3086,7 +3453,7 @@ namespace Chaptarr.Core.Test.MediaCover
             if (authorCover) h.Author.Images.Add(alternative);
             else h.Book.Editions.Single().Images.Add(alternative);
             var attempted = h.Responses.Calls;
-            h.Disk.BeforeWriteText = path => { if (path == identity) throw new IOException("Fixture identity write refused"); };
+            h.Disk.BeforeWriteText = path => { if (path == identity || (!authorCover && Path.GetExtension(path) == ".json")) throw new IOException("Fixture identity write refused"); };
             h.Refresh();
             Assert.That(h.Responses.Calls, Is.EqualTo(attempted + 1), "A local receipt failure must not fetch the next provider");
             Assert.That(h.Resizes, Is.EqualTo(resizes), "Do not derive files before their identity was saved");
@@ -3155,7 +3522,8 @@ namespace Chaptarr.Core.Test.MediaCover
             Action restore = null;
             void Snapshot(string path)
             {
-                if (path != (step == 1 ? h.Original : identity)) return;
+                var expectedPath = step == 1 ? h.Original : identity;
+                if (path != expectedPath && !(step == 2 && !authorCover && Path.GetExtension(path) == ".json")) return;
                 var files = h.Disk.ExistingPaths.ToArray();
                 var text = h.Disk.TextByPath.ToDictionary(p => p.Key, p => p.Value);
                 var bytes = h.Disk.BinaryByPath.ToDictionary(p => p.Key, p => p.Value.ToArray());
@@ -3168,7 +3536,11 @@ namespace Chaptarr.Core.Test.MediaCover
             }
             if (step == 1) h.Disk.AfterPublication = Snapshot;
             if (step == 2) h.Disk.BeforeWriteText = Snapshot;
-            if (step == 3) h.Disk.AfterWriteText = Snapshot;
+            if (step == 3)
+            {
+                if (authorCover) h.Disk.AfterWriteText = Snapshot;
+                else h.Disk.AfterPublication = Snapshot;
+            }
             h.Refresh();
             Assert.That(restore, Is.Not.Null);
             restore(); // Restore the exact on-disk state at the simulated process exit.
@@ -3564,7 +3936,7 @@ namespace Chaptarr.Core.Test.MediaCover
         }
 
         [Test]
-        public void book_cover_should_not_map_a_stale_local_file_after_monitored_edition_changes()
+        public void display_serves_the_recorded_cover_while_url_replacement_is_pending()
         {
             var appFolder = DispatchProxy.Create<IAppFolderInfo, AppFolderProxy>();
             ((AppFolderProxy)(object)appFolder).AppDataFolder = ConfigRoot;
@@ -3592,7 +3964,7 @@ namespace Chaptarr.Core.Test.MediaCover
 
             subject.ConvertToLocalUrls(12, MediaCoverEntity.Book, new[] { cover });
 
-            Assert.That(cover.Url, Does.StartWith("/MediaCoverProxy/book/12/new.jpg?v="));
+            Assert.That(cover.Url, Does.StartWith("/MediaCover/Books/12/cover.jpg?v="));
             Assert.That(proxy.ProxyCalls, Is.Zero);
         }
 

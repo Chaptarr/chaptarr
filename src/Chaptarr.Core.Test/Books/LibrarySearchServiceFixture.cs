@@ -1,5 +1,12 @@
 using System;
 using System.Data;
+using System.Collections.Generic;
+using Chaptarr.Api.V1.Search;
+using NzbDrone.Core.MediaCover;
+using NzbDrone.Common.EnvironmentInfo;
+using NzbDrone.Common.Serializer;
+using NzbDrone.Core.Configuration;
+using static Chaptarr.Core.Test.Common.InterfaceProxy;
 using System.IO;
 using System.Linq;
 using Dapper;
@@ -85,21 +92,44 @@ namespace Chaptarr.Core.Test.Books
             return _observeCommand == null ? connection : CommandObserver.Wrap<IDbConnection>(connection, _observeCommand);
         }
 
-        [Test]
-        public void search_carries_the_native_monitored_edition_identity_without_exposing_it()
+        [TestCase(false)]
+        [TestCase(true)]
+        public void library_search_maps_suffixed_monitored_edition_and_asin_to_the_stored_cover(bool changedUrl)
         {
             using var connection = OpenConnection();
-            var id = connection.ExecuteScalar<int>("SELECT MIN(\"Id\") FROM \"Editions\" WHERE \"Title\" = 'Dune Messiah'");
-            connection.Execute("UPDATE \"Editions\" SET \"Monitored\" = true, \"ForeignEditionId\" = 'gr:cover-owner' WHERE \"Id\" = @id", new { id });
+            var editionId = connection.ExecuteScalar<int>("SELECT MIN(\"Id\") FROM \"Editions\" WHERE \"Title\" = 'Dune Messiah'");
+            var bookId = connection.ExecuteScalar<int>("SELECT \"BookId\" FROM \"Editions\" WHERE \"Id\" = @editionId", new { editionId });
+            var oldImages = connection.ExecuteScalar<string>("SELECT \"Images\" FROM \"Books\" WHERE \"Id\" = @bookId", new { bookId });
+            var folder = Path.Combine(Path.GetTempPath(), "cover-search-" + Guid.NewGuid().ToString("N"));
             try
             {
-                var result = _service.Search("Dune Messiah", 1).Books.Single();
-                Assert.That(result.CoverEditionId, Is.EqualTo("gr:cover-owner"));
-                Assert.That(NzbDrone.Common.Serializer.STJson.ToJson(result), Does.Not.Contain("coverEditionId"));
+                connection.Execute("UPDATE \"Editions\" SET \"Monitored\" = true, \"ForeignEditionId\" = 'gr:51995426-audiobook', \"Asin\" = 'B07HPDQ9SS' WHERE \"Id\" = @editionId", new { editionId });
+                const string storedUrl = "https://images.example/stored.png";
+                var images = new List<NzbDrone.Core.MediaCover.MediaCover> { new(MediaCoverTypes.Cover, changedUrl ? "https://images.example/new.png" : storedUrl) };
+                connection.Execute("UPDATE \"Editions\" SET \"Images\" = @images WHERE \"Id\" = @editionId", new { editionId, images = images.ToJson() });
+                var mapper = new MediaCoverService(null, null, null, null, RealDiskProvider.Create(LogManager.GetCurrentClassLogger()),
+                    Proxy<IAppFolderInfo>((_, _) => folder), Proxy<IConfigService>((_, _) => CoverDownloadScope.AllBooks),
+                    Proxy<IConfigFileProvider>((_, _) => ""), null, null, LogManager.GetCurrentClassLogger(),
+                    imageHostHealth: new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
+                var coverPath = mapper.GetCoverPath(bookId, MediaCoverEntity.Book, MediaCoverTypes.Cover, ".png", 500);
+                Directory.CreateDirectory(Path.GetDirectoryName(coverPath));
+                File.WriteAllBytes(coverPath, new byte[] { 1 });
+                File.WriteAllText(Path.Combine(Path.GetDirectoryName(coverPath), "cover-metadata.json"), new
+                {
+                    SelectedEdition = new { LocalEditionId = editionId, EditionProviderId = "az:B07HPDQ9SS", CoverUrl = storedUrl, DownloadedAt = DateTime.UtcNow, ContentHash = "verified" }
+                }.ToJson());
+                var result = new LibrarySearchController(_service, mapper).Search("Dune Messiah", 1).Books.Single();
+                Assert.That(result.Images.Single().RemoteUrl, Is.EqualTo(images.Single().Url));
+                Assert.That((int)Newtonsoft.Json.Linq.JObject.Parse(STJson.ToJson(result))["id"], Is.EqualTo(bookId));
+                Assert.That(STJson.ToJson(result), Does.Not.Contain("coverEditionId"));
+                Assert.That(result.Images.Single().Url, Does.StartWith("/MediaCover/Books/" + bookId + "/"));
+                Assert.That(result.Images.Single().TemporaryUrl, Is.Null);
             }
             finally
             {
-                connection.Execute("UPDATE \"Editions\" SET \"Monitored\" = false, \"ForeignEditionId\" = NULL WHERE \"Id\" = @id", new { id });
+                connection.Execute("UPDATE \"Editions\" SET \"Monitored\" = false, \"ForeignEditionId\" = NULL, \"Asin\" = NULL, \"Images\" = NULL WHERE \"Id\" = @editionId", new { editionId });
+                connection.Execute("UPDATE \"Books\" SET \"Images\" = @oldImages WHERE \"Id\" = @bookId", new { bookId, oldImages });
+                if (Directory.Exists(folder)) Directory.Delete(folder, true);
             }
         }
 
@@ -552,7 +582,7 @@ namespace Chaptarr.Core.Test.Books
             var boolean = _postgres ? "BOOLEAN DEFAULT TRUE" : "INTEGER DEFAULT 1";
             connection.Execute($"CREATE TABLE \"Authors\" (\"Id\" INTEGER PRIMARY KEY, {string.Join(", ", authorColumns.Select(column => $"\"{column}\" TEXT NULL"))});");
             connection.Execute($"CREATE TABLE \"Books\" (\"Id\" INTEGER PRIMARY KEY, \"AuthorId\" INTEGER, \"MediaType\" INTEGER, \"SeriesId\" INTEGER NULL, \"AudiobookMonitored\" {boolean}, \"EbookMonitored\" {boolean}, {string.Join(", ", bookColumns.Select(column => $"\"{column}\" TEXT NULL"))});");
-            connection.Execute("CREATE TABLE \"Editions\" (\"Id\" INTEGER PRIMARY KEY, \"BookId\" INTEGER, \"Title\" TEXT, \"MatchingTitle\" TEXT, \"ForeignEditionId\" TEXT, \"Subtitle\" TEXT, \"Narrator\" TEXT, \"Monitored\" BOOLEAN DEFAULT FALSE);");
+            connection.Execute("CREATE TABLE \"Editions\" (\"Id\" INTEGER PRIMARY KEY, \"BookId\" INTEGER, \"Title\" TEXT, \"MatchingTitle\" TEXT, \"ForeignEditionId\" TEXT, \"HardcoverEditionId\" TEXT, \"GoodreadsEditionId\" BIGINT, \"AudibleASIN\" TEXT, \"Asin\" TEXT, \"Asins\" TEXT, \"Subtitle\" TEXT, \"Narrator\" TEXT, \"Monitored\" BOOLEAN DEFAULT FALSE, \"Images\" TEXT);");
             connection.Execute("CREATE TABLE \"BookFiles\" (\"Id\" INTEGER PRIMARY KEY, \"EditionId\" INTEGER);");
             connection.Execute("CREATE TABLE \"Series\" (\"Id\" INTEGER PRIMARY KEY, \"Title\" TEXT, \"GoodreadsSeriesId\" TEXT, \"MediaType\" INTEGER);");
             connection.Execute("CREATE TABLE \"SeriesBookLink\" (\"BookId\" INTEGER, \"SeriesId\" INTEGER, \"Position\" TEXT);");

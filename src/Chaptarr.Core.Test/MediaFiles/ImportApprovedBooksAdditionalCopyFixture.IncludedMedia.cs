@@ -435,7 +435,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var checkedSizes = new List<long>();
             var bonusPolicyInputs = new List<LocalBook>();
             var approved = new ImportApprovedBooks(media, tags, new StubMediaInfoExtractor(), authorService, bookService, editionService,
-                new StubRecycleBinProvider(), Proxy<IExtraService>(), mover, history, downloads, events,
+                new StubRecycleBinProvider(), Proxy<IExtraService>(), mover, history, downloads, events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 Proxy<IManageCommandQueue>(), new SeriesBookLinkService(new SeriesBookLinkRepository(db, events)), Proxy<ISeriesService>(), Proxy<IQualityProfileService>(),
                 converter, logger, configService: converting ? CreateConfigService() : null, conversionJobService: jobs,
                 customFormatCalculationService: InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) =>

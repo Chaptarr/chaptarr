@@ -17,6 +17,9 @@ using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Authors;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaCover;
+using NzbDrone.Core.MediaCover.Commands;
+using NzbDrone.Core.Messaging.Commands;
 
 namespace NzbDrone.Core.MediaFiles.BookImport.Services
 {
@@ -31,6 +34,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
         private readonly IMediaInfoExtractor _mediaInfoExtractor;
         private readonly IEventAggregator _eventAggregator;
         private readonly IAuthorService _authorService;
+        private readonly IManageCommandQueue _commandQueue;
+        private readonly IDeferredCoverService _deferredCoverService;
         private readonly Logger _logger;
 
         public BookImportService(
@@ -43,6 +48,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             IEventAggregator eventAggregator,
             NzbDrone.Core.Configuration.IConfigService configService,
             IAuthorService authorService,
+            IDeferredCoverService deferredCoverService,
+            IManageCommandQueue commandQueue,
             Logger logger)
         {
             _bookService = bookService;
@@ -54,6 +61,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             _eventAggregator = eventAggregator;
             _configService = configService;
             _authorService = authorService;
+            _deferredCoverService = deferredCoverService;
+            _commandQueue = commandQueue;
             _logger = logger;
         }
 
@@ -182,11 +191,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                         // Prefer the edition that just received a file
                         try
                         {
-                            _editionService.SetMonitored(targetEdition, false);
+                            SelectImportedEdition(targetEdition, allEditions);
                         }
                         catch (Exception ex)
                         {
-                            _logger.Debug(ex, "[SCAN] Failed to set monitored edition for bookId={0}", bookId);
+                            _logger.Warn(ex, "[SCAN] Failed to set monitored edition for bookId={0}", bookId);
                         }
 
                         _eventAggregator.PublishEvent(new BookFileAddedEvent(existing));
@@ -253,11 +262,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 // Prefer the edition that just received a file
                 try
                 {
-                    _editionService.SetMonitored(targetEdition, false);
+                    SelectImportedEdition(targetEdition, allEditions);
                 }
                 catch (Exception ex)
                 {
-                    _logger.Debug(ex, "[SCAN] Failed to set monitored edition for bookId={0}", bookId);
+                    _logger.Warn(ex, "[SCAN] Failed to set monitored edition for bookId={0}", bookId);
                 }
 
                 _eventAggregator.PublishEvent(new BookFileAddedEvent(bf));
@@ -268,6 +277,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             {
                 _logger.Error(ex, "[SCAN] Failed to track existing file: {0} for book: {1}", path, bookId);
                 return Task.FromResult(BookImportFileResult.Failed(path, "APPLY_EXCEPTION"));
+            }
+        }
+
+        private void SelectImportedEdition(Edition edition, IReadOnlyCollection<Edition> editions)
+        {
+            var changed = editions.Any(item => item.Monitored != (item.Id == edition.Id));
+            _editionService.SetMonitored(edition, false);
+            if (changed)
+            {
+                DownloadBookMediaCommand.NotifyBookSelectionsChanged(new[] { edition.BookId }, _commandQueue, _deferredCoverService, _logger);
             }
         }
 
@@ -656,11 +675,11 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 {
                     var editionId = editionsTouched.First();
                     var monitored = allEditions.FirstOrDefault(e => e.Id == editionId) ?? defaultEdition;
-                    _editionService.SetMonitored(monitored, false);
+                    SelectImportedEdition(monitored, allEditions);
                 }
                 catch (Exception ex)
                 {
-                    _logger.Debug(ex, "[TRACK] Failed to set monitored edition for bookId={0}", book.Id);
+                    _logger.Warn(ex, "[TRACK] Failed to set monitored edition for bookId={0}", book.Id);
                 }
             }
 

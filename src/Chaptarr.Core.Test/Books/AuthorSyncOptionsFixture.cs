@@ -202,7 +202,7 @@ namespace Chaptarr.Core.Test.Books
                     rootFolderSettingsResolver: null, logger: Logger, bookRepository: BookRows, authorRepository: AuthorRows);
                 refresh.Execute(command);
             }
-            public void ProcessPending() => new ProcessPendingImportsCommandHandler(Pending, Library, Books, null, Queue, Events, Logger)
+            public void ProcessPending() => new ProcessPendingImportsCommandHandler(Pending, Library, Books, null, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  Queue, Events, Logger)
                 .Execute(new ProcessPendingImportsCommand());
         }
 

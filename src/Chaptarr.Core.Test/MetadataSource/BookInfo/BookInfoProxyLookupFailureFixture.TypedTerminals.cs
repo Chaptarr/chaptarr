@@ -141,7 +141,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 throw failure;
             });
             var service = new ImportListSyncService(null, null, null, metadata, null, null, null,
-                null, null, null, null, null, LogManager.GetCurrentClassLogger(), null);
+                null, null, null, null, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  null, LogManager.GetCurrentClassLogger(), null);
             var type = typeof(ImportListSyncService);
             var lookup = Activator.CreateInstance(type.GetNestedType("ImportListLocalLookup", BindingFlags.NonPublic), true);
             var stats = Activator.CreateInstance(type.GetNestedType("ImportListSyncStats", BindingFlags.NonPublic), true);

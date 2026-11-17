@@ -409,7 +409,7 @@ namespace Chaptarr.Core.Test.Books
                     Assert.Throws<AuthorIdentityUnverifiedException>(() => service.AddAuthorAsync("hc:100", config).GetAwaiter().GetResult(),
                         "unverified replay must fail with the identity hold before attempting downstream work");
                     var handler = new NzbDrone.Core.Books.Commands.ProcessPendingImportsCommandHandler(pending, service, books,
-                        null, null, events, logger);
+                        null, new NzbDrone.Core.MediaCover.DeferredCoverService(logger, null), null, events, logger);
                     var processing = (Task<PendingAuthorImport>)handler.GetType().GetMethod("ProcessPendingImportAsync",
                         System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).Invoke(handler, new object[] { request });
                     processing.GetAwaiter().GetResult();

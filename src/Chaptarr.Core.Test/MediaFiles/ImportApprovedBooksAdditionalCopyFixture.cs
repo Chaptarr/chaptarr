@@ -260,6 +260,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             public string[] LastInputFiles { get; private set; }
             public string LastOutputFile { get; private set; }
             public ConversionOptions LastOptions { get; private set; }
+            public Action BeforeConvert { get; set; }
+            public byte[] CoverBytes { get; private set; }
 
             public bool CanConvert(string[] inputFiles) => true;
 
@@ -277,6 +279,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 LastInputFiles = inputFiles;
                 LastOutputFile = outputFile;
                 LastOptions = options;
+                BeforeConvert?.Invoke();
+                CoverBytes = options?.TagOptions?.Cover != null ? File.ReadAllBytes(options.TagOptions.Cover) : null;
                 return new ConversionResult
                 {
                     Success = false,
@@ -543,12 +547,17 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         private sealed class StubCoverMapper : IMapCoversToLocal
         {
-            public (bool Ready, byte[] Data) ReadLocalBookCover(Edition edition) =>
-                System.IO.File.Exists(CoverPath) ? (true, System.IO.File.ReadAllBytes(CoverPath)) : (false, null);
+            public bool CoverReady { get; set; } = true;
+            public byte[] ReadCoverBytes { get; private set; }
+            public (bool Ready, byte[] Data) ReadLocalBookCover(Edition edition)
+            {
+                ReadCoverBytes = File.Exists(CoverPath) ? File.ReadAllBytes(CoverPath) : null;
+                return (CoverReady && EnsureBookCoversCalls > 0 && ReadCoverBytes != null, ReadCoverBytes);
+            }
 
             public void EnsureBookCoversForBooks(List<Book> books, bool forceDownload = false) => throw new NotImplementedException();
             public void EnsureBookCoversForImport(Book book) => EnsureBookCovers(book);
-            public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers, IReadOnlyDictionary<int, string> editionIds = null)
+            public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers)
             {
                 foreach (var book in covers)
                 {
@@ -939,7 +948,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     ImportApprovedBooks CreateService() => new ImportApprovedBooks(media, new StubMetadataTagService(), new StubMediaInfoExtractor(),
                         authorService, bookService, editionService,
                         recycle, Proxy<IExtraService>(), mover, history,
-                        Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events,
+                        Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                         Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
                         Proxy<IQualityProfileService>(), Proxy<IM4bConversionService>(), logger, customFormatCalculationService: customFormats);
                     ImportDecision<LocalBook> Decision(string path, bool manual) => new(new LocalBook
@@ -1214,7 +1223,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         DestinationForFile = local => parts == 1 ? destinationPath : Path.Combine(tempDir, "out", Path.GetFileName(local.Path)) },
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -1430,7 +1439,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 new StubMoveBookFiles(),
                 Proxy<IHistoryService>(),
                 Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                new NoOpEventAggregator(),
+                new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 Proxy<IManageCommandQueue>(),
                 Proxy<ISeriesBookLinkService>(),
                 Proxy<ISeriesService>(),
@@ -1539,7 +1548,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var service = new ImportApprovedBooks(media, new StubMetadataTagService(), Proxy<IMediaInfoExtractor>(),
                     Proxy<IAuthorService>(), Proxy<IBookService>(), CreateEditionService(new List<Edition> { edition, siblingEdition }),
                     new StubRecycleBinProvider(), Proxy<IExtraService>(), mover, Proxy<IHistoryService>(),
-                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), new NoOpEventAggregator(),
+                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(), converter, LogManager.GetCurrentClassLogger(), conversionJobService: jobs);
                 var local = new LocalBook { Path = source, Author = author, Book = book, Edition = edition,
@@ -1671,7 +1680,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var service = new ImportApprovedBooks(media, new StubMetadataTagService(), new StubMediaInfoExtractor(),
                         authorService, bookService, editionService,
                         recycle, Proxy<IExtraService>(), mover, Proxy<IHistoryService>(),
-                        Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events,
+                        Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                         Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
                         Proxy<IQualityProfileService>(), Proxy<IM4bConversionService>(), logger);
                     var local = new LocalBook { Path = source, Author = author, Book = book, Edition = edition,
@@ -1821,7 +1830,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 	                    mover,
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -1978,7 +1987,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     mover,
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -2110,7 +2119,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 mover,
                 Proxy<IHistoryService>(),
                 Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                new NoOpEventAggregator(),
+                new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 Proxy<IManageCommandQueue>(),
                 Proxy<ISeriesBookLinkService>(),
                 Proxy<ISeriesService>(),
@@ -2184,7 +2193,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         mover,
                         Proxy<IHistoryService>(),
                         Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                        new NoOpEventAggregator(),
+                        new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                         Proxy<IManageCommandQueue>(),
                         Proxy<ISeriesBookLinkService>(),
                         Proxy<ISeriesService>(),
@@ -2274,7 +2283,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     mover,
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -2396,7 +2405,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     mover,
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -2489,7 +2498,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     new StubMoveBookFiles { DestinationPath = destinationPath },
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -2617,7 +2626,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     mover,
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -2698,7 +2707,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     mover,
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -2784,7 +2793,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     mover,
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -2869,7 +2878,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     mover,
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -2960,7 +2969,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     mover,
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -3049,7 +3058,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     new StubMoveBookFiles { DestinationPath = destinationPath },
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -3097,8 +3106,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
-        [Test]
-        public void should_pass_matched_book_cover_as_conversion_fallback()
+        [TestCase(true)]
+        [TestCase(false)]
+        public void conversion_uses_only_verified_artwork_and_keeps_its_own_snapshot(bool ready)
         {
             var tempDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-cover-{Guid.NewGuid():N}");
             var destinationDir = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"conversion-destination-{Guid.NewGuid():N}");
@@ -3114,7 +3124,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             var sourcePath = Path.Combine(sourceDir, "Black Sheep.mp3");
             var coverPath = Path.Combine(cacheDir, "cover.jpg");
             File.WriteAllText(sourcePath, "fake mp3");
-            File.WriteAllText(coverPath, "fake cover");
+            var coverBytes = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLttAAAAABJRU5ErkJggg==");
+            File.WriteAllBytes(coverPath, coverBytes);
 
             try
             {
@@ -3125,8 +3136,11 @@ namespace Chaptarr.Core.Test.MediaFiles
                 };
                 book.Editions = new List<Edition> { edition };
 
-                var coverMapper = new StubCoverMapper { CoverPath = coverPath };
-                var conversion = new FailingM4bConversionService();
+                var coverMapper = new StubCoverMapper { CoverPath = coverPath, CoverReady = ready };
+                var conversion = new FailingM4bConversionService
+                {
+                    BeforeConvert = () => File.WriteAllText(coverPath, "another edition replaced the cache")
+                };
                 var service = new ImportApprovedBooks(
                     new StubMediaFileService(),
                     new StubMetadataTagService(),
@@ -3139,7 +3153,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     new StubMoveBookFiles { DestinationPath = destinationPath },
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -3167,10 +3181,20 @@ namespace Chaptarr.Core.Test.MediaFiles
                     cancellationToken: CancellationToken.None);
 
                 Assert.That(conversion.ConvertCalls, Is.EqualTo(1));
-                Assert.That(conversion.LastOptions.TagOptions.Cover, Is.EqualTo(coverPath));
-                Assert.That(conversion.LastOptions.TagOptions.CoverPolicySignature, Does.Contain("source-cover-v1"));
-                Assert.That(conversion.LastOptions.TagOptions.CoverPolicySignature, Does.Contain(coverPath));
-                Assert.That(coverMapper.EnsureBookCoversCalls, Is.EqualTo(1));
+                var tags = conversion.LastOptions.TagOptions;
+                if (ready)
+                {
+                    Assert.That(tags.Cover, Is.Not.EqualTo(coverPath));
+                    Assert.That(Path.GetDirectoryName(tags.Cover), Is.EqualTo(conversion.LastOptions.TempDirectory));
+                    Assert.That(conversion.CoverBytes, Is.EqualTo(coverBytes));
+                    Assert.That(tags.MatchedCoverContentHash, Is.EqualTo(MediaCoverRendition.ComputeContentSha256(coverBytes)));
+                    var method = typeof(ImportApprovedBooks).GetMethod("GetConversionTagSignature", BindingFlags.NonPublic | BindingFlags.Static);
+                    var signature = method.Invoke(null, new object[] { tags });
+                    tags.Cover = null;
+                    Assert.That(method.Invoke(null, new object[] { tags }), Is.EqualTo(signature), "The work-folder path must not prevent reuse of the same verified artwork");
+                }
+                else Assert.That(tags.Cover, Is.Null, "A cached file is not permission to embed it");
+                Assert.That(coverMapper.EnsureBookCoversCalls, Is.EqualTo(ready ? 1 : 2), "Each import attempt can request artwork once; the verified second read needs no download");
             }
             finally
             {
@@ -3230,7 +3254,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     new StubMoveBookFiles { DestinationPath = destinationPath },
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -3325,7 +3349,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     new StubMoveBookFiles { DestinationPath = destinationPath },
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -3400,7 +3424,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     mover,
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -3446,7 +3470,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     mover,
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -3519,7 +3543,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     new StubMoveBookFiles { DestinationPath = destinationPath },
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -3597,7 +3621,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     mover,
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -3722,7 +3746,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     new StubMoveBookFiles { DestinationPath = destinationPath },
                     Proxy<IHistoryService>(),
                     Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(),
                     Proxy<ISeriesService>(),
@@ -3902,7 +3926,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var importer = new ImportApprovedBooks(mediaFiles, new StubMetadataTagService(), new StubMediaInfoExtractor(), Proxy<IAuthorService>(),
                         bookService, importEditions, Proxy<IRecycleBinProvider>(), Proxy<IExtraService>(),
                         new StubMoveBookFiles { DestinationPath = destination, TransferFilesOnDisk = true }, history,
-                        Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>((method, args) => null), eventWriter,
+                        Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>((method, args) => null), eventWriter, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                         Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(), Proxy<IQualityProfileService>(), Proxy<IM4bConversionService>(), logger);
                     var result = importer.Import(new List<ImportDecision<LocalBook>> { decision }, false, client, ImportMode.Copy);
                     Assert.That(result.Single().Result, Is.EqualTo(ImportResultType.Imported));

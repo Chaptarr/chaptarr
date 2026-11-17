@@ -77,7 +77,7 @@ namespace Chaptarr.Core.Test.Books
             };
             var queue = new RecordingCommandQueue();
             var events = new RecordingEventAggregator();
-            var handler = new ProcessPendingImportsCommandHandler(pendingService, library, books, info, queue, events, LogManager.GetCurrentClassLogger());
+            var handler = new ProcessPendingImportsCommandHandler(pendingService, library, books, info, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  queue, events, LogManager.GetCurrentClassLogger());
             handler.Execute(new ProcessPendingImportsCommand());
             Assert.That(imports.ProviderIds, Is.EqualTo(new[] { source.HardcoverAuthorId }));
             Assert.That(pendingService.QueuedRequests.Single().ProviderId, Is.EqualTo(selected.HardcoverAuthorId));
@@ -168,7 +168,7 @@ namespace Chaptarr.Core.Test.Books
                 return method.Invoke(books, args);
             });
             var queue = new RecordingCommandQueue();
-            var handler = new ProcessPendingImportsCommandHandler(pendingService, library, observedBooks, info, queue, new RecordingEventAggregator(), LogManager.GetCurrentClassLogger());
+            var handler = new ProcessPendingImportsCommandHandler(pendingService, library, observedBooks, info, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  queue, new RecordingEventAggregator(), LogManager.GetCurrentClassLogger());
             handler.Execute(new ProcessPendingImportsCommand());
             while (pendingService.DueResponses.Count > 0) handler.Execute(new ProcessPendingImportsCommand());
             Assert.That(queue.Pushed.OfType<BookSearchCommand>().SelectMany(command => command.BookIds), Is.EqualTo(new[] { local.Id }));

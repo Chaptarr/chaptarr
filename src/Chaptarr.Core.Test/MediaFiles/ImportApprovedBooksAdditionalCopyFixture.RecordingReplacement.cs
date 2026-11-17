@@ -74,7 +74,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var stored = (BookFile)args[0]; storedSizes.Add(stored.Size);
                     return calculator.ParseCustomFormat(stored);
                 });
-                var service = new ImportApprovedBooks(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                var service = new ImportApprovedBooks(null, null, null, null, null, null, null, null, null, null, null, null, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  null, null, null, null, null,
                     logger, configService: CreateConfigService(), diskProvider: InterfaceProxy.Proxy<IDiskProvider>((_, _) => true),
                     customFormatCalculationService: formats);
                 var method = typeof(ImportApprovedBooks).GetMethod("CheckReplacement", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -172,7 +172,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Assert.That(method.Name, Is.EqualTo(nameof(IDiskProvider.FileExists)));
                 return true;
             });
-            var service = new ImportApprovedBooks(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+            var service = new ImportApprovedBooks(null, null, null, null, null, null, null, null, null, null, null, null, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  null, null, null, null, null,
                 LogManager.GetCurrentClassLogger(), configService: CreateConfigService(), diskProvider: disk, customFormatCalculationService: formats);
             var method = typeof(ImportApprovedBooks).GetMethod("CheckReplacement", BindingFlags.Instance | BindingFlags.NonPublic);
             var result = ((ImportResultType Result, string Reason))method.Invoke(service,

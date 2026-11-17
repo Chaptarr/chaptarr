@@ -149,7 +149,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var service = new ImportApprovedBooks(media, new StubMetadataTagService(), new StubMediaInfoExtractor(),
                         Proxy<IAuthorService>(), bookService, CreateEditionService(book.Editions), new StubRecycleBinProvider(),
                         Proxy<IExtraService>(), mover, Proxy<IHistoryService>(), Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                        events, Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
+                        events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
                         Proxy<IQualityProfileService>(), converter, logger,
                         diskProvider: checkedDisk, configService: CreateConfigService(),
                         conversionJobService: scenario == "before-conversion" ? CreateConversionJobs(converter, media: media) : null);

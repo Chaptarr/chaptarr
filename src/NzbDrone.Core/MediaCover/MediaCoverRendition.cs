@@ -310,11 +310,7 @@ namespace NzbDrone.Core.MediaCover
 
         public static IReadOnlyList<BookCoverSelection> SelectMonitoredBookCovers(Book book)
         {
-            var monitoredEdition = book?.Editions?
-                .Where(edition => edition != null && edition.Monitored)
-                .OrderBy(edition => edition.Id)
-                .FirstOrDefault();
-            return SelectMonitoredEditionCovers(monitoredEdition);
+            return SelectMonitoredEditionCovers(BookEditionIdentity.GetMonitoredEdition(book));
         }
 
         public static IReadOnlyList<BookCoverSelection> SelectMonitoredEditionCovers(Edition edition)

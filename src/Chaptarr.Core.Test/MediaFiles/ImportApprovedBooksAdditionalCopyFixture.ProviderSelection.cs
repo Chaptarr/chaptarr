@@ -168,7 +168,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var importer = new ImportApprovedBooks(media, new StubMetadataTagService(), new StubMediaInfoExtractor(),
                         authorService, books, editions, new StubRecycleBinProvider(), Proxy<IExtraService>(),
                         new StubMoveBookFiles { DestinationPath = destination, TransferFilesOnDisk = true },
-                        history, Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, queue,
+                        history, Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  queue,
                         new SeriesBookLinkService(new SeriesBookLinkRepository(database, events)), Proxy<ISeriesService>(), null, Proxy<IM4bConversionService>(), logger);
                     var dependencies = new Dictionary<Type, object>
                     {

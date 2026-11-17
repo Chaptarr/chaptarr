@@ -33,7 +33,7 @@ namespace NzbDrone.Core.MediaCover
         void EnsureBookCoversForImport(Book book);
         void RepairBookCovers() => throw new NotSupportedException();
         bool AuthorCoverMatchesRemoteUrl(int authorId, MediaCoverTypes coverType, string remoteUrl, out bool unreadable) => throw new NotSupportedException();
-        void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<MediaCover>>> covers, IReadOnlyDictionary<int, string> editionIds = null);
+        void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<MediaCover>>> covers);
         void DeleteBookCovers(int bookId);
         Task<EnsureImageResult> EnsureAuthorImage(Author author, MediaCover cover);
     }
@@ -70,6 +70,7 @@ namespace NzbDrone.Core.MediaCover
         private readonly ConcurrentDictionary<int, byte> _inFlightAuthorCovers = new();
         private readonly ConcurrentDictionary<string, (int BookId, string Path)> _bookCoverUrlToPath = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<int, BookCoverMetadata> _bookCoverMetadataByBookId = new();
+        private readonly ConcurrentDictionary<int, byte> _unreadableBookFingerprints = new();
         private readonly ConcurrentDictionary<string, string> _authorCoverUrlByAuthorAndType = new(StringComparer.OrdinalIgnoreCase);
 
         public MediaCoverService(IMediaCoverProxy mediaCoverProxy,
@@ -107,25 +108,24 @@ namespace NzbDrone.Core.MediaCover
             return MediaCoverUrlSafetyPolicy.TryGetSafeImageUrl(url, _configService, out safeUrl, out reason);
         }
 
-        private HttpResponse GetBookImageResponse(int bookId, string url, out (string Origin, bool Attempted)? retry)
+        private HttpResponse GetImageResponse(string url, out (string Origin, bool Attempted)? retry)
         {
             retry = null;
             if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
             {
-                _logger.Debug("Skipping invalid book cover URL for book {0}: {1}", bookId, url);
-                return null;
+                throw MediaCoverUrlSafetyPolicy.BlockedUrl(url, "invalid_url");
             }
             var key = "image:" + uri.GetLeftPart(UriPartial.Authority).ToLowerInvariant();
             var label = "Cover host " + uri.Host;
             if (!_imageHostHealth.TryBeginRequest(key, out var retryAfter, label))
             {
                 retry = (key, false);
-                _logger.Debug("Skipping cover host {0} for book {1}; retry after {2}", uri.Host, bookId, retryAfter);
+                _logger.Debug("Skipping cover host {0}; retry after {1}", uri.Host, retryAfter);
                 return null;
             }
             try
             {
-                var response = GetImageResponse(url);
+                var response = MediaCoverHttpRequest.Get(_httpClient, _configService, url);
                 var result = _imageHostHealth.ReportResult(key, response: response, label: label);
                 if (!NzbDrone.Core.Http.HttpServiceHealth.OpensBackoff(result)) return response;
                 retry = (key, true);
@@ -146,11 +146,6 @@ namespace NzbDrone.Core.MediaCover
                 }
                 throw;
             }
-        }
-
-        private HttpResponse GetImageResponse(string url)
-        {
-            return MediaCoverHttpRequest.Get(_httpClient, _configService, url);
         }
 
         public string GetCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCoverTypes coverType, string extension, int? height = null)
@@ -176,17 +171,15 @@ namespace NzbDrone.Core.MediaCover
                 // The file already carries its edition. The receipt proves ownership of
                 // stored pixels; do not load the book's entire edition list to read them.
                 var candidates = MediaCoverRendition.SelectMonitoredEditionCovers(edition);
-                var before = TryReadBookCoverMetadata(edition.BookId);
-                var selected = before?.SelectedEdition;
-                if (selected != null && !BookEditionIdentity.GetEditionProviderIds(edition)
-                    .Contains(selected.EditionProviderId, StringComparer.OrdinalIgnoreCase)) return (false, null);
                 if (candidates.Count == 0)
                     return (edition.Images != null && !edition.Images.Any(cover => cover?.CoverType == MediaCoverTypes.Cover && MediaCoverRendition.HasImageUrl(cover)), null);
-                if (selected == null) return (false, null);
                 foreach (var candidate in candidates)
                 {
                     var cover = candidate.Cover;
-                    if (!BookCoverMatchesRemoteUrl(edition.BookId, cover.Url)) continue;
+                    // Display uses the stored cover. Writing into a user file requires
+                    // the current URL; verify the bytes already read, including legacy receipts.
+                    var stored = FindStoredBookCover(edition.BookId, cover.Url);
+                    if (stored == null) continue;
                     var path = GetCoverPath(edition.BookId, MediaCoverEntity.Book, cover.CoverType, cover.Extension);
                     if (!MediaCoverRendition.IsUsable(path, _diskProvider)) continue;
                     using var input = _diskProvider.OpenReadStream(path);
@@ -195,8 +188,10 @@ namespace NzbDrone.Core.MediaCover
                     // Do not reserve the writer's slot. Recheck its receipt so a completed
                     // edition switch during the read cannot attach the other edition's art.
                     if (_inFlightBookCovers.ContainsKey(edition.BookId) ||
-                        !ReferenceEquals(before, TryReadBookCoverMetadata(edition.BookId))) return (false, null);
-                    return (true, output.ToArray());
+                        !ReferenceEquals(stored, TryReadBookCoverMetadata(edition.BookId)?.SelectedEdition)) return (false, null);
+                    var bytes = output.ToArray();
+                    return MediaCoverRendition.IsKnownPlaceholderImageHash(MediaCoverRendition.ComputeContentSha256(bytes))
+                        ? (false, null) : (true, bytes);
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -206,7 +201,7 @@ namespace NzbDrone.Core.MediaCover
             return (false, null);
         }
 
-        public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<MediaCover>>> covers, IReadOnlyDictionary<int, string> editionIds = null)
+        public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<MediaCover>>> covers)
         {
             var books = covers.ToList();
             var eligible = LibraryCoversOnly
@@ -216,7 +211,7 @@ namespace NzbDrone.Core.MediaCover
             foreach (var book in books)
             {
                 ConvertToLocalUrls(book.Key, MediaCoverEntity.Book, book.Value, null,
-                    eligible == null || eligible.Contains(book.Key), editionIds?.GetValueOrDefault(book.Key));
+                    eligible == null || eligible.Contains(book.Key));
             }
         }
 
@@ -229,7 +224,7 @@ namespace NzbDrone.Core.MediaCover
             ConvertToLocalUrls(entityId, coverEntity, covers, selectedAuthorImageHash, eligible);
         }
 
-        private void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<MediaCover> covers, string selectedAuthorImageHash, bool cacheBookCover, string editionId = null)
+        private void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<MediaCover> covers, string selectedAuthorImageHash, bool cacheBookCover)
         {
             var coverList = covers?.Where(cover => cover != null).ToList() ?? new List<MediaCover>();
 
@@ -299,12 +294,9 @@ namespace NzbDrone.Core.MediaCover
                 }
                 else if (coverEntity == MediaCoverEntity.Book)
                 {
-                    var stored = TryReadBookCoverMetadata(entityId)?.SelectedEdition;
-                    var sameEdition = !string.IsNullOrWhiteSpace(editionId) &&
-                        string.Equals(stored?.EditionProviderId, editionId, StringComparison.OrdinalIgnoreCase);
-                    var sameUrlWithoutIdentity = string.IsNullOrWhiteSpace(editionId) && BookCoverMatchesRemoteUrl(entityId, remoteUrl);
-                    if (stored != null && (sameEdition || sameUrlWithoutIdentity) &&
-                        !MediaCoverRendition.IsKnownPlaceholderImageHash(stored.ContentHash))
+                    var stored = mediaCover.CoverType == MediaCoverTypes.Cover
+                        ? TryReadBookCoverMetadata(entityId)?.SelectedEdition : null;
+                    if (stored != null && !MediaCoverRendition.IsKnownPlaceholderImageHash(stored.ContentHash))
                     {
                         var storedCover = new MediaCover(mediaCover.CoverType, stored.CoverUrl);
                         filePath = GetDeterministicLocalCoverPath(entityId, coverEntity, storedCover);
@@ -774,13 +766,14 @@ namespace NzbDrone.Core.MediaCover
                     }
                 }
 
-                byte[] imageData;
+                byte[] imageData = null;
+                var failureCode = "download_failed";
                 string contentType = null;
                 string cachedCoverPath = null;
 
                 try
                 {
-                    var response = GetImageResponse(cover.Url);
+                    var response = GetImageResponse(cover.Url, out _);
                     imageData = response?.ResponseData;
                     contentType = response?.Headers?.ContentType;
                 }
@@ -796,6 +789,11 @@ namespace NzbDrone.Core.MediaCover
                         _logger.Warn(ex, "On-demand author image download failed for {0} from URL: {1}", author.Name, cover.Url);
                     }
 
+                    failureCode = unsafeTarget ? "unsafe_url" : "download_failed";
+                }
+
+                if (imageData == null)
+                {
                     // Keep a URL-keyed fallback even if the canonical photo has since changed.
                     cachedCoverPath = MediaCoverRendition.IsUsable(variantPath, _diskProvider) ? variantPath : null;
                     if (cachedCoverPath == null && AuthorCoverMatchesRemoteUrl(author.Id, cover.CoverType, cover.Url))
@@ -809,7 +807,7 @@ namespace NzbDrone.Core.MediaCover
 
                     if (cachedCoverPath == null)
                     {
-                        return new EnsureImageResult { State = "error", ErrorCode = unsafeTarget ? "unsafe_url" : "download_failed" };
+                        return new EnsureImageResult { State = "error", ErrorCode = failureCode };
                     }
 
                     using var cachedStream = _diskProvider.OpenReadStream(cachedCoverPath);
@@ -933,26 +931,46 @@ namespace NzbDrone.Core.MediaCover
             var timer = Stopwatch.StartNew();
             HashSet<int> eligible = null;
             var skipped = 0;
-            foreach (var book in candidates)
+            var failed = 0;
+            try
             {
-                var libraryOnly = LibraryCoversOnly;
-                if (libraryOnly && eligible == null)
+                foreach (var book in candidates)
                 {
-                    eligible = _bookService.GetLibraryBookIds(candidates.Select(candidate => candidate.Id)).ToHashSet();
-                }
+                    var libraryOnly = LibraryCoversOnly;
+                    if (libraryOnly && eligible == null)
+                    {
+                        eligible = _bookService.GetLibraryBookIds(candidates.Select(candidate => candidate.Id)).ToHashSet();
+                    }
 
-                var keep = !libraryOnly || eligible.Contains(book.Id);
-                if (!keep)
-                {
-                    skipped++;
-                    continue;
-                }
+                    var keep = !libraryOnly || eligible.Contains(book.Id);
+                    if (!keep)
+                    {
+                        skipped++;
+                        continue;
+                    }
 
-                EnsureBookCovers(book, eligible: true, forImport: false, forceDownload);
+                    try
+                    {
+                        EnsureBookCovers(book, eligible: true, forImport: false, forceDownload);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        failed++;
+                        _deferredCoverService.RequeueBooksForCoverDownload(new[] { book.Id });
+                        _logger.Warn(ex, "Unable to process cover for book {0}; retained for retry", book.Id);
+                    }
+                }
             }
-
-            _logger.Debug("Book-cover batch: {0} considered, {1} eligible, {2} skipped in {3} ms",
-                candidates.Count, candidates.Count - skipped, skipped, timer.ElapsedMilliseconds);
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _deferredCoverService.RequeueBooksForCoverDownload(candidates.Select(candidate => candidate.Id));
+                throw;
+            }
+            finally
+            {
+                _logger.Debug("Book-cover batch: {0} candidates, {1} book errors, {2} skipped in {3} ms",
+                    candidates.Count, failed, skipped, timer.ElapsedMilliseconds);
+            }
         }
 
         public void RepairBookCovers()
@@ -973,9 +991,10 @@ namespace NzbDrone.Core.MediaCover
 
             var candidates = 0;
             var repaired = 0;
-            var incomplete = 0;
+            var incomplete = new HashSet<int>();
             var unreadableCount = 0;
-            foreach (var page in ids.Chunk(250))
+            var unknownEditionCount = 0;
+            foreach (var page in ids.Chunk(DeferredCoverService.BookBatchSize))
             {
                 if (RepairDeferredByImport()) return;
                 try
@@ -988,13 +1007,13 @@ namespace NzbDrone.Core.MediaCover
                     {
                         try
                         {
-                            var needsRepair = NeedsBookCoverRepair(book, out var unreadable);
+                            var needsRepair = NeedsBookCoverRepair(book, out var unreadable, out _);
                             if (unreadable) unreadableCount++;
                             if (needsRepair == true) missing.Add(book);
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException)
                         {
-                            incomplete++;
+                            incomplete.Add(book.Id);
                             _logger.Warn(ex, "Book cover repair could not inspect book {0}; continuing with the remaining books", book.Id);
                         }
                     }
@@ -1003,30 +1022,40 @@ namespace NzbDrone.Core.MediaCover
                     EnsureBookCoversForBooks(missing);
                     foreach (var book in missing)
                     {
-                        if (NeedsBookCoverRepair(book, out _, logUnreadable: false) == false) repaired++;
-                        else incomplete++;
+                        try
+                        {
+                            if (NeedsBookCoverRepair(book, out _, out var unknownEdition, logUnreadable: false) == false) repaired++;
+                            else incomplete.Add(book.Id);
+                            if (unknownEdition) unknownEditionCount++;
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            incomplete.Add(book.Id);
+                            _logger.Warn(ex, "Book cover repair could not verify book {0}; continuing with the remaining books", book.Id);
+                        }
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    incomplete += page.Length;
+                    incomplete.UnionWith(page);
                     _logger.Warn(ex, "Book cover repair failed for a page of {0} books; continuing with the next page", page.Length);
                 }
             }
-            _logger.Info("[BOOK-COVER-REPAIR] {0} checked, {1} candidates, {2} repaired, {3} incomplete, {4} unreadable in {5} ms",
-                ids.Count, candidates, repaired, incomplete, unreadableCount, timer.ElapsedMilliseconds);
+            _logger.Info("[BOOK-COVER-REPAIR] {0} checked, {1} candidates, {2} repaired, {3} incomplete, {4} unreadable, {5} retained with unknown edition in {6} ms",
+                ids.Count, candidates, repaired, incomplete.Count, unreadableCount, unknownEditionCount, timer.ElapsedMilliseconds);
         }
 
         private bool RepairDeferredByImport()
         {
-            if (!_deferredCoverService.IsCoverDownloadDeferred) return false;
-            _logger.Info("Book cover repair paused: import running; the next run retries");
+            if (!_deferredCoverService.DeferRepairIfImporting()) return false;
+            _logger.Info("Book cover repair paused: import running; repair resumes after the import");
             return true;
         }
 
-        private bool? NeedsBookCoverRepair(Book book, out bool unreadable, bool logUnreadable = true)
+        private bool? NeedsBookCoverRepair(Book book, out bool unreadable, out bool unknownEdition, bool logUnreadable = true)
         {
             unreadable = false;
+            unknownEdition = false;
             var candidates = MediaCoverRendition.SelectMonitoredBookCovers(book);
             if (candidates.Count == 0) return null;
             TryReadBookCoverMetadata(book.Id, out unreadable);
@@ -1035,8 +1064,19 @@ namespace NzbDrone.Core.MediaCover
                 if (logUnreadable) _logger.Warn("Cannot read the cover receipt for book {0} ({1}); keeping its cover", book.Title, book.Id);
                 return null;
             }
-            var contentHash = StoredBookContentHash(book.Id);
-            return !candidates.Any(candidate => HasCompleteBookCover(book.Id, candidate.Cover, contentHash));
+            if (!_inFlightBookCovers.TryAdd(book.Id, 0)) return null;
+            try
+            {
+                var contentHash = StoredBookContentHash(book.Id, BookEditionIdentity.GetMonitoredEdition(book));
+                var complete = candidates.Any(candidate => HasCompleteBookCover(book.Id, candidate.Cover, contentHash));
+                unknownEdition = !complete && contentHash != null &&
+                    !MediaCoverRendition.IsKnownPlaceholderImageHash(contentHash) && StoredBookEditionMatches(book) == null;
+                return !complete;
+            }
+            finally
+            {
+                _inFlightBookCovers.TryRemove(book.Id, out _);
+            }
         }
 
         private void EnsureBookCovers(Book book, bool eligible, bool forImport, bool forceDownload = false)
@@ -1048,16 +1088,12 @@ namespace NzbDrone.Core.MediaCover
 
             // Queue non-forced requests before testing the gate: an active older download
             // does not fulfill a monitored-edition change made during an import.
-            if (!forceDownload && !forImport && _deferredCoverService.MarkBookForCoverDownload(book.Id))
-            {
-                _logger.Debug("Cover download deferred for book {0}: {1}", book.Id, book.Title);
-                return;
-            }
+            var deferred = !forceDownload && !forImport && _deferredCoverService.MarkBookForCoverDownload(book.Id);
 
             // Avoid duplicate in-flight downloads for the same book (can be triggered by multiple events/UI requests).
             if (!_inFlightBookCovers.TryAdd(book.Id, 0))
             {
-                _deferredCoverService.RequeueBooksForCoverDownload(new[] { book.Id });
+                if (!deferred) _deferredCoverService.RequeueBooksForCoverDownload(new[] { book.Id });
                 _logger.Debug("Book cover download already in-flight for book {0}: {1}", book.Id, book.Title);
                 return;
             }
@@ -1076,6 +1112,13 @@ namespace NzbDrone.Core.MediaCover
                 if (unreadable)
                 {
                     _logger.Warn("Cannot read the cover receipt for book {0} ({1}); keeping its cover", book.Title, book.Id);
+                    return;
+                }
+
+                if (deferred)
+                {
+                    RemoveBookCoverArtifactsForProvenEditionChange(book);
+                    _logger.Debug("Cover download deferred for book {0}: {1}", book.Id, book.Title);
                     return;
                 }
 
@@ -1129,8 +1172,8 @@ namespace NzbDrone.Core.MediaCover
                     }
                     catch (Exception e) when (e is IOException or UnauthorizedAccessException)
                     {
-                        _logger.Warn(e, "Unable to publish book cover for {0}; keeping the previous sizes", book);
-                        return;
+                        _logger.Warn(e, "Unable to publish book cover for {0}", book);
+                        break;
                     }
                     catch (Exception e)
                     {
@@ -1155,29 +1198,62 @@ namespace NzbDrone.Core.MediaCover
         }
 
         private bool HasCompleteBookCover(int bookId, MediaCover cover, string contentHash) =>
-            BookCoverMatchesRemoteUrl(bookId, cover.Url) && !MediaCoverRendition.IsKnownPlaceholderImageHash(contentHash) &&
+            FindStoredBookCover(bookId, cover.Url) != null && !MediaCoverRendition.IsKnownPlaceholderImageHash(contentHash) &&
             MediaCoverRendition.HasAllRenditions(height => GetCoverPath(bookId, MediaCoverEntity.Book,
                 cover.CoverType, cover.Extension, height), _diskProvider, cover.CoverType);
 
-        private string StoredBookContentHash(int bookId)
+        private string StoredBookContentHash(int bookId, Edition currentEdition = null)
         {
-            var stored = TryReadBookCoverMetadata(bookId)?.SelectedEdition;
+            var metadata = TryReadBookCoverMetadata(bookId);
+            var stored = metadata?.SelectedEdition;
+            if (stored == null) return null;
+            var hash = stored.ContentHash;
+            var providerId = stored.EditionProviderId;
+            var providerIds = stored.EditionProviderIds;
             var originalPath = GetCoverPath(bookId, MediaCoverEntity.Book, MediaCoverTypes.Cover,
-                new MediaCover(MediaCoverTypes.Cover, stored?.CoverUrl).Extension);
-            if (stored != null && string.IsNullOrWhiteSpace(stored.ContentHash) && MediaCoverRendition.IsUsable(originalPath, _diskProvider))
+                new MediaCover(MediaCoverTypes.Cover, stored.CoverUrl).Extension);
+            try
             {
-                // Cache the legacy original's verdict for repair and write decisions,
-                // never hash an image while serving it or rewrite its receipt for this.
-                using var stream = _diskProvider.OpenReadStream(originalPath);
-                stored.ContentHash = MediaCoverRendition.ComputeContentSha256(stream);
+                if (string.IsNullOrWhiteSpace(hash) && MediaCoverRendition.IsUsable(originalPath, _diskProvider))
+                {
+                    using var stream = _diskProvider.OpenReadStream(originalPath);
+                    hash = MediaCoverRendition.ComputeContentSha256(stream);
+                }
             }
-            return stored?.ContentHash;
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // An optional legacy fingerprint is not a failed cover job. Keep it unknown;
+                // a later refresh can inspect it again after permissions or access recover.
+                if (_unreadableBookFingerprints.TryAdd(bookId, 0))
+                    _logger.Warn("Unable to read cover fingerprint for book {0} at {1}: {2}", bookId, originalPath, ex.Message);
+                return hash;
+            }
+            if (providerIds == null &&
+                MediaCoverRendition.SelectMonitoredEditionCovers(currentEdition).Any(candidate =>
+                    MediaCoverRendition.RemoteUrlsMatch(stored.CoverUrl, candidate.Cover.Url)))
+            {
+                providerIds = BookEditionIdentity.GetEditionProviderIds(currentEdition);
+                providerId = BookEditionIdentity.GetTrustedForeignEditionId(currentEdition);
+            }
+            if (hash == stored.ContentHash && ReferenceEquals(providerIds, stored.EditionProviderIds)) return hash;
+
+            // Called while holding the book's writer slot. Upgrade legacy receipts once,
+            // retaining the image's version; never hash or write from a display request.
+            var updated = metadata with { SelectedEdition = stored with { ContentHash = hash, EditionProviderId = providerId, EditionProviderIds = providerIds } };
+            try
+            {
+                WriteBookCoverMetadata(bookId, updated);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.Warn(ex, "Unable to save the cover fingerprint for book {0}; the next inspection retries", bookId);
+            }
+            return hash;
         }
 
         private bool CanKeepBookCover(int bookId, MediaCover cover)
         {
-            if (!BookCoverMatchesRemoteUrl(bookId, cover.Url)) return false;
-            var original = GetCoverPath(bookId, MediaCoverEntity.Book, cover.CoverType, cover.Extension);
+            if (FindStoredBookCover(bookId, cover.Url) == null) return false;
             if (MediaCoverRendition.IsKnownPlaceholderImageHash(StoredBookContentHash(bookId)) ||
                 MediaCoverRendition.FindExistingPath(height => GetCoverPath(bookId, MediaCoverEntity.Book, cover.CoverType, cover.Extension, height),
                     _diskProvider, cover.CoverType) == null) return false;
@@ -1190,8 +1266,8 @@ namespace NzbDrone.Core.MediaCover
             retry = null;
             var cover = selection.Cover;
             var fileName = GetCoverPath(book.Id, MediaCoverEntity.Book, cover.CoverType, cover.Extension, null);
-            var selectedUrlAlreadyStored = BookCoverMatchesRemoteUrl(book.Id, cover.Url);
-            var contentHash = StoredBookContentHash(book.Id);
+            var selectedUrlAlreadyStored = FindStoredBookCover(book.Id, cover.Url) != null;
+            var contentHash = StoredBookContentHash(book.Id, BookEditionIdentity.GetMonitoredEdition(book));
 
             if (!forceDownload && HasCompleteBookCover(book.Id, cover, contentHash))
             {
@@ -1210,7 +1286,7 @@ namespace NzbDrone.Core.MediaCover
                 else
                 {
                     var downloaded = DownloadBookCover(book, cover, out retry);
-                    if (retry.HasValue) return false;
+                    if (retry.HasValue || (downloaded.Hash == null && !downloaded.Placeholder)) return false;
                     contentHash = downloaded.Hash;
                     if (downloaded.Placeholder)
                     {
@@ -1246,18 +1322,23 @@ namespace NzbDrone.Core.MediaCover
             return true;
         }
 
-	        private sealed class BookCoverMetadata
-	        {
-	            public BookCoverMetadataSelectedEdition SelectedEdition { get; set; }
-	        }
+        private sealed record BookCoverMetadata
+        {
+            public int BookId { get; set; }
+            public string BookTitle { get; set; }
+            public BookCoverMetadataSelectedEdition SelectedEdition { get; set; }
+        }
 
-	        private sealed class BookCoverMetadataSelectedEdition
-	        {
-	            public string EditionProviderId { get; set; }
-	            public string CoverUrl { get; set; }
-	            public DateTime? DownloadedAt { get; set; }
-                public string ContentHash { get; set; }
-	        }
+        private sealed record BookCoverMetadataSelectedEdition
+        {
+            public string Title { get; set; }
+            public int LocalEditionId { get; set; }
+            public string EditionProviderId { get; set; }
+            public List<string> EditionProviderIds { get; set; }
+            public string CoverUrl { get; set; }
+            public DateTime? DownloadedAt { get; set; }
+            public string ContentHash { get; set; }
+        }
 
         private (T Value, bool Readable) ReadCoverReceipt<TKey, T>(ConcurrentDictionary<TKey, T> cache, TKey key,
             Func<string> pathFactory, Func<string, T> parse, Func<T> absent) where T : class
@@ -1309,36 +1390,36 @@ namespace NzbDrone.Core.MediaCover
                 RemoveBookCoverArtifacts(book.Id);
                 return;
             }
-            var storedProviderId = stored?.EditionProviderId;
-            var monitoredEdition = BookEditionIdentity.GetMonitoredEdition(book);
-            var monitoredProviderIds = BookEditionIdentity.GetEditionProviderIds(monitoredEdition);
-
-            if (string.IsNullOrWhiteSpace(storedProviderId) ||
-                monitoredProviderIds.Count == 0 ||
-                monitoredProviderIds.Contains(storedProviderId, StringComparer.OrdinalIgnoreCase))
+            if (StoredBookEditionMatches(book) != false)
             {
                 _logger.Debug("Retaining the last usable cover for book {0} ({1}); no different monitored-edition identity was proven", book.Title, book.Id);
                 return;
             }
 
-            _logger.Debug("Removing the stale cover for book {0} ({1}); sidecar edition {2} differs from the monitored edition", book.Title, book.Id, storedProviderId);
+            _logger.Debug("Removing the stale cover for book {0} ({1}); sidecar edition {2} differs from the monitored edition", book.Title, book.Id, stored.EditionProviderId);
             RemoveBookCoverArtifacts(book.Id);
         }
 
-        private bool BookCoverMatchesRemoteUrl(int bookId, string remoteUrl)
+        private bool? StoredBookEditionMatches(Book book)
         {
-            return BookCoverMatchesRemoteUrl(bookId, remoteUrl, out _);
+            var stored = TryReadBookCoverMetadata(book.Id)?.SelectedEdition;
+            if (MediaCoverRendition.SelectMonitoredBookCovers(book).Any(candidate => FindStoredBookCover(book.Id, candidate.Cover.Url) != null))
+                return true;
+            var providerIds = BookEditionIdentity.GetEditionProviderIds(BookEditionIdentity.GetMonitoredEdition(book));
+            // Older receipts have one trusted ID; new receipts retain all known IDs.
+            var storedIds = stored?.EditionProviderIds ?? new List<string> { stored?.EditionProviderId };
+            if (!storedIds.Any(id => !string.IsNullOrWhiteSpace(id)) || providerIds.Count == 0) return null;
+            return storedIds.Intersect(providerIds, StringComparer.OrdinalIgnoreCase).Any();
         }
 
-        private bool BookCoverMatchesRemoteUrl(int bookId, string remoteUrl, out string cacheToken)
+        private BookCoverMetadataSelectedEdition FindStoredBookCover(int bookId, string currentUrl)
         {
-            var selectedEdition = TryReadBookCoverMetadata(bookId)?.SelectedEdition;
-            var storedCoverUrl = selectedEdition?.CoverUrl;
-            cacheToken = selectedEdition?.DownloadedAt?.Ticks.ToString() ?? ComputeHash(storedCoverUrl);
+            var stored = TryReadBookCoverMetadata(bookId)?.SelectedEdition;
+            if (stored == null || MediaCoverRendition.IsKnownPlaceholderImageHash(stored.ContentHash)) return null;
 
-            return !string.IsNullOrWhiteSpace(storedCoverUrl) &&
-                   !string.IsNullOrWhiteSpace(remoteUrl) &&
-                   storedCoverUrl.Equals(remoteUrl, StringComparison.OrdinalIgnoreCase);
+            var sameUrl = !string.IsNullOrWhiteSpace(currentUrl) &&
+                MediaCoverRendition.RemoteUrlsMatch(stored.CoverUrl, currentUrl);
+            return sameUrl ? stored : null;
         }
 
         public void DeleteBookCovers(int bookId)
@@ -1367,12 +1448,9 @@ namespace NzbDrone.Core.MediaCover
         {
             var fileName = GetCoverPath(author.Id, MediaCoverEntity.Author, cover.CoverType, cover.Extension);
 
-            // Ensure the directory exists before downloading
-            var directory = Path.GetDirectoryName(fileName);
-            _diskProvider.EnsureFolder(directory);
-
             _logger.Debug("Downloading {0} for {1} {2}", cover.CoverType, author, cover.Url);
-            var response = GetImageResponse(cover.Url);
+            var response = GetImageResponse(cover.Url, out _);
+            if (response == null) return (null, false);
 
             MediaCoverRendition.ValidateImageResponse(response?.ResponseData, response?.Headers?.ContentType);
 
@@ -1382,6 +1460,7 @@ namespace NzbDrone.Core.MediaCover
                 return (contentHash, true);
             }
 
+            _diskProvider.EnsureFolder(Path.GetDirectoryName(fileName));
             TryReadAuthorCoverIdentity(author.Id, cover.CoverType, out _, out var previousHash);
             PublishCoverFile(fileName, temporary => SaveImageBytes(response.ResponseData, temporary),
                 GetAuthorCoverIdentityPath(author.Id, cover.CoverType), previousHash,
@@ -1394,12 +1473,8 @@ namespace NzbDrone.Core.MediaCover
         {
             var fileName = GetCoverPath(book.Id, MediaCoverEntity.Book, cover.CoverType, cover.Extension, null);
 
-            // Ensure the directory exists before downloading
-            var directory = Path.GetDirectoryName(fileName);
-            _diskProvider.EnsureFolder(directory);
-
             _logger.Debug("Downloading {0} for {1} {2}", cover.CoverType, book, cover.Url);
-            var response = GetBookImageResponse(book.Id, cover.Url, out retry);
+            var response = GetImageResponse(cover.Url, out retry);
             if (response == null) return (null, false);
 
             MediaCoverRendition.ValidateImageResponse(response?.ResponseData, response?.Headers?.ContentType);
@@ -1410,6 +1485,7 @@ namespace NzbDrone.Core.MediaCover
                 return (contentHash, true);
             }
 
+            _diskProvider.EnsureFolder(Path.GetDirectoryName(fileName));
             PublishCoverFile(fileName, temporary => SaveImageBytes(response.ResponseData, temporary),
                 Path.Combine(GetBookCoverPath(book.Id), "cover-metadata.json"),
                 TryReadBookCoverMetadata(book.Id)?.SelectedEdition?.ContentHash,
@@ -1435,7 +1511,7 @@ namespace NzbDrone.Core.MediaCover
                 var legacy = string.IsNullOrWhiteSpace(TryReadBookCoverMetadata(cached.BookId)?.SelectedEdition?.ContentHash);
                 contentHash = StoredBookContentHash(cached.BookId);
                 if (string.IsNullOrWhiteSpace(contentHash) || MediaCoverRendition.IsKnownPlaceholderImageHash(contentHash) ||
-                    !BookCoverMatchesRemoteUrl(cached.BookId, cover.Url) || (!legacy && !OriginalMatchesIdentity(cached.Path, contentHash)))
+                    FindStoredBookCover(cached.BookId, cover.Url) == null || (!legacy && !OriginalMatchesIdentity(cached.Path, contentHash)))
                 {
                     return false;
                 }
@@ -1707,46 +1783,37 @@ namespace NzbDrone.Core.MediaCover
             DeleteBookCovers(message.Book.Id);
         }
 
+        private void WriteBookCoverMetadata(int bookId, BookCoverMetadata metadata)
+        {
+            var folder = GetBookCoverPath(bookId);
+            _diskProvider.EnsureFolder(folder);
+            var path = Path.Combine(folder, "cover-metadata.json");
+            _diskProvider.WriteFileAtomically(path, temporary => _diskProvider.WriteAllText(temporary, Json.ToJson(metadata)));
+            _bookCoverMetadataByBookId[bookId] = metadata;
+            _logger.Debug("Stored cover metadata for book {0} at {1}", bookId, path);
+        }
+
         private bool StoreEditionCoverMetadata(Book book, BookCoverSelection coverChoice, string contentHash, out string failure)
         {
             failure = "missing edition cover";
             try
             {
-                // Store the exact monitored-edition identity behind the one local cover.
-                var bookCoverPath = GetBookCoverPath(book.Id);
-                _diskProvider.EnsureFolder(bookCoverPath);
-                var metadataPath = Path.Combine(bookCoverPath, "cover-metadata.json");
-                var downloadedAt = DateTime.UtcNow;
-
-	                var metadata = new
-	                {
-	                    BookId = book.Id,
-	                    BookTitle = book.Title,
-	                    SelectedEdition = new
-	                    {
-	                        Title = coverChoice.Edition.Title,
-	                        LocalEditionId = coverChoice.Edition.Id,
-	                        EditionProviderId = BookEditionIdentity.GetTrustedForeignEditionId(coverChoice.Edition),
-	                        CoverUrl = coverChoice.Cover.Url,
-	                        DownloadedAt = downloadedAt,
-                        ContentHash = contentHash
-	                    }
-	                };
-
-                var metadataJson = Json.ToJson(metadata);
-                _diskProvider.WriteAllText(metadataPath, metadataJson);
-                _bookCoverMetadataByBookId[book.Id] = new BookCoverMetadata
+                WriteBookCoverMetadata(book.Id, new BookCoverMetadata
                 {
+                    BookId = book.Id,
+                    BookTitle = book.Title,
                     SelectedEdition = new BookCoverMetadataSelectedEdition
                     {
+                        Title = coverChoice.Edition.Title,
+                        LocalEditionId = coverChoice.Edition.Id,
                         EditionProviderId = BookEditionIdentity.GetTrustedForeignEditionId(coverChoice.Edition),
+                        EditionProviderIds = BookEditionIdentity.GetEditionProviderIds(coverChoice.Edition),
                         CoverUrl = coverChoice.Cover.Url,
-                        DownloadedAt = downloadedAt,
+                        DownloadedAt = DateTime.UtcNow,
                         ContentHash = contentHash
                     }
-                };
+                });
 
-                _logger.Debug("Stored cover metadata for book {0} at {1}", book.Title, metadataPath);
                 return true;
             }
             catch (Exception ex)

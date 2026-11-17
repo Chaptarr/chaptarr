@@ -75,7 +75,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var service = new ImportApprovedBooks(media, tags, new StubMediaInfoExtractor(),
                     Proxy<IAuthorService>(), CreateBookService(new List<Book> { book }).Service, CreateEditionService(book.Editions),
                     new StubRecycleBinProvider(), Proxy<IExtraService>(), detached, Proxy<IHistoryService>(), Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(), Proxy<IManageCommandQueue>(), series, Proxy<ISeriesService>(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  Proxy<IManageCommandQueue>(), series, Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(), Proxy<IM4bConversionService>(), LogManager.GetCurrentClassLogger(), configService: config);
                 var decisions = Enumerable.Range(1, 50).Select(part =>
                 {

@@ -94,7 +94,7 @@ namespace Chaptarr.Core.Test.Api
 
         [TestCase(false)]
         [TestCase(true)]
-        public void thousand_book_mass_monitor_queues_one_cover_batch(bool postgres)
+        public void thousand_book_mass_monitor_queues_paged_cover_batches(bool postgres)
         {
             DualDatabaseFixture.Run(postgres, database =>
             {
@@ -141,8 +141,8 @@ namespace Chaptarr.Core.Test.Api
                 Assert.Multiple(() =>
                 {
                     Assert.That(h.Books.All().Count(b => b.AudiobookMonitored), Is.EqualTo(1000));
-                    Assert.That(commands, Has.Count.EqualTo(1));
-                    Assert.That(commands.Single().BookIds, Is.EquivalentTo(books.Select(b => b.Id)));
+                    Assert.That(commands.Select(command => command.BookIds.Count), Is.EqualTo(new[] { 250, 250, 250, 250 }));
+                    Assert.That(commands.SelectMany(command => command.BookIds), Is.EquivalentTo(books.Select(b => b.Id)));
                     Assert.That(h.FileBatches, Has.Count.EqualTo(1));
                     Assert.That(aggregateEvents, Is.EqualTo(1));
                     Assert.That(individualEvents, Is.EqualTo(1000), "Keep existing statistics/UI observers");
@@ -373,7 +373,7 @@ namespace Chaptarr.Core.Test.Api
                         nameof(IMetadataProfileService.Exists) => true,
                         nameof(IMetadataProfileService.Get) => new MetadataProfile { Id = (int)args[0] },
                         _ => throw new AssertionException(method.Name)
-                    }), logger, Queue);
+                    }), logger, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  Queue);
                 IAddBookService addService = captureAdd == null ? add : Proxy<IAddBookService>((method, args) =>
                 {
                     if (args.FirstOrDefault() is Book book) captureAdd(book);

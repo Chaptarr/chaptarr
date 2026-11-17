@@ -139,7 +139,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var bookService = new BookService(books, editionService, events, authorService, media, Proxy<IRootFolderService>(), null, null, logger);
                     var service = new ImportApprovedBooks(media, tags, new StubMediaInfoExtractor(), authorService,
                         bookService, editionService, new StubRecycleBinProvider(), Proxy<IExtraService>(),
-                        mover, Proxy<IHistoryService>(), Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events,
+                        mover, Proxy<IHistoryService>(), Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                         Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
                         Proxy<IQualityProfileService>(), Proxy<IM4bConversionService>(), logger);
                     ImportDecision<LocalBook> Decision(string path, bool existing) => new(new LocalBook { Path = path,
@@ -278,7 +278,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var bookService = new BookService(books, editionService, events, authorService, media, Proxy<IRootFolderService>(), null, null, logger);
                     var service = new ImportApprovedBooks(media, tags, new StubMediaInfoExtractor(), authorService,
                         bookService, editionService, new StubRecycleBinProvider(), Proxy<IExtraService>(),
-                        mover, Proxy<IHistoryService>(), Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events,
+                        mover, Proxy<IHistoryService>(), Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                         Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
                         Proxy<IQualityProfileService>(), Proxy<IM4bConversionService>(), logger);
                     var local = new LocalBook { Path = incoming, Book = book, Edition = edition, Author = author,
@@ -393,7 +393,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var bookService = new BookService(books, editionService, events, authorService, media, Proxy<IRootFolderService>(), null, null, logger);
                     var service = new ImportApprovedBooks(media, new StubMetadataTagService(), new StubMediaInfoExtractor(), Proxy<IAuthorService>(),
                         bookService, new EditionService(editions, events, logger), new StubRecycleBinProvider(), Proxy<IExtraService>(),
-                        mover, history, Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events,
+                        mover, history, Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                         Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
                         Proxy<IQualityProfileService>(), Proxy<IM4bConversionService>(), logger);
                     published.Clear();
@@ -481,7 +481,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     var mover = new StubMoveBookFiles { DestinationPath = destination, TransferFilesOnDisk = true };
                     var service = new ImportApprovedBooks(media, new StubMetadataTagService(), new StubMediaInfoExtractor(), authorService,
                         bookService, editionService, new StubRecycleBinProvider(), Proxy<IExtraService>(), mover,
-                        Proxy<IHistoryService>(), Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events,
+                        Proxy<IHistoryService>(), Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                         Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
                         Proxy<IQualityProfileService>(), Proxy<IM4bConversionService>(), logger);
                     var results = service.Import(new() { new(new LocalBook { Book = book, Edition = selected, Author = author,

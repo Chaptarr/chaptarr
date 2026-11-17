@@ -1218,7 +1218,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             });
             var importer = new NzbDrone.Core.MediaFiles.BookImport.ImportApprovedBooks(_media, tags,
                 null, null, null, null, null, null, null, null, null,
-                Proxy<IEventAggregator>((_, _) => { added++; return null; }), null, null, null, null, null,
+                Proxy<IEventAggregator>((_, _) => { added++; return null; }), new NzbDrone.Core.MediaCover.DeferredCoverService(_logs.GetLogger("import-fixture"), null), null, null, null, null, null,
                 _logs.GetLogger("import-fixture"), configService: _config);
             type.GetMethod("WriteTagsForCommittedFiles", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
                 .Invoke(importer, new object[] { commits });
