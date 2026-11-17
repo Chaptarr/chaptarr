@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using NzbDrone.Common.EnsureThat;
 
@@ -30,6 +31,7 @@ namespace NzbDrone.Common.Cache
         }
 
         private readonly ConcurrentDictionary<string, CacheItem> _store;
+        private readonly ConcurrentDictionary<string, CancellationTokenSource> _pendingExpiry = new ConcurrentDictionary<string, CancellationTokenSource>();
         private readonly TimeSpan? _defaultLifeTime;
         private readonly bool _rollingExpiry;
 
@@ -150,13 +152,42 @@ namespace NzbDrone.Common.Cache
 
         private void ScheduleTryRemove(string key, TimeSpan lifeTime)
         {
-            Task.Delay(lifeTime).ContinueWith(t =>
+            // Each Set()/rolling-expiry Find()/Get() call used to schedule a brand new
+            // Task.Delay(lifeTime) here without cancelling any delay already pending for
+            // the same key. On a long-lived cache (e.g. MediaCoverProxy's 24h cover-url
+            // cache) touched more often than its lifetime, orphaned delays never got
+            // cancelled and piled up indefinitely - tens of thousands of live
+            // TimerQueueTimer/Task chains sitting idle, driving continuous GC/ThreadPool
+            // overhead. Track one pending removal per key and cancel the previous one
+            // before scheduling a new one so re-touching a key doesn't add another timer.
+            var cts = new CancellationTokenSource();
+
+            if (_pendingExpiry.TryRemove(key, out var previous))
             {
+                previous.Cancel();
+                previous.Dispose();
+            }
+
+            _pendingExpiry[key] = cts;
+
+            Task.Delay(lifeTime, cts.Token).ContinueWith(t =>
+            {
+                if (t.IsCanceled)
+                {
+                    return;
+                }
+
                 if (_store.TryGetValue(key, out var cacheItem) && cacheItem.IsExpired())
                 {
                     _store.TryRemove(key, out _);
                 }
-            });
+
+                if (_pendingExpiry.TryGetValue(key, out var current) && current == cts)
+                {
+                    _pendingExpiry.TryRemove(key, out _);
+                    cts.Dispose();
+                }
+            }, TaskScheduler.Default);
         }
     }
 }
