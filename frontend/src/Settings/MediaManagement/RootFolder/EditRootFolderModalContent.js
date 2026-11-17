@@ -80,6 +80,16 @@ class EditRootFolderModalContent extends Component {
     this.setState(newState);
   };
 
+  getImportMixedContentHelpText = (isFolderTypeLocked, isMixed) => {
+    if (isFolderTypeLocked) {
+      return translate('ImportMixedContentLockedHelpText');
+    }
+
+    return isMixed ?
+      translate('ImportMixedContentEnabledHelpText') :
+      translate('ImportMixedContentDisabledHelpText');
+  };
+
   onAcceptsMixedContentChange = ({ value }) => {
     if (this.isFolderTypeFixed()) {
       return;
@@ -171,6 +181,7 @@ class EditRootFolderModalContent extends Component {
       name,
       path,
       folderType,
+      hasAssignedAuthors,
       placeEbooksWithAudiobooks,
       defaultSyncMonitoredAcrossFormats,
       isCalibreLibrary,
@@ -203,6 +214,8 @@ class EditRootFolderModalContent extends Component {
 
     const rootFolderId = item?.id?.value;
     const isFolderTypeFixed = this.isFolderTypeFixed();
+    const hasAssignedAuthorsValue = hasAssignedAuthors?.value ?? false;
+    const isFolderTypeLocked = !!rootFolderId && hasAssignedAuthorsValue;
     const folderTypeValue = folderType?.value;
     const allowBothMediaTabs = !rootFolderId || folderTypeValue === FolderType.Mixed;
     const hasAudiobookTab = allowBothMediaTabs || folderTypeValue === FolderType.Audiobook;
@@ -297,11 +310,8 @@ class EditRootFolderModalContent extends Component {
                           type={inputTypes.CHECK}
                           name="folderType"
                           value={folderType?.value === FolderType.Mixed}
-                          helpText={
-                            folderType?.value === FolderType.Mixed ?
-                              translate('ImportMixedContentEnabledHelpText') :
-                              translate('ImportMixedContentDisabledHelpText')
-                          }
+                          isDisabled={isFolderTypeLocked}
+                          helpText={this.getImportMixedContentHelpText(isFolderTypeLocked, folderType?.value === FolderType.Mixed)}
                           onChange={this.onAcceptsMixedContentChange}
                         />
                       </FormGroup>
