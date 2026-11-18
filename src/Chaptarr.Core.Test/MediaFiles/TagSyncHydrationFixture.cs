@@ -67,9 +67,11 @@ namespace Chaptarr.Core.Test.MediaFiles
             ((TagConfigServiceProxy)config).WriteBookTags = WriteBookTagsType.Sync;
 
             var mediaFileService = DispatchProxy.Create<IMediaFileService, MediaFileServiceProxy>();
+            // Deliberately a format Chaptarr cannot write tags into, so this stays a test about
+            // hydrating missing book files rather than about the tag writing that follows it.
             ((MediaFileServiceProxy)mediaFileService).FilesByBooks = new List<BookFile>
             {
-                new BookFile { EditionId = 42, CalibreId = 0, Path = "/books/test.epub" }
+                new BookFile { EditionId = 42, CalibreId = 0, Path = "/books/test.pdf" }
             };
 
             var sut = new EBookTagService(
@@ -79,6 +81,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 config,
                 DispatchProxy.Create<ICalibreProxy, ThrowingProxy<ICalibreProxy>>(),
                 DispatchProxy.Create<IFileMutationSafetyService, ThrowingProxy<IFileMutationSafetyService>>(),
+                DispatchProxy.Create<IEpubSeriesTagWriter, ThrowingProxy<IEpubSeriesTagWriter>>(),
                 LogManager.GetLogger("test"));
 
             var edition = new Edition { Id = 42, BookId = 7 };

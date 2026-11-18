@@ -17,6 +17,11 @@ namespace NzbDrone.Core.MediaFiles
         private static readonly HashSet<string> _allExtensionSet;
         private static readonly HashSet<string> _singleFileBookContainerSet;
 
+        // Formats Chaptarr can write series metadata into without help from Calibre. Both are
+        // OPF-in-a-zip; the Mobi-derived formats and PDF have no writer.
+        private static readonly HashSet<string> _seriesTagWritableExtensionSet =
+            new HashSet<string>(new[] { ".epub", ".kepub" }, StringComparer.OrdinalIgnoreCase);
+
         static MediaFileExtensions()
         {
             _textExtensions = new Dictionary<string, Quality>(StringComparer.OrdinalIgnoreCase)
@@ -95,6 +100,11 @@ namespace NzbDrone.Core.MediaFiles
         public static bool CanWriteAudioTags(string extension)
         {
             return AudioExtensions.Contains(extension) && !IsMatroskaAudioExtension(extension);
+        }
+
+        public static bool CanWriteEbookSeriesTags(string extension)
+        {
+            return extension != null && _seriesTagWritableExtensionSet.Contains(extension);
         }
 
         public static bool IsSingleFileBookContainer(string extension)
