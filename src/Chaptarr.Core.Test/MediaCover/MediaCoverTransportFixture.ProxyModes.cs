@@ -5,8 +5,6 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Security;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
 using Chaptarr.Core.Test.Common;
@@ -273,9 +271,7 @@ namespace Chaptarr.Core.Test.MediaCover
             using var origin = new Server();
             const string host = "direct-cover.invalid";
             var url = $"https://{host}:{origin.Port}/cover.png";
-            using var key = RSA.Create(2048);
-            using var certificate = new CertificateRequest("CN=" + host, key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)
-                .CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddMinutes(5));
+            using var certificate = CreateServerCertificate(host);
             string sni = null;
             var serving = Task.Run(async () =>
             {
@@ -299,7 +295,7 @@ namespace Chaptarr.Core.Test.MediaCover
 
         [TestCase(false)]
         [TestCase(true)]
-        public void DNS_deadline_has_phase_diagnostic_but_caller_cancellation_stays_cancellation(bool callerCancel)
+        public void DNS_cancellation_has_phase_diagnostic_but_caller_cancellation_stays_cancellation(bool callerCancel)
         {
             using var logFactory = new LogFactory();
             var logs = new MemoryTarget { Layout = "${level}|${message}" };
@@ -307,17 +303,22 @@ namespace Chaptarr.Core.Test.MediaCover
             config.AddRule(LogLevel.Debug, LogLevel.Fatal, logs);
             logFactory.Configuration = config;
             var pending = new TaskCompletionSource<IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var sockets = new ResolvingFactory((_, _) => pending.Task);
-            using var caller = new CancellationTokenSource();
-            if (callerCancel)
+            using var cancel = new CancellationTokenSource();
+            var sockets = new ResolvingFactory((_, _) =>
             {
-                caller.CancelAfter(100);
-            }
+                if (callerCancel)
+                {
+                    cancel.Cancel();
+                }
+
+                return pending.Task;
+            });
 
             try
             {
-                var error = Assert.Catch(() => MediaCoverHttpRequest.Get(Client(factory: sockets, logger: logFactory.GetLogger("CoverDNS")), null, "http://dns-deadline.invalid/image",
-                    cancellationToken: caller.Token, timeout: TimeSpan.FromMilliseconds(callerCancel ? 5000 : 200)));
+                var client = Client(factory: sockets, logger: logFactory.GetLogger("CoverDNS"));
+                var error = Assert.Catch(() => MediaCoverHttpRequest.Get(client, null, "http://dns-deadline.invalid/image",
+                    cancellationToken: cancel.Token, timeout: TimeSpan.FromSeconds(2)));
                 if (callerCancel)
                 {
                     Assert.That(error, Is.InstanceOf<OperationCanceledException>());

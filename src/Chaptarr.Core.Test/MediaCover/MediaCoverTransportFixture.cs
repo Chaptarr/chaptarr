@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Pipelines;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -107,6 +108,15 @@ namespace Chaptarr.Core.Test.MediaCover
             }
         }
 
+        private static X509Certificate2 CreateServerCertificate(string host)
+        {
+            using var key = RSA.Create(2048);
+            using var certificate = new CertificateRequest("CN=" + host, key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)
+                .CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
+            // Schannel needs a named private key to serve the certificate.
+            return X509CertificateLoader.LoadPkcs12(certificate.Export(X509ContentType.Pkcs12), null);
+        }
+
         [Test]
         public async Task configured_local_metadata_server_works_and_generic_HTTP_stays_unrestricted()
         {
@@ -143,9 +153,7 @@ namespace Chaptarr.Core.Test.MediaCover
             var url = $"{(tls ? "https" : "http")}://{host}/cover.png";
             string proxyTarget = null;
             string headers = null;
-            using var key = RSA.Create(2048);
-            using var certificate = new CertificateRequest("CN=" + host, key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)
-                .CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddMinutes(5));
+            using var certificate = tls ? CreateServerCertificate(host) : null;
             var serving = Task.Run(async () =>
             {
                 using var socket = await server.Listener.AcceptTcpClientAsync(server.Deadline.Token);
@@ -349,9 +357,13 @@ namespace Chaptarr.Core.Test.MediaCover
         {
             using var handler = Factory().CreateHandler(HttpProxySettings.DirectConnection, false, false, null, false, 12);
             var pending = new TaskCompletionSource<IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
-            Factory().ApplyTargetPolicy(handler, MediaCoverUrlSafetyPolicy.CreateTargetPolicy(null), (_, _) => pending.Task);
+            using var cancellation = new CancellationTokenSource();
+            Factory().ApplyTargetPolicy(handler, MediaCoverUrlSafetyPolicy.CreateTargetPolicy(null), (_, _) =>
+            {
+                cancellation.Cancel();
+                return pending.Task;
+            });
             using var http = new System.Net.Http.HttpClient(handler);
-            using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
             Assert.CatchAsync<OperationCanceledException>(async () => await http.GetAsync("http://test.invalid/", cancellation.Token));
             pending.SetResult(Array.Empty<IPAddress>());
         }
@@ -392,33 +404,80 @@ namespace Chaptarr.Core.Test.MediaCover
         }
 
         [Test]
-        public async Task redirect_and_response_body_share_one_deadline()
+        public async Task redirect_and_response_body_share_the_attempt_cancellation_token()
         {
             using var server = new Server();
+            using var caller = new CancellationTokenSource();
+            var body = new Pipe();
+            using var received = body.Reader.AsStream();
+            using var destination = body.Writer.AsStream();
             var serving = Task.Run(async () =>
             {
                 using (var first = await server.Listener.AcceptTcpClientAsync(server.Deadline.Token))
                 {
                     await ReadHeaders(first.GetStream(), server.Deadline.Token);
-                    await Task.Delay(180, server.Deadline.Token);
                     await Reply(first.GetStream(), server.Deadline.Token, "Location: /final\r\n", body: false);
                 }
 
                 using var last = await server.Listener.AcceptTcpClientAsync(server.Deadline.Token);
                 await ReadHeaders(last.GetStream(), server.Deadline.Token);
-                await last.GetStream().WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n"), server.Deadline.Token);
+                await last.GetStream().WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\na"), server.Deadline.Token);
                 var one = new byte[1];
                 return await last.GetStream().ReadAsync(one, server.Deadline.Token);
             });
             var tokens = new List<CancellationToken>();
-            var error = Assert.Throws<WebException>(() => MediaCoverHttpRequest.Get(
-                Client(onRequest: request => tokens.Add(request.CancellationToken)), Config(server.Url), server.Url, timeout: TimeSpan.FromMilliseconds(300)));
-            Assert.That(error.Status, Is.EqualTo(WebExceptionStatus.Timeout));
+            var client = Client(onRequest: request => tokens.Add(request.CancellationToken));
+            var fetch = Task.Run(() => MediaCoverHttpRequest.Get(client, Config(server.Url), server.Url,
+                responseStream: destination, cancellationToken: caller.Token));
+            try
+            {
+                await received.ReadExactlyAsync(new byte[1], server.Deadline.Token);
+            }
+            finally
+            {
+                caller.Cancel();
+            }
+
+            Assert.CatchAsync<OperationCanceledException>(async () => await fetch);
             Assert.That(tokens.Count, Is.EqualTo(2));
             Assert.That(tokens[0].CanBeCanceled, Is.True);
+            Assert.That(tokens[0], Is.Not.EqualTo(caller.Token));
             Assert.That(tokens[1], Is.EqualTo(tokens[0]), "Redirects must not replace the attempt deadline");
             Assert.That(tokens[1].IsCancellationRequested, Is.True);
-            Assert.That(await serving, Is.Zero, "Deadline must close the pending body read");
+            Assert.That(await serving, Is.Zero, "Cancellation must close the pending body read");
+        }
+
+        [Test]
+        public async Task stalled_response_body_reports_the_cover_attempt_timeout()
+        {
+            using var server = new Server();
+            using var body = new MemoryStream();
+            var fetch = Task.Run(() => MediaCoverHttpRequest.Get(Client(), Config(server.Url), server.Url,
+                responseStream: body, timeout: TimeSpan.FromSeconds(2)));
+
+            using var socket = await server.Listener.AcceptTcpClientAsync(server.Deadline.Token);
+            var stream = socket.GetStream();
+            await ReadHeaders(stream, server.Deadline.Token);
+            await stream.WriteAsync("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\na"u8.ToArray(), server.Deadline.Token);
+
+            var error = Assert.ThrowsAsync<WebException>(async () => await fetch.WaitAsync(server.Deadline.Token));
+            Assert.That(body.ToArray(), Is.EqualTo(new byte[] { (byte)'a' }));
+            Assert.That(error.Status, Is.EqualTo(WebExceptionStatus.Timeout));
+        }
+
+        [Test]
+        public void attempt_deadline_expires_without_caller_cancellation()
+        {
+            var client = InterfaceProxy.Proxy<IHttpClient>((_, args) =>
+            {
+                var token = ((HttpRequest)args[0]).CancellationToken;
+                Assert.That(token.WaitHandle.WaitOne(TimeSpan.FromSeconds(5)), Is.True, "Attempt deadline never fired");
+                token.ThrowIfCancellationRequested();
+                return null;
+            });
+            var error = Assert.Throws<WebException>(() => MediaCoverHttpRequest.Get(client, null,
+                "https://cover.invalid/image", timeout: TimeSpan.FromMilliseconds(25)));
+            Assert.That(error.Status, Is.EqualTo(WebExceptionStatus.Timeout));
         }
 
         [Test]
@@ -519,8 +578,12 @@ namespace Chaptarr.Core.Test.MediaCover
         public void caller_cancellation_during_the_lookup_is_not_a_failed_lookup()
         {
             var pending = new TaskCompletionSource<IPAddress[]>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var factory = new ResolvingFactory((_, _) => pending.Task);
-            using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+            using var cancellation = new CancellationTokenSource();
+            var factory = new ResolvingFactory((_, _) =>
+            {
+                cancellation.Cancel();
+                return pending.Task;
+            });
             Assert.Catch<OperationCanceledException>(() => MediaCoverHttpRequest.Get(Client(factory: factory), null,
                 "http://slow-lookup.invalid/", cancellationToken: cancellation.Token));
             pending.SetResult(Array.Empty<IPAddress>());

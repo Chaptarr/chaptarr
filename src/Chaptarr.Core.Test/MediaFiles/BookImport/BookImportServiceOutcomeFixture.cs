@@ -378,12 +378,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             context.TargetEdition.Images = new() { new(NzbDrone.Core.MediaCover.MediaCoverTypes.Cover, "https://images.example/new.png") };
             context.Editions.Editions.Add(old);
             context.Book.Editions = context.Editions.Editions;
-            const string path = "/library/book/new.epub";
+            var path = @"C:\library\book\new.epub".AsOsAgnostic();
             context.Disk.Files[path] = (100, DateTime.UtcNow);
-            if (batch)
-                await context.Sut.ImportFilesAsync(new List<(string, int?, Dictionary<string, List<string>>, int?)> { (path, context.TargetEdition.Id, new(), null) }, context.Book.Id);
-            else
-                await context.Sut.ImportExistingFileAsync(path, context.Book.Id, context.TargetEdition.Id, null, new());
+            var result = batch
+                ? (await context.Sut.ImportFilesAsync(new List<(string, int?, Dictionary<string, List<string>>, int?)> { (path, context.TargetEdition.Id, new(), null) }, context.Book.Id)).Single()
+                : await context.Sut.ImportExistingFileAsync(path, context.Book.Id, context.TargetEdition.Id, null, new());
+            Assert.That(result.Outcome, Is.EqualTo(ImportOutcome.Imported), result.ReasonCode);
             Assert.That(context.TargetEdition.Monitored, Is.True);
             Assert.That(context.CoverCommands, Has.Count.EqualTo(1));
             Chaptarr.Core.Test.MediaCover.AudioTagCoverLookupFixture.AssertSelectionCommandReachesDeferredWriter(context.CoverCommands[0], context.Book, old, expectReplaced: true);
