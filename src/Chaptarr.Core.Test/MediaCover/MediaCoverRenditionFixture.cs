@@ -181,7 +181,7 @@ namespace Chaptarr.Core.Test.MediaCover
                 try
                 {
                     write(staged);
-                    if (RefusePublication) throw new IOException("Fixture publication refused");
+                    if (RefusePublication) throw new UnauthorizedAccessException("Fixture publication refused");
                     Move(staged, path);
                     AfterPublication?.Invoke(path);
                 }
@@ -2513,6 +2513,8 @@ namespace Chaptarr.Core.Test.MediaCover
             h.SetPhoto("replacement.png", BuildPngBytes(24, 32, new Rgba32(150, 40, 20)));
             h.Disk.RefusePublication = true;
             h.Refresh();
+            var kind = authorCover ? "author" : "book";
+            Assert.That(h.Logs.Logs, Has.Some.StartsWith($"Warn|Unable to publish {kind} cover for "));
             Assert.That(h.Disk.BinaryByPath[h.Sized(250)], Is.EqualTo(oldSize));
             Assert.That(h.Disk.ExistingPaths, Does.Contain(h.Sized(500)));
             Assert.That(h.Disk.ExistingPaths.Any(path => Path.GetFileName(path).StartsWith(DiskProviderBase.TemporaryWritePrefix)), Is.False);
@@ -2598,6 +2600,7 @@ namespace Chaptarr.Core.Test.MediaCover
             if (refuseDelete) h.Disk.BeforeDelete = path => { if (path == receipt.Key) throw new IOException("Fixture receipt locked"); };
             else h.Disk.RefusePublication = true;
             h.Refresh();
+            Assert.That(h.Logs.Logs, Has.Some.StartsWith($"Warn|Unable to publish {(authorCover ? "author" : "book")} cover for "));
             Assert.That(h.Disk.TextByPath[receipt.Key], Is.EqualTo(receipt.Value));
             h.SetPhoto("first.png", oldSmall);
             Assert.That(h.LocalUrl(), Is.EqualTo(oldUrl));

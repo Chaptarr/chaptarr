@@ -56,7 +56,8 @@ namespace Chaptarr.Core.Test.Common
             var oldBytes = new byte[] { 1, 2, 3, 4 };
             var newBytes = new byte[] { 5, 6, 7, 8 };
             File.WriteAllBytes(path, oldBytes);
-            using var reader = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+            // Windows refuses to replace a file that another handle has open.
+            using var reader = OperatingSystem.IsWindows() ? null : File.OpenRead(path);
             byte[] duringWrite = null;
             TestDelegate write = () => _diskProvider.WriteFileAtomically(path, temporaryPath =>
             {
@@ -85,9 +86,12 @@ namespace Chaptarr.Core.Test.Common
 
             Assert.That(duringWrite, Is.EqualTo(oldBytes), "Readers must never see an incomplete replacement");
             Assert.That(File.ReadAllBytes(path), Is.EqualTo(fail ? oldBytes : newBytes));
-            using var readBytes = new MemoryStream();
-            reader.CopyTo(readBytes);
-            Assert.That(readBytes.ToArray(), Is.EqualTo(oldBytes), "An already-open reader keeps the complete old file");
+            if (reader != null)
+            {
+                using var readBytes = new MemoryStream();
+                reader.CopyTo(readBytes);
+                Assert.That(readBytes.ToArray(), Is.EqualTo(oldBytes), "An already-open reader keeps the complete old file");
+            }
             Assert.That(Directory.GetFiles(_tempDir), Is.EquivalentTo(new[] { path }));
         }
 

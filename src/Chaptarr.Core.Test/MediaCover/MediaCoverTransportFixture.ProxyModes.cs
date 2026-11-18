@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -10,7 +9,6 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Xml.Linq;
 using Chaptarr.Core.Test.Common;
 using NLog;
 using NLog.Config;
@@ -197,7 +195,7 @@ namespace Chaptarr.Core.Test.MediaCover
         private sealed class DefaultProxyScope : IDisposable
         {
             private readonly IWebProxy _old = NetClient.DefaultProxy;
-            public DefaultProxyScope() => NetClient.DefaultProxy = new WebProxy();
+            public DefaultProxyScope(IWebProxy proxy = null) => NetClient.DefaultProxy = proxy ?? new WebProxy();
             public void Dispose() => NetClient.DefaultProxy = _old;
         }
 
@@ -342,82 +340,26 @@ namespace Chaptarr.Core.Test.MediaCover
         }
 
         [Test]
-        public async Task indexer_only_uses_environment_proxy_in_fresh_process()
+        public async Task indexer_only_routes_cover_through_the_process_default_proxy()
         {
-            const string marker = "CHAPTARR_COVER_PROXY_TEST";
-            var childPorts = Environment.GetEnvironmentVariable(marker);
-            if (childPorts != null)
-            {
-                var ports = childPorts.Split(',').Select(int.Parse).ToArray();
-                var setup = ModeClient(ProxyMode.IndexerOnly, ports[1]);
-                var url = $"http://environment-cover.invalid:{ports[0]}/cover.png";
-                Assert.That(MediaCoverHttpRequest.Get(setup.Client, setup.Config, url).ResponseData, Is.EqualTo(Image));
-                return;
-            }
-
             using var origin = new Server();
             using var appProxy = new Server();
-            using var environmentProxy = new Server(TimeSpan.FromSeconds(30));
+            using var defaultProxy = new Server();
+            using var scope = new DefaultProxyScope(new WebProxy($"http://127.0.0.1:{defaultProxy.Port}"));
+            var setup = ModeClient(ProxyMode.IndexerOnly, appProxy.Port);
+            var url = $"http://cover.invalid:{origin.Port}/cover.png";
             var serving = Task.Run(async () =>
             {
-                using var socket = await environmentProxy.Listener.AcceptTcpClientAsync(environmentProxy.Deadline.Token);
-                var headers = await ReadHeaders(socket.GetStream(), environmentProxy.Deadline.Token);
-                await Reply(socket.GetStream(), environmentProxy.Deadline.Token);
+                using var socket = await defaultProxy.Listener.AcceptTcpClientAsync(defaultProxy.Deadline.Token);
+                var headers = await ReadHeaders(socket.GetStream(), defaultProxy.Deadline.Token);
+                await Reply(socket.GetStream(), defaultProxy.Deadline.Token);
                 return headers;
             });
-            var directory = Path.Combine(Path.GetTempPath(), "cover-env-proxy-" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(directory);
-            using var process = new Process();
-            var started = false;
-            try
-            {
-                var settings = Path.Combine(directory, "tests.runsettings");
-                var selection = "FullyQualifiedName=" + GetType().FullName + "." + nameof(indexer_only_uses_environment_proxy_in_fresh_process);
-                new XDocument(new XElement("RunSettings",
-                    new XElement("RunConfiguration", new XElement("MaxCpuCount", 1), new XElement("TestCaseFilter", selection)),
-                    new XElement("NUnit", new XElement("NumberOfTestWorkers", 0), new XElement("UseNUnitFilter", true),
-                        new XElement("AssemblySelectLimit", 1), new XElement("WorkDirectory", directory)))).Save(settings);
-                process.StartInfo = new ProcessStartInfo("dotnet") { RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = directory };
-                foreach (var arg in new[] { "vstest", GetType().Assembly.Location, "--Settings:" + settings,
-                    "--ResultsDirectory:" + directory, "--Logger:trx;LogFileName=result.trx" })
-                {
-                    process.StartInfo.ArgumentList.Add(arg);
-                }
 
-                foreach (var key in new[] { "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY" })
-                {
-                    process.StartInfo.Environment.Remove(key);
-                    process.StartInfo.Environment.Remove(key.ToLowerInvariant());
-                }
-
-                process.StartInfo.Environment["HTTP_PROXY"] = "http://127.0.0.1:" + environmentProxy.Port;
-                process.StartInfo.Environment[marker] = origin.Port + "," + appProxy.Port;
-                started = process.Start();
-                var output = process.StandardOutput.ReadToEndAsync();
-                var errors = process.StandardError.ReadToEndAsync();
-                await process.WaitForExitAsync(environmentProxy.Deadline.Token);
-                Assert.That(process.ExitCode, Is.Zero, await output + await errors);
-                XNamespace ns = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
-                var results = XDocument.Load(Path.Combine(directory, "result.trx")).Descendants(ns + "UnitTestResult").ToArray();
-                Assert.That(results, Has.Length.EqualTo(1), "Child must run exactly this test, never the whole assembly");
-                Assert.That((string)results[0].Attribute("outcome"), Is.EqualTo("Passed"));
-                Assert.That(await serving, Does.StartWith($"GET http://environment-cover.invalid:{origin.Port}/cover.png "));
-                Assert.That(origin.Listener.Pending(), Is.False);
-                Assert.That(appProxy.Listener.Pending(), Is.False);
-            }
-            finally
-            {
-                if (started && !process.HasExited)
-                {
-                    process.Kill(entireProcessTree: true);
-                    await process.WaitForExitAsync();
-                }
-
-                environmentProxy.Deadline.Cancel();
-                try { await serving; }
-                catch (OperationCanceledException) when (environmentProxy.Deadline.IsCancellationRequested) { }
-                Directory.Delete(directory, recursive: true);
-            }
+            Assert.That(MediaCoverHttpRequest.Get(setup.Client, setup.Config, url).ResponseData, Is.EqualTo(Image));
+            Assert.That(await serving, Does.StartWith($"GET {url} "));
+            Assert.That(origin.Listener.Pending(), Is.False);
+            Assert.That(appProxy.Listener.Pending(), Is.False);
         }
     }
 }

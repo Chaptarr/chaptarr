@@ -94,9 +94,9 @@ namespace Chaptarr.Core.Test.MediaCover
             public readonly CancellationTokenSource Deadline;
             public int Port => ((IPEndPoint)Listener.LocalEndpoint).Port;
             public string Url => $"http://127.0.0.1:{Port}/cover.png";
-            public Server(TimeSpan? timeout = null)
+            public Server()
             {
-                Deadline = new(timeout ?? TimeSpan.FromSeconds(5));
+                Deadline = new(TimeSpan.FromSeconds(5));
                 Listener.Start();
             }
             public void Dispose()

@@ -4915,6 +4915,17 @@ WHERE b.Id IN @bookIds
             }
         }
 
+        private sealed class ReplayAuxiliaryDatabase(DatabaseType databaseType, Func<IDatabase> create) : ILogDatabase, ICacheDatabase
+        {
+            private readonly Lazy<IDatabase> _database = new(create);
+
+            public IDbConnection OpenConnection() => _database.Value.OpenConnection();
+            public DatabaseType DatabaseType => databaseType;
+            public Version Version => _database.Value.Version;
+            public int Migration => _database.Value.Migration;
+            public void Vacuum() => _database.Value.Vacuum();
+        }
+
         private static IHost BuildHost(StartupContext startupContext, bool blockOutboundHttp = false, bool recordDownloads = false)
         {
             var config = BuildConfiguration(startupContext);
@@ -4947,6 +4958,14 @@ WHERE b.Id IN @bookIds
                     }
                     if (blockOutboundHttp)
                     {
+                        // Resolving search services and event handlers does not itself need
+                        // a log or cache database. Migrate each only if replay accesses it.
+                        c.RegisterDelegate<IDbFactory, IConnectionStringFactory, ILogDatabase>((db, connections) =>
+                            new ReplayAuxiliaryDatabase(connections.LogDbConnection.DatabaseType, () => db.Create(MigrationType.Log)),
+                            Reuse.Singleton, ifAlreadyRegistered: IfAlreadyRegistered.Replace);
+                        c.RegisterDelegate<IDbFactory, IConnectionStringFactory, ICacheDatabase>((db, connections) =>
+                            new ReplayAuxiliaryDatabase(connections.CacheDbConnection.DatabaseType, () => db.Create(MigrationType.Cache)),
+                            Reuse.Singleton, ifAlreadyRegistered: IfAlreadyRegistered.Replace);
                         c.Register<IHttpDispatcher, OfflineReplayHttpDispatcher>(Reuse.Singleton, ifAlreadyRegistered: IfAlreadyRegistered.Replace);
                         c.Register<IIndexerHttpClientFactory, OfflineReplayIndexerHttpClient>(Reuse.Singleton, ifAlreadyRegistered: IfAlreadyRegistered.Replace);
                     }
