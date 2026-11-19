@@ -20,6 +20,7 @@ namespace Chaptarr.Api.V1.ManualImport
         public string SuggestedEditionTitle { get; set; }
         public QualityModel Quality { get; set; }
         public string ReleaseGroup { get; set; }
+        public bool? AudioProductionOverride { get; set; }
         public int IndexerFlags { get; set; }
         public string DownloadId { get; set; }
         public bool AdditionalFile { get; set; }

@@ -11,6 +11,7 @@ using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore.Events;
+using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.Indexers;
@@ -31,11 +32,13 @@ namespace Chaptarr.Core.Test.Download
         private sealed class RecordingEventAggregator : IEventAggregator
         {
             public List<IEvent> Events { get; } = new();
+            public Action<IEvent> Published { get; set; }
 
             public void PublishEvent<TEvent>(TEvent @event)
                 where TEvent : class, IEvent
             {
                 Events.Add(@event);
+                Published?.Invoke(@event);
             }
         }
 
@@ -44,7 +47,8 @@ namespace Chaptarr.Core.Test.Download
             public List<int> SuccessfulProviderIds { get; } = new();
             public List<int> FailedProviderIds { get; } = new();
 
-            public List<DownloadClientStatus> GetBlockedProviders() => new();
+            public List<DownloadClientStatus> BlockedProviders { get; } = new();
+            public List<DownloadClientStatus> GetBlockedProviders() => BlockedProviders;
 
             public void RecordSuccess(int providerId)
             {
@@ -99,6 +103,7 @@ namespace Chaptarr.Core.Test.Download
             public void Fail(CommandModel command, string message, Exception e) => throw new NotImplementedException();
             public void Requeue() => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void Pause(int id) => throw new NotImplementedException();
             public void Resume(int id) => throw new NotImplementedException();
             public void CleanCommands() => throw new NotImplementedException();
@@ -117,6 +122,7 @@ namespace Chaptarr.Core.Test.Download
             }
 
             public List<List<TrackedDownload>> UpdateTrackableCalls { get; } = new();
+            public Exception TrackFailure { get; set; }
 
             public TrackedDownload Find(string downloadId)
             {
@@ -139,6 +145,7 @@ namespace Chaptarr.Core.Test.Download
 
             public TrackedDownload TrackDownload(DownloadClientDefinition downloadClient, DownloadClientItem downloadItem)
             {
+                if (TrackFailure != null) throw TrackFailure;
                 if (_trackedDownloads.TryGetValue(downloadItem.DownloadId, out var existingItem) && existingItem.State != TrackedDownloadState.Downloading)
                 {
                     existingItem.DownloadItem = downloadItem;
@@ -182,7 +189,6 @@ namespace Chaptarr.Core.Test.Download
 
             public void MarkAsFailed(int historyId, bool skipRedownload = false) => throw new NotImplementedException();
             public void MarkAsFailed(string downloadId, bool skipRedownload = false) => throw new NotImplementedException();
-            public void MarkAsFailed(TrackedDownload trackedDownload, string reason, bool skipRedownload = false) => throw new NotImplementedException();
 
             public void Check(TrackedDownload trackedDownload)
             {
@@ -210,14 +216,16 @@ namespace Chaptarr.Core.Test.Download
                 ImportedDownloadIds.Add(trackedDownload.DownloadItem.DownloadId);
             }
 
+            public bool CanRemoveDownload(TrackedDownload trackedDownload, DownloadCleanupContext cleanup = null) => throw new NotImplementedException();
+
             public bool VerifyImport(TrackedDownload trackedDownload, List<ImportResult> importResults) => throw new NotImplementedException();
         }
 
-        private sealed class StubDownloadClient : IDownloadClient
+        private sealed class StubDownloadClient : IDownloadClient, IRecoverDownloadClientOperations
         {
             public IEnumerable<DownloadClientItem> Items { get; set; } = Array.Empty<DownloadClientItem>();
 
-            public DownloadProtocol Protocol => DownloadProtocol.Torrent;
+            public DownloadProtocol Protocol => (Definition as DownloadClientDefinition)?.Protocol ?? DownloadProtocol.Torrent;
             public string Name => Definition?.Name;
             public Type ConfigContract => typeof(DownloadClientDefinition);
             public ProviderMessage Message => null;
@@ -225,7 +233,15 @@ namespace Chaptarr.Core.Test.Download
             public ProviderDefinition Definition { get; set; }
 
             public Task<string> Download(RemoteBook remoteBook, IIndexer indexer) => throw new NotImplementedException();
-            public IEnumerable<DownloadClientItem> GetItems() => Items;
+            public int PollCount { get; private set; }
+            public int RecoveryCount { get; private set; }
+            public void RecoverPendingOperations() => RecoveryCount++;
+            public bool PollFails { get; set; }
+            public IEnumerable<DownloadClientItem> GetItems()
+            {
+                PollCount++;
+                return PollFails ? throw new InvalidOperationException("Client offline") : Items;
+            }
             public DownloadClientItem GetImportItem(DownloadClientItem item, DownloadClientItem previousImportAttempt) => item;
             public void RemoveItem(DownloadClientItem item, bool deleteData) => throw new NotImplementedException();
             public DownloadClientInfo GetStatus() => null;
@@ -262,6 +278,152 @@ namespace Chaptarr.Core.Test.Download
 
                 throw new NotImplementedException($"Test proxy does not implement IConfigService.{targetMethod?.Name}");
             }
+        }
+
+        [Test]
+        public void failed_poll_must_preserve_known_queue_until_successful_poll_confirms_removal()
+        {
+            var tracked = CreateTrackedDownload("outage-download", TrackedDownloadState.ImportBlocked, DownloadItemStatus.Completed);
+            var tracking = new StubTrackedDownloadService(tracked);
+            var factory = CreateDownloadClientFactory(tracked.DownloadItem);
+            var client = (StubDownloadClient)((DownloadClientFactoryProxy)(object)factory).Clients.Single();
+            var config = CreateConfigService(true);
+            var service = CreateSubject(tracking, factory, config, out var events, out _, out _, out _, out var status);
+            tracked.RemoteBook.ParsedBookInfo = new ParsedBookInfo { Quality = new NzbDrone.Core.Qualities.QualityModel(NzbDrone.Core.Qualities.Quality.M4B) };
+            var queue = new NzbDrone.Core.Queue.QueueService(events,
+                Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.History.IHistoryService>((method, args) => new List<NzbDrone.Core.History.EntityHistory>()),
+                Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.CustomFormats.ICustomFormatCalculationService>((method, args) => new List<NzbDrone.Core.CustomFormats.CustomFormat>()));
+            events.Published = message => { if (message is TrackedDownloadRefreshedEvent refreshed) queue.Handle(refreshed); };
+            var specification = new NzbDrone.Core.DecisionEngine.Specifications.QueueSpecification(queue,
+                new NzbDrone.Core.DecisionEngine.Specifications.UpgradableSpecification(config, LogManager.GetCurrentClassLogger()),
+                null, config, LogManager.GetCurrentClassLogger());
+            service.Execute(new RefreshMonitoredDownloadsCommand());
+            client.PollFails = true;
+            service.Execute(new RefreshMonitoredDownloadsCommand());
+            Assert.That(tracked.IsTrackable, Is.True, "A failed poll does not prove a download was removed");
+            Assert.That(status.FailedProviderIds, Is.EqualTo(new[] { 1 }));
+            Assert.That(queue.GetQueue(), Has.Count.EqualTo(1));
+            Assert.That(specification.IsSatisfiedBy(tracked.RemoteBook, null).Accepted, Is.False);
+            client.PollFails = false;
+            client.Items = Array.Empty<DownloadClientItem>();
+            service.Execute(new RefreshMonitoredDownloadsCommand());
+            Assert.That(tracked.IsTrackable, Is.False, "A reachable client confirmed removal");
+            Assert.That(queue.GetQueue(), Is.Empty);
+            Assert.That(specification.IsSatisfiedBy(tracked.RemoteBook, null).Accepted, Is.True);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void client_backoff_retains_queue_without_reporting_removal_evidence(bool firstPollSucceeded)
+        {
+            var tracked = CreateTrackedDownload("backoff-download", TrackedDownloadState.ImportBlocked, DownloadItemStatus.Completed);
+            var factory = CreateDownloadClientFactory(tracked.DownloadItem);
+            var client = (StubDownloadClient)((DownloadClientFactoryProxy)(object)factory).Clients.Single();
+            var service = CreateSubject(new StubTrackedDownloadService(tracked), factory, CreateConfigService(true),
+                out var events, out _, out _, out _, out var status);
+            if (firstPollSucceeded) service.Execute(new RefreshMonitoredDownloadsCommand());
+            var polls = client.PollCount;
+            status.BlockedProviders.Add(new DownloadClientStatus { ProviderId = 1 });
+            service.Execute(new RefreshMonitoredDownloadsCommand());
+            Assert.That(client.PollCount, Is.EqualTo(polls), "Backoff must still suppress network requests");
+            Assert.That(client.RecoveryCount, Is.EqualTo(polls), "Backoff must also suppress recovery calls");
+            Assert.That(tracked.IsTrackable, Is.True);
+            var refresh = events.Events.OfType<TrackedDownloadRefreshedEvent>().Last();
+            Assert.That(refresh.TrackedDownloads, Does.Contain(tracked));
+            Assert.That(refresh.ReportedDownloadIds, Is.Empty);
+        }
+
+        [Test]
+        public void item_processing_failure_keeps_known_item_until_recovery()
+        {
+            var tracked = CreateTrackedDownload("database-outage", TrackedDownloadState.ImportBlocked, DownloadItemStatus.Completed);
+            var tracking = new StubTrackedDownloadService(tracked) { TrackFailure = new InvalidOperationException("Database unavailable") };
+            var service = CreateSubject(tracking, CreateDownloadClientFactory(tracked.DownloadItem), CreateConfigService(true),
+                out var events, out _, out _, out _, out _);
+            service.Execute(new RefreshMonitoredDownloadsCommand());
+            Assert.That(tracked.IsTrackable, Is.True);
+            Assert.That(events.Events.OfType<TrackedDownloadRefreshedEvent>().Last().TrackedDownloads, Does.Contain(tracked));
+            tracking.TrackFailure = null;
+            service.Execute(new RefreshMonitoredDownloadsCommand());
+            Assert.That(tracked.IsTrackable, Is.True);
+            Assert.That(events.Events.OfType<TrackedDownloadRefreshedEvent>().Last().TrackedDownloads, Does.Contain(tracked));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public async Task unavailable_client_at_startup_does_not_hold_unrelated_grab(bool inBackoff)
+        {
+            var factory = CreateDownloadClientFactory();
+            var clients = ((DownloadClientFactoryProxy)(object)factory).Clients;
+            clients[0].Definition.Name = "SABnzbd";
+            ((DownloadClientDefinition)clients[0].Definition).Protocol = DownloadProtocol.Usenet;
+            var offline = new StubDownloadClient
+            {
+                Definition = new DownloadClientDefinition { Id = 2, Name = "Deluge", Protocol = DownloadProtocol.Torrent },
+                PollFails = true
+            };
+            clients.Add(offline);
+            var service = CreateSubject(new StubTrackedDownloadService(), factory, CreateConfigService(true),
+                out var events, out _, out _, out _, out var status);
+            if (inBackoff) status.BlockedProviders.Add(new DownloadClientStatus { ProviderId = 2 });
+            var queue = new NzbDrone.Core.Queue.QueueService(events,
+                Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.History.IHistoryService>((method, args) => new List<NzbDrone.Core.History.EntityHistory>()), null);
+            queue.Handle(new TrackedDownloadRefreshedEvent(new()));
+            events.Published = message => { if (message is TrackedDownloadRefreshedEvent refreshed) queue.Handle(refreshed); };
+            service.Execute(new RefreshMonitoredDownloadsCommand());
+            Assert.That(status.SuccessfulProviderIds, Is.EqualTo(new[] { 1 }));
+            Assert.That(offline.PollCount, Is.EqualTo(inBackoff ? 0 : 1));
+            Assert.That(offline.RecoveryCount, Is.EqualTo(offline.PollCount));
+            Assert.That(events.Events.OfType<TrackedDownloadRefreshedEvent>().Last().ReportedDownloadIds.Keys, Is.EqualTo(new[] { 1 }));
+
+            var downloads = new List<RemoteBook>();
+            var transport = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IDownloadService>((method, args) =>
+            {
+                downloads.Add((RemoteBook)args[0]);
+                return Task.CompletedTask;
+            });
+            var prioritizer = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IPrioritizeDownloadDecision>((method, args) => args[0]);
+            var pendingCount = 0;
+            var pending = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Download.Pending.IPendingReleaseService>((method, args) =>
+            {
+                pendingCount += ((System.Collections.ICollection)args[0]).Count;
+                return null;
+            });
+            var processor = new ProcessDownloadDecisions(transport, prioritizer, pending,
+                new NzbDrone.Core.DecisionEngine.Specifications.QueueSpecification(queue, null, null, null, LogManager.GetCurrentClassLogger()),
+                LogManager.GetCurrentClassLogger());
+            var book = new RemoteBook
+            {
+                Author = new Author { Id = 38, Name = "Frank Herbert" },
+                Books = new List<Book> { new Book { Id = 17, MediaType = BookMediaType.Ebook } },
+                Release = new ReleaseInfo { Title = "Frank Herbert - Dune", DownloadProtocol = DownloadProtocol.Usenet },
+                ParsedBookInfo = new ParsedBookInfo { Quality = new NzbDrone.Core.Qualities.QualityModel(NzbDrone.Core.Qualities.Quality.EPUB) }
+            };
+            var result = await processor.ProcessDecisions(new List<NzbDrone.Core.DecisionEngine.DownloadDecision> { new(book) });
+            Assert.That(result.Grabbed, Has.Count.EqualTo(1));
+            Assert.That(result.Pending, Is.Empty);
+            Assert.That(pendingCount, Is.Zero);
+            Assert.That(downloads, Is.EqualTo(new[] { book }));
+        }
+
+        [Test]
+        public void only_successful_polls_report_authoritative_download_ids()
+        {
+            var factory = CreateDownloadClientFactory();
+            var client = (StubDownloadClient)((DownloadClientFactoryProxy)(object)factory).Clients.Single();
+            var service = CreateSubject(new StubTrackedDownloadService(), factory, CreateConfigService(true),
+                out var events, out _, out _, out _, out _);
+            client.PollFails = true;
+            service.Execute(new RefreshMonitoredDownloadsCommand());
+            Assert.That(events.Events.OfType<TrackedDownloadRefreshedEvent>().Last().ReportedDownloadIds, Is.Empty);
+            client.PollFails = false;
+            service.Execute(new RefreshMonitoredDownloadsCommand());
+            Assert.That(events.Events.OfType<TrackedDownloadRefreshedEvent>().Last().ReportedDownloadIds[1], Is.Empty);
+            service.Handle(new DownloadsProcessedEvent());
+            Assert.That(events.Events.OfType<TrackedDownloadRefreshedEvent>().Last().ReportedDownloadIds, Is.Null);
+            client.PollFails = true;
+            service.Execute(new RefreshMonitoredDownloadsCommand());
+            Assert.That(events.Events.OfType<TrackedDownloadRefreshedEvent>().Last().ReportedDownloadIds, Is.Empty);
         }
 
         [Test]

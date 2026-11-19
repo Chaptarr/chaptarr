@@ -17,7 +17,7 @@ namespace NzbDrone.Core.Extras
 {
     public interface IExtraService
     {
-        void ImportTrack(LocalBook localBook, BookFile bookFile, bool isReadOnly);
+        void ImportTrack(LocalBook localBook, BookFile bookFile, bool isReadOnly, bool replaceExisting);
     }
 
     public class ExtraService : IExtraService,
@@ -47,14 +47,14 @@ namespace NzbDrone.Core.Extras
             _logger = logger;
         }
 
-        public void ImportTrack(LocalBook localBook, BookFile bookFile, bool isReadOnly)
+        public void ImportTrack(LocalBook localBook, BookFile bookFile, bool isReadOnly, bool replaceExisting)
         {
-            ImportExtraFiles(localBook, bookFile, isReadOnly);
+            ImportExtraFiles(localBook, bookFile, isReadOnly, replaceExisting);
 
             CreateAfterImport(localBook.Author, bookFile);
         }
 
-        public void ImportExtraFiles(LocalBook localBook, BookFile bookFile, bool isReadOnly)
+        public void ImportExtraFiles(LocalBook localBook, BookFile bookFile, bool isReadOnly, bool replaceExisting)
         {
             if (!_configService.ImportExtraFiles)
             {
@@ -95,7 +95,7 @@ namespace NzbDrone.Core.Extras
             foreach (var matchingFilename in filteredFilenames)
             {
                 var extension = Path.GetExtension(matchingFilename);
-                if (string.IsNullOrWhiteSpace(extension) || !wantedExtensions.Contains(extension))
+                if (string.IsNullOrWhiteSpace(extension) || MediaFileExtensions.AllExtensions.Contains(extension) || !wantedExtensions.Contains(extension))
                 {
                     continue;
                 }
@@ -104,7 +104,7 @@ namespace NzbDrone.Core.Extras
                 {
                     foreach (var extraFileManager in _extraFileManagers)
                     {
-                        var extraFile = extraFileManager.Import(localBook.Author, bookFile, matchingFilename, extension, isReadOnly);
+                        var extraFile = extraFileManager.Import(localBook.Author, bookFile, matchingFilename, extension, isReadOnly, replaceExisting);
 
                         if (extraFile != null)
                         {
@@ -173,11 +173,10 @@ namespace NzbDrone.Core.Extras
         {
             var author = message.Author;
             var bookFiles = message.RenamedFiles?
-                .Select(r => r.BookFile)
-                .Where(bf => bf != null)
-                .DistinctBy(bf => bf.Id)
+                .Where(r => r.BookFile != null)
+                .DistinctBy(r => r.BookFile.Id)
                 .ToList()
-                ?? new List<BookFile>();
+                ?? new List<RenamedBookFile>();
 
             if (bookFiles.Count == 0)
             {

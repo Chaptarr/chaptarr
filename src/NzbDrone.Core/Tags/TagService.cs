@@ -82,7 +82,7 @@ namespace NzbDrone.Core.Tags
         {
             var tag = GetTag(tagId);
             var delayProfiles = _delayProfileService.AllForTag(tagId);
-            var importLists = _importListFactory.AllForTag(tagId);
+            var importLists = _importListFactory.All().Where(list => list.GetReferencedTags().Contains(tagId)).ToList();
             var notifications = _notificationFactory.AllForTag(tagId);
             var restrictions = _releaseProfileService.AllForTag(tagId);
             var author = _authorService.AllForTag(tagId);
@@ -117,6 +117,10 @@ namespace NzbDrone.Core.Tags
             var rootFolders = _rootFolderService.All();
             var downloadClients = _downloadClientFactory.All();
 
+            var importListIdsByTag = importLists.SelectMany(list => list.GetReferencedTags().Distinct().Select(tagId => (TagId: tagId, OwnerId: list.Id)))
+                .ToLookup(reference => reference.TagId, reference => reference.OwnerId);
+            var rootFolderIdsByTag = rootFolders.SelectMany(root => root.GetReferencedTags().Distinct().Select(tagId => (TagId: tagId, OwnerId: root.Id)))
+                .ToLookup(reference => reference.TagId, reference => reference.OwnerId);
             var details = new List<TagDetails>();
 
             foreach (var tag in tags)
@@ -126,12 +130,12 @@ namespace NzbDrone.Core.Tags
                     Id = tag.Id,
                     Label = tag.Label,
                     DelayProfileIds = delayProfiles.Where(c => c.Tags.Contains(tag.Id)).Select(c => c.Id).ToList(),
-                    ImportListIds = importLists.Where(c => c.Tags.Contains(tag.Id)).Select(c => c.Id).ToList(),
+                    ImportListIds = importListIdsByTag[tag.Id].ToList(),
                     NotificationIds = notifications.Where(c => c.Tags.Contains(tag.Id)).Select(c => c.Id).ToList(),
                     RestrictionIds = restrictions.Where(c => c.Tags.Contains(tag.Id)).Select(c => c.Id).ToList(),
                     AuthorIds = authors.Where(c => c.Value.Contains(tag.Id)).Select(c => c.Key).ToList(),
                     IndexerIds = indexers.Where(c => c.Tags.Contains(tag.Id)).Select(c => c.Id).ToList(),
-                    RootFolderIds = rootFolders.Where(c => c.DefaultTags.Contains(tag.Id)).Select(c => c.Id).ToList(),
+                    RootFolderIds = rootFolderIdsByTag[tag.Id].ToList(),
                     DownloadClientIds = downloadClients.Where(c => c.Tags.Contains(tag.Id)).Select(c => c.Id).ToList()
                 });
             }

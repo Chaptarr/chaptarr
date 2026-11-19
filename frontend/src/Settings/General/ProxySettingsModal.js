@@ -12,7 +12,7 @@ import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { kinds } from 'Helpers/Props';
-import { fetchGeneralSettings, fetchProxies, saveGeneralSettings, setGeneralSettingsValue } from 'Store/Actions/settingsActions';
+import { fetchGeneralSettings, fetchProxies, saveGeneralSettingsFields } from 'Store/Actions/settingsActions';
 import createSettingsSectionSelector from 'Store/Selectors/createSettingsSectionSelector';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import translate from 'Utilities/String/translate';
@@ -22,20 +22,14 @@ function createMapStateToProps() {
   return createSelector(
     createSettingsSectionSelector('general'),
     (state) => state.settings.proxies,
-    (generalSettings, proxiesState) => {
-      const {
-        settings,
-        isPopulated,
-        isSaving,
-        saveError
-      } = generalSettings;
+    (state) => state.settings.general.item,
+    (generalSettings, proxiesState, savedGeneral) => {
+      const { isPopulated } = generalSettings;
 
       return {
         isPopulated,
-        isSaving,
-        saveError,
-        proxyMode: settings?.proxyMode?.value || 'disabled',
-        globalProxyId: settings?.globalProxyId?.value ?? null,
+        proxyMode: savedGeneral.proxyMode || 'disabled',
+        globalProxyId: savedGeneral.globalProxyId ?? null,
         isProxyListPopulated: proxiesState?.isPopulated || false,
         proxyCount: proxiesState?.items?.length || 0
       };
@@ -46,8 +40,7 @@ function createMapStateToProps() {
 const mapDispatchToProps = {
   fetchGeneralSettings,
   fetchProxies,
-  saveGeneralSettings,
-  setGeneralSettingsValue
+  saveGeneralSettings: saveGeneralSettingsFields
 };
 
 class ProxySettingsModal extends Component {
@@ -75,14 +68,11 @@ class ProxySettingsModal extends Component {
     if (this.props.isOpen && this.props.selectedProxy !== prevProps.selectedProxy) {
       this.resetLocalState(this.props.selectedProxy);
     }
+  }
 
-    if (this.state.didRequestGeneralSave && prevProps.isSaving && !this.props.isSaving) {
-      if (this.props.saveError) {
-        this.setState({ didRequestGeneralSave: false });
-      } else {
-        this.props.onModalClose();
-      }
-    }
+  componentWillUnmount() {
+    this.saveRequest = null;
+    this.testRequest = null;
   }
 
   onOpen = () => {
@@ -107,12 +97,13 @@ class ProxySettingsModal extends Component {
       hasTestedSuccessfully: false,
       testedConfig: null,
       isSavingProxy: false,
-      proxySaveError: null,
-      didRequestGeneralSave: false
+      proxySaveError: null
     };
   };
 
   resetLocalState = (selectedProxy = null) => {
+    this.saveRequest = null;
+    this.testRequest = null;
     this.setState(this.getStateForSelectedProxy(selectedProxy));
   };
 
@@ -172,6 +163,7 @@ class ProxySettingsModal extends Component {
       return;
     }
 
+    const { proxyCount, proxyMode, globalProxyId } = this.props;
     const payload = {
       name: proxyName || 'Default Proxy',
       type: proxyType,
@@ -181,45 +173,44 @@ class ProxySettingsModal extends Component {
       password: proxyPassword
     };
 
+    this.setState({ isSavingProxy: true, proxySaveError: null });
     const request = createAjaxRequest({
       url: proxyId ? `/settings/proxy/${proxyId}` : '/settings/proxy',
       method: proxyId ? 'PUT' : 'POST',
       dataType: 'json',
       contentType: 'application/json',
       data: JSON.stringify(payload)
-    });
-
-    this.setState({ isSavingProxy: true, proxySaveError: null });
-
-    request.request.done((savedProxy) => {
+    }).request.then((savedProxy) => {
       const savedId = savedProxy?.id ?? proxyId;
-      const isFirstProxy = !proxyId && this.props.proxyCount === 0;
-      const isProxyRoutingDisabled = this.props.proxyMode === 'disabled';
-      const shouldRepairDefaultProxy = savedId != null && (isFirstProxy || isProxyRoutingDisabled || !this.props.globalProxyId);
+      const isFirstProxy = !proxyId && proxyCount === 0;
+      const isProxyRoutingDisabled = proxyMode === 'disabled';
+      const shouldRepairDefaultProxy = savedId != null && (isFirstProxy || isProxyRoutingDisabled || !globalProxyId);
 
       this.props.fetchProxies();
 
       if (shouldRepairDefaultProxy) {
-        this.props.setGeneralSettingsValue({ name: 'globalProxyId', value: savedId });
-
+        const updates = { globalProxyId: savedId };
         if (isProxyRoutingDisabled) {
-          this.props.setGeneralSettingsValue({ name: 'proxyMode', value: 'proxyEverything' });
+          updates.proxyMode = 'proxyEverything';
         }
 
-        this.setState({ proxyId: savedId, isSavingProxy: false, didRequestGeneralSave: true });
-        this.props.saveGeneralSettings();
-        return;
+        if (this.saveRequest === request) {
+          this.setState({ proxyId: savedId });
+        }
+        return this.props.saveGeneralSettings(updates);
       }
-
-      this.setState({ isSavingProxy: false });
-      this.props.onModalClose();
     });
-
-    request.request.fail((xhr) => {
-      this.setState({
-        isSavingProxy: false,
-        proxySaveError: xhr
-      });
+    this.saveRequest = request;
+    request.done(() => {
+      if (this.saveRequest === request) {
+        this.setState({ isSavingProxy: false });
+        this.props.onModalClose();
+      }
+    });
+    request.fail((xhr) => {
+      if (this.saveRequest === request) {
+        this.setState({ isSavingProxy: false, proxySaveError: xhr });
+      }
     });
   };
 
@@ -262,7 +253,11 @@ class ProxySettingsModal extends Component {
       })
     });
 
+    this.testRequest = request;
     request.request.done((data) => {
+      if (this.testRequest !== request) {
+        return;
+      }
       if (data?.isValid) {
         this.setState({
           isTestingProxy: false,
@@ -293,6 +288,9 @@ class ProxySettingsModal extends Component {
     });
 
     request.request.fail((xhr) => {
+      if (this.testRequest !== request) {
+        return;
+      }
       this.setState({
         isTestingProxy: false,
         testError: xhr
@@ -306,9 +304,7 @@ class ProxySettingsModal extends Component {
       onModalClose,
       proxyMode,
       isPopulated,
-      isProxyListPopulated,
-      isSaving,
-      saveError
+      isProxyListPopulated
     } = this.props;
 
     const {
@@ -346,8 +342,8 @@ class ProxySettingsModal extends Component {
 
     const canSaveNow = hasTestedSuccessfully && this.isConfigUnchanged();
     const primaryIsSave = canSaveNow;
-    const primaryIsSpinning = primaryIsSave ? (isSavingProxy || isSaving) : isTestingProxy;
-    const primaryError = primaryIsSave ? (proxySaveError || saveError) : testError;
+    const primaryIsSpinning = primaryIsSave ? isSavingProxy : isTestingProxy;
+    const primaryError = primaryIsSave ? proxySaveError : testError;
 
     return (
       <Modal
@@ -383,7 +379,7 @@ class ProxySettingsModal extends Component {
             <SpinnerErrorButton
               kind={primaryIsSave ? kinds.PRIMARY : kinds.DEFAULT}
               isSpinning={primaryIsSpinning}
-              isDisabled={isSavingProxy || isSaving}
+              isDisabled={isSavingProxy}
               error={primaryError}
               onPress={primaryIsSave ? this.onSavePress : this.onTestProxyPress}
             >
@@ -405,12 +401,9 @@ ProxySettingsModal.propTypes = {
   isProxyListPopulated: PropTypes.bool.isRequired,
   proxyCount: PropTypes.number.isRequired,
   isPopulated: PropTypes.bool.isRequired,
-  isSaving: PropTypes.bool.isRequired,
-  saveError: PropTypes.object,
   fetchGeneralSettings: PropTypes.func.isRequired,
   fetchProxies: PropTypes.func.isRequired,
-  saveGeneralSettings: PropTypes.func.isRequired,
-  setGeneralSettingsValue: PropTypes.func.isRequired
+  saveGeneralSettings: PropTypes.func.isRequired
 };
 
 export default connect(createMapStateToProps, mapDispatchToProps)(ProxySettingsModal);

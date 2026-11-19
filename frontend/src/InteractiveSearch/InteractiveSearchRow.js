@@ -7,6 +7,7 @@ import BookQuality from 'Book/BookQuality';
 import IndexerFlags from 'Book/IndexerFlags';
 import Icon from 'Components/Icon';
 import Label from 'Components/Label';
+import labelStyles from 'Components/Label.css';
 import Link from 'Components/Link/Link';
 import SpinnerIconButton from 'Components/Link/SpinnerIconButton';
 import ConfirmModal from 'Components/Modal/ConfirmModal';
@@ -62,6 +63,23 @@ function getDownloadTooltip(isGrabbing, isGrabbed, grabError) {
 
 function hasResolvedGrabTarget(authorId, bookId) {
   return authorId != null && bookId != null;
+}
+
+function getSearchScope({ searchId, searchedBookId, searchPayload }) {
+  return {
+    searchId: searchId ?? searchPayload.searchId,
+    searchedBookId: searchedBookId ?? searchPayload.searchedBookId
+  };
+}
+
+function isScopedGrabTargetValid(bookId, searchScope) {
+  const isScopedSearch = searchScope.searchId != null || searchScope.searchedBookId != null;
+
+  return !isScopedSearch || (
+    searchScope.searchId != null &&
+    searchScope.searchedBookId != null &&
+    bookId === searchScope.searchedBookId
+  );
 }
 
 function renderTitleCharSpan(title, matchedTitleCharStart, matchedTitleCharEnd) {
@@ -173,10 +191,37 @@ class InteractiveSearchRow extends Component {
     };
   }
 
+  componentDidMount() {
+    this.scheduleExpiry();
+  }
+
+  componentDidUpdate(previous) {
+    if (previous.expiresAt !== this.props.expiresAt) {
+      this.scheduleExpiry();
+    }
+  }
+
+  componentWillUnmount() {
+    clearTimeout(this._expiryTimer);
+  }
+
+  isExpired = () => this.props.expiresAt && Date.parse(this.props.expiresAt) <= Date.now();
+
+  scheduleExpiry = () => {
+    clearTimeout(this._expiryTimer);
+    const remaining = Date.parse(this.props.expiresAt) - Date.now();
+    if (remaining > 0) {
+      this._expiryTimer = setTimeout(() => this.forceUpdate(), remaining + 1);
+    }
+  };
+
   //
   // Listeners
 
   onGrabPress = () => {
+    if (this.isExpired()) {
+      return;
+    }
     const {
       guid,
       indexerId,
@@ -184,13 +229,20 @@ class InteractiveSearchRow extends Component {
       bookId,
       onGrabPress
     } = this.props;
-
-    onGrabPress({
+    const payload = {
       guid,
       indexerId,
       authorId,
       bookId
-    });
+    };
+    const searchScope = getSearchScope(this.props);
+
+    if (searchScope.searchId != null && searchScope.searchedBookId != null) {
+      payload.searchId = searchScope.searchId;
+      payload.searchedBookId = searchScope.searchedBookId;
+    }
+
+    onGrabPress(payload);
   };
 
   onConfirmGrabPress = () => {
@@ -198,20 +250,34 @@ class InteractiveSearchRow extends Component {
   };
 
   onGrabConfirm = () => {
+    if (this.isExpired()) {
+      return;
+    }
     this.setState({ isConfirmGrabModalOpen: false });
 
     const {
       guid,
       indexerId,
+      authorId,
+      bookId,
       searchPayload,
       onGrabPress
     } = this.props;
-
-    onGrabPress({
+    const payload = {
       guid,
       indexerId,
       ...searchPayload
-    });
+    };
+    const searchScope = getSearchScope(this.props);
+
+    if (searchScope.searchId != null && searchScope.searchedBookId != null) {
+      payload.authorId = authorId;
+      payload.bookId = bookId;
+      payload.searchId = searchScope.searchId;
+      payload.searchedBookId = searchScope.searchedBookId;
+    }
+
+    onGrabPress(payload);
   };
 
   onGrabCancel = () => {
@@ -250,6 +316,11 @@ class InteractiveSearchRow extends Component {
       isGrabbing,
       isGrabbed,
       isPreferredChoice,
+      showPreferredBadge,
+      showNarrator,
+      summaryMode,
+      summaryBookLabel,
+      summaryStatusText,
       longDateFormat,
       timeFormat,
       grabError
@@ -258,10 +329,76 @@ class InteractiveSearchRow extends Component {
     const titleText = renderTitleWithMatch(displayTitle || title, matchedTitleCharStart, matchedTitleCharEnd);
     const narratorDisplay = renderNarratorDisplay(this.props.narrator);
     const resolvedGrabTarget = hasResolvedGrabTarget(authorId, bookId);
+    const isValidScopedGrabTarget = isScopedGrabTargetValid(bookId, getSearchScope(this.props));
+    const expired = this.isExpired();
+    let downloadButtonTitle = isValidScopedGrabTarget ?
+      getDownloadTooltip(isGrabbing, isGrabbed, grabError) :
+      translate('InteractiveSearchGrabBookMismatch');
+    if (expired) {
+      downloadButtonTitle = translate('SearchResultsExpired');
+    }
     const rowClassName = classNames(
       tableRowStyles.row,
       isPreferredChoice && styles.preferredRow
     );
+
+    if (summaryMode) {
+      return (
+        <TableRow className={rowClassName}>
+          <TableRowCell className={styles.summaryBook}>
+            {summaryBookLabel}
+            {summaryStatusText ? <div className={styles.summaryBookStatus}>{summaryStatusText}</div> : null}
+          </TableRowCell>
+          <TableRowCell className={styles.title}>
+            <div className={classNames(styles.titleContent, !showPreferredBadge && styles.titleContentWithoutBadge)}>
+              <div className={styles.titleTextBlock}>
+                <Link
+                  to={infoUrl}
+                  title={title}
+                  className={styles.titleLink}
+                >
+                  {titleText}
+                </Link>
+                {grabError ? <div className={styles.grabError}>{grabError}</div> : null}
+              </div>
+              {isPreferredChoice && showPreferredBadge ? <span className={styles.preferredBadge}>{translate('Preferred')}</span> : null}
+            </div>
+          </TableRowCell>
+          <TableRowCell className={styles.indexer}>{indexer}</TableRowCell>
+          <TableRowCell className={styles.quality}>
+            <BookQuality
+              className={labelStyles.wrapping}
+              quality={quality}
+              showRevision={true}
+            />
+          </TableRowCell>
+          <TableRowCell className={styles.size}>{formatBytes(size)}</TableRowCell>
+          {showNarrator ?
+            <TableRowCell className={styles.narrator}>
+              <div className={styles.narratorContent}>{narratorDisplay}</div>
+            </TableRowCell> : null}
+          <TableRowCell className={styles.download}>
+            <SpinnerIconButton
+              name={getDownloadIcon(isGrabbing, isGrabbed, grabError)}
+              kind={getDownloadKind(isGrabbed, grabError, downloadAllowed)}
+              title={downloadButtonTitle}
+              isDisabled={expired || !isValidScopedGrabTarget}
+              isSpinning={isGrabbing}
+              onPress={downloadAllowed || resolvedGrabTarget ? this.onGrabPress : this.onConfirmGrabPress}
+            />
+          </TableRowCell>
+          <ConfirmModal
+            isOpen={this.state.isConfirmGrabModalOpen}
+            kind={kinds.WARNING}
+            title={translate('GrabRelease')}
+            message={translate('GrabReleaseMessageText', [title])}
+            confirmLabel={translate('Grab')}
+            onConfirm={this.onGrabConfirm}
+            onCancel={this.onGrabCancel}
+          />
+        </TableRow>
+      );
+    }
 
     return (
       <TableRow className={rowClassName}>
@@ -298,7 +435,7 @@ class InteractiveSearchRow extends Component {
                 </div>
               ) : null}
             </div>
-            {isPreferredChoice ? (
+            {isPreferredChoice && showPreferredBadge ? (
               <span className={styles.preferredBadge}>{translate('Preferred')}</span>
             ) : null}
           </div>
@@ -326,22 +463,27 @@ class InteractiveSearchRow extends Component {
           {this.props.duration || ''}
         </TableRowCell>
 
-        <TableRowCell className={styles.narrator}>
-          <div className={styles.narratorContent}>
-            {narratorDisplay}
-            {isGraphicAudio ? (
-              <Label
-                kind={kinds.INFO}
-                title={translate('InteractiveSearchDramatizedTitle')}
-              >
-                {translate('InteractiveSearchDramatized')}
-              </Label>
-            ) : null}
-          </div>
-        </TableRowCell>
+        {showNarrator ?
+          <TableRowCell className={styles.narrator}>
+            <div className={styles.narratorContent}>
+              {narratorDisplay}
+              {isGraphicAudio ? (
+                <Label
+                  kind={kinds.INFO}
+                  title={translate('InteractiveSearchDramatizedTitle')}
+                >
+                  {translate('InteractiveSearchDramatized')}
+                </Label>
+              ) : null}
+            </div>
+          </TableRowCell> : null}
 
         <TableRowCell className={styles.quality}>
-          <BookQuality quality={quality} showRevision={true} />
+          <BookQuality
+            className={labelStyles.wrapping}
+            quality={quality}
+            showRevision={true}
+          />
         </TableRowCell>
 
         <TableRowCell className={styles.customFormatScore}>
@@ -399,7 +541,8 @@ class InteractiveSearchRow extends Component {
             <SpinnerIconButton
               name={getDownloadIcon(isGrabbing, isGrabbed, grabError)}
               kind={getDownloadKind(isGrabbed, grabError, downloadAllowed)}
-              title={getDownloadTooltip(isGrabbing, isGrabbed, grabError)}
+              title={downloadButtonTitle}
+              isDisabled={expired || !isValidScopedGrabTarget}
               isSpinning={isGrabbing}
               onPress={downloadAllowed || resolvedGrabTarget ? this.onGrabPress : this.onConfirmGrabPress}
             />
@@ -421,6 +564,7 @@ class InteractiveSearchRow extends Component {
 }
 
 InteractiveSearchRow.propTypes = {
+  expiresAt: PropTypes.string,
   rank: PropTypes.number.isRequired,
   guid: PropTypes.string.isRequired,
   protocol: PropTypes.string.isRequired,
@@ -453,6 +597,13 @@ InteractiveSearchRow.propTypes = {
   isGrabbing: PropTypes.bool.isRequired,
   isGrabbed: PropTypes.bool.isRequired,
   isPreferredChoice: PropTypes.bool,
+  showPreferredBadge: PropTypes.bool,
+  showNarrator: PropTypes.bool,
+  summaryMode: PropTypes.bool,
+  summaryBookLabel: PropTypes.node,
+  summaryStatusText: PropTypes.string,
+  searchId: PropTypes.string,
+  searchedBookId: PropTypes.number,
   grabError: PropTypes.string,
   longDateFormat: PropTypes.string.isRequired,
   timeFormat: PropTypes.string.isRequired,
@@ -467,6 +618,9 @@ InteractiveSearchRow.defaultProps = {
   isGrabbing: false,
   isGrabbed: false,
   isPreferredChoice: false,
+  showPreferredBadge: true,
+  showNarrator: true,
+  summaryMode: false,
   duration: null,
   narrator: null,
   isGraphicAudio: false

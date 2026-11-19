@@ -5,6 +5,7 @@ import { filterTypePredicates, filterTypes, sortDirections } from 'Helpers/Props
 import { createThunk, handleThunks } from 'Store/thunks';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
 import { getAuthorStatisticsForMediaType } from 'Utilities/Author/getAuthorStatisticsForMediaType';
+import getAuthorUpdatePayload from 'Utilities/Author/getAuthorUpdatePayload';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import dateFilterPredicate from 'Utilities/Date/dateFilterPredicate';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
@@ -13,7 +14,6 @@ import { showMessage } from './appActions';
 import { set, update, updateItem } from './baseActions';
 import { fetchBooks } from './bookActions';
 import createHandleActions from './Creators/createHandleActions';
-import createRemoveItemHandler from './Creators/createRemoveItemHandler';
 import createSaveProviderHandler from './Creators/createSaveProviderHandler';
 import createSetSettingValueReducer from './Creators/Reducers/createSetSettingValueReducer';
 
@@ -235,7 +235,6 @@ export const SAVE_AUTHOR = 'authors/saveAuthor';
 export const DELETE_AUTHOR = 'authors/deleteAuthor';
 
 export const TOGGLE_AUTHOR_MONITORED = 'authors/toggleAuthorMonitored';
-export const TOGGLE_BOOK_MONITORED = 'authors/toggleBookMonitored';
 export const UPDATE_BOOK_MONITORED = 'authors/updateBookMonitored';
 export const UPDATE_AUTHOR_MEDIA_TYPE = 'authors/updateAuthorMediaType';
 export const LINK_AUTHOR_TO_FOLDER = 'authors/linkAuthorToFolder';
@@ -262,19 +261,9 @@ export const saveAuthor = createThunk(SAVE_AUTHOR, (payload) => {
   return newPayload;
 });
 
-export const deleteAuthor = createThunk(DELETE_AUTHOR, (payload) => {
-  return {
-    ...payload,
-    queryParams: {
-      deleteFiles: payload.deleteFiles,
-      addImportListExclusion: payload.addImportListExclusion,
-      readdAuthor: payload.readdAuthor
-    }
-  };
-});
+export const deleteAuthor = createThunk(DELETE_AUTHOR);
 
 export const toggleAuthorMonitored = createThunk(TOGGLE_AUTHOR_MONITORED);
-export const toggleBookMonitored = createThunk(TOGGLE_BOOK_MONITORED);
 export const updateBookMonitor = createThunk(UPDATE_BOOK_MONITORED);
 export const updateAuthorMediaType = createThunk(UPDATE_AUTHOR_MEDIA_TYPE);
 export const linkAuthorToFolder = createThunk(LINK_AUTHOR_TO_FOLDER);
@@ -290,12 +279,11 @@ export const setAuthorValue = createAction(SET_AUTHOR_VALUE, (payload) => {
 //
 // Helpers
 
-function getSaveAjaxOptions({ ajaxOptions, payload }) {
-  if (payload.moveFolder) {
-    ajaxOptions.url = `${ajaxOptions.url}?moveFolder=true`;
-  }
-
-  return ajaxOptions;
+function getSaveAjaxOptions({ ajaxOptions, payload, saveData, getState }) {
+  return {
+    ...ajaxOptions,
+    data: JSON.stringify(getAuthorUpdatePayload(saveData, { ...getState().authors.pendingChanges, ...payload }))
+  };
 }
 
 //
@@ -341,7 +329,18 @@ export const actionHandlers = handleThunks({
     return abortRequest;
   },
   [SAVE_AUTHOR]: createSaveProviderHandler(section, '/author', { getAjaxOptions: getSaveAjaxOptions }),
-  [DELETE_AUTHOR]: createRemoveItemHandler(section, '/author'),
+  [DELETE_AUTHOR]: (getState, { id, ...options }, dispatch) => {
+    dispatch(set({ section, isDeleting: true, deleteError: null }));
+    const query = new URLSearchParams(Object.entries(options).filter(([, value]) => value != null));
+    const promise = createAjaxRequest({ url: `/author/${id}?${query}`, method: 'DELETE' }).request;
+    promise.done(() => {
+      dispatch(set({ section, isDeleting: false, deleteError: null }));
+      dispatch(fetchAuthor());
+      dispatch(fetchBooks({ authorId: id }));
+    });
+    promise.fail((xhr) => dispatch(set({ section, isDeleting: false, deleteError: xhr })));
+    return promise;
+  },
 
   [TOGGLE_AUTHOR_MONITORED]: (getState, payload, dispatch) => {
     const {
@@ -379,7 +378,7 @@ export const actionHandlers = handleThunks({
 
     // Update only the author-level gate for the selected media type. Book-row
     // monitoring remains independent and is never changed by this control.
-    const updateData = { ...author };
+    const updateData = getAuthorUpdatePayload(author);
 
     // Remove read-only nested objects; they can include LazyLoaded<> metadata that isn't valid to send back on PUT.
     delete updateData.nextBook;
@@ -450,66 +449,6 @@ export const actionHandlers = handleThunks({
         id,
         section,
         isSaving: false
-      }));
-    });
-  },
-
-  [TOGGLE_BOOK_MONITORED]: function(getState, payload, dispatch) {
-    const {
-      authorId: id,
-      seasonNumber,
-      monitored
-    } = payload;
-
-    const author = _.find(getState().authors.items, { id });
-    const seasons = _.cloneDeep(author.seasons);
-    const season = _.find(seasons, { seasonNumber });
-
-    season.isSaving = true;
-
-    dispatch(updateItem({
-      id,
-      section,
-      seasons
-    }));
-
-    season.monitored = monitored;
-
-    const promise = createAjaxRequest({
-      url: `/author/${id}`,
-      method: 'PUT',
-      data: JSON.stringify({
-        ...author,
-        seasons
-      }),
-      dataType: 'json'
-    }).request;
-
-    promise.done((data) => {
-      const books = _.filter(getState().books.items, { authorId: id, seasonNumber });
-
-      dispatch(batchActions([
-        updateItem({
-          id,
-          section,
-          ...data
-        }),
-
-        ...books.map((book) => {
-          return updateItem({
-            id: book.id,
-            section: 'books',
-            monitored
-          });
-        })
-      ]));
-    });
-
-    promise.fail((xhr) => {
-      dispatch(updateItem({
-        id,
-        section,
-        seasons: author.seasons
       }));
     });
   },

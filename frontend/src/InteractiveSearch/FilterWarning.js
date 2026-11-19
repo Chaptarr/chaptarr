@@ -21,8 +21,7 @@ function FilterWarning(props) {
 
   const {
     softFilteredCount,
-    filterWarnings,
-    summaryText
+    filterWarnings
   } = filterSummary;
 
   if (bypassFilters) {
@@ -35,7 +34,7 @@ function FilterWarning(props) {
               {translate('FilterWarningShowingHiddenResults')}
             </div>
             <div className={styles.alertText}>
-              {summaryText}
+              {translate('FilterWarningSoftFilteredCount', { count: softFilteredCount })}
             </div>
           </div>
           <Button
@@ -82,8 +81,7 @@ FilterWarning.propTypes = {
     hasSoftFilters: PropTypes.bool,
     displayedCount: PropTypes.number,
     softFilteredCount: PropTypes.number,
-    filterWarnings: PropTypes.arrayOf(PropTypes.string),
-    summaryText: PropTypes.string
+    filterWarnings: PropTypes.arrayOf(PropTypes.string)
   }),
   bypassFilters: PropTypes.bool.isRequired,
   onToggleBypass: PropTypes.func.isRequired

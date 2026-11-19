@@ -1,4 +1,8 @@
+using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using NzbDrone.Common.Disk;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.CustomFormats;
 using NzbDrone.Core.MediaFiles;
@@ -9,149 +13,115 @@ namespace NzbDrone.Core.Organizer
 {
     public interface IFilenameSampleService
     {
-        SampleResult GetStandardTrackSample(NamingConfig nameSpec);
-        SampleResult GetMultiDiscTrackSample(NamingConfig nameSpec);
-        string GetAuthorFolderSample(NamingConfig nameSpec);
+        SampleResult GetStandardTrackSample(NamingConfig nameSpec, string mediaType = "audiobook");
+        SampleResult GetMultiDiscTrackSample(NamingConfig nameSpec, string mediaType = "audiobook");
+        string GetAuthorFolderSample(NamingConfig nameSpec, string mediaType = "audiobook");
     }
 
     public class FileNameSampleService : IFilenameSampleService
     {
         private readonly IBuildFileNames _buildFileNames;
 
-        private static Author _standardAuthor;
-        private static Book _standardBook;
-        private static Edition _standardEdition;
-        private static BookFile _singleTrackFile;
-        private static BookFile _multiTrackFile;
-        private static List<CustomFormat> _customFormats;
-
         public FileNameSampleService(IBuildFileNames buildFileNames)
         {
             _buildFileNames = buildFileNames;
+        }
 
-            _standardAuthor = new Author
-            {
-                Name = "The Author Name",
-                Disambiguation = "US Author",
-                NameLastFirst = "Last name, First name"
-            };
+        public SampleResult GetStandardTrackSample(NamingConfig nameSpec, string mediaType = "audiobook")
+        {
+            return GetSample(nameSpec, mediaType, 1);
+        }
 
-            var series = new Series
+        public SampleResult GetMultiDiscTrackSample(NamingConfig nameSpec, string mediaType = "audiobook")
+        {
+            var firstPart = GetSample(nameSpec, mediaType, 12, 1);
+            var secondPart = GetSample(nameSpec, mediaType, 12, 2);
+            if (string.Equals(firstPart.FileName, secondPart.FileName, DiskProviderBase.PathStringComparison))
             {
-                Title = "Series Title"
-            };
+                firstPart.FileName = string.Empty;
+            }
 
-            var seriesLink = new SeriesBookLink
-            {
-                Position = "1",
-                Series = series
-            };
+            return firstPart;
+        }
 
-            _standardBook = new Book
-            {
-                Title = "The Book Title",
-                ReleaseDate = System.DateTime.Today,
-                Author = _standardAuthor,
-                AuthorId = _standardAuthor.Id,
-                SeriesLinks = new List<SeriesBookLink> { seriesLink }
-            };
+        public string GetAuthorFolderSample(NamingConfig nameSpec, string mediaType = "audiobook")
+        {
+            return _buildFileNames.GetAuthorFolder(CreateAuthor(), nameSpec, mediaType);
+        }
 
-            _standardEdition = new Edition
-            {
-                Title = "The Edition Title",
-                Book = _standardBook,
-                NarratorNames = new List<string> { "Alice Reader", "Bob Voice" }
-            };
+        private static Author CreateAuthor() => new Author
+        {
+            Name = "Jim Butcher",
+            Disambiguation = "US Author",
+            NameLastFirst = "Butcher, Jim"
+        };
 
-            _customFormats = new List<CustomFormat>
+        private SampleResult GetSample(NamingConfig nameSpec, string mediaType, int partCount, int partNumber = 1)
+        {
+            // Samples own their format-specific metadata: concurrent ebook/audio requests must
+            // neither share mutable files nor show MP3/narrator data for an ebook pattern.
+            var isEbook = string.Equals(mediaType, "ebook", StringComparison.OrdinalIgnoreCase);
+            var author = CreateAuthor();
+            var book = new Book
             {
-                new CustomFormat
+                Title = "Grave Peril",
+                ReleaseDate = DateTime.Today,
+                Author = author,
+                MediaType = isEbook ? BookMediaType.Ebook : BookMediaType.Audiobook,
+                SeriesLinks = new List<SeriesBookLink>
                 {
-                    Name = "Surround Sound",
-                    IncludeCustomFormatWhenRenaming = true
-                },
-                new CustomFormat
-                {
-                    Name = "x264",
-                    IncludeCustomFormatWhenRenaming = true
+                    new SeriesBookLink { Position = "3", Series = new Series { Title = "The Dresden Files", GoodreadsSeriesId = "gr:1",
+                        MediaType = isEbook ? BookMediaType.Ebook : BookMediaType.Audiobook } }
                 }
             };
-
-            var mediaInfo = new MediaInfoModel()
+            var edition = new Edition
             {
-                AudioFormat = "Flac Audio",
-                AudioChannels = 2,
-                AudioBitrate = 875,
-                AudioBits = 24,
-                AudioSampleRate = 44100
+                Title = book.Title,
+                Book = book,
+                NarratorNames = isEbook ? new List<string>() : new List<string> { "James Marsters" }
             };
-
-            _singleTrackFile = new BookFile
+            var originalName = book.Title;
+            // Preserve source identity per part so Original Title patterns can distinguish input files.
+            if (partCount > 1)
             {
-                Quality = new QualityModel(Quality.MP3, new Revision(2)),
-                Path = "/music/Author.Name.Book.Name.TrackNum.Track.Title.MP3256.mp3",
-                SceneName = "Author.Name.Book.Name.TrackNum.Track.Title.MP3256",
+                originalName += " - Part " + partNumber.ToString(CultureInfo.InvariantCulture);
+            }
+
+            var file = new BookFile
+            {
+                Quality = new QualityModel(isEbook ? Quality.EPUB : Quality.MP3, new Revision(2)),
+                MediaType = mediaType,
+                Path = Path.Combine(Path.DirectorySeparatorChar.ToString(), "books", originalName + (isEbook ? ".epub" : ".mp3")),
+                SceneName = originalName,
                 ReleaseGroup = "RlsGrp",
-                MediaInfo = mediaInfo,
-                Edition = _standardEdition,
-                Part = 1,
-                PartCount = 1
+                MediaInfo = isEbook ? null : new MediaInfoModel
+                {
+                    AudioFormat = "Flac Audio",
+                    AudioChannels = 2,
+                    AudioBitrate = 875,
+                    AudioBits = 24,
+                    AudioSampleRate = 44100
+                },
+                Edition = edition,
+                Part = partNumber,
+                PartCount = partCount
             };
-
-            _multiTrackFile = new BookFile
+            var customFormats = isEbook ? new List<CustomFormat>() : new List<CustomFormat>
             {
-                Quality = new QualityModel(Quality.MP3, new Revision(2)),
-                Path = "/music/Author.Name.Book.Name.TrackNum.Track.Title.MP3256.mp3",
-                SceneName = "Author.Name.Book.Name.TrackNum.Track.Title.MP3256",
-                ReleaseGroup = "RlsGrp",
-                MediaInfo = mediaInfo,
-                Edition = _standardEdition,
-                Part = 1,
-                PartCount = 2
+                new CustomFormat { Name = "Surround Sound", IncludeCustomFormatWhenRenaming = true },
+                new CustomFormat { Name = "x264", IncludeCustomFormatWhenRenaming = true }
             };
-        }
-
-        public SampleResult GetStandardTrackSample(NamingConfig nameSpec)
-        {
-            var result = new SampleResult
-            {
-                FileName = BuildTrackSample(_standardAuthor, _singleTrackFile, nameSpec),
-                Author = _standardAuthor,
-                Book = _standardBook,
-                BookFile = _singleTrackFile
-            };
-
-            return result;
-        }
-
-        public SampleResult GetMultiDiscTrackSample(NamingConfig nameSpec)
-        {
-            var result = new SampleResult
-            {
-                FileName = BuildTrackSample(_standardAuthor, _multiTrackFile, nameSpec),
-                Author = _standardAuthor,
-                Book = _standardBook,
-                BookFile = _singleTrackFile
-            };
-
-            return result;
-        }
-
-        public string GetAuthorFolderSample(NamingConfig nameSpec)
-        {
-            return _buildFileNames.GetAuthorFolder(_standardAuthor, nameSpec);
-        }
-
-        private string BuildTrackSample(Author author, BookFile bookFile, NamingConfig nameSpec)
-        {
+            var result = new SampleResult { Author = author, Book = book, BookFile = file };
             try
             {
-                return _buildFileNames.BuildBookFileName(author, bookFile.Edition, bookFile, nameSpec, _customFormats);
+                result.FileName = _buildFileNames.BuildBookFileName(author, edition, file, nameSpec, customFormats);
             }
             catch (NamingFormatException)
             {
-                return string.Empty;
+                result.FileName = string.Empty;
             }
+
+            return result;
         }
     }
 }

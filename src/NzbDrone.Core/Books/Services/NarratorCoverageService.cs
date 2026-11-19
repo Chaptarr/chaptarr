@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using NLog;
+using NzbDrone.Core.Parser;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.MetadataSource;
@@ -69,17 +70,7 @@ namespace NzbDrone.Core.Books
 
             var coverage = await GetNarratorCoverageForSeries(series);
 
-            // Try exact match first
-            if (coverage.TryGetValue(narratorName, out var info))
-            {
-                return info.HasCompleteCoverage;
-            }
-
-            // Try case-insensitive match
-            var match = coverage.FirstOrDefault(kv =>
-                kv.Key.Equals(narratorName, StringComparison.OrdinalIgnoreCase));
-
-            return match.Value?.HasCompleteCoverage ?? false;
+            return coverage.TryGetValue(narratorName, out var info) && info.HasCompleteCoverage;
         }
 
         public async Task<List<string>> GetNarratorsWithCompleteCoverage(Series series)
@@ -94,7 +85,7 @@ namespace NzbDrone.Core.Books
 
         private async Task<Dictionary<string, NarratorCoverageInfo>> CalculateNarratorCoverage(Series series)
         {
-            var result = new Dictionary<string, NarratorCoverageInfo>(StringComparer.OrdinalIgnoreCase);
+            var result = new Dictionary<string, NarratorCoverageInfo>(NzbDrone.Core.Parser.Parser.NarratorNameComparer);
 
             try
             {

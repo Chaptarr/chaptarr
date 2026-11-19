@@ -866,8 +866,6 @@
     "BlocklistAndSearchHint": "Iniciar uma pesquisa por um substituto após adicionar à lista de bloqueio",
     "BlocklistOnlyHint": "Adicionar à lista de bloqueio sem procurar por um substituto",
     "ChangeCategory": "Alterar categoria",
-    "ChangeCategoryHint": "Altera o download para a \"Categoria pós-importação\" do cliente de download",
-    "ChangeCategoryMultipleHint": "Altera os downloads para a \"Categoria pós-importação' do cliente de download",
     "CustomFormatsSettingsTriggerInfo": "Um formato personalizado será aplicado a uma versão ou ficheiro quando corresponder a pelo menos um dos diferentes tipos de condição escolhidos.",
     "DashOrSpaceDashDependingOnName": "Traço ou Espaço e Traço, dependendo do nome",
     "ConnectionSettingsUrlBaseHelpText": "Adiciona um prefixo ao URL {connectionName}, como {url}",

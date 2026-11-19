@@ -153,12 +153,12 @@ namespace Chaptarr.Core.Test.DecisionEngine
         }
 
         [Test]
-        public void monitored_book_should_reject_for_author_search_criteria()
+        public void monitored_book_should_reject_without_explicit_book_search_criteria()
         {
             var author = BuildAuthor(monitored: false);
             var book = BuildBook(author);
             var subject = BuildRemoteBook(author, book, Quality.M4B, Quality.M4B);
-            var criteria = BuildAuthorSearchCriteria(author, book);
+            var criteria = BuildGenericSearchCriteria(author, book);
 
             var result = new NzbDrone.Core.DecisionEngine.Specifications.RssSync.MonitoredBookSpecification(LogManager.GetCurrentClassLogger())
                 .IsSatisfiedBy(subject, criteria);
@@ -423,9 +423,13 @@ namespace Chaptarr.Core.Test.DecisionEngine
             };
         }
 
-        private static AuthorSearchCriteria BuildAuthorSearchCriteria(Author author, Book book)
+        private sealed class GenericSearchCriteria : SearchCriteriaBase
         {
-            return new AuthorSearchCriteria
+        }
+
+        private static SearchCriteriaBase BuildGenericSearchCriteria(Author author, Book book)
+        {
+            return new GenericSearchCriteria
             {
                 Author = author,
                 Books = new List<Book> { book },

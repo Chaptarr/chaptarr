@@ -26,11 +26,6 @@ namespace NzbDrone.Core.ImportLists.Goodreads
         private const int ParallelPageFetches = 5;
 
         private readonly IProvideListInfo _listInfo;
-        private readonly Lazy<IQualityProfileService> _qualityProfileService;
-        private readonly Lazy<IMetadataProfileService> _metadataProfileService;
-        private readonly Lazy<ITagService> _tagService;
-        private readonly IRootFolderService _rootFolderService;
-        private readonly IRootFolderSettingsResolver _rootFolderSettingsResolver;
 
         public override string Name => "Goodreads List";
         public override ImportListType ListType => ImportListType.Goodreads;
@@ -46,14 +41,9 @@ namespace NzbDrone.Core.ImportLists.Goodreads
             IRootFolderService rootFolderService,
             IRootFolderSettingsResolver rootFolderSettingsResolver,
             Logger logger)
-            : base(importListStatusService, configService, parsingService, logger)
+            : base(importListStatusService, configService, parsingService, qualityProfileService, metadataProfileService, tagService, rootFolderService, rootFolderSettingsResolver, logger)
         {
             _listInfo = listInfo;
-            _qualityProfileService = qualityProfileService;
-            _metadataProfileService = metadataProfileService;
-            _tagService = tagService;
-            _rootFolderService = rootFolderService;
-            _rootFolderSettingsResolver = rootFolderSettingsResolver;
         }
 
         public override IList<ImportListItemInfo> Fetch()
@@ -83,8 +73,10 @@ namespace NzbDrone.Core.ImportLists.Goodreads
 
                 _importListStatusService.RecordSuccess(Definition.Id);
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.Warn(ex, "Error fetching Goodreads List import list '{0}' (ListId={1})",
+                    Definition?.Name ?? Name, Settings.ListId);
                 _importListStatusService.RecordFailure(Definition.Id);
             }
 
@@ -115,7 +107,6 @@ namespace NzbDrone.Core.ImportLists.Goodreads
                         AddPageItems(result, pageItems, seenSourceBooks))
                     {
                         reachedLimit = true;
-                        break;
                     }
                 }
 
@@ -166,19 +157,20 @@ namespace NzbDrone.Core.ImportLists.Goodreads
 
         private bool AddPageItems(List<ImportListItemInfo> result, IEnumerable<ImportListItemInfo> pageItems, HashSet<string> seenSourceBooks)
         {
+            var reachedBeforePage = GoodreadsImportListLimit.HasReached(seenSourceBooks.Count, Settings.ImportLimit);
             foreach (var item in pageItems)
             {
                 GoodreadsImportListLimit.TryAdd(result, item, seenSourceBooks, Settings.ImportLimit);
-
-                if (GoodreadsImportListLimit.HasReached(result.Count, Settings.ImportLimit))
-                {
-                    _logger.Info("Goodreads List import list '{0}' reached import limit of {1}; remaining Goodreads items will be skipped.",
-                        Definition?.Name ?? Name, Settings.ImportLimit);
-                    return true;
-                }
             }
 
-            return false;
+            var reachedLimit = GoodreadsImportListLimit.HasReached(seenSourceBooks.Count, Settings.ImportLimit);
+            if (reachedLimit && !reachedBeforePage)
+            {
+                _logger.Info("Goodreads List import list '{0}' reached import limit of {1}; remaining Goodreads items will be skipped.",
+                    Definition?.Name ?? Name, Settings.ImportLimit);
+            }
+
+            return reachedLimit;
         }
 
         private List<ImportListItemInfo> FetchPage(int page)
@@ -215,13 +207,6 @@ namespace NzbDrone.Core.ImportLists.Goodreads
         protected override void Test(List<ValidationFailure> failures)
         {
             failures.AddIfNotNull(TestConnection());
-            failures.AddRange(GoodreadsDualMediaImportListActions.TestRootFolderConfig(Settings, _rootFolderService, _rootFolderSettingsResolver));
-        }
-
-        public override object RequestAction(string action, IDictionary<string, string> query)
-        {
-            return GoodreadsDualMediaImportListActions.HandleRequestAction(action, _qualityProfileService, _metadataProfileService, _tagService)
-                ?? base.RequestAction(action, query);
         }
 
         private ValidationFailure TestConnection()

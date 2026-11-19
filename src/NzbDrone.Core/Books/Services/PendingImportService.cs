@@ -330,7 +330,7 @@ namespace NzbDrone.Core.Books
             author.EbookMetadataProfileId = settings.EbookMetadataProfileId ?? 0;
             author.AudiobookTags = settings.AudiobookTags ?? new HashSet<int>();
             author.EbookTags = settings.EbookTags ?? new HashSet<int>();
-            author.Tags = author.AudiobookTags.Concat(author.EbookTags).ToHashSet();
+            author.Tags = author.GetCombinedTags();
         }
 
         private void MonitorSpecificBooks(Author author, List<string> monitoringIds, string mediaType)

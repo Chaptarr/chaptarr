@@ -1,9 +1,12 @@
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
 using Dapper;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.ImportLists;
 using NzbDrone.Core.RootFolders;
 
 namespace NzbDrone.Core.Housekeeping.Housekeepers
@@ -28,7 +31,7 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
             usedTags.UnionWith(GetUsedTagsFromArrayColumn("Notifications", "Tags", mapper));
             usedTags.UnionWith(GetUsedTagsFromArrayColumn("DelayProfiles", "Tags", mapper));
             usedTags.UnionWith(GetUsedTagsFromArrayColumn("ReleaseProfiles", "Tags", mapper));
-            usedTags.UnionWith(GetUsedTagsFromArrayColumn("ImportLists", "Tags", mapper));
+            usedTags.UnionWith(GetUsedTagsFromImportLists(mapper));
             usedTags.UnionWith(GetUsedTagsFromArrayColumn("Indexers", "Tags", mapper));
             usedTags.UnionWith(GetUsedTagsFromArrayColumn("DownloadClients", "Tags", mapper));
             usedTags.UnionWith(GetUsedTagsFromArrayColumn("DownloadClients", "AudiobookTags", mapper));
@@ -82,6 +85,27 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
                 """)
                 .SelectMany(x => x)
                 .Distinct()
+                .ToArray();
+        }
+
+        private static IEnumerable<int> GetUsedTagsFromImportLists(IDbConnection mapper)
+        {
+            foreach (var (tags, settings) in mapper.Query<(string Tags, string Settings)>("SELECT \"Tags\", \"Settings\" FROM \"ImportLists\""))
+            {
+                if (!string.IsNullOrWhiteSpace(tags))
+                {
+                    foreach (var tagId in JsonConvert.DeserializeObject<List<int>>(tags) ?? new List<int>()) yield return tagId;
+                }
+                foreach (var tagId in ExtractTagsFromImportListSettingsJson(settings)) yield return tagId;
+            }
+        }
+
+        private static IEnumerable<int> ExtractTagsFromImportListSettingsJson(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return Enumerable.Empty<int>();
+            var settings = JsonConvert.DeserializeObject<JObject>(json);
+            return new[] { nameof(DualMediaImportListSettings.AudiobookTags), nameof(DualMediaImportListSettings.EbookTags) }
+                .SelectMany(field => settings?.GetValue(field, StringComparison.OrdinalIgnoreCase)?.ToObject<List<int>>() ?? new List<int>())
                 .ToArray();
         }
 

@@ -45,5 +45,19 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         {
             Assert.That(SeriesPositionTokenHelper.HasPositionIdentity(value), Is.False);
         }
+
+        [TestCase("II", true)]
+        [TestCase("XIV", true)]
+        [TestCase("MIX", true)]
+        [TestCase("VI", true)]
+        [TestCase("Mild", false)]
+        [TestCase("Civil", false)]
+        [TestCase("IL", false)]
+        [TestCase("IM", false)]
+        [TestCase("", false)]
+        public void should_classify_only_canonical_roman_tokens(string value, bool expected)
+        {
+            Assert.That(SeriesPositionTokenHelper.LooksLikeRomanNumeralToken(value), Is.EqualTo(expected));
+        }
     }
 }

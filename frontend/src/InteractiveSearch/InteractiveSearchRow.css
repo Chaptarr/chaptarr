@@ -31,6 +31,10 @@
   column-gap: 10px;
 }
 
+.titleContentWithoutBadge {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .titleTextBlock {
   min-width: 0;
 }
@@ -60,8 +64,9 @@
 .indexer {
   composes: cell;
 
-  width: 82px;
   overflow: hidden;
+
+  width: 82px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -69,18 +74,18 @@
 .quality {
   composes: cell;
 
-  width: 70px;
+  width: 120px;
   text-align: center;
-}
-
-.quality {
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .customFormatScore {
   composes: cell from '~Components/Table/Cells/TableRowCell.css';
 
-  width: 44px;
+  width: 64px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+
   font-weight: bold;
   cursor: default;
 }
@@ -162,7 +167,8 @@
 .peers {
   composes: cell;
 
-  width: 68px;
+  width: 88px;
+  white-space: normal;
 }
 
 .goldStar {
@@ -201,5 +207,19 @@
   white-space: nowrap;
   letter-spacing: 0.35px;
   font-weight: 600;
+  font-size: 11px;
+}
+
+.summaryBook {
+  composes: cell;
+
+  white-space: normal;
+  font-weight: 600;
+}
+
+.summaryBookStatus {
+  margin-top: 4px;
+  color: var(--helpTextColor);
+  font-weight: normal;
   font-size: 11px;
 }

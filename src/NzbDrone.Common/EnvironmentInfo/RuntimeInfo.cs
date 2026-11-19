@@ -18,7 +18,7 @@ namespace NzbDrone.Common.EnvironmentInfo
         {
             _logger = logger;
 
-            IsWindowsService = hostLifetime is WindowsServiceLifetime;
+            IsWindowsService = hostLifetime is WindowsServiceLifetime || ServiceHost.IsServiceLifetime(hostLifetime);
             IsStarting = true;
 
             //Guarded to avoid issues when running in a non-managed process

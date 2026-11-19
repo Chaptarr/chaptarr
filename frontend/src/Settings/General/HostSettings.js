@@ -18,6 +18,7 @@ function HostSettings(props) {
 
   const {
     bindAddress,
+    allowedHosts,
     port,
     urlBase,
     instanceName,
@@ -46,6 +47,18 @@ function HostSettings(props) {
           helpTextWarning={translate('BindAddressHelpTextWarning')}
           onChange={onInputChange}
           {...bindAddress}
+        />
+      </FormGroup>
+
+      <FormGroup>
+        <FormLabel>{translate('AllowedHosts')}</FormLabel>
+        <FormInputGroup
+          type={inputTypes.TEXT}
+          name="allowedHosts"
+          helpText={translate('AllowedHostsHelpText')}
+          helpTextWarning={translate('RestartRequiredHelpTextWarning')}
+          onChange={onInputChange}
+          {...allowedHosts}
         />
       </FormGroup>
 

@@ -56,10 +56,12 @@ namespace Chaptarr.Core.Test.Download
 
                 return TorrentDetails;
             }
+            public DelugeTorrent GetTorrent(string hash, DelugeSettings settings) => throw new NotImplementedException();
+            public void SetTorrentPaused(string hash, bool paused, DelugeSettings settings) => throw new NotImplementedException();
             public string[] GetAvailablePlugins(DelugeSettings settings) => throw new NotImplementedException();
             public string[] GetEnabledPlugins(DelugeSettings settings) => throw new NotImplementedException();
             public string[] GetAvailableLabels(DelugeSettings settings) => throw new NotImplementedException();
-            public DelugeLabel GetLabelOptions(DelugeSettings settings)
+            public DelugeLabel GetLabelOptions(string label, DelugeSettings settings)
             {
                 LabelOptionsCalls++;
                 throw new DelugeException("label.get_options should not be called for an empty label", 4);
@@ -121,6 +123,9 @@ namespace Chaptarr.Core.Test.Download
                     diskProvider: null,
                     remotePathMappingService: new PassthroughRemotePathMappingService(),
                     blocklistService: null,
+                    downloadSeedConfigProvider: null,
+                    downloadHistory: null,
+                    cacheManager: new NzbDrone.Common.Cache.CacheManager(),
                     logger: logger)
             {
             }

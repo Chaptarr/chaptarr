@@ -92,6 +92,11 @@ namespace NzbDrone.Core.Indexers.Newznab
             releaseInfo.Author = GetAuthor(item);
             releaseInfo.Book = GetBook(item);
 
+            _logger.Trace("NEWZNAB_SOURCE_STRUCTURED: Title='{0}', booktitle='{1}', author='{2}'",
+                releaseInfo.Title ?? "EMPTY",
+                releaseInfo.Book.IsNullOrWhiteSpace() ? "EMPTY" : releaseInfo.Book,
+                releaseInfo.Author.IsNullOrWhiteSpace() ? "EMPTY" : releaseInfo.Author);
+
             // Indexer-provided extended metadata hints (used by narrator metadata enrichment)
             var nfoValue = TryGetNewznabAttribute(item, "nfo", null);
             if (!nfoValue.IsNullOrWhiteSpace() && int.TryParse(nfoValue, out var nfoInt))

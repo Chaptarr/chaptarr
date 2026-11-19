@@ -31,7 +31,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             };
         }
 
-        public static MatchingContext ForManualPreview(bool allowPathFallback = true)
+        public static MatchingContext ForManualPreview(bool allowPathFallback = true, IEnumerable<int> targetBookIds = null)
         {
             return new MatchingContext
             {
@@ -41,7 +41,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 AllowUnscopedFallback = false,
                 DisablePathFallback = !allowPathFallback,
                 PerFileMatching = true,
-                AllowGroupedV5Suggestions = true
+                AllowGroupedV5Suggestions = true,
+                TargetBookIds = NormalizeTargetBookIds(targetBookIds)
             };
         }
 

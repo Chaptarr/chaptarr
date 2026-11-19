@@ -31,15 +31,16 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class RecordingIngestQueueRepository : IIngestQueueRepository
         {
             public readonly List<string> PurgedPrefixes = new List<string>();
+            public readonly List<string> PurgedPaths = new List<string>();
+            public int ExactPurgeCalls { get; private set; }
 
-            public void BeginSession(int commandId) => throw new NotImplementedException();
             public void InsertBatch(List<IngestQueueItem> items) => throw new NotImplementedException();
             public List<IngestQueueItem> GetQueuedItems(int limit = 100) => throw new NotImplementedException();
             public List<IngestQueueItem> GetQueuedItemsUnderPath(string pathPrefix, int limit = 100, int afterId = 0) => throw new NotImplementedException();
             public int GetActiveCountUnderPath(string pathPrefix) => throw new NotImplementedException();
             public List<IngestQueueStatusCount> GetActiveStatusCountsUnderPath(string pathPrefix) => throw new NotImplementedException();
             public List<IngestQueueItem> GetActiveItemsUnderPath(string pathPrefix, int limit = 20) => throw new NotImplementedException();
-            public List<IngestQueueItem> GetActiveItems(int limit = 1000, int afterId = 0) => throw new NotImplementedException();
+            public List<IngestQueueItem> GetActiveItems(int limit = 1000, int afterId = 0, bool includeCompleted = false) => throw new NotImplementedException();
             public List<IngestQueueItem> GetActiveItemsForSweepUnderPath(string pathPrefix, int limit = 1000, int afterId = 0) => throw new NotImplementedException();
 
             public int RecoverStaleInProgress(string pathPrefix, int staleMinutes = 10) => throw new NotImplementedException();
@@ -52,19 +53,22 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void UpdateBatchStatus(List<int> ids, string status) => throw new NotImplementedException();
             public void RequeueInProgress(List<int> ids, string error = null) => throw new NotImplementedException();
             public int GetQueueCount() => throw new NotImplementedException();
-            public int RequeueFailedOrUnmappedUnderPath(string pathPrefix) => throw new NotImplementedException();
-            public int RequeueFailedPaths(IEnumerable<string> paths) => throw new NotImplementedException();
+            public int PurgeCompletedResults(IEnumerable<int> resultIds) => 0;
             public int PurgeUnderPath(string pathPrefix)
             {
                 PurgedPrefixes.Add(pathPrefix);
                 return 1;
             }
 
-            public int PurgePaths(IEnumerable<string> paths) => throw new NotImplementedException();
-            public void PurgeOldCompleted(int daysToKeep = 14) => throw new NotImplementedException();
+            public int PurgePaths(IEnumerable<string> paths)
+            {
+                ExactPurgeCalls++;
+                PurgedPaths.AddRange(paths);
+                return PurgedPaths.Count;
+            }
             public void RecordImportResult(int queueItemId, string path, ImportOutcome outcome, int? bookId = null, int? authorId = null, string quality = null, string errorMessage = null) => throw new NotImplementedException();
             public void CompleteItemWithResult(int queueItemId, string path, ImportOutcome outcome, int? bookId = null, int? authorId = null, string quality = null, string errorMessage = null, string statusError = null) => throw new NotImplementedException();
-            public List<ImportResult> GetImportResults(int? commandId = null) => throw new NotImplementedException();
+            public List<ImportResult> GetImportResults(IReadOnlyCollection<string> paths = null) => throw new NotImplementedException();
         }
 
         private class MediaFileRepositoryProxy : DispatchProxy
@@ -108,10 +112,6 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                         return null;
 
-                    case nameof(IMediaFileRepository.UnlinkFilesByBook):
-                    case nameof(IMediaFileRepository.DeleteFilesByBook):
-                        return null;
-
                     case nameof(IMediaFileRepository.GetFilesByEdition):
                         return GetFilesByEditionHandler?.Invoke((int)args[0]) ?? Enumerable.Empty<BookFile>();
 
@@ -139,7 +139,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var repo = DispatchProxy.Create<IMediaFileRepository, MediaFileRepositoryProxy>();
             var ingestQueue = new RecordingIngestQueueRepository();
             var events = new RecordingEventAggregator();
-            var sut = new MediaFileService(repo, events, ingestQueue, LogManager.GetLogger("test"));
+            var sut = new MediaFileService(repo, events, ingestQueue, null, LogManager.GetLogger("test"));
 
             var file = new BookFile
             {
@@ -150,7 +150,8 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             sut.Delete(file, DeleteMediaFileReason.MissingFromDisk);
 
-            Assert.That(ingestQueue.PurgedPrefixes, Is.EqualTo(new[] { file.Path }));
+            Assert.That(ingestQueue.PurgedPaths, Is.EqualTo(new[] { file.Path }));
+            Assert.That(ingestQueue.PurgedPrefixes, Is.Empty);
             Assert.That(events.Events.OfType<BookFileDeletedEvent>(), Is.Empty);
         }
 
@@ -178,7 +179,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var ingestQueue = new RecordingIngestQueueRepository();
             var events = new RecordingEventAggregator();
-            var sut = new MediaFileService(repo, events, ingestQueue, LogManager.GetLogger("test"));
+            var sut = new MediaFileService(repo, events, ingestQueue, null, LogManager.GetLogger("test"));
 
             var files = new List<BookFile>
             {
@@ -190,7 +191,9 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             var deleteEvents = events.Events.OfType<BookFileDeletedEvent>().ToList();
 
-            Assert.That(ingestQueue.PurgedPrefixes, Is.EquivalentTo(files.Select(f => f.Path)));
+            Assert.That(ingestQueue.PurgedPaths, Is.EquivalentTo(files.Select(f => f.Path)));
+            Assert.That(ingestQueue.ExactPurgeCalls, Is.EqualTo(1));
+            Assert.That(ingestQueue.PurgedPrefixes, Is.Empty);
             Assert.That(deleteEvents, Has.Count.EqualTo(2));
             Assert.That(deleteEvents.All(e => e.BookFile.Author?.Id == 7), Is.True);
             Assert.That(deleteEvents.Select(e => e.BookFile.Edition?.Book?.Title), Is.EquivalentTo(new[] { "Test Book 1", "Test Book 2" }));
@@ -231,7 +234,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             };
             var ingestQueue = new RecordingIngestQueueRepository();
             var events = new RecordingEventAggregator();
-            var sut = new MediaFileService(repo, events, ingestQueue, LogManager.GetLogger("test"));
+            var sut = new MediaFileService(repo, events, ingestQueue, null, LogManager.GetLogger("test"));
 
             sut.ReplaceMany(
                 new List<BookFile> { replacement },
@@ -240,7 +243,8 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             Assert.That(repoProxy.ReplacementAdditions, Is.EqualTo(new[] { replacement }));
             Assert.That(repoProxy.ReplacementRemovals, Is.EqualTo(new[] { oldFile }));
-            Assert.That(ingestQueue.PurgedPrefixes, Is.EqualTo(new[] { oldFile.Path }));
+            Assert.That(ingestQueue.PurgedPaths, Is.EqualTo(new[] { oldFile.Path }));
+            Assert.That(ingestQueue.PurgedPrefixes, Is.Empty);
             Assert.That(events.Events.OfType<BookFileDeletedEvent>().Single().BookFile.Edition.Book.Title, Is.EqualTo("Test Book"));
             Assert.That(events.Events.OfType<BookFilesAddedEvent>().Single().BookFiles, Is.EqualTo(new[] { replacement }));
         }
@@ -264,6 +268,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 repo,
                 new RecordingEventAggregator(),
                 new RecordingIngestQueueRepository(),
+                null,
                 LogManager.GetLogger("test"));
 
             sut.Handle(new EditionDeletedEvent(new Edition { Id = 100 }));
@@ -281,7 +286,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var repo = DispatchProxy.Create<IMediaFileRepository, MediaFileRepositoryProxy>();
             var ingestQueue = new RecordingIngestQueueRepository();
             var events = new RecordingEventAggregator();
-            var sut = new MediaFileService(repo, events, ingestQueue, LogManager.GetLogger("test"));
+            var sut = new MediaFileService(repo, events, ingestQueue, null, LogManager.GetLogger("test"));
 
             var author = new Author
             {
@@ -307,7 +312,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var repo = DispatchProxy.Create<IMediaFileRepository, MediaFileRepositoryProxy>();
             var ingestQueue = new RecordingIngestQueueRepository();
             var events = new RecordingEventAggregator();
-            var sut = new MediaFileService(repo, events, ingestQueue, LogManager.GetLogger("test"));
+            var sut = new MediaFileService(repo, events, ingestQueue, null, LogManager.GetLogger("test"));
 
             var book = new Book
             {
@@ -321,7 +326,8 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             sut.HandleAsync(new BookDeletedEvent(book, deleteFiles: false, addImportListExclusion: false));
 
-            Assert.That(ingestQueue.PurgedPrefixes, Is.EqualTo(new[] { "/books/books/Test Author/Test Book/Test Book.m4b" }));
+            Assert.That(ingestQueue.PurgedPaths, Is.EqualTo(new[] { "/books/books/Test Author/Test Book/Test Book.m4b" }));
+            Assert.That(ingestQueue.PurgedPrefixes, Is.Empty);
         }
     }
 }

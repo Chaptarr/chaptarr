@@ -6,9 +6,10 @@ import { createSelector } from 'reselect';
 import { clearPendingChanges } from 'Store/Actions/baseActions';
 import { fetchDownloadClients } from 'Store/Actions/Settings/downloadClients';
 import { fetchRootFolders } from 'Store/Actions/Settings/rootFolders';
-import { fetchMediaManagementSettings, saveMediaManagementSettings, saveNamingSettings, setMediaManagementSettingsValue } from 'Store/Actions/settingsActions';
+import { fetchMediaManagementSettings, invalidateBookCoverScopeResources, saveMediaManagementSettings, saveNamingSettings, setMediaManagementSettingsValue } from 'Store/Actions/settingsActions';
 import createSettingsSectionSelector from 'Store/Selectors/createSettingsSectionSelector';
 import createSystemStatusSelector from 'Store/Selectors/createSystemStatusSelector';
+import createAjaxRequest from 'Utilities/createAjaxRequest';
 import MediaManagement from './MediaManagement';
 
 const SECTION = 'mediaManagement';
@@ -35,12 +36,20 @@ const mapDispatchToProps = {
   setMediaManagementSettingsValue,
   saveMediaManagementSettings,
   saveNamingSettings,
+  invalidateBookCoverScopeResources,
   clearPendingChanges,
   fetchDownloadClients,
   fetchRootFolders
 };
 
 class MediaManagementConnector extends Component {
+
+  state = {
+    isCoverDownloadScopeConfirmOpen: false,
+    coverCleanupEstimate: null,
+    isFetchingCoverCleanupEstimate: false,
+    coverCleanupEstimateError: false
+  };
 
   //
   // Lifecycle
@@ -52,6 +61,7 @@ class MediaManagementConnector extends Component {
   }
 
   componentWillUnmount() {
+    this.cancelCoverCleanupEstimate();
     this.props.clearPendingChanges({ section: `settings.${SECTION}` });
   }
 
@@ -59,28 +69,67 @@ class MediaManagementConnector extends Component {
   // Listeners
 
   onInputChange = ({ name, value }) => {
-    if (name === 'bookMatchingStrictness') {
-      this.props.setMediaManagementSettingsValue({ name, value });
-
-      if (value === 'strict') {
-        this.props.setMediaManagementSettingsValue({ name: 'usePathAsTagsFallback', value: false });
-      }
-
-      return;
-    }
-
-    if (name === 'usePathAsTagsFallback' &&
-        this.props.settings?.bookMatchingStrictness?.value === 'strict' &&
-        value) {
-      return;
-    }
-
     this.props.setMediaManagementSettingsValue({ name, value });
   };
 
   onSavePress = () => {
-    this.props.saveMediaManagementSettings();
+    const coverDownloadScope = this.props.settings?.coverDownloadScope;
+
+    if (coverDownloadScope?.pending &&
+        coverDownloadScope.value === 'libraryBooks' &&
+        coverDownloadScope.previousValue === 'allBooks') {
+      this.setState({ isCoverDownloadScopeConfirmOpen: true });
+      return;
+    }
+
+    this.saveSettings();
+  };
+
+  onConfirmCoverDownloadScope = () => {
+    this.setState({ isCoverDownloadScopeConfirmOpen: false }, this.saveSettings);
+  };
+
+  onCancelCoverDownloadScope = () => {
+    this.setState({ isCoverDownloadScopeConfirmOpen: false });
+  };
+
+  onCalculateCoverSavings = () => {
+    this.cancelCoverCleanupEstimate();
+    this.setState({ coverCleanupEstimate: null, isFetchingCoverCleanupEstimate: true, coverCleanupEstimateError: false });
+
+    const pending = createAjaxRequest({ url: '/config/mediamanagement/covercleanup', dataType: 'json' });
+    this.coverCleanupRequest = pending;
+
+    pending.request.done((estimate) => {
+      if (this.coverCleanupRequest === pending) {
+        this.setState({ coverCleanupEstimate: estimate, isFetchingCoverCleanupEstimate: false });
+      }
+    }).fail(() => {
+      if (this.coverCleanupRequest === pending) {
+        this.setState({ coverCleanupEstimateError: true, isFetchingCoverCleanupEstimate: false });
+      }
+    });
+  };
+
+  cancelCoverCleanupEstimate = () => {
+    const pending = this.coverCleanupRequest;
+    this.coverCleanupRequest = null;
+    pending?.abortRequest();
+  };
+
+  saveSettings = () => {
+    this.cancelCoverCleanupEstimate();
+    this.setState({ coverCleanupEstimate: null, isFetchingCoverCleanupEstimate: false, coverCleanupEstimateError: false });
+
+    const coverDownloadScope = this.props.settings?.coverDownloadScope;
+    const scopeChanged = coverDownloadScope?.pending && coverDownloadScope.previousValue !== coverDownloadScope.value;
+    const mediaManagementSave = this.props.saveMediaManagementSettings();
+
     this.props.saveNamingSettings();
+
+    if (scopeChanged) {
+      mediaManagementSave.done(() => this.props.invalidateBookCoverScopeResources());
+    }
   };
 
   //
@@ -89,9 +138,16 @@ class MediaManagementConnector extends Component {
   render() {
     return (
       <MediaManagement
+        {...this.props}
         onInputChange={this.onInputChange}
         onSavePress={this.onSavePress}
-        {...this.props}
+        onConfirmCoverDownloadScope={this.onConfirmCoverDownloadScope}
+        onCancelCoverDownloadScope={this.onCancelCoverDownloadScope}
+        onCalculateCoverSavings={this.onCalculateCoverSavings}
+        isCoverDownloadScopeConfirmOpen={this.state.isCoverDownloadScopeConfirmOpen}
+        coverCleanupEstimate={this.state.coverCleanupEstimate}
+        isFetchingCoverCleanupEstimate={this.state.isFetchingCoverCleanupEstimate}
+        coverCleanupEstimateError={this.state.coverCleanupEstimateError}
       />
     );
   }
@@ -102,6 +158,7 @@ MediaManagementConnector.propTypes = {
   setMediaManagementSettingsValue: PropTypes.func.isRequired,
   saveMediaManagementSettings: PropTypes.func.isRequired,
   saveNamingSettings: PropTypes.func.isRequired,
+  invalidateBookCoverScopeResources: PropTypes.func.isRequired,
   clearPendingChanges: PropTypes.func.isRequired,
   fetchDownloadClients: PropTypes.func.isRequired,
   fetchRootFolders: PropTypes.func.isRequired,

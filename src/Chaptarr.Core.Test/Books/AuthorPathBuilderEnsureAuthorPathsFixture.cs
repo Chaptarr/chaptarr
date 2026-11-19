@@ -24,8 +24,6 @@ namespace Chaptarr.Core.Test.Books
             }
 
             public string BuildBookFileName(Author author, Edition edition, BookFile bookFile, NamingConfig namingConfig = null, List<CustomFormat> customFormats = null) => throw new NotImplementedException();
-            public string BuildBookFilePath(Author author, Edition edition, string fileName, string extension) => throw new NotImplementedException();
-            public string BuildBookPath(Author author) => throw new NotImplementedException();
             public BasicNamingConfig GetBasicNamingConfig(NamingConfig nameSpec) => throw new NotImplementedException();
         }
 
@@ -38,7 +36,12 @@ namespace Chaptarr.Core.Test.Books
                 _rootFolders = rootFolders ?? new List<RootFolder>();
             }
 
-            public List<RootFolder> All() => _rootFolders;
+            public int RootReads { get; private set; }
+            public List<RootFolder> All()
+            {
+                RootReads++;
+                return _rootFolders;
+            }
             public List<RootFolder> AllWithSpaceStats() => _rootFolders;
             public RootFolder Add(RootFolder rootFolder) => throw new NotImplementedException();
             public RootFolder Update(RootFolder rootFolder) => throw new NotImplementedException();
@@ -69,7 +72,7 @@ namespace Chaptarr.Core.Test.Books
 
             public string GetBestRootFolderPath(string path)
             {
-                return GetBestRootFolderPath(path, _rootFolders);
+                return GetBestRootFolderPath(path, All());
             }
 
             public string GetBestRootFolderPath(string path, List<RootFolder> allRootFolders)
@@ -84,6 +87,33 @@ namespace Chaptarr.Core.Test.Books
 
                 return possibleRootFolder.Path;
             }
+        }
+
+        [Test]
+        public void path_repair_reuses_the_root_list_for_both_formats()
+        {
+            var roots = new StubRootFolderService(new List<RootFolder>
+            {
+                new() { Path = "/old/audio", FolderType = FolderType.Audiobook },
+                new() { Path = "/old/ebooks", FolderType = FolderType.Ebook },
+                new() { Path = "/new/audio", FolderType = FolderType.Audiobook },
+                new() { Path = "/new/ebooks", FolderType = FolderType.Ebook }
+            });
+            var author = new Author
+            {
+                Name = "Frank Herbert", AudiobookRootFolderPath = "/new/audio", EbookRootFolderPath = "/new/ebooks",
+                AudiobookPath = "/old/audio/library/Frank Herbert", EbookPath = "/old/ebooks/library/Frank Herbert",
+                Path = "/old/audio/library/Frank Herbert"
+            };
+
+            new AuthorPathBuilder(new StubBuildFileNames(), roots).EnsureAuthorPaths(author, true);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(author.AudiobookPath, Is.EqualTo("/new/audio/library/Frank Herbert"));
+                Assert.That(author.EbookPath, Is.EqualTo("/new/ebooks/library/Frank Herbert"));
+                Assert.That(roots.RootReads, Is.EqualTo(1));
+            });
         }
 
         [Test]
@@ -150,6 +180,37 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(author.AudiobookPath, Is.EqualTo("/media/Alexis Hall"));
             Assert.That(author.EbookPath, Is.EqualTo("/media/Alexis Hall"));
             Assert.That(author.Path, Is.EqualTo("/media/Alexis Hall"));
+        }
+
+        [Test]
+        public void unrelated_save_preserves_both_scattered_folders()
+        {
+            var builder = new AuthorPathBuilder(new StubBuildFileNames(), new StubRootFolderService(new List<RootFolder>
+            {
+                new() { Path = "/audio", FolderType = FolderType.Audiobook },
+                new() { Path = "/ebooks", FolderType = FolderType.Ebook }
+            }));
+            var author = new Author { Name = "Frank Herbert", AudiobookRootFolderPath = "/audio", EbookRootFolderPath = "/ebooks",
+                AudiobookPath = "/loose/audio/Frank Herbert", EbookPath = "/loose/ebooks/Frank Herbert", Path = "/loose/audio/Frank Herbert" };
+            var previous = new Author { AudiobookRootFolderPath = "/audio", EbookRootFolderPath = "/ebooks" };
+            builder.EnsureAuthorPaths(author, true, previous);
+            Assert.That(author.AudiobookPath, Is.EqualTo("/loose/audio/Frank Herbert"));
+            Assert.That(author.EbookPath, Is.EqualTo("/loose/ebooks/Frank Herbert"));
+            Assert.That(author.Path, Is.EqualTo("/loose/audio/Frank Herbert"));
+        }
+
+        [Test]
+        public void distinct_folders_in_one_mixed_root_stay_distinct()
+        {
+            var builder = new AuthorPathBuilder(new StubBuildFileNames(), new StubRootFolderService(new List<RootFolder>
+            {
+                new() { Path = "/mixed", FolderType = FolderType.Mixed }
+            }));
+            var author = new Author { Name = "Frank Herbert", AudiobookRootFolderPath = "/mixed", EbookRootFolderPath = "/mixed",
+                AudiobookPath = "/mixed/audio/Frank Herbert", EbookPath = "/mixed/ebooks/Frank Herbert", Path = "/mixed/audio/Frank Herbert" };
+            builder.EnsureAuthorPaths(author, true);
+            Assert.That(author.AudiobookPath, Is.EqualTo("/mixed/audio/Frank Herbert"));
+            Assert.That(author.EbookPath, Is.EqualTo("/mixed/ebooks/Frank Herbert"));
         }
 
         [Test]

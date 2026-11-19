@@ -45,7 +45,7 @@ namespace NzbDrone.Core.Notifications.Ntfy
                 }
                 catch (NtfyException ex)
                 {
-                    _logger.Error(ex, "Unable to send test message to {0}", topic);
+                    _logger.Error(ex, "Unable to send notification to ntfy server {0}", new HttpUri(serverUrl).Host);
                     error = true;
                 }
             }
@@ -135,6 +135,7 @@ namespace NzbDrone.Core.Notifications.Ntfy
                 }
 
                 var request = requestBuilder.Build();
+                request.RedactUrlInLogs = true;
 
                 _httpClient.Execute(request);
             }

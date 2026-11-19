@@ -108,7 +108,7 @@ namespace NzbDrone.Core.Download.Clients.UTorrent
 
         public void SetTorrentSeedingConfiguration(string hash, TorrentSeedConfiguration seedConfiguration, UTorrentSettings settings)
         {
-            if (seedConfiguration == null)
+            if (seedConfiguration == null || seedConfiguration.KeepSeeding)
             {
                 return;
             }

@@ -4,6 +4,7 @@ import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import * as commandNames from 'Commands/commandNames';
 import withCurrentPage from 'Components/withCurrentPage';
+import { set } from 'Store/Actions/baseActions';
 import { executeCommand } from 'Store/Actions/commandActions';
 import { clearQueueDetails, fetchQueueDetails } from 'Store/Actions/queueActions';
 import * as wantedActions from 'Store/Actions/wantedActions';
@@ -33,6 +34,7 @@ function createMapStateToProps() {
 
 const mapDispatchToProps = {
   ...wantedActions,
+  onSearchCountError: (error) => set({ section: 'wanted.missing', error }),
   executeCommand,
   fetchQueueDetails,
   clearQueueDetails

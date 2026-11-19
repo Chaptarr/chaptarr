@@ -39,24 +39,26 @@ namespace Chaptarr.Core.Test.MediaFiles
             public Author Author { get; set; }
 
             public Author GetAuthor(int authorId) => Author;
+            public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => throw new NotImplementedException();
             public List<Author> GetAuthors(IEnumerable<int> authorIds) => new List<Author> { Author };
             public Author AddAuthor(Author newAuthor, bool doRefresh) => throw new NotImplementedException();
             public List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh) => throw new NotImplementedException();
             public Author FindByProviderId(string provider, string providerId) => throw new NotImplementedException();
             public Author FindByName(string title) => throw new NotImplementedException();
-            public Author FindByNameInexact(string title) => throw new NotImplementedException();
             public List<Author> GetCandidates(string title) => throw new NotImplementedException();
             public List<Author> GetReportCandidates(string reportTitle) => throw new NotImplementedException();
             public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false) => throw new NotImplementedException();
+            public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false) => throw new NotImplementedException();
             public List<Author> GetAllAuthors(bool bypassCache = false) => throw new NotImplementedException();
             public Dictionary<int, List<int>> GetAllAuthorTags() => throw new NotImplementedException();
             public List<Author> AllForTag(int tagId) => throw new NotImplementedException();
+            public Author UpdateAuthor(Author author, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> beforeSave) => throw new System.NotSupportedException();
             public Author UpdateAuthor(Author author) => Author = author;
             public Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId, int? audiobookMonitorExisting, bool? audiobookMonitorFuture, int? ebookQualityProfileId, int? ebookMetadataProfileId, int? ebookMonitorExisting, bool? ebookMonitorFuture, string rootFolderPath) => throw new NotImplementedException();
             public List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder) => throw new NotImplementedException();
-            public Dictionary<int, string> AllAuthorPaths() => throw new NotImplementedException();
+            public List<KeyValuePair<int, string>> AllAuthorPaths() => throw new NotImplementedException();
             public bool AuthorPathExists(string folder) => throw new NotImplementedException();
-            public void RemoveAddOptions(Author author) => throw new NotImplementedException();
+            public void SetAddOptions(Author author) => throw new NotImplementedException();
             public void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored) => throw new NotImplementedException();
             public long GetAuthorSizeForMediaType(int authorId, string mediaType) => throw new NotImplementedException();
             public void UpdateLastSelectedMediaType(int authorId, string mediaType) => throw new NotImplementedException();
@@ -67,6 +69,15 @@ namespace Chaptarr.Core.Test.MediaFiles
 
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
+                System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+                => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
+
+            public void ReplaceMany(System.Collections.Generic.List<BookFile> bookFiles, System.Collections.Generic.List<BookFile> replacedFiles,
+                DeleteMediaFileReason reason, System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+                System.Action<System.Action<System.Data.IDbConnection, System.Data.IDbTransaction>> persist)
+                => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
+
             public List<BookFile> Files { get; set; } = new();
             public List<BookFile> Updated { get; } = new();
 
@@ -80,6 +91,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void Update(BookFile bookFile) => Updated.Add(bookFile);
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
             public void AddMany(List<BookFile> bookFiles) => throw new NotImplementedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+
             public void Update(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason) => throw new NotImplementedException();
@@ -135,6 +148,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public BookFile MoveBookFile(BookFile bookFile, NzbDrone.Core.Parser.Model.LocalBook localBook) => throw new NotImplementedException();
             public BookFile CopyBookFile(BookFile bookFile, NzbDrone.Core.Parser.Model.LocalBook localBook) => throw new NotImplementedException();
             public string GetImportDestinationPath(BookFile bookFile, NzbDrone.Core.Parser.Model.LocalBook localBook) => throw new NotImplementedException();
+            public bool CompleteImportReplicas(BookFile bookFile, NzbDrone.Core.Parser.Model.LocalBook localBook) => false;
         }
 
         private class ThrowingProxy<T> : DispatchProxy where T : class
@@ -153,6 +167,11 @@ namespace Chaptarr.Core.Test.MediaFiles
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (targetMethod?.Name == nameof(IDiskProvider.GetFileAttributes))
+                {
+                    return FileAttributes.Directory;
+                }
+
                 if (targetMethod?.Name == nameof(IDiskProvider.FolderExists))
                 {
                     return ExistingFolders.Contains((string)args[0]);
@@ -171,6 +190,7 @@ namespace Chaptarr.Core.Test.MediaFiles
 
                 if (targetMethod?.Name == nameof(IDiskProvider.DeleteFolder))
                 {
+                    Assert.That(args[1], Is.False, "empty cleanup must never recursively delete contents");
                     var folder = (string)args[0];
                     DeletedFolders.Add(folder);
                     ExistingFolders.Remove(folder);
@@ -207,7 +227,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 mover,
                 eventAggregator,
                 diskProvider ?? DispatchProxy.Create<IDiskProvider, DiskProviderProxy>(),
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(), null);
         }
 
         [Test]
@@ -379,6 +399,33 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(author.AudiobookPath, Is.EqualTo(canonicalAuthorFolder));
             Assert.That(author.Path, Is.EqualTo(canonicalAuthorFolder));
             Assert.That(author.EbookPath, Is.EqualTo("/ebooks/George R.R. Martin"));
+        }
+
+        [Test]
+        public void canonical_move_without_source_author_boundary_updates_file_but_does_not_clean_source_folders()
+        {
+            var author = new Author { Id = 1, Name = "Author", AudiobookPath = "/library/Author" };
+            var file = BookFile(1, "/old-share/loose.m4b", Quality.M4B, "audiobook");
+            var files = new StubMediaFileService { Files = new List<BookFile> { file } };
+            var disk = DispatchProxy.Create<IDiskProvider, DiskProviderProxy>();
+            var diskProxy = (DiskProviderProxy)(object)disk;
+            diskProxy.ExistingFolders.Add("/old-share");
+            var plan = new BookFileMovePlan
+            {
+                CanOrganize = true,
+                DestinationAuthorFolderPath = author.AudiobookPath,
+                DestinationPath = "/library/Author/Book/renamed.m4b",
+                ShouldUpdateStoredAuthorPath = true
+            };
+            var events = new RecordingEventAggregator();
+            var service = CreateService(author, files, new RecordingMoveBookFiles { PlanFactory = (_, _) => plan }, events, disk);
+
+            service.Execute(new RenameFilesCommand(author.Id, new List<int> { file.Id }, true));
+
+            Assert.That(files.Updated.Single().Path, Is.EqualTo(plan.DestinationPath));
+            Assert.That(events.Events.OfType<BookFileRenamedEvent>().Count(), Is.EqualTo(1));
+            Assert.That(diskProxy.RemovedEmptySubfolders, Is.Empty);
+            Assert.That(diskProxy.DeletedFolders, Is.Empty);
         }
 
         [Test]

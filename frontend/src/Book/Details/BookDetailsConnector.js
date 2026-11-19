@@ -188,7 +188,7 @@ class BookDetailsConnector extends Component {
   componentDidUpdate(prevProps) {
     const {
       id,
-      anyReleaseOk,
+      anyEditionOk,
       isRefreshing,
       isRenamingFiles,
       isRenamingAuthor
@@ -199,7 +199,7 @@ class BookDetailsConnector extends Component {
       (prevProps.isRenamingFiles && !isRenamingFiles) ||
       (prevProps.isRenamingAuthor && !isRenamingAuthor) ||
       !_.isEqual(getMonitoredEditions(prevProps), getMonitoredEditions(this.props)) ||
-      (prevProps.anyReleaseOk === false && anyReleaseOk === true)
+      prevProps.anyEditionOk !== anyEditionOk
     ) {
       this.unpopulate();
       this.populate();
@@ -279,7 +279,7 @@ class BookDetailsConnector extends Component {
 
 BookDetailsConnector.propTypes = {
   id: PropTypes.number,
-  anyReleaseOk: PropTypes.bool,
+  anyEditionOk: PropTypes.bool,
   isRefreshing: PropTypes.bool.isRequired,
   isRenamingFiles: PropTypes.bool.isRequired,
   isRenamingAuthor: PropTypes.bool.isRequired,

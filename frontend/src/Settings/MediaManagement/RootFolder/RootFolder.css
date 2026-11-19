@@ -23,8 +23,6 @@
 
 .path {
   @add-mixin truncate;
-
-  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
 }
 
 .typeCell {

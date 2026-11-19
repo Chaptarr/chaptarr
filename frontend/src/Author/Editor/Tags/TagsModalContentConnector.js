@@ -10,12 +10,14 @@ function createMapStateToProps() {
     (state, { authorIds }) => authorIds,
     createAllAuthorSelector(),
     createTagsSelector(),
-    (authorIds, allAuthors, tagList) => {
+    (state, { selectedMediaType }) => selectedMediaType,
+    (authorIds, allAuthors, tagList, selectedMediaType) => {
       const author = _.intersectionWith(allAuthors, authorIds, (s, id) => {
         return s.id === id;
       });
 
-      const authorTags = _.uniq(_.concat(..._.map(author, 'tags')));
+      const field = ({ audiobook: 'audiobookTags', ebook: 'ebookTags' })[selectedMediaType] || 'tags';
+      const authorTags = _.uniq(author.flatMap((item) => item[field] ?? item.tags ?? []));
 
       return {
         authorTags,
@@ -25,12 +27,4 @@ function createMapStateToProps() {
   );
 }
 
-function createMapDispatchToProps(dispatch, props) {
-  return {
-    onAction() {
-      // Do something
-    }
-  };
-}
-
-export default connect(createMapStateToProps, createMapDispatchToProps)(TagsModalContent);
+export default connect(createMapStateToProps)(TagsModalContent);

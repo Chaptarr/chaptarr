@@ -13,7 +13,7 @@ namespace NzbDrone.Core.ImportLists
     public interface IFetchAndParseImportList
     {
         List<ImportListItemInfo> Fetch();
-        List<ImportListItemInfo> FetchSingleList(ImportListDefinition definition);
+        List<ImportListItemInfo> FetchSingleList(IImportList importList);
     }
 
     public class FetchAndParseImportListService : IFetchAndParseImportList
@@ -130,15 +130,13 @@ namespace NzbDrone.Core.ImportLists
             return result;
         }
 
-        public List<ImportListItemInfo> FetchSingleList(ImportListDefinition definition)
+        public List<ImportListItemInfo> FetchSingleList(IImportList importList)
         {
             var result = new List<ImportListItemInfo>();
 
-            var importList = _importListFactory.GetInstance(definition);
-
-            if (importList == null || !definition.EnableAutomaticAdd)
+            if (importList == null || !((ImportListDefinition)importList.Definition).EnableAutomaticAdd)
             {
-                _logger.Debug("Import List {0} ({1}) is not enabled, skipping.", importList.Name, importList.Definition.Name);
+                _logger.Debug("Import List {0} ({1}) is not enabled, skipping.", importList?.Name, importList?.Definition.Name);
                 return result;
             }
 

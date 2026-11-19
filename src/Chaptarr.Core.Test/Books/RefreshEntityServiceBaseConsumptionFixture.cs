@@ -35,7 +35,7 @@ namespace Chaptarr.Core.Test.Books
                 return LastSortedChildren;
             }
 
-            protected override RemoteData GetRemoteData(Author local, List<Author> remote, Author data)
+            protected override RemoteData GetRemoteData(Author local, List<Author> remote, Author data, RefreshContext context)
             {
                 return RemoteDataForRefresh ?? throw new NotImplementedException();
             }
@@ -70,17 +70,17 @@ namespace Chaptarr.Core.Test.Books
                 DeletedWithFiles = deleteFiles;
             }
 
-            protected override List<Book> GetRemoteChildren(Author local, Author remote)
+            protected override List<Book> GetRemoteChildren(Author local, Author remote, RefreshContext context)
             {
                 return remote?.Books ?? new List<Book>();
             }
 
-            protected override List<Book> GetLocalChildren(Author entity, List<Book> remoteChildren)
+            protected override List<Book> GetLocalChildren(Author entity, List<Book> remoteChildren, RefreshContext context)
             {
                 return new List<Book>(_localChildren);
             }
 
-            protected override Tuple<Book, List<Book>> GetMatchingExistingChildren(List<Book> existingChildren, Book remote)
+            protected override Tuple<Book, List<Book>> GetMatchingExistingChildren(List<Book> existingChildren, Book remote, RefreshContext context)
             {
                 var matches = existingChildren
                     .Where(b => b.MediaType == remote.MediaType && b.GoodreadsWorkId == remote.GoodreadsWorkId)
@@ -112,7 +112,7 @@ namespace Chaptarr.Core.Test.Books
             {
             }
 
-            protected override bool RefreshChildren(SortedChildren localChildren, List<Book> remoteChildren, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate)
+            protected override bool RefreshChildren(SortedChildren localChildren, List<Book> remoteChildren, Author remoteData, bool forceChildRefresh, bool forceUpdateFileTags, DateTime? lastUpdate, RefreshContext context)
             {
                 LastSortedChildren = localChildren;
                 return false;
@@ -155,7 +155,7 @@ namespace Chaptarr.Core.Test.Books
                     editionSelector: null,
                     editionMetadataProfileFilter: null,
                     mediaCoverService: null,
-                    logger)
+                    logger, mainDatabase: null)
             {
             }
 
@@ -227,19 +227,22 @@ namespace Chaptarr.Core.Test.Books
                 ShouldDeleteResult = true
             };
 
+            var deletedIds = new List<int>();
             var result = service.RefreshEntityInfo(
                 new Author { Id = 1, Name = "Missing" },
                 new List<Author>(),
                 remoteData: null,
                 forceChildRefresh: false,
                 forceUpdateFileTags: false,
-                lastUpdate: null);
+                lastUpdate: null,
+                entityDeleted: author => deletedIds.Add(author.Id));
 
             Assert.Multiple(() =>
             {
                 Assert.That(result, Is.False);
                 Assert.That(service.Deleted, Is.True);
                 Assert.That(service.DeletedWithFiles, Is.False);
+                Assert.That(deletedIds, Is.EqualTo(new[] { 1 }));
             });
         }
 
@@ -256,18 +259,21 @@ namespace Chaptarr.Core.Test.Books
                 MergeTarget = new Author { Id = 3, Name = "Target", Books = new List<Book>() }
             };
 
+            var deletedIds = new List<int>();
             service.RefreshEntityInfo(
                 new Author { Id = 1, Name = "Local", Books = new List<Book>() },
                 new List<Author>(),
                 remoteData: null,
                 forceChildRefresh: false,
                 forceUpdateFileTags: false,
-                lastUpdate: null);
+                lastUpdate: null,
+                entityDeleted: author => deletedIds.Add(author.Id));
 
             Assert.Multiple(() =>
             {
                 Assert.That(service.Deleted, Is.True);
                 Assert.That(service.DeletedWithFiles, Is.False);
+                Assert.That(deletedIds, Is.EqualTo(new[] { 1 }));
             });
         }
 

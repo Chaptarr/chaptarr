@@ -15,6 +15,7 @@ import scrollPositions from 'Store/scrollPositions';
 import createBookClientSideCollectionItemsSelector from 'Store/Selectors/createBookClientSideCollectionItemsSelector';
 import createCommandExecutingSelector from 'Store/Selectors/createCommandExecutingSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
+import { isBookSearchEligible } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import BookIndex from './BookIndex';
 import getBookIndexQuery from './getBookIndexQuery';
 
@@ -29,6 +30,7 @@ function createMapStateToProps() {
     createDimensionsSelector(),
     (state) => state.app.selectedMediaType,
     (state) => state.bookInfiniteScroll,
+    (state) => state.authors,
     (
       book,
       isRefreshingAuthorCommand,
@@ -38,7 +40,8 @@ function createMapStateToProps() {
       isMissingBooksSearch,
       dimensionsState,
       selectedMediaType,
-      bookInfiniteScroll
+      bookInfiniteScroll,
+      authors
     ) => {
       const isRefreshingBook = isRefreshingBookCommand || isRefreshingAuthorCommand;
       const mediaType = selectedMediaType || 'audiobook';
@@ -55,7 +58,10 @@ function createMapStateToProps() {
       // Provide the currently loaded poster items to BookIndex so editor selection
       // (Select All / bulk actions) works consistently across views.
       const selectionItems = useInfinitePosters ?
-        selectQueryBooks({ bookInfiniteScroll }, posterQueryKey).map((b) => ({ id: b.id })) :
+        selectQueryBooks({ bookInfiniteScroll }, posterQueryKey).map((b) => ({
+          id: b.id,
+          isSearchEligible: isBookSearchEligible(b, authors.items[authors.itemMap[b.authorId]] ?? b.author)
+        })) :
         book.items;
 
       return {
@@ -111,10 +117,11 @@ function createMapDispatchToProps(dispatch, props) {
       }));
     },
 
-    onSearchPress(items) {
+    onSearchPress(items, monitoredOnly) {
       dispatch(executeCommand({
         name: commandNames.BOOK_SEARCH,
-        bookIds: items
+        bookIds: items,
+        monitoredOnly
       }));
     },
 

@@ -2,7 +2,6 @@
 // Please do not change this file!
 interface CssExports {
   'controlsContainer': string;
-  'leftControls': string;
   'rightControls': string;
   'rootFolderMessage': string;
   'syncAndToggle': string;

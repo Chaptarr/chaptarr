@@ -1,5 +1,6 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import Alert from 'Components/Alert';
 import TextInput from 'Components/Form/TextInput';
 import Icon from 'Components/Icon';
 import Button from 'Components/Link/Button';
@@ -14,7 +15,7 @@ import styles from './RestoreBackupModalContent.css';
 
 function getErrorMessage(error) {
   if (!error || !error.responseJSON || !error.responseJSON.message) {
-    return 'Error restoring backup';
+    return translate('BackupRestoreRequestFailed');
   }
 
   return error.responseJSON.message;
@@ -38,7 +39,7 @@ function getStepIconProps(isExecuting, hasExecuted, error) {
   if (error) {
     return {
       name: icons.FATAL,
-      kinds: kinds.DANGER,
+      kind: kinds.DANGER,
       title: getErrorMessage(error)
     };
   }
@@ -69,14 +70,11 @@ class RestoreBackupModalContent extends Component {
     const {
       isRestoring,
       restoreError,
-      isRestarting,
-      dispatchRestart
+      isRestarting
     } = this.props;
 
     if (prevProps.isRestoring && !isRestoring && !restoreError) {
-      this.setState({ isRestored: true }, () => {
-        dispatchRestart();
-      });
+      this.setState({ isRestored: true });
     }
 
     if (prevProps.isRestarting && !isRestarting) {
@@ -121,7 +119,8 @@ class RestoreBackupModalContent extends Component {
       isRestoring,
       restoreError,
       isRestarting,
-      onModalClose
+      onModalClose,
+      omittedComponents = []
     } = this.props;
 
     const {
@@ -134,6 +133,7 @@ class RestoreBackupModalContent extends Component {
     const isRestoreDisabled = (
       (!id && !path) ||
       isRestoring ||
+      isRestored ||
       isRestarting ||
       isReloading
     );
@@ -158,6 +158,12 @@ class RestoreBackupModalContent extends Component {
                 onChange={this.onPathChange}
               />
           }
+
+          {restoreError && <Alert kind={kinds.DANGER}>{getErrorMessage(restoreError)}</Alert>}
+          {!id && <Alert kind={kinds.INFO}>{translate('BackupUploadLimitHelp')}</Alert>}
+          <Alert kind={kinds.WARNING}>{translate('RestoreBackupReplaceWarning')}</Alert>
+          <Alert kind={kinds.WARNING}>{translate('RestoreBackupQueueHelp')}</Alert>
+          {omittedComponents.length > 0 && <Alert kind={kinds.WARNING}>{translate('BackupOmittedComponents', { components: omittedComponents.join(', ') })}</Alert>}
 
           <div className={styles.steps}>
             <div className={styles.step}>
@@ -199,12 +205,12 @@ class RestoreBackupModalContent extends Component {
               </div>
             </div>
           </div>
-        </ModalBody>
-
-        <ModalFooter>
           <div className={styles.additionalInfo}>
             {translate('RestartReloadNote')}
           </div>
+        </ModalBody>
+
+        <ModalFooter>
 
           <Button onPress={onModalClose}>
             {translate('Cancel')}
@@ -231,9 +237,9 @@ RestoreBackupModalContent.propTypes = {
   isRestoring: PropTypes.bool.isRequired,
   restoreError: PropTypes.object,
   isRestarting: PropTypes.bool.isRequired,
-  dispatchRestart: PropTypes.func.isRequired,
   onRestorePress: PropTypes.func.isRequired,
-  onModalClose: PropTypes.func.isRequired
+  onModalClose: PropTypes.func.isRequired,
+  omittedComponents: PropTypes.arrayOf(PropTypes.string)
 };
 
 export default RestoreBackupModalContent;

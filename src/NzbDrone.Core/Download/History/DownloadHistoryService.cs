@@ -15,8 +15,8 @@ namespace NzbDrone.Core.Download.History
 {
     public interface IDownloadHistoryService
     {
-        bool DownloadAlreadyImported(string downloadId);
         DownloadHistory GetLatestDownloadHistoryItem(string downloadId);
+        List<DownloadHistory> GetLatestDownloadHistoryItems(IEnumerable<string> downloadIds);
         DownloadHistory GetLatestGrab(string downloadId);
         PagingSpec<DownloadHistory> CurrentlyIgnored(PagingSpec<DownloadHistory> pagingSpec);
         List<string> RemoveIgnored(int id);
@@ -45,71 +45,35 @@ namespace NzbDrone.Core.Download.History
 
         private static string NormalizeDownloadId(string downloadId)
         {
-            return downloadId.IsNullOrWhiteSpace() ? null : downloadId.ToUpperInvariant();
-        }
-
-        public bool DownloadAlreadyImported(string downloadId)
-        {
-            var events = FindByDownloadId(downloadId);
-
-            // Events are ordered by date descending, if a grabbed event comes before an imported event then it was never imported
-            // or grabbed again after importing and should be reprocessed.
-            foreach (var e in events)
-            {
-                if (e.EventType == DownloadHistoryEventType.DownloadGrabbed)
-                {
-                    return false;
-                }
-
-                if (e.EventType == DownloadHistoryEventType.DownloadImported)
-                {
-                    return true;
-                }
-            }
-
-            return false;
+            return DownloadIdentity.Key(downloadId);
         }
 
         public DownloadHistory GetLatestDownloadHistoryItem(string downloadId)
         {
-            var events = FindByDownloadId(downloadId);
+            return GetLatestDownloadHistoryItems(new[] { downloadId }).SingleOrDefault();
+        }
 
-            // Events are ordered by date descending. We'll return the most recent expected event.
-            foreach (var e in events)
-            {
-                if (e.EventType == DownloadHistoryEventType.DownloadIgnored)
-                {
-                    return e;
-                }
-
-                if (e.EventType == DownloadHistoryEventType.DownloadGrabbed)
-                {
-                    return e;
-                }
-
-                if (e.EventType == DownloadHistoryEventType.DownloadImported)
-                {
-                    return e;
-                }
-
-                if (e.EventType == DownloadHistoryEventType.DownloadFailed)
-                {
-                    return e;
-                }
-
-                if (e.EventType == DownloadHistoryEventType.DownloadImportIncomplete)
-                {
-                    return e;
-                }
-            }
-
-            return null;
+        public List<DownloadHistory> GetLatestDownloadHistoryItems(IEnumerable<string> downloadIds)
+        {
+            var ids = (downloadIds ?? Enumerable.Empty<string>()).Select(NormalizeDownloadId)
+                .Where(id => id != null).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            return ids.Length == 0 ? new List<DownloadHistory>() : _repository.GetLatestDownloadHistoryItems(ids);
         }
 
         public DownloadHistory GetLatestGrab(string downloadId)
         {
-            return FindByDownloadId(downloadId)
-                .FirstOrDefault(d => d.EventType == DownloadHistoryEventType.DownloadGrabbed);
+            var grabs = FindByDownloadId(downloadId)
+                .Where(d => d.EventType == DownloadHistoryEventType.DownloadGrabbed).ToList();
+            var latest = grabs.FirstOrDefault();
+            // Keep current grab identity while retaining any earlier preservation choice
+            // for this hash. A later grab must not authorize cleanup of a preserved torrent.
+            if (latest != null && grabs.Any(grab => grab.ShouldKeepSeeding()))
+            {
+                latest.Data ??= new Dictionary<string, string>();
+                latest.Data[DownloadHistory.KeepSeedingKey] = bool.TrueString;
+            }
+
+            return latest;
         }
 
         public PagingSpec<DownloadHistory> CurrentlyIgnored(PagingSpec<DownloadHistory> pagingSpec)
@@ -179,6 +143,11 @@ namespace NzbDrone.Core.Download.History
             history.Data.Add("DownloadClientName", message.DownloadClientName);
             history.Data.Add("CustomFormatScore", message.Book.CustomFormatScore.ToString());
 
+            if (message.Book.SeedConfiguration?.KeepSeeding == true)
+            {
+                history.Data.Add(DownloadHistory.KeepSeedingKey, bool.TrueString);
+            }
+
             _repository.Insert(history);
         }
 
@@ -234,6 +203,11 @@ namespace NzbDrone.Core.Download.History
 
             var targetBook = message.TrackedDownload.RemoteBook?.GetBooksMatchingReleaseMediaType().FirstOrDefault();
 
+            if (message.PersistedHistory != null)
+            {
+                return;
+            }
+
             var history = new DownloadHistory
             {
                 EventType = DownloadHistoryEventType.DownloadImportIncomplete,
@@ -241,7 +215,7 @@ namespace NzbDrone.Core.Download.History
                 BookId = targetBook?.Id ?? 0,
                 DownloadId = NormalizeDownloadId(message.TrackedDownload.DownloadItem.DownloadId),
                 SourceTitle = message.TrackedDownload.DownloadItem.OutputPath.ToString(),
-                Date = DateTime.UtcNow,
+                Date = message.Date,
                 Protocol = message.TrackedDownload.Protocol,
                 DownloadClientId = message.TrackedDownload.DownloadClient
             };
@@ -249,6 +223,7 @@ namespace NzbDrone.Core.Download.History
             history.Data.Add("DownloadClient", clientInfo?.Type);
             history.Data.Add("DownloadClientName", clientInfo?.Name);
             history.Data.Add(StatusMessagesKey, statusMessages);
+            history.Data.Add("awaitingImportConfirmation", message.TrackedDownload.AwaitingImportConfirmation.ToString());
 
             if (IsDuplicateImportIncomplete(history, statusMessages))
             {

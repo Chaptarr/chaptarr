@@ -137,7 +137,7 @@ namespace NzbDrone.Core.MetadataSource.Goodreads
             var resource = httpResponse.Deserialize<BookResource>();
 
             var book = MapBook(resource);
-            book.CleanTitle = Parser.Parser.CleanAuthorName(book.Title);
+            book.CleanTitle = NzbDrone.Core.Books.Extensions.StringSuperNormalizer.ComputeBookComparisonKey(book.Title);
 
             var authorMetadata = resource.Authors.SelectList(MapAuthor);
             // Convert AuthorMetadata to Author

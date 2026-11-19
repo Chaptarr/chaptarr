@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using Chaptarr.Api.V1.MediaTypes;
 using Chaptarr.Http;
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
@@ -19,6 +20,8 @@ using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Validation;
+using Swashbuckle.AspNetCore.Annotations;
+using BadRequestException = Chaptarr.Http.REST.BadRequestException;
 using HttpStatusCode = System.Net.HttpStatusCode;
 
 namespace Chaptarr.Api.V1.Indexers
@@ -36,6 +39,8 @@ namespace Chaptarr.Api.V1.Indexers
         private readonly IParsingService _parsingService;
         private readonly IIndexerFactory _indexerFactory;
         private readonly Logger _logger;
+        private readonly IGroupedAuthorSearch _groupedAuthorSearch;
+        private readonly InteractiveReleaseMapper _interactiveReleaseMapper;
 
         private readonly ICached<DownloadDecision> _downloadDecisionCache;
 
@@ -49,7 +54,8 @@ namespace Chaptarr.Api.V1.Indexers
                              IParsingService parsingService,
                              IIndexerFactory indexerFactory,
                              ICacheManager cacheManager,
-                             Logger logger)
+                             Logger logger,
+                             IGroupedAuthorSearch groupedAuthorSearch)
         {
             _rssFetcherAndParser = rssFetcherAndParser;
             _releaseSearchService = releaseSearchService;
@@ -61,6 +67,8 @@ namespace Chaptarr.Api.V1.Indexers
             _parsingService = parsingService;
             _indexerFactory = indexerFactory;
             _logger = logger;
+            _groupedAuthorSearch = groupedAuthorSearch;
+            _interactiveReleaseMapper = new InteractiveReleaseMapper(cacheManager, logger);
 
             PostValidator.RuleFor(s => s.IndexerId).ValidId();
             PostValidator.RuleFor(s => s.Guid).NotEmpty();
@@ -68,12 +76,36 @@ namespace Chaptarr.Api.V1.Indexers
             _downloadDecisionCache = cacheManager.GetCache<DownloadDecision>(GetType(), "downloadDecisions");
         }
 
+        [HttpDelete]
+        [ProducesResponseType(typeof(AuthorReleaseSearchStopResponse), 200)]
+        [ProducesResponseType(400)]
+        [SwaggerOperation(Description = "Requests a stop for an active grouped author search identified by its UUID searchId. Queued work is removed atomically (isRemoved=true); otherwise the current book finishes and remaining books are not searched. isStopping confirms a running stop request, not completion. The SignalR stream delivers the terminal result. An inactive searchId returns isStopping=false; malformed or missing IDs return 400.")]
+        public AuthorReleaseSearchStopResponse StopAuthorSearch(string searchId)
+        {
+            if (!Guid.TryParse(searchId, out var id))
+            {
+                throw new BadRequestException("Stopping an author search requires a UUID searchId");
+            }
+
+            return _groupedAuthorSearch.Stop(id);
+        }
+
         [HttpPost]
         public async Task<ActionResult<ReleaseResource>> DownloadRelease([FromBody] ReleaseResource release)
         {
             ValidateResource(release);
 
-            var decision = _downloadDecisionCache.Find(GetCacheKey(release));
+            if (release.SearchId != null || release.SearchedBookId.HasValue)
+            {
+                if (!Guid.TryParse(release.SearchId, out _) || release.SearchedBookId.GetValueOrDefault() <= 0)
+                {
+                    throw new BadRequestException("A scoped release requires a valid searchId and searchedBookId");
+                }
+            }
+
+            var decision = release.SearchId == null
+                ? _downloadDecisionCache.Find(InteractiveReleaseMapper.GetCacheKey(release))
+                : _groupedAuthorSearch.GetDecision(release);
 
             if (decision?.RemoteBook == null)
             {
@@ -83,6 +115,15 @@ namespace Chaptarr.Api.V1.Indexers
             }
 
             var remoteBook = decision.RemoteBook;
+
+            // A displayed search group must never redirect a grab to another book.
+            if (release.SearchId != null &&
+                (remoteBook.Books?.Count != 1 || remoteBook.Books[0].Id != release.SearchedBookId ||
+                 release.BookId != release.SearchedBookId ||
+                 (release.AuthorId.HasValue && release.AuthorId != remoteBook.Author?.Id)))
+            {
+                throw new NzbDroneClientException(HttpStatusCode.Conflict, "The release does not match the requested book");
+            }
 
             try
             {
@@ -138,6 +179,7 @@ namespace Chaptarr.Api.V1.Indexers
                 }
 
                 await _downloadService.DownloadReport(remoteBook, release.DownloadClientId);
+                if (release.SearchId != null) _groupedAuthorSearch.MarkGrabbed(release);
             }
             catch (DownloadClientRejectedReleaseException ex)
             {
@@ -175,8 +217,35 @@ namespace Chaptarr.Api.V1.Indexers
         }
 
         [HttpGet]
-        public async Task<object> GetReleases(int? bookId, int? authorId, bool bypassFilters = false)
+        [ProducesResponseType(200)]
+        [ProducesResponseType(204)]
+        [ProducesResponseType(400)]
+        [ProducesResponseType(409)]
+        [SwaggerOperationFilter(typeof(ReleaseSearchResponseOperationFilter))]
+        [SwaggerOperation(Description = "GET /api/v1/release with existing=true, authorId and mediaType returns the retained grouped search or null, without querying indexers. Otherwise it returns ReleaseResource[] when bookId, authorId, and searchId are absent; bookId or authorId without searchId returns the flat ReleaseSearchResponse; a UUID searchId with authorId and explicit audiobook/ebook mediaType queues a grouped search and immediately returns an AuthorReleaseSearchResponse acknowledgement. Book results and completion arrive through SignalR; ending the GET does not cancel the search. Other searchId combinations return 400. Per-book AuthorSearchResults SignalR messages use the same grouped envelope. Scoped grabs must echo searchId and searchedBookId alongside bookId, authorId, indexerId and guid.")]
+        public async Task<object> GetReleases(int? bookId, int? authorId, bool bypassFilters = false, string mediaType = null, string searchId = null, bool existing = false)
         {
+            if (existing)
+            {
+                var parsedMediaType = MediaTypeParameterParser.ParseOptional(mediaType);
+                if (bookId.HasValue || !authorId.HasValue || !parsedMediaType.HasValue || searchId != null)
+                {
+                    throw new BadRequestException("Existing search lookup requires authorId and audiobook or ebook mediaType, without bookId or searchId");
+                }
+                return _groupedAuthorSearch.GetSnapshot(authorId.Value, parsedMediaType.Value);
+            }
+
+            if (searchId != null)
+            {
+                var parsedMediaType = MediaTypeParameterParser.ParseOptional(mediaType);
+                if (bookId.HasValue || !authorId.HasValue || !parsedMediaType.HasValue || !Guid.TryParse(searchId, out _))
+                {
+                    throw new BadRequestException("Grouped search requires authorId, audiobook or ebook mediaType, and a UUID searchId");
+                }
+
+                return _groupedAuthorSearch.Start(authorId.Value, parsedMediaType.Value, searchId);
+            }
+
             if (bookId.HasValue)
             {
                 return await GetBookReleases(int.Parse(Request.Query["bookId"]), bypassFilters);
@@ -184,7 +253,7 @@ namespace Chaptarr.Api.V1.Indexers
 
             if (authorId.HasValue)
             {
-                return await GetAuthorReleases(int.Parse(Request.Query["authorId"]), bypassFilters);
+                return await GetAuthorReleases(int.Parse(Request.Query["authorId"]), bypassFilters, MediaTypeParameterParser.ParseOptional(mediaType));
             }
 
             return await GetRss();
@@ -197,16 +266,14 @@ namespace Chaptarr.Api.V1.Indexers
                 var book = _bookService.GetBook(bookId);
                 var author = _authorService.GetAuthor(book.AuthorId);
 
-                // Start indexer search
-                var indexerSearchTask = _releaseSearchService.BookSearch(bookId, true, true, true);
-
-                // Wait for indexer search to complete
-                var decisions = await indexerSearchTask;
+                book.Author = author;
+                var outcome = await _releaseSearchService.BookSearchWithOutcome(book, null, true, true, true);
+                var decisions = outcome.Decisions;
 
                 var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(decisions);
                 var siblingToggleInfo = BuildSiblingToggleInfo(book, author);
 
-                var (results, hiddenResults, filterSummary) = MapDecisionsForInteractiveSearchWithSummary(prioritizedDecisions, bypassFilters);
+                var (results, hiddenResults, filterSummary) = _interactiveReleaseMapper.MapInteractiveDecisions(prioritizedDecisions, bypassFilters);
 
                 _logger.Debug("FILTER_DEBUG: TotalResults={0}, FilteredCount={1}, DisplayedCount={2}, HasSoftFilters={3}, SoftFilteredCount={4}, BypassMode={5}", filterSummary.TotalResults, filterSummary.FilteredCount, filterSummary.DisplayedCount, filterSummary.HasSoftFilters, filterSummary.SoftFilteredCount, bypassFilters);
 
@@ -225,6 +292,8 @@ namespace Chaptarr.Api.V1.Indexers
                 {
                     Releases = results,
                     HiddenReleases = hiddenResults,
+                    IndexersQueried = outcome.Indexers.Queried,
+                    IndexersFailed = outcome.Indexers.Failed,
                     FilterSummary = filterSummary,
                     SiblingBookId = siblingToggleInfo.SiblingBookId,
                     SiblingMediaType = siblingToggleInfo.SiblingMediaType,
@@ -239,14 +308,14 @@ namespace Chaptarr.Api.V1.Indexers
             }
         }
 
-        private async Task<object> GetAuthorReleases(int authorId, bool bypassFilters = false)
+        private async Task<object> GetAuthorReleases(int authorId, bool bypassFilters, BookMediaType? mediaType)
         {
             try
             {
-                var decisions = await _releaseSearchService.AuthorSearch(authorId, false, true, true);
+                var decisions = await _releaseSearchService.AuthorSearch(authorId, false, true, true, mediaType, HttpContext.RequestAborted);
                 var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(decisions);
 
-                var (results, hiddenResults, filterSummary) = MapDecisionsForInteractiveSearchWithSummary(prioritizedDecisions, bypassFilters);
+                var (results, hiddenResults, filterSummary) = _interactiveReleaseMapper.MapInteractiveDecisions(prioritizedDecisions, bypassFilters);
 
                 // Log filter summary for monitoring and debugging
                 if (filterSummary.FilteredCount > 0)
@@ -266,6 +335,10 @@ namespace Chaptarr.Api.V1.Indexers
                     FilterSummary = filterSummary
                 };
             }
+            catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.Error(ex, "Author search failed");
@@ -284,268 +357,7 @@ namespace Chaptarr.Api.V1.Indexers
 
         protected override ReleaseResource MapDecision(DownloadDecision decision, int initialWeight)
         {
-            var resource = base.MapDecision(decision, initialWeight);
-            _downloadDecisionCache.Set(GetCacheKey(resource), decision, TimeSpan.FromMinutes(30));
-
-            return resource;
-        }
-
-        private List<ReleaseResource> MapDecisionsForInteractiveSearch(IEnumerable<DownloadDecision> decisions, bool bypassFilters = false)
-        {
-            var result = new List<ReleaseResource>();
-            var totalDecisions = decisions.Count();
-            var filteredCount = 0;
-            var hardFilteredCount = 0;
-            var softFilteredCount = 0;
-            var durationsFound = 0;
-            var narratorsFound = 0;
-            var graphicAudioFound = 0;
-
-            foreach (var downloadDecision in decisions)
-            {
-                // Count MAM metadata for trace logging
-                var releaseInfo = downloadDecision.RemoteBook.Release;
-                if (releaseInfo != null)
-                {
-                    if (!string.IsNullOrWhiteSpace(releaseInfo.Duration))
-                    {
-                        durationsFound++;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(releaseInfo.Narrator))
-                    {
-                        narratorsFound++;
-                    }
-
-                    if (releaseInfo.IsGraphicAudio)
-                    {
-                        graphicAudioFound++;
-                    }
-                }
-
-                // Enhanced filtering logic with bypass support
-                var shouldFilter = ShouldFilterFromInteractiveSearch(downloadDecision, bypassFilters);
-                if (shouldFilter.shouldFilter)
-                {
-                    filteredCount++;
-                    if (shouldFilter.isHardFilter)
-                    {
-                        hardFilteredCount++;
-                    }
-                    else
-                    {
-                        softFilteredCount++;
-                    }
-
-                    _logger.Debug("Filtering out rejected release for interactive search: {0} - {1} (Hard: {2}, Bypass: {3})",
-                        downloadDecision.RemoteBook.Release.Title,
-                        string.Join(", ", downloadDecision.Rejections.Select(r => r.Reason)),
-                        shouldFilter.isHardFilter,
-                        bypassFilters);
-                    continue;
-                }
-
-                var release = MapDecision(downloadDecision, result.Count);
-                result.Add(release);
-            }
-
-            // Enhanced logging with filter breakdown
-            _logger.Trace("MAM_SEARCH_SUMMARY: TOTAL={0}, FILTERED={1} (HARD={2}, SOFT={3}), DISPLAYED={4}, DURATIONS_FOUND={5}, NARRATORS_FOUND={6}, GRAPHIC_AUDIO={7}, BYPASS_MODE={8}", totalDecisions, filteredCount, hardFilteredCount, softFilteredCount, result.Count, durationsFound, narratorsFound, graphicAudioFound, bypassFilters);
-
-            if (bypassFilters && softFilteredCount > 0)
-            {
-                _logger.Debug("FILTER_BYPASS: Showing {0} additional results due to soft filter bypass (total: {1})", softFilteredCount, result.Count);
-            }
-
-            if (durationsFound == 0 && totalDecisions > 0)
-            {
-                _logger.Trace("MAM_DURATION_WARNING: No durations found in {0} results - check pattern matching", totalDecisions);
-            }
-
-            return result;
-        }
-
-        private (List<ReleaseResource> results, List<ReleaseResource> hiddenResults, FilterSummary filterSummary) MapDecisionsForInteractiveSearchWithSummary(IEnumerable<DownloadDecision> decisions, bool bypassFilters = false)
-        {
-            var result = new List<ReleaseResource>();
-            var hiddenResults = new List<ReleaseResource>();
-            var allDecisions = decisions.ToList(); // Convert to list for multiple enumeration
-            var totalDecisions = allDecisions.Count;
-            var filteredCount = 0;
-            var hardFilteredCount = 0;
-            var softFilteredCount = 0;
-            var durationsFound = 0;
-            var narratorsFound = 0;
-            var graphicAudioFound = 0;
-
-            foreach (var downloadDecision in allDecisions)
-            {
-                // Count MAM metadata for trace logging
-                var releaseInfo = downloadDecision.RemoteBook.Release;
-                if (releaseInfo != null)
-                {
-                    if (!string.IsNullOrWhiteSpace(releaseInfo.Duration))
-                    {
-                        durationsFound++;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(releaseInfo.Narrator))
-                    {
-                        narratorsFound++;
-                    }
-
-                    if (releaseInfo.IsGraphicAudio)
-                    {
-                        graphicAudioFound++;
-                    }
-                }
-
-                // Enhanced filtering logic with bypass support
-                var shouldFilter = ShouldFilterFromInteractiveSearch(downloadDecision, bypassFilters);
-                if (shouldFilter.shouldFilter)
-                {
-                    filteredCount++;
-                    if (shouldFilter.isHardFilter)
-                    {
-                        hardFilteredCount++;
-                    }
-                    else
-                    {
-                        softFilteredCount++;
-                    }
-
-                    _logger.Debug("FILTER_DEBUG_REJECTION: Title='{0}', Rejections=[{1}], Hard={2}, Soft={3}, HasIsHardFilter={4}, HasIsSoftFilter={5}, BypassMode={6}",
-                        downloadDecision.RemoteBook.Release.Title,
-                        string.Join(", ", downloadDecision.Rejections.Select(r => $"'{r.Reason}'")),
-                        shouldFilter.isHardFilter,
-                        downloadDecision.Rejections.All(r => r.IsSoftFilter),
-                        downloadDecision.Rejections.Any(r => r.IsHardFilter),
-                        downloadDecision.Rejections.Any(r => r.IsSoftFilter),
-                        bypassFilters);
-
-                    hiddenResults.Add(MapDecision(downloadDecision, hiddenResults.Count));
-                    continue;
-                }
-
-                var release = MapDecision(downloadDecision, result.Count);
-
-                result.Add(release);
-            }
-
-            // Create filter summary
-            var filterSummary = CreateFilterSummary(allDecisions, result, hardFilteredCount, softFilteredCount, bypassFilters);
-
-            // Enhanced logging with filter breakdown
-            _logger.Trace("MAM_SEARCH_SUMMARY: TOTAL={0}, FILTERED={1} (HARD={2}, SOFT={3}), DISPLAYED={4}, DURATIONS_FOUND={5}, NARRATORS_FOUND={6}, GRAPHIC_AUDIO={7}, BYPASS_MODE={8}", totalDecisions, filteredCount, hardFilteredCount, softFilteredCount, result.Count, durationsFound, narratorsFound, graphicAudioFound, bypassFilters);
-
-            if (bypassFilters && softFilteredCount > 0)
-            {
-                _logger.Debug("FILTER_BYPASS: Showing {0} additional results due to soft filter bypass (total: {1})", softFilteredCount, result.Count);
-            }
-
-            if (durationsFound == 0 && totalDecisions > 0)
-            {
-                _logger.Trace("MAM_DURATION_WARNING: No durations found in {0} results - check pattern matching", totalDecisions);
-            }
-
-            return (result, hiddenResults, filterSummary);
-        }
-
-        internal static FilterSummary CreateFilterSummary(IEnumerable<DownloadDecision> allDecisions, List<ReleaseResource> displayedResults, int hardFilteredCount, int softFilteredCount, bool bypassFilters)
-        {
-            var decisions = allDecisions.ToList();
-            var hiddenDecisions = decisions
-                .Where(decision => ShouldFilterFromInteractiveSearch(decision, bypassFilters).shouldFilter)
-                .ToList();
-            var totalDecisions = decisions.Count;
-            var filteredCount = hardFilteredCount + softFilteredCount;
-
-            // Analyze filter categories and create breakdown
-            var filterBreakdown = new Dictionary<string, int>();
-            var filteredCategories = new List<string>();
-            var filterWarnings = new List<string>();
-
-            foreach (var decision in hiddenDecisions)
-            {
-                foreach (var rejection in decision.Rejections)
-                {
-                    var category = rejection.Category ?? "General";
-                    if (!filterBreakdown.ContainsKey(category))
-                    {
-                        filterBreakdown[category] = 0;
-                        filteredCategories.Add(category);
-                    }
-
-                    filterBreakdown[category]++;
-                }
-            }
-
-            if (filteredCount > 0)
-            {
-                filterWarnings.Add($"{filteredCount} results hidden because author/book identity or release contents could not be safely resolved");
-            }
-
-            // Create summary text
-            var summaryText = "";
-            if (filteredCount > 0)
-            {
-                if (bypassFilters)
-                {
-                    summaryText = $"Showing {displayedResults.Count} of {totalDecisions} results (bypass mode enabled, {hardFilteredCount} hard filtered)";
-                }
-                else
-                {
-                    summaryText = $"Showing {displayedResults.Count} of {totalDecisions} results ({filteredCount} filtered)";
-                }
-            }
-            else
-            {
-                summaryText = $"Showing all {displayedResults.Count} results";
-            }
-
-            return new FilterSummary
-            {
-                TotalResults = totalDecisions,
-                FilteredCount = filteredCount,
-                DisplayedCount = displayedResults.Count,
-                HardFilteredCount = hardFilteredCount,
-                SoftFilteredCount = softFilteredCount,
-                HasSoftFilters = softFilteredCount > 0,
-                HasHardFilters = hardFilteredCount > 0,
-                BypassMode = bypassFilters,
-                FilteredCategories = filteredCategories.Distinct().ToList(),
-                FilterBreakdown = filterBreakdown,
-                SummaryText = summaryText,
-                FilterWarnings = filterWarnings
-            };
-        }
-
-        // Enhanced filter method with bypass support and hard/soft filter detection
-        internal static (bool shouldFilter, bool isHardFilter) ShouldFilterFromInteractiveSearch(DownloadDecision decision, bool bypassFilters = false)
-        {
-            if (!decision.Rejections.Any())
-            {
-                return (false, false); // No rejections, don't filter
-            }
-
-            var mismatchCategories = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "Matching",
-                "Author",
-                "Title",
-                "Parsing",
-                "Pack"
-            };
-
-            var hasMismatchRejection = decision.Rejections.Any(r => mismatchCategories.Contains(r.Category ?? "General"));
-            if (hasMismatchRejection)
-            {
-                return (true, decision.Rejections.Any(r => r.IsHardFilter));
-            }
-
-            // Interactive search is the user override surface. Once author/book identity has
-            // passed, profile and preference rejections remain visible with their score/reasons.
-            return (false, false);
+            return _interactiveReleaseMapper.MapDecision(decision, initialWeight);
         }
 
         internal static bool ShouldBlockInteractiveDownload(DownloadDecision decision)
@@ -572,11 +384,6 @@ namespace Chaptarr.Api.V1.Indexers
         internal static bool IsReleaseProfileRejection(Rejection rejection)
         {
             return string.Equals(rejection?.Category, "Release Profile", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private string GetCacheKey(ReleaseResource resource)
-        {
-            return string.Concat(resource.IndexerId, "_", resource.Guid);
         }
 
         private SiblingToggleInfo BuildSiblingToggleInfo(Book book, NzbDrone.Core.Books.Author author)

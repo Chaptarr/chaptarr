@@ -1,14 +1,18 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
+import BookFileDeletionPreview, { deletionSelection } from 'BookFile/Editor/BookFileDeletionPreview';
+import Alert from 'Components/Alert';
 import FormGroup from 'Components/Form/FormGroup';
 import FormInputGroup from 'Components/Form/FormInputGroup';
 import FormLabel from 'Components/Form/FormLabel';
 import Button from 'Components/Link/Button';
+import SpinnerButton from 'Components/Link/SpinnerButton';
 import ModalBody from 'Components/Modal/ModalBody';
 import ModalContent from 'Components/Modal/ModalContent';
 import ModalFooter from 'Components/Modal/ModalFooter';
 import ModalHeader from 'Components/Modal/ModalHeader';
 import { inputTypes, kinds } from 'Helpers/Props';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import styles from './DeleteBookModalContent.css';
 
@@ -22,9 +26,21 @@ class DeleteBookModalContent extends Component {
 
     this.state = {
       deleteFiles: false,
-      addImportListExclusion: true
+      addImportListExclusion: true,
+      hasSubmitted: false,
+      readySelection: null
     };
   }
+
+  componentDidUpdate(prevProps) {
+    if (this.props.deleteError && !prevProps.deleteError && this.scroller) {
+      this.scroller.scrollTop = 0;
+    }
+  }
+
+  registerScroller = (scroller) => {
+    this.scroller = scroller;
+  };
 
   //
   // Listeners
@@ -37,13 +53,19 @@ class DeleteBookModalContent extends Component {
     this.setState({ addImportListExclusion: value });
   };
 
+  onPreviewReady = (readySelection) => this.setState({ readySelection });
+
   onDeleteBookConfirmed = () => {
+    if (this.state.deleteFiles && this.state.readySelection !== deletionSelection([], this.props.bookIds)) {
+      return;
+    }
+
     const {
       deleteFiles,
       addImportListExclusion
     } = this.state;
 
-    this.setState({ deleteFiles: false });
+    this.setState({ hasSubmitted: true });
     this.props.onDeleteSelectedPress(deleteFiles, addImportListExclusion);
   };
 
@@ -53,8 +75,10 @@ class DeleteBookModalContent extends Component {
   render() {
     const {
       book,
-      files,
+      bookIds,
       selectedCount,
+      isDeleting,
+      deleteError,
       onModalClose
     } = this.props;
 
@@ -69,7 +93,12 @@ class DeleteBookModalContent extends Component {
           {translate('DeleteSelectedBook')}
         </ModalHeader>
 
-        <ModalBody>
+        <ModalBody registerScroller={this.registerScroller}>
+          {this.state.hasSubmitted && deleteError &&
+            <Alert kind={kinds.DANGER} role="alert">
+              {getErrorMessage(deleteError, translate('BookDeleteFailed'))}
+            </Alert>
+          }
           <div>
             <FormGroup>
               <FormLabel>{translate('DeleteFiles')}</FormLabel>
@@ -80,7 +109,7 @@ class DeleteBookModalContent extends Component {
                 value={deleteFiles}
                 helpText={translate('DeleteFilesHelpText')}
                 kind={kinds.DANGER}
-                isDisabled={selectedCount === 0}
+                isDisabled={isDeleting || selectedCount === 0}
                 onChange={this.onDeleteFilesChange}
               />
             </FormGroup>
@@ -92,6 +121,7 @@ class DeleteBookModalContent extends Component {
                 type={inputTypes.CHECK}
                 name="addImportListExclusion"
                 value={addImportListExclusion}
+                isDisabled={isDeleting}
                 helpText={translate('AddImportListExclusionHelpText')}
                 kind={kinds.DANGER}
                 onChange={this.onAddImportListExclusionChange}
@@ -138,32 +168,27 @@ class DeleteBookModalContent extends Component {
                 <div className={styles.deleteFilesMessage}>
                   {translate('TheFollowingFilesWillBeDeleted')}
                 </div>
-                <ul>
-                  {
-                    files.map((s) => {
-                      return (
-                        <li key={s.path}>
-                          <span>{s.path}</span>
-                        </li>
-                      );
-                    })
-                  }
-                </ul>
+                <BookFileDeletionPreview key={deletionSelection([], bookIds)} bookIds={bookIds}
+                  onReadyChange={this.onPreviewReady}
+                />
               </div>
           }
         </ModalBody>
 
         <ModalFooter>
-          <Button onPress={onModalClose}>
+          <Button onPress={onModalClose} isDisabled={isDeleting}>
             {translate('Cancel')}
           </Button>
 
-          <Button
+          <SpinnerButton
             kind={kinds.DANGER}
+            aria-label={translate('Delete')}
+            isSpinning={isDeleting}
+            isDisabled={selectedCount === 0 || (deleteFiles && this.state.readySelection !== deletionSelection([], bookIds))}
             onPress={this.onDeleteBookConfirmed}
           >
             {translate('Delete')}
-          </Button>
+          </SpinnerButton>
         </ModalFooter>
       </ModalContent>
     );
@@ -172,10 +197,16 @@ class DeleteBookModalContent extends Component {
 
 DeleteBookModalContent.propTypes = {
   book: PropTypes.arrayOf(PropTypes.object).isRequired,
-  files: PropTypes.arrayOf(PropTypes.object).isRequired,
+  bookIds: PropTypes.arrayOf(PropTypes.number).isRequired,
   selectedCount: PropTypes.number.isRequired,
+  isDeleting: PropTypes.bool,
+  deleteError: PropTypes.object,
   onModalClose: PropTypes.func.isRequired,
   onDeleteSelectedPress: PropTypes.func.isRequired
+};
+
+DeleteBookModalContent.defaultProps = {
+  isDeleting: false
 };
 
 export default DeleteBookModalContent;

@@ -1,6 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.IO;
+using NLog;
+using NzbDrone.Common.Disk;
+using NzbDrone.Core.HealthCheck;
+using NzbDrone.Core.HealthCheck.Checks;
+using NzbDrone.Core.Localization;
+using static Chaptarr.Core.Test.Common.InterfaceProxy;
 using NUnit.Framework;
 using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Core.Configuration;
@@ -15,10 +22,12 @@ namespace Chaptarr.Core.Test.Update
         {
             public List<UpdatePackage> Items { get; } = new();
             public int Calls { get; private set; }
+            public bool Unavailable { get; set; }
 
             public List<UpdatePackage> GetRecentUpdatePackages()
             {
                 Calls++;
+                if (Unavailable) throw new IOException("planted update-feed outage");
                 return Items;
             }
         }
@@ -98,9 +107,36 @@ namespace Chaptarr.Core.Test.Update
             });
         }
 
+        [Test]
+        [NonParallelizable]
+        public void old_install_health_check_survives_feed_outage_and_recovers_without_restart()
+        {
+            var assembly = typeof(UpdateCheck).Assembly.Location;
+            var modified = File.GetLastWriteTimeUtc(assembly);
+            try
+            {
+                File.SetLastWriteTimeUtc(assembly, DateTime.UtcNow.AddDays(-30));
+                var recent = new RecentUpdates { Unavailable = true };
+                var check = new UpdateCheck(null,
+                    Proxy<IAppFolderInfo>((_, _) => TestContext.CurrentContext.TestDirectory),
+                    CreateSubject(new Packages(), recent),
+                    Proxy<IConfigFileProvider>((_, _) => false), null,
+                    Proxy<ILocalizationService>((_, args) => args[0]));
+                Assert.That(check.Check().Type, Is.EqualTo(HealthCheckResult.Ok));
+                Assert.That(recent.Calls, Is.EqualTo(1), "exercise the real old-install update check");
+                recent.Unavailable = false;
+                recent.Items.Add(new UpdatePackage { Version = new Version(BuildInfo.Version.Major + 1, 0, 0, 0) });
+                Assert.That(check.Check().Type, Is.EqualTo(HealthCheckResult.Warning));
+                Assert.That(recent.Calls, Is.EqualTo(2));
+                recent.Unavailable = true;
+                Assert.Throws<IOException>(() => recent.GetRecentUpdatePackages(), "manual update-history errors remain visible");
+            }
+            finally { File.SetLastWriteTimeUtc(assembly, modified); }
+        }
+
         private static CheckUpdateService CreateSubject(Packages packages, RecentUpdates recent)
         {
-            return new CheckUpdateService(packages, DispatchProxy.Create<IConfigFileProvider, ConfigProxy>(), recent);
+            return new CheckUpdateService(packages, DispatchProxy.Create<IConfigFileProvider, ConfigProxy>(), recent, LogManager.GetCurrentClassLogger());
         }
     }
 }

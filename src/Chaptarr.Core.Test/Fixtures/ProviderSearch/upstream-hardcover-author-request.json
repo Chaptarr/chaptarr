@@ -1,0 +1,9 @@
+{
+  "query": "\n            query ChaptarrSearch($q: String!, $query_type: String!, $limit: Int!, $page: Int!) {\n                search(query: $q, query_type: $query_type, per_page: $limit, page: $page) {\n                    results\n                }\n            }",
+  "variables": {
+    "q": "Ursula Le Guin",
+    "query_type": "Author",
+    "limit": 10,
+    "page": 1
+  }
+}

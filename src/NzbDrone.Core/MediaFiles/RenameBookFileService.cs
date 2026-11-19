@@ -25,6 +25,7 @@ namespace NzbDrone.Core.MediaFiles
         public int AlreadyInPlaceCount { get; set; }
         public int FailedCount { get; set; }
         public int BoundarySkippedCount { get; set; }
+        public int MissingSourcePathCount { get; set; }
     }
 
     public interface IRenameBookFileService
@@ -41,13 +42,15 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IEventAggregator _eventAggregator;
         private readonly IDiskProvider _diskProvider;
         private readonly Logger _logger;
+        private readonly ISeriesBookLinkService _seriesBookLinkService;
 
         public RenameBookFileService(IAuthorService authorService,
                                         IMediaFileService mediaFileService,
                                         IMoveBookFiles bookFileMover,
                                         IEventAggregator eventAggregator,
                                         IDiskProvider diskProvider,
-                                        Logger logger)
+                                        Logger logger,
+                                        ISeriesBookLinkService seriesBookLinkService)
         {
             _authorService = authorService;
             _mediaFileService = mediaFileService;
@@ -55,6 +58,7 @@ namespace NzbDrone.Core.MediaFiles
             _eventAggregator = eventAggregator;
             _diskProvider = diskProvider;
             _logger = logger;
+            _seriesBookLinkService = seriesBookLinkService;
         }
 
         public List<RenameBookFilePreview> GetRenamePreviews(int authorId, string mediaType = null, bool moveToCanonicalAuthorFolder = false)
@@ -87,6 +91,7 @@ namespace NzbDrone.Core.MediaFiles
         private IEnumerable<RenameBookFilePreview> GetPreviews(Author author, List<BookFile> files, bool moveToCanonicalAuthorFolder)
         {
             var renameFiles = files.Where(x => x.CalibreId == 0).ToList();
+            BookSeries.LoadLinks(renameFiles.Select(file => file.Edition?.Book), ids => _seriesBookLinkService.GetLinksByBook(ids));
             EnsurePartNumbers(renameFiles);
             // Pass 1: compute target directories for audiobook files that are part of this rename batch.
             var batchContext = new RenameBatchContext();
@@ -98,7 +103,7 @@ namespace NzbDrone.Core.MediaFiles
                 var oldFolder = file.Path.IsNotNullOrWhiteSpace() ? Path.GetDirectoryName(file.Path) : null;
                 if (!newFolder.IsNullOrWhiteSpace() && !oldFolder.IsNullOrWhiteSpace())
                 {
-                    batchContext.AddAudiobookFolderRemap(oldFolder, newFolder);
+                    batchContext.AddAudiobookFolderRemap(file.Id, oldFolder, newFolder);
                 }
             }
 
@@ -192,7 +197,12 @@ namespace NzbDrone.Core.MediaFiles
                 details.Add($"{result.BoundarySkippedCount} skipped because the current author folder could not be determined");
             }
 
-            var notEligibleCount = Math.Max(0, result.SelectedCount - result.AttemptedCount - result.BoundarySkippedCount);
+            if (result.MissingSourcePathCount > 0)
+            {
+                details.Add($"{result.MissingSourcePathCount} skipped because no source file path is recorded");
+            }
+
+            var notEligibleCount = Math.Max(0, result.SelectedCount - result.AttemptedCount - result.BoundarySkippedCount - result.MissingSourcePathCount);
             if (notEligibleCount > 0)
             {
                 details.Add($"{notEligibleCount} not eligible for organize");
@@ -256,13 +266,22 @@ namespace NzbDrone.Core.MediaFiles
 
             var batchContext = new RenameBatchContext();
 
+            BookSeries.LoadLinks(ordered.Select(file => file.Edition?.Book), ids => _seriesBookLinkService.GetLinksByBook(ids));
             foreach (var bookFile in ordered)
             {
                 var previousPath = bookFile.Path;
+                var previousAuthorPath = Extras.ExtraFilePathHelper.GetPreferredBasePath(author, bookFile);
                 var plan = _bookFileMover.GetOrganizeDestination(bookFile, author, moveToCanonicalAuthorFolder, batchContext);
                 if (!plan.CanOrganize)
                 {
-                    result.BoundarySkippedCount++;
+                    if (bookFile.Path.IsNullOrWhiteSpace())
+                    {
+                        result.MissingSourcePathCount++;
+                    }
+                    else
+                    {
+                        result.BoundarySkippedCount++;
+                    }
                     _logger.Warn("Skipping organize for {0}: {1}", previousPath, plan.SkipReason);
                     continue;
                 }
@@ -287,7 +306,8 @@ namespace NzbDrone.Core.MediaFiles
                     renamed.Add(new RenamedBookFile
                     {
                         BookFile = bookFile,
-                        PreviousPath = previousPath
+                        PreviousPath = previousPath,
+                        PreviousAuthorPath = previousAuthorPath
                     });
                     result.RenamedCount++;
                     cleanupCandidates.Add((previousPath, plan.SourceAuthorFolderPath));
@@ -306,7 +326,7 @@ namespace NzbDrone.Core.MediaFiles
                 catch (FileAlreadyExistsException ex)
                 {
                     result.CollisionSkippedCount++;
-                    _logger.Warn("File not organized, there is already a file at the destination: {0}", ex.Filename);
+                    _logger.Warn("File not organized at {0}: {1}", ex.Filename, ex.Message);
                 }
                 catch (DestinationAlreadyExistsException ex)
                 {
@@ -344,7 +364,7 @@ namespace NzbDrone.Core.MediaFiles
 
             var oldFolder = previousPath.IsNotNullOrWhiteSpace() ? Path.GetDirectoryName(previousPath) : null;
             var newFolder = bookFile.Path.IsNotNullOrWhiteSpace() ? Path.GetDirectoryName(bookFile.Path) : null;
-            batchContext.AddAudiobookFolderRemap(oldFolder, newFolder);
+            batchContext.AddAudiobookFolderRemap(bookFile.Id, oldFolder, newFolder);
         }
 
         private void UpdateAuthorPathsAfterCanonicalMoves(
@@ -413,49 +433,8 @@ namespace NzbDrone.Core.MediaFiles
 
         private void CleanupEmptySourceFolders(List<(string PreviousPath, string SourceAuthorFolderPath)> cleanupCandidates)
         {
-            foreach (var candidate in cleanupCandidates ?? new List<(string PreviousPath, string SourceAuthorFolderPath)>())
-            {
-                var folder = candidate.PreviousPath.IsNotNullOrWhiteSpace()
-                    ? Path.GetDirectoryName(candidate.PreviousPath)
-                    : null;
-                var sourceAuthorFolder = candidate.SourceAuthorFolderPath;
-
-                if (folder.IsNullOrWhiteSpace() || sourceAuthorFolder.IsNullOrWhiteSpace())
-                {
-                    continue;
-                }
-
-                try
-                {
-                    while (folder.PathEquals(sourceAuthorFolder) || sourceAuthorFolder.IsParentPath(folder))
-                    {
-                        if (_diskProvider.FolderExists(folder))
-                        {
-                            _diskProvider.RemoveEmptySubfolders(folder);
-                            if (_diskProvider.GetFiles(folder, true).Empty())
-                            {
-                                _logger.Debug("Removing empty source folder after organize: {0}", folder);
-                                _diskProvider.DeleteFolder(folder, true);
-                            }
-                        }
-
-                        if (folder.PathEquals(sourceAuthorFolder))
-                        {
-                            break;
-                        }
-
-                        folder = Path.GetDirectoryName(folder);
-                        if (folder.IsNullOrWhiteSpace())
-                        {
-                            break;
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warn(ex, "Failed to clean empty source folders after organizing {0}", candidate.PreviousPath);
-                }
-            }
+            Extras.ExtraFilePathHelper.CleanupEmptySourceFolders(_diskProvider, _logger,
+                cleanupCandidates.Select(c => (Path.GetDirectoryName(c.PreviousPath), c.SourceAuthorFolderPath)));
         }
 
         public void Execute(RenameFilesCommand message)

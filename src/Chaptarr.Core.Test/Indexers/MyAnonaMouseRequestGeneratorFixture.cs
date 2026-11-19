@@ -30,7 +30,7 @@ namespace Chaptarr.Core.Test.Indexers
             var payload = JObject.Parse(Encoding.UTF8.GetString(requests[0].HttpRequest.ContentData));
             Assert.That(payload["tor"]?["text"]?.Value<string>(), Is.Empty);
             Assert.That(payload["tor"]?["startNumber"]?.Value<string>(), Is.EqualTo("0"));
-            Assert.That(payload["tor"]?["searchType"]?.Value<string>(), Is.EqualTo("active"));
+            Assert.That(payload["tor"]?["searchType"]?.Value<string>(), Is.EqualTo("all"));
             Assert.That(payload["perpage"]?.Value<string>(), Is.EqualTo("500"));
             Assert.That(payload["mediaInfo"]?.Value<string>(), Is.EqualTo("1"));
             Assert.That(payload["description"], Is.Null);
@@ -188,7 +188,7 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(payload["dlLink"], Is.Null);
             Assert.That(payload["isbn"], Is.Null);
             Assert.That(payload["perpage"]?.Value<string>(), Is.EqualTo("100"));
-            Assert.That(payload["tor"]?["searchType"]?.Value<string>(), Is.EqualTo("active"));
+            Assert.That(payload["tor"]?["searchType"]?.Value<string>(), Is.EqualTo("all"));
             Assert.That(payload["tor"]?["srchIn"]?.Values<string>(), Is.EqualTo(new[] { "title", "author", "narrator", "series", "tags" }));
             Assert.That(payload["tor"]?["cat"]?.Values<string>(), Is.EqualTo(new[] { "0" }));
             Assert.That(payload["tor"]?["main_cat"]?.Values<string>(), Is.EqualTo(new[] { "13" }));
@@ -374,10 +374,7 @@ namespace Chaptarr.Core.Test.Indexers
         [Test]
         public void should_generate_ten_search_pages_and_stop_at_mam_query_limit()
         {
-            var chain = CreateGenerator().GetSearchRequests(new AuthorSearchCriteria
-            {
-                Author = new Author { Name = "Stephen King" }
-            });
+            var chain = CreateGenerator().GetSearchRequests(CreateAudiobookCriteria("en"));
 
             var requests = chain.GetTier(0).Single().ToList();
 
@@ -386,16 +383,14 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(JObject.Parse(Encoding.UTF8.GetString(requests[9].HttpRequest.ContentData))["tor"]?["startNumber"]?.Value<string>(), Is.EqualTo("900"));
         }
 
-        [Test]
-        public void should_search_all_torrents_when_zero_seeders_are_allowed()
+        [TestCase(0)]
+        [TestCase(3)]
+        public void should_search_all_torrents_regardless_of_minimum_seeders(int minimumSeeders)
         {
             var generator = CreateGenerator();
-            generator.Settings.MinimumSeeders = 0;
+            generator.Settings.MinimumSeeders = minimumSeeders;
 
-            var payload = GetRequestPayloadObject(generator.GetSearchRequests(new AuthorSearchCriteria
-            {
-                Author = new Author { Name = "Author" }
-            }), 0);
+            var payload = GetRequestPayloadObject(generator.GetSearchRequests(CreateAudiobookCriteria("en")), 0);
 
             Assert.That(payload["tor"]?["searchType"]?.Value<string>(), Is.EqualTo("all"));
         }

@@ -23,6 +23,8 @@ namespace Chaptarr.Core.Test.History
             public List<EntityHistory> DownloadHistory { get; set; } = new();
             public List<EntityHistory> DownloadIdHistory { get; set; } = new();
             public int FindDownloadHistoryCalls { get; private set; }
+            public int FindByDownloadIdCalls { get; private set; }
+            public int UpdateManyCalls { get; private set; }
             public int InsertManyCalls { get; private set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
@@ -44,12 +46,60 @@ namespace Chaptarr.Core.Test.History
                         return DownloadHistory;
 
                     case nameof(IHistoryRepository.FindByDownloadId):
+                        FindByDownloadIdCalls++;
                         return DownloadIdHistory;
+
+                    case nameof(IHistoryRepository.UpdateMany):
+                        UpdateManyCalls++;
+                        return null;
 
                     default:
                         throw new NotImplementedException($"Test proxy does not implement IHistoryRepository.{targetMethod?.Name}");
                 }
             }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void multipart_history_should_load_grab_evidence_once_and_preserve_alternate_mutations(bool seeded)
+        {
+            var repository = DispatchProxy.Create<IHistoryRepository, HistoryRepositoryProxy>();
+            var state = (HistoryRepositoryProxy)(object)repository;
+            var date = DateTime.UtcNow.AddMinutes(-10);
+            state.DownloadIdHistory = new List<EntityHistory>
+            {
+                new() { AuthorId = 7, BookId = 10, EditionId = 3, Date = date,
+                    EventType = EntityHistoryEventType.Grabbed,
+                    Data = new() { [EntityHistory.ALTERNATIVE_COPIES] = bool.TrueString, ["CustomFormatScore"] = "75" } },
+                new() { AuthorId = 7, BookId = 11, EditionId = 4, Date = date,
+                    EventType = EntityHistoryEventType.Grabbed,
+                    Data = new() { [EntityHistory.ALTERNATIVE_COPIES] = bool.TrueString, ["CustomFormatScore"] = "25" } }
+            };
+            var context = new ImportHistoryContext("batch", seeded ? state.DownloadIdHistory : null);
+            var service = new HistoryService(repository, LogManager.GetCurrentClassLogger());
+            for (var part = 1; part <= 64; part++)
+            {
+                service.Handle(new TrackImportedEvent(
+                    new LocalBook { Path = $"/downloads/{part}.mp3", Author = new Author { Id = 7 },
+                        Book = new Book { Id = 10, AuthorId = 7 }, AlternativeCopyGrabDate = date,
+                        AlternativeCopyIncompatibleEditionIds = new Dictionary<int, int> { [11] = 4 } },
+                    new BookFile { Id = part, Path = $"/books/{part}.mp3", EditionId = 3 }, new List<BookFile>(),
+                    true, new DownloadClientItem { DownloadId = "BATCH" }) { HistoryContext = context });
+            }
+
+            Assert.That(state.FindByDownloadIdCalls, Is.EqualTo(seeded ? 0 : 1));
+            Assert.That(state.Inserted, Has.Count.EqualTo(64));
+            Assert.That(state.Inserted.TrueForAll(row => row.Data["CustomFormatScore"] == "75"), Is.True);
+            Assert.That(state.UpdateManyCalls, Is.EqualTo(1));
+            Assert.That(state.DownloadIdHistory[1].Data[EntityHistory.ALTERNATIVE_COPY_INCOMPATIBLE], Is.EqualTo(bool.TrueString));
+        }
+
+        [Test]
+        public void history_context_should_never_supply_another_downloads_evidence()
+        {
+            var context = new ImportHistoryContext("one", new List<EntityHistory> { new() { BookId = 1 } });
+            var actual = context.Get("two", id => new List<EntityHistory> { new() { BookId = 2 } });
+            Assert.That(actual[0].BookId, Is.EqualTo(2));
         }
 
         [Test]

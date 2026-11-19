@@ -11,6 +11,7 @@ using Chaptarr.Http.REST;
 using FluentValidation;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Filters;
 using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Http.Proxy;
@@ -53,6 +54,20 @@ namespace Chaptarr.Api.V1.Config
             SharedValidator.RuleFor(c => c.BindAddress)
                            .ValidIpAddress()
                            .When(c => c.BindAddress != "*" && c.BindAddress != "localhost");
+
+            SharedValidator.RuleFor(c => c.AllowedHosts)
+                           .Must(value => AllowedHostsParser.Parse(value).All(host => AllowedHostsParser.IsValidHost(host) && !AllowedHostsParser.IsBindAddress(host)))
+                           .WithMessage("Enter hostnames or IP addresses without schemes, ports or paths. Leave empty to allow all hosts.");
+
+            SharedValidator.RuleFor(c => c.AllowedHosts)
+                           .Must(value => !AllowedHostsParser.IsUnrestricted(value))
+                           .When(c => c.AuthenticationRequired != AuthenticationRequiredType.Enabled)
+                           .WithMessage("Allowed Hosts is required when authentication is not required for every address.");
+
+            SharedValidator.RuleFor(c => c.AuthenticationMethod)
+                           .Must(method => method == _configFileProvider.ConfiguredAuthenticationMethod)
+                           .When(c => c.AuthenticationMethod == AuthenticationType.None || c.AuthenticationMethod == AuthenticationType.External)
+                           .WithMessage("Switching authentication to None or External is not permitted through the API. Configure External in config.xml or the environment if authentication is provided by a reverse proxy.");
 
             SharedValidator.RuleFor(c => c.Port).ValidPort();
 
@@ -123,7 +138,7 @@ namespace Chaptarr.Api.V1.Config
                            .WithMessage("Proxy type must be Http, Socks4, or Socks5");
 
             SharedValidator.RuleFor(c => c.BackupFolder).IsValidPath().When(c => Path.IsPathRooted(c.BackupFolder));
-            SharedValidator.RuleFor(c => c.BackupInterval).InclusiveBetween(1, 7);
+            SharedValidator.RuleFor(c => c.BackupInterval).InclusiveBetween(0, 7);
             SharedValidator.RuleFor(c => c.BackupRetention).InclusiveBetween(1, 90);
         }
 
@@ -191,6 +206,16 @@ namespace Chaptarr.Api.V1.Config
 
             RedactSensitiveFields(resource);
             return resource;
+        }
+
+        public override void OnActionExecuting(ActionExecutingContext context)
+        {
+            foreach (var resource in context.ActionArguments.Values.OfType<HostConfigResource>())
+            {
+                resource.AllowedHosts ??= _configFileProvider.AllowedHosts;
+            }
+
+            base.OnActionExecuting(context);
         }
 
         [RestPutById]

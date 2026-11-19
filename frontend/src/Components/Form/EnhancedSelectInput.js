@@ -512,6 +512,7 @@ class EnhancedSelectInput extends Component {
                       isOpen && !isMobile ?
                         <Scroller
                           className={styles.options}
+                          autoFocus={false}
                           style={{
                             maxHeight: style.maxHeight
                           }}

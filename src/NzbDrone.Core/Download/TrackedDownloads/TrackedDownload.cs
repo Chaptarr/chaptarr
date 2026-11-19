@@ -17,7 +17,10 @@ namespace NzbDrone.Core.Download.TrackedDownloads
         public string Indexer { get; set; }
         public DateTime? Added { get; set; }
         public bool IsTrackable { get; set; }
-        public int MissingAuthoritativeMediaFileAttempts { get; set; }
+        public bool CleanupCheckFailed { get; set; }
+        public bool SlowCleanupProbeReported { get; set; }
+        public bool CleanupDeletionRefused { get; set; }
+        public bool AwaitingImportConfirmation { get; set; }
 
         public TrackedDownload()
         {
@@ -33,6 +36,12 @@ namespace NzbDrone.Core.Download.TrackedDownloads
         public void Warn(params TrackedDownloadStatusMessage[] statusMessages)
         {
             Status = TrackedDownloadStatus.Warning;
+            StatusMessages = statusMessages;
+        }
+
+        public void Wait(params TrackedDownloadStatusMessage[] statusMessages)
+        {
+            Status = TrackedDownloadStatus.Ok;
             StatusMessages = statusMessages;
         }
 

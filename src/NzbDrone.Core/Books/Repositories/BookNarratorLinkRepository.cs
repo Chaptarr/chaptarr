@@ -8,7 +8,7 @@ namespace NzbDrone.Core.Books.Repositories
 {
     public interface IBookNarratorLinkRepository : IBasicRepository<BookNarratorLink>
     {
-        void DeleteByBookIds(List<int> bookIds);
+        void ReplaceByBookIds(List<int> bookIds, List<BookNarratorLink> newLinks);
     }
 
     public class BookNarratorLinkRepository : BasicRepository<BookNarratorLink>, IBookNarratorLinkRepository
@@ -18,7 +18,7 @@ namespace NzbDrone.Core.Books.Repositories
         {
         }
 
-        public void DeleteByBookIds(List<int> bookIds)
+        public void ReplaceByBookIds(List<int> bookIds, List<BookNarratorLink> newLinks)
         {
             if (bookIds == null || bookIds.Count == 0)
             {
@@ -26,6 +26,7 @@ namespace NzbDrone.Core.Books.Repositories
             }
 
             using var conn = _database.OpenConnection();
+            using var transaction = conn.BeginTransaction();
             var isPostgres = _database.DatabaseType == DatabaseType.PostgreSQL;
 
             foreach (var batch in bookIds.Chunk(SqliteVariableLimit.MaxParameters))
@@ -34,8 +35,11 @@ namespace NzbDrone.Core.Books.Repositories
                     isPostgres
                         ? @"DELETE FROM ""BookNarratorLink"" WHERE ""BookId"" = ANY(@ids)"
                         : @"DELETE FROM ""BookNarratorLink"" WHERE ""BookId"" IN @ids",
-                    new { ids = isPostgres ? batch.ToArray() : batch });
+                    new { ids = isPostgres ? batch.ToArray() : batch }, transaction);
             }
+
+            InsertMany(newLinks, conn, transaction);
+            transaction.Commit();
         }
     }
 }

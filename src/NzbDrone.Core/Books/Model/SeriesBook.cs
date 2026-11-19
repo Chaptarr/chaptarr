@@ -24,8 +24,7 @@ namespace NzbDrone.Core.Books
         public string Position { get; set; }
         public string CoverUrl { get; set; }
 
-        // Null when the V5 API did not surface a primary flag for this slot. Consumers should
-        // default null to true to preserve pre-2026-06-02 behavior for not-yet-refreshed authors.
+        // Unknown primary status remains unknown; membership does not depend on this flag.
         public bool? IsPrimary { get; set; }
     }
 }

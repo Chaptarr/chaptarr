@@ -30,6 +30,7 @@ namespace NzbDrone.Core.Notifications.Discord
                     .Accept(HttpAccept.Json)
                     .Build();
 
+                request.RedactUrlInLogs = true;
                 request.Method = HttpMethod.Post;
                 request.Headers.ContentType = "application/json";
                 request.SetContent(payload.ToJson());

@@ -28,11 +28,15 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
             switch (detection.Verdict)
             {
                 case ReleasePackDetectionVerdict.MultipleBooks:
-                    _logger.Trace("Release {0} rejected as multi-book pack. Type={1}, Match={2}",
+                    _logger.Trace("Release {0} soft-rejected as multi-book pack. Type={1}, Match={2}",
                         subject.Release?.Title,
                         detection.PackType,
                         detection.MatchedValue);
-                    return Decision.RejectHardFilter("Release appears to contain multiple books", "Pack");
+
+                    // Soft rather than hard. Both are kept out of automatic grabbing, because
+                    // DownloadDecision.Approved requires zero rejections of any kind. The only difference is
+                    // that soft lets the user grab it deliberately from interactive search.
+                    return Decision.RejectSoftFilter("Release appears to contain multiple books", "Pack");
 
                 case ReleasePackDetectionVerdict.AudiobookFragment:
                     _logger.Trace("Release {0} soft-rejected as audiobook fragment. Type={1}, Match={2}",

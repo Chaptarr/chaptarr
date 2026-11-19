@@ -10,12 +10,21 @@ class PageToolbar extends Component {
   render() {
     const {
       className,
+      controls,
       children
     } = this.props;
 
     return (
       <div className={className}>
-        {children}
+        {
+          controls &&
+            <div className={styles.controls}>
+              {controls}
+            </div>
+        }
+        <div className={styles.actions}>
+          {children}
+        </div>
       </div>
     );
   }
@@ -23,6 +32,7 @@ class PageToolbar extends Component {
 
 PageToolbar.propTypes = {
   className: PropTypes.string,
+  controls: PropTypes.node,
   children: PropTypes.node.isRequired
 };
 

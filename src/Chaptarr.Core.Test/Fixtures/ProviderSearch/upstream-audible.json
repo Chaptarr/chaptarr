@@ -1,0 +1,1831 @@
+{
+  "product_filters": [],
+  "products": [
+    {
+      "asin": "B002VA3CDO",
+      "asset_details": [],
+      "authors": [
+        {
+          "asin": "B0GZZ57KFW",
+          "name": "Ursula K. Le Guin"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "LC_128_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_128"
+        },
+        {
+          "enhanced_codec": "LC_64_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_64"
+        },
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "SinglePartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": false,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2009-04-10",
+      "language": "english",
+      "merchandising_summary": "Winner of the Boston Globe–Horn Book Award Winner of the Lewis Carroll Shelf Award One of TIME's 100 Best Fantasy Books of All Time Ged was the greatest sorcerer in Earthsea, but in his youth he was the reckless Sparrowhawk. In his hunger for power and knowledge, he tampered with long held...",
+      "narrators": [
+        {
+          "name": "Rob Inglis"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/51dYUumvCdL._SL500_.jpg"
+      },
+      "publication_datetime": "2009-04-10T05:31:00Z",
+      "publication_name": "The Earthsea Quartet",
+      "publisher_name": "Recorded Books",
+      "release_date": "2009-04-10",
+      "runtime_length_min": 437,
+      "sku": "BK_RECO_002086",
+      "sku_lite": "BK_RECO_002086",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/51dYUumvCdL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C51dYUumvCdL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/51dYUumvCdL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/51dYUumvCdL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C51dYUumvCdL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBA%20Wizard%20of%20Earthsea,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBUrsula%20K.%20Le%20Guin,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C51dYUumvCdL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAA%20Wizard%20of%20Ear...,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Ursula%20K.%20Le%20Guin,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/51dYUumvCdL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C51dYUumvCdL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "subtitle": "The Earthsea Cycle, Book 1",
+      "thesaurus_subject_keywords": [
+        "la_confidential"
+      ],
+      "title": "A Wizard of Earthsea"
+    },
+    {
+      "asin": "B09FN44ZLJ",
+      "asset_details": [],
+      "authors": [
+        {
+          "asin": "B00LBKVU3E",
+          "name": "T. Kingfisher"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "format4",
+          "format": "Format4",
+          "is_kindle_enhanced": false,
+          "name": "format4"
+        },
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "LC_128_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_128"
+        },
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "LC_64_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_64"
+        },
+        {
+          "enhanced_codec": "mp444128",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_44_128"
+        },
+        {
+          "enhanced_codec": "mp42264",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_64"
+        },
+        {
+          "enhanced_codec": "mp44464",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_44_64"
+        },
+        {
+          "enhanced_codec": "mp42232",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_32"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "SinglePartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": false,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2021-10-12",
+      "language": "english",
+      "merchandising_summary": "Fourteen-year-old Mona isn't like the wizards charged with defending the city. She can't control lightning or speak to water. Her familiar is a sourdough starter, and her magic only works on bread. She has a comfortable life in her aunt's bakery making gingerbread men dance. But Mona's life is...",
+      "narrators": [
+        {
+          "name": "Patricia Santomasso"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/51cJJUOQ1fL._SL500_.jpg"
+      },
+      "publication_datetime": "2021-10-12T07:00:00Z",
+      "publisher_name": "Tantor Audio",
+      "release_date": "2021-10-12",
+      "runtime_length_min": 510,
+      "sku": "BK_TANT_028895",
+      "sku_lite": "BK_TANT_028895",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/51cJJUOQ1fL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C51cJJUOQ1fL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/51cJJUOQ1fL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/51cJJUOQ1fL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C51cJJUOQ1fL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBA%20Wizard%27s%20Guide%20to%20Def...,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBT.%20Kingfisher,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C51cJJUOQ1fL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAA%20Wizard%27s%20Guid...,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20T.%20Kingfisher,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/51cJJUOQ1fL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C51cJJUOQ1fL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "title": "A Wizard's Guide to Defensive Baking"
+    },
+    {
+      "asin": "B09G7B8XXY",
+      "asset_details": [],
+      "authors": [
+        {
+          "name": "Ursula K. Le Guin"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "LC_64_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_64"
+        },
+        {
+          "enhanced_codec": "format4",
+          "format": "Format4",
+          "is_kindle_enhanced": false,
+          "name": "format4"
+        },
+        {
+          "enhanced_codec": "LC_128_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_128"
+        },
+        {
+          "enhanced_codec": "mp44464",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_44_64"
+        },
+        {
+          "enhanced_codec": "mp444128",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_44_128"
+        },
+        {
+          "enhanced_codec": "mp42232",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_32"
+        },
+        {
+          "enhanced_codec": "mp42264",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_64"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "SinglePartBook",
+      "content_type": "Radio/TV Program",
+      "format_type": "unabridged",
+      "has_children": false,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2021-12-09",
+      "language": "english",
+      "merchandising_summary": "The dazzling BBC Radio adaptations of Ursula K. Le Guin's famous fantasy saga and her groundbreaking science fiction masterpiece - plus bonus material. Ursula K. Le Guin was one of the most revered and influential writers of the 20th century. Her Earthsea books have sold millions of copies and...",
+      "narrators": [
+        {
+          "name": "full cast"
+        },
+        {
+          "name": "Toby Jones"
+        },
+        {
+          "name": "Kobna Holdbrook-Smith"
+        },
+        {
+          "name": "Lesley Sharp"
+        },
+        {
+          "name": "Adjoa Andoh"
+        },
+        {
+          "name": "Noma Dumezweni"
+        },
+        {
+          "name": "Robert Glenister"
+        },
+        {
+          "name": "James McArdle"
+        },
+        {
+          "name": "Sam Dale"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/61gRKZxtlKL._SL500_.jpg"
+      },
+      "publication_datetime": "2021-12-09T08:00:00Z",
+      "publisher_name": "BBC Audio",
+      "release_date": "2021-12-09",
+      "runtime_length_min": 470,
+      "sku": "BK_RHUK_005970",
+      "sku_lite": "BK_RHUK_005970",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/61gRKZxtlKL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C61gRKZxtlKL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/61gRKZxtlKL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/61gRKZxtlKL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C61gRKZxtlKL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBThe%20Complete%20Earthsea%20S...,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBUrsula%20K.%20Le%20Guin,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C61gRKZxtlKL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAThe%20Complete%20Ea...,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Ursula%20K.%20Le%20Guin,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/61gRKZxtlKL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C61gRKZxtlKL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "subtitle": "3 BBC Radio Full Cast Dramatisations",
+      "title": "The Complete Earthsea Series & The Left Hand of Darkness"
+    },
+    {
+      "asin": "B002V1NRLU",
+      "asset_details": [],
+      "authors": [
+        {
+          "asin": "B000APY9DE",
+          "name": "Mark Helprin"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "format4",
+          "format": "Format4",
+          "is_kindle_enhanced": false,
+          "name": "format4"
+        },
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "mp42232",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_32"
+        },
+        {
+          "enhanced_codec": "mp42264",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_64"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "MultiPartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": true,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2008-03-13",
+      "language": "english",
+      "merchandising_summary": "One night, Peter Lake attempts to rob a fortress-like mansion on the Upper West Side. Though he thinks the house is empty, the daughter of the house is home....",
+      "narrators": [
+        {
+          "name": "Oliver Wyman"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/51d0PZym8TL._SL500_.jpg"
+      },
+      "publication_datetime": "2008-03-13T13:07:00Z",
+      "publisher_name": "Blackstone Audio, Inc.",
+      "release_date": "2008-03-13",
+      "runtime_length_min": 1666,
+      "sku": "BK_BBCA_000097",
+      "sku_lite": "BK_BBCA_000097",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/51d0PZym8TL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C51d0PZym8TL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/51d0PZym8TL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/51d0PZym8TL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C51d0PZym8TL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBWinter%27s%20Tale,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBMark%20Helprin,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C51d0PZym8TL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAWinter%27s%20Tale,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Mark%20Helprin,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/51d0PZym8TL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C51d0PZym8TL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "thesaurus_subject_keywords": [
+        "la_confidential"
+      ],
+      "title": "Winter's Tale"
+    },
+    {
+      "asin": "B0D18B8S7R",
+      "asset_details": [],
+      "authors": [
+        {
+          "asin": "B001IGFHW6",
+          "name": "Brandon Sanderson"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "LC_64_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_64"
+        },
+        {
+          "enhanced_codec": "LC_128_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_128"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "SinglePartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": false,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2024-04-23",
+      "language": "english",
+      "merchandising_summary": "<p>A man awakens in a clearing in what appears to be medieval England with no memory of who he is, where he came from, or why he is there. </p>",
+      "narrators": [
+        {
+          "name": "Michael Kramer"
+        },
+        {
+          "name": "Kate Reading"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/512wAWtbBlL._SL500_.jpg"
+      },
+      "publication_datetime": "2024-04-23T07:00:00Z",
+      "publication_name": "Secret Projects",
+      "publisher_name": "Dragonsteel",
+      "release_date": "2024-04-23",
+      "runtime_length_min": 551,
+      "sku": "BK_DSTE_000003",
+      "sku_lite": "BK_DSTE_000003",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/512wAWtbBlL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C512wAWtbBlL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/512wAWtbBlL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/512wAWtbBlL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C512wAWtbBlL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBThe%20Frugal%20Wizard%E2%80%99s%20Han...,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBBrandon%20Sanderson,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C512wAWtbBlL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAThe%20Frugal%20Wiza...,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Brandon%20Sanderson,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/512wAWtbBlL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C512wAWtbBlL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "thesaurus_subject_keywords": [
+        "literature-and-fiction"
+      ],
+      "title": "The Frugal Wizard’s Handbook for Surviving Medieval England"
+    },
+    {
+      "asin": "B007BR5KZA",
+      "asset_details": [],
+      "authors": [
+        {
+          "asin": "B000AQ3ZFG",
+          "name": "L. Frank Baum"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "format4",
+          "format": "Format4",
+          "is_kindle_enhanced": false,
+          "name": "format4"
+        },
+        {
+          "enhanced_codec": "mp42232",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_32"
+        },
+        {
+          "enhanced_codec": "mp42264",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_64"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "SinglePartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": false,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2012-03-08",
+      "language": "english",
+      "merchandising_summary": "<p>One of the best-known stories in American culture, <i>The Wonderful Wizard of Oz</i> has stirred the imagination of young and old alike for over 100 years....</p>",
+      "narrators": [
+        {
+          "name": "Anne Hathaway"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/51k2rVIwwhL._SL500_.jpg"
+      },
+      "publication_datetime": "2012-03-08T05:00:00Z",
+      "publication_name": "Oz",
+      "publisher_name": "Audible Studios",
+      "release_date": "2012-03-08",
+      "runtime_length_min": 229,
+      "sku": "BK_ADBL_002341",
+      "sku_lite": "BK_ADBL_002341",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/51k2rVIwwhL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C51k2rVIwwhL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/51k2rVIwwhL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/51k2rVIwwhL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C51k2rVIwwhL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBThe%20Wonderful%20Wizard%20of%20Oz,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBL.%20Frank%20Baum,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C51k2rVIwwhL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAThe%20Wonderful%20W...,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20L.%20Frank%20Baum,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/51k2rVIwwhL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C51k2rVIwwhL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "thesaurus_subject_keywords": [
+        "literature-and-fiction"
+      ],
+      "title": "The Wonderful Wizard of Oz"
+    },
+    {
+      "asin": "B003ZWFO7E",
+      "asset_details": [
+        {
+          "attributes": {},
+          "name": "audio-discovery"
+        }
+      ],
+      "authors": [
+        {
+          "asin": "B001IGFHW6",
+          "name": "Brandon Sanderson"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "LC_128_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_128"
+        },
+        {
+          "enhanced_codec": "LC_64_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_64"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "MultiPartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": true,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2010-08-31",
+      "language": "english",
+      "merchandising_summary": "From #1 New York Times bestselling author Brandon Sanderson, The Way of Kings, Book One of the Stormlight Archive begins an incredible new saga of epic proportion. Roshar is a world of stone and storms. Uncanny tempests of incredible power sweep across the rocky terrain so frequently that they...",
+      "narrators": [
+        {
+          "name": "Michael Kramer"
+        },
+        {
+          "name": "Kate Reading"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/51hAwcG3oNL._SL500_.jpg"
+      },
+      "publication_datetime": "2010-08-31T05:00:00Z",
+      "publication_name": "The Stormlight Archive",
+      "publisher_name": "Macmillan Audio",
+      "release_date": "2010-08-31",
+      "runtime_length_min": 2730,
+      "sku": "BK_AREN_001117",
+      "sku_lite": "BK_AREN_001117",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/51hAwcG3oNL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C51hAwcG3oNL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/51hAwcG3oNL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/51hAwcG3oNL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C51hAwcG3oNL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBThe%20Way%20of%20Kings,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBBrandon%20Sanderson,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C51hAwcG3oNL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAThe%20Way%20of%20Kings,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Brandon%20Sanderson,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/51hAwcG3oNL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C51hAwcG3oNL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "subtitle": "Book One of the Stormlight Archive",
+      "title": "The Way of Kings"
+    },
+    {
+      "asin": "B0D4B9HYWL",
+      "asset_details": [],
+      "authors": [
+        {
+          "asin": "B00IT9V1YI",
+          "name": "Charlotte McConaghy"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "LC_64_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_64"
+        },
+        {
+          "enhanced_codec": "LC_128_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_128"
+        },
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "SinglePartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": false,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2025-03-04",
+      "language": "english",
+      "merchandising_summary": "A Reese's Book Club pick and a 2026 Audie Awards finalist for Audiobook of the Year! This program features multicast narration. INSTANT NEW YORK TIMES BESTSELLER #1 AMAZON BEST BOOK OF THE YEAR SO FAR 2025 An ENTHRALLING new novel from the NEW YORK TIMES BESTSELLING author of Migrations and...",
+      "narrators": [
+        {
+          "name": "Cooper Mortlock"
+        },
+        {
+          "name": "Katherine Littrell"
+        },
+        {
+          "name": "Saskia Maarleveld"
+        },
+        {
+          "name": "Steve West"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/51KmLDp+LHL._SL500_.jpg"
+      },
+      "publication_datetime": "2025-03-04T08:00:00Z",
+      "publisher_name": "Macmillan Audio",
+      "release_date": "2025-03-04",
+      "runtime_length_min": 598,
+      "sku": "BK_AREN_007112",
+      "sku_lite": "BK_AREN_007112",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/51KmLDp+LHL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C51KmLDp+LHL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/51KmLDp+LHL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/51KmLDp+LHL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C51KmLDp+LHL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBWild%20Dark%20Shore,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBCharlotte%20McConaghy,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C51KmLDp+LHL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAWild%20Dark%20Shore,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Charlotte%20McConaghy,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/51KmLDp+LHL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C51KmLDp+LHL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "subtitle": "Reese's Book Club Pick (A Novel)",
+      "title": "Wild Dark Shore"
+    },
+    {
+      "asin": "B0GKBBGTBS",
+      "asset_details": [],
+      "authors": [
+        {
+          "asin": "B0GSCQD9TG",
+          "name": "W.D. Swanson"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "LC_64_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_64"
+        },
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "LC_128_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_128"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "MultiPartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": true,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2026-05-19",
+      "language": "english",
+      "merchandising_summary": "<p><b>With the power to bend reality at his fingertips, nobody will stop him. </b>Asher was a mortician’s apprentice used to the quiet company of corpses. </p>",
+      "narrators": [
+        {
+          "name": "Garrett Michael Brown"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/51Fj-s8gnyL._SL500_.jpg"
+      },
+      "publication_datetime": "2026-05-19T07:00:00Z",
+      "publication_name": "The Eternal Assassin",
+      "publisher_name": "Aethon Audio",
+      "release_date": "2026-05-19",
+      "runtime_length_min": 785,
+      "sku": "BK_ACX0_495135",
+      "sku_lite": "BK_ACX0_495135",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/51Fj-s8gnyL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C51Fj-s8gnyL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/51Fj-s8gnyL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/51Fj-s8gnyL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C51Fj-s8gnyL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBRise%20of%20the%20Reaper,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBW.D.%20Swanson,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C51Fj-s8gnyL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZARise%20of%20the%20Reaper,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20W.D.%20Swanson,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/51Fj-s8gnyL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C51Fj-s8gnyL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "subtitle": "The Eternal Assassin Book One",
+      "thesaurus_subject_keywords": [
+        "literature-and-fiction"
+      ],
+      "title": "Rise of the Reaper"
+    },
+    {
+      "asin": "B0FC414P3T",
+      "asset_details": [],
+      "authors": [
+        {
+          "asin": "B00UI17OPK",
+          "name": "Brittany Fichter"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "LC_128_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_128"
+        },
+        {
+          "enhanced_codec": "LC_64_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_64"
+        },
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "MultiPartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": true,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2025-07-01",
+      "language": "english",
+      "merchandising_summary": "Magic just... isn't her thing. Everleigh Clarkson is half-elf and half-fae, and it shows. Then again, it isn't for most supernatural half-breeds. But that's okay. Who needs magic when you live in a city as exciting as Las Vegas? Magic, however, seems to have other plans. Not only have...",
+      "narrators": [
+        {
+          "name": "Deva Marie Gregory"
+        },
+        {
+          "name": "Ryan Hudson"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/51RS+vI5oZL._SL500_.jpg"
+      },
+      "publication_datetime": "2025-07-01T07:00:00Z",
+      "publication_name": "A Wizard in Vegas",
+      "publisher_name": "Podium Audio",
+      "release_date": "2025-07-01",
+      "runtime_length_min": 803,
+      "sku": "BK_PODM_010657",
+      "sku_lite": "BK_PODM_010657",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/51RS+vI5oZL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C51RS+vI5oZL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/51RS+vI5oZL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/51RS+vI5oZL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C51RS+vI5oZL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBA%20Wizard%20Awakened,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBBrittany%20Fichter,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C51RS+vI5oZL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAA%20Wizard%20Awakened,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Brittany%20Fichter,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/51RS+vI5oZL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C51RS+vI5oZL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "subtitle": "A Wizard in Vegas, Book 1",
+      "title": "A Wizard Awakened"
+    },
+    {
+      "asin": "B0BQNYR1QQ",
+      "asset_details": [],
+      "authors": [
+        {
+          "asin": "B010ETTBJC",
+          "name": "Dennis E. Taylor"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "LC_128_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_128"
+        },
+        {
+          "enhanced_codec": "LC_64_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_64"
+        },
+        {
+          "enhanced_codec": "mp444128",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_44_128"
+        },
+        {
+          "enhanced_codec": "mp44464",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_44_64"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "SinglePartBook",
+      "content_type": "Product",
+      "format_type": "original_recording",
+      "has_children": false,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2023-01-26",
+      "language": "english",
+      "merchandising_summary": "In this continuation of the Quantum Earth series, the alternate world Outland seems to be humanity's best hope for survival--if they can agree on how to coexist.",
+      "narrators": [
+        {
+          "name": "Ray Porter"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/512+Qe7fJdL._SL500_.jpg"
+      },
+      "program_participation": "Audible Original",
+      "publication_datetime": "2023-01-26T08:00:00Z",
+      "publication_name": "Quantum Earth",
+      "publisher_name": "Audible Originals",
+      "release_date": "2023-01-26",
+      "runtime_length_min": 535,
+      "sku": "OR_ORIG_000142",
+      "sku_lite": "OR_ORIG_000142",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/512+Qe7fJdL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C512+Qe7fJdL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/512+Qe7fJdL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/512+Qe7fJdL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C512+Qe7fJdL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBEarthside,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBDennis%20E.%20Taylor,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C512+Qe7fJdL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAEarthside,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Dennis%20E.%20Taylor,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/512+Qe7fJdL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C512+Qe7fJdL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "subtitle": "Quantum Earth, Book 2",
+      "thesaurus_subject_keywords": [
+        "audible_original",
+        "literature-and-fiction"
+      ],
+      "title": "Earthside"
+    },
+    {
+      "asin": "B006LPK3A0",
+      "asset_details": [],
+      "authors": [
+        {
+          "asin": "B000APZXFW",
+          "name": "Madeleine L'Engle"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "format4",
+          "format": "Format4",
+          "is_kindle_enhanced": false,
+          "name": "format4"
+        },
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "mp42232",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_32"
+        },
+        {
+          "enhanced_codec": "mp42264",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_64"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "SinglePartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": false,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2012-01-10",
+      "language": "english",
+      "merchandising_summary": "The second book in Madeleine L'Engle's A Wrinkle in Time Quintet. Read the ground-breaking science fiction and fantasy series that has delighted children for over 60 years! * \"This is breathtaking entertainment.” —School Library Journal, starred review Just before Meg Murry's little brother...",
+      "narrators": [
+        {
+          "name": "Jennifer Ehle"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/51LUsO7R5dL._SL500_.jpg"
+      },
+      "publication_datetime": "2012-01-10T11:18:59Z",
+      "publication_name": "Time Quintet",
+      "publisher_name": "Listening Library",
+      "release_date": "2012-01-10",
+      "runtime_length_min": 327,
+      "sku": "BK_LILI_001397",
+      "sku_lite": "BK_LILI_001397",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/51LUsO7R5dL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C51LUsO7R5dL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/51LUsO7R5dL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/51LUsO7R5dL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C51LUsO7R5dL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBA%20Wind%20in%20the%20Door,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBMadeleine%20L%27Engle,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C51LUsO7R5dL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAA%20Wind%20in%20the%20Door,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Madeleine%20L%27Engle,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/51LUsO7R5dL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C51LUsO7R5dL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "title": "A Wind in the Door"
+    },
+    {
+      "asin": "B0CDN8R48B",
+      "asset_details": [],
+      "authors": [
+        {
+          "asin": "B0077CUW02",
+          "name": "Sangu Mandanna"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "LC_128_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_128"
+        },
+        {
+          "enhanced_codec": "LC_64_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_64"
+        },
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "SinglePartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": false,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2025-07-15",
+      "language": "english",
+      "merchandising_summary": "AN INSTANT NEW YORK TIMES BESTSELLER! A whimsical and heartwarming novel about a witch who has a second chance to get her magical powers—and her life—back on track, from the national bestselling author of The Very Secret Society of Irregular Witches. Sera Swan used to be one of the most...",
+      "narrators": [
+        {
+          "name": "Samara MacLaren"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/51ZWWmns0KL._SL500_.jpg"
+      },
+      "publication_datetime": "2025-07-15T07:00:00Z",
+      "publisher_name": "Penguin Audio",
+      "release_date": "2025-07-15",
+      "runtime_length_min": 593,
+      "sku": "BK_PENG_007253",
+      "sku_lite": "BK_PENG_007253",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/51ZWWmns0KL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C51ZWWmns0KL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/51ZWWmns0KL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/51ZWWmns0KL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C51ZWWmns0KL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBA%20Witch%27s%20Guide%20to%20Magi...,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBSangu%20Mandanna,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C51ZWWmns0KL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAA%20Witch%27s%20Guide...,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Sangu%20Mandanna,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/51ZWWmns0KL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C51ZWWmns0KL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "title": "A Witch's Guide to Magical Innkeeping"
+    },
+    {
+      "asin": "B01KOTMZFE",
+      "asset_details": [],
+      "authors": [
+        {
+          "asin": "B0GZZ57KFW",
+          "name": "Ursula K. Le Guin"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "format4",
+          "format": "Format4",
+          "is_kindle_enhanced": false,
+          "name": "format4"
+        },
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "mp42232",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_32"
+        },
+        {
+          "enhanced_codec": "mp42264",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_64"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "MultiPartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": true,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2016-08-22",
+      "language": "english",
+      "merchandising_summary": "The tales of this book explore and extend the world established by Ursula K. Le Guin's must-listen Earthsea Cycle. \"The magic of Earthsea is primal; the lessons of Earthsea remain as potent, as wise, and as necessary as anyone could dream.\" (Neil Gaiman) This collection contains the novella \"The...",
+      "narrators": [
+        {
+          "name": "Jenny Sterlin"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/51fDt8SxHBL._SL500_.jpg"
+      },
+      "publication_datetime": "2016-08-22T12:26:00Z",
+      "publication_name": "The Earthsea Quartet",
+      "publisher_name": "Recorded Books",
+      "release_date": "2016-08-22",
+      "runtime_length_min": 733,
+      "sku": "BK_RECO_009688",
+      "sku_lite": "BK_RECO_009688",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/51fDt8SxHBL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C51fDt8SxHBL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/51fDt8SxHBL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/51fDt8SxHBL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C51fDt8SxHBL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBTales%20from%20Earthsea,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBUrsula%20K.%20Le%20Guin,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C51fDt8SxHBL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZATales%20from%20Eart...,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Ursula%20K.%20Le%20Guin,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/51fDt8SxHBL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C51fDt8SxHBL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "thesaurus_subject_keywords": [
+        "la_confidential"
+      ],
+      "title": "Tales from Earthsea"
+    },
+    {
+      "asin": "1974955117",
+      "asset_details": [],
+      "authors": [
+        {
+          "asin": "B00D78O1FW",
+          "name": "Christelle Dabos"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "LC_64_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_64"
+        },
+        {
+          "enhanced_codec": "format4",
+          "format": "Format4",
+          "is_kindle_enhanced": false,
+          "name": "format4"
+        },
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "LC_128_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_128"
+        },
+        {
+          "enhanced_codec": "mp444128",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_44_128"
+        },
+        {
+          "enhanced_codec": "mp42264",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_64"
+        },
+        {
+          "enhanced_codec": "mp42232",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_32"
+        },
+        {
+          "enhanced_codec": "mp44464",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_44_64"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "MultiPartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": true,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2019-05-22",
+      "language": "english",
+      "merchandising_summary": "Plain-spoken, headstrong Ophelia cares little about appearances. Her ability to read the past of objects is unmatched in all of Anima, and, what’s more, she possesses the ability to travel through mirrors, a skill passed down to her from previous generations. Her idyllic life is disrupted...",
+      "narrators": [
+        {
+          "name": "Emma Fenney"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/61QLTXf6icL._SL500_.jpg"
+      },
+      "publication_datetime": "2019-05-22T14:50:00Z",
+      "publication_name": "The Mirror Visitor Quartet",
+      "publisher_name": "Dreamscape Media, LLC",
+      "release_date": "2019-05-22",
+      "runtime_length_min": 883,
+      "sku": "BK_DRMS_004260",
+      "sku_lite": "BK_DRMS_004260",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/61QLTXf6icL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C61QLTXf6icL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/61QLTXf6icL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/61QLTXf6icL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C61QLTXf6icL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBA%20Winter%27s%20Promise,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBChristelle%20Dabos,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C61QLTXf6icL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAA%20Winter%27s%20Promise,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Christelle%20Dabos,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/61QLTXf6icL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C61QLTXf6icL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "title": "A Winter's Promise"
+    },
+    {
+      "asin": "B003U6SERW",
+      "asset_details": [],
+      "authors": [
+        {
+          "asin": "B0GZZ57KFW",
+          "name": "Ursula K. Le Guin"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "format4",
+          "format": "Format4",
+          "is_kindle_enhanced": false,
+          "name": "format4"
+        },
+        {
+          "enhanced_codec": "mp42264",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_64"
+        },
+        {
+          "enhanced_codec": "mp42232",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_32"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "SinglePartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": false,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2010-06-29",
+      "language": "english",
+      "merchandising_summary": "A bold young wizard enters the labyrinth of the sacred Tombs of Atuan to steal the magical ring of Erreth-Akbe. Instead, he finds an unhappy priestess in need of a hero to save her...",
+      "narrators": [
+        {
+          "name": "Rob Inglis"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/51xIDYmSdWL._SL500_.jpg"
+      },
+      "publication_datetime": "2010-06-29T18:32:00Z",
+      "publication_name": "The Earthsea Quartet",
+      "publisher_name": "Recorded Books",
+      "release_date": "2010-06-29",
+      "runtime_length_min": 328,
+      "sku": "BK_RECO_003965",
+      "sku_lite": "BK_RECO_003965",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/51xIDYmSdWL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C51xIDYmSdWL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/51xIDYmSdWL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/51xIDYmSdWL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C51xIDYmSdWL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBThe%20Tombs%20of%20Atuan,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBUrsula%20K.%20Le%20Guin,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C51xIDYmSdWL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAThe%20Tombs%20of%20Atuan,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Ursula%20K.%20Le%20Guin,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/51xIDYmSdWL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C51xIDYmSdWL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "subtitle": "The Earthsea Cycle, Book 2",
+      "thesaurus_subject_keywords": [
+        "la_confidential"
+      ],
+      "title": "The Tombs of Atuan"
+    },
+    {
+      "asin": "B0C3F1FQK2",
+      "asset_details": [],
+      "authors": [
+        {
+          "asin": "B099Q55LKS",
+          "name": "T.A. Lawrence"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "LC_128_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_128"
+        },
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "LC_64_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_64"
+        },
+        {
+          "enhanced_codec": "mp42232",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_32"
+        },
+        {
+          "enhanced_codec": "mp44464",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_44_64"
+        },
+        {
+          "enhanced_codec": "mp444128",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_44_128"
+        },
+        {
+          "enhanced_codec": "mp42264",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_64"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "MultiPartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": true,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2023-05-30",
+      "language": "english",
+      "merchandising_summary": "One stunning bride. One wedding. One night with the king. One execution come morning. Rinse and repeat. When the fae king of Naenden returns home to his palace only to find that his human queen has committed treason by conspiring to assassinate him, he has the queen executed and decrees that...",
+      "narrators": [
+        {
+          "name": "Fajer Al-Kaisi"
+        },
+        {
+          "name": "Nikki Massoud"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/51rUtnB7-DL._SL500_.jpg"
+      },
+      "publication_datetime": "2023-05-30T07:00:00Z",
+      "publication_name": "Severed Realms",
+      "publisher_name": "Podium Audio",
+      "release_date": "2023-05-30",
+      "runtime_length_min": 1124,
+      "sku": "BK_PODM_005206",
+      "sku_lite": "BK_PODM_005206",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/51rUtnB7-DL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C51rUtnB7-DL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/51rUtnB7-DL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/51rUtnB7-DL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C51rUtnB7-DL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBA%20Word%20So%20Fitly%20Spoken,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBT.A.%20Lawrence,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C51rUtnB7-DL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAA%20Word%20So%20Fitly...,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20T.A.%20Lawrence,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/51rUtnB7-DL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C51rUtnB7-DL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "subtitle": "The Severed Realms, Book 1",
+      "title": "A Word So Fitly Spoken"
+    },
+    {
+      "asin": "B003U70Z5K",
+      "asset_details": [],
+      "authors": [
+        {
+          "asin": "B0GZZ57KFW",
+          "name": "Ursula K. Le Guin"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "format4",
+          "format": "Format4",
+          "is_kindle_enhanced": false,
+          "name": "format4"
+        },
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "mp42232",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_32"
+        },
+        {
+          "enhanced_codec": "mp42264",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "mp4_22_64"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "SinglePartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": false,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2010-06-29",
+      "language": "english",
+      "merchandising_summary": "Return to Earthsea with Ged, the brash young wizard who survived the enchanted labyrinth of The Tombs of Atuan. In the third episode of this brilliant fantasy saga, a much older Ged sets off on a harrowing quest for the source of a terrible darkness that is taking the magic out of Earthsea...",
+      "narrators": [
+        {
+          "name": "Rob Inglis"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/51Yuqh3VFqL._SL500_.jpg"
+      },
+      "publication_datetime": "2010-06-29T18:21:00Z",
+      "publication_name": "The Earthsea Quartet",
+      "publisher_name": "Recorded Books",
+      "release_date": "2010-06-29",
+      "runtime_length_min": 486,
+      "sku": "BK_RECO_003961",
+      "sku_lite": "BK_RECO_003961",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/51Yuqh3VFqL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C51Yuqh3VFqL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/51Yuqh3VFqL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/51Yuqh3VFqL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C51Yuqh3VFqL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBThe%20Farthest%20Shore,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBUrsula%20K.%20Le%20Guin,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C51Yuqh3VFqL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAThe%20Farthest%20Shore,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Ursula%20K.%20Le%20Guin,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/51Yuqh3VFqL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C51Yuqh3VFqL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "subtitle": "The Earthsea Cycle, Book 3",
+      "thesaurus_subject_keywords": [
+        "la_confidential"
+      ],
+      "title": "The Farthest Shore"
+    },
+    {
+      "asin": "B006LPK3WS",
+      "asset_details": [
+        {
+          "attributes": {},
+          "name": "audio-discovery"
+        }
+      ],
+      "authors": [
+        {
+          "asin": "B000APZXFW",
+          "name": "Madeleine L'Engle"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "LC_128_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_128"
+        },
+        {
+          "enhanced_codec": "LC_64_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_64"
+        },
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "SinglePartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": false,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2012-01-10",
+      "language": "english",
+      "merchandising_summary": "As seen on Stranger Things, discover the ground-breaking, bestselling science fiction and fantasy classic that has delighted readers for over 60 years! NEWBERY MEDAL WINNER TIME MAGAZINE’S 100 BEST FANTASY BOOKS OF ALL TIME NOW A MAJOR MOTION PICTURE FROM DISNEY \"A Wrinkle in Time is...",
+      "narrators": [
+        {
+          "name": "Hope Davis"
+        },
+        {
+          "name": "Ava DuVernay"
+        },
+        {
+          "name": "Madeleine L'Engle"
+        },
+        {
+          "name": "Charlotte Jones Voiklis"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/61JnsbOmtnL._SL500_.jpg"
+      },
+      "publication_datetime": "2012-01-10T05:00:00Z",
+      "publication_name": "Time Quintet",
+      "publisher_name": "Listening Library",
+      "release_date": "2012-01-10",
+      "runtime_length_min": 387,
+      "sku": "BK_LILI_001396",
+      "sku_lite": "BK_LILI_001396",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/61JnsbOmtnL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C61JnsbOmtnL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/61JnsbOmtnL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/61JnsbOmtnL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C61JnsbOmtnL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBA%20Wrinkle%20in%20Time,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBMadeleine%20L%27Engle,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C61JnsbOmtnL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAA%20Wrinkle%20in%20Time,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Madeleine%20L%27Engle,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/61JnsbOmtnL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C61JnsbOmtnL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "title": "A Wrinkle in Time"
+    },
+    {
+      "asin": "B0FQT9VX7K",
+      "asset_details": [
+        {
+          "assets": [
+            {
+              "asset_type": "reel_video",
+              "format": "MP4",
+              "uri": "https://media.audible.com/immersive-reels/BK_PENG_008630/32b8fa61-a3d6-4e0c-a918-2d687f3b6f98/mp4/reel.mp4"
+            },
+            {
+              "asset_type": "reel_first_frame",
+              "format": "JPG",
+              "uri": "https://media.audible.com/immersive-reels/BK_PENG_008630/32b8fa61-a3d6-4e0c-a918-2d687f3b6f98/poster/poster.jpg"
+            },
+            {
+              "asset_type": "loop_video",
+              "etag": "bef4db4ca5a7b65b25a36f1ebb68ad4b-3",
+              "format": "MP4",
+              "uri": "https://media.audible.com/immersive-reels/BK_PENG_008630/32b8fa61-a3d6-4e0c-a918-2d687f3b6f98/preview/preview_4s.mp4"
+            },
+            {
+              "asset_type": "loop_preview",
+              "format": "JPG",
+              "uri": "https://media.audible.com/immersive-reels/BK_PENG_008630/32b8fa61-a3d6-4e0c-a918-2d687f3b6f98/preview/preview_poster.jpg"
+            },
+            {
+              "asset_type": "reel_video",
+              "format": "DASH",
+              "uri": "https://media.audible.com/immersive-reels/BK_PENG_008630/video/bef4db4ca5a7b65b25a36f1ebb68ad4b-3/cmaf/reel.mpd"
+            },
+            {
+              "asset_type": "reel_video",
+              "format": "HlsCmaf",
+              "uri": "https://media.audible.com/immersive-reels/BK_PENG_008630/video/bef4db4ca5a7b65b25a36f1ebb68ad4b-3/cmaf/reel.m3u8"
+            },
+            {
+              "asset_type": "loop_video",
+              "format": "DASH",
+              "uri": "https://media.audible.com/immersive-reels/BK_PENG_008630/loop_video/bef4db4ca5a7b65b25a36f1ebb68ad4b-3/cmaf/loop_video.mpd"
+            },
+            {
+              "asset_type": "loop_video",
+              "format": "HlsCmaf",
+              "uri": "https://media.audible.com/immersive-reels/BK_PENG_008630/loop_video/bef4db4ca5a7b65b25a36f1ebb68ad4b-3/cmaf/loop_video.m3u8"
+            }
+          ],
+          "attributes": {
+            "creativeType": "BTS",
+            "description": "Author Michael Pollan discusses his new book A World Appears which looks at consciousness from scientific philosophical spiritual and even psychedelic perspectives."
+          },
+          "name": "immersive-reels"
+        }
+      ],
+      "authors": [
+        {
+          "asin": "B000AQ74HQ",
+          "name": "Michael Pollan"
+        }
+      ],
+      "available_codecs": [
+        {
+          "enhanced_codec": "LC_64_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_64"
+        },
+        {
+          "enhanced_codec": "LC_32_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_32"
+        },
+        {
+          "enhanced_codec": "LC_128_44100_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_44_128"
+        },
+        {
+          "enhanced_codec": "LC_64_22050_stereo",
+          "format": "Enhanced",
+          "is_kindle_enhanced": true,
+          "name": "aax_22_64"
+        },
+        {
+          "enhanced_codec": "aax",
+          "format": "Enhanced",
+          "is_kindle_enhanced": false,
+          "name": "aax"
+        }
+      ],
+      "content_delivery_type": "SinglePartBook",
+      "content_type": "Product",
+      "format_type": "unabridged",
+      "has_children": false,
+      "is_adult_product": false,
+      "is_listenable": true,
+      "is_purchasability_suppressed": false,
+      "is_vvab": false,
+      "issue_date": "2026-02-24",
+      "language": "english",
+      "merchandising_summary": "The Instant New York Times Bestseller One of Barack Obama's Favorite Books of the Summer Finalist for the Kirkus Prize \"Pollan’s real genius—the word is not too strong—remains intact. That is his uncanny ability to scent the direction in which the culture is headed. He did it with...",
+      "narrators": [
+        {
+          "name": "Michael Pollan"
+        }
+      ],
+      "product_images": {
+        "500": "https://m.media-amazon.com/images/I/418WiTod8eL._SL500_.jpg"
+      },
+      "publication_datetime": "2026-02-24T08:00:00Z",
+      "publisher_name": "Penguin Audio",
+      "release_date": "2026-02-24",
+      "runtime_length_min": 526,
+      "sku": "BK_PENG_008630",
+      "sku_lite": "BK_PENG_008630",
+      "social_media_images": {
+        "facebook": "https://m.media-amazon.com/images/I/418WiTod8eL._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C418WiTod8eL.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+        "ig_bg": "https://m.media-amazon.com/images/I/418WiTod8eL._SL200_BL80_UR1080,2160.jpg",
+        "ig_static_with_bg": "https://m.media-amazon.com/images/I/418WiTod8eL._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C418WiTod8eL.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBA%20World%20Appears,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBMichael%20Pollan,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+        "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C418WiTod8eL.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZAA%20World%20Appears,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Michael%20Pollan,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+        "twitter": "https://m.media-amazon.com/images/I/418WiTod8eL._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C418WiTod8eL.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+      },
+      "subtitle": "A Journey into Consciousness",
+      "title": "A World Appears"
+    }
+  ],
+  "response_groups": [
+    "product_desc",
+    "always-returned",
+    "contributors",
+    "media",
+    "product_attrs"
+  ],
+  "total_results": 51
+}

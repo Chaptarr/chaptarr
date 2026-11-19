@@ -23,6 +23,15 @@ namespace Chaptarr.Core.Test.MediaFiles
     {
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
+                System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+                => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
+
+            public void ReplaceMany(System.Collections.Generic.List<BookFile> bookFiles, System.Collections.Generic.List<BookFile> replacedFiles,
+                DeleteMediaFileReason reason, System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+                System.Action<System.Action<System.Data.IDbConnection, System.Data.IDbTransaction>> persist)
+                => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
+
             public BookFile ExistingFile { get; set; }
             public List<BookFile> ExistingFiles { get; set; } = new List<BookFile>();
             public List<BookFile> UnmappedFiles { get; set; } = new List<BookFile>();
@@ -81,6 +90,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     UpdatedMany.Add(bookFile);
                 }
             }
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles)
             {
@@ -286,6 +296,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 {
                     Calls++;
                     ForceStagePaths.Add((IReadOnlyCollection<string>)args[3]);
+                    ((Action<List<string>, bool>)args[5])?.Invoke(Result.ScannedFilePaths, Result.CleanupSafe);
                     return Task.FromResult(Result);
                 }
 
@@ -296,12 +307,14 @@ namespace Chaptarr.Core.Test.MediaFiles
         private class MediaFileTableCleanupServiceProxy : DispatchProxy
         {
             public List<List<string>> CleanedPaths { get; } = new List<List<string>>();
+            public Exception Failure { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IMediaFileTableCleanupService.Clean))
                 {
                     CleanedPaths.Add(((List<string>)args[1]).ToList());
+                    if (Failure != null) throw Failure;
                 }
 
                 return null;
@@ -312,7 +325,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
-                if (targetMethod?.Name == nameof(IAuthorService.GetAuthors))
+                if (targetMethod?.Name == nameof(IAuthorService.GetExistingAuthors))
                 {
                     return new List<Author>();
                 }
@@ -347,6 +360,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void Fail(CommandModel command, string message, Exception e) => throw new NotImplementedException();
             public void Requeue() => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void Pause(int id) => throw new NotImplementedException();
             public void Resume(int id) => throw new NotImplementedException();
             public void CleanCommands() => throw new NotImplementedException();
@@ -372,7 +386,10 @@ namespace Chaptarr.Core.Test.MediaFiles
             out MediaFileTableCleanupServiceProxy cleanupProxy,
             IMediaFileService mediaFileService = null,
             IMetadataTagService metadataTagService = null,
-            RootFolder rootFolder = null)
+            RootFolder rootFolder = null,
+            IAuthorService authorService = null,
+            IEventAggregator eventAggregator = null,
+            Logger logger = null)
         {
             var diskProvider = DispatchProxy.Create<NzbDrone.Common.Disk.IDiskProvider, DiskProviderProxy>();
             ((DiskProviderProxy)(object)diskProvider).FolderExistsResult = folderExists;
@@ -392,8 +409,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             var cleanupService = DispatchProxy.Create<IMediaFileTableCleanupService, MediaFileTableCleanupServiceProxy>();
             cleanupProxy = (MediaFileTableCleanupServiceProxy)(object)cleanupService;
 
-            var authorService = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
-            var eventAggregator = DispatchProxy.Create<IEventAggregator, EventAggregatorProxy>();
+            authorService ??= DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            eventAggregator ??= DispatchProxy.Create<IEventAggregator, EventAggregatorProxy>();
 
             return new DiskScanService(
                 configService: null,
@@ -408,7 +425,42 @@ namespace Chaptarr.Core.Test.MediaFiles
                 mediaFileTableCleanupService: cleanupService,
                 commandQueueManager: new StubCommandQueueManager(),
                 eventAggregator: eventAggregator,
-                logger: LogManager.GetCurrentClassLogger());
+                logger: logger ?? LogManager.GetCurrentClassLogger());
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void completed_scan_notifies_discovered_authors_once_without_repeating_the_scan(bool complete)
+        {
+            var lookups = new List<int[]>();
+            var notified = new List<int>();
+            var authors = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IAuthorService>((method, args) =>
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(IAuthorService.GetExistingAuthors)));
+                var ids = ((IEnumerable<int>)args[0]).ToArray();
+                lookups.Add(ids);
+                return ids.Select(id => new Author { Id = id }).ToList();
+            });
+            var events = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IEventAggregator>((_, args) =>
+            {
+                if (args[0] is NzbDrone.Core.MediaFiles.Events.AuthorScannedEvent scanned) notified.Add(scanned.Author.Id);
+                return null;
+            });
+            var result = new OrchestratorImportResult
+            {
+                CleanupSafe = complete,
+                StagingResults = new List<NzbDrone.Core.Datastore.ImportResult>
+                {
+                    new() { AuthorId = 9, Outcome = ImportOutcome.Imported },
+                    new() { AuthorId = 9, Outcome = ImportOutcome.Imported },
+                    new() { AuthorId = null, Outcome = ImportOutcome.Unmapped }
+                }
+            };
+            var service = CreateScanService(true, result, out var orchestrator, out _, authorService: authors, eventAggregator: events);
+            service.Scan(new List<string> { "/books" }, authorIds: new List<int> { 7 });
+            Assert.That(orchestrator.Calls, Is.EqualTo(1));
+            Assert.That(lookups, Has.Count.EqualTo(1));
+            Assert.That(notified, Is.EquivalentTo(complete ? new[] { 7, 9 } : new[] { 7 }));
         }
 
         [Test]
@@ -828,6 +880,34 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
+        public void cleanup_failure_does_not_abort_scan_or_hide_observed_file()
+        {
+            using var logFactory = new LogFactory();
+            var target = new NLog.Targets.MemoryTarget { Layout = "${level}|${message}|${exception:format=message}" };
+            var config = new NLog.Config.LoggingConfiguration();
+            config.AddRule(LogLevel.Warn, LogLevel.Fatal, target);
+            logFactory.Configuration = config;
+            var filePath = "/books/new.epub";
+            var media = new StubMediaFileService();
+            var sut = CreateScanService(true, new OrchestratorImportResult
+            {
+                CleanupSafe = true,
+                ScannedFilePaths = new List<string> { filePath }
+            }, out _, out var cleanup, media, logger: logFactory.GetLogger("cleanup-failure"));
+            cleanup.Failure = new InvalidOperationException("Cleanup database read failed");
+
+            sut.Scan(new List<string> { "/books" }, authorIds: new List<int>());
+
+            Assert.That(cleanup.CleanedPaths, Has.Count.EqualTo(1));
+            Assert.That(media.AddedMany, Has.Count.EqualTo(1));
+            Assert.That(media.AddedMany.Single().Path, Is.EqualTo(filePath));
+            Assert.That(media.AddedMany.Single().EditionId, Is.Zero);
+            Assert.That(target.Logs.Count(line => line.Contains("Scan cleanup failed") &&
+                line.Contains("/books") && line.Contains("Cleanup database read failed") &&
+                line.Contains("continuing to process 1 observed files")), Is.EqualTo(1));
+        }
+
+        [Test]
         public void scan_should_create_visible_unmapped_row_for_seen_file_whose_apply_failed()
         {
             var filePath = "/books/failed.epub";
@@ -907,7 +987,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(exception.Message, Does.Contain("every observed root media file"));
             Assert.That(mediaFileService.AddManyCalls, Is.EqualTo(1));
             Assert.That(mediaFileService.AddCalls, Is.EqualTo(0), "The postcondition must catch a non-throwing persistence no-op");
-            Assert.That(cleanupProxy.CleanedPaths, Is.Empty, "Cleanup must not run after an unproven inventory reconciliation");
+            Assert.That(cleanupProxy.CleanedPaths, Has.Count.EqualTo(1),
+                "Complete enumeration cleans vanished paths before import; failed post-import persistence still fails the scan");
+            Assert.That(cleanupProxy.CleanedPaths.Single(), Is.EqualTo(new[] { filePath }));
         }
 
         [Test]

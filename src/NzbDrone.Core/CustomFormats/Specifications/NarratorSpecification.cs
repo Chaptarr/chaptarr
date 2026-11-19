@@ -20,12 +20,14 @@ namespace NzbDrone.Core.CustomFormats
                 return true;
             }
 
-            return ReleaseNarratorEvidenceExtractor.Extract(input).Names.Any();
+            return ReleaseNarratorEvidenceExtractor.Extract(input,
+                NarratorNameMatcher.LooksLikeLiteralName(Value) ? new[] { Value } : null).Names.Any();
         }
 
         protected override bool IsSatisfiedByWithoutNegate(CustomFormatInput input)
         {
-            var names = ReleaseNarratorEvidenceExtractor.Extract(input).Names;
+            var names = ReleaseNarratorEvidenceExtractor.Extract(input,
+                NarratorNameMatcher.LooksLikeLiteralName(Value) ? new[] { Value } : null).Names;
 
             if (NarratorNameMatcher.LooksLikeLiteralName(Value))
             {

@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
 using NzbDrone.Core.Books;
 
@@ -244,6 +246,40 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(BookEditionIdentity.GetReadarrFacadeGoodreadsEditionId(new Edition { ForeignEditionId = "gr:234547961-audiobook" }), Is.EqualTo("234547961"));
                 Assert.That(BookEditionIdentity.GetReadarrFacadeGoodreadsEditionId(new Edition { ForeignEditionId = "hc:edition:30643037-ebook" }), Is.Null);
             });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void readarr_goodreads_alias_projection_is_deterministic_without_primary_promotion(bool reverse)
+        {
+            var aliases = new[] { "gr:44767458", "gr:1000049", "hc:edition:12250068", "gr:1000049-ebook" };
+            var edition = new Edition { ForeignEditionId = "hc:edition:12250068-ebook",
+                RemoteProviderIds = new HashSet<string>(reverse ? aliases.Reverse() : aliases, StringComparer.OrdinalIgnoreCase) };
+            var before = edition.RemoteProviderIds.ToArray();
+            Assert.That(BookEditionIdentity.GetReadarrFacadeGoodreadsEditionId(edition), Is.EqualTo("1000049"));
+            Assert.That(edition.GoodreadsEditionId, Is.Null);
+            Assert.That(edition.ForeignEditionId, Is.EqualTo("hc:edition:12250068-ebook"));
+            Assert.That(edition.RemoteProviderIds, Is.EquivalentTo(before));
+        }
+
+        [TestCase(777, "gr:888-audiobook", "777")]
+        [TestCase(null, "gr:888-audiobook", "888")]
+        public void readarr_goodreads_alias_projection_preserves_explicit_primary_precedence(long? scalar, string foreignId, string expected)
+        {
+            var edition = new Edition { GoodreadsEditionId = scalar, ForeignEditionId = foreignId,
+                RemoteProviderIds = new HashSet<string> { "gr:1000049", "gr:44767458" } };
+            Assert.That(BookEditionIdentity.GetReadarrFacadeGoodreadsEditionId(edition), Is.EqualTo(expected));
+            Assert.That(edition.GoodreadsEditionId, Is.EqualTo(scalar));
+            Assert.That(edition.ForeignEditionId, Is.EqualTo(foreignId));
+        }
+
+        [Test]
+        public void readarr_goodreads_alias_projection_rejects_other_provider_and_malformed_ids()
+        {
+            var edition = new Edition { ForeignEditionId = "hc:edition:12250068",
+                RemoteProviderIds = new HashSet<string> { "hc:edition:1000049", "az:B001", "1000049", "gr:gr:44767458", "gr:" } };
+            Assert.That(BookEditionIdentity.GetReadarrFacadeGoodreadsEditionId(edition), Is.Null);
+            Assert.That(edition.GoodreadsEditionId, Is.Null);
         }
     }
 }

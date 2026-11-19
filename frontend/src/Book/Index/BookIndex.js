@@ -15,6 +15,7 @@ import PageToolbarSection from 'Components/Page/Toolbar/PageToolbarSection';
 import PageToolbarSeparator from 'Components/Page/Toolbar/PageToolbarSeparator';
 import TableOptionsModalWrapper from 'Components/Table/TableOptions/TableOptionsModalWrapper';
 import { align, icons, kinds, sortDirections } from 'Helpers/Props';
+import { shouldConfirmSearch } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import hasDifferentItemsOrOrder from 'Utilities/Object/hasDifferentItemsOrOrder';
 import translate from 'Utilities/String/translate';
@@ -356,8 +357,17 @@ class BookIndex extends Component {
     });
   };
 
+  getSearchIds = () => {
+    const selectedBookIds = this.getSelectedIds();
+    return this.state.isEditorActive && selectedBookIds.length > 0 ? selectedBookIds : this.props.items.filter((book) => book.isSearchEligible).map((book) => book.id);
+  };
+
   onSearchPress = () => {
-    this.setState({ isConfirmSearchModalOpen: true });
+    if (shouldConfirmSearch(this.getSearchIds().length)) {
+      this.setState({ isConfirmSearchModalOpen: true });
+      return;
+    }
+    this.onSearchConfirmed();
   };
 
   onRefreshBookPress = () => {
@@ -368,10 +378,7 @@ class BookIndex extends Component {
   };
 
   onSearchConfirmed = () => {
-    const selectedBookIds = this.getSelectedIds();
-    const searchIds = this.state.isEditorActive && selectedBookIds.length > 0 ? selectedBookIds : this.props.items.map((m) => m.id);
-
-    this.props.onSearchPress(searchIds);
+    this.props.onSearchPress(this.getSearchIds(), !(this.state.isEditorActive && this.getSelectedIds().length > 0));
     this.setState({ isConfirmSearchModalOpen: false });
   };
 
@@ -450,17 +457,19 @@ class BookIndex extends Component {
     const refreshLabel = isEditorActive && selectedBookIds.length > 0 ? translate('UpdateSelected') : translate('UpdateAll');
     const searchIndexLabel = selectedFilterKey === 'all' ? translate('SearchAll') : translate('SearchFiltered');
     const searchEditorLabel = selectedBookIds.length > 0 ? translate('SearchSelected') : translate('SearchAll');
-    const searchWarningCount = isEditorActive && selectedBookIds.length > 0 ? selectedBookIds.length : items.length;
+    const searchWarningCount = this.getSearchIds().length;
 
     return (
       <PageContent>
-        <PageToolbar>
-          <PageToolbarSection>
+        <PageToolbar
+          controls={
             <MediaTypeToggle
               selectedMediaType={selectedMediaType}
               onMediaTypeChange={onMediaTypeChange}
             />
-
+          }
+        >
+          <PageToolbarSection>
             <PageToolbarButton
               label={refreshLabel}
               iconName={icons.REFRESH}
@@ -520,7 +529,7 @@ class BookIndex extends Component {
 
           <PageToolbarSection
             alignContent={align.RIGHT}
-            collapseButtons={true}
+            collapseButtons={false}
           >
             {
               view === 'table' ?
@@ -679,7 +688,7 @@ class BookIndex extends Component {
           message={
             <div>
               <div>
-                {translate('MassBookSearchWarning', [searchWarningCount])}
+                {translate('SearchAuthorBooksConfirm', { count: searchWarningCount })}
               </div>
               <div>
                 {translate('ThisCannotBeCancelled')}

@@ -1,5 +1,6 @@
 const serverSideFilterKeys = new Set([
   'all',
+  'library',
   'monitored',
   'unmonitored',
   'downloaded',
@@ -20,8 +21,11 @@ export default function getBookIndexQuery(bookIndex = {}, selectedMediaType) {
   let downloaded = undefined;
   let missing = undefined;
   let wanted = undefined;
+  let library = undefined;
 
-  if (filterKey === 'monitored') {
+  if (filterKey === 'library') {
+    library = true;
+  } else if (filterKey === 'monitored') {
     monitored = true;
   } else if (filterKey === 'unmonitored') {
     monitored = false;
@@ -46,7 +50,8 @@ export default function getBookIndexQuery(bookIndex = {}, selectedMediaType) {
         monitored,
         downloaded,
         missing,
-        wanted
+        wanted,
+        library
       }
     }
   };

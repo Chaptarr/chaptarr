@@ -25,6 +25,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Identification
     {
         public DownloadClientItem DownloadClientItem { get; set; }
         public ParsedBookInfo ParsedBookInfo { get; set; }
+        public IReadOnlyCollection<int> TargetBookIds { get; set; }
     }
 
     public class ImportDecisionMakerConfig

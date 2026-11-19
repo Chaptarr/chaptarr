@@ -5,8 +5,10 @@ import React, { Component } from 'react';
 import { connect } from 'react-redux';
 import { createSelector } from 'reselect';
 import * as commandNames from 'Commands/commandNames';
+import ConfirmModal from 'Components/Modal/ConfirmModal';
+import { coerceFolderType, FolderType } from 'Helpers/Props/folderTypes';
 import { setSelectedMediaType } from 'Store/Actions/appActions';
-import { updateAuthorMediaType, fetchAuthorMediaTypeSize } from 'Store/Actions/authorActions';
+import { fetchAuthorMediaTypeSize, updateAuthorMediaType } from 'Store/Actions/authorActions';
 import { clearBooks, fetchBooks } from 'Store/Actions/bookActions';
 import { clearBookFiles, fetchBookFiles } from 'Store/Actions/bookFileActions';
 import { saveBookEditor } from 'Store/Actions/bookIndexActions';
@@ -19,10 +21,14 @@ import createAllAuthorSelector from 'Store/Selectors/createAllAuthorsSelector';
 import createCommandsSelector from 'Store/Selectors/createCommandsSelector';
 import createDimensionsSelector from 'Store/Selectors/createDimensionsSelector';
 import createSortedSectionSelector from 'Store/Selectors/createSortedSectionSelector';
-import { findCommand, isCommandExecuting } from 'Utilities/Command';
 import getAuthorMediaTypeRootFolderStatus from 'Utilities/Author/getAuthorMediaTypeRootFolderStatus';
+import { getAuthorSearchBookCount, shouldConfirmSearch } from 'Utilities/Author/getAuthorStatisticsForMediaType';
+import createBookSearchFilter from 'Utilities/Book/createBookSearchFilter';
+import isLibraryBook from 'Utilities/Book/isLibraryBook';
+import { findCommand, isCommandExecuting } from 'Utilities/Command';
 import { registerPagePopulator, unregisterPagePopulator } from 'Utilities/pagePopulator';
-import { FolderType, coerceFolderType } from 'Helpers/Props/folderTypes';
+import createTextSearch from 'Utilities/String/createTextSearch';
+import translate from 'Utilities/String/translate';
 import AuthorDetails from './AuthorDetails';
 
 const selectBooks = createSelector(
@@ -290,59 +296,10 @@ function createMapStateToProps() {
         let visibleBooks = visibleBooksBase;
 
         if (isFilterActive) {
-          const searchTerm = filterText.toLowerCase();
-          const includes = (value) => typeof value === 'string' && value.toLowerCase().includes(searchTerm);
-          const listIncludes = (list) => Array.isArray(list) && list.some((value) => includes(value));
-
-          const editionMatches = (edition) => {
-            if (!edition) {
-              return false;
-            }
-
-            // Narrator search: use ALL editions (even when the book-level narrator is hidden).
-            // Also include edition title/subtitle so users can search alternate-language variants.
-            return includes(edition.narrator) || includes(edition.title) || includes(edition.subtitle);
-          };
-
-          visibleBooks = visibleBooks.filter((book) => {
-            if (!book) {
-              return false;
-            }
-
-            // Book-level fields
-            if (includes(book.title) || includes(book.authorTitle) || includes(book.seriesTitle) || includes(book.narrator)) {
-              return true;
-            }
-
-            // Aggregated edition narrators (server-provided) so search works even when narrator column is hidden.
-            if (listIncludes(book.availableNarrators)) {
-              return true;
-            }
-
-            // Series (legacy shape)
-            if (Array.isArray(book.seriesLinks)) {
-              const matchesSeries = book.seriesLinks.some((link) => includes(link?.series?.title));
-              if (matchesSeries) {
-                return true;
-              }
-            }
-
-            // Editions (robust narrator search across all editions)
-            if (Array.isArray(book.editions) && book.editions.some(editionMatches)) {
-              return true;
-            }
-
-            return false;
-          });
+          visibleBooks = visibleBooks.filter(createBookSearchFilter(filterText));
         } else if (hideUnmonitoredMissing && visibleBooks.length > 0) {
           // When showing "Monitored", hide only if unmonitored AND missing.
-          visibleBooks = visibleBooks.filter((book) => {
-            const isMonitored = effectiveMediaType === 'audiobook'
-              ? book.audiobookMonitored
-              : book.ebookMonitored;
-            const hasFiles = book.statistics && book.statistics.bookFileCount > 0;
-            return isMonitored || hasFiles;
-          });
+          visibleBooks = visibleBooks.filter((book) => isLibraryBook(book));
         }
 
         const authorBookFiles = Array.isArray(allBookFileItems)
@@ -371,16 +328,11 @@ function createMapStateToProps() {
           ? authorBookFiles.filter((file) => file.mediaType === effectiveMediaType)
           : authorBookFiles;
 
-        const visibleBookFiles = isFilterActive
-          ? authorBookFilesForMediaType.filter((file) => {
-            const searchTerm = filterText.toLowerCase();
-            const pathMatch = file.path && file.path.toLowerCase().includes(searchTerm);
-            const titleMatch = file.book && file.book.title && file.book.title.toLowerCase().includes(searchTerm);
-            const authorMatch = file.book && file.book.authorTitle && file.book.authorTitle.toLowerCase().includes(searchTerm);
-
-            return pathMatch || titleMatch || authorMatch;
-          })
-          : authorBookFilesForMediaType;
+        const { matches } = createTextSearch(filterText);
+        const visibleBookFiles = isFilterActive ?
+          authorBookFilesForMediaType.filter((file) =>
+            [file.path, file.book?.title, file.book?.authorTitle].some(matches)) :
+          authorBookFilesForMediaType;
 
         const hasBooksForAuthor = visibleBooksBase.length > 0;
         const hasMonitoredBooksForAuthor = visibleBooksBase.some((book) => {
@@ -459,8 +411,8 @@ const mapDispatchToProps = {
   fetchAuthorMediaTypeSize,
   fetchQueueDetails,
   clearQueueDetails,
-  clearReleases,
   cancelFetchReleases,
+  clearReleases,
   executeCommand,
   fetchRootFolders,
   setSelectedMediaType
@@ -469,6 +421,8 @@ const mapDispatchToProps = {
 class AuthorDetailsConnector extends Component {
   constructor(props) {
     super(props);
+
+    this.state = { pendingSearch: null };
 
     this._hasPopulated = false;
     this._userSelectedMediaType = false;
@@ -660,10 +614,25 @@ class AuthorDetailsConnector extends Component {
   };
 
   onSearchPress = () => {
+    const count = getAuthorSearchBookCount(this.props);
+    if (shouldConfirmSearch(count)) {
+      this.setState({ pendingSearch: { authorId: this.props.id, count } });
+      return;
+    }
+
+    this.onSearchConfirmed();
+  };
+
+  onSearchConfirmed = () => {
     this.props.executeCommand({
       name: commandNames.AUTHOR_SEARCH,
       authorId: this.props.id
     });
+    this.onSearchCancelled();
+  };
+
+  onSearchCancelled = () => {
+    this.setState({ pendingSearch: null });
   };
 
   onSaveSelected = (payload) => {
@@ -685,18 +654,33 @@ class AuthorDetailsConnector extends Component {
     // and call populate() which handles all the fetching with proper parameters
   };
 
+  onAuthorAdded = () => {
+    this.populate();
+  };
+
   //
   // Render
 
   render() {
     return (
-      <AuthorDetails
-        {...this.props}
-        onRefreshPress={this.onRefreshPress}
-        onSearchPress={this.onSearchPress}
-        onSaveSelected={this.onSaveSelected}
-        onMediaTypeChange={this.onMediaTypeChange}
-      />
+      <>
+        <AuthorDetails
+          {...this.props}
+          onRefreshPress={this.onRefreshPress}
+          onSearchPress={this.onSearchPress}
+          onSaveSelected={this.onSaveSelected}
+          onMediaTypeChange={this.onMediaTypeChange}
+          onAuthorAdded={this.onAuthorAdded}
+        />
+        <ConfirmModal
+          isOpen={this.state.pendingSearch?.authorId === this.props.id}
+          title={translate('SearchMonitored')}
+          message={translate('SearchAuthorBooksConfirm', { count: this.state.pendingSearch?.count ?? 0 })}
+          confirmLabel={translate('Search')}
+          onConfirm={this.onSearchConfirmed}
+          onCancel={this.onSearchCancelled}
+        />
+      </>
     );
   }
 }
@@ -725,8 +709,8 @@ AuthorDetailsConnector.propTypes = {
   fetchAuthorMediaTypeSize: PropTypes.func.isRequired,
   fetchQueueDetails: PropTypes.func.isRequired,
   clearQueueDetails: PropTypes.func.isRequired,
-  clearReleases: PropTypes.func.isRequired,
   cancelFetchReleases: PropTypes.func.isRequired,
+  clearReleases: PropTypes.func.isRequired,
   executeCommand: PropTypes.func.isRequired,
   fetchRootFolders: PropTypes.func.isRequired,
   setSelectedMediaType: PropTypes.func.isRequired

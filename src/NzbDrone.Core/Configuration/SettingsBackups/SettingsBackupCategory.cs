@@ -10,6 +10,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
         MetadataServer = 5,
         Proxies = 6,
         Hardcover = 7,
-        RemotePathMappings = 8
+        RemotePathMappings = 8,
+        UiSettings = 9
     }
 }

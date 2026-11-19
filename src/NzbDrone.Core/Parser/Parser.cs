@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -15,30 +16,9 @@ namespace NzbDrone.Core.Parser
 {
     public static class Parser
     {
+        internal static readonly char[] SubtitleSeparators = { ':', '：' };
+
         private static readonly Logger Logger = NzbDroneLogger.GetLogger(typeof(Parser));
-
-        private static readonly Regex[] ReportMusicTitleRegex = new[]
-        {
-            // Track with author (01 - author - trackName)
-            new Regex(@"(?<trackNumber>\d*){0,1}([-| ]{0,1})(?<author>[a-zA-Z0-9, ().&_]*)[-| ]{0,1}(?<trackName>[a-zA-Z0-9, ().&_]+)",
-                        RegexOptions.IgnoreCase | RegexOptions.Compiled),
-
-            // Track without author (01 - trackName)
-            new Regex(@"(?<trackNumber>\d*)[-| .]{0,1}(?<trackName>[a-zA-Z0-9, ().&_]+)",
-                RegexOptions.IgnoreCase | RegexOptions.Compiled),
-
-            // Track without trackNumber or author(trackName)
-            new Regex(@"(?<trackNumber>\d*)[-| .]{0,1}(?<trackName>[a-zA-Z0-9, ().&_]+)",
-                RegexOptions.IgnoreCase | RegexOptions.Compiled),
-
-            // Track without trackNumber and  with author(author - trackName)
-            new Regex(@"(?<trackNumber>\d*)[-| .]{0,1}(?<trackName>[a-zA-Z0-9, ().&_]+)",
-                RegexOptions.IgnoreCase | RegexOptions.Compiled),
-
-            // Track with author and starting title (01 - author - trackName)
-            new Regex(@"(?<trackNumber>\d*){0,1}[-| ]{0,1}(?<author>[a-zA-Z0-9, ().&_]*)[-| ]{0,1}(?<trackName>[a-zA-Z0-9, ().&_]+)",
-                RegexOptions.IgnoreCase | RegexOptions.Compiled),
-        };
 
         private static readonly Regex[] ReportBookTitleRegex = new[]
         {
@@ -176,10 +156,6 @@ namespace NzbDrone.Core.Parser
                 new Regex(@"^b00bs$", RegexOptions.Compiled | RegexOptions.IgnoreCase)
             };
 
-        private static readonly RegexReplace NormalizeRegex = new RegexReplace(@"((?:\b|_)(?<!^)(a(?!$)|an|the|and|or|of)(?!$)(?:\b|_))|\W|_",
-                                                                string.Empty,
-                                                                RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
         private static readonly Regex PercentRegex = new Regex(@"(?<=\b\d+)%", RegexOptions.Compiled);
 
         private static readonly Regex FileExtensionRegex = new Regex(@"\.[a-z0-9]{2,4}$",
@@ -216,9 +192,6 @@ namespace NzbDrone.Core.Parser
         private static readonly Regex MalformedApostropheEntityRegex = new Regex(@"&(?:#)?0*39;",
                                                                 RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-        private static readonly Regex QuotedUsenetFilenameRegex = new Regex(@"\s*-\s*""[^""]+\.(?:mp3|m4b|m4a|flac|aac|opus|ogg|wav|wma|alac|aax|mp4|mp4a|epub|mobi|azw|azw3|pdf|djvu|cbz|cbr|fb2|lit|pdb|txt|nzb|rar|par2)""\s*(?:yenc)?\s*$",
-                                                                RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
         private static readonly Regex LeadingUsenetCounterRegex = new Regex(@"^\s*\(\d+/\d+\)\s*",
                                                                 RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
@@ -247,31 +220,12 @@ namespace NzbDrone.Core.Parser
                                                                 RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private static readonly HashSet<char> WordDelimiters = new HashSet<char>(" .,_-=()[]|\"`'’");
-        private static readonly Regex WordDelimiterRegex = new Regex(@"(\s|\.|,|_|-|=|\(|\)|\[|\]|\|)+", RegexOptions.Compiled);
-        private static readonly Regex PunctuationRegex = new Regex(@"[^\w\s]", RegexOptions.Compiled);
-        private static readonly Regex CommonWordRegex = new Regex(@"\b(a|an|the|and|or|of)\b\s?", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-        private static readonly Regex SpecialEpisodeWordRegex = new Regex(@"\b(part|special|edition|christmas)\b\s?", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex DuplicateSpacesRegex = new Regex(@"\s{2,}", RegexOptions.Compiled);
 
         private static readonly Regex RequestInfoRegex = new Regex(@"\[.+?\]", RegexOptions.Compiled);
 
-        private static readonly string[] Numbers = new[] { "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine" };
 
-        private static readonly Regex[] CommonTagRegex = new Regex[]
-        {
-            new Regex(@"(\[|\()*\b((featuring|feat.|feat|ft|ft.)\s{1}){1}\s*.*(\]|\))*", RegexOptions.IgnoreCase | RegexOptions.Compiled),
-            new Regex(@"(?:\(|\[)(?:[^\(\[]*)(?:version|limited|deluxe|single|clean|book|special|bonus|promo|remastered)(?:[^\)\]]*)(?:\)|\])", RegexOptions.IgnoreCase | RegexOptions.Compiled)
-        };
-
-        private static readonly Regex[] BracketRegex = new Regex[]
-        {
-            new Regex(@"\(.*\)", RegexOptions.Compiled),
-            new Regex(@"\[.*\]", RegexOptions.Compiled)
-        };
-
-        private static readonly Regex AfterDashRegex = new Regex(@"[-:].*", RegexOptions.Compiled);
-
-        public static ParsedBookInfo ParseBookTitleWithSearchCriteria(string title, Author author, List<Book> books)
+        public static ParsedBookInfo ParseBookTitleWithSearchCriteria(string title, Author author, List<Book> books, List<Book> authorCatalog)
         {
             try
             {
@@ -280,14 +234,14 @@ namespace NzbDrone.Core.Parser
                     return null;
                 }
 
-                var authorName = author.Name == "Various Authors" ? "VA" : author.Name.RemoveAccent();
+                var authorName = author.Name == "Various Authors" ? "VA" : author.Name;
 
                 if (Logger.IsTraceEnabled)
                 {
                     Logger.Trace("Parsing string '{0}' using search criteria author: '{1}' books: '{2}'",
                                  title,
-                                 authorName.RemoveAccent(),
-                                 string.Join(", ", books.Select(a => a.Title.RemoveAccent())));
+                                 authorName,
+                                 string.Join(", ", books.Select(a => a.Title)));
                 }
 
                 var releaseTitle = CleanReleaseTitleForParsing(title);
@@ -299,7 +253,6 @@ namespace NzbDrone.Core.Parser
 
                 simpleTitle = CleanTorrentSuffixRegex.Replace(simpleTitle);
 
-                var authorCatalog = author?.Books ?? books;
                 var bestMatch = ReleaseTitleMatchScorer.FindBestMatch(simpleTitle, authorName, books, null, authorCatalog);
 
                 if (bestMatch?.Book == null || !bestMatch.IsMatch)
@@ -342,7 +295,7 @@ namespace NzbDrone.Core.Parser
                     result.Quality = QualityParser.ParseQuality(title);
                     Logger.Trace("Quality parsed: {0}", result.Quality);
 
-                    result.ReleaseGroup = ParseReleaseGroup(releaseTitle);
+                    result.ReleaseGroup = ParseReleaseGroup(CleanReleaseTitleForParsing(title, normalizeBrackets: true));
 
                     Logger.Trace("Release Group parsed: {0}", result.ReleaseGroup);
 
@@ -365,38 +318,6 @@ namespace NzbDrone.Core.Parser
             return null;
         }
 
-        public static string GetTitleFuzzy(string report, string name, out string remainder)
-        {
-            remainder = report;
-
-            Logger.Trace("Finding '{0}' in '{1}'", name, report);
-
-            var similarity = StringSimilarity(report, name);
-            if (similarity < 0.6)
-            {
-                return null;
-            }
-
-            // Simple substring match for location
-            var locStart = report.IndexOf(name, StringComparison.OrdinalIgnoreCase);
-            if (locStart == -1)
-            {
-                return null;
-            }
-
-            var matchLength = name.Length;
-
-            var found = report.Substring(locStart, matchLength);
-
-            if (similarity >= 0.8)
-            {
-                remainder = report.Remove(locStart, matchLength);
-                return found.Replace('.', ' ').Replace('_', ' ');
-            }
-
-            return null;
-        }
-
         public static ParsedBookInfo ParseBookTitle(string title)
         {
             try
@@ -411,8 +332,9 @@ namespace NzbDrone.Core.Parser
                 Logger.Trace("Parsing string '{0}'", title);
 
                 var releaseTitle = CleanReleaseTitleForParsing(title);
+                var parseTitle = CleanReleaseTitleForParsing(title, normalizeBrackets: true);
 
-                var simpleTitle = SimpleTitleRegex.Replace(releaseTitle);
+                var simpleTitle = SimpleTitleRegex.Replace(parseTitle);
 
                 // TODO: Quick fix stripping [url] - prefixes.
                 simpleTitle = WebsitePrefixRegex.Replace(simpleTitle);
@@ -457,7 +379,7 @@ namespace NzbDrone.Core.Parser
                                 result.Quality = QualityParser.ParseQuality(title);
                                 Logger.Trace("Quality parsed: {0}", result.Quality);
 
-                                result.ReleaseGroup = ParseReleaseGroup(releaseTitle);
+                                result.ReleaseGroup = ParseReleaseGroup(parseTitle);
 
                                 var subGroup = GetSubGroup(match);
                                 if (!subGroup.IsNullOrWhiteSpace())
@@ -555,52 +477,30 @@ namespace NzbDrone.Core.Parser
                 return string.Empty;
             }
 
-            // If Title only contains numbers return it as is.
-            if (long.TryParse(name, out _))
+            // Keep numeric strings textual so leading zeroes and signs are retained.
+            if (long.TryParse(name, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
             {
-                return name;
+                return name.Trim();
             }
 
-            name = PercentRegex.Replace(name, "percent");
+            name = PercentRegex.Replace(UnicodeComparisonNormalizer.NormalizeText(name), "percent");
 
-            return UnicodeComparisonNormalizer.NormalizeKey(NormalizeRegex.Replace(name));
+            return UnicodeComparisonNormalizer.NormalizeKey(name);
+        }
+
+        internal static IEqualityComparer<string> NarratorNameComparer { get; } = new NarratorWordComparer();
+
+        private sealed class NarratorWordComparer : IEqualityComparer<string>
+        {
+            public bool Equals(string left, string right) => string.Equals(
+                UnicodeComparisonNormalizer.NormalizeWords(left), UnicodeComparisonNormalizer.NormalizeWords(right), StringComparison.Ordinal);
+
+            public int GetHashCode(string name) => StringComparer.Ordinal.GetHashCode(UnicodeComparisonNormalizer.NormalizeWords(name));
         }
 
         public static string CleanNarratorName(this string name)
         {
-            if (name.IsNullOrWhiteSpace())
-            {
-                return string.Empty;
-            }
-
-            // If Title only contains numbers return it as is.
-            if (long.TryParse(name, out _))
-            {
-                return name;
-            }
-
-            name = PercentRegex.Replace(name, "percent");
-
-            return UnicodeComparisonNormalizer.NormalizeKey(NormalizeRegex.Replace(name));
-        }
-
-        public static string NormalizeTrackTitle(this string title)
-        {
-            title = SpecialEpisodeWordRegex.Replace(title, string.Empty);
-            title = PunctuationRegex.Replace(title, " ");
-            title = DuplicateSpacesRegex.Replace(title, " ");
-
-            return title.Trim().ToLower();
-        }
-
-        public static string NormalizeTitle(string title)
-        {
-            title = WordDelimiterRegex.Replace(title, " ");
-            title = PunctuationRegex.Replace(title, string.Empty);
-            title = CommonWordRegex.Replace(title, string.Empty);
-            title = DuplicateSpacesRegex.Replace(title, " ");
-
-            return title.Trim().ToLower();
+            return name.CleanAuthorName();
         }
 
         public static string ParseReleaseGroup(string title)
@@ -651,7 +551,9 @@ namespace NzbDrone.Core.Parser
             return title;
         }
 
-        public static string CleanReleaseTitleForParsing(string title)
+        public static string CleanReleaseTitleForParsing(string title) => CleanReleaseTitleForParsing(title, normalizeBrackets: false);
+
+        private static string CleanReleaseTitleForParsing(string title, bool normalizeBrackets)
         {
             if (title.IsNullOrWhiteSpace())
             {
@@ -660,14 +562,18 @@ namespace NzbDrone.Core.Parser
 
             var cleaned = MalformedApostropheEntityRegex.Replace(title, "'");
             cleaned = WebUtility.HtmlDecode(cleaned);
-            cleaned = QuotedUsenetFilenameRegex.Replace(cleaned, string.Empty);
+            if (normalizeBrackets)
+            {
+                cleaned = TitleBracketCatalog.NormalizeForParsing(cleaned);
+            }
+
             cleaned = LeadingUsenetCounterRegex.Replace(cleaned, string.Empty);
             cleaned = MultipartArticleCounterRegex.Replace(cleaned, " ");
             cleaned = TrailingYEncRegex.Replace(cleaned, string.Empty);
             cleaned = KbpsMetadataRegex.Replace(cleaned, string.Empty);
             cleaned = TrailingPar2VolumeRegex.Replace(cleaned, string.Empty);
             cleaned = TrailingPar2OrNzbRegex.Replace(cleaned, string.Empty);
-            cleaned = TrimDanglingBracketTail(cleaned);
+            cleaned = TitleBracketCatalog.TrimUnclosedTail(cleaned);
             cleaned = RemoveFileExtension(cleaned);
             cleaned = DuplicateSpacesRegex.Replace(cleaned, " ").Trim();
 
@@ -676,36 +582,9 @@ namespace NzbDrone.Core.Parser
 
         public static string CleanBookTitle(this string book)
         {
-            return CommonTagRegex[1].Replace(book, string.Empty).Trim();
+            // Stored title keys retain every word; metadata omissions belong to the guarded title comparison.
+            return book?.Trim() ?? string.Empty;
         }
-
-        public static string RemoveBracketsAndContents(this string book)
-        {
-            var intermediate = book;
-            foreach (var regex in BracketRegex)
-            {
-                intermediate = regex.Replace(intermediate, string.Empty).Trim();
-            }
-
-            return intermediate;
-        }
-
-        public static string RemoveAfterDash(this string text)
-        {
-            return AfterDashRegex.Replace(text, string.Empty).Trim();
-        }
-
-        public static string CleanTrackTitle(this string title)
-        {
-            var intermediateTitle = title;
-            foreach (var regex in CommonTagRegex)
-            {
-                intermediateTitle = regex.Replace(intermediateTitle, string.Empty).Trim();
-            }
-
-            return intermediateTitle;
-        }
-
 
         private static AuthorTitleInfo GetAuthorTitleInfo(string title)
         {
@@ -777,30 +656,6 @@ namespace NzbDrone.Core.Parser
             return result;
         }
 
-        private static string TrimDanglingBracketTail(string title)
-        {
-            if (title.IsNullOrWhiteSpace())
-            {
-                return title;
-            }
-
-            var lastOpenParen = title.LastIndexOf('(');
-            var lastCloseParen = title.LastIndexOf(')');
-            if (lastOpenParen >= 0 && lastOpenParen > lastCloseParen)
-            {
-                title = title[..lastOpenParen];
-            }
-
-            var lastOpenBracket = title.LastIndexOf('[');
-            var lastCloseBracket = title.LastIndexOf(']');
-            if (lastOpenBracket >= 0 && lastOpenBracket > lastCloseBracket)
-            {
-                title = title[..lastOpenBracket];
-            }
-
-            return title.Trim();
-        }
-
         private static bool ValidateBeforeParsing(string title)
         {
             if (title.ToLower().Contains("password") && title.ToLower().Contains("yenc"))
@@ -856,56 +711,5 @@ namespace NzbDrone.Core.Parser
             return string.Empty;
         }
 
-        private static int ParseNumber(string value)
-        {
-            if (int.TryParse(value, out var number))
-            {
-                return number;
-            }
-
-            number = Array.IndexOf(Numbers, value.ToLower());
-
-            if (number != -1)
-            {
-                return number;
-            }
-
-            throw new FormatException(string.Format("{0} isn't a number", value));
-        }
-
-        private static double StringSimilarity(string a, string b)
-        {
-            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b))
-            {
-                return 0.0;
-            }
-
-            var aLower = a.ToLowerInvariant();
-            var bLower = b.ToLowerInvariant();
-
-            if (aLower == bLower)
-            {
-                return 1.0;
-            }
-
-            // Simple substring containment check
-            if (aLower.Contains(bLower) || bLower.Contains(aLower))
-            {
-                return 0.8;
-            }
-
-            // Character overlap similarity
-            var maxLen = Math.Max(a.Length, b.Length);
-            var commonChars = 0;
-            for (var i = 0; i < Math.Min(a.Length, b.Length); i++)
-            {
-                if (aLower[i] == bLower[i])
-                {
-                    commonChars++;
-                }
-            }
-
-            return (double)commonChars / maxLen;
-        }
     }
 }

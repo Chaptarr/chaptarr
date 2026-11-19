@@ -1,7 +1,22 @@
 using NzbDrone.Common.Messaging;
+using NzbDrone.Core.Exceptions;
 
 namespace NzbDrone.Core.Books.Events
 {
+    public class AuthorSetupMetadataRefusedEvent : IEvent
+    {
+        public Author Author { get; }
+        public string ProviderId { get; }
+        public AuthorTerminalException Refusal { get; }
+
+        public AuthorSetupMetadataRefusedEvent(Author author, string providerId, AuthorTerminalException refusal)
+        {
+            Author = author;
+            ProviderId = providerId;
+            Refusal = refusal;
+        }
+    }
+
     public class PendingAuthorImportQueuedEvent : IEvent
     {
         public PendingAuthorImport PendingImport { get; private set; }

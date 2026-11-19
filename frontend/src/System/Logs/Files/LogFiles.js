@@ -1,10 +1,7 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import Alert from 'Components/Alert';
-import FormGroup from 'Components/Form/FormGroup';
-import FormLabel from 'Components/Form/FormLabel';
 import FormInputGroup from 'Components/Form/FormInputGroup';
-import Link from 'Components/Link/Link';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import PageContent from 'Components/Page/PageContent';
 import PageContentBody from 'Components/Page/PageContentBody';
@@ -14,7 +11,7 @@ import PageToolbarSection from 'Components/Page/Toolbar/PageToolbarSection';
 import PageToolbarSeparator from 'Components/Page/Toolbar/PageToolbarSeparator';
 import Table from 'Components/Table/Table';
 import TableBody from 'Components/Table/TableBody';
-import { icons, kinds, inputTypes } from 'Helpers/Props';
+import { icons, inputTypes, kinds } from 'Helpers/Props';
 import translate from 'Utilities/String/translate';
 import LogsNavMenu from '../LogsNavMenu';
 import LogFilesTableRow from './LogFilesTableRow';
@@ -51,6 +48,9 @@ class LogFiles extends Component {
       location,
       logLevel,
       isSavingSettings,
+      saveSettingsError,
+      settingsError,
+      isSettingsLoaded,
       onRefreshPress,
       onDeleteFilesPress,
       onLogLevelChange,
@@ -107,7 +107,7 @@ class LogFiles extends Component {
                       name="logLevel"
                       value={logLevel}
                       values={logLevelOptions}
-                      isDisabled={isSavingSettings}
+                      isDisabled={!isSettingsLoaded || isSavingSettings}
                       onChange={onLogLevelChange}
                       className={styles.logLevelDropdown}
                     />
@@ -120,6 +120,18 @@ class LogFiles extends Component {
               }
             </div>
           </Alert>
+
+          {settingsError && (
+            <Alert kind={kinds.WARNING} role="alert">
+              {translate('LogSettingsLoadFailed')}
+            </Alert>
+          )}
+
+          {saveSettingsError && (
+            <Alert kind={kinds.DANGER} role="alert">
+              {translate('UnableToSaveLogLevel')}
+            </Alert>
+          )}
 
           {
             isFetching &&
@@ -170,6 +182,9 @@ LogFiles.propTypes = {
   location: PropTypes.string.isRequired,
   logLevel: PropTypes.string,
   isSavingSettings: PropTypes.bool,
+  saveSettingsError: PropTypes.object,
+  settingsError: PropTypes.object,
+  isSettingsLoaded: PropTypes.bool,
   onRefreshPress: PropTypes.func.isRequired,
   onDeleteFilesPress: PropTypes.func.isRequired,
   onLogLevelChange: PropTypes.func.isRequired

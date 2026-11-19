@@ -23,6 +23,7 @@ namespace Chaptarr.Core.Test.AuthorStats
             }
 
             public List<BookStatistics> AuthorStatistics(int authorId) => Stats();
+            public List<BookStatistics> AuthorStatistics(IEnumerable<int> authorIds) => Stats();
             public List<BookStatistics> AuthorStatistics(string mediaType) => Stats();
             public List<BookStatistics> AuthorStatistics(int authorId, string mediaType) => Stats();
             private static List<BookStatistics> Stats()
@@ -38,6 +39,39 @@ namespace Chaptarr.Core.Test.AuthorStats
                     }
                 };
             }
+        }
+
+        [Test]
+        public void identity_changes_refresh_narrator_and_system_counts()
+        {
+            var narratorReads = 0;
+            var systemReads = 0;
+            var narrators = new NzbDrone.Core.NarratorStats.NarratorStatisticsService(
+                Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.NarratorStats.INarratorStatisticsRepository>((_, _) =>
+                { narratorReads++; return new List<NzbDrone.Core.NarratorStats.BookStatistics>(); }), new CacheManager());
+            var system = new NzbDrone.Core.SystemStats.SystemStatisticsService(
+                Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.SystemStats.ISystemStatisticsRepository>((_, _) =>
+                { systemReads++; return new NzbDrone.Core.SystemStats.SystemStatistics(); }), new CacheManager(), NLog.LogManager.GetCurrentClassLogger());
+            narrators.NarratorStatistics();
+            system.GetSystemStatistics("audiobook");
+            var change = new NzbDrone.Core.Books.Events.LibraryIdentityChangedEvent(new[] { 1 }, new[] { 10 });
+            narrators.Handle(change);
+            system.Handle(change);
+            narrators.NarratorStatistics();
+            system.GetSystemStatistics("audiobook");
+            Assert.That(narratorReads, Is.EqualTo(2));
+            Assert.That(systemReads, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void identity_changes_invalidate_statistics_without_a_delete_event()
+        {
+            var repository = new RecordingRepository();
+            var service = new AuthorStatisticsService(repository, new CacheManager());
+            service.AuthorStatistics();
+            service.Handle(new NzbDrone.Core.Books.Events.LibraryIdentityChangedEvent(new[] { 1 }, new[] { 10 }, new[] { 11 }));
+            service.AuthorStatistics();
+            Assert.That(repository.AllAuthorCalls, Is.EqualTo(2));
         }
 
         [Test]

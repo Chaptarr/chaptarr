@@ -72,6 +72,11 @@ namespace Chaptarr.Api.V1.Commands
 
             dynamic command = STJson.Deserialize(body, commandType);
 
+            if (command is ManualImportCommand { ReplaceExistingFiles: true, ConfirmedReplacementFiles: null })
+            {
+                throw new BadRequestException(ManualImportReplacementFiles.ConfirmationRequiredMessage);
+            }
+
             if (command is RescanFoldersCommand rescanFoldersCommand)
             {
                 rescanFoldersCommand.MediaType = ValidateMediaType(rescanFoldersCommand.MediaType, " when unmappedFiles is provided");

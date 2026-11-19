@@ -5,6 +5,7 @@ using System.IO.Abstractions;
 using System.Linq;
 using System.Threading;
 using NLog;
+using NzbDrone.Common;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.MediaFiles;
@@ -70,6 +71,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 cancellationToken.ThrowIfCancellationRequested();
             }
 
+            var storedFiles = musicFiles.Count == 0 ? new Dictionary<string, BookFile>(PathEqualityComparer.Instance) :
+                (_mediaFileService.GetFileWithPath(musicFiles.Select(file => file.FullName).ToList()) ?? new List<BookFile>())
+                .ToDictionary(file => file.Path, PathEqualityComparer.Instance);
             var bookCache = new Dictionary<int, Book>();
             var editionCache = new Dictionary<int, Edition>();
             var manualPreviewCandidates = new List<ManualPreviewCandidate>();
@@ -113,8 +117,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         DurationSeconds = durationSeconds,
                         RawTags = rawTags,
                         ExistingFile = !config.NewDownload,
+                        AudioProductionOverride = storedFiles.GetValueOrDefault(file.FullName)?.AudioProductionOverride,
                         Quality = new QualityModel(detectedQuality)
                     };
+
+                    var mediaType = MediaFileExtensions.AudioExtensions.Contains(fileExtension) ? BookMediaType.Audiobook :
+                                    MediaFileExtensions.TextExtensions.Contains(fileExtension) ? BookMediaType.Ebook :
+                                    (BookMediaType?)null;
+                    var shouldSuggestMatch = itemInfo != null;
 
                     // Apply user's manual selections if provided
                     if (idOverrides != null)
@@ -122,17 +132,17 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         localBook.Author = idOverrides.Author;
                         localBook.Book = idOverrides.Book;
                         localBook.Edition = idOverrides.Edition;
+                        if (shouldSuggestMatch && mediaType.HasValue && localBook.Book != null && localBook.Book.MediaType != mediaType)
+                        {
+                            localBook.Book = null;
+                            localBook.Edition = null;
+                        }
                     }
 
                     // For initial manual-import UI load (itemInfo != null), try to suggest a match from the library.
                     // For UpdateItems (itemInfo == null), do NOT auto-override user selections.
-                    var shouldSuggestMatch = itemInfo != null;
                     if (shouldSuggestMatch && (localBook.Book == null || localBook.Edition == null))
                     {
-                        var mediaType = MediaFileExtensions.AudioExtensions.Contains(fileExtension) ? BookMediaType.Audiobook :
-                                        MediaFileExtensions.TextExtensions.Contains(fileExtension) ? BookMediaType.Ebook :
-                                        (BookMediaType?)null;
-
                         if (mediaType != null)
                         {
                             var discoveredTags = ToCaseInsensitiveTags(rawTags?.AllTags);
@@ -184,12 +194,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            ApplyManualPreviewMatches(manualPreviewCandidates, idOverrides, bookCache, editionCache, cancellationToken);
+            ApplyManualPreviewMatches(manualPreviewCandidates, idOverrides, itemInfo, bookCache, editionCache, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
             foreach (var decision in decisions)
             {
                 var localBook = decision.Item;
+                if (localBook != null)
+                {
+                    localBook.ImportRoot = itemInfo?.DownloadClientItem?.OutputPath.FullPath ?? localBook.Author?.AudiobookPath ?? localBook.Author?.Path;
+                }
                 if (localBook?.Book != null && localBook.Edition == null)
                 {
                     localBook.Edition = localBook.Book.Editions?.FirstOrDefault(e => e.Monitored)
@@ -204,6 +218,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
         private void ApplyManualPreviewMatches(
             List<ManualPreviewCandidate> candidates,
             IdentificationOverrides idOverrides,
+            ImportDecisionMakerInfo itemInfo,
             Dictionary<int, Book> bookCache,
             Dictionary<int, Edition> editionCache,
             CancellationToken cancellationToken)
@@ -216,7 +231,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             try
             {
                 var restrictToAuthorId = idOverrides?.Author?.Id > 0 ? idOverrides.Author.Id : (int?)null;
-                var context = MatchingContextPresets.ForManualPreview();
+                var context = MatchingContextPresets.ForManualPreview(targetBookIds: itemInfo?.TargetBookIds);
                 context.CancellationToken = cancellationToken;
                 var result = _fileMatchingService
                     .MatchFilesToLibraryAsync(candidates.Select(c => c.Discovered).ToArray(), restrictToAuthorId, context)

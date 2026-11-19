@@ -89,6 +89,7 @@ namespace NzbDrone.Core.Download
             }
 
             var previousImportItem = trackedDownload.ImportItem;
+            var previousOutputPath = trackedDownload.DownloadItem.OutputPath;
             var refreshedFromClient = TryRefreshFromDownloadClient(ref trackedDownload, out var downloadClient);
             if (!refreshedFromClient)
             {
@@ -111,10 +112,12 @@ namespace NzbDrone.Core.Download
 
             _conversionJobService?.Reset(trackedDownload.DownloadItem.DownloadId);
             _conversionTrackingService?.Clear(trackedDownload.DownloadItem.DownloadId);
-            _downloadClientFileSnapshotService.Delete(trackedDownload.DownloadItem);
-            _downloadClientFileSnapshotService.Delete(previousImportItem);
-            _downloadClientFileSnapshotService.Delete(trackedDownload.ImportItem);
-            trackedDownload.MissingAuthoritativeMediaFileAttempts = 0;
+            if (previousOutputPath != trackedDownload.DownloadItem.OutputPath)
+            {
+                _downloadClientFileSnapshotService.Delete(trackedDownload.DownloadItem);
+                _downloadClientFileSnapshotService.Delete(previousImportItem);
+                _downloadClientFileSnapshotService.Delete(trackedDownload.ImportItem);
+            }
             trackedDownload.State = TrackedDownloadState.ImportPending;
             trackedDownload.ClearStatus();
             PublishQueueUpdate();

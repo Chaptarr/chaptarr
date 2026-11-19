@@ -16,6 +16,7 @@ namespace NzbDrone.Core.Organizer
         {
             ruleBuilder.SetValidator(new NotEmptyValidator(null));
             ruleBuilder.SetValidator(new IllegalCharactersValidator());
+            ruleBuilder.SetValidator(new BalancedNamingBracesValidator());
 
             return ruleBuilder.SetValidator(new ValidStandardTrackFormatValidator());
         }
@@ -24,8 +25,40 @@ namespace NzbDrone.Core.Organizer
         {
             ruleBuilder.SetValidator(new NotEmptyValidator(null));
             ruleBuilder.SetValidator(new IllegalCharactersValidator());
+            ruleBuilder.SetValidator(new BalancedNamingBracesValidator());
 
             return ruleBuilder.SetValidator(new RegularExpressionValidator(FileNameBuilder.AuthorNameRegex)).WithMessage("Must contain Author name");
+        }
+
+        public static string GetBraceError(string pattern)
+        {
+            var depth = 0;
+            var opening = 0;
+            for (var index = 0; index < (pattern?.Length ?? 0); index++)
+            {
+                if (pattern[index] == '{')
+                {
+                    if (depth++ == 0) opening = index;
+                }
+                else if (pattern[index] == '}' && --depth < 0)
+                {
+                    return $"Unmatched closing brace at position {index + 1}.";
+                }
+            }
+
+            return depth > 0 ? $"Unmatched opening brace at position {opening + 1}." : null;
+        }
+    }
+
+    public class BalancedNamingBracesValidator : PropertyValidator
+    {
+        protected override string GetDefaultMessageTemplate() => "{BraceError}";
+
+        protected override bool IsValid(PropertyValidatorContext context)
+        {
+            var error = FileNameValidation.GetBraceError(context.PropertyValue as string);
+            context.MessageFormatter.AppendArgument("BraceError", error);
+            return error == null;
         }
     }
 

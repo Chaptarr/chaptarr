@@ -35,7 +35,7 @@ namespace NzbDrone.Core.Indexers.Newznab
 
         public override IIndexerRequestGenerator GetRequestGenerator()
         {
-            return new NewznabRequestGenerator(_capabilitiesProvider)
+            return new NewznabRequestGenerator(_capabilitiesProvider, _logger, Definition.Name)
             {
                 PageSize = PageSize,
                 Settings = Settings,
@@ -48,17 +48,20 @@ namespace NzbDrone.Core.Indexers.Newznab
             return new NewznabRssParser();
         }
 
-        public bool CanProvideNarratorMetadata => Settings?.EnableNarratorMetadata == true;
+        private NewznabNarratorMetadataClient NarratorMetadataClient => _narratorMetadataClient ??=
+            new NewznabNarratorMetadataClient(_httpClient, Settings, Definition?.Id ?? 0, RateLimit, _cacheManager, (Definition as IndexerDefinition)?.ProxyId);
+
+        public bool? SupportsNarratorMetadata => Definition?.Settings is NewznabSettings ? NarratorMetadataClient.SupportsMetadata : null;
+        public bool CanProvideNarratorMetadata => Settings?.EnableNarratorMetadata == true && SupportsNarratorMetadata != false;
+
+        public void TestNarratorMetadata(IEnumerable<ReleaseInfo> releases)
+        {
+            NarratorMetadataClient.Test(releases);
+        }
 
         public bool TryPopulateNarratorMetadata(ReleaseInfo release)
         {
-            if (!CanProvideNarratorMetadata)
-            {
-                return false;
-            }
-
-            _narratorMetadataClient ??= new NewznabNarratorMetadataClient(_httpClient, Settings, Definition?.Id ?? 0, RateLimit, _cacheManager, _logger);
-            return _narratorMetadataClient.TryPopulate(release);
+            return CanProvideNarratorMetadata && NarratorMetadataClient.TryPopulate(release);
         }
 
         public override IEnumerable<ProviderDefinition> DefaultDefinitions
@@ -129,7 +132,7 @@ namespace NzbDrone.Core.Indexers.Newznab
         {
             try
             {
-                var capabilities = _capabilitiesProvider.GetCapabilities(Settings, (Definition as IndexerDefinition)?.ProxyId);
+                var capabilities = _capabilitiesProvider.GetCapabilities(Settings, (Definition as IndexerDefinition)?.ProxyId, forceRefresh: true);
 
                 if (capabilities.SupportedSearchParameters != null && capabilities.SupportedSearchParameters.Contains("q"))
                 {
@@ -155,7 +158,7 @@ namespace NzbDrone.Core.Indexers.Newznab
             {
                 _logger.Warn(ex, "Unable to connect to indexer: " + ex.Message);
 
-                return new ValidationFailure(string.Empty, "Unable to connect to indexer, check the log for more details");
+                return new ValidationFailure(string.Empty, NewznabCapabilitiesProvider.GetTestFailureMessage(ex));
             }
         }
 

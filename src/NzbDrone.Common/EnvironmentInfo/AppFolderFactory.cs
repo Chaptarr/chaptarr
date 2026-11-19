@@ -85,7 +85,7 @@ namespace NzbDrone.Common.EnvironmentInfo
                     !_diskProvider.FolderExists(configHome))
                 {
                     // Tell mono/netcore to use appData/.config as ApplicationData folder.
-                    Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", Path.Combine(_appFolderInfo.AppDataFolder, ".config"));
+                    Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", _appFolderInfo.GetXdgConfigFolder());
                 }
 
                 var dataHome = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify);
@@ -95,7 +95,7 @@ namespace NzbDrone.Common.EnvironmentInfo
                     !_diskProvider.FolderExists(dataHome))
                 {
                     // Tell mono/netcore to use appData/.config/share as LocalApplicationData folder.
-                    Environment.SetEnvironmentVariable("XDG_DATA_HOME", Path.Combine(_appFolderInfo.AppDataFolder, ".config/share"));
+                    Environment.SetEnvironmentVariable("XDG_DATA_HOME", _appFolderInfo.GetXdgDataFolder());
                 }
             }
             catch (Exception ex)

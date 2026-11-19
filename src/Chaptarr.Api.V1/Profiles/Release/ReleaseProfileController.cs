@@ -23,9 +23,9 @@ namespace Chaptarr.Api.V1.Profiles.Release
 
             SharedValidator.RuleFor(r => r).Custom((restriction, context) =>
             {
-                if (restriction.Ignored.Empty() && restriction.Required.Empty())
+                foreach (var error in NzbDrone.Core.Configuration.ConfigValueValidation.ValidateReleaseProfile(restriction.ToModel()))
                 {
-                    context.AddFailure("Either 'Must contain' or 'Must not contain' is required");
+                    context.AddFailure(error);
                 }
 
                 if (restriction.Enabled && restriction.IndexerId != 0 && !_indexerFactory.Exists(restriction.IndexerId))

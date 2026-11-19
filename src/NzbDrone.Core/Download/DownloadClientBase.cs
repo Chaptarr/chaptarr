@@ -1,6 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Linq;
+using NzbDrone.Common.Extensions;
+using NzbDrone.Core.RootFolders;
+using NzbDrone.Core.Download.Clients;
 using System.Threading.Tasks;
 using FluentValidation.Results;
 using NLog;
@@ -103,6 +107,18 @@ namespace NzbDrone.Core.Download
 
         public abstract void RemoveItem(DownloadClientItem item, bool deleteData);
         public abstract DownloadClientInfo GetStatus();
+
+        protected void EnsureCanDeleteItemData(DownloadClientItem item, IRootFolderService rootFolders)
+        {
+            if (item == null || item.OutputPath.IsEmpty) return;
+            var path = item.OutputPath.FullPath;
+            var root = rootFolders.All().FirstOrDefault(folder =>
+                folder.Path.PathEquals(path) || folder.Path.IsParentPath(path) || path.IsParentPath(folder.Path));
+            if (root != null)
+            {
+                throw new DownloadDataDeletionRefusedException("Refusing to delete download data at '{0}' because it overlaps library root '{1}'. Remove library files explicitly from the library.", path, root.Path);
+            }
+        }
 
         protected virtual void DeleteItemData(DownloadClientItem item)
         {

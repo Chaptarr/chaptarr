@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using NLog;
@@ -37,6 +38,7 @@ namespace NzbDrone.Core.MediaFiles
 
         public void Clean(string folder, List<string> filesOnDisk, string mediaType)
         {
+            var timer = Stopwatch.StartNew();
             // Cleanup only needs id/path/media-type for the scan comparison. Avoid loading persisted
             // tag/media-info JSON for every tracked file in a large root folder.
             LogMemorySnapshot("[CLEANUP] before db file stat load folder='{0}' mediaType='{1}' diskFiles={2}",
@@ -129,6 +131,9 @@ namespace NzbDrone.Core.MediaFiles
                     mediaType ?? "<any>",
                     trulyMissing.Count);
             }
+            _logger.Debug("[CLEANUP] folder='{0}' mediaType='{1}' diskFiles={2} dbFiles={3} unseen={4} missing={5} stillPresent={6} elapsedMs={7}",
+                folder, mediaType ?? "<any>", filesOnDisk.Count, dbFiles.Count, notSeen.Count,
+                trulyMissing.Count, stillPresent.Count, timer.ElapsedMilliseconds);
         }
 
         private void LogMemorySnapshot(string message, params object[] args)

@@ -1,4 +1,5 @@
 using System;
+using System.Data;
 using System.Collections.Generic;
 using System.Linq;
 using NLog;
@@ -15,6 +16,8 @@ namespace Chaptarr.Core.Test.Books
     {
         private sealed class StubBookRepository : IBookRepository
         {
+            public List<Book> GetImportListBookIdentities() => All().ToList();
+
             private readonly Dictionary<(string provider, string providerId, BookMediaType mediaType), Book> _matches = new();
             private readonly Dictionary<int, Book> _books = new();
 
@@ -43,6 +46,12 @@ namespace Chaptarr.Core.Test.Books
                     : new List<Book>();
             }
 
+            public Dictionary<string, List<int>> FindIdsByProviderIds(string provider, IEnumerable<string> ids)
+            {
+                return ids.ToDictionary(id => id, id => _matches.Where(pair => pair.Key.provider == provider && pair.Key.providerId == id)
+                    .Select(pair => pair.Value.Id).Distinct().ToList());
+            }
+
             public Book FindByProviderIdAndMediaType(string provider, string providerId, BookMediaType mediaType)
             {
                 FindByProviderIdCalls.Add((provider, providerId, mediaType));
@@ -62,11 +71,14 @@ namespace Chaptarr.Core.Test.Books
             public void Delete(Book model) => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
             public IEnumerable<Book> Get(IEnumerable<int> ids) => ids.Select(id => _books.TryGetValue(id, out var book) ? book : null).Where(book => book != null).ToList();
+            public IEnumerable<Book> FindExisting(IEnumerable<int> ids) => Get(ids);
             public void InsertMany(IList<Book> model) => throw new NotImplementedException();
             public void InsertMany(IList<Book> model, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
+            public void UpdateManyAtomic(IList<Book> books, System.Action<System.Data.IDbConnection, System.Data.IDbTransaction> writeRelated) => throw new System.NotSupportedException();
             public void UpdateMany(IList<Book> model) => throw new NotImplementedException();
             public void SetFields(IList<Book> models, params System.Linq.Expressions.Expression<Func<Book, object>>[] properties) => throw new NotImplementedException();
             public void DeleteMany(List<Book> model) => throw new NotImplementedException();
+            public void DeleteManyAtomic(IEnumerable<int> ids, IEnumerable<int> deletedFileIds = null) => throw new NotImplementedException();
             public void DeleteMany(IEnumerable<int> ids) => throw new NotImplementedException();
             public void Purge(bool vacuum = false) => throw new NotImplementedException();
             public bool HasItems() => throw new NotImplementedException();
@@ -84,14 +96,13 @@ namespace Chaptarr.Core.Test.Books
 	            public Book FindByIsbn(string isbn) => throw new NotImplementedException();
 	            public Book FindByAsin(string asin) => throw new NotImplementedException();
 	            public Book FindByProviderIds(string hardcoverBookId = null, string goodreadsBookId = null, string openLibraryWorkId = null) => throw new NotImplementedException();
-	            public Book FindBySlug(string titleSlug) => throw new NotImplementedException();
+	            public List<Book> FindTitleSlugConflicts(IEnumerable<string> slugs, IDbConnection connection = null, IDbTransaction transaction = null) => new List<Book>();
+            public List<Book> FindBySlug(string titleSlug) => throw new NotImplementedException();
 	            public PagingSpec<Book> BooksWithoutFiles(PagingSpec<Book> pagingSpec) => throw new NotImplementedException();
 	            public PagingSpec<Book> BooksWhereCutoffUnmet(PagingSpec<Book> pagingSpec, List<QualitiesBelowCutoff> qualitiesBelowCutoff) => throw new NotImplementedException();
 	            public List<Book> BooksBetweenDates(DateTime startDate, DateTime endDate, bool includeUnmonitored) => throw new NotImplementedException();
             public List<Book> AuthorBooksBetweenDates(Author author, DateTime startDate, DateTime endDate, bool includeUnmonitored) => throw new NotImplementedException();
-            public void SetMonitoredFlat(Book book, bool monitored) => throw new NotImplementedException();
             public void SetMonitored(IEnumerable<int> ids, bool monitored) => throw new NotImplementedException();
-            public void SetMonitoredForMediaType(IEnumerable<int> ids, string mediaType, bool monitored) => throw new NotImplementedException();
             public List<Book> GetAuthorBooksWithFiles(Author author) => throw new NotImplementedException();
             public List<Book> GetBooksBySeries(int seriesId) => throw new NotImplementedException();
             public List<Book> GetMonitoredBooksForAuthor(int authorId, string mediaType) => throw new NotImplementedException();
@@ -124,15 +135,19 @@ namespace Chaptarr.Core.Test.Books
             public List<Edition> GetAllMonitoredEditions() => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions) => throw new NotImplementedException();
             public void InsertMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new NotImplementedException();
+            public void UpdateMany(List<Edition> editions, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction, Edition selectedEdition = null) => throw new System.NotSupportedException();
             public void UpdateMany(List<Edition> editions) => throw new NotImplementedException();
             public void DeleteMany(List<Edition> editions) => throw new NotImplementedException();
             public List<Edition> GetEditionsForRefresh(int bookId) => throw new NotImplementedException();
             public List<Edition> GetEditionsByBook(int bookId) => throw new NotImplementedException();
-            public List<Edition> GetEditionsByAuthor(int authorId) => throw new NotImplementedException();
+            public List<Edition> GetEditionsByAuthor(int authorId, bool onlyMonitored = false) => throw new NotImplementedException();
             public Edition FindByTitle(int authorId, string title) => throw new NotImplementedException();
             public Edition FindByTitleInexact(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> GetCandidates(int authorId, string title) => throw new NotImplementedException();
             public List<Edition> SetMonitored(Edition edition, bool isManualSelection = false) => throw new NotImplementedException();
+
+            public void RefreshProviderAliases(List<Edition> editions) { }
+            public void UpdateSelection(List<Edition> editions) => UpdateMany(editions);
         }
 
         private sealed class StubProviderAliasService : IProviderAliasService
@@ -146,6 +161,7 @@ namespace Chaptarr.Core.Test.Books
                 _idsByScope[scope] = ids?.ToList() ?? new List<int>();
             }
 
+            public void ReplaceAliases(string entityType, int entityId, string scope, IEnumerable<string> providerIds, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
             public void ReplaceAliases(string entityType, int entityId, string scope, IEnumerable<string> providerIds) => throw new NotImplementedException();
             public void DeleteAliases(string entityType, int entityId) => throw new NotImplementedException();
             public List<int> FindBookIds(string scope, IEnumerable<string> providerIds)
@@ -154,6 +170,9 @@ namespace Chaptarr.Core.Test.Books
                 return _idsByScope.TryGetValue(scope, out var ids) ? ids.ToList() : new List<int>();
             }
 
+            public List<ProviderAlias> GetAliases(string entityType, int entityId, string scope) => new();
+            public List<ProviderAlias> FindBookAliases(string scope, IEnumerable<string> providerIds) => throw new NotSupportedException();
+            public List<ProviderAlias> GetAliases(string entityType, IEnumerable<int> entityIds, string scope) => new();
             public List<int> FindAuthorIds(IEnumerable<string> providerIds) => throw new NotImplementedException();
             public List<(string Provider, string NormalizedProviderId)> NormalizeProviderIds(IEnumerable<string> providerIds) => throw new NotImplementedException();
         }
@@ -165,7 +184,7 @@ namespace Chaptarr.Core.Test.Books
             repo.AddMatch("hc", "hc:123", BookMediaType.Audiobook, new Book { Id = 1, MediaType = BookMediaType.Audiobook });
 
             var service = new BookService(repo, editionService: new StubEditionService(), eventAggregator: null, authorService: null,
-                mediaFileService: null, rootFolderService: null, seriesBookLinkRepository: null,
+                mediaFileService: null, rootFolderService: null, seriesBookLinkRepository: Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<ISeriesBookLinkRepository>((method, args) => new List<SeriesBookLink>()),
                 multiCopySeriesService: null,
                 logger: LogManager.GetCurrentClassLogger());
 
@@ -184,7 +203,7 @@ namespace Chaptarr.Core.Test.Books
             repo.AddMatch("gr", "gr:42", BookMediaType.Ebook, new Book { Id = 5, MediaType = BookMediaType.Ebook });
 
             var service = new BookService(repo, editionService: new StubEditionService(), eventAggregator: null, authorService: null,
-                mediaFileService: null, rootFolderService: null, seriesBookLinkRepository: null,
+                mediaFileService: null, rootFolderService: null, seriesBookLinkRepository: Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<ISeriesBookLinkRepository>((method, args) => new List<SeriesBookLink>()),
                 multiCopySeriesService: null,
                 logger: LogManager.GetCurrentClassLogger());
 
@@ -211,7 +230,7 @@ namespace Chaptarr.Core.Test.Books
                 new Edition { Id = 3, BookId = 20 });
 
             var service = new BookService(repo, editionService: editionService, eventAggregator: null, authorService: null,
-                mediaFileService: null, rootFolderService: null, seriesBookLinkRepository: null,
+                mediaFileService: null, rootFolderService: null, seriesBookLinkRepository: Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<ISeriesBookLinkRepository>((method, args) => new List<SeriesBookLink>()),
                 multiCopySeriesService: null,
                 logger: LogManager.GetCurrentClassLogger());
 
@@ -227,7 +246,7 @@ namespace Chaptarr.Core.Test.Books
             repo.AddMatch("isbn", "9780123456789", BookMediaType.Ebook, new Book { Id = 7, MediaType = BookMediaType.Ebook });
 
             var service = new BookService(repo, editionService: new StubEditionService(), eventAggregator: null, authorService: null,
-                mediaFileService: null, rootFolderService: null, seriesBookLinkRepository: null,
+                mediaFileService: null, rootFolderService: null, seriesBookLinkRepository: Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<ISeriesBookLinkRepository>((method, args) => new List<SeriesBookLink>()),
                 multiCopySeriesService: null,
                 logger: LogManager.GetCurrentClassLogger());
 
@@ -255,7 +274,7 @@ namespace Chaptarr.Core.Test.Books
                 authorService: null,
                 mediaFileService: null,
                 rootFolderService: null,
-                seriesBookLinkRepository: null,
+                seriesBookLinkRepository: Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<ISeriesBookLinkRepository>((method, args) => new List<SeriesBookLink>()),
                 multiCopySeriesService: null,
                 logger: LogManager.GetCurrentClassLogger(),
                 providerAliasService: aliases);

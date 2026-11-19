@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Newtonsoft.Json;
+using NzbDrone.Core.MediaFiles;
 
 namespace NzbDrone.Core.MetadataSource.Audible.Resources
 {
@@ -105,10 +105,7 @@ namespace NzbDrone.Core.MetadataSource.Audible.Resources
 
         public TimeSpan? Duration => LengthMinutes.HasValue ? TimeSpan.FromMinutes(LengthMinutes.Value) : null;
 
-        public bool IsGraphicAudio =>
-            Publisher?.Contains("GraphicAudio", StringComparison.OrdinalIgnoreCase) == true ||
-            Narrators?.Count > 5 ||
-            (Narrators?.Any(n => n.Name?.Contains("cast", StringComparison.OrdinalIgnoreCase) == true) == true);
+        public bool IsGraphicAudio => AudioProductionDetector.ContainsGraphicAudioBrand(Publisher);
     }
 
     public class AudibleCatalogAuthorResource

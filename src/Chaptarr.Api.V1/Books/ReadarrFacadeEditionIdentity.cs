@@ -130,7 +130,12 @@ namespace Chaptarr.Api.V1.Books
                     source ?? "edition response");
             }
 
-            return addressable;
+            // A compatibility ID must address one local choice within its owning book.
+            // Keep the current selection when several provider records project to the same ID.
+            return addressable
+                .GroupBy(edition => (edition.BookId, ForeignId: BuildForeignEditionId(edition, facadeContext)))
+                .Select(group => group.OrderByDescending(edition => edition.Monitored).ThenBy(edition => edition.Id).First())
+                .ToList();
         }
     }
 }

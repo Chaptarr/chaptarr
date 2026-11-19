@@ -63,7 +63,7 @@ namespace Chaptarr.Core.Test.Http
             var resolver = new GlobalProxySettingsResolver(config, proxyService, LogManager.GetCurrentClassLogger());
             var provider = new StandardProxySettingsProvider(config, resolver);
 
-            var settings = provider.GetProxySettings(new HttpUri("http://192.168.86.100:5000/api"));
+            var settings = provider.GetProxySettings(new HttpUri("http://10.0.0.10:5000/api"));
 
             Assert.That(settings.IsDirectConnection, Is.True);
         }

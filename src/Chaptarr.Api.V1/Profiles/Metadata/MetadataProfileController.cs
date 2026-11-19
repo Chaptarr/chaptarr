@@ -32,35 +32,13 @@ namespace Chaptarr.Api.V1.Profiles.Metadata
             _authorService = authorService;
             _commandQueueManager = commandQueueManager;
 
-            SharedValidator.RuleFor(c => c.Name)
-                .NotEqual("None").WithMessage("'None' is a reserved profile name")
-                .NotEmpty();
-            SharedValidator.RuleFor(c => c.ProfileType)
-                .Must(x => Enum.IsDefined(typeof(MetadataProfileType), x))
-                .WithMessage("Profile type must be General, Audiobook, or Ebook");
-            SharedValidator.RuleFor(c => c.MinPopularity).GreaterThanOrEqualTo(0);
-            SharedValidator.RuleFor(c => c.MinPages).GreaterThanOrEqualTo(0);
-            SharedValidator.RuleFor(c => c.AllowedLanguages)
-                .Must(x =>
+            SharedValidator.RuleFor(value => value).Custom((value, context) =>
+            {
+                foreach (var error in NzbDrone.Core.Configuration.ConfigValueValidation.ValidateMetadataProfile(value.ToModel()))
                 {
-                    if (string.IsNullOrWhiteSpace(x))
-                    {
-                        return true;
-                    }
-
-                    var languages = x.Trim(',')
-                        .Split(',')
-                        .Select(y => y.Trim())
-                        .Where(y => !string.IsNullOrWhiteSpace(y))
-                        .ToList();
-
-                    return languages.All(y =>
-                        y.Equals("null", StringComparison.OrdinalIgnoreCase) ||
-                        y.Equals("unknown", StringComparison.OrdinalIgnoreCase) ||
-                        y.CanonicalizeLanguage().IsNotNullOrWhiteSpace());
-                })
-                .When(x => x.AllowedLanguages.IsNotNullOrWhiteSpace())
-                .WithMessage("Unknown languages");
+                    context.AddFailure(error);
+                }
+            });
         }
 
         [RestPostById]

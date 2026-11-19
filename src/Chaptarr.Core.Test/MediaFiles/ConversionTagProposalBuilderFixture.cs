@@ -138,8 +138,10 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Overview = "The fourth Harry Potter audiobook.",
                     Genres = new List<string> { "Fantasy", "Young Adult", "Fantasy" },
                     Publisher = "Fallback Publisher",
-                    SeriesName = "Harry Potter",
-                    SeriesPosition = "4"
+                    SeriesName = "Unbacked scalar series",
+                    SeriesPosition = "99",
+                    SeriesLinks = new List<SeriesBookLink> { new SeriesBookLink { Position = "4",
+                        Series = new Series { Title = "Harry Potter", GoodreadsSeriesId = "gr:1" } } }
                 },
                 new Author { Name = "J.K. Rowling" },
                 new Edition
@@ -197,12 +199,17 @@ namespace Chaptarr.Core.Test.MediaFiles
                 return Values(allTags).Any(value => Contains(value, authorName));
             }
 
-            public bool ValidateEditionInTags(string editionTitle, IDictionary<string, List<string>> allTags)
+            public bool ValidateAuthorInTags(string authorName, IDictionary<string, List<string>> allTags, IEnumerable<string> knownTitles)
+            {
+                return ValidateAuthorInTags(authorName, allTags);
+            }
+
+            public bool ValidateEditionInTags(string editionTitle, IDictionary<string, List<string>> allTags, IEnumerable<string> knownNarrators = null)
             {
                 return GetEditionTitleEvidence(editionTitle, allTags).Count > 0;
             }
 
-            public IReadOnlyList<EditionTitleEvidence> GetEditionTitleEvidence(string editionTitle, IDictionary<string, List<string>> allTags, bool includeDurationGatedNearExact = false)
+            public IReadOnlyList<EditionTitleEvidence> GetEditionTitleEvidence(string editionTitle, IDictionary<string, List<string>> allTags, bool includeDurationGatedNearExact = false, IEnumerable<string> knownNarrators = null)
             {
                 return (allTags ?? new Dictionary<string, List<string>>())
                     .Where(kv => kv.Value != null)

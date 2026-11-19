@@ -10,6 +10,7 @@ namespace Chaptarr.Api.V1.Indexers
         public bool EnableInteractiveSearch { get; set; }
         public bool SupportsRss { get; set; }
         public bool SupportsSearch { get; set; }
+        public bool? SupportsNarratorMetadata { get; set; }
         public DownloadProtocol Protocol { get; set; }
         public int Priority { get; set; }
         public int DownloadClientId { get; set; }
@@ -33,6 +34,7 @@ namespace Chaptarr.Api.V1.Indexers
             resource.EnableInteractiveSearch = definition.EnableInteractiveSearch;
             resource.SupportsRss = definition.SupportsRss;
             resource.SupportsSearch = definition.SupportsSearch;
+            resource.SupportsNarratorMetadata = definition.SupportsNarratorMetadata;
             resource.Protocol = definition.Protocol;
             resource.Priority = definition.Priority;
             resource.DownloadClientId = definition.DownloadClientId;

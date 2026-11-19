@@ -18,11 +18,13 @@ using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RemotePathMappings;
 using NzbDrone.Core.ThingiProvider;
 using NzbDrone.Core.Validation;
+using NzbDrone.Core.RootFolders;
 
 namespace NzbDrone.Core.Download.Clients.DownloadStation
 {
     public class TorrentDownloadStation : TorrentClientBase<DownloadStationSettings>
     {
+        private readonly IRootFolderService _rootFolders;
         protected readonly IDownloadStationInfoProxy _dsInfoProxy;
         protected readonly IDownloadStationTaskProxySelector _dsTaskProxySelector;
         protected readonly ISharedFolderResolver _sharedFolderResolver;
@@ -40,9 +42,11 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
                                       IDiskProvider diskProvider,
                                       IRemotePathMappingService remotePathMappingService,
                                       IBlocklistService blocklistService,
-                                      Logger logger)
+                                      Logger logger,
+                                      IRootFolderService rootFolders)
             : base(torrentFileInfoReader, httpClient, configService, diskProvider, remotePathMappingService, blocklistService, logger)
         {
+            _rootFolders = rootFolders;
             _dsInfoProxy = dsInfoProxy;
             _dsTaskProxySelector = dsTaskProxySelector;
             _fileStationProxy = fileStationProxy;
@@ -164,6 +168,8 @@ namespace NzbDrone.Core.Download.Clients.DownloadStation
 
         public override void RemoveItem(DownloadClientItem item, bool deleteData)
         {
+            if (deleteData) EnsureCanDeleteItemData(item, _rootFolders);
+
             if (deleteData)
             {
                 DeleteItemData(item);

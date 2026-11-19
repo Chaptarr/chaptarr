@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Linq;
 using NLog;
 using NzbDrone.Core.Configuration;
@@ -38,10 +39,15 @@ namespace NzbDrone.Core.Download
                                                           .Where(t => !t.DownloadItem.Removed && t.DownloadItem.CanBeRemoved && t.State == TrackedDownloadState.Imported)
                                                           .ToList();
 
+            var cleanup = new DownloadCleanupContext();
+            var stopwatch = Stopwatch.StartNew();
             foreach (var trackedDownload in trackedDownloads)
             {
-                _eventAggregator.PublishEvent(new DownloadCanBeRemovedEvent(trackedDownload));
+                _eventAggregator.PublishEvent(new DownloadCanBeRemovedEvent(trackedDownload, cleanup));
             }
+
+            _logger.Debug("Download cleanup pass: downloads={0}, parentProbes={1}, reusedParentProbes={2}, elapsedMs={3}",
+                trackedDownloads.Count, cleanup.ParentProbes, cleanup.ReusedParentProbes, stopwatch.ElapsedMilliseconds);
         }
 
         public void Execute(ProcessMonitoredDownloadsCommand message)

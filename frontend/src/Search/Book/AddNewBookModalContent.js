@@ -195,7 +195,10 @@ class AddNewBookModalContent extends Component {
       isAdding,
       isQueued,
       addNotice,
-      isExistingAuthor,
+      isLoadingAuthor,
+      authorLoadError,
+      rootFoldersPopulated,
+      rootFoldersError,
       isSmallScreen,
       initialMediaType,
       defaultMediaType,
@@ -210,6 +213,8 @@ class AddNewBookModalContent extends Component {
       ...otherProps
     } = this.props;
 
+    const settingsError = (isLoadingAuthor && authorLoadError && 'UnableToLoadAuthor') ||
+      (rootFoldersError && 'UnableToLoadRootFolders');
     const allowBothMediaType = canSelectBoth({
       initialMediaType,
       addedMediaTypes,
@@ -274,19 +279,22 @@ class AddNewBookModalContent extends Component {
                   null
               }
 
-              <AddAuthorOptionsForm
-                authorName={authorName}
-                includeNoneMetadataProfile={true}
-                includeSpecificBookMonitor={true}
-                includeBothMediaType={allowBothMediaType}
-                isExistingAuthor={isExistingAuthor}
-                selectedMediaType={this.state.selectedMediaType}
-                onMediaTypeChange={this.onMediaTypeChange}
-                defaultMediaType={defaultMediaType}
-                onSetDefaultMediaType={onSetDefaultMediaType}
-                isSavingDefaultMediaType={isSavingDefaultMediaType}
-                {...otherProps}
-              />
+              {(isLoadingAuthor || !rootFoldersPopulated) && <Alert kind={settingsError ? kinds.DANGER : kinds.INFO}>{translate(settingsError || 'Loading')}</Alert>}
+              {
+                !isLoadingAuthor && rootFoldersPopulated &&
+                  <AddAuthorOptionsForm
+                    authorName={authorName}
+                    includeNoneMetadataProfile={true}
+                    includeSpecificBookMonitor={true}
+                    includeBothMediaType={allowBothMediaType}
+                    selectedMediaType={this.state.selectedMediaType}
+                    onMediaTypeChange={this.onMediaTypeChange}
+                    defaultMediaType={defaultMediaType}
+                    onSetDefaultMediaType={onSetDefaultMediaType}
+                    isSavingDefaultMediaType={isSavingDefaultMediaType}
+                    {...otherProps}
+                  />
+              }
 
               {
                 isQueued && addNotice ?
@@ -332,7 +340,7 @@ class AddNewBookModalContent extends Component {
             <SpinnerButton
               className={styles.addButton}
               kind={kinds.PRIMARY}
-              isDisabled={isQueued || !canAddSelectedMediaType(this.props, this.state.selectedMediaType)}
+              isDisabled={isLoadingAuthor || !rootFoldersPopulated || isQueued || !canAddSelectedMediaType(this.props, this.state.selectedMediaType)}
               isSpinning={isAdding}
               onPress={this.onAddBookPress}
             >
@@ -366,7 +374,10 @@ AddNewBookModalContent.propTypes = {
   addError: PropTypes.object,
   addedMediaTypes: PropTypes.arrayOf(PropTypes.oneOf(['audiobook', 'ebook'])),
   addFailedMediaType: PropTypes.oneOf(['audiobook', 'ebook']),
-  isExistingAuthor: PropTypes.bool.isRequired,
+  isLoadingAuthor: PropTypes.bool,
+  authorLoadError: PropTypes.object,
+  rootFoldersPopulated: PropTypes.bool,
+  rootFoldersError: PropTypes.object,
   isSmallScreen: PropTypes.bool.isRequired,
   initialMediaType: PropTypes.string,
   defaultMediaType: PropTypes.string,

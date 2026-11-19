@@ -25,10 +25,5 @@ namespace NzbDrone.Core.Indexers
         {
             throw new System.NotImplementedException();
         }
-
-        public virtual IndexerPageableRequestChain GetSearchRequests(AuthorSearchCriteria searchCriteria)
-        {
-            throw new System.NotImplementedException();
-        }
     }
 }

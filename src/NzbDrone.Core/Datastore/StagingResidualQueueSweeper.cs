@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using NLog;
+using NzbDrone.Common;
 using NzbDrone.Core.Instrumentation;
 using NzbDrone.Common.Disk;
 using NzbDrone.Core.MediaFiles;
@@ -32,39 +35,77 @@ namespace NzbDrone.Core.Datastore
             _logger = logger;
         }
 
-        public int SweepAllResidualItems(int batchSize = 1000)
+        public int SweepAllResidualItems(int batchSize = 1000, bool completedOnly = false)
         {
+            var stopwatch = Stopwatch.StartNew();
+            var released = 0;
             var total = 0;
+            var failedBatches = 0;
             var afterId = 0;
-            LogMemorySnapshot("[STAGING-STARTUP] SweepAllResidualItems start (batchSize={0})", batchSize);
+            var logPrefix = completedOnly ? "[STAGING-CLEANUP]" : "[STAGING-STARTUP]";
 
             while (true)
             {
-                var items = _ingestQueue.GetActiveItems(batchSize, afterId);
+                List<IngestQueueItem> items;
+                try
+                {
+                    items = _ingestQueue.GetActiveItems(batchSize, afterId, includeCompleted: true);
+                }
+                catch (Exception ex)
+                {
+                    failedBatches++;
+                    _logger.Warn(ex, "{0} Unable to read staging work after id {1}; remaining work retained", logPrefix, afterId);
+                    break;
+                }
+
                 if (items == null || items.Count == 0)
                 {
                     break;
                 }
 
-                foreach (var item in items)
+                // A failed batch stays durable; advance so unrelated work can still finish.
+                afterId = items.Max(item => item.Id);
+                if (completedOnly)
                 {
-                    total += SweepItem(item, "[STAGING-STARTUP]");
-                    afterId = Math.Max(afterId, item.Id);
+                    items = items.Where(item => item.Status == "done").ToList();
                 }
-                LogMemorySnapshot("[STAGING-STARTUP] SweepAllResidualItems batch complete (batch={0}, total={1}, afterId={2})", items.Count, total, afterId);
 
-                if (items.Count < batchSize)
+                if (items.Count == 0) { continue; }
+
+                try
                 {
-                    break;
+                    var completedResults = _ingestQueue.GetImportResults(items.Select(item => item.Path).ToArray())
+                        .ToDictionary(result => result.QueueItemId);
+                    var representedPaths = (_mediaFileService.GetFileWithPath(items.Select(item => item.Path).ToList()) ?? new List<BookFile>())
+                        .Select(file => file.Path).ToHashSet(PathEqualityComparer.Instance);
+                    var verifiedResults = new List<int>();
+                    var verifiedPaths = new List<string>();
+                    foreach (var item in items)
+                    {
+                        if (item.Status == "done" && completedResults.TryGetValue(item.Id, out var result) &&
+                            (representedPaths.Contains(item.Path) || !_diskProvider.GetFileInfo(item.Path).Exists))
+                        {
+                            verifiedResults.Add(result.Id);
+                        }
+                        else if (!completedOnly && SweepItem(item, logPrefix) > 0)
+                        {
+                            total++;
+                            verifiedPaths.Add(item.Path);
+                        }
+                    }
+
+                    verifiedResults.AddRange(_ingestQueue.GetImportResults(verifiedPaths).Select(result => result.Id));
+                    released += _ingestQueue.PurgeCompletedResults(verifiedResults);
+                }
+                catch (Exception ex)
+                {
+                    failedBatches++;
+                    _logger.Warn(ex, "{0} Retained batch of {1} staging items through id {2}; continuing with later items", logPrefix, items.Count, afterId);
                 }
             }
 
-            if (total > 0)
-            {
-                _logger.Warn("[STAGING-STARTUP] Swept {0} abandoned staging items into terminal state", total);
-            }
-            LogMemorySnapshot("[STAGING-STARTUP] SweepAllResidualItems complete (total={0})", total);
-
+            _logger.Info("{0} Reconciled {1} abandoned items, released {2} completed items, failed batches: {3}, elapsed: {4}ms",
+                logPrefix, total, released, failedBatches, stopwatch.ElapsedMilliseconds);
             return total;
         }
 
@@ -146,6 +187,12 @@ namespace NzbDrone.Core.Datastore
                     _rootFolderService.GetBestRootFolder,
                     _logger,
                     logPrefix);
+
+                if (reason == "UNMAPPED_CREATE_FAILED")
+                {
+                    _logger.Warn("{0} Keeping staging item {1}: its file could not be saved in the library", logPrefix, item.Id);
+                    return 0;
+                }
 
                 var finalReason = outcome == ImportOutcome.Unmapped && !string.IsNullOrWhiteSpace(item.Err)
                     ? item.Err

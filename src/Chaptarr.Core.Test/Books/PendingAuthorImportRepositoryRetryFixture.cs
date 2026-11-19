@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Dapper;
+using Chaptarr.Core.Test.Common;
 using Microsoft.Data.Sqlite;
+using Npgsql;
 using NUnit.Framework;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books;
@@ -46,12 +48,13 @@ namespace Chaptarr.Core.Test.Books
         [Test]
         public void request_update_and_delete_should_require_the_expected_version()
         {
-            WithCasRepository((repository, connectionString) =>
+            WithCasRepository(false, (repository, connectionString) =>
             {
                 var item = new PendingAuthorImport
                 {
                     Id = 1,
                     ProviderId = "gr:1",
+                    AuthorName = "Selected Search Writer",
                     Version = 4,
                     AudiobookStatus = PendingImportStatus.Pending,
                     EbookStatus = PendingImportStatus.NotRequested,
@@ -61,10 +64,18 @@ namespace Chaptarr.Core.Test.Books
                     EbookTags = "[]",
                     Tags = "[1]",
                     LastSelectedMediaType = "ebook",
+                    RequestedBy = "UserInterface",
+                    AudiobookNarrations = "[{\"WorkProviderId\":\"hc:100\",\"EditionProviderId\":\"hc:201\",\"NarratorNames\":[\"Jim Dale\",\"Jane Smith\"],\"Search\":true}]",
                     NextAttemptAt = DateTime.UtcNow
                 };
 
                 Assert.That(repository.TryUpdateRequest(item, expectedVersion: 3), Is.False);
+                using (var verifyStaleUpdate = new SqliteConnection(connectionString))
+                {
+                    verifyStaleUpdate.Open();
+                    Assert.That(verifyStaleUpdate.ExecuteScalar<string>("SELECT \"AuthorName\" FROM \"PendingAuthorImport\" WHERE \"Id\" = 1"), Is.Null);
+                }
+
                 Assert.That(repository.TryUpdateRequest(item, expectedVersion: 4), Is.True);
                 Assert.That(item.Version, Is.EqualTo(5));
 
@@ -72,13 +83,16 @@ namespace Chaptarr.Core.Test.Books
                 {
                     verifyUpdate.Open();
                     var tags = verifyUpdate.QuerySingle<TagProjection>(@"
-                        SELECT ""AudiobookTags"", ""EbookTags"", ""Tags"", ""LastSelectedMediaType""
+                        SELECT ""AudiobookTags"", ""EbookTags"", ""Tags"", ""LastSelectedMediaType"", ""RequestedBy""
                         FROM ""PendingAuthorImport""
                         WHERE ""Id"" = 1;");
                     Assert.That(tags.AudiobookTags, Is.EqualTo("[1]"));
                     Assert.That(tags.EbookTags, Is.EqualTo("[]"));
                     Assert.That(tags.Tags, Is.EqualTo("[1]"));
                     Assert.That(tags.LastSelectedMediaType, Is.EqualTo("ebook"));
+                    Assert.That(tags.RequestedBy, Is.EqualTo("UserInterface"));
+                    Assert.That(verifyUpdate.ExecuteScalar<string>("SELECT \"AuthorName\" FROM \"PendingAuthorImport\" WHERE \"Id\" = 1"), Is.EqualTo(item.AuthorName));
+                    Assert.That(verifyUpdate.ExecuteScalar<string>("SELECT \"AudiobookNarrations\" FROM \"PendingAuthorImport\" WHERE \"Id\" = 1"), Is.EqualTo(item.AudiobookNarrations));
                 }
 
                 Assert.That(repository.TryDelete(item.Id, expectedVersion: 4), Is.False);
@@ -90,86 +104,76 @@ namespace Chaptarr.Core.Test.Books
             });
         }
 
-        private static void WithCasRepository(Action<PendingAuthorImportRepository, string> action)
+        [Test]
+        public void requested_by_should_survive_postgres_cas_update_and_connection_reopen()
         {
-            var databasePath = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"pending_author_cas_{Guid.NewGuid():N}.db");
-            var connectionString = new SqliteConnectionStringBuilder
+            WithCasRepository(true, (repository, postgresConnectionString) =>
             {
-                DataSource = databasePath,
-                Mode = SqliteOpenMode.ReadWriteCreate,
-                Pooling = false
-            }.ToString();
-
-            try
-            {
-                using (var connection = new SqliteConnection(connectionString))
+                var item = new PendingAuthorImport
                 {
-                    connection.Open();
-                    connection.Execute(@"
-                        CREATE TABLE ""PendingAuthorImport"" (
-                            ""Id"" INTEGER PRIMARY KEY,
-                            ""ProviderId"" TEXT,
-                            ""DiscoveredAuthorFolderPath"" TEXT,
-                            ""AudiobookStatus"" INTEGER,
-                            ""EbookStatus"" INTEGER,
-                            ""OverallStatus"" INTEGER,
-                            ""AudiobookMonitored"" INTEGER,
-                            ""AudiobookMonitorNewItems"" INTEGER,
-                            ""AudiobookMonitorExistingMode"" INTEGER,
-                            ""AudiobookQualityProfileId"" INTEGER,
-                            ""AudiobookMetadataProfileId"" INTEGER,
-                            ""AudiobookRootFolderPath"" TEXT,
-                            ""AudiobookBooksToMonitor"" TEXT,
-                            ""AudiobookBooksToSearch"" TEXT,
-                            ""AudiobookTags"" TEXT,
-                            ""EbookMonitored"" INTEGER,
-                            ""EbookMonitorNewItems"" INTEGER,
-                            ""EbookMonitorExistingMode"" INTEGER,
-                            ""EbookQualityProfileId"" INTEGER,
-                            ""EbookMetadataProfileId"" INTEGER,
-                            ""EbookRootFolderPath"" TEXT,
-                            ""EbookBooksToMonitor"" TEXT,
-                            ""EbookBooksToSearch"" TEXT,
-                            ""EbookTags"" TEXT,
-                            ""Tags"" TEXT,
-                            ""SearchForMissingBooks"" INTEGER,
-                            ""LastSelectedMediaType"" TEXT,
-                            ""AttemptCount"" INTEGER,
-                            ""MaxAttempts"" INTEGER,
-                            ""LastAttemptAt"" DATETIME,
-                            ""LastError"" TEXT,
-                            ""UpdatedAt"" DATETIME,
-                            ""NextAttemptAt"" DATETIME,
-                            ""Version"" INTEGER,
-                            ""CreatedAt"" DATETIME
-                        );
-                        INSERT INTO ""PendingAuthorImport""
-                            (""Id"", ""ProviderId"", ""AudiobookStatus"", ""EbookStatus"", ""OverallStatus"", ""SearchForMissingBooks"", ""AttemptCount"", ""MaxAttempts"", ""NextAttemptAt"", ""Version"", ""CreatedAt"")
-                        VALUES
-                            (1, 'gr:1', @Pending, @NotRequested, @Pending, 0, 0, 0, @Now, 4, @Now);",
-                        new
-                        {
-                            Pending = PendingImportStatus.Pending,
-                            NotRequested = PendingImportStatus.NotRequested,
-                            Now = DateTime.UtcNow
-                        });
+                    Id = 1,
+                    ProviderId = "gr:58",
+                    AuthorName = "Selected Search Writer",
+                    Version = 4,
+                    AudiobookStatus = PendingImportStatus.Pending,
+                    EbookStatus = PendingImportStatus.NotRequested,
+                    OverallStatus = PendingImportStatus.Pending,
+                    RequestedBy = "UserInterface",
+                    AudiobookNarrations = "[{\"WorkProviderId\":\"hc:100\",\"EditionProviderId\":\"hc:201\",\"NarratorNames\":[\"Jim Dale\",\"Jane Smith\"],\"Search\":true}]",
+                    NextAttemptAt = DateTime.UtcNow
+                };
+
+                Assert.That(repository.TryUpdateRequest(item, expectedVersion: 3), Is.False);
+                using (var verifyStaleUpdate = new NpgsqlConnection(postgresConnectionString))
+                {
+                    verifyStaleUpdate.Open();
+                    Assert.That(verifyStaleUpdate.ExecuteScalar<string>("SELECT \"AuthorName\" FROM \"PendingAuthorImport\" WHERE \"Id\" = 1"), Is.Null);
                 }
 
-                var database = new Database("main", () =>
+                Assert.That(repository.TryUpdateRequest(item, expectedVersion: 4), Is.True);
+                Assert.That(item.Version, Is.EqualTo(5));
+
+                using var verifyConnection = new NpgsqlConnection(postgresConnectionString);
+                verifyConnection.Open();
+                Assert.That(verifyConnection.ExecuteScalar<string>("SELECT \"AuthorName\" FROM \"PendingAuthorImport\" WHERE \"Id\" = 1"), Is.EqualTo(item.AuthorName));
+                Assert.That(
+                    verifyConnection.ExecuteScalar<string>(@"SELECT ""RequestedBy"" FROM ""PendingAuthorImport"" WHERE ""Id"" = 1;"),
+                    Is.EqualTo("UserInterface"));
+                using (var verifyNarration = new NpgsqlConnection(postgresConnectionString))
                 {
-                    var connection = new SqliteConnection(connectionString);
-                    connection.Open();
-                    return connection;
+                    verifyNarration.Open();
+                    Assert.That(verifyNarration.ExecuteScalar<string>("SELECT \"AudiobookNarrations\" FROM \"PendingAuthorImport\" WHERE \"Id\" = 1"), Is.EqualTo(item.AudiobookNarrations));
+                }
+
+                Assert.That(repository.TryDelete(item.Id, expectedVersion: 4), Is.False);
+                Assert.That(repository.TryDelete(item.Id, expectedVersion: 5), Is.True);
+            });
+        }
+
+        private static void WithCasRepository(bool postgres, Action<PendingAuthorImportRepository, string> action)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var repository = new PendingAuthorImportRepository(database, new StubEventAggregator());
+                repository.Insert(new PendingAuthorImport
+                {
+                    ProviderId = postgres ? "gr:58" : "gr:1",
+                    ProviderPrefix = "gr",
+                    AudiobookStatus = PendingImportStatus.Pending,
+                    EbookStatus = PendingImportStatus.NotRequested,
+                    OverallStatus = PendingImportStatus.Pending,
+                    RequestedBy = "ImportList:Favorites",
+                    CreatedAt = DateTime.UtcNow,
+                    NextAttemptAt = DateTime.UtcNow,
+                    Version = 4
                 });
-                action(new PendingAuthorImportRepository(new MainDatabase(database), new StubEventAggregator()), connectionString);
-            }
-            finally
-            {
-                if (File.Exists(databasePath))
+                string connectionString;
+                using (var connection = database.OpenConnection())
                 {
-                    File.Delete(databasePath);
+                    connectionString = connection.ConnectionString;
                 }
-            }
+                action(repository, connectionString);
+            });
         }
 
         private static void WithRepository(Action<PendingAuthorImportRepository, string> action)
@@ -241,6 +245,7 @@ namespace Chaptarr.Core.Test.Books
             public string EbookTags { get; set; }
             public string Tags { get; set; }
             public string LastSelectedMediaType { get; set; }
+            public string RequestedBy { get; set; }
         }
     }
 }

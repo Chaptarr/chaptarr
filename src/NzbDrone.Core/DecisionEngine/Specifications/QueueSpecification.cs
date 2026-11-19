@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using NLog;
@@ -39,24 +40,39 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
 
         public Decision IsSatisfiedBy(RemoteBook subject, SearchCriteriaBase searchCriteria)
         {
+            return CheckQueue(subject, _queueService.GetQueue(includeConversionStatus: false));
+        }
+
+        public Func<RemoteBook, Decision> PrepareCheck()
+        {
+            var queue = _queueService.GetQueue(includeConversionStatus: false);
+            return subject => CheckQueue(subject, queue);
+        }
+
+        private Decision CheckQueue(RemoteBook subject, List<Queue.Queue> queue)
+        {
             var subjectBookIds = GetSubjectBookIds(subject);
             if (!subjectBookIds.Any())
             {
                 return Decision.Accept();
             }
 
-            var queue = _queueService.GetQueue();
-            var matchingBook = queue.Where(q => GetQueueBookIds(q).Intersect(subjectBookIds).Any())
+            var matchingBook = queue.Where(q => q.TrackedDownloadState != TrackedDownloadState.Imported &&
+                                        q.GetTargetBookIds().Intersect(subjectBookIds).Any())
                                     .ToList();
 
             foreach (var queueItem in matchingBook)
             {
                 var remoteBook = queueItem.RemoteBook;
+                if (remoteBook?.AlternativeCopies == true)
+                {
+                    remoteBook = remoteBook.ForBooks(remoteBook.Books.Where(book => subjectBookIds.Contains(book.Id)));
+                }
                 var queuedSourceQuality = remoteBook?.ParsedBookInfo?.Quality ?? queueItem.Quality;
                 var candidateSourceQuality = subject.ParsedBookInfo.Quality;
-                var queuedEffectiveQuality = QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(subject.Author, queuedSourceQuality);
-                var candidateEffectiveQuality = QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(subject.Author, candidateSourceQuality);
-                var qualityProfile = subject.Author.GetQualityProfileForQuality(candidateSourceQuality.Quality);
+                var qualityProfile = subject.GetQualityProfile();
+                var queuedEffectiveQuality = QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(qualityProfile, queuedSourceQuality);
+                var candidateEffectiveQuality = QualityConversionHelper.GetEffectiveQualityAfterPlannedConversion(qualityProfile, candidateSourceQuality);
 
                 // To avoid a race make sure it's not FailedPending (failed awaiting removal/search).
                 // Failed items (already searching for a replacement) won't be part of the queue since
@@ -124,30 +140,6 @@ namespace NzbDrone.Core.DecisionEngine.Specifications
         private static List<int> GetSubjectBookIds(RemoteBook remoteBook)
         {
             return GetBookIds(remoteBook?.GetBooksMatchingReleaseMediaType());
-        }
-
-        private static List<int> GetQueueBookIds(Queue.Queue queueItem)
-        {
-            if (queueItem?.TargetBookIds?.Any() == true)
-            {
-                return queueItem.TargetBookIds
-                    .Where(id => id > 0)
-                    .Distinct()
-                    .ToList();
-            }
-
-            if (queueItem?.Book?.Id > 0)
-            {
-                return new List<int> { queueItem.Book.Id };
-            }
-
-            var matchingMediaTypeBooks = queueItem?.RemoteBook?.GetBooksMatchingReleaseMediaType();
-            if (matchingMediaTypeBooks?.Any() == true)
-            {
-                return GetBookIds(matchingMediaTypeBooks);
-            }
-
-            return GetBookIds(queueItem?.RemoteBook?.Books);
         }
 
         private static List<int> GetBookIds(IEnumerable<Book> books)

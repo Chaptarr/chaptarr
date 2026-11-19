@@ -6,10 +6,10 @@
 .toggle {
   display: inline-flex;
   align-items: stretch;
-  background-color: var(--inputBackgroundColor);
+  overflow: hidden;
   border: 1px solid var(--inputBorderColor);
   border-radius: 999px;
-  overflow: hidden;
+  background-color: var(--inputBackgroundColor);
   user-select: none;
 }
 
@@ -20,20 +20,20 @@
 }
 
 .option {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  color: var(--gray);
-  font-size: 13px;
-  font-weight: 500;
-  padding: 0 14px;
-  height: 35px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  cursor: pointer;
+  padding: 0 14px;
+  height: 35px;
+  border: 0;
+  background: transparent;
+  color: var(--gray);
   white-space: nowrap;
+  font-weight: 500;
+  font-size: 13px;
+  cursor: pointer;
+  appearance: none;
+  gap: 6px;
 }
 
 .option:not(:first-child) {
@@ -44,8 +44,9 @@
   color: var(--textColor);
 }
 
-.option:focus {
-  outline: 0;
+.option:focus-visible {
+  outline: 2px solid var(--textColor);
+  outline-offset: -3px;
 }
 
 .active {
@@ -54,14 +55,23 @@
 }
 
 .disabled {
-  cursor: not-allowed;
   opacity: 0.7;
+  cursor: not-allowed;
 }
 
-@media (max-width: 768px) {
+@media (max-width: $breakpointSmall) {
+  .toggleContainer,
+  .toggle {
+    min-width: 0;
+    width: 100%;
+  }
+
   .option {
-    height: 32px;
-    font-size: 12px;
+    justify-content: center;
+    flex: 1 1 auto;
+    padding: 0 10px;
+    min-height: 44px;
+    height: auto;
   }
 }
 

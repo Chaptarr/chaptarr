@@ -61,7 +61,8 @@ namespace Chaptarr.Core.Test.Api
                 null,
                 null,
                 rootFolderService,
-                LogManager.GetCurrentClassLogger());
+                LogManager.GetCurrentClassLogger(),
+                null);
 
             var resources = controller.GetBookFiles(
                 null,

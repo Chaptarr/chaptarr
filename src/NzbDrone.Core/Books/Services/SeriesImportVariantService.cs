@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using NLog;
+using NzbDrone.Core.Parser;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Messaging;
 using NzbDrone.Core.Books.Events;
@@ -96,7 +97,7 @@ namespace NzbDrone.Core.Books
                 var userNarrators = books
                     .Where(b => b.BookFiles?.Any() == true && !b.Narrator.IsNullOrWhiteSpace())
                     .Select(b => b.Narrator)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Distinct(NzbDrone.Core.Parser.Parser.NarratorNameComparer)
                     .ToList();
 
                 if (!userNarrators.Any())
@@ -148,7 +149,7 @@ namespace NzbDrone.Core.Books
         {
             // Check if this narrator has complete coverage
             var coverage = narratorCoverage.Values.FirstOrDefault(c =>
-                c.NarratorName.Equals(narratorName, StringComparison.OrdinalIgnoreCase));
+                NzbDrone.Core.Parser.Parser.NarratorNameComparer.Equals(c.NarratorName, narratorName));
 
             if (coverage == null || !coverage.HasCompleteCoverage)
             {
@@ -162,7 +163,7 @@ namespace NzbDrone.Core.Books
                 series.MediaType);
             var existingVariant = existingVariants.FirstOrDefault(v =>
                 v.IsNarratorVariant &&
-                v.Narrator.Equals(narratorName, StringComparison.OrdinalIgnoreCase));
+                NzbDrone.Core.Parser.Parser.NarratorNameComparer.Equals(v.Narrator, narratorName));
 
             if (existingVariant != null)
             {
@@ -187,7 +188,7 @@ namespace NzbDrone.Core.Books
         {
             // Ensure books with this narrator are linked to the variant
             var booksWithNarrator = seriesBooks
-                .Where(b => b.Narrator.Equals(narratorName, StringComparison.OrdinalIgnoreCase))
+                .Where(b => NzbDrone.Core.Parser.Parser.NarratorNameComparer.Equals(b.Narrator, narratorName))
                 .ToList();
 
             foreach (var book in booksWithNarrator)
@@ -219,7 +220,7 @@ namespace NzbDrone.Core.Books
                 .Where(b => b.BookFiles?.Any() == true)
                 .Where(b => !narratorCoverage.Values.Any(c =>
                     c.HasCompleteCoverage &&
-                    c.NarratorName.Equals(b.Narrator, StringComparison.OrdinalIgnoreCase)))
+                    NzbDrone.Core.Parser.Parser.NarratorNameComparer.Equals(c.NarratorName, b.Narrator)))
                 .ToList();
 
             if (booksWithoutCompleteNarratorCoverage.Any())

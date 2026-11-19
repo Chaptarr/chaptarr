@@ -45,8 +45,9 @@
   color: var(--textColor);
 }
 
-.option:focus {
-  outline: 0;
+.option:focus-visible {
+  outline: 2px solid var(--textColor);
+  outline-offset: -3px;
 }
 
 .active {
@@ -72,12 +73,12 @@
   .container {
     grid-template-columns: repeat(2, 60px);
 
-    height: 32px;
+    height: 50px;
   }
 
   .option,
   .slider {
-    height: 26px;
+    height: 44px;
   }
 
   .option {

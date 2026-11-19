@@ -12,6 +12,7 @@ namespace NzbDrone.Core.MetadataSource
     {
         bool TryBeginRequest(out TimeSpan retryAfter);
         bool CanAttemptWithoutProbe(out TimeSpan retryAfter);
+        bool CanBeginRequest(out TimeSpan retryAfter);
         void ReportResponse(HttpResponse response);
         void ReportException(Exception exception);
         void Reset();
@@ -43,6 +44,11 @@ namespace NzbDrone.Core.MetadataSource
         public bool CanAttemptWithoutProbe(out TimeSpan retryAfter)
         {
             return _healthService.CanAttemptWithoutProbe(SourceName, out retryAfter);
+        }
+
+        public bool CanBeginRequest(out TimeSpan retryAfter)
+        {
+            return _healthService.CanBeginRequest(SourceName, out retryAfter);
         }
 
         public void Reset()

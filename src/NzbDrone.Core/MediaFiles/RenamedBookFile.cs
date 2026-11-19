@@ -4,5 +4,6 @@ namespace NzbDrone.Core.MediaFiles
     {
         public BookFile BookFile { get; set; }
         public string PreviousPath { get; set; }
+        public string PreviousAuthorPath { get; set; }
     }
 }

@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
-using NzbDrone.Common.Exceptions;
+using System.Net;
 
 namespace NzbDrone.Core.Exceptions
 {
-    public class AuthorTerminalException : NzbDroneException
+    public class AuthorTerminalException : NzbDroneClientException
     {
         private static readonly HashSet<string> KnownCodes = new(StringComparer.Ordinal)
         {
@@ -21,7 +21,7 @@ namespace NzbDrone.Core.Exceptions
         public bool Reopenable { get; }
 
         public AuthorTerminalException(string code, string providerId, string resolvedProviderId, string message, bool reopenable)
-            : base("{0}: {1}", code, message)
+            : base(HttpStatusCode.UnprocessableEntity, "{0}: {1}", code, message)
         {
             if (!IsKnownCode(code))
             {

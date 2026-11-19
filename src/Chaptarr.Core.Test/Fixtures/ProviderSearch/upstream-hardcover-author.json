@@ -1,0 +1,1279 @@
+{
+  "data": {
+    "search": {
+      "results": {
+        "facet_counts": [],
+        "found": 30,
+        "hits": [
+          {
+            "document": {
+              "alternate_names": [
+                "Ursula Le Guin",
+                "URSULA K. LE GUIN",
+                "Ursula K.Le Guin",
+                "Ursula le Guin",
+                "Ursula K. Le GUIN",
+                "Ursula Kroeber Le Guin",
+                "Ursula K. (Ursula Kroeber) Le Guin",
+                "URSULA. LE GUIN",
+                "Ursula K. Le Guin",
+                "U. Le Guin",
+                "Le Guin, Ursula K., 1929-",
+                "Ursula Le Guin Kroeber",
+                "URSULA L. LE GUIN",
+                "Ursula K., Jen, Gish Le Guin",
+                "Ursula Leguin",
+                "Ursula LeGuin",
+                "Ursula K. Leguin",
+                "Ursula K. LeGuin",
+                "Ursula K Le Guin",
+                "Ursula K LeGuin",
+                "le-guin-ursula",
+                "Ursula LE GUIN",
+                "URSULA LE GUIN",
+                "Ursala K. LeGuin",
+                "Ursula K. LE GUIN",
+                "Le Guin Ursula K",
+                "Ursula K. Le Guine",
+                "Ursula k le guin"
+              ],
+              "books": [
+                "A Wizard of Earthsea",
+                "The Left Hand of Darkness",
+                "The Dispossessed",
+                "Roadside Picnic",
+                "The Lathe of Heaven"
+              ],
+              "books_count": 397,
+              "id": "213830",
+              "image": {
+                "color": "#464646",
+                "color_name": "Gray",
+                "height": 340,
+                "id": 35187,
+                "url": "https://assets.hardcover.app/authors/213830/6294300-L.jpg",
+                "width": 280
+              },
+              "name": "Ursula K. Le Guin",
+              "name_personal": "Ursula K. Le Guin",
+              "series_ids": [
+                185078,
+                122915,
+                311490,
+                218580,
+                190092,
+                73522,
+                92125,
+                28820,
+                125293,
+                66630,
+                67419,
+                67418,
+                67820,
+                67821,
+                86138,
+                128619,
+                128617,
+                128618,
+                122919,
+                137673,
+                139127,
+                144907,
+                125299,
+                219656,
+                1170,
+                148436,
+                149368,
+                149446,
+                267506,
+                139791,
+                156049,
+                278932,
+                278933,
+                271177,
+                11239,
+                109152,
+                110200,
+                184653,
+                187113,
+                186951,
+                199320,
+                199323,
+                8113,
+                60558,
+                6676,
+                186948,
+                254114,
+                199286,
+                237683,
+                208939,
+                203112,
+                12990,
+                239289,
+                6182,
+                256366,
+                1123,
+                303348,
+                213194,
+                303354,
+                240955,
+                8115,
+                215742,
+                220721,
+                247581,
+                291173,
+                291338,
+                6984,
+                112168,
+                292869,
+                294017
+              ],
+              "series_names": [
+                "Terremer",
+                "Earthsea",
+                "Orpheuse raamatukogu",
+                "The Earthsea Cycle Series",
+                "Earthsea Cycle #1",
+                "The Earthsea Cycle",
+                "Terramare",
+                "Os Despojados",
+                "Gifts",
+                "Kroniki Zachodniego Brzegu",
+                "Chronique des Rivages de l'Ouest",
+                "Chronique des Rivages de l’Ouest",
+                "Zeměmoří",
+                "Zeměmoří",
+                "Historias de Terramar",
+                "Χαϊνικός Κύκλος",
+                "Γαιοθάλασσα",
+                "Φτερόγατες",
+                "La saga di Terramare",
+                "Övärlden",
+                "Lo irreal y lo lo real",
+                "Цикълът за Землемория",
+                "En Gondal-bog",
+                "The Hainish Cycle",
+                "Earthsea Cycle",
+                "Ekumena",
+                "Erdsee",
+                "Ciclo do Ecuménio",
+                "Batı Sahili Yıllıkları",
+                "Ecumene",
+                "Maameren tarinat, #1 Maameren velho, #2 Atuanin Holvihaudat",
+                "The Ekumen",
+                "The Ekumen",
+                "Чарівник Земномор'я",
+                "Yeowe and Werel",
+                "Erdsee-Zyklus",
+                "Ciclo de Terramar",
+                "The Earthsea Quartet",
+                "Aardzee",
+                "Hainish Cycle 06",
+                "Les chats volants",
+                "Chronique des rivages de l'Ouest",
+                "Catwings",
+                "Hainish Hainish Cycle Series",
+                "Collected Works of Ursula K. Le Guin",
+                "Ekumen 04",
+                "Yerdeniz",
+                "Le Cycle de Hain",
+                "Terramare. Le Tombe di Atuan: Terramare",
+                "Hainish Döngüsü",
+                "PM's Outspoken Authors",
+                "The Unreal and the Real",
+                "Anales de la Costa Occidental",
+                "About Writing",
+                "Library of America",
+                "Hainish Cycle",
+                "v",
+                "Hainish,",
+                "Ekumen",
+                "LOA",
+                "Orsinia",
+                "Ace Books",
+                "Ciclo Hainish",
+                "Cronicile Ținuturilor din Apus",
+                "The Wind's Twelve Quarters",
+                "Krönikor från västra kusten",
+                "Annals of the Western Shore",
+                "Poetry",
+                "Metis Bilimkurgu",
+                "The"
+              ],
+              "slug": "ursula-k-le-guin"
+            },
+            "highlight": {
+              "alternate_names": [
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "Le",
+                    "Guin"
+                  ],
+                  "snippet": "<mark>Ursula</mark> <mark>Le</mark> <mark>Guin</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "URSULA",
+                    "LE",
+                    "GUIN"
+                  ],
+                  "snippet": "<mark>URSULA</mark> K. <mark>LE</mark> <mark>GUIN</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "Guin"
+                  ],
+                  "snippet": "<mark>Ursula</mark> K.Le <mark>Guin</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "le",
+                    "Guin"
+                  ],
+                  "snippet": "<mark>Ursula</mark> <mark>le</mark> <mark>Guin</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "Le",
+                    "GUIN"
+                  ],
+                  "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> <mark>GUIN</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "Le",
+                    "Guin"
+                  ],
+                  "snippet": "<mark>Ursula</mark> Kroeber <mark>Le</mark> <mark>Guin</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "Ursula",
+                    "Le",
+                    "Guin"
+                  ],
+                  "snippet": "<mark>Ursula</mark> K. (<mark>Ursula</mark> Kroeber) <mark>Le</mark> <mark>Guin</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "URSULA",
+                    "LE",
+                    "GUIN"
+                  ],
+                  "snippet": "<mark>URSULA</mark>. <mark>LE</mark> <mark>GUIN</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "Le",
+                    "Guin"
+                  ],
+                  "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "Le",
+                    "Guin"
+                  ],
+                  "snippet": "U. <mark>Le</mark> <mark>Guin</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "Le",
+                    "Guin",
+                    "Ursula"
+                  ],
+                  "snippet": "<mark>Le</mark> <mark>Guin</mark>, <mark>Ursula</mark> K., 1929-"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "Le",
+                    "Guin"
+                  ],
+                  "snippet": "<mark>Ursula</mark> <mark>Le</mark> <mark>Guin</mark> Kroeber"
+                },
+                {
+                  "matched_tokens": [
+                    "URSULA",
+                    "LE",
+                    "GUIN"
+                  ],
+                  "snippet": "<mark>URSULA</mark> L. <mark>LE</mark> <mark>GUIN</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "Le",
+                    "Guin"
+                  ],
+                  "snippet": "<mark>Ursula</mark> K., Jen, Gish <mark>Le</mark> <mark>Guin</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula"
+                  ],
+                  "snippet": "<mark>Ursula</mark> Leguin"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula"
+                  ],
+                  "snippet": "<mark>Ursula</mark> LeGuin"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula"
+                  ],
+                  "snippet": "<mark>Ursula</mark> K. Leguin"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula"
+                  ],
+                  "snippet": "<mark>Ursula</mark> K. LeGuin"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "Le",
+                    "Guin"
+                  ],
+                  "snippet": "<mark>Ursula</mark> K <mark>Le</mark> <mark>Guin</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula"
+                  ],
+                  "snippet": "<mark>Ursula</mark> K LeGuin"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "le-guin-ursula"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "LE",
+                    "GUIN"
+                  ],
+                  "snippet": "<mark>Ursula</mark> <mark>LE</mark> <mark>GUIN</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "URSULA",
+                    "LE",
+                    "GUIN"
+                  ],
+                  "snippet": "<mark>URSULA</mark> <mark>LE</mark> <mark>GUIN</mark>"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Ursala K. LeGuin"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "LE",
+                    "GUIN"
+                  ],
+                  "snippet": "<mark>Ursula</mark> K. <mark>LE</mark> <mark>GUIN</mark>"
+                },
+                {
+                  "matched_tokens": [
+                    "Le",
+                    "Guin",
+                    "Ursula"
+                  ],
+                  "snippet": "<mark>Le</mark> <mark>Guin</mark> <mark>Ursula</mark> K"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "Le"
+                  ],
+                  "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> Guine"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "le",
+                    "guin"
+                  ],
+                  "snippet": "<mark>Ursula</mark> k <mark>le</mark> <mark>guin</mark>"
+                }
+              ],
+              "name": {
+                "matched_tokens": [
+                  "Ursula",
+                  "Le",
+                  "Guin"
+                ],
+                "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>"
+              },
+              "name_personal": {
+                "matched_tokens": [
+                  "Ursula",
+                  "Le",
+                  "Guin"
+                ],
+                "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>"
+              },
+              "series_names": [
+                {
+                  "matched_tokens": [],
+                  "snippet": "Terremer"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Earthsea"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Orpheuse raamatukogu"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "The Earthsea Cycle Series"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Earthsea Cycle #1"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "The Earthsea Cycle"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Terramare"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Os Despojados"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Gifts"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Kroniki Zachodniego Brzegu"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Chronique des Rivages de l'Ouest"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Chronique des Rivages de l’Ouest"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Zeměmoří"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Zeměmoří"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Historias de Terramar"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Χαϊνικός Κύκλος"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Γαιοθάλασσα"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Φτερόγατες"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "La saga di Terramare"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Övärlden"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Lo irreal y lo lo real"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Цикълът за Землемория"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "En Gondal-bog"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "The Hainish Cycle"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Earthsea Cycle"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Ekumena"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Erdsee"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Ciclo do Ecuménio"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Batı Sahili Yıllıkları"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Ecumene"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Maameren tarinat, #1 Maameren velho, #2 Atuanin Holvihaudat"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "The Ekumen"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "The Ekumen"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Чарівник Земномор'я"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Yeowe and Werel"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Erdsee-Zyklus"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Ciclo de Terramar"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "The Earthsea Quartet"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Aardzee"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Hainish Cycle 06"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Les chats volants"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Chronique des rivages de l'Ouest"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Catwings"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Hainish Hainish Cycle Series"
+                },
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "Le",
+                    "Guin"
+                  ],
+                  "snippet": "Collected Works of <mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Ekumen 04"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Yerdeniz"
+                },
+                {
+                  "matched_tokens": [
+                    "Le"
+                  ],
+                  "snippet": "<mark>Le</mark> Cycle de Hain"
+                },
+                {
+                  "matched_tokens": [
+                    "Le"
+                  ],
+                  "snippet": "Terramare. <mark>Le</mark> Tombe di Atuan: Terramare"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Hainish Döngüsü"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "PM's Outspoken Authors"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "The Unreal and the Real"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Anales de la Costa Occidental"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "About Writing"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Library of America"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Hainish Cycle"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "v"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Hainish,"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Ekumen"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "LOA"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Orsinia"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Ace Books"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Ciclo Hainish"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Cronicile Ținuturilor din Apus"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "The Wind's Twelve Quarters"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Krönikor från västra kusten"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Annals of the Western Shore"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Poetry"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "Metis Bilimkurgu"
+                },
+                {
+                  "matched_tokens": [],
+                  "snippet": "The"
+                }
+              ]
+            },
+            "highlights": [
+              {
+                "field": "alternate_names",
+                "indices": [
+                  0,
+                  3,
+                  7,
+                  21,
+                  22
+                ],
+                "matched_tokens": [
+                  [
+                    "Ursula",
+                    "Le",
+                    "Guin"
+                  ],
+                  [
+                    "Ursula",
+                    "le",
+                    "Guin"
+                  ],
+                  [
+                    "URSULA",
+                    "LE",
+                    "GUIN"
+                  ],
+                  [
+                    "Ursula",
+                    "LE",
+                    "GUIN"
+                  ],
+                  [
+                    "URSULA",
+                    "LE",
+                    "GUIN"
+                  ]
+                ],
+                "snippets": [
+                  "<mark>Ursula</mark> <mark>Le</mark> <mark>Guin</mark>",
+                  "<mark>Ursula</mark> <mark>le</mark> <mark>Guin</mark>",
+                  "<mark>URSULA</mark>. <mark>LE</mark> <mark>GUIN</mark>",
+                  "<mark>Ursula</mark> <mark>LE</mark> <mark>GUIN</mark>",
+                  "<mark>URSULA</mark> <mark>LE</mark> <mark>GUIN</mark>"
+                ]
+              },
+              {
+                "field": "name",
+                "matched_tokens": [
+                  "Ursula",
+                  "Le",
+                  "Guin"
+                ],
+                "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>"
+              },
+              {
+                "field": "name_personal",
+                "matched_tokens": [
+                  "Ursula",
+                  "Le",
+                  "Guin"
+                ],
+                "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>"
+              },
+              {
+                "field": "series_names",
+                "indices": [
+                  44,
+                  47,
+                  48
+                ],
+                "matched_tokens": [
+                  [
+                    "Ursula",
+                    "Le",
+                    "Guin"
+                  ],
+                  [
+                    "Le"
+                  ],
+                  [
+                    "Le"
+                  ]
+                ],
+                "snippets": [
+                  "Collected Works of <mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>",
+                  "<mark>Le</mark> Cycle de Hain",
+                  "Terramare. <mark>Le</mark> Tombe di Atuan: Terramare"
+                ]
+              }
+            ],
+            "text_match": 1736172819517538332,
+            "text_match_info": {
+              "best_field_score": "3315704398080",
+              "best_field_weight": 3,
+              "fields_matched": 4,
+              "num_tokens_dropped": 0,
+              "score": "1736172819517538332",
+              "tokens_matched": 3,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "alternate_names": [],
+              "books": [
+                "Ursula Le Guin"
+              ],
+              "books_count": 1,
+              "id": "1519047",
+              "image": {},
+              "name": "Aardzee",
+              "series_ids": [],
+              "series_names": [],
+              "slug": "aardzee"
+            },
+            "highlight": {
+              "books": [
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "Le",
+                    "Guin"
+                  ],
+                  "snippet": "<mark>Ursula</mark> <mark>Le</mark> <mark>Guin</mark>"
+                }
+              ]
+            },
+            "highlights": [
+              {
+                "field": "books",
+                "indices": [
+                  0
+                ],
+                "matched_tokens": [
+                  [
+                    "Ursula",
+                    "Le",
+                    "Guin"
+                  ]
+                ],
+                "snippets": [
+                  "<mark>Ursula</mark> <mark>Le</mark> <mark>Guin</mark>"
+                ]
+              }
+            ],
+            "text_match": 1736172819517538313,
+            "text_match_info": {
+              "best_field_score": "3315704398080",
+              "best_field_weight": 1,
+              "fields_matched": 1,
+              "num_tokens_dropped": 0,
+              "score": "1736172819517538313",
+              "tokens_matched": 3,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "alternate_names": [],
+              "books": [
+                "Tao Te Ching: A New English Version by Ursula K. Le Guin"
+              ],
+              "books_count": 1,
+              "id": "1479452",
+              "image": {},
+              "name": "Ursula K. Le Guin, Tao Tzu",
+              "series_ids": [],
+              "series_names": [],
+              "slug": "ursula-k-le-guin-tao-tzu"
+            },
+            "highlight": {
+              "books": [
+                {
+                  "matched_tokens": [
+                    "Ursula",
+                    "Le",
+                    "Guin"
+                  ],
+                  "snippet": "Tao Te Ching: A New English Version by <mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>"
+                }
+              ],
+              "name": {
+                "matched_tokens": [
+                  "Ursula",
+                  "Le",
+                  "Guin"
+                ],
+                "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>, Tao Tzu"
+              }
+            },
+            "highlights": [
+              {
+                "field": "name",
+                "matched_tokens": [
+                  "Ursula",
+                  "Le",
+                  "Guin"
+                ],
+                "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>, Tao Tzu"
+              },
+              {
+                "field": "books",
+                "indices": [
+                  0
+                ],
+                "matched_tokens": [
+                  [
+                    "Ursula",
+                    "Le",
+                    "Guin"
+                  ]
+                ],
+                "snippets": [
+                  "Tao Te Ching: A New English Version by <mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>"
+                ]
+              }
+            ],
+            "text_match": 1736172819382796314,
+            "text_match_info": {
+              "best_field_score": "3315704332288",
+              "best_field_weight": 3,
+              "fields_matched": 2,
+              "num_tokens_dropped": 0,
+              "score": "1736172819382796314",
+              "tokens_matched": 3,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "alternate_names": [],
+              "books": [
+                "Nebula Award Stories Eleven"
+              ],
+              "books_count": 1,
+              "id": "1558330",
+              "image": {},
+              "name": "Harlan Ellison, Craig Kee Strete, Ursula K. Le Guin, Vonda N. McIntyre, Peter Nicholls, Fritz Leiber, Tom Reamy, P.J. Plauger, Roger Zelazny, Joe Haldeman",
+              "series_ids": [],
+              "series_names": [],
+              "slug": "harlan-ellison-craig-kee-strete-ursula-k-le-guin-vonda-n-mcintyre-peter-nicholls-fritz-leiber-tom-reamy-pj-plauger-roger-zelazny-joe-haldeman"
+            },
+            "highlight": {
+              "name": {
+                "matched_tokens": [
+                  "Ursula",
+                  "Le",
+                  "Guin"
+                ],
+                "snippet": "Harlan Ellison, Craig Kee Strete, <mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>, Vonda N. McIntyre, Peter Nicholls, Fritz Leiber, Tom Reamy, P.J. Plauger, Roger Zelazny, Joe Haldeman"
+              }
+            },
+            "highlights": [
+              {
+                "field": "name",
+                "matched_tokens": [
+                  "Ursula",
+                  "Le",
+                  "Guin"
+                ],
+                "snippet": "Harlan Ellison, Craig Kee Strete, <mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>, Vonda N. McIntyre, Peter Nicholls, Fritz Leiber, Tom Reamy, P.J. Plauger, Roger Zelazny, Joe Haldeman"
+              }
+            ],
+            "text_match": 1736172819382796313,
+            "text_match_info": {
+              "best_field_score": "3315704332288",
+              "best_field_weight": 3,
+              "fields_matched": 1,
+              "num_tokens_dropped": 0,
+              "score": "1736172819382796313",
+              "tokens_matched": 3,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "alternate_names": [],
+              "books": [
+                "Atuani hauad"
+              ],
+              "books_count": 1,
+              "id": "1520024",
+              "image": {},
+              "name": "Ursula K. Le Guin, Krista Kaer",
+              "series_ids": [],
+              "series_names": [],
+              "slug": "ursula-k-le-guin-krista-kaer"
+            },
+            "highlight": {
+              "name": {
+                "matched_tokens": [
+                  "Ursula",
+                  "Le",
+                  "Guin"
+                ],
+                "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>, Krista Kaer"
+              }
+            },
+            "highlights": [
+              {
+                "field": "name",
+                "matched_tokens": [
+                  "Ursula",
+                  "Le",
+                  "Guin"
+                ],
+                "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>, Krista Kaer"
+              }
+            ],
+            "text_match": 1736172819382796313,
+            "text_match_info": {
+              "best_field_score": "3315704332288",
+              "best_field_weight": 3,
+              "fields_matched": 1,
+              "num_tokens_dropped": 0,
+              "score": "1736172819382796313",
+              "tokens_matched": 3,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "alternate_names": [],
+              "books": [
+                "Lao Tzu: Tao Te Ching: A Book about the Way and the Power of the Way"
+              ],
+              "books_count": 1,
+              "id": "1514829",
+              "image": {},
+              "name": "Ursula K. Le Guin, Lao Tzu, J.P. Seaton",
+              "series_ids": [],
+              "series_names": [],
+              "slug": "ursula-k-le-guin-lao-tzu-jp-seaton"
+            },
+            "highlight": {
+              "name": {
+                "matched_tokens": [
+                  "Ursula",
+                  "Le",
+                  "Guin"
+                ],
+                "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>, Lao Tzu, J.P. Seaton"
+              }
+            },
+            "highlights": [
+              {
+                "field": "name",
+                "matched_tokens": [
+                  "Ursula",
+                  "Le",
+                  "Guin"
+                ],
+                "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>, Lao Tzu, J.P. Seaton"
+              }
+            ],
+            "text_match": 1736172819382796313,
+            "text_match_info": {
+              "best_field_score": "3315704332288",
+              "best_field_weight": 3,
+              "fields_matched": 1,
+              "num_tokens_dropped": 0,
+              "score": "1736172819382796313",
+              "tokens_matched": 3,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "alternate_names": [],
+              "books": [
+                "Brave New Worlds: Dystopian Stories"
+              ],
+              "books_count": 1,
+              "id": "1498759",
+              "image": {},
+              "name": "Ursula K. le Guin & Cory Doctorow & Paolo Bacigalupi & Orson Scott Card & Neil Gaiman & Ray Bradbury & Philip K. Dick & Kurt Vonnegut & Shirley Jackson & Kate Wilhelm & Carrie Vaughn & Nick Gaetano",
+              "series_ids": [],
+              "series_names": [],
+              "slug": "ursula-k-le-guin-and-cory-doctorow-and-paolo-bacigalupi-and-orson-scott-card-and-neil-gaiman-and-ray-bradbury-and-philip-k-dick-and-kurt-vonnegut-and-shirley-jackson-and-kate-wilhelm-and-carrie-vaughn-and-nick-gaetano"
+            },
+            "highlight": {
+              "name": {
+                "matched_tokens": [
+                  "Ursula",
+                  "le",
+                  "Guin"
+                ],
+                "snippet": "<mark>Ursula</mark> K. <mark>le</mark> <mark>Guin</mark> & Cory Doctorow & Paolo Bacigalupi & Orson Scott Card & Neil Gaiman & Ray Bradbury & Philip K. Dick & Kurt Vonnegut & Shirley Jackson & Kate Wilhelm & Carrie Vaughn & Nick Gaetano"
+              }
+            },
+            "highlights": [
+              {
+                "field": "name",
+                "matched_tokens": [
+                  "Ursula",
+                  "le",
+                  "Guin"
+                ],
+                "snippet": "<mark>Ursula</mark> K. <mark>le</mark> <mark>Guin</mark> & Cory Doctorow & Paolo Bacigalupi & Orson Scott Card & Neil Gaiman & Ray Bradbury & Philip K. Dick & Kurt Vonnegut & Shirley Jackson & Kate Wilhelm & Carrie Vaughn & Nick Gaetano"
+              }
+            ],
+            "text_match": 1736172819382796313,
+            "text_match_info": {
+              "best_field_score": "3315704332288",
+              "best_field_weight": 3,
+              "fields_matched": 1,
+              "num_tokens_dropped": 0,
+              "score": "1736172819382796313",
+              "tokens_matched": 3,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "alternate_names": [],
+              "books": [
+                "The Apocalypse Reader"
+              ],
+              "books_count": 1,
+              "id": "1498756",
+              "image": {},
+              "name": "Justin Taylor & Grace Aguilar & Steve Aylett & Robert Bradley & Dennis Cooper & Lucy Corin & Matthew Derby & Carol Emshwiller & Ian Evenson & Neil Gaiman & Jeff Goldberg & Theodora Goss & Nathaniel Hawthorne & Shelley Jackson & Ursula K. le Guin & Stacey Levine & Kelly Link & Gary Lutz & H. P. Lovecraft & Rick Moody & Michael Moorcock & Josip Novakovich & Joyce Carol Oates & Edgar Allan Poe & Colette Phair & Terese Svoboda & Lynne Tillman & Deb Olin Unferth & H. G. Wells & Allison Whittenberg & Diane Williams & Adam Nemett & Elliott David & Jared Ho",
+              "series_ids": [],
+              "series_names": [],
+              "slug": "justin-taylor-and-grace-aguilar-and-steve-aylett-and-robert-bradley-and-dennis-cooper-and-lucy-corin-and-matthew-derby-and-carol-emshwiller-and-ian-evenson-and-neil-gaiman-and-jeff-goldberg-and-theodora-goss-and-nathaniel-hawthorne-and-shelley-jackson-and-ursula-k-le-guin-and-stacey-levine-and-kelly-link-and-gary-lutz-and-h-p-lovecraft-and-rick-moody-and-michael-moorcock-and-josip-novakovich-and-joyce-carol-oates-and-edgar-allan-poe-and-colette-phair-and-terese-svoboda-and-lynne-tillman-and-deb-olin-unferth-and-h-g-wells-and-allison-whittenberg-and-diane-williams-and-adam-nemett-and-elliott-david-and-jared-ho"
+            },
+            "highlight": {
+              "name": {
+                "matched_tokens": [
+                  "Ursula",
+                  "le",
+                  "Guin"
+                ],
+                "snippet": "Nathaniel Hawthorne & Shelley Jackson & <mark>Ursula</mark> K. <mark>le</mark> <mark>Guin</mark> & Stacey Levine & Kelly Link"
+              }
+            },
+            "highlights": [
+              {
+                "field": "name",
+                "matched_tokens": [
+                  "Ursula",
+                  "le",
+                  "Guin"
+                ],
+                "snippet": "Nathaniel Hawthorne & Shelley Jackson & <mark>Ursula</mark> K. <mark>le</mark> <mark>Guin</mark> & Stacey Levine & Kelly Link"
+              }
+            ],
+            "text_match": 1736172819382796313,
+            "text_match_info": {
+              "best_field_score": "3315704332288",
+              "best_field_weight": 3,
+              "fields_matched": 1,
+              "num_tokens_dropped": 0,
+              "score": "1736172819382796313",
+              "tokens_matched": 3,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "alternate_names": [],
+              "books": [],
+              "books_count": 0,
+              "id": "1466726",
+              "image": {},
+              "name": "Ursula K. Le Guin, Hilde Kramer",
+              "series_ids": [],
+              "series_names": [],
+              "slug": "ursula-k-le-guin-hilde-kramer"
+            },
+            "highlight": {
+              "name": {
+                "matched_tokens": [
+                  "Ursula",
+                  "Le",
+                  "Guin"
+                ],
+                "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>, Hilde Kramer"
+              }
+            },
+            "highlights": [
+              {
+                "field": "name",
+                "matched_tokens": [
+                  "Ursula",
+                  "Le",
+                  "Guin"
+                ],
+                "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>, Hilde Kramer"
+              }
+            ],
+            "text_match": 1736172819382796313,
+            "text_match_info": {
+              "best_field_score": "3315704332288",
+              "best_field_weight": 3,
+              "fields_matched": 1,
+              "num_tokens_dropped": 0,
+              "score": "1736172819382796313",
+              "tokens_matched": 3,
+              "typo_prefix_score": 0
+            }
+          },
+          {
+            "document": {
+              "alternate_names": [],
+              "books": [],
+              "books_count": 0,
+              "id": "1441423",
+              "image": {},
+              "name": "Ursula K. Le Guin, Lao Tzu",
+              "series_ids": [],
+              "series_names": [],
+              "slug": "ursula-k-le-guin-lao-tzu"
+            },
+            "highlight": {
+              "name": {
+                "matched_tokens": [
+                  "Ursula",
+                  "Le",
+                  "Guin"
+                ],
+                "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>, Lao Tzu"
+              }
+            },
+            "highlights": [
+              {
+                "field": "name",
+                "matched_tokens": [
+                  "Ursula",
+                  "Le",
+                  "Guin"
+                ],
+                "snippet": "<mark>Ursula</mark> K. <mark>Le</mark> <mark>Guin</mark>, Lao Tzu"
+              }
+            ],
+            "text_match": 1736172819382796313,
+            "text_match_info": {
+              "best_field_score": "3315704332288",
+              "best_field_weight": 3,
+              "fields_matched": 1,
+              "num_tokens_dropped": 0,
+              "score": "1736172819382796313",
+              "tokens_matched": 3,
+              "typo_prefix_score": 0
+            }
+          }
+        ],
+        "out_of": 1345391,
+        "page": 1,
+        "request_params": {
+          "collection_name": "Author_production_1764974976",
+          "first_q": "Ursula Le Guin",
+          "per_page": 10,
+          "q": "Ursula Le Guin"
+        },
+        "search_cutoff": false,
+        "search_time_ms": 4
+      }
+    }
+  }
+}

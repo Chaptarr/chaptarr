@@ -7,6 +7,10 @@ using NzbDrone.Core.Configuration;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
+using NzbDrone.Core.Profiles.Metadata;
+using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.RootFolders;
+using NzbDrone.Core.Tags;
 using NzbDrone.Core.ThingiProvider;
 
 namespace NzbDrone.Core.ImportLists
@@ -18,6 +22,11 @@ namespace NzbDrone.Core.ImportLists
         protected readonly IConfigService _configService;
         protected readonly IParsingService _parsingService;
         protected readonly Logger _logger;
+        private readonly Lazy<IQualityProfileService> _qualityProfileService;
+        private readonly Lazy<IMetadataProfileService> _metadataProfileService;
+        private readonly Lazy<ITagService> _tagService;
+        private readonly IRootFolderService _rootFolderService;
+        private readonly IRootFolderSettingsResolver _rootFolderSettingsResolver;
 
         public abstract string Name { get; }
 
@@ -25,12 +34,25 @@ namespace NzbDrone.Core.ImportLists
 
         public abstract TimeSpan MinRefreshInterval { get; }
 
-        public ImportListBase(IImportListStatusService importListStatusService, IConfigService configService, IParsingService parsingService, Logger logger)
+        public ImportListBase(IImportListStatusService importListStatusService,
+            IConfigService configService,
+            IParsingService parsingService,
+            Lazy<IQualityProfileService> qualityProfileService,
+            Lazy<IMetadataProfileService> metadataProfileService,
+            Lazy<ITagService> tagService,
+            IRootFolderService rootFolderService,
+            IRootFolderSettingsResolver rootFolderSettingsResolver,
+            Logger logger)
         {
             _importListStatusService = importListStatusService;
             _configService = configService;
             _parsingService = parsingService;
             _logger = logger;
+            _qualityProfileService = qualityProfileService;
+            _metadataProfileService = metadataProfileService;
+            _tagService = tagService;
+            _rootFolderService = rootFolderService;
+            _rootFolderSettingsResolver = rootFolderSettingsResolver;
         }
 
         public Type ConfigContract => typeof(TSettings);
@@ -43,13 +65,19 @@ namespace NzbDrone.Core.ImportLists
             {
                 var config = (IProviderConfig)new TSettings();
 
-                yield return new ImportListDefinition
+                var definition = new ImportListDefinition
                 {
                     Name = GetType().Name,
                     EnableAutomaticAdd = config.Validate().IsValid,
+                    ShouldMonitor = ImportListMonitorType.SpecificBook,
+                    ShouldMonitorExisting = true,
+                    MonitoringOptions = new ImportListMonitoringOptions(),
                     Implementation = GetType().Name,
                     Settings = config
                 };
+
+                definition.EnableAutomaticAdd &= DualMediaImportListActions.ValidateCreationSettings(definition).Count == 0;
+                yield return definition;
             }
         }
 
@@ -57,7 +85,7 @@ namespace NzbDrone.Core.ImportLists
 
         public virtual object RequestAction(string action, IDictionary<string, string> query)
         {
-            return null;
+            return DualMediaImportListActions.HandleRequestAction(action, _qualityProfileService, _metadataProfileService, _tagService);
         }
 
         protected TSettings Settings => (TSettings)Definition.Settings;
@@ -84,6 +112,7 @@ namespace NzbDrone.Core.ImportLists
                 Author = authorProviderId ?? fallbackAuthor,
                 Book = bookProviderId ?? editionProviderId ?? fallbackBook,
                 Edition = editionProviderId,
+                item.EditionMediaType,
                 item.HardcoverReadingFormatId
             };
         }
@@ -111,6 +140,18 @@ namespace NzbDrone.Core.ImportLists
             try
             {
                 Test(failures);
+                var definition = (ImportListDefinition)Definition;
+                var creationFailures = DualMediaImportListActions.ValidateCreationSettings(definition);
+                if (creationFailures.Count == 0)
+                {
+                    creationFailures.AddRange(DualMediaImportListActions.ValidateCreationProfiles(definition, _qualityProfileService, _metadataProfileService));
+                }
+
+                failures.AddRange(creationFailures);
+                if (creationFailures.Count == 0)
+                {
+                    failures.AddRange(DualMediaImportListActions.TestRootFolderConfig(definition, _rootFolderService, _rootFolderSettingsResolver));
+                }
             }
             catch (Exception ex)
             {

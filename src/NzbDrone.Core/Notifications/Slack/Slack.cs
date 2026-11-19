@@ -209,7 +209,7 @@ namespace NzbDrone.Core.Notifications.Slack
                     Color = "warning"
                 }
             };
-            var payload = CreatePayload($"Import Failed: {message.Message}", attachments);
+            var payload = CreatePayload($"{message.ImportStatusTitle}: {message.Message}", attachments);
 
             _proxy.SendPayload(payload, Settings);
         }

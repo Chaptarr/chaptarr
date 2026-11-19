@@ -56,11 +56,12 @@ namespace NzbDrone.Core.Indexers
 
             var seedConfig = new TorrentSeedConfiguration
             {
-                Ratio = seedCriteria.SeedRatio
+                KeepSeeding = seedCriteria.NeverMoveOnImport,
+                Ratio = seedCriteria.NeverMoveOnImport ? null : seedCriteria.SeedRatio
             };
 
             var seedTime = fullSeason ? seedCriteria.DiscographySeedTime : seedCriteria.SeedTime;
-            if (seedTime.HasValue)
+            if (!seedConfig.KeepSeeding && seedTime.HasValue)
             {
                 seedConfig.SeedTime = TimeSpan.FromMinutes(seedTime.Value);
             }

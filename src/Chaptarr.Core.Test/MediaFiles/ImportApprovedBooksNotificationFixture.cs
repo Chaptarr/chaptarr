@@ -1,12 +1,18 @@
 using System;
+using System.Data;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
+using Chaptarr.Core.Test;
+using Microsoft.Data.Sqlite;
 using NLog;
 using NUnit.Framework;
+using Npgsql;
 using NzbDrone.Core.Blocklisting;
 using NzbDrone.Common.Messaging;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.CustomFormats;
@@ -36,9 +42,14 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<BookFile> AddedFiles { get; } = new();
             public List<BookFile> UpdatedFiles { get; } = new();
             public List<BookFile> DeletedFiles { get; } = new();
+            public List<BookFile> FilesByBook { get; } = new();
+            public List<List<BookFile>> ReplacementArguments { get; } = new();
             public bool ClearEditionOnAdd { get; set; }
             public BookFile FileAtPath { get; set; }
             public List<string> OperationOrder { get; set; }
+            public int ReplaceManyCalls { get; private set; }
+            public Exception ReplaceManyFailure { get; set; }
+            public bool FailOnlyFirstReplaceMany { get; set; }
 
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
 
@@ -57,13 +68,41 @@ namespace Chaptarr.Core.Test.MediaFiles
                 }
             }
 
+            public void ReplaceMany(List<BookFile> bookFiles, List<BookFile> replacedFiles, DeleteMediaFileReason reason, IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles = null)
+            {
+                ReplaceManyCalls++;
+                var rowsToReplace = replacedFiles?.ToList() ?? new List<BookFile>();
+                ReplacementArguments.Add(rowsToReplace);
+
+                if (ReplaceManyFailure != null && (!FailOnlyFirstReplaceMany || ReplaceManyCalls == 1))
+                {
+                    throw ReplaceManyFailure;
+                }
+
+                DeletedFiles.AddRange(rowsToReplace);
+                var replacedIds = rowsToReplace.Select(file => file.Id).ToHashSet();
+                FilesByBook.RemoveAll(file => replacedIds.Contains(file.Id));
+                foreach (var file in (bookFiles ?? new List<BookFile>()).Where(file => file.Id > 0)) Update(file);
+                AddMany((bookFiles ?? new List<BookFile>()).Where(file => file.Id == 0).ToList());
+            }
+
             public void Update(BookFile bookFile)
             {
                 UpdatedFiles.Add(bookFile);
+                FileAtPath = bookFile;
                 OperationOrder?.Add("update");
             }
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles) { }
+            public void ValidateReplacementFiles(List<BookFile> replacedFiles, IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+                => throw new NotSupportedException("Confirmation preflight is outside this notification adapter");
+            public void ReplaceMany(List<BookFile> bookFiles, List<BookFile> replacedFiles, DeleteMediaFileReason reason,
+                IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+                Action<Action<IDbConnection, IDbTransaction>> persist)
+            {
+                persist((connection, transaction) => ReplaceMany(bookFiles, replacedFiles, reason, confirmedFiles));
+            }
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason)
             {
                 DeletedFiles.Add(bookFile);
@@ -77,7 +116,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason) { }
             public List<System.IO.Abstractions.IFileInfo> FilterUnchangedFiles(List<System.IO.Abstractions.IFileInfo> files, FilterFilesType filter) => throw new NotImplementedException();
             public List<BookFile> GetFilesByAuthor(int authorId) => new();
-            public List<BookFile> GetFilesByBook(int bookId) => new();
+            public List<BookFile> GetFilesByBook(int bookId) => FilesByBook.ToList();
             public List<BookFile> GetFilesByBooks(List<int> bookIds) => new();
             public List<BookFile> GetFilesByEdition(int editionId) => new();
             public List<BookFile> GetUnmappedFiles() => new();
@@ -140,6 +179,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
 
             public BookFile CopyBookFile(BookFile bookFile, LocalBook localBook) => throw new NotImplementedException();
+            public bool CompleteImportReplicas(BookFile bookFile, LocalBook localBook) => false;
+
             public string GetImportDestinationPath(BookFile bookFile, LocalBook localBook) => DestinationPath;
         }
 
@@ -163,11 +204,20 @@ namespace Chaptarr.Core.Test.MediaFiles
         private class BookServiceProxy : DispatchProxy
         {
             public Book Book { get; set; }
+            public EditionServiceProxy EditionService { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
                 if (targetMethod?.Name == nameof(IBookService.GetBook))
                 {
+                    return Book;
+                }
+
+                if (targetMethod?.Name == nameof(IBookService.UpdateBook) && args.Length == 4)
+                {
+                    ((Action<IDbConnection, IDbTransaction>)args[3])?.Invoke(null, null);
+                    Book = (Book)args[0];
+                    EditionService?.CommitPreparedSelection((List<Edition>)args[1]);
                     return Book;
                 }
 
@@ -196,6 +246,16 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<Edition> EditionsByBook { get; set; } = new();
             public List<(Edition Edition, bool IsManualSelection)> SetMonitoredCalls { get; } = new();
             public List<string> OperationOrder { get; set; }
+            public void CommitPreparedSelection(List<Edition> changes)
+            {
+                var selected = changes.SingleOrDefault(edition => edition.Monitored);
+                if (selected != null)
+                {
+                    var original = EditionsByBook.Single(edition => edition.Id == selected.Id);
+                    SetMonitoredCalls.Add((original, selected.ManualAdd));
+                    OperationOrder?.Add("monitor");
+                }
+            }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
@@ -224,6 +284,11 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (typeof(T) == typeof(IHistoryService) && targetMethod?.Name == nameof(IHistoryService.FindByDownloadId))
+                {
+                    return new List<EntityHistory>();
+                }
+
                 throw new NotImplementedException($"Unexpected call to {typeof(T).Name}.{targetMethod?.Name}");
             }
         }
@@ -255,6 +320,60 @@ namespace Chaptarr.Core.Test.MediaFiles
         private static T Proxy<T>() where T : class
         {
             return DispatchProxy.Create<T, ThrowingProxy<T>>();
+        }
+
+        private static string CreateTemporaryUpgradeDirectory()
+        {
+            var path = Path.Combine(
+                Path.GetTempPath(),
+                $"chaptarr-tests\\import-upgrade-{Guid.NewGuid():N}").AsOsAgnostic();
+            Directory.CreateDirectory(path);
+            return path;
+        }
+
+        private static BookFile CreateExistingEbookFile(Edition edition, string path, int id)
+        {
+            return new BookFile
+            {
+                Id = id,
+                Path = path,
+                EditionId = edition.Id,
+                Edition = edition,
+                Quality = new QualityModel { Quality = Quality.EPUB, Revision = new Revision() },
+                MediaType = "ebook"
+            };
+        }
+
+        private static Exception CreatePathUniqueViolation(string provider)
+        {
+            if (provider == "postgres")
+            {
+                return new PostgresException(
+                    "duplicate key value violates unique constraint",
+                    "ERROR",
+                    "ERROR",
+                    "23505",
+                    detail: "Key (Path)=(replacement.epub) already exists.",
+                    constraintName: "IX_BookFiles_Path_Unique");
+            }
+
+            using var connection = new SqliteConnection("Data Source=:memory:;Pooling=False");
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "CREATE TABLE BookFiles (Path TEXT NOT NULL UNIQUE); INSERT INTO BookFiles (Path) VALUES ('replacement.epub');";
+            command.ExecuteNonQuery();
+            command.CommandText = "INSERT INTO BookFiles (Path) VALUES ('replacement.epub');";
+
+            try
+            {
+                command.ExecuteNonQuery();
+            }
+            catch (SqliteException exception)
+            {
+                return exception;
+            }
+
+            throw new InvalidOperationException("Could not create a SQLite BookFiles.Path unique violation for the retry test");
         }
 
         private static (Author Author, Book Book, Edition Edition, string Path) CreateExistingEbookContext(bool monitored = true)
@@ -334,7 +453,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             var editionServiceProxy = (EditionServiceProxy)(object)editionService;
             editionServiceProxy.Edition = edition;
             editionServiceProxy.EditionsByBook = editionsByBook?.Any() == true ? editionsByBook.ToList() : new List<Edition> { edition };
+            book.Editions = editionServiceProxy.EditionsByBook.Select(item => item.JsonClone()).ToList();
             editionServiceProxy.OperationOrder = operationOrder;
+            ((BookServiceProxy)(object)bookService).EditionService = editionServiceProxy;
 
             var service = new ImportApprovedBooks(
                 mediaFileService,
@@ -706,7 +827,8 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
-        public void should_publish_book_imported_event_for_new_download_when_edition_book_navigation_is_missing()
+        public void should_publish_book_imported_event_when_edition_book_navigation_is_missing(
+            [Values(false, true)] bool tracked)
         {
             var qualityProfile = new QualityProfile
             {
@@ -808,11 +930,11 @@ namespace Chaptarr.Core.Test.MediaFiles
             var results = service.Import(
                 new List<ImportDecision<LocalBook>> { new(localBook) },
                 replaceExisting: true,
-                downloadClientItem: new DownloadClientItem
+                downloadClientItem: tracked ? new DownloadClientItem
                 {
                     DownloadId = "download-id",
                     DownloadClientInfo = new DownloadClientItemClientInfo { Name = "qBittorrent", Type = "qbittorrent" }
-                },
+                } : null,
                 importMode: ImportMode.Copy,
                 cancellationToken: CancellationToken.None);
 
@@ -823,8 +945,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(importedEvents, Has.Count.EqualTo(1));
             Assert.That(importedEvents[0].Book.Id, Is.EqualTo(book.Id));
             Assert.That(importedEvents[0].Author.Id, Is.EqualTo(author.Id));
-            Assert.That(importedEvents[0].NewDownload, Is.True);
+            Assert.That(importedEvents[0].NewDownload, Is.EqualTo(tracked));
             Assert.That(importedEvents[0].ImportedBooks, Has.Count.EqualTo(1));
+            Assert.That(importedEvents[0].OldFiles, Is.Empty);
 
             Assert.That(eventAggregator.Events.OfType<BookAddedEvent>(), Is.Empty);
         }
@@ -1085,7 +1208,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(mediaFileService.AddedFiles, Is.Empty);
             Assert.That(mediaFileService.UpdatedFiles, Has.Count.EqualTo(1));
             Assert.That(mediaFileService.DeletedFiles, Is.Empty);
-            Assert.That(mediaFileService.FileAtPath, Is.SameAs(orphan));
+            Assert.That(mediaFileService.FileAtPath.Id, Is.EqualTo(orphan.Id));
+            orphan = mediaFileService.FileAtPath;
             Assert.That(orphan.DateAdded, Is.GreaterThan(originalDateAdded));
             Assert.That(orphan.CalibreId, Is.EqualTo(41));
 
@@ -1128,7 +1252,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(mediaFileService.AddedFiles, Is.Empty);
             Assert.That(mediaFileService.DeletedFiles, Is.Empty);
             Assert.That(mediaFileService.UpdatedFiles, Has.Count.EqualTo(1));
-            Assert.That(mediaFileService.UpdatedFiles[0], Is.SameAs(trackedFile));
+            Assert.That(mediaFileService.UpdatedFiles[0].Id, Is.EqualTo(trackedFile.Id));
+            trackedFile = mediaFileService.UpdatedFiles[0];
             Assert.That(mediaFileService.FileAtPath, Is.SameAs(trackedFile));
             Assert.That(trackedFile.Id, Is.EqualTo(8002));
             Assert.That(trackedFile.EditionId, Is.EqualTo(context.Edition.Id));
@@ -1185,7 +1310,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(mediaFileService.AddedFiles, Is.Empty);
             Assert.That(mediaFileService.DeletedFiles, Is.Empty);
             Assert.That(mediaFileService.UpdatedFiles, Has.Count.EqualTo(1));
-            Assert.That(mediaFileService.UpdatedFiles[0], Is.SameAs(trackedFile));
+            Assert.That(mediaFileService.UpdatedFiles[0].Id, Is.EqualTo(trackedFile.Id));
+            trackedFile = mediaFileService.UpdatedFiles[0];
             Assert.That(mediaFileService.FileAtPath, Is.SameAs(trackedFile));
             Assert.That(trackedFile.Id, Is.EqualTo(8003));
             Assert.That(trackedFile.EditionId, Is.EqualTo(context.Edition.Id));
@@ -1244,7 +1370,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(import.Results[0].Result, Is.EqualTo(ImportResultType.Imported));
             Assert.That(mediaFileService.AddedFiles, Is.Empty);
             Assert.That(mediaFileService.UpdatedFiles, Has.Count.EqualTo(1));
-            Assert.That(mediaFileService.UpdatedFiles[0], Is.SameAs(trackedFile));
+            Assert.That(mediaFileService.UpdatedFiles[0].Id, Is.EqualTo(trackedFile.Id));
+            trackedFile = mediaFileService.UpdatedFiles[0];
             Assert.That(mediaFileService.DeletedFiles, Is.Empty);
             Assert.That(eventAggregator.Events.OfType<BookFileAddedEvent>().ToList(), Has.Count.EqualTo(1));
             Assert.That(import.EditionService.SetMonitoredCalls, Has.Count.EqualTo(1));
@@ -1289,7 +1416,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(mediaFileService.AddedFiles, Is.Empty);
             Assert.That(mediaFileService.DeletedFiles, Is.Empty);
             Assert.That(mediaFileService.UpdatedFiles, Has.Count.EqualTo(1));
-            Assert.That(mediaFileService.UpdatedFiles[0], Is.SameAs(trackedFile));
+            Assert.That(mediaFileService.UpdatedFiles[0].Id, Is.EqualTo(trackedFile.Id));
+            trackedFile = mediaFileService.UpdatedFiles[0];
             Assert.That(trackedFile.Id, Is.EqualTo(8005));
             Assert.That(trackedFile.Path, Is.EqualTo(destinationPath));
             Assert.That(trackedFile.DateAdded, Is.EqualTo(originalDateAdded));
@@ -1355,6 +1483,167 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(trackedFile.CalibreId, Is.EqualTo(46));
             Assert.That(eventAggregator.Events, Is.Empty);
             Assert.That(import.EditionService.SetMonitoredCalls, Is.Empty);
+        }
+
+        [Test]
+        public void successful_replacement_import_should_publish_staged_old_file_with_book_imported_event()
+        {
+            var context = CreateExistingEbookContext();
+            var tempDirectory = CreateTemporaryUpgradeDirectory();
+            var oldPath = Path.Combine(tempDirectory, "existing.epub");
+            var sourcePath = Path.Combine(tempDirectory, "download.epub");
+            var destinationPath = Path.Combine(tempDirectory, "replacement.epub");
+            File.WriteAllText(oldPath, "existing file");
+
+            try
+            {
+                var oldFile = CreateExistingEbookFile(context.Edition, oldPath, 8101);
+                var mediaFiles = new StubMediaFileService();
+                mediaFiles.FilesByBook.Add(oldFile);
+                var events = new CapturingEventAggregator();
+                var mover = new StubMoveBookFiles { DestinationPath = destinationPath };
+
+                var import = ImportExistingEbook(
+                    mediaFiles,
+                    events,
+                    context.Author,
+                    context.Book,
+                    context.Edition,
+                    sourcePath,
+                    existingFile: false,
+                    bookFileMover: mover,
+                    importMode: ImportMode.Move);
+
+                Assert.That(import.Results.Single().Result, Is.EqualTo(ImportResultType.Imported));
+                Assert.That(mediaFiles.ReplaceManyCalls, Is.EqualTo(1));
+                Assert.That(mediaFiles.ReplacementArguments.Single(), Has.Count.EqualTo(1));
+                Assert.That(mediaFiles.ReplacementArguments.Single().Single(), Is.SameAs(oldFile));
+
+                var importedEvent = events.Events.OfType<BookImportedEvent>().Single();
+                Assert.That(importedEvent.ImportedBooks, Has.Count.EqualTo(1));
+                Assert.That(importedEvent.OldFiles, Has.Count.EqualTo(1));
+                Assert.That(importedEvent.OldFiles.Single(), Is.SameAs(oldFile));
+            }
+            finally
+            {
+                if (Directory.Exists(tempDirectory))
+                {
+                    Directory.Delete(tempDirectory, recursive: true);
+                }
+            }
+        }
+
+        [TestCase("sqlite")]
+        [TestCase("postgres")]
+        public void same_book_path_conflict_retry_should_only_publish_physically_staged_old_files(string provider)
+        {
+            var context = CreateExistingEbookContext();
+            var tempDirectory = CreateTemporaryUpgradeDirectory();
+            var oldPath = Path.Combine(tempDirectory, "existing.epub");
+            var sourcePath = Path.Combine(tempDirectory, "download.epub");
+            var destinationPath = Path.Combine(tempDirectory, "replacement.epub");
+            File.WriteAllText(oldPath, "existing file");
+
+            try
+            {
+                var oldFile = CreateExistingEbookFile(context.Edition, oldPath, 8102);
+                var staleDestinationFile = new BookFile
+                {
+                    Id = 8103,
+                    Path = destinationPath,
+                    EditionId = context.Edition.Id,
+                    Edition = context.Edition,
+                    MediaType = "ebook"
+                };
+                var mediaFiles = new StubMediaFileService
+                {
+                    FileAtPath = staleDestinationFile,
+                    ReplaceManyFailure = CreatePathUniqueViolation(provider),
+                    FailOnlyFirstReplaceMany = true
+                };
+                mediaFiles.FilesByBook.Add(oldFile);
+                var events = new CapturingEventAggregator();
+                var mover = new StubMoveBookFiles { DestinationPath = destinationPath };
+
+                var import = ImportExistingEbook(
+                    mediaFiles,
+                    events,
+                    context.Author,
+                    context.Book,
+                    context.Edition,
+                    sourcePath,
+                    existingFile: false,
+                    bookFileMover: mover,
+                    importMode: ImportMode.Move);
+
+                Assert.That(import.Results.Single().Result, Is.EqualTo(ImportResultType.Imported));
+                Assert.That(mediaFiles.ReplaceManyCalls, Is.EqualTo(2));
+                Assert.That(mediaFiles.ReplacementArguments, Has.Count.EqualTo(2));
+                Assert.That(mediaFiles.ReplacementArguments.All(rows => rows.Count == 2), Is.True);
+                Assert.That(mediaFiles.ReplacementArguments.All(rows => rows.Contains(oldFile)), Is.True);
+                Assert.That(mediaFiles.ReplacementArguments.All(rows => rows.Contains(staleDestinationFile)), Is.True);
+
+                var importedEvent = events.Events.OfType<BookImportedEvent>().Single();
+                Assert.That(importedEvent.OldFiles, Has.Count.EqualTo(1));
+                Assert.That(importedEvent.OldFiles.Single(), Is.SameAs(oldFile));
+                Assert.That(importedEvent.OldFiles, Does.Not.Contain(staleDestinationFile));
+            }
+            finally
+            {
+                if (Directory.Exists(tempDirectory))
+                {
+                    Directory.Delete(tempDirectory, recursive: true);
+                }
+            }
+        }
+
+        [Test]
+        public void failed_replacement_should_restore_old_file_and_publish_no_book_imported_event()
+        {
+            var context = CreateExistingEbookContext();
+            var tempDirectory = CreateTemporaryUpgradeDirectory();
+            var oldPath = Path.Combine(tempDirectory, "existing.epub");
+            var sourcePath = Path.Combine(tempDirectory, "download.epub");
+            var destinationPath = Path.Combine(tempDirectory, "replacement.epub");
+            File.WriteAllText(oldPath, "existing file");
+
+            try
+            {
+                var oldFile = CreateExistingEbookFile(context.Edition, oldPath, 8104);
+                var mediaFiles = new StubMediaFileService
+                {
+                    ReplaceManyFailure = new InvalidOperationException("synthetic atomic replacement failure")
+                };
+                mediaFiles.FilesByBook.Add(oldFile);
+                var events = new CapturingEventAggregator();
+                var mover = new StubMoveBookFiles { DestinationPath = destinationPath };
+
+                Assert.Throws<InvalidOperationException>(() =>
+                {
+                    ImportExistingEbook(
+                        mediaFiles,
+                        events,
+                        context.Author,
+                        context.Book,
+                        context.Edition,
+                        sourcePath,
+                        existingFile: false,
+                        bookFileMover: mover,
+                        importMode: ImportMode.Move);
+                });
+
+                Assert.That(mediaFiles.ReplaceManyCalls, Is.EqualTo(1));
+                Assert.That(mediaFiles.DeletedFiles, Is.Empty);
+                Assert.That(File.Exists(oldPath), Is.True);
+                Assert.That(events.Events.OfType<BookImportedEvent>(), Is.Empty);
+            }
+            finally
+            {
+                if (Directory.Exists(tempDirectory))
+                {
+                    Directory.Delete(tempDirectory, recursive: true);
+                }
+            }
         }
     }
 }

@@ -1,5 +1,7 @@
+import _ from 'lodash';
 import { createAction } from 'redux-actions';
 import { sortDirections } from 'Helpers/Props';
+import { updateItem } from 'Store/Actions/baseActions';
 import createBulkEditItemHandler from 'Store/Actions/Creators/createBulkEditItemHandler';
 import createBulkRemoveItemHandler from 'Store/Actions/Creators/createBulkRemoveItemHandler';
 import createFetchHandler from 'Store/Actions/Creators/createFetchHandler';
@@ -11,6 +13,8 @@ import createTestProviderHandler, { createCancelTestProviderHandler } from 'Stor
 import createSetClientSideCollectionSortReducer from 'Store/Actions/Creators/Reducers/createSetClientSideCollectionSortReducer';
 import createSetProviderFieldValueReducer from 'Store/Actions/Creators/Reducers/createSetProviderFieldValueReducer';
 import createSetSettingValueReducer from 'Store/Actions/Creators/Reducers/createSetSettingValueReducer';
+import { fetchOptions } from 'Store/Actions/providerOptionActions';
+import createProviderSettingsSelector from 'Store/Selectors/createProviderSettingsSelector';
 import { createThunk } from 'Store/thunks';
 import getSectionState from 'Utilities/State/getSectionState';
 import selectProviderSchema from 'Utilities/State/selectProviderSchema';
@@ -117,7 +121,24 @@ export default {
     [SAVE_INDEXER]: createSaveProviderHandler(section, '/indexer'),
     [CANCEL_SAVE_INDEXER]: createCancelSaveProviderHandler(section),
     [DELETE_INDEXER]: createRemoveItemHandler(section, '/indexer'),
-    [TEST_INDEXER]: createTestProviderHandler(section, '/indexer'),
+    [TEST_INDEXER]: createTestProviderHandler(section, '/indexer', (data, testData, getState, dispatch) => {
+      const supportsNarratorMetadata = data?.resource?.supportsNarratorMetadata ?? undefined;
+      const saved = getState().settings.indexers.items.find((item) => item.id === testData.id);
+      if (saved && saved.proxyId === testData.proxyId &&
+          testData.fields.every((field) => _.isEqual(field.value, saved.fields.find((item) => item.name === field.name)?.value))) {
+        dispatch(updateItem({ section, id: saved.id, supportsNarratorMetadata }));
+      }
+      dispatch(setIndexerValue({ name: 'supportsNarratorMetadata', value: supportsNarratorMetadata }));
+      const { item } = createProviderSettingsSelector('indexers')(getState(), { id: testData.id });
+      if (item.fields?.some((field) => field.selectOptionsProviderAction === 'newznabCategories')) {
+        dispatch(fetchOptions({
+          section: 'newznabCategories',
+          action: 'newznabCategories',
+          provider: 'indexer',
+          providerData: item
+        }));
+      }
+    }),
     [CANCEL_TEST_INDEXER]: createCancelTestProviderHandler(section),
     [TEST_ALL_INDEXERS]: createTestAllProvidersHandler(section, '/indexer'),
     [BULK_EDIT_INDEXERS]: createBulkEditItemHandler(section, '/indexer/bulk'),

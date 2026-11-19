@@ -117,6 +117,7 @@ namespace Chaptarr.Core.Test.DecisionEngine
             public List<ReleaseProfile> AllForTags(HashSet<int> tagIds) => _profiles;
             public ReleaseProfile Get(int id) => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();
+            public void Delete(IEnumerable<int> ids) => throw new NotImplementedException();
             public ReleaseProfile Add(ReleaseProfile restriction) => throw new NotImplementedException();
             public ReleaseProfile Update(ReleaseProfile restriction) => throw new NotImplementedException();
         }

@@ -90,19 +90,19 @@ namespace NzbDrone.Core.MediaFiles
             return assignments;
         }
 
-        private static int GetLocalBookGroupingKey(LocalBook localBook)
+        private static (bool HasEdition, int Id) GetLocalBookGroupingKey(LocalBook localBook)
         {
             if (localBook?.Edition?.Id > 0)
             {
-                return localBook.Edition.Id;
+                return (true, localBook.Edition.Id);
             }
 
             if (localBook?.Book?.Id > 0)
             {
-                return localBook.Book.Id;
+                return (false, localBook.Book.Id);
             }
 
-            return 0;
+            return (false, 0);
         }
 
         private static bool IsAudiobookFile(string path, string mediaType = null, QualityModel quality = null)

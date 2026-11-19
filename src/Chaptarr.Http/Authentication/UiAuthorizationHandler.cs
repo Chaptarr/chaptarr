@@ -25,7 +25,7 @@ namespace NzbDrone.Http.Authentication
             if (_authenticationRequired == AuthenticationRequiredType.DisabledForLocalAddresses)
             {
                 if (context.Resource is HttpContext httpContext &&
-                    TrustedNetworkPolicy.IsLocalOrTrusted(httpContext, _configService))
+                    TrustedNetworkPolicy.MaySkipLocalLogin(httpContext, _configService))
                 {
                     context.Succeed(requirement);
                 }

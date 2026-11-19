@@ -110,12 +110,14 @@ namespace Chaptarr.Core.Test.Parser
                 Author = author,
                 SeriesName = row.TargetSeriesName,
                 SeriesPosition = row.TargetSeriesPosition,
+                HardcoverBookId = row.TargetHardcoverBookId,
                 Editions = new List<Edition>
                 {
                     new Edition
                     {
                         Id = 1,
                         Title = editionTitle,
+                        Language = row.TargetEditionLanguage,
                         Monitored = true
                     }
                 }
@@ -133,6 +135,7 @@ namespace Chaptarr.Core.Test.Parser
                     Id = catalogBook.BookId,
                     Title = catalogBook.Title,
                     Author = author,
+                    HardcoverBookId = catalogBook.HardcoverBookId,
                     SeriesName = catalogBook.SeriesName,
                     SeriesPosition = catalogBook.SeriesPosition,
                     Editions = new List<Edition>
@@ -141,6 +144,7 @@ namespace Chaptarr.Core.Test.Parser
                         {
                             Id = catalogBook.BookId,
                             Title = string.IsNullOrWhiteSpace(catalogBook.EditionTitle) ? catalogBook.Title : catalogBook.EditionTitle,
+                            Language = catalogBook.EditionLanguage,
                             Monitored = true
                         }
                     }
@@ -175,6 +179,8 @@ namespace Chaptarr.Core.Test.Parser
             public int TargetBookId { get; set; }
             public string TargetBookTitle { get; set; }
             public string TargetEditionTitle { get; set; }
+            public string TargetEditionLanguage { get; set; }
+            public string TargetHardcoverBookId { get; set; }
             public string TargetSeriesName { get; set; }
             public string TargetSeriesPosition { get; set; }
             public bool ExpectedIsMatch { get; set; }
@@ -188,6 +194,8 @@ namespace Chaptarr.Core.Test.Parser
             public int BookId { get; set; }
             public string Title { get; set; }
             public string EditionTitle { get; set; }
+            public string EditionLanguage { get; set; }
+            public string HardcoverBookId { get; set; }
             public string SeriesName { get; set; }
             public string SeriesPosition { get; set; }
         }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using NLog;
+using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Disk;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
@@ -38,10 +39,11 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
                 return;
             }
 
-            var authors = _authorService.AllAuthorPaths();
+            var authorPaths = _authorService.AllAuthorPaths()
+                .GroupBy(author => author.Key);
             var imageExtensions = new List<string> { ".jpg", ".png", ".gif" };
 
-            foreach (var author in authors)
+            foreach (var author in authorPaths)
             {
                 var images = _metaFileService.GetFilesByAuthor(author.Key)
                     .Where(c => c.LastUpdated > new DateTime(2014, 12, 27) && imageExtensions.Any(x => c.RelativePath.EndsWith(x, StringComparison.InvariantCultureIgnoreCase)));
@@ -50,11 +52,21 @@ namespace NzbDrone.Core.Housekeeping.Housekeepers
                 {
                     try
                     {
-                        var path = Path.Combine(author.Value, image.RelativePath);
-                        if (!IsValid(path))
+                        var paths = author
+                            .Select(entry => entry.Value)
+                            .Where(basePath => image.RelativePath.IsNotNullOrWhiteSpace() && !Path.IsPathRooted(image.RelativePath))
+                            .Select(basePath => Path.GetFullPath(Path.Combine(basePath, image.RelativePath)))
+                            .Distinct(NzbDrone.Common.PathEqualityComparer.Instance)
+                            .Where(_diskProvider.FileExistsCanonical)
+                            .ToList();
+                        if (paths.Count > 1)
                         {
-                            _logger.Debug("Deleting invalid image file " + path);
-                            DeleteMetadata(image.Id, path);
+                            _logger.Debug("Skipping ambiguous metadata image {0} for author {1}: found at {2} base paths", image.RelativePath, author.Key, paths.Count);
+                        }
+                        else if (paths.Count == 1 && !IsValid(paths[0]))
+                        {
+                            _logger.Debug("Deleting invalid image file " + paths[0]);
+                            DeleteMetadata(image.Id, paths[0]);
                         }
                     }
                     catch (Exception e)

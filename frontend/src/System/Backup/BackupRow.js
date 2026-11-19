@@ -67,7 +67,9 @@ class BackupRow extends Component {
       name,
       path,
       size,
-      time
+      time,
+      includedComponents = [],
+      omittedComponents = []
     } = this.props;
 
     const {
@@ -104,6 +106,9 @@ class BackupRow extends Component {
           >
             {name}
           </Link>
+          {includedComponents.length > 0 && <div>{translate('BackupContents', { components: includedComponents.join(', ') })}</div>}
+          {omittedComponents.length > 0 && <div><Icon name={icons.WARNING} kind={kinds.WARNING} /> {translate('BackupOmittedComponents', { components: omittedComponents.join(', ') })}</div>}
+          {size > 5000000000 && <div>{translate('BackupUploadLimitHelp')}</div>}
         </TableRowCell>
 
         <TableRowCell>
@@ -116,12 +121,15 @@ class BackupRow extends Component {
 
         <TableRowCell className={styles.actions}>
           <IconButton
+            title={translate('RestoreBackup')}
+            aria-label={translate('RestoreBackup')}
             name={icons.RESTORE}
             onPress={this.onRestorePress}
           />
 
           <IconButton
             title={translate('DeleteBackup')}
+            aria-label={translate('DeleteBackup')}
             name={icons.DELETE}
             onPress={this.onDeletePress}
           />
@@ -131,6 +139,7 @@ class BackupRow extends Component {
           isOpen={isRestoreModalOpen}
           id={id}
           name={name}
+          omittedComponents={omittedComponents}
           onModalClose={this.onRestoreModalClose}
         />
 
@@ -155,7 +164,9 @@ BackupRow.propTypes = {
   path: PropTypes.string.isRequired,
   size: PropTypes.number.isRequired,
   time: PropTypes.string.isRequired,
-  onDeleteBackupPress: PropTypes.func.isRequired
+  onDeleteBackupPress: PropTypes.func.isRequired,
+  includedComponents: PropTypes.arrayOf(PropTypes.string),
+  omittedComponents: PropTypes.arrayOf(PropTypes.string)
 };
 
 export default BackupRow;

@@ -1,6 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
+using NLog;
+using NzbDrone.Core.MediaFiles.BookImport.Services;
+using NzbDrone.Core.Parser;
 using NzbDrone.Core.MediaFiles.BookImport;
 
 namespace Chaptarr.Core.Test.MediaFiles.BookImport
@@ -77,6 +81,92 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var result = UnitTagConsensusBuilder.BuildConsensus(sparse, totalFileCount: 6);
 
             Assert.That(result, Is.Empty, "two tagged files should not define consensus for a six-file unit");
+        }
+
+        [TestCase("Frank Herbert's Dune Messiah Chapter 1", "Frank Herbert's Dune Messiah Chapter 2", "frank herberts dune messiah chapter")]
+        [TestCase("Arrival — Dune Messiah", "Dune Messiah — Departure", "dune messiah")]
+        [TestCase("Chapter One — Author Book Title", "Author Book Title — Chapter Two", "author book title")]
+        [TestCase("أول فصل — اسم المؤلف عنوان الكتاب", "اسم المؤلف عنوان الكتاب — فصل آخر", "اسم المؤلف عنوان الكتاب")]
+        [TestCase("序章「宮沢賢治・銀河鉄道の夜」", "「宮沢賢治・銀河鉄道の夜」終章", "宮沢賢治 銀河鉄道の夜")]
+        [TestCase("One Renée Book", "Rene\u0301e Book Two", "renee book")]
+        [TestCase("One Never Never Land", "Never Never Land Two", "never never land")]
+        public void matching_should_retain_shared_ordered_text_anywhere_in_the_same_field(string first, string second, string expected)
+        {
+            var fields = new[]
+            {
+                new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) { ["CUSTOM"] = new() { first } },
+                new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) { ["custom"] = new() { second } }
+            };
+
+            Assert.That(UnitTagConsensusBuilder.BuildConsensus(fields, includeSharedText: true)["CUSTOM"].Select(value => string.Join(" ", ReleaseTitleMatchScorer.Tokenize(value))), Does.Contain(expected));
+            Assert.That(UnitTagConsensusBuilder.BuildConsensus(fields), Is.Empty, "conversion metadata must retain complete source values");
+            Array.Reverse(fields);
+            Assert.That(UnitTagConsensusBuilder.BuildConsensus(fields, includeSharedText: true)["CUSTOM"].Select(value => string.Join(" ", ReleaseTitleMatchScorer.Tokenize(value))), Does.Contain(expected));
+        }
+
+        [Test]
+        public void shared_request_must_preserve_author_possessive_punctuation()
+        {
+            var tags = new[] { "Frank Herbert's Dune Messiah — Opening", "Arrival — Frank Herbert's Dune Messiah" }
+                .Select(value => new Dictionary<string, List<string>> { ["FIELD1"] = new() { value } }).ToArray();
+            var shared = UnitTagConsensusBuilder.BuildConsensus(tags, includeSharedText: true);
+            Assert.That(shared["FIELD1"], Is.EqualTo(new[] { "Frank Herbert's Dune Messiah" }));
+            var validator = new ContainmentValidator(new TagNormalizer(), LogManager.GetCurrentClassLogger());
+            Assert.That(validator.ValidateAuthorInTags("Frank Herbert", shared, new[] { "Dune Messiah" }), Is.True);
+        }
+
+        [TestCase("Red Blue", "Blue Red")]
+        [TestCase("Red extra Blue", "Red different Blue")]
+        [TestCase("Red Blues", "Red Blue")]
+        public void shared_text_must_not_reorder_stitch_or_truncate_words(string first, string second)
+        {
+            var fields = new[]
+            {
+                new Dictionary<string, List<string>> { ["TITLE"] = new() { first } },
+                new Dictionary<string, List<string>> { ["TITLE"] = new() { second } }
+            };
+
+            Assert.That(UnitTagConsensusBuilder.BuildConsensus(fields, includeSharedText: true)["TITLE"]
+                .Select(value => string.Join(" ", ReleaseTitleMatchScorer.Tokenize(value))), Does.Not.Contain("red blue"));
+        }
+
+        [Test]
+        public void shared_text_must_not_cross_field_names_or_missing_members()
+        {
+            var fields = new[]
+            {
+                new Dictionary<string, List<string>> { ["TITLE"] = new() { "Author Book One" } },
+                new Dictionary<string, List<string>> { ["ALBUM"] = new() { "Author Book Two" } }
+            };
+
+            Assert.That(UnitTagConsensusBuilder.BuildConsensus(fields, includeSharedText: true), Is.Empty);
+            fields[1] = new Dictionary<string, List<string>> { ["TITLE"] = new() { "Author Book Two" } };
+            Assert.That(UnitTagConsensusBuilder.BuildConsensus(fields, totalFileCount: 3, includeSharedText: true), Is.Empty);
+        }
+
+        [Test]
+        public void shared_request_fields_must_be_present_on_every_member()
+        {
+            var tags = Enumerable.Range(0, 8).Select(index => new Dictionary<string, List<string>>
+            {
+                [index == 7 ? "OTHER" : "TITLE"] = new() { "Dune Messiah" }
+            }).ToArray();
+            Assert.That(UnitTagConsensusBuilder.BuildConsensus(tags, includeSharedText: true), Is.Empty);
+            Assert.That(UnitTagConsensusBuilder.BuildConsensus(tags)["TITLE"], Is.EqualTo(new[] { "Dune Messiah" }));
+        }
+
+        [Test]
+        public void matching_should_keep_the_shared_title_even_when_one_chapter_value_has_a_majority()
+        {
+            var fields = new[]
+            {
+                new Dictionary<string, List<string>> { ["TITLE"] = new() { "First Chapter Book Title" } },
+                new Dictionary<string, List<string>> { ["TITLE"] = new() { "First Chapter Book Title" } },
+                new Dictionary<string, List<string>> { ["TITLE"] = new() { "Book Title Final Chapter" } }
+            };
+
+            Assert.That(UnitTagConsensusBuilder.BuildConsensus(fields, includeSharedText: true)["TITLE"], Does.Contain("Book Title"));
+            Assert.That(UnitTagConsensusBuilder.BuildConsensus(fields)["TITLE"], Is.EqualTo(new[] { "First Chapter Book Title" }));
         }
     }
 }

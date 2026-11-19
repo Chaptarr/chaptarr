@@ -5,12 +5,14 @@ import Button from 'Components/Link/Button';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
 import Measure from 'Components/Measure';
 import FilterMenu from 'Components/Menu/FilterMenu';
+import ConfirmModal from 'Components/Modal/ConfirmModal';
 import PageContent from 'Components/Page/PageContent';
 import PageContentBody from 'Components/Page/PageContentBody';
 import PageToolbar from 'Components/Page/Toolbar/PageToolbar';
 import PageToolbarButton from 'Components/Page/Toolbar/PageToolbarButton';
 import PageToolbarSection from 'Components/Page/Toolbar/PageToolbarSection';
 import { align, icons, kinds } from 'Helpers/Props';
+import { shouldConfirmSearch } from 'Utilities/Author/getAuthorStatisticsForMediaType';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import CalendarConnector from './CalendarConnector';
@@ -32,6 +34,7 @@ class CalendarPage extends Component {
     this.state = {
       isCalendarLinkModalOpen: false,
       isOptionsModalOpen: false,
+      pendingSearchBookIds: null,
       width: 0
     };
   }
@@ -68,7 +71,21 @@ class CalendarPage extends Component {
       onSearchMissingPress
     } = this.props;
 
+    if (shouldConfirmSearch(missingBookIds.length)) {
+      this.setState({ pendingSearchBookIds: [...missingBookIds] });
+      return;
+    }
+
     onSearchMissingPress(missingBookIds);
+  };
+
+  onSearchConfirmed = () => {
+    this.props.onSearchMissingPress(this.state.pendingSearchBookIds);
+    this.onSearchCancelled();
+  };
+
+  onSearchCancelled = () => {
+    this.setState({ pendingSearchBookIds: null });
   };
 
   //
@@ -197,6 +214,15 @@ class CalendarPage extends Component {
               <LegendConnector />
           }
         </PageContentBody>
+
+        <ConfirmModal
+          isOpen={this.state.pendingSearchBookIds !== null}
+          title={translate('SearchForMissing')}
+          message={translate('SearchAuthorBooksConfirm', { count: this.state.pendingSearchBookIds?.length ?? 0 })}
+          confirmLabel={translate('Search')}
+          onConfirm={this.onSearchConfirmed}
+          onCancel={this.onSearchCancelled}
+        />
 
         <CalendarLinkModal
           isOpen={isCalendarLinkModalOpen}

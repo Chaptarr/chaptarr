@@ -38,56 +38,6 @@ namespace Chaptarr.Core.Test.Api
         }
 
         [Test]
-        public void should_skip_repair_for_partial_facade_compat_submission_that_omitted_current_edition()
-        {
-            var stored = new List<Edition>
-            {
-                new Edition { Id = 1, Monitored = true },
-                new Edition { Id = 2, Monitored = false }
-            };
-            var submitted = new List<Edition>
-            {
-                new Edition { Id = 2, Monitored = false }
-            };
-
-            var skip = BookController.ShouldSkipEditionRepairForPartialFacadeCompat(
-                pinExplicitEditionChange: false,
-                facadeContext: new ReadarrFacadeContext("hc", "ebook", "/readarr/hc/ebook"),
-                beforeMonitoredEditionId: 1,
-                storedEditions: stored,
-                submittedEditions: submitted);
-
-            Assert.That(skip, Is.True);
-        }
-
-        [Test]
-        public void should_not_skip_repair_for_human_route_or_full_facade_submission()
-        {
-            var stored = new List<Edition>
-            {
-                new Edition { Id = 1, Monitored = true },
-                new Edition { Id = 2, Monitored = false }
-            };
-            var fullSubmitted = new List<Edition>
-            {
-                new Edition { Id = 1, Monitored = false },
-                new Edition { Id = 2, Monitored = false }
-            };
-            var partialSubmitted = new List<Edition>
-            {
-                new Edition { Id = 2, Monitored = false }
-            };
-            var facadeContext = new ReadarrFacadeContext("hc", "ebook", "/readarr/hc/ebook");
-
-            Assert.Multiple(() =>
-            {
-                Assert.That(BookController.ShouldSkipEditionRepairForPartialFacadeCompat(true, facadeContext, 1, stored, partialSubmitted), Is.False);
-                Assert.That(BookController.ShouldSkipEditionRepairForPartialFacadeCompat(false, facadeContext, 1, stored, fullSubmitted), Is.False);
-                Assert.That(BookController.ShouldSkipEditionRepairForPartialFacadeCompat(false, null, 1, stored, partialSubmitted), Is.False);
-            });
-        }
-
-        [Test]
         public void should_not_detect_explicit_edition_change_when_single_submitted_monitored_is_unchanged()
         {
             var submitted = new List<Edition>
@@ -135,13 +85,12 @@ namespace Chaptarr.Core.Test.Api
                 BookController.ShouldApplyFacadeSpecificBookMonitoring(
                     context,
                     bookMediaType,
-                    wasMonitored: false,
                     requestedMonitored: true),
                 Is.EqualTo(expected));
         }
 
         [Test]
-        public void should_not_use_specific_book_monitoring_outside_facade_or_without_false_to_true_change()
+        public void should_not_use_specific_book_monitoring_outside_facade_or_without_a_monitor_request()
         {
             Assert.Multiple(() =>
             {
@@ -149,21 +98,12 @@ namespace Chaptarr.Core.Test.Api
                     BookController.ShouldApplyFacadeSpecificBookMonitoring(
                         null,
                         BookMediaType.Audiobook,
-                        wasMonitored: false,
                         requestedMonitored: true),
                     Is.False);
                 Assert.That(
                     BookController.ShouldApplyFacadeSpecificBookMonitoring(
                         new ReadarrFacadeContext("hc", "audiobook", "/audiobook"),
                         BookMediaType.Audiobook,
-                        wasMonitored: true,
-                        requestedMonitored: true),
-                    Is.False);
-                Assert.That(
-                    BookController.ShouldApplyFacadeSpecificBookMonitoring(
-                        new ReadarrFacadeContext("hc", "audiobook", "/audiobook"),
-                        BookMediaType.Audiobook,
-                        wasMonitored: false,
                         requestedMonitored: false),
                     Is.False);
             });

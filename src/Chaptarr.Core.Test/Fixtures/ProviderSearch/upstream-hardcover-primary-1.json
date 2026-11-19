@@ -1,0 +1,75 @@
+{
+  "data": {
+    "author0": [
+      {
+        "id": 2796434,
+        "title": "Lao Tzu: Tao Te Ching: A Book about the Way and the Power of the Way",
+        "subtitle": "Tao Te Ching: A Book about the Way and the Power of the Way",
+        "description": null,
+        "rating": null,
+        "ratings_count": 0,
+        "pages": null,
+        "release_date": null,
+        "image": null,
+        "contributions": [
+          {
+            "author_id": 1514829,
+            "contribution": "Author",
+            "author": {
+              "id": 1514829,
+              "name": "Ursula K. Le Guin, Lao Tzu, J.P. Seaton"
+            }
+          }
+        ]
+      }
+    ],
+    "author1": [
+      {
+        "id": 2772325,
+        "title": "Brave New Worlds: Dystopian Stories",
+        "subtitle": "Dystopian Stories",
+        "description": null,
+        "rating": null,
+        "ratings_count": 0,
+        "pages": null,
+        "release_date": null,
+        "image": null,
+        "contributions": [
+          {
+            "author_id": 1498759,
+            "contribution": "Author",
+            "author": {
+              "id": 1498759,
+              "name": "Ursula K. le Guin & Cory Doctorow & Paolo Bacigalupi & Orson Scott Card & Neil Gaiman & Ray Bradbury & Philip K. Dick & Kurt Vonnegut & Shirley Jackson & Kate Wilhelm & Carrie Vaughn & Nick Gaetano"
+            }
+          }
+        ]
+      }
+    ],
+    "author2": [
+      {
+        "id": 2772316,
+        "title": "The Apocalypse Reader",
+        "subtitle": null,
+        "description": null,
+        "rating": null,
+        "ratings_count": 0,
+        "pages": null,
+        "release_date": null,
+        "image": null,
+        "contributions": [
+          {
+            "author_id": 1498756,
+            "contribution": "Author",
+            "author": {
+              "id": 1498756,
+              "name": "Justin Taylor & Grace Aguilar & Steve Aylett & Robert Bradley & Dennis Cooper & Lucy Corin & Matthew Derby & Carol Emshwiller & Ian Evenson & Neil Gaiman & Jeff Goldberg & Theodora Goss & Nathaniel Hawthorne & Shelley Jackson & Ursula K. le Guin & Stacey Levine & Kelly Link & Gary Lutz & H. P. Lovecraft & Rick Moody & Michael Moorcock & Josip Novakovich & Joyce Carol Oates & Edgar Allan Poe & Colette Phair & Terese Svoboda & Lynne Tillman & Deb Olin Unferth & H. G. Wells & Allison Whittenberg & Diane Williams & Adam Nemett & Elliott David & Jared Ho"
+            }
+          }
+        ]
+      }
+    ],
+    "author3": [],
+    "author4": []
+  }
+}

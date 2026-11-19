@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using NUnit.Framework;
+using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Messaging.Commands;
 
 namespace Chaptarr.Core.Test.Messaging
@@ -7,6 +8,15 @@ namespace Chaptarr.Core.Test.Messaging
     [TestFixture]
     public class CommandEqualityComparerFixture
     {
+        [Test]
+        public void book_search_sweep_does_not_deduplicate_an_explicit_selection()
+        {
+            var selection = new BookSearchCommand(new List<int> { 1, 2 });
+            var sweep = new BookSearchCommand(new List<int> { 1, 2 }) { MonitoredOnly = true };
+
+            Assert.That(CommandEqualityComparer.Instance.Equals(selection, sweep), Is.False);
+        }
+
         private sealed class TestCommand : Command
         {
             public string DownloadId { get; set; }

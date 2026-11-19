@@ -214,7 +214,7 @@ export default function QueuedTaskRow(props: QueuedTaskRowProps) {
       </TableRowCell>
 
       <TableRowCell className={styles.actions}>
-        {(status === 'queued' || status === 'started') && (
+        {(status === 'queued' || (status === 'started' && body.supportsCancellation)) && (
           <IconButton
             title={
               status === 'queued'

@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import React, { Component } from 'react';
 import TextTruncate from 'react-text-truncate';
+import { findImage, getCoverImageUrl } from 'Author/AuthorImage';
 import AuthorPoster from 'Author/AuthorPoster';
 import { getAuthorStatusDetails } from 'Author/AuthorStatus';
 import HeartRating from 'Components/HeartRating';
@@ -18,16 +19,13 @@ import formatBytes from 'Utilities/Number/formatBytes';
 import stripHtml from 'Utilities/String/stripHtml';
 import translate from 'Utilities/String/translate';
 import AuthorAlternateTitles from './AuthorAlternateTitles';
+import AuthorInitialScanStatus from './AuthorInitialScanStatus';
 import AuthorDetailsLinks from './AuthorDetailsLinks';
 import AuthorTagsConnector from './AuthorTagsConnector';
 import styles from './AuthorDetailsHeader.css';
 
 const defaultFontSize = parseInt(fonts.defaultFontSize);
 const lineHeight = parseFloat(fonts.lineHeight);
-
-function getFanartUrl(images) {
-  return images.find((x) => x.coverType === 'fanart')?.url;
-}
 
 class AuthorDetailsHeader extends Component {
 
@@ -39,8 +37,7 @@ class AuthorDetailsHeader extends Component {
 
     this._isMounted = false;
     this.state = {
-      overviewHeight: 0,
-      titleWidth: 0
+      overviewHeight: 0
     };
   }
 
@@ -58,12 +55,6 @@ class AuthorDetailsHeader extends Component {
   onOverviewMeasure = ({ height }) => {
     if (this._isMounted) {
       this.setState({ overviewHeight: height });
-    }
-  };
-
-  onTitleMeasure = ({ width }) => {
-    if (this._isMounted) {
-      this.setState({ titleWidth: width });
     }
   };
 
@@ -114,14 +105,12 @@ class AuthorDetailsHeader extends Component {
     } = statistics;
 
     const {
-      overviewHeight,
-      titleWidth
+      overviewHeight
     } = this.state;
 
     const statusDetails = getAuthorStatusDetails(status);
 
-    const fanartUrl = getFanartUrl(images);
-    const marqueeWidth = titleWidth - (isSmallScreen ? 85 : 160);
+    const fanartUrl = getCoverImageUrl(findImage(images, 'fanart'), 'fanart', width || window.innerWidth);
 
     let bookFilesCountMessage = translate('BookFilesCountMessage');
 
@@ -158,10 +147,7 @@ class AuthorDetailsHeader extends Component {
           />
 
           <div className={styles.info}>
-            <Measure
-              className={styles.titleRow}
-              onMeasure={this.onTitleMeasure}
-            >
+            <div className={styles.titleRow}>
               <div className={styles.titleContainer}>
                 <div className={styles.toggleMonitoredContainer}>
                   <MonitorToggleButton
@@ -175,7 +161,7 @@ class AuthorDetailsHeader extends Component {
                   />
                 </div>
 
-                <div className={styles.title} style={{ width: marqueeWidth }}>
+                <div className={styles.title}>
                   <Marquee text={authorName} />
                 </div>
 
@@ -189,14 +175,14 @@ class AuthorDetailsHeader extends Component {
                             size={20}
                           />
                         }
-                        title={translate('AlternateTitles')}
+                        title={translate('AlternateSpellings')}
                         body={<AuthorAlternateTitles alternateTitles={alternateTitles} />}
                         position={tooltipPositions.BOTTOM}
                       />
                     </div>
                 }
               </div>
-            </Measure>
+            </div>
 
             <div className={styles.details}>
               <div>
@@ -359,6 +345,7 @@ class AuthorDetailsHeader extends Component {
 
               }
             </div>
+            {this.props.initialScanPaths?.length > 0 && <AuthorInitialScanStatus authorId={id} paths={this.props.initialScanPaths} />}
             <Measure
               onMeasure={this.onOverviewMeasure}
               className={styles.overview}
@@ -392,6 +379,7 @@ AuthorDetailsHeader.propTypes = {
   monitored: PropTypes.bool.isRequired,
   status: PropTypes.string.isRequired,
   overview: PropTypes.string,
+  initialScanPaths: PropTypes.arrayOf(PropTypes.string),
   links: PropTypes.arrayOf(PropTypes.object).isRequired,
   images: PropTypes.arrayOf(PropTypes.object).isRequired,
   alternateTitles: PropTypes.arrayOf(PropTypes.string).isRequired,

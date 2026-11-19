@@ -14,6 +14,7 @@ import Table from 'Components/Table/Table';
 import TableBody from 'Components/Table/TableBody';
 import { icons, inputTypes, kinds, sizes } from 'Helpers/Props';
 import importModeOptions from 'InteractiveImport/importModeOptions';
+import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import RecentFolderRow from './RecentFolderRow';
 import styles from './InteractiveImportSelectFolderModalContent.css';
@@ -83,6 +84,7 @@ class InteractiveImportSelectFolderModalContent extends Component {
       isCheckingInteractiveImportFolder,
       largeFolderWarning,
       mediaManagementSettings,
+      pathFallbackSaveError,
       onPathFallbackChange,
       onRemoveRecentFolderPress,
       onModalClose
@@ -106,6 +108,12 @@ class InteractiveImportSelectFolderModalContent extends Component {
         </ModalHeader>
 
         <ModalBody>
+          {
+            pathFallbackSaveError &&
+              <Alert kind={kinds.DANGER} role="alert">
+                {getErrorMessage(pathFallbackSaveError, translate('UnableToSaveMediaManagementSettings'))}
+              </Alert>
+          }
           <PathInputConnector
             name="folder"
             value={folder}
@@ -231,6 +239,7 @@ InteractiveImportSelectFolderModalContent.propTypes = {
   isCheckingInteractiveImportFolder: PropTypes.bool.isRequired,
   largeFolderWarning: PropTypes.object,
   mediaManagementSettings: PropTypes.object.isRequired,
+  pathFallbackSaveError: PropTypes.object,
   onQuickImportPress: PropTypes.func.isRequired,
   onInteractiveImportPress: PropTypes.func.isRequired,
   onConfirmInteractiveImportPress: PropTypes.func.isRequired,

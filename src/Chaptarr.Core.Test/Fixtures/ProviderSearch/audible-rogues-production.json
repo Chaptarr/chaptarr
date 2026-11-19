@@ -1,0 +1,59 @@
+{
+  "product": {
+    "asin": "B00L1GU3WC",
+    "title": "Rogues",
+    "publisher_name": "Random House Audio",
+    "authors": [
+      {
+        "asin": "B000APIGH4",
+        "name": "George R. R. Martin"
+      },
+      {
+        "name": "Gardner Dozois"
+      },
+      {
+        "asin": "B001JP3W46",
+        "name": "Gillian Flynn"
+      },
+      {
+        "asin": "B000AQ01G2",
+        "name": "Neil Gaiman"
+      }
+    ],
+    "narrators": [
+      {
+        "name": "George R. R. Martin"
+      },
+      {
+        "name": "Gwendoline Christie"
+      },
+      {
+        "name": "Roy Dotrice"
+      },
+      {
+        "name": "Ron Donachie"
+      },
+      {
+        "name": "W. Morgan Sheppard"
+      },
+      {
+        "name": "Janis Ian"
+      },
+      {
+        "name": "Molly Quinn"
+      },
+      {
+        "name": "Rupert Degas"
+      },
+      {
+        "name": "Iain Glen"
+      },
+      {
+        "name": "Various"
+      }
+    ],
+    "runtime_length_min": 1875,
+    "format_type": "unabridged",
+    "language": "english"
+  }
+}

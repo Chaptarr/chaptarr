@@ -44,7 +44,7 @@ namespace Chaptarr.Http.Authentication
             // When Plex/OIDC is the configured primary auth, only allow local fallback to prevent
             // remote credential-based bypass of external auth (recovery is still possible from LAN).
             var isLocalCredentials = method == AuthenticationType.Basic || method == AuthenticationType.Forms;
-            if (!isLocalCredentials && !TrustedNetworkPolicy.IsLocalOrTrusted(request, _configFileProvider))
+            if (!isLocalCredentials && !TrustedNetworkPolicy.MaySkipLocalLogin(request.HttpContext, _configFileProvider))
             {
                 return null;
             }

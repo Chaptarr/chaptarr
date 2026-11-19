@@ -1,6 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
+using System.Diagnostics;
 using System.Linq;
+using System.Net;
+using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.Datastore;
 using FluentValidation;
 using FluentValidation.Results;
 using NLog;
@@ -8,13 +13,17 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books.Events;
 using NzbDrone.Core.MediaCover.Commands;
+using NzbDrone.Core.ImportLists.Exclusions;
+using NzbDrone.Core.Extras;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.MetadataSource;
 // using NzbDrone.Core.MediaFiles.BookImport.Identification; // Disabled - old identification system
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.RootFolders;
+using PreparedAuthorName = (System.Collections.Generic.List<string> Tokens, int FirstCount, int LastCount, int CharacterCount, bool HasGivenInitialGroup, bool HasContributorBoundary, string LiteralKey, System.Collections.Generic.IReadOnlyList<int> JoinerIndexes);
 
 namespace NzbDrone.Core.Books
 {
@@ -22,11 +31,11 @@ namespace NzbDrone.Core.Books
     {
         Author GetAuthor(int authorId);
         List<Author> GetAuthors(IEnumerable<int> authorIds);
+        List<Author> GetExistingAuthors(IEnumerable<int> authorIds);
         Author AddAuthor(Author newAuthor, bool doRefresh);
         List<Author> AddAuthors(List<Author> newAuthors, bool doRefresh);
         Author FindByProviderId(string provider, string providerId);
         Author FindByName(string title);
-        Author FindByNameInexact(string title);
         List<Author> GetCandidates(string title);
 	        void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false);
             // Purge/re-add deliberately retains files, so production must preserve the import
@@ -36,17 +45,12 @@ namespace NzbDrone.Core.Books
             {
                 throw new NotSupportedException();
             }
-	        void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false)
-	        {
-	            foreach (var authorId in authorIds ?? new List<int>())
-	            {
-	                DeleteAuthor(authorId, deleteFiles, addImportListExclusion);
-	            }
-	        }
+        void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false);
         List<Author> GetAllAuthors(bool bypassCache = false);
         Dictionary<int, List<int>> GetAllAuthorTags();
         List<Author> AllForTag(int tagId);
         Author UpdateAuthor(Author author);
+        Author UpdateAuthor(Author author, Action<IDbConnection, IDbTransaction> beforeSave);
         Author UpdateAuthorProgressiveSettings(Author author, int? audiobookQualityProfileId, int? audiobookMetadataProfileId,
             bool? audiobookMonitored, NewItemMonitorTypes? audiobookMonitorNewItems,
             int? ebookQualityProfileId, int? ebookMetadataProfileId,
@@ -56,15 +60,10 @@ namespace NzbDrone.Core.Books
             throw new NotSupportedException();
         }
         List<Author> UpdateAuthors(List<Author> authors, bool useExistingRelativeFolder);
-        Dictionary<int, string> AllAuthorPaths();
+        List<KeyValuePair<int, string>> AllAuthorPaths();
         bool AuthorPathExists(string folder);
-        void RemoveAddOptions(Author author);
+        void SetAddOptions(Author author);
         void SetMediaTypeMonitoring(int authorId, string mediaType, bool monitored);
-        // The default exists only for lightweight test doubles. Every production implementation must override it.
-        void EnsureMediaTypeMonitoring(int authorId, string mediaType)
-        {
-            throw new NotSupportedException();
-        }
         long GetAuthorSizeForMediaType(int authorId, string mediaType);
         void UpdateLastSelectedMediaType(int authorId, string mediaType);
         List<Book> GetAuthorBooksFromCache(int authorId);
@@ -75,18 +74,22 @@ namespace NzbDrone.Core.Books
     public class AuthorService : IAuthorService
     {
         private readonly IAuthorRepository _authorRepository;
+        private readonly IMainDatabase _mainDatabase;
+        // Calibre cover resolution depends on AuthorService; resolve deletion only on demand.
+        private readonly Lazy<IDeleteMediaFiles> _deleteMediaFiles;
         private readonly IEventAggregator _eventAggregator;
         private readonly IBuildAuthorPaths _authorPathBuilder;
         private readonly IRootFolderService _rootFolderService;
 	        private readonly IManageCommandQueue _commandQueueManager;
 	        private readonly Logger _logger;
-	        private readonly ICached<List<Author>> _cache;
+	        private readonly ICached<(List<Author> Authors, Lazy<AuthorNameIndex> Names)> _cache;
 	        private readonly ICached<Author> _authorByIdCache;
 	        private static readonly TimeSpan AuthorByIdCacheTtl = TimeSpan.FromSeconds(10);
-	        // private readonly IDeterministicMatcher _deterministicMatcher; // Disabled - old identification system
 	        private readonly IBookRepository _bookRepository;
 	        private readonly IMediaFileService _mediaFileService;
 	        private readonly IProviderAliasService _providerAliasService;
+        private readonly IImportListExclusionService _importListExclusionService;
+        private readonly Lazy<IBookService> _bookService;
 
         // Single-author cache fields
         private volatile int _currentAuthorId = -1;
@@ -102,23 +105,32 @@ namespace NzbDrone.Core.Books
 	                             IBookRepository bookRepository,
 	                             IMediaFileService mediaFileService,
 	                             Logger logger,
-	                             IProviderAliasService providerAliasService = null)
+                             IImportListExclusionService importListExclusionService,
+                             Lazy<IDeleteMediaFiles> deleteMediaFiles,
+                             Lazy<IBookService> bookService,
+                             IMainDatabase mainDatabase,
+                             IProviderAliasService providerAliasService = null)
 	        {
 	            _authorRepository = authorRepository;
+                _mainDatabase = mainDatabase;
+                _deleteMediaFiles = deleteMediaFiles;
 	            _eventAggregator = eventAggregator;
 	            _authorPathBuilder = authorPathBuilder;
-                _rootFolderService = rootFolderService;
+	            _rootFolderService = rootFolderService;
 	            _commandQueueManager = commandQueueManager;
-	            _cache = cacheManager.GetRollingCache<List<Author>>(GetType(), "authorcache", TimeSpan.FromSeconds(30));
+	            // Repeated lookups must not keep an outdated author/name snapshot alive indefinitely.
+	            _cache = cacheManager.GetCache<(List<Author> Authors, Lazy<AuthorNameIndex> Names)>(
+                    GetType(), "authorcache");
 	            _authorByIdCache = cacheManager.GetCache<Author>(GetType(), "authorById");
 	            _logger = logger;
-	            // _deterministicMatcher = new DeterministicMatchingService(_logger); // Disabled - old identification system
 	            _bookRepository = bookRepository;
 	            _mediaFileService = mediaFileService;
 	            _providerAliasService = providerAliasService;
+                _importListExclusionService = importListExclusionService;
+                _bookService = bookService;
 	        }
 
-        private void EnsureAuthorDbFields(Author author, bool ensurePaths, bool requirePath)
+        internal static void NormalizeAuthorDbFields(Author author, Logger logger)
         {
             if (author == null)
             {
@@ -151,7 +163,7 @@ namespace NzbDrone.Core.Books
             if (author.CleanName.IsNullOrWhiteSpace())
             {
                 author.CleanName = author.Name.CleanAuthorName();
-                _logger.Debug("Computed missing CleanName for author '{0}'", author.Name);
+                logger.Debug("Computed missing CleanName for author '{0}'", author.Name);
             }
 
             if (author.LastSelectedMediaType.IsNullOrWhiteSpace())
@@ -178,6 +190,13 @@ namespace NzbDrone.Core.Books
                 author.Added = DateTime.UtcNow;
             }
 
+        }
+
+        private void EnsureAuthorDbFields(Author author, bool ensurePaths, bool requirePath)
+        {
+            if (author == null) return;
+            NormalizeAuthorDbFields(author, _logger);
+
             if (ensurePaths && _authorPathBuilder != null)
             {
                 try
@@ -196,53 +215,6 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        private void RefreshAuthorProviderAliases(IEnumerable<Author> authors)
-        {
-            if (_providerAliasService == null || authors == null)
-            {
-                return;
-            }
-
-            foreach (var author in authors)
-            {
-                RefreshAuthorProviderAliases(author);
-            }
-        }
-
-        private void RefreshAuthorProviderAliases(Author author)
-        {
-            if (_providerAliasService == null || author == null || author.Id <= 0)
-            {
-                return;
-            }
-
-            var providerIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            AddProviderId(providerIds, author.GoodreadsAuthorId);
-            AddProviderId(providerIds, author.HardcoverAuthorId);
-            AddProviderId(providerIds, author.OpenLibraryAuthorId);
-            AddProviderId(providerIds, author.GoogleBooksAuthorId);
-            AddProviderId(providerIds, author.AudnexusAuthorId);
-
-            if (author.RemoteProviderIds != null)
-            {
-                foreach (var providerId in author.RemoteProviderIds)
-                {
-                    AddProviderId(providerIds, providerId);
-                }
-            }
-
-            _providerAliasService.ReplaceAliases("Author", author.Id, "author", providerIds);
-        }
-
-        private static void AddProviderId(ISet<string> values, string value)
-        {
-            if (!string.IsNullOrWhiteSpace(value))
-            {
-                values.Add(value.Trim());
-            }
-        }
-
         public Author AddAuthor(Author newAuthor, bool doRefresh)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -253,9 +225,9 @@ namespace NzbDrone.Core.Books
             
             EnsureAuthorDbFields(newAuthor, ensurePaths: true, requirePath: true);
 
-            _cache.Clear();
             var insertedAuthor = _authorRepository.Insert(newAuthor);
-            RefreshAuthorProviderAliases(insertedAuthor);
+            InvalidateAuthorCatalog();
+            _authorByIdCache.Remove(insertedAuthor.Id.ToString());
             
             stopwatch.Stop();
             _logger.Debug("[DB-TIMING] Author '{0}' inserted in {1}ms", newAuthor.Name, stopwatch.ElapsedMilliseconds);
@@ -280,9 +252,9 @@ namespace NzbDrone.Core.Books
                 EnsureAuthorDbFields(author, ensurePaths: true, requirePath: true);
             }
 
-            _cache.Clear();
             _authorRepository.InsertMany(newAuthors);
-            RefreshAuthorProviderAliases(newAuthors);
+            InvalidateAuthorCatalog();
+            _authorByIdCache.Clear();
             
             stopwatch.Stop();
             _logger.Debug("[DB-TIMING] {0} authors batch inserted in {1}ms (avg {2}ms/author)",
@@ -307,24 +279,27 @@ namespace NzbDrone.Core.Books
 
 	        public void DeleteAuthor(int authorId, bool deleteFiles, bool addImportListExclusion = false)
 	        {
-	            DeleteAuthorsInternal(new List<int> { authorId }, deleteFiles, addImportListExclusion, false);
+	            DeleteAuthorsInternal(new List<int> { authorId }, deleteFiles, addImportListExclusion, false, null, true);
 	        }
 
 	        public List<int> DeleteAuthorForReadd(int authorId)
 	        {
-	            return DeleteAuthorsInternal(new List<int> { authorId }, false, false, true);
+	            return DeleteAuthorsInternal(new List<int> { authorId }, false, false, true, null, true);
 	        }
 
-	        public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false)
+	        public void DeleteAuthors(List<int> authorIds, bool deleteFiles, bool addImportListExclusion = false, BookMediaType? mediaType = null, bool applyToBothFormats = false, bool deleteOtherAuthorsFiles = false)
 	        {
-	            DeleteAuthorsInternal(authorIds, deleteFiles, addImportListExclusion, false);
+	            DeleteAuthorsInternal(authorIds, deleteFiles, addImportListExclusion, false, mediaType, applyToBothFormats, deleteOtherAuthorsFiles);
 	        }
 
 	        private List<int> DeleteAuthorsInternal(
 	            List<int> authorIds,
 	            bool deleteFiles,
 	            bool addImportListExclusion,
-	            bool preserveRetainedFileHistory)
+	            bool preserveRetainedFileHistory,
+                BookMediaType? mediaType,
+                bool applyToBothFormats,
+                bool deleteOtherAuthorsFiles = false)
 	        {
 	            var retainedBookFileIds = new List<int>();
 	            var distinctIds = (authorIds ?? new List<int>())
@@ -337,50 +312,122 @@ namespace NzbDrone.Core.Books
 	                return retainedBookFileIds;
 	            }
 
-	            _cache.Clear();
-	            foreach (var authorId in distinctIds)
-	            {
-	                _authorByIdCache.Remove(authorId.ToString());
-	            }
-
 	            var authors = _authorRepository.Get(distinctIds)
 	                .Where(author => author != null)
 	                .ToList();
 
-	            // Keep every parent row alive while synchronous handlers remove Books and Editions.
-	            // Besides satisfying the PostgreSQL FK, this lets the SQLite edition_fts delete trigger
-	            // read the original Book and Author values before its Edition row disappears.
-	            foreach (var author in authors)
-	            {
-	                var retainedBookFiles = preserveRetainedFileHistory
-	                    ? _mediaFileService.GetFilesByAuthor(author.Id)
-	                        .Where(file => file != null && file.Id > 0)
-	                        .ToList()
-	                    : new List<BookFile>();
-	                var authorRetainedBookFileIds = retainedBookFiles
-	                    .Select(file => file.Id)
-	                    .Distinct()
-	                    .ToList();
-	                retainedBookFileIds.AddRange(authorRetainedBookFileIds);
-	                var retainedBookFileEditionIds = retainedBookFiles
-	                    .Where(file => !string.IsNullOrWhiteSpace(file.Edition?.ForeignEditionId))
-	                    .GroupBy(file => file.Id)
-	                    .ToDictionary(group => group.Key, group => group.First().Edition.ForeignEditionId);
+                if (mediaType.HasValue && !Enum.IsDefined(mediaType.Value))
+                {
+                    throw new NzbDroneClientException(HttpStatusCode.BadRequest, "Media type must be audiobook or ebook.");
+                }
 
-	                _eventAggregator.PublishEvent(new AuthorDeletedEvent(
-	                    author,
-	                    deleteFiles,
-	                    addImportListExclusion,
-	                    preserveRetainedFileHistory,
-	                    authorRetainedBookFileIds,
-	                    retainedBookFileEditionIds));
-	                _providerAliasService?.DeleteAliases("Author", author.Id);
-	            }
+                mediaType = applyToBothFormats ? null : mediaType;
+                var booksByAuthor = authors.ToDictionary(author => author.Id, author =>
+                    mediaType.HasValue || !applyToBothFormats
+                        ? _bookRepository.GetBooksByAuthorId(author.Id)
+                        : new List<Book>());
+                AuthorDeletionScope.Validate(authors, author => booksByAuthor[author.Id], mediaType, applyToBothFormats);
 
-	            _authorRepository.DeleteMany(authors.Select(author => author.Id));
+                var bookService = mediaType.HasValue
+                    ? _bookService?.Value ?? throw new InvalidOperationException("Book deletion service is unavailable")
+                    : null;
+                if (addImportListExclusion)
+                {
+                    // Validate identity before physical work; persistence waits until deletion succeeds.
+                    _importListExclusionService.ValidateAuthorExclusions(authors);
+                }
 
-	            return retainedBookFileIds.Distinct().ToList();
-	        }
+                // Delete against one complete selection while ownership still exists. A physical
+                // failure must not be swallowed by events and followed by database teardown.
+                List<BookFile> deletedBookFiles = null;
+                if (deleteFiles)
+                {
+                    deletedBookFiles = (_deleteMediaFiles?.Value ?? throw new InvalidOperationException("Author file deletion service is unavailable"))
+                        .DeleteAuthorFiles(authors, mediaType, deleteOtherAuthorsFiles);
+                }
+
+                try
+                {
+                    if (addImportListExclusion)
+                    {
+                        _importListExclusionService.AddAuthorExclusions(authors, mediaType);
+                    }
+
+                    if (mediaType.HasValue)
+                    {
+                        ClearAuthorCache();
+                        bookService.DeleteMany(booksByAuthor.Values.SelectMany(books => books)
+                            .Where(book => book.MediaType == mediaType.Value).ToList(), filesAlreadyDeleted: deleteFiles, deletedBookFiles: deletedBookFiles);
+                        var removedAuthors = new List<Author>();
+                        foreach (var author in authors)
+                        {
+                            var otherRoot = mediaType == BookMediaType.Audiobook ? author.EbookRootFolderPath : author.AudiobookRootFolderPath;
+                            if (otherRoot.IsNotNullOrWhiteSpace() || booksByAuthor[author.Id].Any(book => book.MediaType != mediaType.Value))
+                            {
+                                ClearMediaTypeSettings(author, mediaType.Value);
+                                var survivingPath = mediaType == BookMediaType.Audiobook ? author.EbookPath : author.AudiobookPath;
+                                if (survivingPath.IsNotNullOrWhiteSpace()) author.Path = survivingPath;
+                                author.LastSelectedMediaType = mediaType == BookMediaType.Audiobook ? "ebook" : "audiobook";
+                                UpdateAuthor(author);
+                            }
+                            else
+                            {
+                                removedAuthors.Add(author);
+                            }
+                        }
+
+                        // Removing the final side may remove the author record, but never widens file permission.
+                        authors = removedAuthors;
+                    }
+
+                    var deletedFilesByAuthor = deletedBookFiles?.ToLookup(file => file.Author.Id);
+                    // Keep every parent row alive while synchronous handlers remove Books and Editions.
+                    // Besides satisfying the PostgreSQL FK, this lets the SQLite edition_fts delete trigger
+                    // read the original Book and Author values before its Edition row disappears.
+                    foreach (var author in authors)
+                    {
+                        var retainedBookFiles = preserveRetainedFileHistory
+                            ? _mediaFileService.GetFilesByAuthor(author.Id)
+                                .Where(file => file != null && file.Id > 0)
+                                .ToList()
+                            : new List<BookFile>();
+                        var authorRetainedBookFileIds = retainedBookFiles
+                            .Select(file => file.Id)
+                            .Distinct()
+                            .ToList();
+                        retainedBookFileIds.AddRange(authorRetainedBookFileIds);
+                        var retainedBookFileEditionIds = retainedBookFiles
+                            .Where(file => !string.IsNullOrWhiteSpace(file.Edition?.ForeignEditionId))
+                            .GroupBy(file => file.Id)
+                            .ToDictionary(group => group.Key, group => group.First().Edition.ForeignEditionId);
+
+                        _eventAggregator.PublishEvent(new AuthorDeletedEvent(
+                            author,
+                            deleteFiles,
+                            addImportListExclusion,
+                            preserveRetainedFileHistory,
+                            authorRetainedBookFileIds,
+                            retainedBookFileEditionIds,
+                            deletedFilesByAuthor?[author.Id].ToList()));
+                    }
+
+                    _authorRepository.DeleteMany(authors.Select(author => author.Id));
+                    InvalidateAuthorCatalog();
+                    foreach (var authorId in distinctIds)
+                    {
+                        _authorByIdCache.Remove(authorId.ToString());
+                    }
+
+                    return retainedBookFileIds.Distinct().ToList();
+                }
+                finally
+                {
+                    if (deleteFiles)
+                    {
+                        _eventAggregator.PublishEvent(new DeleteCompletedEvent());
+                    }
+                }
+        }
 
         public Author FindByProviderId(string provider, string providerId)
         {
@@ -445,7 +492,14 @@ namespace NzbDrone.Core.Books
 
         public Author FindByName(string title)
         {
-            return CacheLookupAuthor(_authorRepository.FindByName(title.CleanAuthorName()));
+            var candidates = GetCandidates(title);
+            if (candidates.Count > 1 && _logger.IsDebugEnabled)
+            {
+                _logger.Debug("Author name lookup '{0}' is ambiguous: matches author IDs [{1}]", title,
+                    string.Join(", ", candidates.Select(author => author.Id)));
+            }
+
+            return CacheLookupAuthor(candidates.ExclusiveOrDefault());
         }
 
         private Author CacheLookupAuthor(Author author)
@@ -466,112 +520,112 @@ namespace NzbDrone.Core.Books
             return author;
         }
 
-        public List<Tuple<Func<Author, string, double>, string>> AuthorScoringFunctions(string title, string cleanTitle)
+        public List<Author> GetCandidates(string name)
         {
-            // DEPRECATED-IDENTIFICATION: Old deterministic matching system
-            // var matcher = new DeterministicMatchingService(_logger);
-            // IDeterministicMatcher matcher = null;
-
-            Func<Func<Author, string, double>, string, Tuple<Func<Author, string, double>, string>> tc = Tuple.Create;
-            var scoringFunctions = new List<Tuple<Func<Author, string, double>, string>>
+            var tokens = ReleaseTitleMatchScorer.TokenizeWithSpans(name);
+            var prepared = AuthorNameMatcher.PrepareName(name, tokens);
+            if (prepared.Tokens.Count == 0)
             {
-                // tc((a, t) => matcher.AuthorNamesMatch(a.Metadata.Name, t) ? 1.0 : 0.0, title),
-                // tc((a, t) => matcher.AuthorNamesMatch(a.Metadata.NameLastFirst, t) ? 1.0 : 0.0, title)
-                tc((a, t) => a.Name.Equals(t, StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.0, title),
-                tc((a, t) => a.NameLastFirst.Equals(t, StringComparison.OrdinalIgnoreCase) ? 1.0 : 0.0, title)
-            };
+                _logger.Debug("Author name lookup: rejected empty name evidence");
+                return new List<Author>();
+            }
 
-            return scoringFunctions;
-        }
-
-        public Author FindByNameInexact(string title)
-        {
-            var authors = GetAllAuthors();
-
-            foreach (var func in AuthorScoringFunctions(title, title.CleanAuthorName()))
+            var stopwatch = Stopwatch.StartNew();
+            var index = GetAuthorCatalog().Names.Value;
+            var authors = index.Find(prepared);
+            var examined = 0;
+            var compared = 0;
+            var contained = 0;
+            var exact = new List<Author>();
+            var compatible = new List<Author>();
+            try
             {
-                // AuthorScoringFunctions is intentionally exact-name / last-first
-                // matching. Avoid sorting the full author library for every RSS
-                // release that only needs an exact fallback.
-                var results = authors
-                    .Where(author => func.Item1(author, func.Item2) > 0.8)
-                    .Take(2)
-                    .ToList();
-
-                if (results.Count == 1)
+                foreach (var entry in authors)
                 {
-                    return results[0];
+                    examined++;
+                    if (AuthorNameMatcher.AuthorNamesExactlyMatch(entry.Name, prepared))
+                    {
+                        exact.Add(entry.Author);
+                    }
+                }
+
+                if (exact.Count > 0)
+                {
+                    return exact;
+                }
+
+                for (var pass = 0; pass < 2 && compatible.Count == 0; pass++)
+                {
+                    foreach (var entry in authors)
+                    {
+                        examined++;
+                        if (pass > 0 && !AuthorNameMatcher.HasSurnameSuffixAnchor(entry.Name.Tokens, prepared.Tokens))
+                        {
+                            continue;
+                        }
+
+                        compared++;
+                        var matches = AuthorNameMatcher.AuthorNamesMatch(entry.Name, prepared, allowSurnameSuffix: pass > 0);
+                        if (!matches)
+                        {
+                            contained++;
+                            matches = AuthorNameMatcher.ContainsAuthorName(entry.Name, name, tokens, allowSurnameSuffix: pass > 0);
+                        }
+
+                        if (matches)
+                        {
+                            compatible.Add(entry.Author);
+                        }
+                    }
                 }
             }
-
-            return null;
-        }
-
-        public List<Author> GetCandidates(string title)
-        {
-            var authors = GetAllAuthors();
-            var output = new List<Author>();
-
-            // Normalize the search term for comparison
-            var normalizedSearch = NormalizeAuthorNameForComparison(title);
-
-            // First try exact normalized match
-            var exactMatches = authors.Where(a =>
-                NormalizeAuthorNameForComparison(a.Name) == normalizedSearch);
-
-            output.AddRange(exactMatches);
-
-            if (!output.Any())
+            finally
             {
-                foreach (var func in AuthorScoringFunctions(title, title.CleanAuthorName()))
-                {
-                    output.AddRange(FindByStringInexact(authors, func.Item1, func.Item2));
-                }
+                _logger.Debug("Author name lookup: examined {0} across {1} cached names, matched {2}, compatibility comparisons {3}, credit comparisons {4}, elapsed {5} ms",
+                    examined, index.Count, exact.Count > 0 ? exact.Count : compatible.Count, compared, contained, stopwatch.ElapsedMilliseconds);
             }
 
-            return output.DistinctBy(x => x.Id).ToList();
+            return compatible;
         }
 
-        private static string NormalizeAuthorNameForComparison(string name)
+        private static void ClearMediaTypeSettings(Author author, BookMediaType mediaType)
         {
-            if (string.IsNullOrWhiteSpace(name))
+            author.SyncMonitoredAcrossFormats = false;
+            if (author.AudiobookTags == null && author.EbookTags == null)
             {
-                return string.Empty;
+                var legacyTags = author.GetTagsForMediaType(mediaType);
+                author.AudiobookTags = legacyTags;
+                author.EbookTags = legacyTags;
             }
 
-            // Full normalization: remove all punctuation and spaces for comparison
-            // This ensures "A. F. Kay", "A.F. Kay", "AF Kay", and "A F Kay" all match
-            var normalized = new System.Text.StringBuilder();
-
-            foreach (var c in name.ToLowerInvariant())
+            if (mediaType == BookMediaType.Audiobook)
             {
-                if (char.IsLetterOrDigit(c))
-                {
-                    normalized.Append(c);
-                }
+                // NOTE: AudiobookMetadataProfileId is the refresh gate for remote audiobook children.
+                // RefreshAuthorService.GetRemoteChildren() treats "no audiobook metadata profile" as "audiobooks disabled"
+                // and will otherwise include remote audiobooks again on refresh.
+                author.AudiobookMetadataProfileId = null;
+                author.AudiobookRootFolderPath = null;
+                author.AudiobookPath = null;
+                author.AudiobookQualityProfileId = null;
+                author.AudiobookMonitored = null;
+                author.AudiobookMonitorNewItems = null;
+                author.AudiobookSettingsManuallyOverridden = false;
+                author.AudiobookTags = new HashSet<int>();
+            }
+            else
+            {
+                // NOTE: EbookMetadataProfileId is the refresh gate for remote ebook children.
+                author.EbookMetadataProfileId = null;
+                author.EbookRootFolderPath = null;
+                author.EbookPath = null;
+                author.EbookQualityProfileId = null;
+                author.EbookMonitored = null;
+                author.EbookMonitorNewItems = null;
+                author.EbookSettingsManuallyOverridden = false;
+                author.EbookTags = new HashSet<int>();
             }
 
-            return normalized.ToString();
-        }
-
-        private List<Author> FindByStringInexact(List<Author> authors, Func<Author, string, double> scoreFunction, string title)
-        {
-            const double fuzzThreshold = 0.8;
-            const double fuzzGap = 0.2;
-
-            var sortedAuthors = authors.Select(s => new
-            {
-                MatchProb = scoreFunction(s, title),
-                Author = s
-            })
-                .ToList()
-                .OrderByDescending(s => s.MatchProb)
-                .ToList();
-
-            return sortedAuthors.TakeWhile((x, i) => i == 0 || sortedAuthors[i - 1].MatchProb - x.MatchProb < fuzzGap)
-                .TakeWhile((x, i) => x.MatchProb > fuzzThreshold || (i > 0 && sortedAuthors[i - 1].MatchProb > fuzzThreshold))
-                .Select(x => x.Author)
-                .ToList();
+            author.Tags = author.GetCombinedTags();
         }
 
         public List<Author> GetAllAuthors(bool bypassCache = false)
@@ -581,7 +635,81 @@ namespace NzbDrone.Core.Books
                 return _authorRepository.All().ToList();
             }
 
-            return _cache.Get("GetAllAuthors", () => _authorRepository.All().ToList(), TimeSpan.FromSeconds(30));
+            return GetAuthorCatalog().Authors;
+        }
+
+        private (List<Author> Authors, Lazy<AuthorNameIndex> Names) GetAuthorCatalog()
+        {
+            // A completed write must clear a preceding load after that load has finished filling the cache.
+            lock (_authorCacheLock)
+            {
+                return _cache.Get("GetAllAuthors", () =>
+                {
+                    var authors = _authorRepository.All().ToList();
+                    var names = new Lazy<AuthorNameIndex>(() =>
+                    {
+                        var index = new AuthorNameIndex(authors);
+                        _logger.Debug("Author name catalog: indexed {0} names", index.Count);
+                        return index;
+                    });
+                    return (authors, names);
+                }, TimeSpan.FromSeconds(30));
+            }
+        }
+
+        private sealed class AuthorNameIndex
+        {
+            private readonly List<(Author Author, PreparedAuthorName Name)> _names;
+            private readonly Dictionary<string, List<int>> _tokens = new(StringComparer.OrdinalIgnoreCase);
+            private readonly List<int> _literalOrder = new();
+            public int Count => _names.Count;
+
+            public AuthorNameIndex(List<Author> authors)
+            {
+                _names = authors.Select(author => (author, AuthorNameMatcher.PrepareName(author.Name))).ToList();
+                for (var i = 0; i < _names.Count; i++)
+                {
+                    var name = _names[i].Name;
+                    foreach (var key in name.Tokens.Append(string.Concat(name.Tokens)).Append(name.LiteralKey).Distinct(StringComparer.OrdinalIgnoreCase))
+                    {
+                        if (!_tokens.TryGetValue(key, out var entries))
+                        {
+                            entries = new List<int>();
+                            _tokens.Add(key, entries);
+                        }
+                        entries.Add(i);
+                    }
+
+                    // FindNameSpans also accepts literal-order suffix anchors for inverted/compact names.
+                    // Retain those spellings for the matcher rather than inventing another name rule.
+                    if (name.LiteralKey != string.Join(" ", name.Tokens)) _literalOrder.Add(i);
+                }
+            }
+
+            public List<(Author Author, PreparedAuthorName Name)> Find(PreparedAuthorName name)
+            {
+                var candidates = new HashSet<int>(_literalOrder);
+                foreach (var key in name.Tokens.Append(string.Concat(name.Tokens)).Append(name.LiteralKey))
+                {
+                    Add(key);
+                    Add(key + "s");
+                    if (key.EndsWith("s", StringComparison.OrdinalIgnoreCase)) Add(key[..^1]);
+                }
+                return candidates.OrderBy(i => i).Select(i => _names[i]).ToList();
+
+                void Add(string key)
+                {
+                    if (_tokens.TryGetValue(key, out var entries)) candidates.UnionWith(entries);
+                }
+            }
+        }
+
+        private void InvalidateAuthorCatalog()
+        {
+            lock (_authorCacheLock)
+            {
+                _cache.Clear();
+            }
         }
 
         public Dictionary<int, List<int>> GetAllAuthorTags()
@@ -589,9 +717,12 @@ namespace NzbDrone.Core.Books
             return _authorRepository.AllAuthorTags();
         }
 
-        public Dictionary<int, string> AllAuthorPaths()
+        public List<KeyValuePair<int, string>> AllAuthorPaths()
         {
-            return _authorRepository.AllAuthorPaths();
+            return _authorRepository.AllAuthorPaths()
+                .SelectMany(author => ExtraFilePathHelper.GetAuthorBasePaths(author)
+                    .Select(path => new KeyValuePair<int, string>(author.Id, path)))
+                .ToList();
         }
 
         public List<Author> AllForTag(int tagId)
@@ -615,21 +746,24 @@ namespace NzbDrone.Core.Books
 	        }
 
 
+        public List<Author> GetExistingAuthors(IEnumerable<int> authorIds) => _authorRepository.FindExisting(authorIds);
+
         public List<Author> GetAuthors(IEnumerable<int> authorIds)
         {
             return _authorRepository.Get(authorIds).ToList();
         }
 
-	        public void RemoveAddOptions(Author author)
+	        public void SetAddOptions(Author author)
 	        {
 	            _authorRepository.SetFields(author, s => s.AddOptions);
-	            _cache.Clear();
+	            InvalidateAuthorCatalog();
 	            _authorByIdCache.Remove(author.Id.ToString());
 	        }
 
-	        public Author UpdateAuthor(Author author)
-	        {
-	            _cache.Clear();
+        public Author UpdateAuthor(Author author) => UpdateAuthor(author, null);
+
+        public Author UpdateAuthor(Author author, Action<IDbConnection, IDbTransaction> beforeSave)
+        {
 	            _authorByIdCache.Remove(author.Id.ToString());
 
 	            var storedAuthor = GetAuthor(author.Id);
@@ -638,7 +772,7 @@ namespace NzbDrone.Core.Books
             author.AddOptions = storedAuthor.AddOptions;
 
                 var rootFolders = _rootFolderService?.All();
-                if (rootFolders != null && rootFolders.Count > 0)
+                if (beforeSave == null && rootFolders != null && rootFolders.Count > 0)
                 {
                     ValidateRootFolderCompatibilityOrThrow(author, storedAuthor, rootFolders);
                     ApplyRootFolderDefaultsForUnsetMediaTypeSettings(author, rootFolders);
@@ -650,12 +784,12 @@ namespace NzbDrone.Core.Books
 	            author.Monitored = author.IsMonitoredFromMediaSettings();
 
 	            // Keep per-media-type and primary paths consistent with configured root folders.
-	            // Preserve existing relative folder when correcting drift/out-of-root paths.
-	            if (_authorPathBuilder != null)
+	            // Preserve the untouched format, including tracked folders outside its configured root.
+	            if (beforeSave == null && _authorPathBuilder != null)
 	            {
 	                try
 	                {
-	                    _authorPathBuilder.EnsureAuthorPaths(author, useExistingRelativeFolder: true);
+	                    _authorPathBuilder.EnsureAuthorPaths(author, useExistingRelativeFolder: true, previous: storedAuthor);
 	                }
 	                catch (Exception ex)
 	                {
@@ -665,10 +799,29 @@ namespace NzbDrone.Core.Books
 
                 EnsureAuthorDbFields(author, ensurePaths: false, requirePath: false);
 
-	            var updatedAuthor = _authorRepository.Update(author);
-	            RefreshAuthorProviderAliases(updatedAuthor);
-	            _authorByIdCache.Remove(updatedAuthor.Id.ToString());
-	            _eventAggregator.PublishEvent(new AuthorEditedEvent(updatedAuthor, storedAuthor));
+            Author updatedAuthor;
+            if (beforeSave == null)
+            {
+                updatedAuthor = _authorRepository.Update(author);
+                InvalidateAuthorCatalog();
+                _authorByIdCache.Remove(updatedAuthor.Id.ToString());
+            }
+            else
+            {
+                // Author consolidation must save ownership and aliases together before notifying readers.
+                using var connection = _mainDatabase.OpenConnection();
+                using var transaction = connection.BeginTransaction();
+                beforeSave(connection, transaction);
+                updatedAuthor = _authorRepository.Update(author, connection, transaction);
+                transaction.Commit();
+                InvalidateAuthorCatalog();
+                _authorByIdCache.Clear();
+            }
+	            try { _eventAggregator.PublishEvent(new AuthorEditedEvent(updatedAuthor, storedAuthor, beforeSave != null)); }
+            catch (Exception ex) when (beforeSave != null)
+            {
+                _logger.Warn(ex, "Author ownership committed for {0}; an edit observer failed", updatedAuthor.Id);
+            }
 
 	            return updatedAuthor;
 	        }
@@ -685,14 +838,14 @@ namespace NzbDrone.Core.Books
             // Also fill missing root-folder path/settings if the profile exists but the path is missing.
             if (audiobookQualityProfileId.HasValue && audiobookQualityProfileId.Value > 0)
             {
-                if (!author.AudiobookQualityProfileId.HasValue)
+                if (IsMissingProfileId(author.AudiobookQualityProfileId))
                 {
                     author.AudiobookQualityProfileId = audiobookQualityProfileId;
                     settingsChanged = true;
                     _logger.Debug("Progressive settings: Added audiobook settings to author {0}", author.Name);
                 }
 
-                if (!author.AudiobookMetadataProfileId.HasValue && audiobookMetadataProfileId.HasValue)
+                if (IsMissingProfileId(author.AudiobookMetadataProfileId) && audiobookMetadataProfileId.HasValue)
                 {
                     author.AudiobookMetadataProfileId = audiobookMetadataProfileId;
                     settingsChanged = true;
@@ -722,14 +875,14 @@ namespace NzbDrone.Core.Books
             // Also fill missing root-folder path/settings if the profile exists but the path is missing.
             if (ebookQualityProfileId.HasValue && ebookQualityProfileId.Value > 0)
             {
-                if (!author.EbookQualityProfileId.HasValue)
+                if (IsMissingProfileId(author.EbookQualityProfileId))
                 {
                     author.EbookQualityProfileId = ebookQualityProfileId;
                     settingsChanged = true;
                     _logger.Debug("Progressive settings: Added ebook settings to author {0}", author.Name);
                 }
 
-                if (!author.EbookMetadataProfileId.HasValue && ebookMetadataProfileId.HasValue)
+                if (IsMissingProfileId(author.EbookMetadataProfileId) && ebookMetadataProfileId.HasValue)
                 {
                     author.EbookMetadataProfileId = ebookMetadataProfileId;
                     settingsChanged = true;
@@ -765,8 +918,6 @@ namespace NzbDrone.Core.Books
 
 	        public List<Author> UpdateAuthors(List<Author> author, bool useExistingRelativeFolder)
 	        {
-	            _cache.Clear();
-	            _authorByIdCache.Clear();
 	            _logger.Debug("Updating {0} author", author.Count);
 
                 var rootFolders = _rootFolderService?.All() ?? new List<RootFolder>();
@@ -793,7 +944,7 @@ namespace NzbDrone.Core.Books
 	                {
 	                    if (_authorPathBuilder != null)
 	                    {
-	                        _authorPathBuilder.EnsureAuthorPaths(s, useExistingRelativeFolder);
+	                        _authorPathBuilder.EnsureAuthorPaths(s, useExistingRelativeFolder, storedAuthors.GetValueOrDefault(s.Id));
 	                    }
 
 	                    _logger.Trace("Changing path for {0} to {1}", s.Name, s.Path);
@@ -805,7 +956,8 @@ namespace NzbDrone.Core.Books
             }
 
             _authorRepository.UpdateMany(author);
-            RefreshAuthorProviderAliases(author);
+            InvalidateAuthorCatalog();
+            _authorByIdCache.Clear();
             _logger.Debug("{0} authors updated", author.Count);
 
             return author;
@@ -904,14 +1056,14 @@ namespace NzbDrone.Core.Books
             }
         }
 
+        private static bool IsMissingProfileId(int? profileId) => !profileId.HasValue || profileId.Value <= 0;
+
         private static void ApplyRootFolderDefaultsForUnsetMediaTypeSettings(Author author, List<RootFolder> rootFolders)
         {
             if (author == null || rootFolders == null || rootFolders.Count == 0)
             {
                 return;
             }
-
-            static bool IsMissingProfileId(int? profileId) => !profileId.HasValue || profileId.Value <= 0;
 
             if (!author.AudiobookRootFolderPath.IsNullOrWhiteSpace())
             {
@@ -990,32 +1142,6 @@ namespace NzbDrone.Core.Books
             }
         }
 
-        private static bool HasCompatibleRootFolder(Author author, List<RootFolder> rootFolders, BookMediaType mediaType)
-        {
-            if (author == null || rootFolders == null || rootFolders.Count == 0)
-            {
-                return false;
-            }
-
-            var rootFolderPath = mediaType == BookMediaType.Audiobook
-                ? author.AudiobookRootFolderPath
-                : author.EbookRootFolderPath;
-
-            if (rootFolderPath.IsNullOrWhiteSpace())
-            {
-                return false;
-            }
-
-            var rootFolder = GetRootFolderForPath(rootFolders, rootFolderPath);
-            return IsCompatibleRootFolder(rootFolder, mediaType);
-        }
-
-        private static bool HasSyncMonitoredAcrossFormatsEligibility(Author author, List<RootFolder> rootFolders)
-        {
-            return HasCompatibleRootFolder(author, rootFolders, BookMediaType.Audiobook) &&
-                   HasCompatibleRootFolder(author, rootFolders, BookMediaType.Ebook);
-        }
-
         private void NormalizeOrValidateSyncMonitoredAcrossFormats(Author author, Author storedAuthor, List<RootFolder> rootFolders)
         {
             if (author?.SyncMonitoredAcrossFormats != true)
@@ -1023,7 +1149,7 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
-            var isEligible = HasSyncMonitoredAcrossFormatsEligibility(author, rootFolders);
+            var isEligible = AuthorMonitoringSyncPolicy.IsEligible(author, rootFolders);
             if (isEligible)
             {
                 return;
@@ -1031,7 +1157,7 @@ namespace NzbDrone.Core.Books
 
             if (storedAuthor?.SyncMonitoredAcrossFormats == true)
             {
-                var wasEligible = HasSyncMonitoredAcrossFormatsEligibility(storedAuthor, rootFolders);
+                var wasEligible = AuthorMonitoringSyncPolicy.IsEligible(storedAuthor, rootFolders);
                 if (wasEligible)
                 {
                     author.SyncMonitoredAcrossFormats = false;
@@ -1054,8 +1180,8 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
-            var wasEligible = HasSyncMonitoredAcrossFormatsEligibility(storedAuthor, rootFolders);
-            var isEligible = HasSyncMonitoredAcrossFormatsEligibility(author, rootFolders);
+            var wasEligible = AuthorMonitoringSyncPolicy.IsEligible(storedAuthor, rootFolders);
+            var isEligible = AuthorMonitoringSyncPolicy.IsEligible(author, rootFolders);
 
             if (!isEligible || wasEligible)
             {
@@ -1072,7 +1198,7 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
-            if (!HasSyncMonitoredAcrossFormatsEligibility(author, rootFolders))
+            if (!AuthorMonitoringSyncPolicy.IsEligible(author, rootFolders))
             {
                 return;
             }
@@ -1087,27 +1213,13 @@ namespace NzbDrone.Core.Books
                 return;
             }
 
-            var explicitDefaults = new List<bool>();
-
-            void TryAddDefault(string rootFolderPath)
+            var syncDefault = AuthorMonitoringSyncPolicy.ResolveDefault(author, rootFolders);
+            if (syncDefault.Value.HasValue)
             {
-                var rootFolder = GetRootFolderForPath(rootFolders, rootFolderPath);
-                if (rootFolder?.DefaultSyncMonitoredAcrossFormats is bool syncDefault)
-                {
-                    explicitDefaults.Add(syncDefault);
-                }
+                author.SyncMonitoredAcrossFormats = syncDefault.Value;
+                _logger.Debug("Seeded SyncMonitoredAcrossFormats={0} for author {1} {2}", syncDefault.Value, author.Name, context);
             }
-
-            TryAddDefault(author.AudiobookRootFolderPath);
-            TryAddDefault(author.EbookRootFolderPath);
-
-            var distinctDefaults = explicitDefaults.Distinct().ToList();
-            if (distinctDefaults.Count == 1)
-            {
-                author.SyncMonitoredAcrossFormats = distinctDefaults[0];
-                _logger.Debug("Seeded SyncMonitoredAcrossFormats={0} for author {1} {2}", distinctDefaults[0], author.Name, context);
-            }
-            else if (distinctDefaults.Count > 1)
+            else if (syncDefault.Conflicting)
             {
                 _logger.Warn("Conflicting root folder sync defaults for author {0}; leaving SyncMonitoredAcrossFormats unset", author.Name);
             }
@@ -1135,52 +1247,10 @@ namespace NzbDrone.Core.Books
 
             author.Monitored = author.IsMonitoredFromMediaSettings();
             _authorRepository.Update(author);
-	            _cache.Clear();
+	            InvalidateAuthorCatalog();
 	            _authorByIdCache.Remove(authorId.ToString());
 	            _eventAggregator.PublishEvent(new AuthorEditedEvent(author, author));
 	        }
-
-        public void EnsureMediaTypeMonitoring(int authorId, string mediaType)
-        {
-            var isAudiobook = string.Equals(mediaType, "audiobook", StringComparison.OrdinalIgnoreCase);
-            var isEbook = string.Equals(mediaType, "ebook", StringComparison.OrdinalIgnoreCase);
-            if (!isAudiobook && !isEbook)
-            {
-                throw new ArgumentException($"Unknown media type '{mediaType}'", nameof(mediaType));
-            }
-
-            var author = GetAuthor(authorId);
-            var currentMonitoring = isAudiobook
-                ? author.AudiobookMonitored
-                : author.EbookMonitored;
-
-            // An explicit book request enables only the named side. The opposite side and
-            // all book-row selections remain unchanged.
-            if (currentMonitoring == true)
-            {
-                return;
-            }
-
-            if (isAudiobook)
-            {
-                author.AudiobookMonitored = true;
-            }
-            else
-            {
-                author.EbookMonitored = true;
-            }
-
-            author.Monitored = author.IsMonitoredFromMediaSettings();
-            _authorRepository.Update(author);
-            _cache.Clear();
-            _authorByIdCache.Remove(authorId.ToString());
-
-            // Do not run root/default reconciliation here: an explicit single-book request
-            // must not configure or monitor the opposite media side.
-            // Reusing the same snapshot intentionally suppresses diff-driven root/profile reconciliation;
-            // the event still refreshes API, statistics, and full-text-search consumers.
-            _eventAggregator.PublishEvent(new AuthorEditedEvent(author, author));
-        }
 
         public long GetAuthorSizeForMediaType(int authorId, string mediaType)
         {
@@ -1191,7 +1261,7 @@ namespace NzbDrone.Core.Books
 	        public void UpdateLastSelectedMediaType(int authorId, string mediaType)
 	        {
 	            _authorRepository.UpdateLastSelectedMediaType(authorId, mediaType);
-	            _cache.Clear();
+	            InvalidateAuthorCatalog();
 	            _authorByIdCache.Remove(authorId.ToString());
 	        }
 

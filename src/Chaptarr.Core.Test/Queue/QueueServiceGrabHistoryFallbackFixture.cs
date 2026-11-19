@@ -4,6 +4,9 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using NUnit.Framework;
+using Chaptarr.Core.Test.Common;
+using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.Datastore;
 using NzbDrone.Common.Crypto;
 using NzbDrone.Common.Disk;
 using NzbDrone.Common.Messaging;
@@ -113,7 +116,7 @@ namespace Chaptarr.Core.Test.Queue
                 }
             };
 
-            var service = new QueueService(eventAggregator, historyService);
+            var service = new QueueService(eventAggregator, historyService, InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()));
 
             var trackedDownload = new TrackedDownload
             {
@@ -191,7 +194,7 @@ namespace Chaptarr.Core.Test.Queue
                 }
             };
 
-            var service = new QueueService(eventAggregator, historyService);
+            var service = new QueueService(eventAggregator, historyService, InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()));
 
             var trackedDownload = new TrackedDownload
             {
@@ -272,7 +275,7 @@ namespace Chaptarr.Core.Test.Queue
                 }
             };
 
-            var service = new QueueService(eventAggregator, historyService);
+            var service = new QueueService(eventAggregator, historyService, InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()));
 
             var trackedDownload = new TrackedDownload
             {
@@ -322,7 +325,7 @@ namespace Chaptarr.Core.Test.Queue
             var historyProxy = (HistoryServiceProxy)(object)historyService;
             historyProxy.FindResult = new List<EntityHistory>();
 
-            var service = new QueueService(eventAggregator, historyService);
+            var service = new QueueService(eventAggregator, historyService, InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()));
             var trackedDownload = CreateFailedCompletedDownload("download-file-paths-mp3", Quality.UnknownAudio);
             trackedDownload.DownloadItem.FilePaths = new List<string>
             {
@@ -357,7 +360,7 @@ namespace Chaptarr.Core.Test.Queue
                 "/downloads/hp/Harry Potter and the Chamber of Secrets.part"
             };
 
-            var service = new QueueService(eventAggregator, historyService, diskProvider: diskProvider);
+            var service = new QueueService(eventAggregator, historyService, InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()), diskProvider: diskProvider);
             var trackedDownload = CreateFailedCompletedDownload("download-scan-mp3", Quality.UnknownAudio);
             trackedDownload.DownloadItem.OutputPath = new OsPath("/downloads/hp");
 
@@ -378,7 +381,7 @@ namespace Chaptarr.Core.Test.Queue
             var historyProxy = (HistoryServiceProxy)(object)historyService;
             historyProxy.FindResult = new List<EntityHistory>();
 
-            var service = new QueueService(eventAggregator, historyService);
+            var service = new QueueService(eventAggregator, historyService, InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()));
 
             var trackedDownload = new TrackedDownload
             {
@@ -422,7 +425,7 @@ namespace Chaptarr.Core.Test.Queue
             var historyProxy = (HistoryServiceProxy)(object)historyService;
             historyProxy.FindResult = new List<EntityHistory>();
 
-            var service = new QueueService(eventAggregator, historyService);
+            var service = new QueueService(eventAggregator, historyService, InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()));
             var trackedDownload = CreateFailedCompletedDownload("download-retry-mp3", Quality.MP3);
 
             service.Handle(new TrackedDownloadRefreshedEvent(new List<TrackedDownload> { trackedDownload }));
@@ -441,7 +444,7 @@ namespace Chaptarr.Core.Test.Queue
             var historyProxy = (HistoryServiceProxy)(object)historyService;
             historyProxy.FindResult = new List<EntityHistory>();
 
-            var service = new QueueService(eventAggregator, historyService);
+            var service = new QueueService(eventAggregator, historyService, InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()));
             var trackedDownload = CreateFailedCompletedDownload("download-retry-blocked", Quality.MP3);
             trackedDownload.State = TrackedDownloadState.ImportBlocked;
 
@@ -463,7 +466,7 @@ namespace Chaptarr.Core.Test.Queue
             var historyProxy = (HistoryServiceProxy)(object)historyService;
             historyProxy.FindResult = new List<EntityHistory>();
 
-            var service = new QueueService(eventAggregator, historyService);
+            var service = new QueueService(eventAggregator, historyService, InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()));
             var trackedDownload = CreateFailedCompletedDownload($"download-no-retry-{qualityId}", Quality.FindById(qualityId));
 
             service.Handle(new TrackedDownloadRefreshedEvent(new List<TrackedDownload> { trackedDownload }));
@@ -482,7 +485,7 @@ namespace Chaptarr.Core.Test.Queue
             var historyProxy = (HistoryServiceProxy)(object)historyService;
             historyProxy.FindResult = new List<EntityHistory>();
 
-            var service = new QueueService(eventAggregator, historyService);
+            var service = new QueueService(eventAggregator, historyService, InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()));
             var trackedDownload = CreateFailedCompletedDownload("download-no-id", Quality.MP3);
             trackedDownload.DownloadItem.DownloadId = null;
 
@@ -507,7 +510,7 @@ namespace Chaptarr.Core.Test.Queue
             conversionTrackingService.Start("download-convert-cancel", Quality.M4B.Id, Quality.M4B.Name, "Converting to M4B");
             conversionTrackingService.RegisterCancellation("download-convert-cancel", cancellation);
 
-            var service = new QueueService(eventAggregator, historyService, conversionTrackingService);
+            var service = new QueueService(eventAggregator, historyService, InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()), conversionTrackingService);
             var trackedDownload = CreateFailedCompletedDownload("download-convert-cancel", Quality.MP3);
             trackedDownload.State = TrackedDownloadState.Importing;
 
@@ -539,7 +542,7 @@ namespace Chaptarr.Core.Test.Queue
             var conversionTrackingService = new ConversionTrackingService(eventAggregator);
             conversionTrackingService.Start("download-copy", Quality.M4B.Id, Quality.M4B.Name, "Converting to M4B");
 
-            var service = new QueueService(eventAggregator, historyService, conversionTrackingService);
+            var service = new QueueService(eventAggregator, historyService, InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()), conversionTrackingService);
             var trackedDownload = CreateFailedCompletedDownload("download-copy", Quality.MP3);
             trackedDownload.State = TrackedDownloadState.Importing;
 
@@ -571,7 +574,7 @@ namespace Chaptarr.Core.Test.Queue
             var conversionTrackingService = new ConversionTrackingService(eventAggregator);
             conversionTrackingService.Start("download-upsert-convert", Quality.M4B.Id, Quality.M4B.Name, "Converting to M4B");
 
-            var service = new QueueService(eventAggregator, historyService, conversionTrackingService);
+            var service = new QueueService(eventAggregator, historyService, InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()), conversionTrackingService);
             service.Handle(new TrackedDownloadRefreshedEvent(new List<TrackedDownload>()));
 
             var trackedDownload = CreateFailedCompletedDownload("download-upsert-convert", Quality.MP3);
@@ -599,7 +602,7 @@ namespace Chaptarr.Core.Test.Queue
             var historyProxy = (HistoryServiceProxy)(object)historyService;
             historyProxy.FindResult = new List<EntityHistory>();
 
-            var service = new QueueService(eventAggregator, historyService);
+            var service = new QueueService(eventAggregator, historyService, InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()));
             var trackedDownload = CreateFailedCompletedDownload("download-terminal-imported", Quality.MP3);
             trackedDownload.State = TrackedDownloadState.Importing;
 
@@ -620,7 +623,7 @@ namespace Chaptarr.Core.Test.Queue
             var historyProxy = (HistoryServiceProxy)(object)historyService;
             historyProxy.FindResult = new List<EntityHistory>();
 
-            var service = new QueueService(eventAggregator, historyService);
+            var service = new QueueService(eventAggregator, historyService, InterfaceProxy.Proxy<ICustomFormatCalculationService>((method, args) => new List<CustomFormat>()));
             service.Handle(new TrackedDownloadRefreshedEvent(new List<TrackedDownload>()));
 
             var trackedDownload = CreateFailedCompletedDownload("download-terminal-failed", Quality.MP3);
@@ -708,6 +711,24 @@ namespace Chaptarr.Core.Test.Queue
                 AudiobookQualityProfileId = profile.Id,
                 AudiobookQualityProfile = profile
             };
+        }
+
+        [Test]
+        public void colliding_tracked_queue_ids_should_refuse_selection_without_removing_rows()
+        {
+            var field = typeof(QueueService).GetField("_queue", BindingFlags.NonPublic | BindingFlags.Static);
+            var previous = field.GetValue(null);
+            try
+            {
+                field.SetValue(null, new List<NzbDrone.Core.Queue.Queue>
+                {
+                    new() { Id = 17, DownloadId = "first" }, new() { Id = 17, DownloadId = "second" }
+                });
+                var service = new QueueService(null, null, null);
+                Assert.Throws<ModelConflictException>(() => service.Find(17));
+                Assert.That(service.GetQueue(), Has.Count.EqualTo(2));
+            }
+            finally { field.SetValue(null, previous); }
         }
     }
 }

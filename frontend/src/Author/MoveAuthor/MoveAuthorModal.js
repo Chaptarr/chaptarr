@@ -15,6 +15,8 @@ function MoveAuthorModal(props) {
     originalPath,
     destinationPath,
     destinationRootFolder,
+    pathChanges,
+    sharedFolder,
     isOpen,
     onSavePress,
     onMoveAuthorPress
@@ -28,6 +30,10 @@ function MoveAuthorModal(props) {
   ) {
     console.error('orginalPath and destinationPath OR destinationRootFolder must be provided');
   }
+
+  const defaultConfirmation = destinationRootFolder ?
+    translate('MoveAuthorFoldersConfirm', { destinationRootFolder }) :
+    translate('MoveAuthorFilesConfirm', { originalPath, destinationPath });
 
   return (
     <Modal
@@ -46,10 +52,16 @@ function MoveAuthorModal(props) {
 
         <ModalBody>
           {
-            destinationRootFolder ?
-              translate('MoveAuthorFoldersConfirm', { destinationRootFolder }) :
-              translate('MoveAuthorFilesConfirm', { originalPath, destinationPath })
+            pathChanges?.length ?
+              pathChanges.map((change) => (
+                <p key={change.mediaType}>
+                  {translate(change.mediaType === 'ebook' ? 'EbookPath' : 'AudiobookPath')}: {' '}
+                  {translate('MoveAuthorFilesConfirm', change)}
+                </p>
+              )) : defaultConfirmation
           }
+          {sharedFolder ? <p>{translate('MoveSharedAuthorFolderConfirm')}</p> : null}
+          {destinationRootFolder ? <p>{translate('MoveAuthorNoMoveHelpText')}</p> : null}
         </ModalBody>
 
         <ModalFooter>
@@ -73,6 +85,8 @@ function MoveAuthorModal(props) {
 }
 
 MoveAuthorModal.propTypes = {
+  pathChanges: PropTypes.arrayOf(PropTypes.object),
+  sharedFolder: PropTypes.bool,
   originalPath: PropTypes.string,
   destinationPath: PropTypes.string,
   destinationRootFolder: PropTypes.string,

@@ -1,10 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using System.Text;
-using System.Text.RegularExpressions;
+using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.MediaFiles;
+using NzbDrone.Core.Parser;
+using NzbDrone.Core.Utilities;
 
 namespace NzbDrone.Core.MediaFiles.BookImport.Services
 {
@@ -12,7 +13,6 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
     {
         private const int MaxStoredValueLength = 500;
         private const int WindowContextLength = 40;
-        private static readonly Regex TokenRegex = new Regex(@"[\p{L}\p{Nd}]+(?:['\u2018\u2019][sS])?", RegexOptions.Compiled);
 
         private sealed class EvidenceToken
         {
@@ -47,6 +47,51 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
             }
 
             AddTokenIndexes(source, field, rawValue, fieldTokens, matchedIndexes, disposition, type, scope, detail);
+        }
+
+        public void AddNumberEquivalentPhrase(
+            string source,
+            string field,
+            string rawValue,
+            string phrase,
+            string editionLanguage,
+            string disposition,
+            string type,
+            string scope,
+            string detail)
+        {
+            if (string.IsNullOrWhiteSpace(rawValue) || string.IsNullOrWhiteSpace(phrase))
+            {
+                return;
+            }
+
+            var fieldTokens = Tokenize(rawValue);
+            var expectedTokens = Tokenize(phrase).Select(token => token.Value).ToList();
+            var matchingSpans = ReleaseTitleMatchScorer
+                .FindNumberEquivalentTitleSpans(
+                    fieldTokens.Select(token => token.Value).ToList(),
+                    expectedTokens,
+                    editionLanguage)
+                .OrderByDescending(span => span.End - span.Start)
+                .ThenBy(span => span.Start)
+                .ToList();
+            if (expectedTokens.Count == 0 || matchingSpans.Count == 0)
+            {
+                return;
+            }
+
+            var matchingSpan = matchingSpans[0];
+
+            AddTokenIndexes(
+                source,
+                field,
+                rawValue,
+                fieldTokens,
+                Enumerable.Range(matchingSpan.Start, matchingSpan.End - matchingSpan.Start + 1),
+                disposition,
+                type,
+                scope,
+                detail);
         }
 
         public void AddMatchingTokens(
@@ -354,7 +399,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 return tokens;
             }
 
-            foreach (Match match in TokenRegex.Matches(rawValue))
+            var mapped = UnicodeComparisonNormalizer.NormalizeTextWithSourceSpans(rawValue);
+            foreach (var match in UnicodeComparisonNormalizer.WordSpans(mapped.Text, includePossessive: true))
             {
                 var normalized = NormalizeToken(match.Value);
                 if (string.IsNullOrWhiteSpace(normalized))
@@ -365,8 +411,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 tokens.Add(new EvidenceToken
                 {
                     Value = normalized,
-                    Start = match.Index,
-                    End = match.Index + match.Length
+                    Start = mapped.SourceSpans[match.Index].Start,
+                    End = mapped.SourceSpans[match.Index + match.Length - 1].End
                 });
             }
 
@@ -380,18 +426,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 return string.Empty;
             }
 
-            value = Regex.Replace(value, "['\u2018\u2019]s$", "s", RegexOptions.IgnoreCase);
-            value = value.Normalize(NormalizationForm.FormD);
-            var builder = new StringBuilder();
-            foreach (var character in value)
-            {
-                if (CharUnicodeInfo.GetUnicodeCategory(character) != UnicodeCategory.NonSpacingMark)
-                {
-                    builder.Append(character);
-                }
-            }
-
-            return builder.ToString().ToLowerInvariant();
+            return UnicodeComparisonNormalizer.NormalizeWords(StringSuperNormalizer.PossessiveRegex.Replace(value, "s"));
         }
 
         private static bool IsNonSemanticGap(string value, int start, int end)
@@ -401,9 +436,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Services
                 return false;
             }
 
-            for (var index = start; index < end; index++)
+            foreach (var rune in value.AsSpan(start, end - start).EnumerateRunes())
             {
-                if (char.IsLetterOrDigit(value[index]))
+                if (Rune.IsLetter(rune) || Rune.IsNumber(rune))
                 {
                     return false;
                 }

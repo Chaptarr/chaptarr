@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using NLog;
@@ -63,6 +64,8 @@ namespace Chaptarr.Core.Test.Download
                 throw new InvalidOperationException("TrackedDownloadService should not map downloads using authorId/bookIds during cache refresh.");
             }
 
+            public List<List<Book>> GetBooks(IReadOnlyList<ParsedBookInfo> parsedBooks, Author author) => throw new NotImplementedException();
+
             public List<Book> GetBooks(ParsedBookInfo parsedBookInfo, Author author, SearchCriteriaBase searchCriteria = null) => throw new NotImplementedException();
             public ParsedBookInfo ParseBookTitleFuzzy(string title) => throw new NotImplementedException();
             public Book GetLocalBook(string filename, Author author) => throw new NotImplementedException();
@@ -106,6 +109,8 @@ namespace Chaptarr.Core.Test.Download
                 };
             }
 
+            public List<List<Book>> GetBooks(IReadOnlyList<ParsedBookInfo> parsedBooks, Author author) => throw new NotImplementedException();
+
             public List<Book> GetBooks(ParsedBookInfo parsedBookInfo, Author author, SearchCriteriaBase searchCriteria = null) => throw new NotImplementedException();
             public ParsedBookInfo ParseBookTitleFuzzy(string title) => throw new NotImplementedException();
             public Book GetLocalBook(string filename, Author author) => throw new NotImplementedException();
@@ -114,11 +119,14 @@ namespace Chaptarr.Core.Test.Download
         private sealed class DirectMatchParsingService : IParsingService
         {
             public Author Author { get; set; } = new Author { Id = 85, Name = "Brandon Sanderson" };
+            public int MapCalls { get; private set; }
+            public int MapWithIdsCalls { get; private set; }
 
             public Author GetAuthor(string title) => throw new NotImplementedException();
 
             public RemoteBook Map(ParsedBookInfo parsedBookInfo, SearchCriteriaBase searchCriteria = null)
             {
+                MapCalls++;
                 return new RemoteBook
                 {
                     ParsedBookInfo = parsedBookInfo,
@@ -140,6 +148,7 @@ namespace Chaptarr.Core.Test.Download
             // overload is now the normal path for downloads with grab history (2026-07-25).
             public RemoteBook Map(ParsedBookInfo parsedBookInfo, int authorId, IEnumerable<int> bookIds)
             {
+                MapWithIdsCalls++;
                 LastBookIds = bookIds?.ToList() ?? new List<int>();
 
                 return new RemoteBook
@@ -159,6 +168,8 @@ namespace Chaptarr.Core.Test.Download
             }
 
             public List<int> LastBookIds { get; private set; } = new List<int>();
+
+            public List<List<Book>> GetBooks(IReadOnlyList<ParsedBookInfo> parsedBooks, Author author) => throw new NotImplementedException();
 
             public List<Book> GetBooks(ParsedBookInfo parsedBookInfo, Author author, SearchCriteriaBase searchCriteria = null) => throw new NotImplementedException();
             public ParsedBookInfo ParseBookTitleFuzzy(string title) => throw new NotImplementedException();
@@ -199,11 +210,6 @@ namespace Chaptarr.Core.Test.Download
                 if (targetMethod?.Name == nameof(IDownloadHistoryService.GetLatestGrab))
                 {
                     return Latest;
-                }
-
-                if (targetMethod?.Name == nameof(IDownloadHistoryService.DownloadAlreadyImported))
-                {
-                    return false;
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement IDownloadHistoryService.{targetMethod?.Name}");
@@ -307,8 +313,10 @@ namespace Chaptarr.Core.Test.Download
             cacheManager.GetCache<TrackedDownload>(service.GetType()).Set(trackedDownload.DownloadItem.DownloadId, trackedDownload);
 
             Assert.DoesNotThrow(() => service.Handle(new AuthorDeletedEvent(author, deleteFiles: false, addImportListExclusion: false)));
-            Assert.That(parsingService.MapCalls, Is.EqualTo(1));
+            Assert.That(parsingService.MapCalls, Is.EqualTo(0));
             Assert.That(parsingService.MapWithIdsCalls, Is.EqualTo(0));
+            Assert.That(trackedDownload.RemoteBook.Author, Is.Null);
+            Assert.That(trackedDownload.RemoteBook.Books, Is.Empty);
             Assert.That(eventAggregator.Events, Has.Some.InstanceOf<TrackedDownloadRefreshedEvent>());
         }
 
@@ -595,6 +603,7 @@ namespace Chaptarr.Core.Test.Download
             // A title naming two series positions must not turn one grab into two expected books.
             Assert.That(parsingService.LastBookIds, Is.EqualTo(new[] { 4242 }));
             Assert.That(trackedDownload.RemoteBook?.Books?.Select(b => b.Id), Is.EqualTo(new[] { 4242 }));
+            Assert.That(parsingService.MapCalls, Is.Zero, "Authoritative grab targets must avoid a full title lookup.");
         }
 
         [Test]
@@ -653,6 +662,83 @@ namespace Chaptarr.Core.Test.Download
             Assert.That(trackedBookIds, Does.Not.Contain(999999), "the deleted row must not survive as a phantom target");
         }
 
+        [TestCase(1, true)]
+        [TestCase(25, true)]
+        [TestCase(1, false)]
+        [TestCase(25, false)]
+        public void downloading_refreshes_should_only_use_title_lookup_without_grab_targets(int count, bool grabbed)
+        {
+            const string clientTitle = "Brandon Sanderson - Mistborn 03 - The Hero of Ages (GraphicAudio)";
+            Assert.That(NzbDrone.Core.Parser.Parser.ParseBookTitle(clientTitle), Is.Not.Null);
+            var parsing = new DirectMatchParsingService();
+            var history = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
+            if (grabbed)
+            {
+                ((HistoryServiceProxy)(object)history).HistoryItems.Add(new EntityHistory
+                {
+                    EventType = EntityHistoryEventType.Grabbed, DownloadId = "tracked-target",
+                    AuthorId = 85, BookId = 4242, Date = DateTime.UtcNow,
+                    SourceTitle = "Brandon Sanderson - The Hero of Ages", Quality = new QualityModel(Quality.M4B),
+                    Data = new Dictionary<string, string>()
+                });
+            }
+
+            var service = new TrackedDownloadService(parsing, new CacheManager(), history, new RecordingEventAggregator(),
+                DispatchProxy.Create<IDownloadHistoryService, DownloadHistoryServiceProxy>(), new StubCustomFormatCalculationService(),
+                LogManager.GetCurrentClassLogger(), NoopDownloadClientFileSnapshotService.Instance);
+            var timer = Stopwatch.StartNew();
+            for (var index = 0; index < count; index++)
+            {
+                var tracked = service.TrackDownload(new DownloadClientDefinition { Id = 5, Protocol = DownloadProtocol.Torrent },
+                    new DownloadClientItem
+                    {
+                        DownloadId = "tracked-target", Title = clientTitle,
+                        DownloadClientInfo = new DownloadClientItemClientInfo { Name = "Test Client", Protocol = DownloadProtocol.Torrent }
+                    });
+                Assert.That(tracked.RemoteBook.Books.Select(book => book.Id), Is.EqualTo(new[] { grabbed ? 4242 : 5651 }));
+            }
+
+            timer.Stop();
+            Assert.That(parsing.MapCalls, Is.EqualTo(grabbed ? 0 : count));
+            Assert.That(parsing.MapWithIdsCalls, Is.EqualTo(grabbed ? count : 0));
+            TestContext.Progress.WriteLine($"TRACKED_REFRESH count={count} grabbed={grabbed} titleMaps={parsing.MapCalls} idMaps={parsing.MapWithIdsCalls} elapsedMs={timer.Elapsed.TotalMilliseconds:F3}");
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void unparseable_client_titles_should_enrich_history_metadata_without_loading_targets_twice(bool parseableHistoryTitle)
+        {
+            var parsing = new HistoryRecoveryParsingService();
+            var history = DispatchProxy.Create<IHistoryService, HistoryServiceProxy>();
+            ((HistoryServiceProxy)(object)history).HistoryItems.Add(new EntityHistory
+            {
+                EventType = EntityHistoryEventType.Grabbed, DownloadId = "unparseable-target", AuthorId = 76, BookId = 4634,
+                Author = new Author { Id = 76, Name = "Cory Doctorow" },
+                Book = new Book { Id = 4634, AuthorId = 76, Title = "Enshittification" },
+                SourceTitle = parseableHistoryTitle ? "Cory Doctorow - Enshittification [MP3]" : string.Empty,
+                Quality = new QualityModel(Quality.M4B), Date = DateTime.UtcNow
+            });
+            var service = new TrackedDownloadService(parsing, new CacheManager(), history, new RecordingEventAggregator(),
+                DispatchProxy.Create<IDownloadHistoryService, DownloadHistoryServiceProxy>(), new StubCustomFormatCalculationService(),
+                LogManager.GetCurrentClassLogger(), NoopDownloadClientFileSnapshotService.Instance);
+
+            var tracked = service.TrackDownload(new DownloadClientDefinition { Id = 5, Protocol = DownloadProtocol.Torrent },
+                new DownloadClientItem
+                {
+                    DownloadId = "unparseable-target", Title = string.Empty,
+                    DownloadClientInfo = new DownloadClientItemClientInfo { Name = "Test Client", Protocol = DownloadProtocol.Torrent }
+                });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(tracked.RemoteBook.Books.Select(book => book.Id), Is.EqualTo(new[] { 4634 }));
+                Assert.That(tracked.RemoteBook.ParsedBookInfo.BookTitle, Is.Not.Null.And.Not.Empty);
+                Assert.That(tracked.RemoteBook.ParsedBookInfo.Quality.Quality, Is.EqualTo(parseableHistoryTitle ? Quality.MP3 : Quality.M4B));
+                Assert.That(parsing.MapCalls, Is.Zero);
+                Assert.That(parsing.MapWithIdsCalls, Is.EqualTo(1));
+            });
+        }
+
         /// <summary>
         /// Grabbed ids resolve to nothing (rows deleted), exactly as GetExistingBooks behaves for
         /// stale ids; title matching still finds a book.
@@ -688,6 +774,8 @@ namespace Chaptarr.Core.Test.Download
                     Books = new List<Book>()
                 };
             }
+
+            public List<List<Book>> GetBooks(IReadOnlyList<ParsedBookInfo> parsedBooks, Author author) => throw new NotImplementedException();
 
             public List<Book> GetBooks(ParsedBookInfo parsedBookInfo, Author author, SearchCriteriaBase searchCriteria = null) => throw new NotImplementedException();
             public ParsedBookInfo ParseBookTitleFuzzy(string title) => throw new NotImplementedException();
@@ -1002,7 +1090,7 @@ namespace Chaptarr.Core.Test.Download
                 CaptureClientListCalls++;
             }
 
-            public void CaptureCompletedOutput(DownloadClientItem item)
+            public void CaptureCompletedOutput(DownloadClientItem item, bool throwOnError = false, DownloadCleanupContext cleanup = null)
             {
             }
 

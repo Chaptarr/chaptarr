@@ -1,3 +1,12 @@
+import { coerceFolderType, FolderType } from 'Helpers/Props/folderTypes';
+
+export function supportsAuthorMediaType(rootFolders, path, mediaType) {
+  const root = rootFolders.find((folder) => folder.path === path);
+  const type = coerceFolderType(root?.folderType);
+  return !!path && !!root && (type === FolderType.Mixed ||
+    type === (mediaType === 'ebook' ? FolderType.Ebook : FolderType.Audiobook));
+}
+
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
@@ -23,9 +32,9 @@ export default function getAuthorMediaTypeRootFolderStatus(author, mediaType) {
 
   const isConfigured = normalizedMediaType === 'audiobook' ? audiobookConfigured : ebookConfigured;
 
-  const isDataLoading = normalizedMediaType === 'audiobook'
-    ? Boolean(author.audiobookQualityProfileId && author.audiobookRootFolderPath === undefined && author.audiobookFolder === undefined)
-    : Boolean(author.ebookQualityProfileId && author.ebookRootFolderPath === undefined && author.ebookFolder === undefined);
+  const isDataLoading = normalizedMediaType === 'audiobook' ?
+    Boolean(author.audiobookQualityProfileId && author.audiobookRootFolderPath === undefined && author.audiobookFolder === undefined) :
+    Boolean(author.ebookQualityProfileId && author.ebookRootFolderPath === undefined && author.ebookFolder === undefined);
 
   return {
     mediaType: normalizedMediaType,

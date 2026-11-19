@@ -29,7 +29,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Aggregation.Aggregators
             }
 
             // CRITICAL FIX: If still no quality detected, use file extension as fallback
-            // This fixes M4B files being detected as "Unknown Text" instead of proper quality
+            // Prefer the detected container format over an unknown quality.
             if (quality == null || quality.Quality == Quality.Unknown)
             {
                 var fileExtension = Path.GetExtension(localTrack.Path);

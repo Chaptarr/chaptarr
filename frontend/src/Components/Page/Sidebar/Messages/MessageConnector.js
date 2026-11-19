@@ -62,7 +62,10 @@ class MessageConnector extends Component {
   }
 
   componentDidUpdate(prevProps) {
-    this.scheduleHideMessage(this.props.hideAfter);
+    if (this.props.id !== prevProps.id || this.props.hideAfter !== prevProps.hideAfter ||
+        this.props.message !== prevProps.message || this.props.type !== prevProps.type) {
+      this.scheduleHideMessage(this.props.hideAfter);
+    }
     
     // Sync pause state with command status
     if (this.props.type === 'importProgress' && this.props.commandStatus !== prevProps.commandStatus) {
@@ -71,6 +74,10 @@ class MessageConnector extends Component {
         this.setState({ isPaused });
       }
     }
+  }
+
+  componentWillUnmount() {
+    clearTimeout(this._hideTimeoutId);
   }
 
   //
@@ -92,7 +99,7 @@ class MessageConnector extends Component {
   };
   
   handlePauseResume = () => {
-    const { type, id } = this.props;
+    const { type } = this.props;
     
     // Only handle pause/resume for import progress messages
     if (type !== 'importProgress') {
@@ -155,6 +162,8 @@ MessageConnector.propTypes = {
   hideMessage: PropTypes.func.isRequired,
   pauseCommand: PropTypes.func.isRequired,
   resumeCommand: PropTypes.func.isRequired,
+  message: PropTypes.string.isRequired,
+  commandStatus: PropTypes.string,
   type: PropTypes.string,
   commands: PropTypes.array
 };

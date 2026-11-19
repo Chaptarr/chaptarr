@@ -87,14 +87,7 @@ namespace NzbDrone.Common.Http
 
         public override string ToString()
         {
-            var result = $"Res: HTTP/{Version} [{Request.Method}] {Request.Url}: {(int)StatusCode}.{StatusCode} ({ResponseData?.Length ?? 0} bytes)";
-
-            if (HasHttpError && Headers.ContentType.IsNotNullOrWhiteSpace() && !Headers.ContentType.Equals("text/html", StringComparison.InvariantCultureIgnoreCase))
-            {
-                result += Environment.NewLine + Content;
-            }
-
-            return result;
+            return $"Res: HTTP/{Version} [{Request.Method}] {Request.GetLogUrl()}: {(int)StatusCode}.{StatusCode} ({ResponseData?.Length ?? 0} bytes)";
         }
     }
 

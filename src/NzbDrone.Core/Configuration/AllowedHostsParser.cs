@@ -1,0 +1,58 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net;
+using NzbDrone.Common.Extensions;
+
+namespace NzbDrone.Core.Configuration
+{
+    public static class AllowedHostsParser
+    {
+        private static readonly char[] Separators = { ',', ';' };
+        private static readonly string[] BindAddresses = { "0.0.0.0", "[::]" };
+
+        public static List<string> Parse(string value)
+        {
+            if (value.IsNullOrWhiteSpace())
+            {
+                return new List<string>();
+            }
+
+            return value.Split(Separators, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                        .Select(Normalize)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+        }
+
+        public static bool IsValidHost(string host)
+        {
+            if (host.IsNullOrWhiteSpace())
+            {
+                return false;
+            }
+
+            if (host.StartsWith("*."))
+            {
+                return Uri.CheckHostName(host.Substring(2)) == UriHostNameType.Dns;
+            }
+
+            return Uri.CheckHostName(host) != UriHostNameType.Unknown;
+        }
+
+        public static bool IsBindAddress(string host)
+        {
+            return BindAddresses.Contains(host);
+        }
+
+        public static bool IsUnrestricted(string value)
+        {
+            var hosts = Parse(value).Where(host => !IsBindAddress(host)).ToList();
+            return hosts.Count == 0 || hosts.Contains("*");
+        }
+
+        private static string Normalize(string host)
+        {
+            return IPAddress.TryParse(host, out var address) ? address.ToString().ToUrlHost() : host;
+        }
+    }
+}

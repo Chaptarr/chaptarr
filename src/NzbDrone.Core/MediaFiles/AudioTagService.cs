@@ -133,8 +133,12 @@ namespace NzbDrone.Core.MediaFiles
                 ["ARTIST"] = author.Name ?? string.Empty,
                 ["TRACKNUMBER"] = (trackfile.Part > 0 ? trackfile.Part : 1).ToString(),
                 ["TRACKCOUNT"] = (partCount > 0 ? partCount : 0).ToString(),
-                ["YEAR"] = (edition.ReleaseDate?.Year ?? 0).ToString(),
             };
+
+            if (edition.ReleaseDate.HasValue)
+            {
+                desired["YEAR"] = edition.ReleaseDate.Value.Year.ToString();
+            }
 
             if (!string.IsNullOrWhiteSpace(edition.Publisher))
             {
@@ -412,32 +416,6 @@ namespace NzbDrone.Core.MediaFiles
             {
                 file?.Dispose();
             }
-        }
-
-        private string CleanNarratorValue(string narrator)
-        {
-            if (string.IsNullOrWhiteSpace(narrator))
-            {
-                return null;
-            }
-
-            // Clean up common narrator prefixes/suffixes
-            narrator = narrator.Trim();
-            narrator = narrator.Replace("Narrated by ", "", StringComparison.OrdinalIgnoreCase);
-            narrator = narrator.Replace("Read by ", "", StringComparison.OrdinalIgnoreCase);
-            narrator = narrator.Replace("Performed by ", "", StringComparison.OrdinalIgnoreCase);
-
-            // Handle multiple narrators - take the first one
-            if (narrator.Contains(";"))
-            {
-                narrator = narrator.Split(';')[0].Trim();
-            }
-            else if (narrator.Contains(",") && narrator.Split(',').Length <= 3) // Only split if reasonable number
-            {
-                narrator = narrator.Split(',')[0].Trim();
-            }
-
-            return narrator;
         }
 
     }

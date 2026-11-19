@@ -173,7 +173,7 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
-        public void should_reassign_existing_external_id_row_instead_of_inserting_duplicate()
+        public void should_refuse_to_steal_existing_external_id_without_identity_reconciliation()
         {
             var repo = new InMemoryAuthorSyncMetadataRepository();
             var logger = LogManager.GetCurrentClassLogger();
@@ -186,18 +186,14 @@ namespace Chaptarr.Core.Test.Books
                 ETag = "old"
             });
 
-            var updated = sut.CreateOrUpdateSyncMetadata(authorId: 2, externalAuthorId: "hc:123", etag: "new");
-
+            Assert.Throws<InvalidOperationException>(() => sut.CreateOrUpdateSyncMetadata(authorId: 2, externalAuthorId: "hc:123", etag: "new"));
             Assert.That(repo.Count(), Is.EqualTo(1));
-            Assert.That(updated.AuthorId, Is.EqualTo(2));
-            Assert.That(updated.ExternalAuthorId, Is.EqualTo("hc:123"));
-            Assert.That(updated.ETag, Is.EqualTo("new"));
-            Assert.That(repo.FindByAuthorId(1), Is.Null);
-            Assert.That(repo.FindByAuthorId(2), Is.Not.Null);
+            Assert.That(repo.FindByAuthorId(1).ETag, Is.EqualTo("old"));
+            Assert.That(repo.FindByAuthorId(2), Is.Null);
         }
 
         [Test]
-        public void should_delete_conflicting_external_id_row_when_updating_existing_author_row()
+        public void should_preserve_both_sync_records_until_identity_reconciliation()
         {
             var repo = new InMemoryAuthorSyncMetadataRepository();
             var logger = LogManager.GetCurrentClassLogger();
@@ -215,13 +211,10 @@ namespace Chaptarr.Core.Test.Books
                 ExternalAuthorId = "hc:456"
             });
 
-            var updated = sut.CreateOrUpdateSyncMetadata(authorId: 2, externalAuthorId: "hc:123");
-
-            Assert.That(repo.Count(), Is.EqualTo(1));
-            Assert.That(updated.AuthorId, Is.EqualTo(2));
-            Assert.That(updated.ExternalAuthorId, Is.EqualTo("hc:123"));
-            Assert.That(repo.FindByAuthorId(1), Is.Null);
-            Assert.That(repo.FindByAuthorId(2), Is.Not.Null);
+            Assert.Throws<InvalidOperationException>(() => sut.CreateOrUpdateSyncMetadata(authorId: 2, externalAuthorId: "hc:123"));
+            Assert.That(repo.Count(), Is.EqualTo(2));
+            Assert.That(repo.FindByAuthorId(1).ExternalAuthorId, Is.EqualTo("hc:123"));
+            Assert.That(repo.FindByAuthorId(2).ExternalAuthorId, Is.EqualTo("hc:456"));
         }
     }
 }

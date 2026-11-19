@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using Equ;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Datastore;
+using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MetadataSource;
 
@@ -18,7 +19,7 @@ namespace NzbDrone.Core.Books
     }
 
     [DebuggerDisplay("{GetType().FullName} ID = {Id}[{Title}]")]
-    public class Book : Entity<Book>
+    public class Book : ProviderIdentityEntity<Book>
     {
         public Book()
         {
@@ -166,11 +167,6 @@ namespace NzbDrone.Core.Books
         [MemberwiseEqualityIgnore]
         public Narrator WantedNarrator { get; set; }
 
-        // Optional in-memory provider ID sets from upstream metadata payloads (not persisted).
-        // Used for identity matching (provider ID intersection) without relying on local row IDs or titles.
-        [MemberwiseEqualityIgnore]
-        [JsonIgnore]
-        public HashSet<string> RemoteProviderIds { get; set; }
 
         //compatibility properties with old version of Book
         [MemberwiseEqualityIgnore]
@@ -224,6 +220,23 @@ namespace NzbDrone.Core.Books
         [JsonIgnore]
         public bool HasFiles => BookFiles?.Any() ?? false;
 
+        [MemberwiseEqualityIgnore]
+        [JsonIgnore]
+        public string SearchSeriesName { get; set; }
+
+        protected override string IdentityScope => "work";
+        protected override IEnumerable<string> GetIdentityIds() => BookIdentity.GetStableWorkProviderIdentityTokens(this);
+
+        public override IEnumerable<string> PrepareForPersistence(IReadOnlyCollection<string> fields)
+        {
+            foreach (var field in base.PrepareForPersistence(fields)) yield return field;
+            if (fields == null || fields.Contains(nameof(SeriesName)) || fields.Contains(nameof(SearchSeriesName)))
+            {
+                SearchSeriesName = StringSuperNormalizer.NormalizeForFts(SeriesName);
+                yield return nameof(SearchSeriesName);
+            }
+        }
+
         public override string ToString()
         {
             return string.Format("[{0}][{1}]", Id, Title.NullSafe());
@@ -272,9 +285,11 @@ namespace NzbDrone.Core.Books
             LanguageName = other.LanguageName ?? LanguageName;
             PublicationYear = other.PublicationYear ?? PublicationYear;
             Publisher = other.Publisher ?? Publisher;
-            SeriesId = other.SeriesId ?? SeriesId;
-            SeriesName = other.SeriesName ?? SeriesName;
-            SeriesPosition = other.SeriesPosition ?? SeriesPosition;
+            // Copy the summary as one unit: retaining individual old components mixes
+            // memberships and prevents refresh from converging after metadata removes them.
+            SeriesId = other.SeriesId;
+            SeriesName = other.SeriesName;
+            SeriesPosition = other.SeriesPosition;
 
 		            // Provider IDs and book identifiers.
 		            // NOTE: ISBN10/ISBN13 are metadata identifiers, NOT provider IDs, and are never used for remote matching.
@@ -300,19 +315,15 @@ namespace NzbDrone.Core.Books
 	            LastUpdated = other.LastUpdated ?? LastUpdated;
 	        }
 
-        private static HashSet<string> CloneProviderIds(HashSet<string> source)
-        {
-            return CleanProviderIds(source);
-        }
-
-        private static HashSet<string> CleanProviderIds(IEnumerable<string> source)
+        internal static HashSet<string> CloneProviderIds(HashSet<string> source)
         {
             var values = source?
                 .Where(id => id.IsNotNullOrWhiteSpace() && !ProviderIdHelper.ContainsProviderIdArtifact(id))
                 .Select(id => id.Trim())
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            return values?.Count > 0 ? values : null;
+            // An empty upstream set withdraws aliases; rejected input does not prove absence.
+            return values?.Count == 0 && source.Count > 0 ? null : values;
         }
 
         private static string CleanProviderIdForCopy(string incoming, string current)

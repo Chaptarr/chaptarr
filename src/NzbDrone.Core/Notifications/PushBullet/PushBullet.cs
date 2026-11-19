@@ -67,7 +67,7 @@ namespace NzbDrone.Core.Notifications.PushBullet
 
         public override void OnImportFailure(BookDownloadMessage message)
         {
-            _proxy.SendNotification(IMPORT_FAILURE_TITLE_BRANDED, message.Message, Settings);
+            _proxy.SendNotification("Chaptarr - " + message.ImportStatusTitle, message.Message, Settings);
         }
 
         public override void OnApplicationUpdate(ApplicationUpdateMessage updateMessage)

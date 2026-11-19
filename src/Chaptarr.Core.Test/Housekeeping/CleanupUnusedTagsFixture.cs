@@ -43,7 +43,7 @@ namespace Chaptarr.Core.Test.Housekeeping
                         CREATE TABLE ""Notifications"" (""Tags"" TEXT NULL);
                         CREATE TABLE ""DelayProfiles"" (""Tags"" TEXT NULL);
                         CREATE TABLE ""ReleaseProfiles"" (""Tags"" TEXT NULL);
-                        CREATE TABLE ""ImportLists"" (""Tags"" TEXT NULL);
+                        CREATE TABLE ""ImportLists"" (""Tags"" TEXT NULL, ""Settings"" TEXT NULL);
                         CREATE TABLE ""Indexers"" (""Tags"" TEXT NULL);
                         CREATE TABLE ""DownloadClients"" (""Tags"" TEXT NULL, ""AudiobookTags"" TEXT NULL, ""EbookTags"" TEXT NULL);
                         CREATE TABLE ""Restrictions"" (""Tags"" TEXT NULL);

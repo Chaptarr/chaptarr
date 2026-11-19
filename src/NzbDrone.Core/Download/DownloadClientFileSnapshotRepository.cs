@@ -1,5 +1,9 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using Dapper;
+using NLog;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.Messaging.Events;
@@ -11,11 +15,14 @@ namespace NzbDrone.Core.Download
         DownloadClientFileSnapshot Find(int downloadClientId, string downloadId);
         void Delete(int downloadClientId, string downloadId);
         void DeleteForDownloadClient(int downloadClientId);
-        void DeleteOlderThan(DateTime cutoff);
+        void RemoveMissingDownloads(int downloadClientId, IEnumerable<string> retainedDownloadIds);
+        void DeleteOrphanedClients();
     }
 
     public class DownloadClientFileSnapshotRepository : BasicRepository<DownloadClientFileSnapshot>, IDownloadClientFileSnapshotRepository
     {
+        private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+
         public DownloadClientFileSnapshotRepository(IMainDatabase database, IEventAggregator eventAggregator)
             : base(database, eventAggregator)
         {
@@ -52,9 +59,24 @@ namespace NzbDrone.Core.Download
             Delete(s => s.DownloadClientId == downloadClientId);
         }
 
-        public void DeleteOlderThan(DateTime cutoff)
+        public void RemoveMissingDownloads(int downloadClientId, IEnumerable<string> retainedDownloadIds)
         {
-            Delete(s => s.LastUpdated < cutoff);
+            var retained = retainedDownloadIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var timer = Stopwatch.StartNew();
+            using var connection = _database.OpenConnection();
+            var snapshots = connection.Query<(int Id, string DownloadId)>(
+                "SELECT \"Id\", \"DownloadId\" FROM \"DownloadClientFileSnapshots\" WHERE \"DownloadClientId\" = @downloadClientId",
+                new { downloadClientId }).ToList();
+            var removed = snapshots.Where(snapshot => !retained.Contains(snapshot.DownloadId)).Select(snapshot => snapshot.Id).ToList();
+            DeleteMany(removed);
+            Logger.Debug("Download file inventory reconciliation: client={0}, retained={1}, snapshots={2}, deleted={3}, elapsedMs={4}",
+                downloadClientId, retained.Count, snapshots.Count, removed.Count, timer.ElapsedMilliseconds);
+        }
+
+        public void DeleteOrphanedClients()
+        {
+            using var connection = _database.OpenConnection();
+            connection.Execute("DELETE FROM \"DownloadClientFileSnapshots\" WHERE NOT EXISTS (SELECT 1 FROM \"DownloadClients\" WHERE \"DownloadClients\".\"Id\" = \"DownloadClientFileSnapshots\".\"DownloadClientId\")");
         }
     }
 }

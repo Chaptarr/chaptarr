@@ -12,6 +12,7 @@ using NLog;
 using NUnit.Framework;
 using NzbDrone.Common.Composition;
 using NzbDrone.Core.IndexerSearch;
+using NzbDrone.Core.MediaFiles.BookImport.Manual;
 using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.SignalR;
@@ -61,6 +62,7 @@ namespace Chaptarr.Core.Test.Commands
             public void Fail(CommandModel command, string message, Exception e) => throw new NotImplementedException();
             public void Requeue() => throw new NotImplementedException();
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void Pause(int id) => throw new NotImplementedException();
             public void Resume(int id) => throw new NotImplementedException();
             public void CleanCommands() => throw new NotImplementedException();
@@ -124,6 +126,31 @@ namespace Chaptarr.Core.Test.Commands
             Assert.That(((MissingBookSearchCommand)queue.PushedCommand).MediaType, Is.Null);
         }
 
+        [TestCase("{\"name\":\"ManualImport\",\"replaceExistingFiles\":true}")]
+        [TestCase("{\"name\":\"ManualImport\",\"replaceExistingFiles\":true,\"confirmedReplacementFiles\":null}")]
+        public void manual_replace_without_confirmation_should_fail_before_queueing(string body)
+        {
+            var queue = new StubCommandQueue();
+            var controller = CreateController(queue, body);
+
+            var exception = Assert.Throws<BadRequestException>(() => controller.StartCommand(new CommandResource { Name = "ManualImport" }));
+
+            Assert.That(exception.Content.ToString(), Does.Contain("manualimport/replacementfiles"));
+            Assert.That(queue.WasPushed, Is.False);
+        }
+
+        [TestCase("{\"name\":\"ManualImport\",\"replaceExistingFiles\":false}")]
+        [TestCase("{\"name\":\"ManualImport\",\"replaceExistingFiles\":true,\"confirmedReplacementFiles\":[]}")]
+        public void combine_or_confirmed_replace_should_queue(string body)
+        {
+            var queue = new StubCommandQueue();
+            var controller = CreateController(queue, body);
+
+            controller.StartCommand(new CommandResource { Name = "ManualImport" });
+
+            Assert.That(queue.WasPushed, Is.True);
+        }
+
         private static CommandController CreateController(StubCommandQueue queue, string body)
         {
             var controller = new CommandController(
@@ -133,7 +160,8 @@ namespace Chaptarr.Core.Test.Commands
                 {
                     typeof(RenameAuthorCommand),
                     typeof(MissingBookSearchCommand),
-                    typeof(CutoffUnmetBookSearchCommand)
+                    typeof(CutoffUnmetBookSearchCommand),
+                    typeof(ManualImportCommand)
                 }),
                 LogManager.GetCurrentClassLogger());
 

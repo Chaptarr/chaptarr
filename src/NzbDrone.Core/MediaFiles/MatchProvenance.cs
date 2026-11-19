@@ -28,6 +28,9 @@ namespace NzbDrone.Core.MediaFiles
         public List<MatchSignal> NeutralSignals { get; set; } = new List<MatchSignal>();
         public List<MatchSignal> ExcludedSignals { get; set; } = new List<MatchSignal>();
         public List<MatchEvidenceValue> EvidenceValues { get; set; } = new List<MatchEvidenceValue>();
+        public string ImportDownloadId { get; set; }
+        public List<string> ImportSourcePaths { get; set; } = new();
+        public List<string> ImportExcludedSourcePaths { get; set; } = new();
 
         public MatchProvenance CloneForDestination(Author author, Book book, Edition edition)
         {
@@ -59,7 +62,10 @@ namespace NzbDrone.Core.MediaFiles
                 ConflictingSignals = CloneSignals(ConflictingSignals),
                 NeutralSignals = CloneSignals(NeutralSignals),
                 ExcludedSignals = CloneSignals(ExcludedSignals),
-                EvidenceValues = CloneEvidenceValues(EvidenceValues)
+                EvidenceValues = CloneEvidenceValues(EvidenceValues),
+                ImportDownloadId = ImportDownloadId,
+                ImportSourcePaths = ImportSourcePaths?.ToList() ?? new List<string>(),
+                ImportExcludedSourcePaths = ImportExcludedSourcePaths?.ToList() ?? new List<string>()
             };
         }
 

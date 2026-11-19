@@ -243,7 +243,7 @@ class QuickstartMAMSection extends Component {
       return (
         <QuickstartSection
           sectionKey="indexers"
-          title={translate('QuickstartConnectIndexersTitle')}
+          title={translate('QuickstartIndexersTitle')}
         >
           <LoadingIndicator />
         </QuickstartSection>
@@ -253,7 +253,7 @@ class QuickstartMAMSection extends Component {
     return (
       <QuickstartSection
         sectionKey="indexers"
-        title={translate('QuickstartAddIndexersTitle')}
+        title={translate('QuickstartIndexersTitle')}
         isComplete={hasEnabledIndexers}
       >
         <div className={styles.sectionDescription}>

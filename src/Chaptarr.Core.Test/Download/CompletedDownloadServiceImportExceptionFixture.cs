@@ -56,6 +56,9 @@ namespace Chaptarr.Core.Test.Download
                 _exception = exception;
             }
 
+            public List<ImportResult> ProcessIncludedMedia(DownloadClientItem item, NzbDrone.Core.Parser.Model.RemoteBook book,
+                List<NzbDrone.Core.History.EntityHistory> history) => new();
+
             public List<ImportResult> ProcessPath(string path, ImportMode importMode = ImportMode.Auto, NzbDrone.Core.Books.Author author = null, DownloadClientItem downloadClientItem = null, NzbDrone.Core.Parser.Model.RemoteBook remoteBook = null, bool requireDefaultRootFolderForMissingAuthors = false)
                 => throw _exception;
 
@@ -68,6 +71,9 @@ namespace Chaptarr.Core.Test.Download
 
         private sealed class PendingDownloadedBooksImportService : IDownloadedBooksImportService
         {
+            public List<ImportResult> ProcessIncludedMedia(DownloadClientItem item, NzbDrone.Core.Parser.Model.RemoteBook book,
+                List<NzbDrone.Core.History.EntityHistory> history) => new();
+
             public List<ImportResult> ProcessPath(string path, ImportMode importMode = ImportMode.Auto, NzbDrone.Core.Books.Author author = null, DownloadClientItem downloadClientItem = null, NzbDrone.Core.Parser.Model.RemoteBook remoteBook = null, bool requireDefaultRootFolderForMissingAuthors = false)
             {
                 var decision = new ImportDecision<NzbDrone.Core.Parser.Model.LocalBook>(new NzbDrone.Core.Parser.Model.LocalBook
@@ -88,7 +94,7 @@ namespace Chaptarr.Core.Test.Download
         {
             public ImportMode Resolve(ImportMode requestedMode, DownloadClientItem downloadClientItem) => requestedMode;
             public DownloadImportPolicy ResolvePolicy(ImportMode requestedMode, DownloadClientItem downloadClientItem) => new(requestedMode, false);
-            public bool ShouldPreserveDownloadClientItem(DownloadClientItem downloadClientItem) => false;
+            public bool ShouldPreserveDownloadClientItem(DownloadClientItem downloadClientItem, int fallbackIndexerId = 0, bool includeUnmanaged = true) => false;
         }
 
         private class ThrowingProxy<T> : DispatchProxy where T : class
@@ -137,7 +143,6 @@ namespace Chaptarr.Core.Test.Download
                 new ThrowingDownloadedBooksImportService(exception),
                 new PassthroughDownloadImportModeResolver(),
                 DispatchProxy.Create<ITrackedDownloadAlreadyImported, ThrowingProxy<ITrackedDownloadAlreadyImported>>(),
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 
@@ -183,7 +188,6 @@ namespace Chaptarr.Core.Test.Download
                 new PendingDownloadedBooksImportService(),
                 new PassthroughDownloadImportModeResolver(),
                 DispatchProxy.Create<ITrackedDownloadAlreadyImported, ThrowingProxy<ITrackedDownloadAlreadyImported>>(),
-                NoopFailedDownloadService.Instance,
                 LogManager.GetCurrentClassLogger(),
                 NoopDownloadClientFileSnapshotService.Instance);
 

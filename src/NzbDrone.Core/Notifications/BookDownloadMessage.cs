@@ -8,6 +8,8 @@ namespace NzbDrone.Core.Notifications
     public class BookDownloadMessage
     {
         public string Message { get; set; }
+        public bool AwaitingImportConfirmation { get; set; }
+        public string ImportStatusTitle => AwaitingImportConfirmation ? "Waiting for import confirmation" : "Import Failed";
         public Author Author { get; set; }
         public Book Book { get; set; }
         public List<BookFile> BookFiles { get; set; }

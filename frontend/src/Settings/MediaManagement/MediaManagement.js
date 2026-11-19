@@ -4,14 +4,17 @@ import Alert from 'Components/Alert';
 import FieldSet from 'Components/FieldSet';
 import Form from 'Components/Form/Form';
 import FormGroup from 'Components/Form/FormGroup';
+import FormInputButton from 'Components/Form/FormInputButton';
 import FormInputGroup from 'Components/Form/FormInputGroup';
 import FormLabel from 'Components/Form/FormLabel';
 import LoadingIndicator from 'Components/Loading/LoadingIndicator';
+import ConfirmModal from 'Components/Modal/ConfirmModal';
 import PageContent from 'Components/Page/PageContent';
 import PageContentBody from 'Components/Page/PageContentBody';
 import { inputTypes, kinds, sizes } from 'Helpers/Props';
 import RemotePathMappingsConnector from 'Settings/DownloadClients/RemotePathMappings/RemotePathMappingsConnector';
 import SettingsToolbarConnector from 'Settings/SettingsToolbarConnector';
+import formatBytes from 'Utilities/Number/formatBytes';
 import translate from 'Utilities/String/translate';
 import NamingConnector from './Naming/NamingConnector';
 import RootFoldersConnector from './RootFolder/RootFoldersConnector';
@@ -58,15 +61,36 @@ class MediaManagement extends Component {
       settings,
       hasSettings,
       isWindows,
+      isCoverDownloadScopeConfirmOpen,
+      coverCleanupEstimate,
+      isFetchingCoverCleanupEstimate,
+      coverCleanupEstimateError,
       onInputChange,
       onSavePress,
+      onConfirmCoverDownloadScope,
+      onCancelCoverDownloadScope,
+      onCalculateCoverSavings,
       ...otherProps
     } = this.props;
 
     const bookMatchingStrictness = settings.bookMatchingStrictness || { value: 'balanced' };
     const usePathAsTagsFallback = settings.usePathAsTagsFallback || { value: true };
     const autoAddMissingAuthorsFromCompletedDownloads = settings.autoAddMissingAuthorsFromCompletedDownloads || { value: false };
+    const coverDownloadScope = settings.coverDownloadScope || { value: 'allBooks' };
+    const coverDownloadScopeOptions = [
+      { key: 'allBooks', value: translate('CoverDownloadScopeAllBooks') },
+      { key: 'libraryBooks', value: translate('CoverDownloadScopeLibraryBooks') }
+    ];
     const isStrictMatching = bookMatchingStrictness.value === 'strict';
+    let coverCleanupMessage = translate('CoverCleanupEstimateHelpText');
+
+    if (isFetchingCoverCleanupEstimate) {
+      coverCleanupMessage = translate('CoverCleanupEstimateLoading');
+    } else if (coverCleanupEstimateError) {
+      coverCleanupMessage = translate('CoverCleanupEstimateError');
+    } else if (coverCleanupEstimate) {
+      coverCleanupMessage = translate('CoverCleanupEstimate', { size: formatBytes(coverCleanupEstimate.bytes, false, 0) });
+    }
 
     return (
       <PageContent title={translate('MediaManagementSettings')}>
@@ -288,6 +312,39 @@ class MediaManagement extends Component {
                 </FieldSet>
 
                 <FieldSet
+                  legend={translate('CoverDownloadSettings')}
+                >
+                  <FormGroup size={sizes.MEDIUM} aria-live="polite">
+                    <FormLabel>
+                      {translate('CoverDownloadScope')}
+                    </FormLabel>
+
+                    <FormInputGroup
+                      type={inputTypes.SELECT}
+                      name="coverDownloadScope"
+                      helpTexts={[
+                        translate(coverDownloadScope.value === 'libraryBooks' ? 'CoverDownloadScopeLibraryBooksHelpText' : 'CoverDownloadScopeAllBooksHelpText'),
+                        coverCleanupMessage
+                      ]}
+                      buttons={
+                        <FormInputButton
+                          canSpin={true}
+                          kind={kinds.DEFAULT}
+                          aria-label={translate('CalculateCoverSavings')}
+                          isSpinning={isFetchingCoverCleanupEstimate}
+                          onPress={onCalculateCoverSavings}
+                        >
+                          {translate('CalculateCoverSavings')}
+                        </FormInputButton>
+                      }
+                      values={coverDownloadScopeOptions}
+                      onChange={onInputChange}
+                      {...coverDownloadScope}
+                    />
+                  </FormGroup>
+                </FieldSet>
+
+                <FieldSet
                   legend={translate('FileManagement')}
                 >
                   <FormGroup size={sizes.MEDIUM}>
@@ -480,6 +537,23 @@ class MediaManagement extends Component {
               </Form>
           }
         </PageContentBody>
+
+        <ConfirmModal
+          isOpen={isCoverDownloadScopeConfirmOpen}
+          title={translate('CoverDownloadScopeConfirmTitle')}
+          message={
+            <>
+              <p>{translate('CoverDownloadScopeConfirmMessage')}</p>
+              {
+                (coverCleanupEstimate || isFetchingCoverCleanupEstimate || coverCleanupEstimateError) &&
+                  <p aria-live="polite">{coverCleanupMessage}</p>
+              }
+            </>
+          }
+          confirmLabel={translate('Save')}
+          onConfirm={onConfirmCoverDownloadScope}
+          onCancel={onCancelCoverDownloadScope}
+        />
       </PageContent>
     );
   }
@@ -493,6 +567,13 @@ MediaManagement.propTypes = {
   settings: PropTypes.object.isRequired,
   hasSettings: PropTypes.bool.isRequired,
   isWindows: PropTypes.bool.isRequired,
+  isCoverDownloadScopeConfirmOpen: PropTypes.bool.isRequired,
+  coverCleanupEstimate: PropTypes.shape({ bytes: PropTypes.number.isRequired }),
+  isFetchingCoverCleanupEstimate: PropTypes.bool.isRequired,
+  coverCleanupEstimateError: PropTypes.bool.isRequired,
+  onConfirmCoverDownloadScope: PropTypes.func.isRequired,
+  onCancelCoverDownloadScope: PropTypes.func.isRequired,
+  onCalculateCoverSavings: PropTypes.func.isRequired,
   onSavePress: PropTypes.func.isRequired,
   onInputChange: PropTypes.func.isRequired
 };

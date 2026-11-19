@@ -148,6 +148,13 @@ namespace NzbDrone.Core.Jobs
 
                     new ScheduledTask
                     {
+                        Interval = 1,
+                        TypeName = typeof(RetryAuthorRefreshCommand).FullName,
+                        Priority = CommandPriority.Low
+                    },
+
+                    new ScheduledTask
+                    {
                         Interval = 24 * 60,
                         TypeName = typeof(RescanFoldersCommand).FullName
                     },
@@ -252,12 +259,7 @@ namespace NzbDrone.Core.Jobs
         {
             var interval = _configService.BackupInterval;
 
-            if (interval < 1)
-            {
-                interval = 1;
-            }
-
-            return interval * 60 * 24;
+            return Math.Max(0, interval) * 60 * 24;
         }
 
         private int GetRssSyncInterval()

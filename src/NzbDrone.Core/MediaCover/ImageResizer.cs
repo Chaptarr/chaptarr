@@ -26,7 +26,7 @@ namespace NzbDrone.Core.MediaCover
             SixLabors.ImageSharp.Configuration.Default.ImageFormatsManager.SetEncoder(JpegFormat.Instance, new JpegEncoder
             {
                 Quality = 95,
-                ColorType = JpegEncodingColor.YCbCrRatio444
+                ColorType = JpegColorType.YCbCrRatio444
             });
         }
 

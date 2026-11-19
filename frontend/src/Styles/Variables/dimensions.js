@@ -11,6 +11,7 @@ module.exports = {
 
   // Toolbar
   toolbarHeight: '60px',
+  toolbarCompactWidth: '1024px',
   toolbarButtonWidth: '60px',
   toolbarSeparatorMargin: '20px',
 

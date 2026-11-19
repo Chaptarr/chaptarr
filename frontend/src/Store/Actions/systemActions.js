@@ -6,7 +6,7 @@ import { createThunk, handleThunks } from 'Store/thunks';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import serverSideCollectionHandlers from 'Utilities/serverSideCollectionHandlers';
 import translate from 'Utilities/String/translate';
-import { pingServer, showMessage, hideMessage } from './appActions';
+import { hideMessage, pingServer, showMessage } from './appActions';
 import { set } from './baseActions';
 import createFetchHandler from './Creators/createFetchHandler';
 import createHandleActions from './Creators/createHandleActions';
@@ -51,6 +51,13 @@ export const defaultState = {
     isPopulated: false,
     error: null,
     items: []
+  },
+
+  backupStatus: {
+    isFetching: false,
+    isPopulated: false,
+    error: null,
+    item: {}
   },
 
   backups: {
@@ -210,6 +217,9 @@ export const FETCH_DISK_SPACE = 'system/diskSpace/fetchDiskSPace';
 export const FETCH_TASK = 'system/tasks/fetchTask';
 export const FETCH_TASKS = 'system/tasks/fetchTasks';
 
+export const FETCH_BACKUP_STATUS = 'system/backups/fetchStatus';
+export const CANCEL_RESTORE = 'system/backups/cancelRestore';
+export const DISMISS_FAILED_RESTORES = 'system/backups/dismissFailedRestores';
 export const FETCH_BACKUPS = 'system/backups/fetchBackups';
 export const RESTORE_BACKUP = 'system/backups/restoreBackup';
 export const CLEAR_RESTORE_BACKUP = 'system/backups/clearRestoreBackup';
@@ -246,6 +256,9 @@ export const fetchDiskSpace = createThunk(FETCH_DISK_SPACE);
 export const fetchTask = createThunk(FETCH_TASK);
 export const fetchTasks = createThunk(FETCH_TASKS);
 
+export const fetchBackupStatus = createThunk(FETCH_BACKUP_STATUS);
+export const cancelRestore = createThunk(CANCEL_RESTORE);
+export const dismissFailedRestores = createThunk(DISMISS_FAILED_RESTORES);
 export const fetchBackups = createThunk(FETCH_BACKUPS);
 export const restoreBackup = createThunk(RESTORE_BACKUP);
 export const clearRestoreBackup = createAction(CLEAR_RESTORE_BACKUP);
@@ -283,6 +296,20 @@ export const actionHandlers = handleThunks({
   [FETCH_TASKS]: createFetchHandler('system.tasks', '/system/task'),
 
   [FETCH_BACKUPS]: createFetchHandler(backupsSection, '/system/backup'),
+  [FETCH_BACKUP_STATUS]: createFetchHandler('system.backupStatus', '/system/backup/status'),
+
+  [DISMISS_FAILED_RESTORES]: function(getState, payload, dispatch) {
+    dispatch(set({ section: backupsSection, restoreError: null }));
+    const { request } = createAjaxRequest({ url: '/system/backup/restore/failed', method: 'DELETE' });
+    request.done(() => dispatch(fetchBackupStatus()));
+    request.fail((xhr) => dispatch(set({ section: backupsSection, restoreError: xhr })));
+  },
+
+  [CANCEL_RESTORE]: function(getState, payload, dispatch) {
+    const { request } = createAjaxRequest({ url: '/system/backup/restore', method: 'DELETE' });
+    request.done(() => dispatch(fetchBackupStatus()));
+    request.fail((xhr) => dispatch(set({ section: backupsSection, restoreError: xhr })));
+  },
 
   [RESTORE_BACKUP]: function(getState, payload, dispatch) {
     const {
@@ -292,7 +319,8 @@ export const actionHandlers = handleThunks({
 
     dispatch(set({
       section: backupsSection,
-      isRestoring: true
+      isRestoring: true,
+      restoreError: null
     }));
 
     let ajaxOptions = null;
@@ -324,24 +352,42 @@ export const actionHandlers = handleThunks({
         isRestoring: false,
         restoreError: 'Error restoring backup'
       }));
+      return;
     }
 
     const promise = createAjaxRequest(ajaxOptions).request;
 
-    promise.done((data) => {
+    const restored = () => {
+      dispatch(setAppValue({ isRestarting: true }));
+      dispatch(pingServer());
       dispatch(set({
         section: backupsSection,
         isRestoring: false,
         restoreError: null
       }));
-    });
+    };
+    const failed = (xhr) => dispatch(set({ section: backupsSection, isRestoring: false, restoreError: xhr }));
+    promise.done(restored);
 
     promise.fail((xhr) => {
-      dispatch(set({
-        section: backupsSection,
-        isRestoring: false,
-        restoreError: xhr
-      }));
+      if (xhr.status === 502 || xhr.status === 504) {
+        // A proxy timeout does not prove that the upload reached the server.
+        const { request } = createAjaxRequest({ url: '/system/backup/status', dataType: 'json' });
+        request.done((status) => {
+          if (status.pendingRestore) {
+            restored();
+          } else {
+            failed({ status: xhr.status, responseJSON: { message: translate('BackupRestoreProxyTimeout') } });
+          }
+        });
+        request.fail(() => failed({ status: xhr.status, responseJSON: { message: translate('BackupRestoreStatusUnconfirmed') } }));
+        return;
+      }
+      if (xhr.status === 0) {
+        dispatch(setAppValue({ isRestarting: true }));
+        dispatch(pingServer());
+      }
+      failed(xhr);
     });
   },
 
@@ -421,7 +467,6 @@ export const actionHandlers = handleThunks({
 
   [TEST_PROXY]: function(getState, payload, dispatch) {
     const {
-      proxyEnabled,
       proxyType,
       proxyHostname,
       proxyPort,
@@ -452,12 +497,12 @@ export const actionHandlers = handleThunks({
           message: `Proxy test successful: ${data.message}`,
           type: 'success'
         }));
-        
+
         // Manually hide after 5 seconds
         setTimeout(() => {
           dispatch(hideMessage({ id: messageId }));
         }, 5000);
-        
+
         // Resolve the promise for success
         deferred.resolve(data);
       } else {
@@ -467,12 +512,12 @@ export const actionHandlers = handleThunks({
           message: `Proxy test failed: ${data.message}`,
           type: 'error'
         }));
-        
+
         // Manually hide after 8 seconds
         setTimeout(() => {
           dispatch(hideMessage({ id: messageId }));
         }, 8000);
-        
+
         // Reject the promise for validation failure
         deferred.reject({ message: data.message || 'Proxy test failed' });
       }
@@ -485,12 +530,12 @@ export const actionHandlers = handleThunks({
         message: `Proxy test failed: ${xhr.responseText || 'Connection failed'}`,
         type: 'error'
       }));
-      
+
       // Manually hide after 8 seconds
       setTimeout(() => {
         dispatch(hideMessage({ id: messageId }));
       }, 8000);
-      
+
       // Reject the promise for network failure
       deferred.reject({ message: xhr.responseText || 'Connection failed' });
     });

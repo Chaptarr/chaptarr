@@ -26,6 +26,15 @@ namespace Chaptarr.Core.Test.MediaFiles
     {
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
+                System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+                => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
+
+            public void ReplaceMany(System.Collections.Generic.List<BookFile> bookFiles, System.Collections.Generic.List<BookFile> replacedFiles,
+                DeleteMediaFileReason reason, System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+                System.Action<System.Action<System.Data.IDbConnection, System.Data.IDbTransaction>> persist)
+                => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
+
             public List<BookFile> UnmappedFiles { get; set; } = new List<BookFile>();
             public List<BookFile> Updated { get; } = new List<BookFile>();
             public List<string> Events { get; set; }
@@ -40,6 +49,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Events?.Add($"update:{bookFile?.Path}");
                 Updated.Add(bookFile);
             }
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
 
             public void Update(List<BookFile> bookFiles)
             {
@@ -132,9 +142,6 @@ namespace Chaptarr.Core.Test.MediaFiles
                 new List<(string, int, int?, Dictionary<string, List<string>>, int?, long, DateTime)>();
             public Func<string, int, int?, BookImportFileResult> ResultFactory { get; set; }
 
-            public Task ImportFileAsync(string path, int bookId, string quality) => throw new NotImplementedException();
-            public Task ImportFileAsync(string path, int bookId, string quality, Dictionary<string, List<string>> tags) => throw new NotImplementedException();
-            public Task ImportFileAsync(string path, int bookId, int? editionId, string quality, Dictionary<string, List<string>> tags) => throw new NotImplementedException();
             public Task<BookImportFileResult> ImportExistingFileAsync(string path, int bookId, int? editionId, string quality, Dictionary<string, List<string>> tags)
             {
                 return ImportExistingFileAsync(path, bookId, editionId, quality, tags, null);
@@ -183,12 +190,17 @@ namespace Chaptarr.Core.Test.MediaFiles
                 return Task.FromResult(NextId++);
             }
 
+            public PendingAuthorImport Get(int id) => GetAll().Find(item => item.Id == id);
+            public NzbDrone.Core.Datastore.PagingSpec<PendingAuthorImport> GetPaged(NzbDrone.Core.Datastore.PagingSpec<PendingAuthorImport> pagingSpec) => throw new NotImplementedException();
             public List<PendingAuthorImport> GetAll() => throw new NotImplementedException();
             public List<PendingAuthorImport> GetDueForProcessing(int limit = 10) => throw new NotImplementedException();
             public PendingAuthorImport GetByProviderId(string providerId) => throw new NotImplementedException();
-            public void UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error) => throw new NotImplementedException();
+            public bool UpdateStatus(PendingAuthorImport item, PendingImportStatus status, string error, long? expectedVersion = null) => throw new NotImplementedException();
+            public bool SaveProgress(PendingAuthorImport item, PendingAuthorImport previous) => throw new NotImplementedException();
             public void ScheduleRetry(PendingAuthorImport item, string error) => throw new NotImplementedException();
+            public bool IsActiveRequest(int id, long version) => true;
             public void Cancel(int id) => throw new NotImplementedException();
+            public bool CancelIfQueued(int id) => throw new NotImplementedException();
             public void RetryNow(int id) => throw new NotImplementedException();
             public void CleanupOldCompleted() => throw new NotImplementedException();
             public void Delete(int id) => throw new NotImplementedException();

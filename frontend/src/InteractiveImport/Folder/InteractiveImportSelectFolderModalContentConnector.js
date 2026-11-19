@@ -5,7 +5,7 @@ import { createSelector } from 'reselect';
 import * as commandNames from 'Commands/commandNames';
 import { executeCommand } from 'Store/Actions/commandActions';
 import { addRecentFolder, removeRecentFolder, setInteractiveImportMode } from 'Store/Actions/interactiveImportActions';
-import { fetchMediaManagementSettings, saveMediaManagementSettings, setMediaManagementSettingsValue } from 'Store/Actions/settingsActions';
+import { fetchMediaManagementSettings, saveMediaManagementSettingsFields } from 'Store/Actions/settingsActions';
 import createSettingsSectionSelector from 'Store/Selectors/createSettingsSectionSelector';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
 import InteractiveImportSelectFolderModalContent from './InteractiveImportSelectFolderModalContent';
@@ -33,8 +33,7 @@ const mapDispatchToProps = {
   setInteractiveImportMode,
   executeCommand,
   fetchMediaManagementSettings,
-  setMediaManagementSettingsValue,
-  saveMediaManagementSettings
+  saveMediaManagementSettings: saveMediaManagementSettingsFields
 };
 
 class InteractiveImportSelectFolderModalContentConnector extends Component {
@@ -47,7 +46,8 @@ class InteractiveImportSelectFolderModalContentConnector extends Component {
 
     this.state = {
       isCheckingInteractiveImportFolder: false,
-      largeFolderWarning: null
+      largeFolderWarning: null,
+      pathFallbackSaveError: null
     };
   }
 
@@ -122,14 +122,10 @@ class InteractiveImportSelectFolderModalContentConnector extends Component {
       return;
     }
 
-    this.props.setMediaManagementSettingsValue({
-      name: 'usePathAsTagsFallback',
-      value
-    });
-
     this.props.saveMediaManagementSettings({
       usePathAsTagsFallback: value
-    });
+    }).done(() => this.setState({ pathFallbackSaveError: null }))
+      .fail((pathFallbackSaveError) => this.setState({ pathFallbackSaveError }));
   };
 
   onRemoveRecentFolderPress = (folder) => {
@@ -157,6 +153,7 @@ class InteractiveImportSelectFolderModalContentConnector extends Component {
     return (
       <InteractiveImportSelectFolderModalContent
         {...this.props}
+        pathFallbackSaveError={this.state.pathFallbackSaveError}
         isCheckingInteractiveImportFolder={this.state.isCheckingInteractiveImportFolder}
         largeFolderWarning={this.state.largeFolderWarning}
         onQuickImportPress={this.onQuickImportPress}
@@ -180,7 +177,6 @@ InteractiveImportSelectFolderModalContentConnector.propTypes = {
   importMode: PropTypes.string,
   mediaManagementSettings: PropTypes.object.isRequired,
   fetchMediaManagementSettings: PropTypes.func.isRequired,
-  setMediaManagementSettingsValue: PropTypes.func.isRequired,
   saveMediaManagementSettings: PropTypes.func.isRequired
 };
 

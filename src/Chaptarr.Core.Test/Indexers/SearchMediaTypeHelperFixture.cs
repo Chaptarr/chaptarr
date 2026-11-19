@@ -9,13 +9,13 @@ namespace Chaptarr.Core.Test.Indexers
     public class SearchMediaTypeHelperFixture
     {
         [Test]
-        public void should_only_use_audio_categories_for_audiobook_searches()
+        public void should_use_selected_audio_and_generic_book_categories_for_audiobook_searches()
         {
-            var categories = new[] { 2000, 3000, 3010, 3030, 3040, 3050, 5000, 7020, 8010, 3030 };
+            var categories = new[] { 2000, 3000, 3010, 3030, 3040, 3050, 5000, 7000, 7020, 8010, 3030, 7000 };
 
             var filtered = SearchMediaTypeHelper.FilterCategoriesForMediaType(categories, BookMediaType.Audiobook);
 
-            Assert.That(filtered, Is.EqualTo(new List<int> { 3000, 3010, 3030, 3040, 3050 }));
+            Assert.That(filtered, Is.EqualTo(new List<int> { 3000, 3010, 3030, 3040, 3050, 7000 }));
         }
 
         [Test]

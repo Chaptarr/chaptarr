@@ -16,6 +16,15 @@ namespace Chaptarr.Core.Test.Books
     {
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
+                System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
+                => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
+
+            public void ReplaceMany(System.Collections.Generic.List<BookFile> bookFiles, System.Collections.Generic.List<BookFile> replacedFiles,
+                DeleteMediaFileReason reason, System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles,
+                System.Action<System.Action<System.Data.IDbConnection, System.Data.IDbTransaction>> persist)
+                => throw new System.NotSupportedException("This test adapter does not support transactional replacement.");
+
             private readonly List<BookFile> _files;
 
             public StubMediaFileService(params BookFile[] files)
@@ -26,6 +35,8 @@ namespace Chaptarr.Core.Test.Books
             public BookFile Add(BookFile bookFile) => throw new NotImplementedException();
             public void AddMany(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Update(BookFile bookFile) => throw new NotImplementedException();
+            public (int Relinked, int Reclassified) RelinkAndClassifyFilesByBook(int bookId, int? editionId, NzbDrone.Core.Books.BookMediaType mediaType, NzbDrone.Core.MediaFiles.AudioProductionCorrection correction, System.Data.IDbConnection connection, System.Data.IDbTransaction transaction) => throw new System.NotSupportedException();
+
             public void Update(List<BookFile> bookFiles) => throw new NotImplementedException();
             public void Delete(BookFile bookFile, DeleteMediaFileReason reason) => throw new NotImplementedException();
             public void DeleteMany(List<BookFile> bookFiles, DeleteMediaFileReason reason) => throw new NotImplementedException();
@@ -48,9 +59,15 @@ namespace Chaptarr.Core.Test.Books
         private class BookServiceProxy : DispatchProxy
         {
             public int UpdateManyCalls { get; private set; }
+            public Book StoredBook { get; set; }
 
             protected override object Invoke(MethodInfo targetMethod, object[] args)
             {
+                if (targetMethod?.Name == nameof(IBookService.GetBook) && StoredBook?.Id == (int)args[0])
+                {
+                    return StoredBook;
+                }
+
                 if (targetMethod?.Name == nameof(IBookService.UpdateMany))
                 {
                     UpdateManyCalls++;
@@ -68,7 +85,7 @@ namespace Chaptarr.Core.Test.Books
             public List<Edition> Deleted { get; private set; }
             public List<Edition> UpToDate { get; private set; }
 
-            public bool RefreshEditionInfo(List<Edition> add, List<Edition> update, List<Tuple<Edition, Edition>> merge, List<Edition> delete, List<Edition> upToDate, List<Edition> remoteEditions, bool forceUpdateFileTags)
+            public bool RefreshEditionInfo(List<Edition> add, List<Edition> update, List<Tuple<Edition, Edition>> merge, List<Edition> delete, List<Edition> upToDate, List<Edition> remoteEditions, bool forceUpdateFileTags, IReadOnlyDictionary<int, Edition> matchedRemoteEditions)
             {
                 Added = add.ToList();
                 Updated = update.ToList();
@@ -100,13 +117,37 @@ namespace Chaptarr.Core.Test.Books
                     editionSelector: new EditionSelector(logger),
                     editionMetadataProfileFilter: new NzbDrone.Core.Books.Services.EditionMetadataProfileFilter(new TestTermMatcherService()),
                     mediaCoverService: null,
-                    logger: logger)
+                    logger: logger, mainDatabase: null)
             {
+            }
+
+            public void PrepareExistingChildPublic(Edition local, Edition remote, Book book)
+            {
+                PrepareExistingChild(local, remote, book);
             }
 
             public UpdateResult UpdateEntityPublic(Book local, Book remote)
             {
                 return UpdateEntity(local, remote);
+            }
+        }
+
+        [TestCase("ready-player-one_2", "ready-player-one")]
+        [TestCase("ready-player-one-3", "ready-player-one")]
+        [TestCase("カスピアン王子_2", "カスピアン王子")]
+        [TestCase("dune_copy_9", "dune")]
+        public void refresh_preserves_stored_slug_before_applying_changed_metadata(string storedSlug, string servedSlug)
+        {
+            var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+            foreach (var media in new[] { BookMediaType.Audiobook, BookMediaType.Ebook })
+            {
+                var local = new Book { Id = 1, Title = "Same", TitleSlug = storedSlug, MediaType = media, Overview = "old" };
+                var remote = new Book { Title = "Same", TitleSlug = servedSlug, MediaType = media, Overview = "changed" };
+                var result = service.UpdateEntityPublic(local, remote);
+                Assert.That(result, Is.Not.EqualTo(RefreshEntityServiceBase<Book, Edition>.UpdateResult.None));
+                Assert.That(local.Overview, Is.EqualTo("changed"));
+                Assert.That(local.TitleSlug, Is.EqualTo(storedSlug));
+                Assert.That(remote.TitleSlug, Is.EqualTo(servedSlug), "The served metadata object remains untouched.");
             }
         }
 
@@ -144,6 +185,49 @@ namespace Chaptarr.Core.Test.Books
                 Assert.That(ReferenceEquals(local.ProviderUrls, localProviderUrls), Is.False);
                 Assert.That(local.ProviderUrls["goodreads"], Is.EqualTo("https://example.com/remote"));
             });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void primary_series_id_survives_refresh_and_persistence_without_repeated_updates(bool postgres)
+        {
+            Common.DualDatabaseFixture.Run(postgres, database =>
+            {
+                var events = Common.InterfaceProxy.Proxy<NzbDrone.Core.Messaging.Events.IEventAggregator>((_, _) => null);
+                var author = new AuthorRepository(database, events, LogManager.GetCurrentClassLogger()).Insert(new Author
+                {
+                    Name = "Brandon Sanderson", CleanName = "brandonsanderson", Path = "/series-fixture", Added = DateTime.UtcNow
+                });
+                var books = new NzbDrone.Core.Datastore.BasicRepository<Book>(database, events);
+                var local = books.Insert(new Book { AuthorId = author.Id, Title = "The Way of Kings", CleanTitle = "thewayofkings", Added = DateTime.UtcNow });
+                var remote = RefreshEntityCopy.CloneBook(local, includeEditions: false);
+                remote.SeriesId = 49075;
+                remote.SeriesName = "The Stormlight Archive";
+                remote.SeriesPosition = "1";
+                var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+
+                Assert.That(service.UpdateEntityPublic(local, remote), Is.EqualTo(RefreshEntityServiceBase<Book, Edition>.UpdateResult.Standard));
+                books.Update(local);
+                local = books.Get(local.Id);
+                Assert.That(local.SeriesId, Is.EqualTo(49075));
+                Assert.That(local.SeriesName, Is.EqualTo("The Stormlight Archive"));
+                Assert.That(local.SeriesPosition, Is.EqualTo("1"));
+                Assert.That(service.UpdateEntityPublic(local, remote), Is.EqualTo(RefreshEntityServiceBase<Book, Edition>.UpdateResult.None));
+            });
+        }
+
+        [Test]
+        public void series_removal_must_clear_the_pair_and_converge_on_the_second_refresh()
+        {
+            var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+            var local = new Book { Title = "Standalone", HardcoverBookId = "hc:1", SeriesId = 5, SeriesName = "Old series", SeriesPosition = "3" };
+            var remote = new Book { Title = "Standalone", HardcoverBookId = "hc:1" };
+
+            Assert.That(service.UpdateEntityPublic(local, remote), Is.EqualTo(RefreshEntityServiceBase<Book, Edition>.UpdateResult.Standard));
+            Assert.That(local.SeriesId, Is.Null);
+            Assert.That(local.SeriesName, Is.Null);
+            Assert.That(local.SeriesPosition, Is.Null);
+            Assert.That(service.UpdateEntityPublic(local, remote), Is.EqualTo(RefreshEntityServiceBase<Book, Edition>.UpdateResult.None));
         }
 
         [Test]
@@ -380,6 +464,30 @@ namespace Chaptarr.Core.Test.Books
         }
 
         [Test]
+        public void unchanged_edition_preparation_preserves_prior_alias_evidence_and_selection_for_refresh_comparison()
+        {
+            var service = new TestableRefreshBookService(new StubMediaFileService(), LogManager.GetCurrentClassLogger());
+            var book = new Book { Id = 1, MediaType = BookMediaType.Ebook };
+            var local = new Edition { Id = 2, ForeignEditionId = "hc:edition:10-ebook", Monitored = true, ManualAdd = true,
+                RemoteProviderIds = new HashSet<string> { "gr:49" } };
+            var remote = new Edition { ForeignEditionId = local.ForeignEditionId,
+                RemoteProviderIds = new HashSet<string> { "gr:50", "gr:51" } };
+            service.PrepareExistingChildPublic(local, remote, book);
+            Assert.That(BookEditionIdentity.EditionMatchesProviderId(local, "gr-ed:49"), Is.True);
+            Assert.That(BookEditionIdentity.EditionMatchesProviderId(local, "gr-ed:51"), Is.False);
+            Assert.That(local.RemoteProviderIds, Is.EquivalentTo(new[] { "gr:49" }));
+            Assert.That(local.RemoteProviderIds, Is.Not.SameAs(remote.RemoteProviderIds));
+            remote.RemoteProviderIds = new HashSet<string> { "gr:50" };
+            service.PrepareExistingChildPublic(local, remote, book);
+            Assert.That(BookEditionIdentity.EditionMatchesProviderId(local, "gr-ed:49"), Is.True);
+            Assert.That(BookEditionIdentity.EditionMatchesProviderId(local, "gr-ed:51"), Is.False);
+            Assert.That(local.RemoteProviderIds, Is.EquivalentTo(new[] { "gr:49" }));
+            Assert.That(local.Id, Is.EqualTo(2));
+            Assert.That(local.Monitored, Is.True);
+            Assert.That(local.ManualAdd, Is.True);
+        }
+
+        [Test]
         public void use_metadata_from_should_clone_remote_provider_ids()
         {
             var source = new Book
@@ -482,6 +590,7 @@ namespace Chaptarr.Core.Test.Books
             var mediaFiles = new StubMediaFileService(file);
             var refreshEditions = new RecordingRefreshEditionService();
             var bookService = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)bookService).StoredBook = local;
             var service = new TestableRefreshBookService(mediaFiles, bookService, refreshEditions, LogManager.GetCurrentClassLogger());
 
             service.RefreshBookInfo(local, new List<Book> { remote }, new Author(), false);

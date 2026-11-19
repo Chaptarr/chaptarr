@@ -59,6 +59,12 @@ namespace NzbDrone.Core.Messaging.Commands
         public void End(CommandModel command)
         {
             SetFields(command, c => c.EndedAt, c => c.Status, c => c.Duration, c => c.Exception);
+
+            if (command.Status == CommandStatus.Cancelled && !command.StartedAt.HasValue)
+            {
+                // Removed queued work never reaches the executor's completion event.
+                ModelUpdated(command, true);
+            }
         }
     }
 }

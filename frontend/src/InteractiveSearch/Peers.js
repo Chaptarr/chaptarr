@@ -1,6 +1,7 @@
 import PropTypes from 'prop-types';
 import React from 'react';
 import Label from 'Components/Label';
+import labelStyles from 'Components/Label.css';
 import { kinds } from 'Helpers/Props';
 
 function getKind(seeders) {
@@ -41,6 +42,7 @@ function Peers(props) {
 
   return (
     <Label
+      className={labelStyles.wrapping}
       kind={kind}
       title={`${getPeersTooltipPart(seeders, 'seeder')}, ${getPeersTooltipPart(leechers, 'leecher')}`}
     >

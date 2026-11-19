@@ -13,7 +13,7 @@ namespace Chaptarr.Core.Test
         public List<QualityProfile> All() => throw new NotImplementedException();
         public List<QualityProfile> GetByType(ProfileType type) => throw new NotImplementedException();
         public QualityProfile Get(int id) => throw new NotImplementedException();
-        public bool Exists(int id) => id > 0;
+        public bool Exists(int id, ProfileType? profileType = null) => id > 0;
         public QualityProfile GetDefaultProfile(string name, Quality cutoff = null, params Quality[] allowed) => throw new NotImplementedException();
     }
 }

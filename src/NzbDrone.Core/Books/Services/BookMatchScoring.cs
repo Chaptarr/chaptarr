@@ -36,7 +36,6 @@ namespace NzbDrone.Core.Books.Services
     {
         public double Total { get; set; }
         public List<MatchComponent> Components { get; set; } = new List<MatchComponent>();
-        public double TrigramSimilarity { get; set; }
         public string UniqueOverlap { get; set; }
         public MatchConfidence Confidence => GetConfidence();
 
@@ -73,10 +72,6 @@ namespace NzbDrone.Core.Books.Services
             foreach (var component in Components.OrderByDescending(c => c.Score))
             {
                 sb.AppendLine($"  {component.Field}: {component.Score:F1} {component.Reason}");
-            }
-            if (TrigramSimilarity > 0)
-            {
-                sb.AppendLine($"  Trigram Similarity: {TrigramSimilarity:F2}");
             }
             if (!string.IsNullOrEmpty(UniqueOverlap))
             {
@@ -122,10 +117,6 @@ namespace NzbDrone.Core.Books.Services
                 sb.AppendLine($"          {component.Field}: {component.Score:F1} {(component.Reason != null ? "(" + component.Reason + ")" : "")}");
             }
 
-            if (score.TrigramSimilarity > 0)
-            {
-                sb.AppendLine($"        Trigram similarity: {score.TrigramSimilarity:F2}");
-            }
 
             if (!string.IsNullOrEmpty(score.UniqueOverlap))
             {
@@ -141,8 +132,8 @@ namespace NzbDrone.Core.Books.Services
             _logger.Debug(sb.ToString());
 
             // Also log a debug version with all details
-            _logger.Debug("[MATCH-DETAIL] Full match data: Book='{0}' (ID:{1}), Score={2:F2}, Components={3}, Trigram={4:F4}",
-                book.Title, book.Id, score.Total, score.Components.Count, score.TrigramSimilarity);
+            _logger.Debug("[MATCH-DETAIL] Full match data: Book='{0}' (ID:{1}), Score={2:F2}, Components={3}",
+                book.Title, book.Id, score.Total, score.Components.Count);
         }
 
         public void LogNoMatch(Dictionary<string, string> tags, string reason)

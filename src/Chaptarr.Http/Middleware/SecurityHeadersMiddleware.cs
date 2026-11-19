@@ -13,14 +13,8 @@ namespace Chaptarr.Http.Middleware
             _next = next;
         }
 
-        private static string BuildContentSecurityPolicy(HttpContext context)
+        private static string BuildContentSecurityPolicy()
         {
-            // Allow SignalR/websocket connections to the current host without allowing arbitrary ws/wss destinations.
-            var host = context?.Request?.Host.ToUriComponent();
-            var websocketSources = string.IsNullOrWhiteSpace(host)
-                ? string.Empty
-                : $" ws://{host} wss://{host}";
-
             return
                 "default-src 'self'; " +
                 "base-uri 'self'; " +
@@ -31,7 +25,7 @@ namespace Chaptarr.Http.Middleware
                 "font-src 'self' data:; " +
                 "style-src 'self' 'unsafe-inline'; " +
                 "script-src 'self' 'unsafe-inline'; " +
-                $"connect-src 'self'{websocketSources}; " +
+                "connect-src 'self'; " +
                 "manifest-src 'self';";
         }
 
@@ -64,7 +58,7 @@ namespace Chaptarr.Http.Middleware
 
                 if (!headers.ContainsKey("Content-Security-Policy"))
                 {
-                    headers["Content-Security-Policy"] = BuildContentSecurityPolicy(context);
+                    headers["Content-Security-Policy"] = BuildContentSecurityPolicy();
                 }
 
                 return Task.CompletedTask;

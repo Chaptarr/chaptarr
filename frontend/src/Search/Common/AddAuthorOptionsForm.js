@@ -4,6 +4,8 @@ import AuthorMonitoringGatePopoverContent from 'AddAuthor/AuthorMonitoringGatePo
 import AuthorMonitoringOptionsPopoverContent from 'AddAuthor/AuthorMonitoringOptionsPopoverContent';
 import AuthorMonitorNewItemsOptionsPopoverContent from 'AddAuthor/AuthorMonitorNewItemsOptionsPopoverContent';
 import BookMonitoringOptionsPopoverContent from 'AddAuthor/BookMonitoringOptionsPopoverContent';
+import DescriptionList from 'Components/DescriptionList/DescriptionList';
+import DescriptionListItem from 'Components/DescriptionList/DescriptionListItem';
 import Form from 'Components/Form/Form';
 import FormGroup from 'Components/Form/FormGroup';
 import FormInputGroup from 'Components/Form/FormInputGroup';
@@ -77,6 +79,11 @@ class AddAuthorOptionsForm extends Component {
       includeNoneMetadataProfile,
       includeSpecificBookMonitor,
       includeBothMediaType,
+      includeSyncMonitoredAcrossFormats,
+      syncMonitoredAcrossFormats,
+      canSyncMonitoredAcrossFormats,
+      sharedMonitor,
+      sharedMonitorNewItems,
       defaultMediaType,
       onSetDefaultMediaType,
       isSavingDefaultMediaType,
@@ -87,10 +94,53 @@ class AddAuthorOptionsForm extends Component {
       audiobookTags,
       ebookTags,
       isWindows,
-      isExistingAuthor,
+      existingAuthor,
+      qualityProfiles,
+      metadataProfiles,
+      tagList,
       onInputChange,
       ...otherProps
     } = this.props;
+
+    const renderExistingSettings = (mediaType) => {
+      const selectedMonitor = mediaType === 'audiobook' ? audiobookMonitor : ebookMonitor;
+      const fields = [
+        ['RootFolder', existingAuthor[`${mediaType}RootFolderPath`]],
+        ['QualityProfile', qualityProfiles?.find((profile) => profile.id === existingAuthor[`${mediaType}QualityProfileId`])?.name],
+        ['MetadataProfile', metadataProfiles?.find((profile) => profile.id === existingAuthor[`${mediaType}MetadataProfileId`])?.name],
+        ['MonitorAuthor', translate(existingAuthor[`${mediaType}Monitored`] ? 'Yes' : 'No')],
+        ['MonitorNewBooks', monitorNewItemsOptions.find((option) => option.key === existingAuthor[`${mediaType}MonitorNewItems`])?.value],
+        ['Tags', (tagList || []).filter((tag) => (existingAuthor[`${mediaType}Tags`] || []).includes(tag.id)).map((tag) => tag.label).join(', ')]
+      ];
+      return (
+        <>
+          <FormGroup>
+            <FormLabel>{translate(mediaType === 'audiobook' ? 'Audiobooks' : 'Ebooks')}</FormLabel>
+            <div>
+              <DescriptionList>
+                {fields.map(([label, value]) => (
+                  <DescriptionListItem
+                    key={label}
+                    title={translate(label)}
+                    data={value || translate('None')}
+                  />
+                ))}
+              </DescriptionList>
+              <p>{translate('AddBookUsesExistingAuthorSettings')}</p>
+            </div>
+          </FormGroup>
+          <FormGroup>
+            <FormLabel>{translate('MonitorThisBook')}</FormLabel>
+            <FormInputGroup
+              type={inputTypes.CHECK}
+              name={`${mediaType}MonitorThisBook`}
+              value={selectedMonitor?.value !== 'none'}
+              onChange={({ value }) => onInputChange({ name: `${mediaType}Monitor`, value: value ? 'specificBook' : 'none' })}
+            />
+          </FormGroup>
+        </>
+      );
+    };
 
     const normalizedDefaultMediaType = (defaultMediaType ?? '').trim().toLowerCase();
     const normalizedSelectedMediaType = (selectedMediaType ?? '').trim().toLowerCase();
@@ -102,8 +152,81 @@ class AddAuthorOptionsForm extends Component {
     const hasAudiobookRootFolder = true;
     const hasEbookRootFolder = true;
 
+    const isSyncEnabled = includeSyncMonitoredAcrossFormats && syncMonitoredAcrossFormats?.value === true;
+    const renderMonitoringOptions = (mediaType) => {
+      const shared = mediaType === 'shared';
+      const initial = shared ? sharedMonitor : (mediaType === 'ebook' ? ebookMonitor : audiobookMonitor) || monitor;
+      const ongoing = shared ? sharedMonitorNewItems : (mediaType === 'ebook' ? ebookMonitorNewItems : audiobookMonitorNewItems) || monitorNewItems;
+      let initialValue = shared ? initial.value : resolveMonitorOptionValue(initial?.value, monitor?.value);
+      if (includeSpecificBookMonitor) {
+        initialValue = initialValue === 'all' ? 'all' : 'specificBook';
+      }
+      const unresolvedOption = { key: '', value: translate('Select'), isDisabled: true };
+      const initialOptions = includeSpecificBookMonitor ? specificBookMonitorOptions : monitorOptions;
+
+      return (
+        <>
+          <FormGroup>
+            <FormLabel>
+              {translate('InitialBookMonitoring')}
+              <Popover
+                anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
+                title={translate('InitialBookMonitoring')}
+                body={includeSpecificBookMonitor ? <BookMonitoringOptionsPopoverContent /> : <AuthorMonitoringOptionsPopoverContent />}
+                position={tooltipPositions.RIGHT}
+              />
+            </FormLabel>
+            <FormInputGroup
+              type={inputTypes.SELECT}
+              name={`${mediaType}Monitor`}
+              {...initial}
+              values={shared && !initial.value ? [unresolvedOption, ...initialOptions] : initialOptions}
+              value={initialValue}
+              onChange={onInputChange}
+            />
+          </FormGroup>
+          <FormGroup>
+            <FormLabel>
+              {translate('MonitorNewBooks')}
+              <Popover
+                anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
+                title={translate('MonitorNewBooks')}
+                body={<AuthorMonitorNewItemsOptionsPopoverContent />}
+                position={tooltipPositions.RIGHT}
+              />
+            </FormLabel>
+            <FormInputGroup
+              type={inputTypes.SELECT}
+              name={`${mediaType}MonitorNewItems`}
+              {...ongoing}
+              values={shared && !ongoing.value ? [unresolvedOption, ...monitorNewItemsOptions] : monitorNewItemsOptions}
+              value={shared ? ongoing.value : resolveMonitorNewItemsOptionValue(ongoing?.value, monitorNewItems?.value)}
+              onChange={onInputChange}
+            />
+          </FormGroup>
+        </>
+      );
+    };
+
     return (
       <Form {...otherProps}>
+        {
+          includeSyncMonitoredAcrossFormats &&
+            <FormGroup>
+              <FormLabel>{translate('SyncMonitoredAudioEbooks')}</FormLabel>
+              <FormInputGroup
+                type={inputTypes.CHECK}
+                name="syncMonitoredAcrossFormats"
+                {...syncMonitoredAcrossFormats}
+                isDisabled={!canSyncMonitoredAcrossFormats}
+                helpText={canSyncMonitoredAcrossFormats ?
+                  translate('AuthorSyncAddHelpText') :
+                  translate('AuthorSyncAddRequiresBoth')}
+                onChange={onInputChange}
+              />
+            </FormGroup>
+        }
+        {isSyncEnabled && renderMonitoringOptions('shared')}
         <MediaTypeToggle
           selectedMediaType={selectedMediaType}
           onMediaTypeChange={this.onMediaTypeChange}
@@ -126,14 +249,14 @@ class AddAuthorOptionsForm extends Component {
         </MediaTypeToggle>
 
         {(() => {
-          const audiobookSettings = (
+          const audiobookSettings = includeSpecificBookMonitor && existingAuthor?.audiobookRootFolderPath ? renderExistingSettings('audiobook') : (
             <>
               <FormGroup>
                 <FormLabel>
                   {translate('AudiobookRootFolder')}
                 </FormLabel>
 
-                {isExistingAuthor ? (
+                {existingAuthor?.audiobookRootFolderPath ? (
                   <FormInputGroup
                     type={inputTypes.TEXT}
                     name="audiobookRootFolderPath_display"
@@ -182,55 +305,7 @@ class AddAuthorOptionsForm extends Component {
                 />
               </FormGroup>
 
-              <FormGroup>
-                <FormLabel>
-                  {translate('InitialBookMonitoring')}
-                  <Popover
-                    anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
-                    title={translate('InitialBookMonitoring')}
-                    body={includeSpecificBookMonitor ? <BookMonitoringOptionsPopoverContent /> : <AuthorMonitoringOptionsPopoverContent />}
-                    position={tooltipPositions.RIGHT}
-                  />
-                </FormLabel>
-
-                <FormInputGroup
-                  type={inputTypes.SELECT}
-                  name="audiobookMonitor"
-                  {...(audiobookMonitor || monitor)}
-                  values={includeSpecificBookMonitor ? specificBookMonitorOptions : monitorOptions}
-                  value={(() => {
-                    const currentValue = resolveMonitorOptionValue(audiobookMonitor?.value, monitor?.value);
-
-                    if (includeSpecificBookMonitor) {
-                      return currentValue === 'all' ? 'all' : 'specificBook';
-                    }
-
-                    return currentValue;
-                  })()}
-                  onChange={onInputChange}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>
-                  {translate('MonitorNewBooks')}
-                  <Popover
-                    anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
-                    title={translate('MonitorNewBooks')}
-                    body={<AuthorMonitorNewItemsOptionsPopoverContent />}
-                    position={tooltipPositions.RIGHT}
-                  />
-                </FormLabel>
-
-                <FormInputGroup
-                  type={inputTypes.SELECT}
-                  name="audiobookMonitorNewItems"
-                  values={monitorNewItemsOptions}
-                  {...(audiobookMonitorNewItems || monitorNewItems)}
-                  value={resolveMonitorNewItemsOptionValue(audiobookMonitorNewItems?.value, monitorNewItems?.value)}
-                  onChange={onInputChange}
-                />
-              </FormGroup>
+              {!isSyncEnabled && renderMonitoringOptions('audiobook')}
 
               <FormGroup>
                 <FormLabel>
@@ -283,14 +358,14 @@ class AddAuthorOptionsForm extends Component {
             </>
           );
 
-          const ebookSettings = (
+          const ebookSettings = includeSpecificBookMonitor && existingAuthor?.ebookRootFolderPath ? renderExistingSettings('ebook') : (
             <>
               <FormGroup>
                 <FormLabel>
                   {translate('EbookRootFolder')}
                 </FormLabel>
 
-                {isExistingAuthor ? (
+                {existingAuthor?.ebookRootFolderPath ? (
                   <FormInputGroup
                     type={inputTypes.TEXT}
                     name="ebookRootFolderPath_display"
@@ -339,55 +414,7 @@ class AddAuthorOptionsForm extends Component {
                 />
               </FormGroup>
 
-              <FormGroup>
-                <FormLabel>
-                  {translate('InitialBookMonitoring')}
-                  <Popover
-                    anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
-                    title={translate('InitialBookMonitoring')}
-                    body={includeSpecificBookMonitor ? <BookMonitoringOptionsPopoverContent /> : <AuthorMonitoringOptionsPopoverContent />}
-                    position={tooltipPositions.RIGHT}
-                  />
-                </FormLabel>
-
-                <FormInputGroup
-                  type={inputTypes.SELECT}
-                  name="ebookMonitor"
-                  {...(ebookMonitor || monitor)}
-                  values={includeSpecificBookMonitor ? specificBookMonitorOptions : monitorOptions}
-                  value={(() => {
-                    const currentValue = resolveMonitorOptionValue(ebookMonitor?.value, monitor?.value);
-
-                    if (includeSpecificBookMonitor) {
-                      return currentValue === 'all' ? 'all' : 'specificBook';
-                    }
-
-                    return currentValue;
-                  })()}
-                  onChange={onInputChange}
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <FormLabel>
-                  {translate('MonitorNewBooks')}
-                  <Popover
-                    anchor={<Icon className={styles.labelIcon} name={icons.INFO} />}
-                    title={translate('MonitorNewBooks')}
-                    body={<AuthorMonitorNewItemsOptionsPopoverContent />}
-                    position={tooltipPositions.RIGHT}
-                  />
-                </FormLabel>
-
-                <FormInputGroup
-                  type={inputTypes.SELECT}
-                  name="ebookMonitorNewItems"
-                  values={monitorNewItemsOptions}
-                  {...(ebookMonitorNewItems || monitorNewItems)}
-                  value={resolveMonitorNewItemsOptionValue(ebookMonitorNewItems?.value, monitorNewItems?.value)}
-                  onChange={onInputChange}
-                />
-              </FormGroup>
+              {!isSyncEnabled && renderMonitoringOptions('ebook')}
 
               <FormGroup>
                 <FormLabel>
@@ -481,6 +508,11 @@ AddAuthorOptionsForm.propTypes = {
   includeNoneMetadataProfile: PropTypes.bool.isRequired,
   includeSpecificBookMonitor: PropTypes.bool.isRequired,
   includeBothMediaType: PropTypes.bool,
+  includeSyncMonitoredAcrossFormats: PropTypes.bool,
+  syncMonitoredAcrossFormats: PropTypes.object,
+  canSyncMonitoredAcrossFormats: PropTypes.bool,
+  sharedMonitor: PropTypes.object,
+  sharedMonitorNewItems: PropTypes.object,
   defaultMediaType: PropTypes.string,
   onSetDefaultMediaType: PropTypes.func,
   isSavingDefaultMediaType: PropTypes.bool,
@@ -489,7 +521,10 @@ AddAuthorOptionsForm.propTypes = {
   audiobookTags: PropTypes.object,
   ebookTags: PropTypes.object,
   isWindows: PropTypes.bool.isRequired,
-  isExistingAuthor: PropTypes.bool,
+  existingAuthor: PropTypes.object,
+  qualityProfiles: PropTypes.arrayOf(PropTypes.object),
+  metadataProfiles: PropTypes.arrayOf(PropTypes.object),
+  tagList: PropTypes.arrayOf(PropTypes.object),
   selectedMediaType: PropTypes.oneOf(['audiobook', 'ebook', 'both']).isRequired,
   onMediaTypeChange: PropTypes.func.isRequired,
   onInputChange: PropTypes.func.isRequired
