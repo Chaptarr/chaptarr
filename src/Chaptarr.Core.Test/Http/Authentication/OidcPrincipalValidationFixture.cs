@@ -1,167 +1,192 @@
 using System;
-using System.Reflection;
+using System.Linq;
+using System.Net.Http;
 using System.Security.Claims;
 using System.Threading.Tasks;
+using Chaptarr.Core.Test.Common;
 using Chaptarr.Http.Authentication;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using NLog;
 using NUnit.Framework;
+using NzbDrone.Common.Http.Dispatchers;
+using NzbDrone.Common.Http.Proxy;
 using NzbDrone.Core.Configuration;
+using AspNetAuthenticationService = Microsoft.AspNetCore.Authentication.IAuthenticationService;
 
 namespace Chaptarr.Core.Test.Http.Authentication
 {
     [TestFixture]
     public class OidcPrincipalValidationFixture
     {
-        private static readonly MethodInfo ValidateMethod = typeof(AuthenticationBuilderExtensions).GetMethod(
-            "ValidateAndNormalizeOidcPrincipal",
-            BindingFlags.NonPublic | BindingFlags.Static);
-
-        private static readonly MethodInfo TicketReceivedMethod = typeof(AuthenticationBuilderExtensions).GetMethod(
-            "HandleOidcTicketReceived",
-            BindingFlags.NonPublic | BindingFlags.Static);
-
-        private class ConfigFileProviderProxy : DispatchProxy
+        [TestCase("alice@example.com", "true", "alice@example.com", "example.com", true, false, null)]
+        [TestCase("alice@example.com", "1", "", "example.com", true, false, null)]
+        [TestCase("alice@example.com", "True", "", "example.com", true, false, null)]
+        [TestCase("alice@example.com", "0", "", "example.com", true, false, "oidc_email_not_verified")]
+        [TestCase("alice@example.com", "yes", "", "example.com", true, false, "oidc_email_not_verified")]
+        [TestCase("alice@example.com", "true", "", "@example.com", true, false, "oidc_domain_not_allowed")]
+        [TestCase("alice@example.com", null, "alice@example.com", "", false, false, null)]
+        [TestCase("alice@example.com", "true", "", "", true, true, null)]
+        [TestCase("alice@example.com", null, "alice@example.com", "", true, false, "oidc_email_verified_missing")]
+        [TestCase("alice@example.com", "false", "alice@example.com", "", false, false, "oidc_email_not_verified")]
+        [TestCase("alice@example.com", "false", "", "", false, true, "oidc_email_not_verified")]
+        [TestCase("alice@example.com", null, "", "", false, true, "oidc_email_verified_missing")]
+        [TestCase(null, null, "", "", true, true, "oidc_email_missing")]
+        [TestCase("bob@example.com", "true", "alice@example.com", "example.com", true, false, "oidc_email_not_allowed")]
+        [TestCase("alice@example.com", "true", "alice@example.com", "family.org", true, false, "oidc_domain_not_allowed")]
+        public async Task registered_ticket_callback_applies_access_rules(string email, string verified, string emails, string domains, bool requireVerified, bool allowAny, string expectedError)
         {
-            public string AllowedEmails { get; set; } = string.Empty;
-            public string AllowedEmailDomains { get; set; } = string.Empty;
-            public bool RequireEmailVerified { get; set; }
-            public bool AllowAnyVerifiedUser { get; set; }
+            var context = await ReceiveTicket(email, verified, emails, domains, requireVerified, allowAny);
 
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
+            if (expectedError == null)
             {
-                return targetMethod?.Name switch
-                {
-                    "get_OidcAllowedEmails" => AllowedEmails,
-                    "get_OidcAllowedEmailDomains" => AllowedEmailDomains,
-                    "get_OidcRequireEmailVerified" => RequireEmailVerified,
-                    "get_OidcAllowAnyVerifiedUser" => AllowAnyVerifiedUser,
-                    "get_AuthCookieStamp" => "test-stamp",
-                    "get_UrlBase" => string.Empty,
-                    _ => throw new NotImplementedException($"Test proxy does not implement {targetMethod?.Name}")
-                };
+                Assert.That(context.Result, Is.Null);
+                Assert.That(context.Principal.FindFirst("auth_stamp")?.Value, Is.EqualTo("test-stamp"));
             }
-
-            public static IConfigFileProvider Create(string allowedEmails = "", string allowedEmailDomains = "", bool requireEmailVerified = false, bool allowAnyVerifiedUser = false)
+            else
             {
-                var proxy = DispatchProxy.Create<IConfigFileProvider, ConfigFileProviderProxy>();
-                var state = (ConfigFileProviderProxy)(object)proxy;
-                state.AllowedEmails = allowedEmails;
-                state.AllowedEmailDomains = allowedEmailDomains;
-                state.RequireEmailVerified = requireEmailVerified;
-                state.AllowAnyVerifiedUser = allowAnyVerifiedUser;
-                return proxy;
+                Assert.That(context.Result?.Handled, Is.True, "a rejection must stop the remote handler before sign-in");
+                Assert.That(context.Response.Headers.Location.ToString(),
+                    Is.EqualTo($"/chaptarr/login?ssoFailed=true&ssoError={expectedError}&returnUrl=%2Fchaptarr%2Fbooks"));
+                Assert.That(context.Principal.FindFirst("auth_stamp"), Is.Null);
             }
         }
 
-        [Test]
-        public void should_allow_missing_email_verified_claim_by_default_when_allowlist_matches()
+        [TestCase("admin@example.org", "", "oidc_email_not_allowed")]
+        [TestCase("", "example.org", "oidc_domain_not_allowed")]
+        [NonParallelizable]
+        public async Task list_rejection_logs_only_the_domain_and_policy_reason(string emails, string domains, string reason)
         {
-            var failure = Validate(BuildPrincipal("alice@example.com"), ConfigFileProviderProxy.Create(allowedEmails: "alice@example.com"));
+            var domain = "mail-2.\u202Egoogle\u200Bmail.\r\nco_m" + new string('x', 260);
+            var messages = await CaptureAuthLogs(LogLevel.Warn, () => ReceiveTicket("private-name@" + domain, "true", emails, domains, true, false));
 
-            Assert.That(failure, Is.Null);
+            var expectedDomain = ("mail-2.googlemail.com" + new string('x', 260))[..253];
+            Assert.That(messages, Is.EqualTo(new[] { $"OIDC sign-in rejected: {reason}, email_verified=true, domain={expectedDomain}" }));
+        }
+
+        [TestCase("भारत.in")]
+        [TestCase("ดี.th")]
+        [TestCase("𐐀.example")]
+        [NonParallelizable]
+        public async Task list_rejection_keeps_the_domain_spelling_in_the_log(string domain)
+        {
+            var messages = await CaptureAuthLogs(LogLevel.Warn, () => ReceiveTicket("reader@" + domain, "true", "", "example.org", true, false));
+            Assert.That(messages, Is.EqualTo(new[] { $"OIDC sign-in rejected: oidc_domain_not_allowed, email_verified=true, domain={domain}" }));
         }
 
         [Test]
-        public void should_reject_missing_email_verified_claim_when_strict_mode_is_enabled()
+        [NonParallelizable]
+        public async Task malformed_verification_logs_only_its_classification()
         {
-            var failure = Validate(BuildPrincipal("alice@example.com"), ConfigFileProviderProxy.Create(allowedEmails: "alice@example.com", requireEmailVerified: true));
-
-            Assert.That(failure, Is.EqualTo("Verified email claim is required to sign in."));
+            var messages = await CaptureAuthLogs(LogLevel.Warn, () => ReceiveTicket("alice@example.org", "unrecognized claim", "", "example.org", true, false));
+            Assert.That(messages, Is.EqualTo(new[] { "OIDC sign-in rejected: oidc_email_not_verified, email_verified=invalid" }));
         }
 
-        [Test]
-        public void should_reject_explicitly_unverified_email_when_allowlist_is_configured()
+        [TestCase("Forms", null, "member", false)]
+        [TestCase("Forms", "current", "member", true)]
+        [TestCase("Oidc", "old", "member", false)]
+        [TestCase("Oidc", "current", "member", true)]
+        [TestCase("Plex", "old", "member", false)]
+        [TestCase("Plex", "current", "other", false)]
+        [TestCase("Plex", "current", "member", true)]
+        [NonParallelizable]
+        public async Task cookie_validation_requires_the_current_stamp_and_keeps_the_plex_user_check(string schemeName, string stamp, string identifier, bool valid)
         {
-            var failure = Validate(BuildPrincipal("alice@example.com", "false"), ConfigFileProviderProxy.Create(allowedEmails: "alice@example.com"));
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton(InterfaceProxy.Proxy<IConfigFileProvider>((method, _) => method.Name switch
+            {
+                "get_InstanceName" => "Chaptarr",
+                "get_AuthCookieStamp" => "current",
+                "get_PlexAuthUserId" => "member",
+                _ => throw new NotImplementedException(method.Name)
+            }));
+            services.AddAppAuthentication();
+            string signedOutScheme = null;
+            services.AddSingleton(InterfaceProxy.Proxy<AspNetAuthenticationService>((method, args) =>
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(AspNetAuthenticationService.SignOutAsync)));
+                signedOutScheme = (string)args[1];
+                return Task.CompletedTask;
+            }));
+            using var provider = services.BuildServiceProvider();
+            var scheme = new AuthenticationScheme(schemeName, null, typeof(CookieAuthenticationHandler));
+            var options = provider.GetRequiredService<IOptionsMonitor<CookieAuthenticationOptions>>().Get(scheme.Name);
+            var identity = new ClaimsIdentity(scheme.Name);
+            if (stamp != null) identity.AddClaim(new Claim("auth_stamp", stamp));
+            identity.AddClaim(new Claim("identifier", identifier));
+            var ticket = new AuthenticationTicket(new ClaimsPrincipal(identity), scheme.Name);
+            var context = new CookieValidatePrincipalContext(new DefaultHttpContext { RequestServices = provider }, scheme, options, ticket);
 
-            Assert.That(failure, Is.EqualTo("Verified email claim is required to sign in."));
+            var messages = await CaptureAuthLogs(LogLevel.Debug, () => options.Events.OnValidatePrincipal(context));
+            var expectedMessages = stamp == "current"
+                ? Array.Empty<string>()
+                : new[] { $"Rejected {schemeName} session because its authentication stamp was missing or changed." };
+            Assert.That(messages, Is.EqualTo(expectedMessages));
+
+            Assert.That(context.Principal != null, Is.EqualTo(valid));
+            Assert.That(signedOutScheme, Is.EqualTo(valid ? null : schemeName));
         }
 
-        [Test]
-        public void should_allow_verified_email_when_allowlist_matches()
+        private static async Task<string[]> CaptureAuthLogs(LogLevel level, Func<Task> action)
         {
-            var failure = Validate(BuildPrincipal("alice@example.com", "true"), ConfigFileProviderProxy.Create(allowedEmails: "alice@example.com", requireEmailVerified: true));
-
-            Assert.That(failure, Is.Null);
+            var original = LogManager.Configuration;
+            var target = new NLog.Targets.MemoryTarget { Layout = "${message}" };
+            var logging = new NLog.Config.LoggingConfiguration();
+            logging.AddRule(level, level, target, "*AuthenticationBuilderExtensions");
+            try
+            {
+                LogManager.Configuration = logging;
+                await action();
+                return target.Logs.ToArray();
+            }
+            finally
+            {
+                LogManager.Configuration = original;
+            }
         }
 
-        [Test]
-        public void should_allow_any_verified_user_when_explicitly_configured()
+        private static async Task<TicketReceivedContext> ReceiveTicket(string email, string verified, string emails, string domains, bool requireVerified, bool allowAny)
         {
-            var failure = Validate(BuildPrincipal("alice@example.com", "true"), ConfigFileProviderProxy.Create(allowAnyVerifiedUser: true));
+            var config = InterfaceProxy.Proxy<IConfigFileProvider>((method, _) => method.Name switch
+            {
+                "get_OidcAllowedEmails" => emails,
+                "get_OidcAllowedEmailDomains" => domains,
+                "get_OidcRequireEmailVerified" => requireVerified,
+                "get_OidcAllowAnyVerifiedUser" => allowAny,
+                "get_AuthCookieStamp" => "test-stamp",
+                "get_UrlBase" => "/chaptarr",
+                "get_OidcScopes" => "openid profile email",
+                "get_OidcAuthority" => "https://login.example",
+                "get_OidcClientId" or "get_OidcClientSecret" => "test",
+                _ => throw new NotImplementedException(method.Name)
+            });
 
-            Assert.That(failure, Is.Null);
-        }
-
-        [Test]
-        public void should_reject_unverified_allow_any_user()
-        {
-            var failure = Validate(BuildPrincipal("alice@example.com", "false"), ConfigFileProviderProxy.Create(allowAnyVerifiedUser: true));
-
-            Assert.That(failure, Is.EqualTo("Verified email claim is required to sign in."));
-        }
-
-        [TestCase("bob@example.com", null, "oidc_user_not_allowed")]
-        [TestCase("alice@example.com", "false", "oidc_email_not_verified")]
-        public void should_stop_sign_in_and_redirect_to_login_when_ticket_is_rejected(string email, string emailVerified, string expectedError)
-        {
-            var context = BuildTicketReceivedContext(BuildPrincipal(email, emailVerified), "/books");
-
-            ReceiveTicket(context, ConfigFileProviderProxy.Create(allowedEmails: "alice@example.com"));
-
-            Assert.That(context.Result, Is.Not.Null);
-            Assert.That(context.Result.Handled, Is.True, "a rejected ticket must not fall through to SignInAsync");
-            Assert.That(context.Response.Headers.Location.ToString(),
-                Is.EqualTo($"/login?ssoFailed=true&ssoError={expectedError}&returnUrl=%2Fbooks"));
-            Assert.That(context.Principal.HasClaim(c => c.Type == "auth_stamp"), Is.False);
-        }
-
-        [Test]
-        public void should_let_accepted_ticket_sign_in_with_auth_stamp()
-        {
-            var context = BuildTicketReceivedContext(BuildPrincipal("alice@example.com", "true"), "/books");
-
-            ReceiveTicket(context, ConfigFileProviderProxy.Create(allowedEmails: "alice@example.com"));
-
-            Assert.That(context.Result, Is.Null);
-            Assert.That(context.Principal.FindFirst("auth_stamp")?.Value, Is.EqualTo("test-stamp"));
-        }
-
-        private static void ReceiveTicket(TicketReceivedContext context, IConfigFileProvider configFileProvider)
-        {
-            ((Task)TicketReceivedMethod.Invoke(null, new object[] { context, configFileProvider })).GetAwaiter().GetResult();
-        }
-
-        private static TicketReceivedContext BuildTicketReceivedContext(ClaimsPrincipal principal, string returnUri)
-        {
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddSingleton(config);
+            services.AddSingleton(InterfaceProxy.Proxy<IHttpProxySettingsProvider>((_, _) => null));
+            using var handler = new SocketsHttpHandler();
+            services.AddSingleton(InterfaceProxy.Proxy<ICreateManagedSocketsHttpHandler>((_, _) => handler));
+            services.AddAppAuthentication();
+            using var provider = services.BuildServiceProvider();
             var scheme = new AuthenticationScheme("OidcOpenIdConnect", null, typeof(OpenIdConnectHandler));
-            var ticket = new AuthenticationTicket(principal, new AuthenticationProperties(), scheme.Name);
+            var options = provider.GetRequiredService<IOptionsMonitor<OpenIdConnectOptions>>().Get(scheme.Name);
 
-            return new TicketReceivedContext(new DefaultHttpContext(), scheme, new OpenIdConnectOptions(), ticket)
-            {
-                ReturnUri = returnUri
-            };
-        }
-
-        private static string Validate(ClaimsPrincipal principal, IConfigFileProvider configFileProvider)
-        {
-            return (string)ValidateMethod.Invoke(null, new object[] { principal, configFileProvider });
-        }
-
-        private static ClaimsPrincipal BuildPrincipal(string email, string emailVerified = null)
-        {
             var identity = new ClaimsIdentity("oidc");
-            identity.AddClaim(new Claim(ClaimTypes.Email, email));
             identity.AddClaim(new Claim("sub", "subject-1"));
+            if (email != null) identity.AddClaim(new Claim(ClaimTypes.Email, email));
+            if (verified != null) identity.AddClaim(new Claim("email_verified", verified));
+            var ticket = new AuthenticationTicket(new ClaimsPrincipal(identity), scheme.Name);
+            var context = new TicketReceivedContext(new DefaultHttpContext(), scheme, options, ticket) { ReturnUri = "/chaptarr/books" };
 
-            if (emailVerified != null)
-            {
-                identity.AddClaim(new Claim("email_verified", emailVerified));
-            }
+            await options.Events.OnTicketReceived(context);
 
-            return new ClaimsPrincipal(identity);
+            return context;
         }
     }
 }

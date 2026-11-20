@@ -29,6 +29,7 @@ namespace Chaptarr.Core.Test.Http.Authentication
             public AuthenticationType AuthenticationMethod { get; set; } = AuthenticationType.Plex;
             public AuthenticationType ConfiguredAuthenticationMethod { get; set; } = AuthenticationType.Plex;
             public bool AuthenticationMethodIsMisconfigured { get; set; }
+            public string OidcAllowedEmailDomains { get; set; } = string.Empty;
             public string PlexAuthUserId { get; set; } = string.Empty;
             public Queue<string> PlexAuthUserIdResponses { get; } = new Queue<string>();
             public bool TrustCgnatIpAddresses { get; set; }
@@ -48,7 +49,7 @@ namespace Chaptarr.Core.Test.Http.Authentication
                     "get_InstanceName" => "Chaptarr",
                     "get_AllowedHosts" => "chaptarr.example",
                     "get_OidcAllowedEmails" => string.Empty,
-                    "get_OidcAllowedEmailDomains" => string.Empty,
+                    "get_OidcAllowedEmailDomains" => OidcAllowedEmailDomains,
                     "get_OidcAllowAnyVerifiedUser" => false,
                     _ => throw new NotImplementedException(targetMethod?.Name)
                 };
@@ -194,6 +195,26 @@ namespace Chaptarr.Core.Test.Http.Authentication
             var result = new OidcSecurityCheck(config, null).Check();
 
             Assert.That(result.Type, Is.EqualTo(HealthCheckResult.Error));
+        }
+
+        [TestCase(AuthenticationType.Oidc, "family.org, @school.org", HealthCheckResult.Warning)]
+        [TestCase(AuthenticationType.Oidc, "family.org.", HealthCheckResult.Warning)]
+        [TestCase(AuthenticationType.Oidc, "भारत.in, ดี.th", HealthCheckResult.Ok)]
+        [TestCase(AuthenticationType.Forms, "@family.org", HealthCheckResult.Ok)]
+        public void health_reports_invalid_stored_domains_when_oidc_is_selected(AuthenticationType method, string domains, HealthCheckResult expected)
+        {
+            var config = ConfigFileProviderProxy.Create();
+            var state = (ConfigFileProviderProxy)(object)config;
+            state.ConfiguredAuthenticationMethod = method;
+            state.OidcAllowedEmailDomains = domains;
+
+            var result = new OidcSecurityCheck(config, null).Check();
+
+            Assert.That(result.Type, Is.EqualTo(expected));
+            if (expected == HealthCheckResult.Warning)
+            {
+                Assert.That(result.Message, Does.Contain("Allowed Email Domains"));
+            }
         }
 
         [TestCase("https", "public.example", "/chaptarr")]

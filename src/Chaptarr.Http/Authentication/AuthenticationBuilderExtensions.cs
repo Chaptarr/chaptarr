@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Security.Claims;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -31,9 +33,11 @@ namespace Chaptarr.Http.Authentication
         internal const string OidcOpenIdConnectScheme = "OidcOpenIdConnect";
         internal const string UiAuthScheme = "UIAuth";
         internal const string AuthStampClaim = "auth_stamp";
-        private const string OidcEmailRequiredFailure = "Email claim is required to sign in.";
-        private const string OidcVerifiedEmailRequiredFailure = "Verified email claim is required to sign in.";
-        private const string OidcUserNotAllowedFailure = "User is not allowed to sign in.";
+        private const string EmailMissing = "oidc_email_missing";
+        private const string EmailNotVerified = "oidc_email_not_verified";
+        private const string VerificationMissing = "oidc_email_verified_missing";
+        private const string EmailNotAllowed = "oidc_email_not_allowed";
+        private const string DomainNotAllowed = "oidc_domain_not_allowed";
         private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
         private static readonly Regex CookieNameRegex = new Regex(@"[^a-z0-9]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
@@ -85,17 +89,7 @@ namespace Chaptarr.Http.Authentication
 
                     options.Events.OnRedirectToAccessDenied = context => RedirectCookieAuthentication(context, 403);
 
-                    options.Events.OnValidatePrincipal = async context =>
-                    {
-                        var principal = context.Principal;
-                        var stamp = principal?.FindFirst(AuthStampClaim)?.Value;
-                        if (stamp.IsNullOrWhiteSpace() ||
-                            !string.Equals(stamp, configFileProvider.AuthCookieStamp, StringComparison.Ordinal))
-                        {
-                            context.RejectPrincipal();
-                            await context.HttpContext.SignOutAsync(AuthenticationType.Forms.ToString());
-                        }
-                    };
+                    options.Events.OnValidatePrincipal = context => ValidateCookieStamp(context, configFileProvider);
                 });
 
             services.AddOptions<CookieAuthenticationOptions>(AuthenticationType.Oidc.ToString())
@@ -124,17 +118,7 @@ namespace Chaptarr.Http.Authentication
 
                     options.Events.OnRedirectToAccessDenied = context => RedirectCookieAuthentication(context, 403);
 
-                    options.Events.OnValidatePrincipal = async context =>
-                    {
-                        var principal = context.Principal;
-                        var stamp = principal?.FindFirst(AuthStampClaim)?.Value;
-                        if (stamp.IsNullOrWhiteSpace() ||
-                            !string.Equals(stamp, configFileProvider.AuthCookieStamp, StringComparison.Ordinal))
-                        {
-                            context.RejectPrincipal();
-                            await context.HttpContext.SignOutAsync(AuthenticationType.Oidc.ToString());
-                        }
-                    };
+                    options.Events.OnValidatePrincipal = context => ValidateCookieStamp(context, configFileProvider);
                 });
 
             services.AddOptions<CookieAuthenticationOptions>(AuthenticationType.Plex.ToString())
@@ -161,20 +145,15 @@ namespace Chaptarr.Http.Authentication
 
                     options.Events.OnValidatePrincipal = async context =>
                     {
-                        var principal = context.Principal;
-                        var stamp = principal?.FindFirst(AuthStampClaim)?.Value;
-                        if (stamp.IsNullOrWhiteSpace() ||
-                            !string.Equals(stamp, configFileProvider.AuthCookieStamp, StringComparison.Ordinal))
+                        if (!await ValidateCookieStamp(context, configFileProvider))
                         {
-                            context.RejectPrincipal();
-                            await context.HttpContext.SignOutAsync(AuthenticationType.Plex.ToString());
                             return;
                         }
 
                         var configuredUserId = configFileProvider.PlexAuthUserId;
                         if (configuredUserId.IsNotNullOrWhiteSpace())
                         {
-                            var identifier = principal?.FindFirst("identifier")?.Value;
+                            var identifier = context.Principal?.FindFirst("identifier")?.Value;
                             if (identifier.IsNullOrWhiteSpace() ||
                                 !string.Equals(identifier, configuredUserId, StringComparison.Ordinal))
                             {
@@ -434,34 +413,61 @@ namespace Chaptarr.Http.Authentication
             return Task.CompletedTask;
         }
 
-        private static System.Threading.Tasks.Task HandleOidcTicketReceived(TicketReceivedContext context, IConfigFileProvider configFileProvider)
+        private static async Task<bool> ValidateCookieStamp(CookieValidatePrincipalContext context, IConfigFileProvider config)
         {
-            var failure = ValidateAndNormalizeOidcPrincipal(context.Principal, configFileProvider);
-            if (failure.IsNullOrWhiteSpace())
+            var stamp = context.Principal?.FindFirst(AuthStampClaim)?.Value;
+            if (stamp.IsNotNullOrWhiteSpace() && string.Equals(stamp, config.AuthCookieStamp, StringComparison.Ordinal))
             {
-                return System.Threading.Tasks.Task.CompletedTask;
+                return true;
             }
 
-            // TicketReceivedContext.Fail() does not stop the remote handler: ASP.NET only honours
-            // HandleResponse()/SkipHandler() here and otherwise signs the ticket in regardless. That
-            // issued a cookie without the auth_stamp claim, which the cookie validator then rejected,
-            // so a policy rejection surfaced as a silent redirect loop back to /login.
-            Logger.Warn("OIDC sign-in rejected by Chaptarr policy: {0}", failure);
-
-            context.HandleResponse();
-            context.Response.Redirect(BuildSsoFailedLoginUrl(configFileProvider, context.ReturnUri, GetOidcPolicyErrorCode(failure)));
-            return System.Threading.Tasks.Task.CompletedTask;
+            Logger.Debug("Rejected {0} session because its authentication stamp was missing or changed.", context.Scheme.Name);
+            context.RejectPrincipal();
+            await context.HttpContext.SignOutAsync(context.Scheme.Name);
+            return false;
         }
 
-        private static string GetOidcPolicyErrorCode(string failure)
+        private static Task HandleOidcTicketReceived(TicketReceivedContext context, IConfigFileProvider configFileProvider)
         {
-            return failure switch
+            var verification = GetEmailVerificationStatus(context.Principal);
+            var failure = ValidateAndNormalizeOidcPrincipal(context.Principal, configFileProvider, verification);
+            if (failure != null)
             {
-                OidcEmailRequiredFailure => "oidc_email_missing",
-                OidcVerifiedEmailRequiredFailure => "oidc_email_not_verified",
-                OidcUserNotAllowedFailure => "oidc_user_not_allowed",
-                _ => "sso_failed"
-            };
+                var detail = string.Empty;
+                if (failure is EmailNotAllowed or DomainNotAllowed)
+                {
+                    var domain = GetEmailDomain(GetOidcEmail(context.Principal));
+                    // Log only the provider's domain. Keep diagnostic text bounded and on one line.
+                    detail = ", domain=" + FormatDomainForLog(domain);
+                }
+
+                Logger.Warn("OIDC sign-in rejected: {0}, email_verified={1}{2}", failure, verification.ToString().ToLowerInvariant(), detail);
+                // The remote handler continues to sign in after TicketReceived unless the response is handled.
+                context.HandleResponse();
+                context.Response.Redirect(BuildSsoFailedLoginUrl(configFileProvider, context.ReturnUri, failure));
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private static string FormatDomainForLog(string domain)
+        {
+            var result = new StringBuilder();
+            foreach (var rune in domain.EnumerateRunes())
+            {
+                if (Rune.IsLetterOrDigit(rune) || rune.Value is '.' or '-' ||
+                    Rune.GetUnicodeCategory(rune) is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark)
+                {
+                    if (result.Length + rune.Utf16SequenceLength > 253)
+                    {
+                        break;
+                    }
+
+                    result.Append(rune.ToString());
+                }
+            }
+
+            return result.ToString();
         }
 
         private static string BuildSsoFailedLoginUrl(IConfigFileProvider configFileProvider, string returnUrl, string errorCode)
@@ -476,10 +482,10 @@ namespace Chaptarr.Http.Authentication
             return $"{urlBase}/login?ssoFailed=true&ssoError={Uri.EscapeDataString(errorCode)}&returnUrl={Uri.EscapeDataString(returnUrl)}";
         }
 
-        private static string ValidateAndNormalizeOidcPrincipal(ClaimsPrincipal principal, IConfigFileProvider configFileProvider)
+        private static string ValidateAndNormalizeOidcPrincipal(ClaimsPrincipal principal, IConfigFileProvider configFileProvider, EmailVerification verification)
         {
-            var allowedEmails = ParseCsvToSet(configFileProvider.OidcAllowedEmails);
-            var allowedDomains = ParseCsvToSet(configFileProvider.OidcAllowedEmailDomains);
+            var allowedEmails = OidcAccessList.Parse(configFileProvider.OidcAllowedEmails);
+            var allowedDomains = OidcAccessList.Parse(configFileProvider.OidcAllowedEmailDomains);
             var requiresTrustedEmail = allowedEmails.Count > 0 || allowedDomains.Count > 0;
             var allowAnyVerifiedUser = configFileProvider.OidcAllowAnyVerifiedUser;
             var requiresVerifiedEmail = configFileProvider.OidcRequireEmailVerified || allowAnyVerifiedUser;
@@ -489,21 +495,19 @@ namespace Chaptarr.Http.Authentication
 
             if ((requiresTrustedEmail || requiresVerifiedEmail) && string.IsNullOrWhiteSpace(email))
             {
-                return OidcEmailRequiredFailure;
+                return EmailMissing;
             }
 
-            var emailVerified = GetEmailVerifiedClaimValue(principal);
-
-            if ((requiresTrustedEmail || requiresVerifiedEmail) && IsEmailExplicitlyUnverified(emailVerified))
+            if ((requiresTrustedEmail || requiresVerifiedEmail) && (verification is EmailVerification.False or EmailVerification.Invalid))
             {
-                return OidcVerifiedEmailRequiredFailure;
+                return EmailNotVerified;
             }
 
-            if (string.IsNullOrWhiteSpace(emailVerified))
+            if (verification == EmailVerification.Missing)
             {
                 if (requiresVerifiedEmail)
                 {
-                    return OidcVerifiedEmailRequiredFailure;
+                    return VerificationMissing;
                 }
 
                 if (requiresTrustedEmail)
@@ -514,16 +518,15 @@ namespace Chaptarr.Http.Authentication
 
             if (allowedEmails.Count > 0 && !allowedEmails.Contains(email.ToLowerInvariant()))
             {
-                return OidcUserNotAllowedFailure;
+                return EmailNotAllowed;
             }
 
             if (allowedDomains.Count > 0)
             {
-                var at = email.LastIndexOf('@');
-                var domain = at >= 0 && at < email.Length - 1 ? email[(at + 1)..] : string.Empty;
+                var domain = GetEmailDomain(email);
                 if (string.IsNullOrWhiteSpace(domain) || !allowedDomains.Contains(domain.ToLowerInvariant()))
                 {
-                    return OidcUserNotAllowedFailure;
+                    return DomainNotAllowed;
                 }
             }
 
@@ -572,20 +575,27 @@ namespace Chaptarr.Http.Authentication
                    principal?.FindFirst("email")?.Value;
         }
 
-        private static string GetEmailVerifiedClaimValue(ClaimsPrincipal principal)
+        private static string GetEmailDomain(string email)
         {
-            return principal?.FindFirst("email_verified")?.Value;
+            var at = email.LastIndexOf('@');
+            return at < 0 ? string.Empty : email[(at + 1)..];
         }
 
-        private static bool IsEmailExplicitlyUnverified(string value)
+        private enum EmailVerification
         {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return false;
-            }
+            Missing,
+            False,
+            True,
+            Invalid
+        }
 
-            return !string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) &&
-                   !string.Equals(value, "1", StringComparison.OrdinalIgnoreCase);
+        private static EmailVerification GetEmailVerificationStatus(ClaimsPrincipal principal)
+        {
+            var value = principal?.FindFirst("email_verified")?.Value;
+            if (string.IsNullOrWhiteSpace(value)) return EmailVerification.Missing;
+            if (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) || value == "1") return EmailVerification.True;
+            if (string.Equals(value, "false", StringComparison.OrdinalIgnoreCase) || value == "0") return EmailVerification.False;
+            return EmailVerification.Invalid;
         }
 
         private static bool IsLoopbackHttpUrl(string value)
@@ -638,21 +648,6 @@ namespace Chaptarr.Http.Authentication
             return TrustedNetworkPolicy.MaySkipLocalLogin(context, configFileProvider)
                 ? AuthenticationType.None.ToString()
                 : "API";
-        }
-
-        private static HashSet<string> ParseCsvToSet(string raw)
-        {
-            if (string.IsNullOrWhiteSpace(raw))
-            {
-                return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            }
-
-            return raw
-                .Split(new[] { ',', ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(x => x.Trim())
-                .Where(x => !string.IsNullOrWhiteSpace(x))
-                .Select(x => x.ToLowerInvariant())
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
 
         private static IEnumerable<string> ParseOidcScopes(string raw)

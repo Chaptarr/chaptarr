@@ -224,6 +224,43 @@ namespace Chaptarr.Core.Test.Configuration
             }
         }
 
+        [TestCase("", "@family.org", false)]
+        [TestCase("family.org", "family.org, @school.org", false)]
+        [TestCase("", "*.school.org", false)]
+        [TestCase("", "https://family.org", false)]
+        [TestCase("", "family.org/", false)]
+        [TestCase("", "family.org.", false)]
+        [TestCase("@family.org", "@family.org", true)]
+        [TestCase("@family.org", "family.org", true)]
+        [TestCase("", "bücher.de,例え.jp भारत.in\tпример.рф\r\nxn--bcher-kva.de", true)]
+        [TestCase("@family.org", "@family.org", false, AuthenticationType.Forms, AuthenticationType.Oidc)]
+        [TestCase("family.org", "family.org", true, AuthenticationType.Forms, AuthenticationType.Oidc)]
+        [TestCase("family.org", "@family.org", true, AuthenticationType.Oidc, AuthenticationType.Forms)]
+        public void oidc_domain_edits_require_bare_domains(string stored, string submitted, bool valid,
+            AuthenticationType current = AuthenticationType.Oidc, AuthenticationType selected = AuthenticationType.Oidc)
+        {
+            var controller = CreateController(currentMethod: current, currentDomains: stored);
+            var resource = CreateResource();
+            resource.Id = 1;
+            resource.AuthenticationMethod = selected;
+            resource.Username = "admin";
+            resource.Password = resource.PasswordConfirmation = "example-password";
+            resource.OidcAuthority = "https://login.example.org";
+            resource.OidcClientId = "test";
+            resource.OidcClientSecret = "test";
+            resource.OidcAllowedEmailDomains = submitted;
+
+            if (valid)
+            {
+                Assert.DoesNotThrow(() => ValidateRequest(controller, nameof(HostConfigController.SaveHostConfig), resource));
+                return;
+            }
+
+            var error = Assert.Throws<ValidationException>(() => ValidateRequest(controller, nameof(HostConfigController.SaveHostConfig), resource));
+            Assert.That(error.Errors, Has.Some.Matches<FluentValidation.Results.ValidationFailure>(failure =>
+                failure.PropertyName == nameof(resource.OidcAllowedEmailDomains) && failure.ErrorMessage.Contains("family.org")));
+        }
+
         [TestCase(AuthenticationRequiredType.Enabled, "", true)]
         [TestCase(AuthenticationRequiredType.DisabledForLocalAddresses, "", false)]
         [TestCase(AuthenticationRequiredType.DisabledForLocalAddresses, " , ; ", false)]
@@ -303,12 +340,13 @@ namespace Chaptarr.Core.Test.Configuration
             controller.OnActionExecuting(new ActionExecutingContext(action, new List<IFilterMetadata>(), new Dictionary<string, object> { ["resource"] = resource }, controller));
         }
 
-        private static HostConfigController CreateController(IProxyTestService proxyTestService = null, AuthenticationType currentMethod = AuthenticationType.None, string currentHosts = "")
+        private static HostConfigController CreateController(IProxyTestService proxyTestService = null, AuthenticationType currentMethod = AuthenticationType.None, string currentHosts = "", string currentDomains = "")
         {
             return new HostConfigController(
                 Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IConfigFileProvider>((method, _) =>
                     method.Name == "get_ConfiguredAuthenticationMethod" ? currentMethod :
                     method.Name == "get_AllowedHosts" ? currentHosts :
+                    method.Name == "get_OidcAllowedEmailDomains" ? currentDomains :
                     method.ReturnType == typeof(string) ? string.Empty : method.ReturnType.IsValueType ? Activator.CreateInstance(method.ReturnType) : null),
                 Throwing<IConfigService>(),
                 Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IUserService>((_, _) => null),

@@ -44,6 +44,14 @@ namespace NzbDrone.Core.HealthCheck.Checks
                     "#oidc-allowlist-missing");
             }
 
+            if (!OidcAccessList.HasValidDomains(_configFileProvider.OidcAllowedEmailDomains))
+            {
+                return new HealthCheck(
+                    GetType(),
+                    HealthCheckResult.Warning,
+                    "Allowed Email Domains contains an invalid entry. In Settings > General, enter exact email domains such as family.org.");
+            }
+
             return new HealthCheck(GetType());
         }
     }
