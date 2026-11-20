@@ -364,7 +364,12 @@ class InteractiveSearchRow extends Component {
               {isPreferredChoice && showPreferredBadge ? <span className={styles.preferredBadge}>{translate('Preferred')}</span> : null}
             </div>
           </TableRowCell>
-          <TableRowCell className={styles.indexer}>{indexer}</TableRowCell>
+          <TableRowCell
+            className={styles.indexer}
+            title={indexer}
+          >
+            {indexer}
+          </TableRowCell>
           <TableRowCell className={styles.quality}>
             <BookQuality
               className={labelStyles.wrapping}
@@ -441,7 +446,10 @@ class InteractiveSearchRow extends Component {
           </div>
         </TableRowCell>
 
-        <TableRowCell className={styles.indexer}>
+        <TableRowCell
+          className={styles.indexer}
+          title={indexer}
+        >
           {indexer}
         </TableRowCell>
 
