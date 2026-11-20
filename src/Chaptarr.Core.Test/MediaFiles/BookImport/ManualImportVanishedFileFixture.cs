@@ -279,6 +279,11 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                         ? new List<TrackedDownload>() : throw new AssertionException(method.Name)),
                 [typeof(IImportApprovedBooks)] = InterfaceProxy.Proxy<IImportApprovedBooks>((method, args) =>
                 {
+                    if (method.Name == nameof(IImportApprovedBooks.CheckExistingDestinationConflict))
+                    {
+                        return null;
+                    }
+
                     Assert.That(method.Name, Is.EqualTo(nameof(IImportApprovedBooks.Import)));
                     _importCalls++;
                     _importedDecisions = (List<ImportDecision<LocalBook>>)args[0];
