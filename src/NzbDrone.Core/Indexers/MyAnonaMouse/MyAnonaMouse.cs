@@ -242,6 +242,21 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             }
         }
 
+        // Requests always send Settings.MamId, so adopt MAM's rotated cookie or the original expires after
+        // ~30 days. MyAnonaMouseAccountStatusService saves Settings after each successful refresh.
+        private void PersistRefreshedMamId(HttpResponse response)
+        {
+            if (!response.GetCookies().TryGetValue("mam_id", out var refreshedMamId) ||
+                string.IsNullOrWhiteSpace(refreshedMamId) ||
+                string.Equals(refreshedMamId, Settings.MamId, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _logger.Info("MAM issued a refreshed mam_id for indexer '{0}', persisting it", Definition?.Name);
+            Settings.MamId = refreshedMamId;
+        }
+
         public async Task<MyAnonaMouseAccountStatus> RefreshAccountStatus()
         {
             var request = new HttpRequestBuilder($"{Settings.BaseUrl.TrimEnd('/')}/jsonLoad.php?snatch_summary&pretty")
@@ -262,6 +277,8 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             {
                 throw new InvalidOperationException($"Failed to fetch MAM user data: HTTP {(int)response.StatusCode} {response.StatusCode}");
             }
+
+            PersistRefreshedMamId(response);
 
             var userData = JsonConvert.DeserializeObject<MyAnonaMouseUserDataResponse>(response.Content);
             var className = userData?.ClassName;
