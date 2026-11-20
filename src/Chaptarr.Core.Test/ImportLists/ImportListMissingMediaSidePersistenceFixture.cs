@@ -201,7 +201,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     new ImportListExclusionService(new ImportListExclusionRepository(database, events), logger),
                     new EditionMetadataProfileFilter(new TestTermMatcherService()), null, logger, new EditionSelector(logger));
                 new ProcessPendingImportsCommandHandler(pending, library, books,
-                    Proxy<IProvideBookInfo>((method, args) => throw new AssertionException("A complete author blob must not require a direct work rescue.")),
+                    Proxy<IProvideBookInfo>((method, args) => throw new AssertionException("A complete author blob must not require a direct work rescue.")), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     queue, events, logger, aliases).Execute(new ProcessPendingImportsCommand());
 
                 var remaining = pending.GetByProviderId(author.GoodreadsAuthorId);
@@ -474,7 +474,7 @@ namespace Chaptarr.Core.Test.ImportLists
                         persistedPending, database, new ImportListExclusionService(new ImportListExclusionRepository(database, events), logger),
                         new EditionMetadataProfileFilter(new TestTermMatcherService()), null, logger, new EditionSelector(logger));
                     new ProcessPendingImportsCommandHandler(persistedPending, library, books,
-                        Proxy<IProvideBookInfo>((method, args) => throw new AssertionException("Complete author metadata must not use a work rescue.")),
+                        Proxy<IProvideBookInfo>((method, args) => throw new AssertionException("Complete author metadata must not use a work rescue.")), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                         queue, events, logger, aliases).Execute(new ProcessPendingImportsCommand());
                 }
 
@@ -763,7 +763,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     library.Requests.Update(request);
                     var handler = new ProcessPendingImportsCommandHandler(library.Pending,
                         Proxy<IAuthorLibraryService>((method, args) => System.Threading.Tasks.Task.FromResult(library.Author)), library.Books,
-                        Proxy<IProvideBookInfo>((method, args) => throw new AssertionException("The stored requested work is already available.")),
+                        Proxy<IProvideBookInfo>((method, args) => throw new AssertionException("The stored requested work is already available.")), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                         library.Queue, library.Events, library.Logger, library.Aliases);
                     handler.Execute(new ProcessPendingImportsCommand());
                     Assert.That(library.Pending.GetByProviderId(library.Author.GoodreadsAuthorId), Is.Null);
@@ -1323,7 +1323,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     profiles, new TestQualityProfileService(), Paths, Roots, Queue, Events, Pending, Database,
                     exclusions, filter, null, Logger, selector, refreshAuthor);
                 new ProcessPendingImportsCommandHandler(Pending, library, Books,
-                    Proxy<IProvideBookInfo>((method, args) => throw new AssertionException("The complete author catalog must be used once.")),
+                    Proxy<IProvideBookInfo>((method, args) => throw new AssertionException("The complete author catalog must be used once.")), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Queue, Events, Logger, Aliases).Execute(new ProcessPendingImportsCommand());
             }
         }

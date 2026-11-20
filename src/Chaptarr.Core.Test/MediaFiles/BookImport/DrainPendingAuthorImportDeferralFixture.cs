@@ -460,6 +460,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<IDirectoryInfo> GetDirectoryInfos(string path) => throw new NotImplementedException();
             public List<IFileInfo> GetFileInfos(string path, bool recursive = false) => throw new NotImplementedException();
             public void RemoveEmptySubfolders(string path) => throw new NotImplementedException();
+            public void WriteFileAtomically(string path, Action<string> write) => throw new NotSupportedException();
             public void SaveStream(Stream stream, string path) => throw new NotImplementedException();
             public bool IsValidFolderPermissionMask(string mask) => throw new NotImplementedException();
         }
@@ -471,8 +472,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public string ReadAllTagsAsJson(IFileInfo file) => throw Failure(file);
             public void WriteTags(BookFile trackfile, bool newDownload, bool force = false) => throw new NotImplementedException();
             public void SyncTags(List<Edition> books) => throw new NotImplementedException();
-            public List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId) => throw new NotImplementedException();
-            public List<RetagBookFilePreview> GetRetagPreviewsByBook(int bookId) => throw new NotImplementedException();
+            public List<RetagBookFilePreview> GetRetagPreviewsByAuthor(int authorId, NzbDrone.Core.Books.BookMediaType? mediaType = null) => throw new NotImplementedException();
+            public List<RetagBookFilePreview> GetRetagPreviewsByBook(int bookId, NzbDrone.Core.Books.BookMediaType? mediaType = null) => throw new NotImplementedException();
             public void Execute(RetagFilesCommand message) => throw new NotImplementedException();
             public void Execute(RetagAuthorCommand message) => throw new NotImplementedException();
 

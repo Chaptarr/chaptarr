@@ -129,7 +129,7 @@ namespace Chaptarr.Core.Test.Books
                     }
                     return method.Invoke(Library.Pending, args);
                 });
-                new ProcessPendingImportsCommandHandler(pending, library, Library.BookService, info, Library.Queue,
+                new ProcessPendingImportsCommandHandler(pending, library, Library.BookService, info, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  Library.Queue,
                     Library.EventAggregator, LogManager.GetCurrentClassLogger(), Library.Aliases).Execute(new ProcessPendingImportsCommand());
             }
         }

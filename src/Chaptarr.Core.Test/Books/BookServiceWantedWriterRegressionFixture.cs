@@ -254,7 +254,7 @@ namespace Chaptarr.Core.Test.Books
                 var authorLibrary = InterfaceProxy.Proxy<IAuthorLibraryService>((_, _) => throw new InvalidOperationException("Existing local narration must not trigger author import."));
                 var service = new AddBookService(new StubAuthorService(author), authorLibrary, writer, null, null, exclusions,
                     null, null, null, null, null, new EditionService(editions, new StubEventAggregator(), LogManager.GetCurrentClassLogger()),
-                    null, null, null, LogManager.GetCurrentClassLogger(), null);
+                    null, null, null, LogManager.GetCurrentClassLogger(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  null);
                 var requestEdition = RefreshEntityCopy.CloneEdition(narration);
                 requestEdition.Monitored = requestEdition.ManualAdd = true;
                 var request = new Book

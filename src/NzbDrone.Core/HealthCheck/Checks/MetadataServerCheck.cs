@@ -1,4 +1,5 @@
 using System;
+using NzbDrone.Core.Http;
 using NzbDrone.Core.Localization;
 using NzbDrone.Core.MetadataSource;
 
@@ -6,10 +7,10 @@ namespace NzbDrone.Core.HealthCheck.Checks
 {
     public class MetadataServerCheck : HealthCheckBase
     {
-        private readonly IMetadataServerHealthService _metadataServerHealthService;
+        private readonly IHttpServiceHealth _metadataServerHealthService;
         private readonly IMetadataServerHealthGate _metadataServerHealthGate;
 
-        public MetadataServerCheck(IMetadataServerHealthService metadataServerHealthService,
+        public MetadataServerCheck(IHttpServiceHealth metadataServerHealthService,
                                    IMetadataServerHealthGate metadataServerHealthGate,
                                    ILocalizationService localizationService)
             : base(localizationService)
@@ -30,7 +31,7 @@ namespace NzbDrone.Core.HealthCheck.Checks
 
             var retryAfter = GetRetryAfter(status);
             var retryText = retryAfter.HasValue
-                ? MetadataServerHealthGate.FormatRetryAfter(retryAfter.Value)
+                ? HttpServiceHealth.FormatRetryAfter(retryAfter.Value)
                 : _localizationService.GetLocalizedString("MetadataServerCheckRetrySoon");
 
             var message = string.Format(_localizationService.GetLocalizedString("MetadataServerCheckUnavailable"),
@@ -44,7 +45,7 @@ namespace NzbDrone.Core.HealthCheck.Checks
                 "#metadata-server-unavailable");
         }
 
-        private static TimeSpan? GetRetryAfter(MetadataServerStatus status)
+        private static TimeSpan? GetRetryAfter(HttpServiceStatus status)
         {
             if (status?.RateLimitedUntil == null)
             {

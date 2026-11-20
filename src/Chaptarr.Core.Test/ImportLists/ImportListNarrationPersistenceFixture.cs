@@ -32,7 +32,9 @@ namespace Chaptarr.Core.Test.ImportLists
         [TestCase(false, true)]
         [TestCase(true, false)]
         [TestCase(true, true)]
-        public void repeated_list_sync_should_preserve_pins_reuse_equivalent_cast_and_persist_cache(bool postgres, bool existingFry)
+        [TestCase(false, false, true)]
+        [TestCase(true, false, true)]
+        public void repeated_list_sync_should_preserve_pins_reuse_equivalent_cast_and_persist_cache(bool postgres, bool existingFry, bool failAddOptions = false)
         {
             DualDatabaseFixture.Run(postgres, database =>
             {
@@ -138,6 +140,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     pendingRequests++;
                     throw new AssertionException("A compatible local cast must not queue author import.");
                 });
+                var optionsFailures = 0;
                 int? stableFryBookId = fry?.Id;
                 int? stableFryEditionId = originalFryPin;
                 for (var pass = 0; pass < 3; pass++)
@@ -148,6 +151,19 @@ namespace Chaptarr.Core.Test.ImportLists
                         files, logger, null, null, new Lazy<IBookService>(() => books), mainDatabase: database, aliases);
                     books = new BookService(bookRows, editions, events, authorService, files, roots,
                         new SeriesBookLinkRepository(database, events), null, logger, providerAliasService: aliases);
+                    if (failAddOptions)
+                    {
+                        var realBooks = books;
+                        books = Proxy<IBookService>((method, args) =>
+                        {
+                            if (method.Name == nameof(IBookService.SetAddOptions))
+                            {
+                                optionsFailures++;
+                                throw new InvalidOperationException("Injected post-selection options failure");
+                            }
+                            return method.Invoke(realBooks, args);
+                        });
+                    }
                     var reports = new[] { "hc:edition:201", "hc:edition:999" }.Select(id => new ImportListItemInfo
                     {
                         ImportListId = list.Id, Author = author.Name, AuthorProviderId = author.HardcoverAuthorId,
@@ -163,9 +179,15 @@ namespace Chaptarr.Core.Test.ImportLists
                     var fetcher = Proxy<IFetchAndParseImportList>((method, args) => method.Name == nameof(IFetchAndParseImportList.FetchSingleList)
                         ? reports : throw new AssertionException(method.Name));
                     var exclusions = new ImportListExclusionService(new ImportListExclusionRepository(database, events), logger);
-                    new ImportListSyncService(factory, exclusions, fetcher, metadata, authorService, books, editions, pending,
-                        roots, new RootFolderSettingsResolver(roots), events, commands, logger,
-                        new ImportListBookIdentityCacheRepository(database, events)).Execute(new ImportListSyncCommand(list.Id));
+                    var service = new ImportListSyncService(factory, exclusions, fetcher, metadata, authorService, books, editions, pending,
+                        roots, new RootFolderSettingsResolver(roots), events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null), commands, logger,
+                        new ImportListBookIdentityCacheRepository(database, events));
+                    if (failAddOptions)
+                    {
+                        Assert.That(() => service.Execute(new ImportListSyncCommand(list.Id)),
+                            Throws.TypeOf<InvalidOperationException>().With.Message.EqualTo("Injected post-selection options failure"));
+                    }
+                    else service.Execute(new ImportListSyncCommand(list.Id));
 
                     var persisted = books.GetBooksByAuthor(author.Id);
                     var audio = persisted.Where(book => book.MediaType == BookMediaType.Audiobook).ToList();
@@ -191,7 +213,7 @@ namespace Chaptarr.Core.Test.ImportLists
                         Assert.That(metadataRequests.Select(request => request.Id), Is.EquivalentTo(new[] { "hc:edition:201", "hc:edition:999" }));
                         Assert.That(metadataRequests.Select(request => request.Media), Is.All.EqualTo(BookMediaType.Audiobook));
                         Assert.That(pendingRequests, Is.Zero);
-                        Assert.That(completed, Has.Count.EqualTo(pass + 1));
+                        Assert.That(completed, Has.Count.EqualTo(failAddOptions ? 0 : pass + 1));
                         Assert.That(queuedCommands, Is.All.TypeOf<DownloadBookMediaCommand>());
                         Assert.That(queuedCommands.OfType<DownloadBookMediaCommand>().SelectMany(command => command.BookIds),
                             Is.EquivalentTo(existingFry ? Array.Empty<int>() : new[] { savedFry.Id }));
@@ -214,6 +236,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     Assert.That(cast.EditionHasNarration, Is.True);
                     Assert.That(cast.EditionNarratorNames, Is.EqualTo(new[] { "Stephen Fry" }));
                     Assert.That(editionRows.All().Any(edition => edition.ForeignEditionId == "hc:edition:999"), Is.False);
+                    if (failAddOptions) Assert.That(optionsFailures, Is.GreaterThan(0), "Exercise the failure after the edition has been saved");
                     TestContext.WriteLine("{0}: pass {1}, Dale local row {2}/edition {3}, Fry local row {4}/edition {5}, 4 books, metadata reads {6}",
                         postgres ? "PostgreSQL" : "SQLite", pass + 1, dale.Id, dalePin, savedFry.Id, selectedFry.Id, metadataRequests.Count);
                 }
@@ -392,7 +415,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     ? reports : throw new AssertionException(method.Name));
                 var exclusions = new ImportListExclusionService(new ImportListExclusionRepository(database, events), logger);
                 new ImportListSyncService(factory, exclusions, fetcher, metadata, authors, books, editions, pending, roots,
-                    new RootFolderSettingsResolver(roots), events, commands, logger, cache).Execute(new ImportListSyncCommand(list.Id));
+                    new RootFolderSettingsResolver(roots), events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  commands, logger, cache).Execute(new ImportListSyncCommand(list.Id));
                 Assert.Multiple(() =>
                 {
                     Assert.That(metadataRequests, Has.Count.EqualTo(expectedMetadataReads));

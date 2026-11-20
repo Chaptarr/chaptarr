@@ -174,6 +174,13 @@ namespace NzbDrone.Core.Jobs
 
                     new ScheduledTask
                     {
+                        Interval = 1,
+                        TypeName = typeof(RetryBookCoversCommand).FullName,
+                        Priority = CommandPriority.Low
+                    },
+
+                    new ScheduledTask
+                    {
                         Interval = GetBackupInterval(),
                         TypeName = typeof(BackupCommand).FullName
                     },

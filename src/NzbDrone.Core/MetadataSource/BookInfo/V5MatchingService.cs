@@ -12,6 +12,7 @@ using NzbDrone.Common.Http;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Services;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Http;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport;
 // using NzbDrone.Core.MediaFiles.BookImport.Identification; // Disabled - old identification system
@@ -166,7 +167,7 @@ namespace NzbDrone.Core.MetadataSource.BookInfo
                     if (!_metadataServerHealthGate.TryBeginRequest(out var retryAfter))
                     {
                         stopwatch.Stop();
-                        var retryMessage = $"METADATA_SERVER_UNAVAILABLE: retrying in {MetadataServerHealthGate.FormatRetryAfter(retryAfter)}";
+                        var retryMessage = $"METADATA_SERVER_UNAVAILABLE: retrying in {HttpServiceHealth.FormatRetryAfter(retryAfter)}";
                         _logger.Warn("[V5-MATCHING] Skipping metadata server request for '{0}': {1}", effectiveQuery, retryMessage);
                         _matchingLogger.LogV5Request(effectiveQuery, logTags, mediaType, retryMessage, filePath: filePath);
                         return new List<V5MatchedAuthor>();

@@ -77,23 +77,13 @@ namespace Chaptarr.Api.V1.MediaTypes
 
         public static BookMediaType? ParseOptional(string mediaType, bool allowAll = true)
         {
-            if (string.IsNullOrWhiteSpace(mediaType))
+            try
             {
-                return null;
+                return BookMediaTypeParser.ParseOptional(mediaType, allowAll);
             }
-
-            switch (mediaType.Trim().ToLowerInvariant())
+            catch (ArgumentException ex)
             {
-                case "all" when allowAll:
-                    return null;
-                case "audiobook":
-                    return BookMediaType.Audiobook;
-                case "ebook":
-                    return BookMediaType.Ebook;
-                default:
-                    throw new BadRequestException(allowAll
-                        ? "mediaType must be 'all', 'audiobook', or 'ebook'"
-                        : "mediaType must be either 'audiobook' or 'ebook'");
+                throw new BadRequestException(ex.Message);
             }
         }
 

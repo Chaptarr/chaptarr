@@ -32,6 +32,7 @@ namespace Chaptarr.Core.Test.MediaCover
             }
 
             public List<int> RequestedBookIds { get; } = new();
+            public List<int> RequestedPageSizes { get; } = new();
             public List<List<int>> RequestedFileBatches { get; } = new();
             public Action OnGetExistingBooks { get; set; }
 
@@ -57,6 +58,7 @@ namespace Chaptarr.Core.Test.MediaCover
             {
                 var ids = bookIds.Distinct().ToList();
                 RequestedBookIds.AddRange(ids);
+                RequestedPageSizes.Add(ids.Count);
                 OnGetExistingBooks?.Invoke();
 
                 return ids
@@ -137,16 +139,18 @@ namespace Chaptarr.Core.Test.MediaCover
 
         private sealed class RecordingCoverMapper : IMapCoversToLocal
         {
+            public (bool Ready, byte[] Data) ReadLocalBookCover(Edition edition) => (false, null);
+
             public List<int> EnsuredBookIds { get; } = new();
             public Action<Book> OnEnsureBook { get; set; }
 
-            public void EnsureBookCovers(Book book)
+            public void EnsureBookCovers(Book book, bool forceDownload = false)
             {
                 EnsuredBookIds.Add(book.Id);
                 OnEnsureBook?.Invoke(book);
             }
 
-            public void EnsureBookCoversForBooks(List<Book> books)
+            public void EnsureBookCoversForBooks(List<Book> books, bool forceDownload = false)
             {
                 foreach (var book in books)
                 {
@@ -171,16 +175,161 @@ namespace Chaptarr.Core.Test.MediaCover
 
             public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<NzbDrone.Core.MediaCover.MediaCover> covers, string selectedAuthorImageHash = null) => throw new NotImplementedException();
             public string GetCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCoverTypes coverType, string extension, int? height = null) => throw new NotImplementedException();
-            public void EnsureAuthorCovers(Author author) => throw new NotImplementedException();
+            public bool EnsureAuthorCovers(Author author, bool forceDownload = false) => throw new NotImplementedException();
             public System.Threading.Tasks.Task<EnsureImageResult> EnsureAuthorImage(Author author, NzbDrone.Core.MediaCover.MediaCover cover) => throw new NotImplementedException();
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void failed_cover_page_read_is_retained_unless_cancelled(bool cancelled)
+        {
+            var ids = Enumerable.Range(1, 250).ToList();
+            var failure = cancelled ? (Exception)new OperationCanceledException("Fixture cancelled") : new TimeoutException("Fixture database timeout");
+            var books = new RecordingBookService(ids.Select(id => new Book { Id = id })) { OnGetExistingBooks = () => throw failure };
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger(), null);
+            var covers = new RecordingCoverMapper();
+            var service = new DownloadMediaService(null, books, deferred, covers, null, LogManager.GetCurrentClassLogger());
+            Assert.That(Assert.Catch(() => service.Execute(new DownloadBookMediaCommand(ids))), Is.SameAs(failure));
+            Assert.That(covers.EnsuredBookIds, Is.Empty);
+            Assert.That(deferred.GetPendingBookIds(), Is.EqualTo(cancelled ? Enumerable.Empty<int>() : ids));
+            if (cancelled) return;
+            // A shared database outage can outlast several minute retries. Its duration
+            // must not make otherwise valid books wait for the next daily repair.
+            for (var attempt = 0; attempt < 4; attempt++)
+            {
+                Assert.That(Assert.Catch(() => service.Execute(new DownloadBookMediaCommand(deferred.TakePendingBookIds()))), Is.SameAs(failure));
+                Assert.That(deferred.GetPendingBookIds(), Is.EqualTo(ids));
+            }
+            books.OnGetExistingBooks = null;
+            service.Execute(new DownloadBookMediaCommand(deferred.TakePendingBookIds()));
+            Assert.That(covers.EnsuredBookIds, Is.EqualTo(ids));
+            Assert.That(deferred.GetPendingBookIds(), Is.Empty);
+        }
+
+        [Test]
+        public void failed_selection_page_is_retained_and_later_pages_are_queued()
+        {
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
+            var attempts = new List<int>();
+            var priorities = new List<CommandPriority>();
+            var queue = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IManageCommandQueue>((_, args) =>
+            {
+                var command = (DownloadBookMediaCommand)args[0];
+                Assert.That(command.BookId, Is.Zero, "One paged command shape");
+                priorities.Add(args.OfType<CommandPriority>().Single());
+                attempts.Add(command.BookIds.Count);
+                if (attempts.Count == 2) throw new InvalidOperationException("Fixture database locked");
+                return new CommandModel();
+            });
+            var service = new DeferredCoverDownloadService(deferred, null, queue, null, LogManager.GetCurrentClassLogger());
+            service.Handle(new NzbDrone.Core.Books.Events.LibraryIdentityChangedEvent(new List<int>(), Enumerable.Range(1, 700).ToList(), new List<int>()));
+            Assert.That(attempts, Is.EqualTo(new[] { 250, 250, 200 }));
+            Assert.That(priorities, Is.EqualTo(new[] { CommandPriority.Low, CommandPriority.Low, CommandPriority.Low }));
+            Assert.That(deferred.TakePendingBookIds(), Is.EqualTo(Enumerable.Range(251, 250)), "The minute retry owns the failed page");
+        }
+
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        public void bulk_monitor_pages_notifications_and_retains_a_failed_page(bool importing, bool failFirstPage)
+        {
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger(), null) { IsCoverDownloadDeferred = importing };
+            var attempts = new List<int>();
+            var queued = new List<int>();
+            var queue = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IManageCommandQueue>((_, args) =>
+            {
+                var command = (DownloadBookMediaCommand)args[0];
+                attempts.Add(command.BookIds.Count);
+                if (attempts.Count == 1 && failFirstPage) throw new InvalidOperationException("Fixture queue unavailable");
+                queued.AddRange(command.BookIds);
+                return new CommandModel();
+            });
+            var service = new DeferredCoverDownloadService(deferred, null, queue, null, LogManager.GetCurrentClassLogger());
+            service.Handle(new BooksEditedEvent(Enumerable.Range(1, 300).Select(id => new BookEditedEvent(
+                new Book { Id = id, AudiobookMonitored = true }, new Book { Id = id, AudiobookMonitored = false })).ToArray()));
+            Assert.That(attempts, Is.EqualTo(importing ? Array.Empty<int>() : new[] { 250, 50 }));
+            Assert.That(queued, Is.EqualTo(importing ? Enumerable.Empty<int>() : failFirstPage ? Enumerable.Range(251, 50) : Enumerable.Range(1, 300)));
+            Assert.That(deferred.GetPendingBookIds(), Is.EqualTo(importing ? Enumerable.Range(1, 300) : failFirstPage ? Enumerable.Range(1, 250) : Enumerable.Empty<int>()));
+        }
+
+        [TestCase(CommandStatus.Started)]
+        [TestCase(CommandStatus.Queued)]
+        public void coalesced_running_cover_notification_is_retained_for_the_minute_retry(CommandStatus status)
+        {
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger(), null);
+            var queue = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IManageCommandQueue>((_, _) => new CommandModel { Status = status });
+            DownloadBookMediaCommand.NotifyBookSelectionsChanged(new[] { 42 }, queue, deferred, LogManager.GetCurrentClassLogger());
+            Assert.That(deferred.GetPendingBookIds(), Is.EqualTo(status == CommandStatus.Started ? new[] { 42 } : Array.Empty<int>()));
+            var covers = new RecordingCoverMapper();
+            var service = new DeferredCoverDownloadService(deferred, new RecordingBookService(new[] { new Book { Id = 42 } }), queue, covers, LogManager.GetCurrentClassLogger());
+            service.Execute(new RetryBookCoversCommand());
+            Assert.That(covers.EnsuredBookIds, Is.EqualTo(status == CommandStatus.Started ? new[] { 42 } : Array.Empty<int>()));
+            Assert.That(deferred.GetPendingBookIds(), Is.Empty);
+        }
+
+        [Test]
+        public void newest_failure_hints_replace_an_older_failed_origin()
+        {
+            var health = new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger());
+            var queue = new DeferredCoverService(LogManager.GetCurrentClassLogger(), health);
+            health.ReportRateLimited("image:https://a.example", TimeSpan.FromMinutes(10));
+            health.ReportRateLimited("image:https://b.example", TimeSpan.FromMinutes(10));
+            queue.RequeueBooksForCoverDownload(new[] { 1 }, new[] { "image:https://a.example" }, true);
+            queue.RequeueBooksForCoverDownload(new[] { 1 }, new[] { "image:https://b.example" }, true);
+            health.GetStatus("image:https://b.example").RateLimitedUntil = DateTime.UtcNow.AddSeconds(-1);
+            Assert.That(queue.TakePendingBookIds(), Is.EqualTo(new[] { 1 }));
+        }
+
+        [Test]
+        public void bulk_removal_preserves_survivor_order_in_one_pass()
+        {
+            var queue = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
+            queue.RequeueBooksForCoverDownload(Enumerable.Range(1, 60000));
+            var visited = 0;
+            queue.RemovePendingBooks(Enumerable.Range(1, 60000).Where(id => { visited++; return id % 2 == 0; }));
+            Assert.That(visited, Is.EqualTo(60000), "Consume the removal source once");
+            Assert.That(queue.TakePendingBookIds(), Is.EqualTo(Enumerable.Range(1, 60000).Where(id => id % 2 != 0)));
+        }
+
+        [Test]
+        public void flush_pages_hydration_and_continues_after_one_page_fails()
+        {
+            var queue = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
+            var books = new RecordingBookService(Enumerable.Range(1, 501).Select(id => new Book { Id = id }));
+            var covers = new RecordingCoverMapper();
+            var service = new DeferredCoverDownloadService(queue, books, null, covers, LogManager.GetCurrentClassLogger());
+            var reads = 0;
+            books.OnGetExistingBooks = () => { if (++reads == 2) throw new InvalidOperationException("Fixture page failure"); };
+            queue.RequeueBooksForCoverDownload(Enumerable.Range(1, 501));
+            service.Execute(new RetryBookCoversCommand());
+            Assert.That(books.RequestedPageSizes, Is.EqualTo(new[] { 250, 250, 1 }));
+            Assert.That(covers.EnsuredBookIds, Is.EqualTo(Enumerable.Range(1, 250).Append(501)));
+            Assert.That(queue.GetPendingBookIds(), Is.EqualTo(Enumerable.Range(251, 250)));
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void newly_deferred_work_reconsiders_a_previously_paused_cover(bool batch)
+        {
+            var health = new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger());
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger(), health);
+            const string origin = "image:https://old-host.example";
+            health.ReportFailure(origin, new System.Net.WebException("Fixture timeout", System.Net.WebExceptionStatus.Timeout));
+            deferred.RequeueBooksForCoverDownload(new[] { 42 }, new[] { origin }, true);
+            Assert.That(deferred.TakePendingBookIds(), Is.Empty);
+            deferred.IsCoverDownloadDeferred = true;
+            if (batch) deferred.MarkBooksForCoverDownload(new[] { 42 });
+            else deferred.MarkBookForCoverDownload(42);
+            deferred.IsCoverDownloadDeferred = false;
+            Assert.That(deferred.TakePendingBookIds(), Is.EqualTo(new[] { 42 }), "New work must resolve the current monitored cover, not retain an old host decision");
         }
 
         [Test]
         public void absorbed_book_leaves_the_deferred_cover_queue_without_deleting_files()
         {
-            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             deferred.RequeueBooksForCoverDownload(new[] { 1, 2 });
-            var service = new DeferredCoverDownloadService(deferred, null, null, null, LogManager.GetCurrentClassLogger());
+            var service = new DeferredCoverDownloadService(deferred, null, CreateCommandQueue().Queue, null, LogManager.GetCurrentClassLogger());
             service.Handle(new LibraryIdentityChangedEvent(new[] { 1 }, new[] { 1, 2 }, new[] { 2 }));
             Assert.That(deferred.GetPendingBookIds(), Is.EqualTo(new[] { 1 }));
         }
@@ -188,7 +337,7 @@ namespace Chaptarr.Core.Test.MediaCover
         [Test]
         public void should_queue_one_batch_for_newly_monitored_books_in_an_aggregate_edit()
         {
-            var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var bookService = new RecordingBookService(new[]
             {
                 new Book { Id = 1, Title = "One" },
@@ -220,7 +369,7 @@ namespace Chaptarr.Core.Test.MediaCover
         [Test]
         public void should_queue_one_batch_for_a_persisted_batch_of_added_files()
         {
-            var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var bookService = new RecordingBookService(new[]
             {
                 new Book { Id = 1, Title = "One" },
@@ -252,7 +401,7 @@ namespace Chaptarr.Core.Test.MediaCover
         {
             var books = new RecordingBookService(new[] { new Book { Id = 3 } });
             var queue = CreateCommandQueue();
-            var service = new DeferredCoverDownloadService(new DeferredCoverService(LogManager.GetCurrentClassLogger()),
+            var service = new DeferredCoverDownloadService(new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger())),
                 books, queue.Queue, new RecordingCoverMapper(), LogManager.GetCurrentClassLogger());
 
             service.Handle(new BookFilesAddedEvent(new[]
@@ -268,10 +417,80 @@ namespace Chaptarr.Core.Test.MediaCover
             Assert.That(((DownloadBookMediaCommand)queue.Recorder.Commands.Single()).BookIds, Is.EqualTo(new[] { 1, 3 }));
         }
 
+        [TestCase(false, false)]
+        [TestCase(false, true)]
+        [TestCase(true, false)]
+        [TestCase(true, true)]
+        public void explicit_refresh_completion_uses_the_existing_cover_queue(bool bulk, bool importing)
+        {
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
+            deferred.IsCoverDownloadDeferred = importing;
+            var queue = CreateCommandQueue();
+            var service = new DeferredCoverDownloadService(deferred, null, queue.Queue, null, LogManager.GetCurrentClassLogger());
+            using var snapshot = new AudioTagCoverLookupFixture.CoverSnapshotFixture(bookId: 1);
+            Command body = bulk ? new NzbDrone.Core.Books.Commands.BulkRefreshBookCommand { BookIds = new() { 1, 2 } }
+                : new NzbDrone.Core.Books.Commands.RefreshBookCommand { BookId = 1 };
+            service.Handle(new CommandExecutedEvent(new CommandModel { Id = 12, Body = body }));
+            var expected = bulk ? new[] { 1, 2 } : new[] { 1 };
+            Assert.That(queue.Recorder.Commands, Has.Count.EqualTo(1));
+            Assert.That(((DownloadBookMediaCommand)queue.Recorder.Commands.Single()).BookIds, Is.EqualTo(expected));
+            Assert.That(deferred.GetPendingBookIds(), Is.Empty, "Selection commands must reach the writer before deferral");
+            if (importing) AudioTagCoverLookupFixture.AssertSelectionCommandReachesDeferredWriter(
+                (DownloadBookMediaCommand)queue.Recorder.Commands.Single(), snapshot.Book, snapshot.OriginalEdition, expectReplaced: true);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void merges_queue_survivors_in_pages_without_readding_deleted_books(bool importing)
+        {
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
+            deferred.IsCoverDownloadDeferred = importing;
+            var queue = CreateCommandQueue();
+            var service = new DeferredCoverDownloadService(deferred, null, queue.Queue, null, LogManager.GetCurrentClassLogger());
+            using var snapshot = new AudioTagCoverLookupFixture.CoverSnapshotFixture(bookId: 1);
+            service.Handle(new LibraryIdentityChangedEvent(new[] { 1 }, Enumerable.Range(1, 601), new[] { 601 }));
+            var commands = queue.Recorder.Commands.Cast<DownloadBookMediaCommand>().ToList();
+            Assert.That(commands.Select(c => c.BookIds.Count), Is.EqualTo(new[] { 250, 250, 100 }));
+            Assert.That(commands.SelectMany(c => c.BookIds), Is.EqualTo(Enumerable.Range(1, 600)));
+            AudioTagCoverLookupFixture.AssertSelectionCommandReachesDeferredWriter(commands[0], snapshot.Book, snapshot.OriginalEdition, expectReplaced: true);
+        }
+
+        [Test]
+        public void bulk_refresh_queues_bounded_pages_while_importing()
+        {
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger())) { IsCoverDownloadDeferred = true };
+            var queue = CreateCommandQueue();
+            var service = new DeferredCoverDownloadService(deferred, null, queue.Queue, null, LogManager.GetCurrentClassLogger());
+            service.Handle(new CommandExecutedEvent(new CommandModel { Id = 99,
+                Body = new NzbDrone.Core.Books.Commands.BulkRefreshBookCommand { BookIds = Enumerable.Range(1, 501).ToList() } }));
+            Assert.That(queue.Recorder.Commands.Cast<DownloadBookMediaCommand>().Select(c => c.BookIds.Count), Is.EqualTo(new[] { 250, 250, 1 }));
+            Assert.That(deferred.GetPendingBookIds(), Is.Empty);
+        }
+
+        [Test]
+        public void large_claim_partitions_the_queue_without_shifting_each_removed_entry()
+        {
+            var healthReads = 0;
+            var health = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Http.IHttpServiceHealth>((method, args) =>
+            {
+                Assert.That(method.Name, Is.EqualTo(nameof(NzbDrone.Core.Http.IHttpServiceHealth.CanBeginRequest)));
+                healthReads++;
+                args[1] = TimeSpan.Zero;
+                return true;
+            });
+            var service = new DeferredCoverService(LogManager.GetCurrentClassLogger(), health);
+            service.RequeueBooksForCoverDownload(Enumerable.Range(1, 60000), new[] { "image:https://images.example" });
+            var claimed = service.TakePendingBookIds();
+            Assert.That(claimed, Is.EqualTo(Enumerable.Range(1, 60000)));
+            Assert.That(service.TakePendingBookIds(), Is.Empty);
+            Assert.That(healthReads, Is.EqualTo(1), "Read readiness once per origin, not per book");
+
+        }
+
         [Test]
         public void should_atomically_report_whether_a_cover_was_deferred()
         {
-            var service = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var service = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
 
             Assert.That(service.MarkBookForCoverDownload(1), Is.False);
 
@@ -287,34 +506,30 @@ namespace Chaptarr.Core.Test.MediaCover
         }
 
         [Test]
-        public void should_remove_deleted_books_from_pending_queue_before_flush()
+        public void bulk_book_deletion_leaves_pending_ids_for_one_paged_flush()
         {
-            var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger());
-            var bookService = new RecordingBookService(new[]
+            var queue = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
+            var books = new RecordingBookService(new[] { new Book { Id = 1201, Title = "Survives" } });
+            var covers = new RecordingCoverMapper();
+            var service = new DeferredCoverDownloadService(queue, books, CreateCommandQueue().Queue, covers, LogManager.GetCurrentClassLogger());
+            queue.RequeueBooksForCoverDownload(Enumerable.Range(1, 1201));
+            // The event aggregator invokes only registered IHandle<T> subscribers.
+            for (var id = 1; id <= 1200; id++)
             {
-                new Book { Id = 1, Title = "One" },
-                new Book { Id = 3, Title = "Three" }
-            });
-            var coverMapper = new RecordingCoverMapper();
-            var commandQueue = CreateCommandQueue();
-            var service = new DeferredCoverDownloadService(deferredCoverService, bookService, commandQueue.Queue, coverMapper, LogManager.GetCurrentClassLogger());
-
-            service.HandleAsync(new ImportStageProgressEvent(ImportStage.MatchingBooks, "start") { CommandId = 7 });
-            deferredCoverService.MarkBooksForCoverDownload(new[] { 1, 2, 3 });
-            service.Handle(new BookDeletedEvent(new Book { Id = 2, Title = "Deleted" }, false, false));
-
-            Assert.DoesNotThrow(() =>
-                service.HandleAsync(new ImportStageProgressEvent(ImportStage.ImportComplete, "done") { CommandId = 7 }));
-
-            Assert.That(bookService.RequestedBookIds, Is.EqualTo(new List<int> { 1, 3 }));
-            Assert.That(coverMapper.EnsuredBookIds, Is.EqualTo(new List<int> { 1, 3 }));
-            Assert.That(deferredCoverService.GetPendingBookIds(), Is.Empty);
+                if ((object)service is IHandle<BookDeletedEvent> handler)
+                    handler.Handle(new BookDeletedEvent(new Book { Id = id }, false, false));
+            }
+            Assert.That(queue.GetPendingBookIds(), Has.Count.EqualTo(1201), "No queue rebuild per deleted book");
+            service.Execute(new RetryBookCoversCommand());
+            Assert.That(books.RequestedPageSizes, Is.EqualTo(new[] { 250, 250, 250, 250, 201 }));
+            Assert.That(covers.EnsuredBookIds, Is.EqualTo(new[] { 1201 }));
+            Assert.That(queue.GetPendingBookIds(), Is.Empty);
         }
 
         [Test]
         public void should_skip_stale_pending_book_ids_when_books_were_deleted_before_flush()
         {
-            var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var bookService = new RecordingBookService(new[]
             {
                 new Book { Id = 1, Title = "One" },
@@ -338,7 +553,7 @@ namespace Chaptarr.Core.Test.MediaCover
         [Test]
         public void should_keep_failed_cover_batch_pending_until_a_later_flush_succeeds()
         {
-            var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var bookService = new RecordingBookService(new[]
             {
                 new Book { Id = 1, Title = "One" },
@@ -372,7 +587,7 @@ namespace Chaptarr.Core.Test.MediaCover
         [Test]
         public void should_ignore_stale_import_stage_events_after_command_terminal_cleanup()
         {
-            var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var bookService = new RecordingBookService(new[]
             {
                 new Book { Id = 1, Title = "One" }
@@ -397,7 +612,7 @@ namespace Chaptarr.Core.Test.MediaCover
         [TestCase(false)]
         public void failed_batch_should_merge_back_with_new_work_even_when_deferral_has_ended(bool lookupFailure)
         {
-            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var books = new RecordingBookService(new[] { new Book { Id = 1 }, new Book { Id = 2 }, new Book { Id = 3 } });
             var covers = new RecordingCoverMapper();
             var service = new DeferredCoverDownloadService(deferred, books, null, covers, LogManager.GetCurrentClassLogger());
@@ -437,7 +652,7 @@ namespace Chaptarr.Core.Test.MediaCover
         [Test]
         public void overlapping_flush_should_not_process_an_already_claimed_batch()
         {
-            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var deferred = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var books = new RecordingBookService(new[] { new Book { Id = 1 } });
             var covers = new RecordingCoverMapper();
             var service = new DeferredCoverDownloadService(deferred, books, null, covers, LogManager.GetCurrentClassLogger());
@@ -459,7 +674,7 @@ namespace Chaptarr.Core.Test.MediaCover
         [Test]
         public void should_not_remove_books_queued_after_the_flush_snapshot()
         {
-            var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger());
+            var deferredCoverService = new DeferredCoverService(LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Http.HttpServiceHealth(LogManager.GetCurrentClassLogger()));
             var bookService = new RecordingBookService(new[]
             {
                 new Book { Id = 1, Title = "First import" },

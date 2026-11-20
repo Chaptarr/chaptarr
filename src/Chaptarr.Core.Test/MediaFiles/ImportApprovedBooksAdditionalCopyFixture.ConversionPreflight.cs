@@ -46,7 +46,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var service = new ImportApprovedBooks(new StubMediaFileService(), new StubMetadataTagService(), new StubMediaInfoExtractor(),
                     Proxy<IAuthorService>(), Proxy<IBookService>(), CreateEditionService(new List<Edition> { edition }),
                     Proxy<IRecycleBinProvider>(), Proxy<IExtraService>(), mover, Proxy<IHistoryService>(),
-                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), new NoOpEventAggregator(), Proxy<IManageCommandQueue>(),
+                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  Proxy<IManageCommandQueue>(),
                     Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(), Proxy<IQualityProfileService>(), converter, LogManager.GetCurrentClassLogger(),
                     conversionJobService: CreateConversionJobs(converter));
                 var decisions = paths.Select((path, index) => new ImportDecision<LocalBook>(new LocalBook

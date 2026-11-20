@@ -1297,10 +1297,8 @@ namespace Chaptarr.Api.V1.Author
                 // Persist a stable selection token only after the replacement image has
                 // passed content validation and exists locally.
                 var selectedHash = AuthorImageHashHelper.ComputeStableImageHash(targetImage.Url, targetImage.CoverType);
-                author.SelectedPosterHash = selectedHash;
-
-                // Save the updated author with SelectedPosterHash
-                _authorService.UpdateAuthor(author);
+                if (_authorService.UpdateSelectedPosterHash(author.Id, selectedHash))
+                    BroadcastResourceChange(ModelAction.Updated, author.Id);
 
                 _logger.Info("User set primary photo for author {0} (ID: {1}) to URL: {2} with hash: {3}",
                     author.Name, author.Id, targetImage.Url, selectedHash);
@@ -1396,22 +1394,9 @@ namespace Chaptarr.Api.V1.Author
             }
 
             var rejectedHash = AuthorImageHashHelper.ComputeStableImageHash(rejectedUrl, MediaCoverTypes.Poster);
-            var before = author.Images.Count;
-            author.Images = author.Images
-                .Where(image => image != null && !MediaCoverRendition.IsKnownPlaceholderImageUrl(image.Url))
-                .ToList();
-
-            var clearedSelection = !string.IsNullOrWhiteSpace(author.SelectedPosterHash) &&
-                                   author.SelectedPosterHash == rejectedHash;
-            if (clearedSelection)
-            {
-                author.SelectedPosterHash = null;
-            }
-
-            if (author.Images.Count != before || clearedSelection)
-            {
-                _authorService.UpdateAuthor(author);
-            }
+            _authorService.UpdateSelectedPosterHash(author.Id, null, rejectedHash);
+            // EnsureAuthorImage may already have removed the placeholder from this object.
+            BroadcastResourceChange(ModelAction.Updated, author.Id);
         }
 
 	        [NonAction]
@@ -1569,19 +1554,19 @@ namespace Chaptarr.Api.V1.Author
 		        [NonAction]
 		        public void Handle(AuthorAddedEvent message)
 	        {
-	            BroadcastResourceChange(ModelAction.Updated, GetAuthorResource(message.Author));
+	            BroadcastResourceChange(ModelAction.Updated, message.Author.Id);
 	        }
 
         [NonAction]
         public void Handle(AuthorUpdatedEvent message)
         {
-            BroadcastResourceChange(ModelAction.Updated, GetAuthorResource(message.Author));
+            BroadcastResourceChange(ModelAction.Updated, message.Author.Id);
         }
 
         [NonAction]
         public void Handle(AuthorEditedEvent message)
         {
-            BroadcastResourceChange(ModelAction.Updated, GetAuthorResource(message.Author));
+            BroadcastResourceChange(ModelAction.Updated, message.Author.Id);
         }
 
         [NonAction]
@@ -1622,19 +1607,19 @@ namespace Chaptarr.Api.V1.Author
         public void Handle(MediaCoversUpdatedEvent message)
         {
             if (message.Author == null) return;
-            BroadcastResourceChange(ModelAction.Updated, GetAuthorResource(message.Author));
+            BroadcastResourceChange(ModelAction.Updated, message.Author.Id);
         }
 
         [NonAction]
         public void Handle(AuthorScanCompletedEvent message)
         {
-            BroadcastResourceChange(ModelAction.Updated, GetAuthorResource(message.Author));
+            BroadcastResourceChange(ModelAction.Updated, message.Author.Id);
         }
 
         [NonAction]
         public void Handle(AuthorRefreshCompleteEvent message)
         {
-            BroadcastResourceChange(ModelAction.Updated, GetAuthorResource(message.Author));
+            BroadcastResourceChange(ModelAction.Updated, message.Author.Id);
         }
     }
 }

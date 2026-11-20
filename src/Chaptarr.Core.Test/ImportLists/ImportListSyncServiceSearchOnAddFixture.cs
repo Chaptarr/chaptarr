@@ -569,7 +569,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 pendingAuthorImportService: pendingImports ?? new RecordingPendingAuthorImportService(),
                 rootFolderService: roots ?? DispatchProxy.Create<IRootFolderService, RootFolderServiceProxy>(),
                 rootFolderSettingsResolver: DispatchProxy.Create<IRootFolderSettingsResolver, RootFolderSettingsResolverProxy>(),
-                eventAggregator: new StubEventAggregator(),
+                eventAggregator: new StubEventAggregator(),deferredCoverService: new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 commandQueueManager: commandQueue ?? new StubCommandQueueManager(),
                 logger: logger ?? LogManager.GetCurrentClassLogger(),
                 bookIdentityCacheRepository: identityCache ?? DispatchProxy.Create<IImportListBookIdentityCacheRepository, ThrowingProxy<IImportListBookIdentityCacheRepository>>());
@@ -837,7 +837,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 pendingAuthorImportService: pendingImportService,
                 rootFolderService: DispatchProxy.Create<IRootFolderService, ThrowingProxy<IRootFolderService>>(),
                 rootFolderSettingsResolver: DispatchProxy.Create<IRootFolderSettingsResolver, ThrowingProxy<IRootFolderSettingsResolver>>(),
-                eventAggregator: new StubEventAggregator(),
+                eventAggregator: new StubEventAggregator(),deferredCoverService: new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 commandQueueManager: commandQueue,
                 logger: LogManager.GetCurrentClassLogger(),
                 bookIdentityCacheRepository: DispatchProxy.Create<IImportListBookIdentityCacheRepository, ThrowingProxy<IImportListBookIdentityCacheRepository>>());
@@ -924,7 +924,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 pendingAuthorImportService: pendingImportService,
                 rootFolderService: DispatchProxy.Create<IRootFolderService, ThrowingProxy<IRootFolderService>>(),
                 rootFolderSettingsResolver: DispatchProxy.Create<IRootFolderSettingsResolver, ThrowingProxy<IRootFolderSettingsResolver>>(),
-                eventAggregator: new StubEventAggregator(),
+                eventAggregator: new StubEventAggregator(),deferredCoverService: new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 commandQueueManager: commandQueue,
                 logger: LogManager.GetCurrentClassLogger(),
                 bookIdentityCacheRepository: DispatchProxy.Create<IImportListBookIdentityCacheRepository, ThrowingProxy<IImportListBookIdentityCacheRepository>>());
@@ -1081,7 +1081,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 pendingAuthorImportService: DispatchProxy.Create<IPendingAuthorImportService, ThrowingProxy<IPendingAuthorImportService>>(),
                 rootFolderService: DispatchProxy.Create<IRootFolderService, ThrowingProxy<IRootFolderService>>(),
                 rootFolderSettingsResolver: DispatchProxy.Create<IRootFolderSettingsResolver, ThrowingProxy<IRootFolderSettingsResolver>>(),
-                eventAggregator: new StubEventAggregator(),
+                eventAggregator: new StubEventAggregator(),deferredCoverService: new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 commandQueueManager: commandQueue,
                 logger: LogManager.GetCurrentClassLogger(),
                 bookIdentityCacheRepository: DispatchProxy.Create<IImportListBookIdentityCacheRepository, ThrowingProxy<IImportListBookIdentityCacheRepository>>());
@@ -1165,7 +1165,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 pendingAuthorImportService: pendingImportService,
                 rootFolderService: DispatchProxy.Create<IRootFolderService, RootFolderServiceProxy>(),
                 rootFolderSettingsResolver: DispatchProxy.Create<IRootFolderSettingsResolver, RootFolderSettingsResolverProxy>(),
-                eventAggregator: new StubEventAggregator(),
+                eventAggregator: new StubEventAggregator(),deferredCoverService: new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 commandQueueManager: commandQueue,
                 logger: LogManager.GetCurrentClassLogger(),
                 bookIdentityCacheRepository: DispatchProxy.Create<IImportListBookIdentityCacheRepository, ThrowingProxy<IImportListBookIdentityCacheRepository>>());
@@ -1254,7 +1254,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 pendingAuthorImportService: pendingImportService,
                 rootFolderService: DispatchProxy.Create<IRootFolderService, RootFolderServiceProxy>(),
                 rootFolderSettingsResolver: DispatchProxy.Create<IRootFolderSettingsResolver, RootFolderSettingsResolverProxy>(),
-                eventAggregator: new StubEventAggregator(),
+                eventAggregator: new StubEventAggregator(),deferredCoverService: new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 commandQueueManager: commandQueue,
                 logger: LogManager.GetCurrentClassLogger(),
                 bookIdentityCacheRepository: DispatchProxy.Create<IImportListBookIdentityCacheRepository, ThrowingProxy<IImportListBookIdentityCacheRepository>>());
@@ -1338,7 +1338,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 pendingAuthorImportService: pendingImportService,
                 rootFolderService: DispatchProxy.Create<IRootFolderService, RootFolderServiceProxy>(),
                 rootFolderSettingsResolver: rootFolderSettingsResolver,
-                eventAggregator: new StubEventAggregator(),
+                eventAggregator: new StubEventAggregator(),deferredCoverService: new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 commandQueueManager: new StubCommandQueueManager(),
                 logger: LogManager.GetCurrentClassLogger(),
                 bookIdentityCacheRepository: DispatchProxy.Create<IImportListBookIdentityCacheRepository, ThrowingProxy<IImportListBookIdentityCacheRepository>>());
@@ -1447,7 +1447,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 pendingAuthorImportService: DispatchProxy.Create<IPendingAuthorImportService, ThrowingProxy<IPendingAuthorImportService>>(),
                 rootFolderService: DispatchProxy.Create<IRootFolderService, ThrowingProxy<IRootFolderService>>(),
                 rootFolderSettingsResolver: DispatchProxy.Create<IRootFolderSettingsResolver, ThrowingProxy<IRootFolderSettingsResolver>>(),
-                eventAggregator: new StubEventAggregator(),
+                eventAggregator: new StubEventAggregator(),deferredCoverService: new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                 commandQueueManager: commandQueue,
                 logger: LogManager.GetCurrentClassLogger(),
                 bookIdentityCacheRepository: DispatchProxy.Create<IImportListBookIdentityCacheRepository, ThrowingProxy<IImportListBookIdentityCacheRepository>>());
@@ -2972,7 +2972,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 new StubFetchAndParseImportList { Items = items }, bookInfo,
                 authors, books, editions, pending, roots,
                 new RootFolderSettingsResolver(roots),
-                new StubEventAggregator(), queue, logger ?? LogManager.GetCurrentClassLogger(),
+                new StubEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  queue, logger ?? LogManager.GetCurrentClassLogger(),
                 DispatchProxy.Create<IImportListBookIdentityCacheRepository, ThrowingProxy<IImportListBookIdentityCacheRepository>>());
         }
 

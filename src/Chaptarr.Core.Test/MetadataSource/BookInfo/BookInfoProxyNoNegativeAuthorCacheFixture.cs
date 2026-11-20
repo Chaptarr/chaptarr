@@ -8,6 +8,7 @@ using NUnit.Framework;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.Http;
 using NzbDrone.Core.Configuration;
+using NzbDrone.Core.Http;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
 
@@ -27,6 +28,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             }
 
             public void DownloadFile(string url, string fileName, string userAgent = null) => throw new NotImplementedException();
+            public void DownloadFile(HttpRequest request, string fileName) => throw new System.NotImplementedException();
             public HttpResponse Execute(HttpRequest request) => throw new NotImplementedException();
             public HttpResponse<T> Get<T>(HttpRequest request) where T : new() => throw new NotImplementedException();
             public HttpResponse Head(HttpRequest request) => throw new NotImplementedException();
@@ -72,7 +74,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 new MetadataRequestBuilder(configService),
                 logger,
                 new CacheManager(),
-                new MetadataServerHealthGate(configService, new MetadataServerHealthService(logger), logger));
+                new MetadataServerHealthGate(configService, new HttpServiceHealth(logger), logger));
             var method = typeof(BookInfoProxy).GetMethod("TryGetAuthorSummaryFromV5ForSearch", BindingFlags.Instance | BindingFlags.NonPublic);
 
             Assert.That(method, Is.Not.Null);

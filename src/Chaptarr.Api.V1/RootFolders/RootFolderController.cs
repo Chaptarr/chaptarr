@@ -5,15 +5,16 @@ using Chaptarr.Http;
 using Chaptarr.Http.REST;
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
+using Newtonsoft.Json.Linq;
 using NzbDrone.Common.Extensions;
-using NzbDrone.Common.Http;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Localization;
-using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Profiles.Metadata;
 using NzbDrone.Core.Profiles.Qualities;
+using NzbDrone.Core.RootFolders;
 using NzbDrone.Core.Validation;
 using NzbDrone.Core.Validation.Paths;
 using NzbDrone.Http.REST.Attributes;
@@ -79,7 +80,7 @@ namespace Chaptarr.Api.V1.RootFolders
             AddMediaSettingsValidation(BookMediaType.Ebook, qualityProfileExistsValidator, metadataProfileExistsValidator);
 
             SharedValidator.RuleFor(c => c)
-                .Must(x => CalibreLibraryOnlyUsedOnce(x))
+                .Must(x => CalibreLibraryOnlyUsedOnce(CalibreLibraryIdentity.GetKey(x.UseSsl, x.Host, x.Port, x.UrlBase, x.Library), x.Id))
                 .When(x => x.IsCalibreLibrary)
                 .WithMessage("Calibre library is already configured as a root folder");
 
@@ -166,22 +167,24 @@ namespace Chaptarr.Api.V1.RootFolders
             return folderType == FolderType.Mixed;
         }
 
-        private bool CalibreLibraryOnlyUsedOnce(RootFolderResource settings)
+        private bool CalibreLibraryOnlyUsedOnce(string newUri, int rootFolderId)
         {
-            var newUri = GetLibraryUri(settings);
-            return !_rootFolderService.All().Exists(x => x.Id != settings.Id &&
+            return newUri == null || !_rootFolderService.All().Exists(x => x.Id != rootFolderId &&
                                                     x.CalibreSettings != null &&
-                                                    GetLibraryUri(x.CalibreSettings) == newUri);
+                                                    CalibreLibraryIdentity.GetKey(x.CalibreSettings) == newUri);
         }
 
-        private string GetLibraryUri(RootFolderResource settings)
+        private void TestCalibreLibrary(RootFolder model)
         {
-            return HttpUri.CombinePath(HttpRequestBuilder.BuildBaseUrl(settings.UseSsl, settings.Host, settings.Port, settings.UrlBase), settings.Library);
-        }
-
-        private string GetLibraryUri(CalibreSettings settings)
-        {
-            return HttpUri.CombinePath(HttpRequestBuilder.BuildBaseUrl(settings.UseSsl, settings.Host, settings.Port, settings.UrlBase), settings.Library);
+            _calibreProxy.Test(model.CalibreSettings);
+            // Test resolves a blank library to the server's default before it can be persisted.
+            if (!CalibreLibraryOnlyUsedOnce(CalibreLibraryIdentity.GetKey(model.CalibreSettings), model.Id))
+            {
+                throw new ValidationException(new[]
+                {
+                    new FluentValidation.Results.ValidationFailure("Library", "Calibre library is already configured as a root folder")
+                });
+            }
         }
 
         protected override RootFolderResource GetResourceById(int id)
@@ -197,7 +200,7 @@ namespace Chaptarr.Api.V1.RootFolders
 
             if (model.IsCalibreLibrary)
             {
-                _calibreProxy.Test(model.CalibreSettings);
+                TestCalibreLibrary(model);
             }
 
             return Created(_rootFolderService.Add(model).Id);
@@ -238,14 +241,19 @@ namespace Chaptarr.Api.V1.RootFolders
             if (model.IsCalibreLibrary)
             {
                 if (model.CalibreSettings != null &&
-                    !string.IsNullOrWhiteSpace(model.CalibreSettings.Username) &&
                     string.IsNullOrWhiteSpace(rootFolderResource.Password) &&
-                    existingRootFolder.CalibreSettings != null)
+                    existingRootFolder.CalibreSettings != null &&
+                    (!string.IsNullOrWhiteSpace(model.CalibreSettings.Username) ||
+                     string.IsNullOrWhiteSpace(existingRootFolder.CalibreSettings.Username)))
                 {
                     model.CalibreSettings.Password = existingRootFolder.CalibreSettings.Password;
                 }
 
-                _calibreProxy.Test(model.CalibreSettings);
+                if (!existingRootFolder.IsCalibreLibrary ||
+                    !JToken.DeepEquals(JToken.Parse(existingRootFolder.CalibreSettings.ToJson()), JToken.Parse(model.CalibreSettings.ToJson())))
+                {
+                    TestCalibreLibrary(model);
+                }
             }
 
             _rootFolderService.Update(model);

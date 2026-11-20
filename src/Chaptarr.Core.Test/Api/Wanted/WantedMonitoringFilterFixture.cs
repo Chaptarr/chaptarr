@@ -117,7 +117,9 @@ namespace Chaptarr.Core.Test.Api.Wanted
 
         private sealed class StubCoverMapper : IMapCoversToLocal
         {
-            public void EnsureBookCoversForBooks(List<Book> books) => throw new NotImplementedException();
+            public (bool Ready, byte[] Data) ReadLocalBookCover(Edition edition) => (false, null);
+
+            public void EnsureBookCoversForBooks(List<Book> books, bool forceDownload = false) => throw new NotImplementedException();
             public void EnsureBookCoversForImport(Book book) => EnsureBookCovers(book);
             public void ConvertBookCoversToLocalUrls(IEnumerable<KeyValuePair<int, List<NzbDrone.Core.MediaCover.MediaCover>>> covers)
             {
@@ -131,8 +133,8 @@ namespace Chaptarr.Core.Test.Api.Wanted
 
             public void ConvertToLocalUrls(int entityId, MediaCoverEntity coverEntity, IList<MediaCoverModel> covers, string selectedAuthorImageHash = null) { }
             public string GetCoverPath(int entityId, MediaCoverEntity coverEntity, MediaCoverTypes coverType, string extension, int? height = null) => null;
-            public void EnsureAuthorCovers(Author author) { }
-            public void EnsureBookCovers(Book book) { }
+            public bool EnsureAuthorCovers(Author author, bool forceDownload = false) => false;
+            public void EnsureBookCovers(Book book, bool forceDownload = false) { }
             public Task<EnsureImageResult> EnsureAuthorImage(Author author, MediaCoverModel cover) => Task.FromResult<EnsureImageResult>(null);
         }
 

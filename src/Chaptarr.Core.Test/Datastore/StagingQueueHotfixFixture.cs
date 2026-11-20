@@ -390,6 +390,8 @@ namespace Chaptarr.Core.Test.Datastore
 
         private sealed class RecordingMediaFileService : IMediaFileService
         {
+            public System.Collections.Generic.List<NzbDrone.Core.MediaFiles.BookFile> GetExisting(System.Collections.Generic.IEnumerable<int> ids) => throw new System.NotImplementedException();
+
             public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
                 System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
                 => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
@@ -512,6 +514,7 @@ namespace Chaptarr.Core.Test.Datastore
             public IFileInfo GetFileInfo(string path) => _fileSystem.FileInfo.FromFileName(path);
             public List<IFileInfo> GetFileInfos(string path, bool recursive = false) => throw new NotImplementedException();
             public void RemoveEmptySubfolders(string path) => throw new NotImplementedException();
+            public void WriteFileAtomically(string path, Action<string> write) => throw new NotSupportedException();
             public void SaveStream(Stream stream, string path) => throw new NotImplementedException();
             public bool IsValidFolderPermissionMask(string mask) => throw new NotImplementedException();
         }

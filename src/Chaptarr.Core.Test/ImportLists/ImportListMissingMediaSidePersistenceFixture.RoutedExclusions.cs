@@ -101,7 +101,7 @@ namespace Chaptarr.Core.Test.ImportLists
                     book.Author = owner;
                     return Tuple.Create(owner.GoodreadsAuthorId, book, new List<Author> { owner });
                 });
-                var handler = new ProcessPendingImportsCommandHandler(stored.Pending, library, stored.Books, metadata,
+                var handler = new ProcessPendingImportsCommandHandler(stored.Pending, library, stored.Books, metadata, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     stored.Queue, stored.Events, stored.Logger, stored.Aliases);
                 handler.Execute(new ProcessPendingImportsCommand());
                 var receivingId = originalOwner ? pending.Id : stored.Pending.GetByProviderId(owner.GoodreadsAuthorId).Id;

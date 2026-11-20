@@ -26,7 +26,7 @@ namespace NzbDrone.Common.Http
             IPAddress.Parse("fd20:ce::254")
         };
 
-        public static bool IsBlocked(string host)
+        public static bool IsBlocked(string host, bool resolve = true)
         {
             if (host.IsNullOrWhiteSpace())
             {
@@ -43,6 +43,11 @@ namespace NzbDrone.Common.Http
             if (IPAddress.TryParse(host, out var ip))
             {
                 return IsBlocked(ip);
+            }
+
+            if (!resolve)
+            {
+                return false;
             }
 
             try

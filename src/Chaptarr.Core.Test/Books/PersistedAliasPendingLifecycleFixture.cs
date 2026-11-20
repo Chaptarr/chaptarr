@@ -200,7 +200,7 @@ namespace Chaptarr.Core.Test.Books
                     return Tuple.Create(Author.HardcoverAuthorId, new Book { MediaType = (BookMediaType)args[1], Author = Author,
                         RemoteProviderIds = new HashSet<string> { (string)args[0] } }, new List<Author> { Author });
                 });
-                new ProcessPendingImportsCommandHandler(Pending, library, books, info, Queue, EventAggregator,
+                new ProcessPendingImportsCommandHandler(Pending, library, books, info, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  Queue, EventAggregator,
                     LogManager.GetCurrentClassLogger(), aliases).Execute(new ProcessPendingImportsCommand());
             }
         }

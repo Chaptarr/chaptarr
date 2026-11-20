@@ -299,8 +299,14 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         [TestCase(BookMediaType.Audiobook, true, false)]
         [TestCase(BookMediaType.Ebook, false, false)]
         [TestCase(BookMediaType.Ebook, true, false)]
+        [TestCase(BookMediaType.Audiobook, false, true, "mp3", "Seven and the Swift (International Edition)")]
+        [TestCase(BookMediaType.Audiobook, false, true, "m4b", "Seven and the Swift (International Edition)")]
+        [TestCase(BookMediaType.Audiobook, false, true, "mp3", "Seven and the Swift: An Epic Romantic Fantasy")]
+        [TestCase(BookMediaType.Audiobook, false, true, "m4b", "Seven and the Swift: An Epic Romantic Fantasy")]
+        [TestCase(BookMediaType.Audiobook, false, true, "mp3", "Seven and the Swift: An Epic Romantic Fantasy (Shield of Sparrows Book 3)")]
+        [TestCase(BookMediaType.Audiobook, false, true, "m4b", "Seven and the Swift: An Epic Romantic Fantasy (Shield of Sparrows Book 3)")]
         public void complete_title_should_beat_a_series_container_without_label_priority(
-            BookMediaType media, bool swapLabels, bool includeSeriesTag)
+            BookMediaType media, bool swapLabels, bool includeSeriesTag, string audioFormat = null, string editionTitle = null)
         {
             var target = new Book { Id = 1, AuthorId = 77, Title = "Seven and the Swift", BaseBookId = "hc:2565489",
                 MediaType = media, SeriesName = "Shield of Sparrows", SeriesPosition = "3", AnyEditionOk = true };
@@ -311,7 +317,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var candidates = new List<EditionFtsMatch>
             {
                 new() { BookId = target.Id, EditionId = 11, AuthorId = 77, AuthorName = "Devney Perry", BookTitle = target.Title,
-                    EditionTitle = target.Title, ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, ForeignEditionId = "hc:target", MatchScore = 1 },
+                    EditionTitle = editionTitle ?? target.Title, EditionSubTitle = audioFormat != null ? "An Epic Romantic Fantasy" : null, ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, ForeignEditionId = "hc:target", MatchScore = 1 },
                 new() { BookId = generic.Id, EditionId = 22, AuthorId = 77, AuthorName = "Devney Perry", BookTitle = generic.Title,
                     EditionTitle = generic.Title, ReadingFormatId = media == BookMediaType.Audiobook ? 2 : 3, ForeignEditionId = "hc:generic", MatchScore = 100 },
                 new() { BookId = dramatized.Id, EditionId = 33, AuthorId = 77, AuthorName = "Devney Perry", BookTitle = dramatized.Title,
@@ -327,6 +333,31 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             if (includeSeriesTag)
             {
                 tags[swapLabels ? "TITLE" : "ALBUM"] = new() { "Shield of Sparrows 3" };
+            }
+
+            if (audioFormat != null)
+            {
+                var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), Guid.NewGuid().ToString("N") + "." + audioFormat);
+                try
+                {
+                    System.IO.File.Copy(System.IO.Path.Combine(TestContext.CurrentContext.TestDirectory, "Fixtures", "Audio", "silence." + audioFormat), path);
+                    using (var audio = TagLib.File.Create(path))
+                    {
+                        audio.Tag.Title = editionTitle ?? target.Title;
+                        audio.Tag.Album = target.Title;
+                        audio.Tag.Performers = new[] { "Devney Perry" };
+                        foreach (var pair in new[] { ("SERIES", "Shield of Sparrows"), ("SERIES-PART", "3") })
+                        {
+                            if (audio.GetTag(TagLib.TagTypes.Apple) is TagLib.Mpeg4.AppleTag apple) apple.SetDashBox("com.apple.iTunes", pair.Item1, pair.Item2);
+                            else TagLib.Id3v2.UserTextInformationFrame.Get((TagLib.Id3v2.Tag)audio.GetTag(TagLib.TagTypes.Id3v2), pair.Item1, true).Text = new[] { pair.Item2 };
+                        }
+                        audio.Save();
+                    }
+                    tags = new NzbDrone.Core.MediaFiles.TagExtraction.TagLibSharpExtractor().ExtractTags(path);
+                    NzbDrone.Core.MediaFiles.TagExtraction.TagCanonicalizer.AddCanonicalKeys(tags);
+                    Assert.That(tags["SERIES-PART"], Is.EqualTo(new[] { "3" }));
+                }
+                finally { System.IO.File.Delete(path); }
             }
 
             var match = matching.HolyGrailMatchFile(new DiscoveredFileWithMetadata

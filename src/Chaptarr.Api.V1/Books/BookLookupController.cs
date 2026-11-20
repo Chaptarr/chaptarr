@@ -299,8 +299,7 @@ namespace Chaptarr.Api.V1.Books
 
             if (resources.Count > 0)
             {
-                _coverMapper.ConvertBookCoversToLocalUrls(resources.Select(resource =>
-                    new KeyValuePair<int, List<MediaCover>>(resource.Id, resource.Images)));
+                _coverMapper.MapCoversToLocal(resources);
             }
 
             return resources;

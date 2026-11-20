@@ -7,6 +7,7 @@ namespace Chaptarr.Api.V1.Config
     {
         public WriteAudioTagsType WriteAudioTags { get; set; }
         public bool ScrubAudioTags { get; set; }
+        public bool EmbedCoverArt { get; set; }
         public WriteBookTagsType WriteBookTags { get; set; }
         public bool UpdateCovers { get; set; }
         public bool EmbedMetadata { get; set; }
@@ -20,6 +21,7 @@ namespace Chaptarr.Api.V1.Config
             {
                 WriteAudioTags = model.WriteAudioTags,
                 ScrubAudioTags = model.ScrubAudioTags,
+                EmbedCoverArt = model.EmbedCoverArt,
                 WriteBookTags = model.WriteBookTags,
                 UpdateCovers = model.UpdateCovers,
                 EmbedMetadata = model.EmbedMetadata

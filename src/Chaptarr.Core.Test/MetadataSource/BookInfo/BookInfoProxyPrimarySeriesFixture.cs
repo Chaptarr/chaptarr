@@ -15,6 +15,7 @@ using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Datastore;
 using NzbDrone.Core.CustomFormats;
+using NzbDrone.Core.Http;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Organizer;
@@ -36,7 +37,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
                 ? "http://metadata" : throw new AssertionException(method.Name));
             logger ??= LogManager.GetCurrentClassLogger();
             return new BookInfoProxy(http, null, null, null, null, null, null, null, config, null,
-                logger, new CacheManager(), new MetadataServerHealthGate(config, new MetadataServerHealthService(logger), logger));
+                logger, new CacheManager(), new MetadataServerHealthGate(config, new HttpServiceHealth(logger), logger));
         }
 
         // Constructed V5 payload: two upstream pockets share a work ID; each has both formats.

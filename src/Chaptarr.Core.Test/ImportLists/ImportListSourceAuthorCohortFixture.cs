@@ -129,7 +129,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 });
                 new ImportListSyncService(factory, Proxy<IImportListExclusionService>((method, args) => new List<ImportListExclusion>()),
                     Proxy<IFetchAndParseImportList>((method, args) => reports), metadata, authorService, books, editionService, writer,
-                    roots, new RootFolderSettingsResolver(roots), events, queue, logger,
+                    roots, new RootFolderSettingsResolver(roots), events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  queue, logger,
                     new ImportListBookIdentityCacheRepository(database, events)).Execute(new ImportListSyncCommand());
                 var saved = pending.GetByProviderId(author.GoodreadsAuthorId);
                 Assert.That(saved, Is.Not.Null);

@@ -112,7 +112,7 @@ namespace Chaptarr.Core.Test.Books
                 });
                 var metadata = Proxy<IProvideBookInfo>((_, args) => Tuple.Create(owner.HardcoverAuthorId,
                     new Book { HardcoverBookId = (string)args[0], MediaType = (BookMediaType)args[1], Author = owner }, new List<Author> { owner }));
-                void Run() => new ProcessPendingImportsCommandHandler(h.Pending, library, books, metadata, h.Queue, h.EventAggregator,
+                void Run() => new ProcessPendingImportsCommandHandler(h.Pending, library, books, metadata, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Queue, h.EventAggregator,
                     LogManager.GetCurrentClassLogger(), h.Aliases).Execute(new ProcessPendingImportsCommand());
                 Run();
                 Assert.That(h.Pending.GetByProviderId(owner.HardcoverAuthorId), Is.Not.Null);
@@ -202,7 +202,7 @@ namespace Chaptarr.Core.Test.Books
                     var owner = work == "hc:7000" ? excluded : healthyOwner;
                     return Tuple.Create(owner.HardcoverAuthorId, new Book { HardcoverBookId = work, MediaType = (BookMediaType)args[1], Author = owner }, new List<Author> { owner });
                 });
-                void Run() => new ProcessPendingImportsCommandHandler(h.Pending, library, h.BookService, metadata, h.Queue, h.EventAggregator,
+                void Run() => new ProcessPendingImportsCommandHandler(h.Pending, library, h.BookService, metadata, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Queue, h.EventAggregator,
                     LogManager.GetCurrentClassLogger(), h.Aliases).Execute(new ProcessPendingImportsCommand());
                 Run();
                 var refusedId = failure == "excluded" ? h.Pending.GetByProviderId(excluded.HardcoverAuthorId).Id : pending.Id;
@@ -250,7 +250,7 @@ namespace Chaptarr.Core.Test.Books
                 var library = Proxy<IAuthorLibraryService>((_, _) => { libraryCalls++; throw new AssertionException("No work identity was established"); });
                 var service = new AddBookService(h.AuthorService, library, h.BookService, null, info,
                     Proxy<IImportListExclusionService>((_, _) => new List<ImportListExclusion>()), null, null, null, null, null,
-                    h.EditionService, null, null, null, LogManager.GetCurrentClassLogger(), h.Queue);
+                    h.EditionService, null, null, null, LogManager.GetCurrentClassLogger(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Queue);
                 var requested = new Book
                 {
                     MediaType = media, Author = new Author { HardcoverAuthorId = "hc:9003" },

@@ -22,22 +22,80 @@ const EN_JSON = path.join(REPO_ROOT, 'src', 'NzbDrone.Core', 'Localization', 'Co
 const FRONTEND_SRC = path.join(REPO_ROOT, 'frontend', 'src');
 const EXTS = new Set(['.js', '.jsx', '.ts', '.tsx', '.cs']);
 const BACKEND_SRC = path.join(REPO_ROOT, 'src');
-const CS_KEY_RE = /GetLocalizedString\(\s*"([^"]+)"/g;
+// Walk the requested argument so nested calls cannot terminate its condition early.
+const CS_KEY_RE = /\b(GetLocalizedString|AddCountMessage|AddSummary)\s*\(/g;
+// The C# argument walker is not a compiler: quoted char literals and generic
+// type arguments containing commas remain known unsupported expressions.
+// Verbatim C# strings (@"…") remain unsupported.
+function backendKeyExpressions(text) {
+  return Array.from(text.matchAll(CS_KEY_RE), (match) => {
+    const wanted = match[1] === 'GetLocalizedString' ? 0 : 1;
+    let start = match.index + match[0].length;
+    let depth = 0;
+    let argument = 0;
+    let quoted = false;
+    for (let i = start; i < text.length; i++) {
+      const c = text[i];
+      if (quoted && c === '\\') {
+        i++;
+      } else if (c === '"') {
+        quoted = !quoted;
+      } else if (!quoted) {
+        if (c === '(') {
+          depth++;
+        } else if (c === ')' && depth > 0) {
+          depth--;
+        } else if ((c === ',' || c === ')') && depth === 0) {
+          if (argument === wanted) {
+            return text.slice(start, i).trim();
+          }
+          if (c === ')') {
+            break;
+          }
+          argument++;
+          start = i + 1;
+        }
+      }
+    }
+    return '';
+  });
+}
 
-function literalValues(node) {
-  if (!node) return [];
-  if (node.type === 'StringLiteral') return [node.value];
-  if (node.type === 'ConditionalExpression') return [...literalValues(node.consequent), ...literalValues(node.alternate)];
-  if (node.type === 'LogicalExpression') return [...literalValues(node.left), ...literalValues(node.right)];
+// JS/TS maps asserted with `as const` remain outside this literal-map resolver.
+function literalValues(node, scope) {
+  if (!node) {
+    return [];
+  }
+  if (node.type === 'StringLiteral') {
+    return [node.value];
+  }
+  if (node.type === 'MemberExpression' && node.object.type === 'Identifier') {
+    const binding = scope.getBinding(node.object.name);
+    const object = binding?.path.node.init;
+    if (object?.type === 'ObjectExpression') {
+      const key = node.computed ? node.property.value : node.property.name;
+      return object.properties
+        .filter((property) => property.type === 'ObjectProperty')
+        .filter((property) => key === undefined ||
+          (property.computed ? property.key.value : property.key.name ?? property.key.value) === key)
+        .flatMap((property) => literalValues(property.value, scope));
+    }
+  }
+  if (node.type === 'ConditionalExpression') {
+    return [...literalValues(node.consequent, scope), ...literalValues(node.alternate, scope)];
+  }
+  if (node.type === 'LogicalExpression') {
+    return [...literalValues(node.left, scope), ...literalValues(node.right, scope)];
+  }
   if (node.type === 'BinaryExpression' && node.operator === '+') {
-    return literalValues(node.left).flatMap((left) => literalValues(node.right).map((right) => left + right));
+    return literalValues(node.left, scope).flatMap((left) => literalValues(node.right, scope).map((right) => left + right));
   }
   if (node.type === 'TemplateLiteral') {
     return node.quasis.reduce((values, part, index) => {
       const prefixes = values.map((value) => value + part.value.cooked);
-      return index < node.expressions.length
-        ? prefixes.flatMap((prefix) => literalValues(node.expressions[index]).map((value) => prefix + value))
-        : prefixes;
+      return index < node.expressions.length ?
+        prefixes.flatMap((prefix) => literalValues(node.expressions[index], scope).map((value) => prefix + value)) :
+        prefixes;
     }, ['']);
   }
   return [];
@@ -45,9 +103,14 @@ function literalValues(node) {
 
 function translationKeys(text, filename) {
   if (path.extname(filename) === '.cs') {
-    return Array.from(text.matchAll(CS_KEY_RE), (match) => match[1]);
+    return backendKeyExpressions(text).flatMap((expression) => {
+      const literal = (/^"([^"]+)"$/).exec(expression);
+      return literal ? [literal[1]] : Array.from(expression.matchAll(/[?:]\s*"([^"]+)"/g), (branch) => branch[1]);
+    });
   }
-  if (!/\btranslate\s*\(/.test(text)) return [];
+  if (!(/\btranslate\s*\(/).test(text)) {
+    return [];
+  }
 
   const keys = new Set();
   const ast = parseSync(text, {
@@ -55,9 +118,9 @@ function translationKeys(text, filename) {
     parserOpts: { plugins: ['jsx', ['typescript', { dts: filename.endsWith('.d.ts') }], 'decorators-legacy'] }
   });
   traverse(ast, {
-    CallExpression({ node }) {
+    CallExpression({ node, scope }) {
       if (node.callee.type === 'Identifier' && node.callee.name === 'translate') {
-        literalValues(node.arguments[0]).forEach((key) => keys.add(key));
+        literalValues(node.arguments[0], scope).forEach((key) => keys.add(key));
       }
     }
   });
@@ -125,4 +188,6 @@ function main() {
 
 module.exports = { translationKeys };
 
-if (require.main === module) main();
+if (require.main === module) {
+  main();
+}

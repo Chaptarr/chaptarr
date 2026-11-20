@@ -208,6 +208,16 @@ namespace NzbDrone.Core.Books
             return Fallback(book?.GoogleBooksId, "GoogleBooksId", logger, context, v => NormalizeProviderId(v, "gb"));
         }
 
+        public static string GetTagAsin(Edition edition) =>
+            NormalizeAmazonExternalId(edition?.AudibleASIN) ?? NormalizeAmazonExternalId(edition?.Asin);
+
+        public static string GetTagIsbn(Edition edition)
+        {
+            static string Clean(string value) => string.IsNullOrWhiteSpace(value) || ProviderIdHelper.ContainsProviderIdArtifact(value)
+                ? null : ProviderIdHelper.StripPrefix(value).Trim();
+            return Clean(edition?.Isbn13) ?? Clean(edition?.Isbn10);
+        }
+
         public static string GetAsin(Book book, Logger logger = null, string context = null)
         {
             foreach (var edition in GetOrderedEditions(book))

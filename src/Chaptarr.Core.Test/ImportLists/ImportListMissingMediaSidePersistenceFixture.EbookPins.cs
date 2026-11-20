@@ -148,7 +148,7 @@ namespace Chaptarr.Core.Test.ImportLists
                 new ImportListExclusionService(new ImportListExclusionRepository(h.Database, h.Events), h.Logger),
                 Proxy<IFetchAndParseImportList>((method, _) => method.Name == nameof(IFetchAndParseImportList.FetchSingleList) ? reports : throw new AssertionException(method.Name)),
                 metadata, h.AuthorService, h.Books, h.Editions, h.Pending, h.Roots, new RootFolderSettingsResolver(h.Roots),
-                h.Events, h.Queue, h.Logger, new ImportListBookIdentityCacheRepository(h.Database, h.Events));
+                h.Events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Queue, h.Logger, new ImportListBookIdentityCacheRepository(h.Database, h.Events));
         }
 
         [TestCase(false)]

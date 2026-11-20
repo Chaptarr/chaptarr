@@ -86,7 +86,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var service = new ImportApprovedBooks(media, new StubMetadataTagService(), new StubMediaInfoExtractor(),
                     Proxy<IAuthorService>(), CreateBookService(new List<Book> { book }).Service, CreateEditionService(book.Editions),
                     recycle, Proxy<IExtraService>(), mover, Proxy<IHistoryService>(), Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(),
-                    new NoOpEventAggregator(), Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
+                    new NoOpEventAggregator(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(), Proxy<IM4bConversionService>(), LogManager.GetCurrentClassLogger(), configService: CreateConfigService(), customFormatCalculationService: formats);
                 var local = new LocalBook { Path = source, Author = author, Book = book, Edition = edition,
                     Quality = new QualityModel(worse ? Quality.MP3 : Quality.M4B), DurationSeconds = 500,
@@ -157,7 +157,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 var logging = new NLog.Config.LoggingConfiguration();
                 logging.AddRuleForAllLevels(sink);
                 logs.Configuration = logging;
-                var service = new ImportApprovedBooks(null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
+                var service = new ImportApprovedBooks(null, null, null, null, null, null, null, null, null, null, null, null, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  null, null, null, null, null,
                     logs.GetLogger("replacement"), configService: CreateConfigService(), diskProvider: disk);
                 var method = typeof(ImportApprovedBooks).GetMethod("CheckReplacement", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
                 var decision = ((ImportResultType Result, string Reason))method.Invoke(service, new object[] { new[] { incoming, incoming }, new[] { old }, profile, false,

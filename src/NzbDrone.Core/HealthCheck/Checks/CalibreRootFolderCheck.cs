@@ -7,7 +7,6 @@ using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Datastore.Events;
-using NzbDrone.Core.Download.Clients;
 using NzbDrone.Core.Localization;
 using NzbDrone.Core.RemotePathMappings;
 using NzbDrone.Core.RootFolders;
@@ -43,12 +42,21 @@ namespace NzbDrone.Core.HealthCheck.Checks
         {
             var rootFolders = _rootFolderService.All().Where(x => x.IsCalibreLibrary);
 
+            HealthCheck warning = null;
+            HealthCheck error = null;
+            void RecordError(string message, string wikiFragment)
+            {
+                _logger.Warn("{0}", message);
+                error ??= new HealthCheck(GetType(), HealthCheckResult.Error, message, wikiFragment);
+            }
+
             foreach (var folder in rootFolders)
             {
                 try
                 {
                     var calibreIsLocal = folder.CalibreSettings.Host == "127.0.0.1" || folder.CalibreSettings.Host == "localhost";
 
+                    // Retain the released identity-cache producer until scans resolve Calibre IDs themselves.
                     var files = _calibreProxy.GetAllBookFilePaths(folder.CalibreSettings);
                     if (files.Any())
                     {
@@ -65,15 +73,18 @@ namespace NzbDrone.Core.HealthCheck.Checks
                         {
                             if (!calibreIsLocal)
                             {
-                                return new HealthCheck(GetType(), HealthCheckResult.Error, $"Remote calibre for root folder {folder.Name} reports files in {libraryFolder} but this is not a valid {_osInfo.Name} path.  Review your remote path mappings and root folder settings.", "#bad-remote-path-mapping");
+                                RecordError($"Remote calibre for root folder {folder.Name} reports files in {libraryFolder} but this is not a valid {_osInfo.Name} path.  Review your remote path mappings and root folder settings.", "#bad-remote-path-mapping");
+                                continue;
                             }
                             else if (_osInfo.IsDocker)
                             {
-                                return new HealthCheck(GetType(), HealthCheckResult.Error, $"You are using docker; calibre for root folder {folder.Name} reports files in {libraryFolder} but this is not a valid {_osInfo.Name} path.  Review your remote path mappings and download client settings.", "#docker-bad-remote-path-mapping");
+                                RecordError($"You are using docker; calibre for root folder {folder.Name} reports files in {libraryFolder} but this is not a valid {_osInfo.Name} path.  Review your remote path mappings and download client settings.", "#docker-bad-remote-path-mapping");
+                                continue;
                             }
                             else
                             {
-                                return new HealthCheck(GetType(), HealthCheckResult.Error, $"Local calibre server for root folder {folder.Name} reports files in {libraryFolder} but this is not a valid {_osInfo.Name} path.  Review your download client settings.", "#bad-download-client-settings");
+                                RecordError($"Local calibre server for root folder {folder.Name} reports files in {libraryFolder} but this is not a valid {_osInfo.Name} path.  Review your download client settings.", "#bad-download-client-settings");
+                                continue;
                             }
                         }
 
@@ -81,15 +92,18 @@ namespace NzbDrone.Core.HealthCheck.Checks
                         {
                             if (_osInfo.IsDocker)
                             {
-                                return new HealthCheck(GetType(), HealthCheckResult.Error, $"You are using docker; calibre server for root folder {folder.Name} places downloads in {libraryFolder} but this directory does not appear to exist inside the container.  Review your remote path mappings and container volume settings.", "#docker-bad-remote-path-mapping");
+                                RecordError($"You are using docker; calibre server for root folder {folder.Name} places downloads in {libraryFolder} but this directory does not appear to exist inside the container.  Review your remote path mappings and container volume settings.", "#docker-bad-remote-path-mapping");
+                                continue;
                             }
                             else if (!calibreIsLocal)
                             {
-                                return new HealthCheck(GetType(), HealthCheckResult.Error, $"Remote calibre server for root folder {folder.Name} places downloads in {libraryFolder} but this directory does not appear to exist.  Likely missing or incorrect remote path mapping.", "#bad-remote-path-mapping");
+                                RecordError($"Remote calibre server for root folder {folder.Name} places downloads in {libraryFolder} but this directory does not appear to exist.  Likely missing or incorrect remote path mapping.", "#bad-remote-path-mapping");
+                                continue;
                             }
                             else
                             {
-                                return new HealthCheck(GetType(), HealthCheckResult.Error, $"Calibre server for root folder {folder.Name} places downloads in {libraryFolder} but Chaptarr cannot see this directory.  You may need to adjust the folder's permissions or add a remote path mapping if calibre is running in docker", "#permissions-error");
+                                RecordError($"Calibre server for root folder {folder.Name} places downloads in {libraryFolder} but Chaptarr cannot see this directory.  You may need to adjust the folder's permissions or add a remote path mapping if calibre is running in docker", "#permissions-error");
+                                continue;
                             }
                         }
 
@@ -97,35 +111,37 @@ namespace NzbDrone.Core.HealthCheck.Checks
                         {
                             if (_osInfo.IsDocker)
                             {
-                                return new HealthCheck(GetType(), HealthCheckResult.Error, $"You are using docker; calibre server for root folder {folder.Name} listed file {file} but this file does not appear to exist inside the container.  Review permissions for {libraryFolder} and PUID/PGID container settings", "#docker-bad-remote-path-mapping");
+                                RecordError($"You are using docker; calibre server for root folder {folder.Name} listed file {file} but this file does not appear to exist inside the container.  Review permissions for {libraryFolder} and PUID/PGID container settings", "#docker-bad-remote-path-mapping");
+                                continue;
                             }
                             else if (!calibreIsLocal)
                             {
-                                return new HealthCheck(GetType(), HealthCheckResult.Error, $"Remote calibre server for root folder {folder.Name} listed file {file} but this file does not appear to exist.  Review permissions for {libraryFolder}", "#permissions-error");
+                                RecordError($"Remote calibre server for root folder {folder.Name} listed file {file} but this file does not appear to exist.  Review permissions for {libraryFolder}", "#permissions-error");
+                                continue;
                             }
                             else
                             {
-                                return new HealthCheck(GetType(), HealthCheckResult.Error, $"Calibre server for root folder {folder.Name} listed file {file} but Chaptarr cannot see this file.  Review permissions for {libraryFolder}", "#permissions-error");
+                                RecordError($"Calibre server for root folder {folder.Name} listed file {file} but Chaptarr cannot see this file.  Review permissions for {libraryFolder}", "#permissions-error");
+                                continue;
                             }
                         }
 
                         if (!libraryFolder.PathEquals(folder.Path))
                         {
-                            return new HealthCheck(GetType(), HealthCheckResult.Error, $"Calibre for root folder {folder.Name} reports files in {libraryFolder} but this is not the same as the root folder path {folder.Path} you chose.  You may need to edit any remote path mapping or delete the root folder and re-create with the correct path", "#calibre-root-does-not-match");
+                            RecordError($"Calibre for root folder {folder.Name} reports files in {libraryFolder} but this is not the same as the root folder path {folder.Path} you chose.  You may need to edit any remote path mapping or delete the root folder and re-create with the correct path", "#calibre-root-does-not-match");
                         }
                     }
                 }
-                catch (DownloadClientException ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _logger.Debug(ex, "Unable to communicate with calibre server for root folder {0}", folder.Name);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Error(ex, "Unknown error occured in CalibreRootFolderCheck HealthCheck");
+                    _logger.Warn("Unable to check Calibre root folder {0}: {1}", folder.Name, ex is CalibreException ? ex.Message : CalibreLibraryGate.GetFailureReason(ex, libraryRequest: true));
+                    _logger.Debug(ex, "Calibre root-folder check failed for {0}", folder.Name);
+                    warning ??= new HealthCheck(GetType(), HealthCheckResult.Warning,
+                        $"Unable to check Calibre root folder {folder.Name}. Check the Calibre connection and settings.");
                 }
             }
 
-            return new HealthCheck(GetType());
+            return error ?? warning ?? new HealthCheck(GetType());
         }
     }
 }

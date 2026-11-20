@@ -58,7 +58,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             var importResults = new List<ImportResult>();
             var subject = new ImportApprovedBooks(
                 null, null, null, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null,
+                null, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  null, null, null, null, null,
                 LogManager.GetLogger("ImportApprovedBooksEbookAlternativeFixture"));
 
             var retained = subject.SelectSingleEbookAlternative(decisions, author, importResults);
@@ -171,7 +171,7 @@ namespace Chaptarr.Core.Test.MediaFiles
         {
             return new ImportApprovedBooks(
                 null, null, null, null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null,
+                null, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  null, null, null, null, null,
                 LogManager.GetLogger("ImportApprovedBooksEbookAlternativeFixture"));
         }
 

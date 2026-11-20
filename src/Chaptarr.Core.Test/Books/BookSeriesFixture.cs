@@ -9,6 +9,49 @@ namespace Chaptarr.Core.Test.Books
     [TestFixture]
     public class BookSeriesFixture
     {
+        [TestCase(null, "original", false, "2", true)]
+        [TestCase(1, "original", false, "2", true)]
+        [TestCase(99, "original", false, "2", false)]
+        [TestCase(null, "narrator_variant", false, "2", false)]
+        [TestCase(null, "original", true, "2", false)]
+        [TestCase(null, null, false, "2", false)]
+        [TestCase(null, "original", false, "3", false)]
+        public void audio_writer_requires_original_consistent_membership(int? header, string provenance, bool inherited, string duplicatePosition, bool expected)
+        {
+            var first = Link("Series", "gr:1", "2", BookMediaType.Audiobook);
+            var duplicate = Link("Series", "1", duplicatePosition, BookMediaType.Audiobook);
+            first.SeriesInstanceType = duplicate.SeriesInstanceType = provenance;
+            first.IsInheritedLink = duplicate.IsInheritedLink = inherited;
+            var book = new Book { MediaType = BookMediaType.Audiobook, SeriesId = header, SeriesLinks = new List<SeriesBookLink> { first, duplicate } };
+            Assert.That(BookSeries.SelectForAudioTags(book) != null, Is.EqualTo(expected));
+        }
+
+        [TestCase(null, null, false)]
+        [TestCase(null, "", false)]
+        [TestCase(null, "  ", false)]
+        [TestCase(null, "0", true)]
+        [TestCase(null, "1/2", true)]
+        [TestCase(1, null, true)]
+        public void sole_original_requires_a_position_unless_header_identifies_it(int? header, string position, bool expected)
+        {
+            var book = new Book { MediaType = BookMediaType.Audiobook, SeriesId = header,
+                SeriesLinks = new List<SeriesBookLink> { Link("Series", "gr:1", position, BookMediaType.Audiobook) } };
+            Assert.That(BookSeries.SelectForAudioTags(book) != null, Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void audio_writer_does_not_change_other_consumers_selection()
+        {
+            var first = Link("First series", "gr:1", "2", BookMediaType.Audiobook);
+            var other = Link("Other series", "gr:2", "3", BookMediaType.Audiobook);
+            var book = new Book { MediaType = BookMediaType.Audiobook, SeriesLinks = new List<SeriesBookLink> { first, other } };
+            Assert.That(BookSeries.SelectForAudioTags(book), Is.Null);
+            Assert.That(BookSeries.Select(book), Is.SameAs(first));
+            book.SeriesId = 2;
+            Assert.That(BookSeries.SelectForAudioTags(book), Is.SameAs(other));
+            Assert.That(BookSeries.Select(book), Is.SameAs(other));
+        }
+
         [TestCase(BookMediaType.Audiobook)]
         [TestCase(BookMediaType.Ebook)]
         public void api_should_display_all_paired_memberships_instead_of_the_scalar(BookMediaType mediaType)

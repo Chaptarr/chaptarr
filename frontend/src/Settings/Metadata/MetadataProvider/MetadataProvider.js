@@ -165,6 +165,17 @@ function MetadataProvider(props) {
                 />
               </FormGroup>
 
+              <FormGroup>
+                <FormLabel>{translate('EmbedCoverArt')}</FormLabel>
+                <FormInputGroup
+                  type={inputTypes.CHECK}
+                  name="embedCoverArt"
+                  helpText={translate('EmbedCoverArtHelp')}
+                  onChange={onInputChange}
+                  {...settings.embedCoverArt}
+                />
+              </FormGroup>
+
             </FieldSet>
           </Form>
       }

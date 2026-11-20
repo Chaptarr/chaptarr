@@ -57,7 +57,7 @@ namespace Chaptarr.Core.Test.Books
                 });
                 var exclusions = Proxy<IImportListExclusionService>((method, args) => new List<ImportListExclusion>());
                 var service = new AddBookService(h.AuthorService, library, h.BookService, null, info, exclusions,
-                    null, null, null, null, null, h.EditionService, null, null, null, LogManager.GetCurrentClassLogger(), h.Queue);
+                    null, null, null, null, null, h.EditionService, null, null, null, LogManager.GetCurrentClassLogger(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Queue);
                 var book = service.AddBook(requested).GetAwaiter().GetResult();
                 var saved = h.BookService.GetBook(book.Id);
                 Assert.That(saved.AuthorId, Is.EqualTo(h.Author.Id));
@@ -123,7 +123,7 @@ namespace Chaptarr.Core.Test.Books
                     new Book { HardcoverBookId = (string)args[0], MediaType = (BookMediaType)args[1], Author = h.Author }, new List<Author> { source, h.Author }); });
                 queries.Clear();
                 var attempt = System.Diagnostics.Stopwatch.StartNew();
-                var handler = new ProcessPendingImportsCommandHandler(h.Pending, library, books, info, h.Queue, h.EventAggregator, LogManager.GetCurrentClassLogger(), h.Aliases);
+                var handler = new ProcessPendingImportsCommandHandler(h.Pending, library, books, info, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Queue, h.EventAggregator, LogManager.GetCurrentClassLogger(), h.Aliases);
                 handler.Execute(new ProcessPendingImportsCommand());
                 Assert.That(h.Pending.GetByProviderId(h.Author.HardcoverAuthorId), Is.Not.Null);
                 Assert.That(imports, Is.EqualTo(new[] { source.HardcoverAuthorId }));
@@ -231,7 +231,7 @@ namespace Chaptarr.Core.Test.Books
                         .GetAwaiter().GetResult();
                     throw new BookNotFoundException((string)args[0]);
                 });
-                new ProcessPendingImportsCommandHandler(h.Pending, library, h.BookService, info, h.Queue, h.EventAggregator, LogManager.GetCurrentClassLogger(), h.Aliases)
+                new ProcessPendingImportsCommandHandler(h.Pending, library, h.BookService, info, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Queue, h.EventAggregator, LogManager.GetCurrentClassLogger(), h.Aliases)
                     .Execute(new ProcessPendingImportsCommand());
                 var saved = h.Requests.Get(pending.Id);
                 Assert.That(saved.Version, Is.GreaterThan(pending.Version));
@@ -265,7 +265,7 @@ namespace Chaptarr.Core.Test.Books
                 var library = Proxy<IAuthorLibraryService>((method, args) => Task.FromException<Author>(new AuthorNotFoundException((string)args[0])));
                 var info = Proxy<IProvideBookInfo>((method, args) => { calls++; return Tuple.Create(h.Author.HardcoverAuthorId,
                     new Book { HardcoverBookId = "hc:7000", MediaType = BookMediaType.Audiobook, Author = h.Author }, new List<Author> { h.Author }); });
-                new ProcessPendingImportsCommandHandler(pending, library, h.BookService, info, h.Queue, h.EventAggregator, LogManager.GetCurrentClassLogger(), h.Aliases)
+                new ProcessPendingImportsCommandHandler(pending, library, h.BookService, info, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Queue, h.EventAggregator, LogManager.GetCurrentClassLogger(), h.Aliases)
                     .Execute(new ProcessPendingImportsCommand());
                 Assert.That(h.Requests.Find(id).IsActive(), Is.True);
                 Assert.That(h.Requests.Find(id).ProviderId, Is.EqualTo("hc:2222"));

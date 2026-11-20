@@ -58,7 +58,7 @@ namespace Chaptarr.Core.Test.Books
                     { HardcoverBookId = (string)args[0], MediaType = (BookMediaType)args[1], Author = owner }, new List<Author> { owner });
                 });
                 var library = Proxy<IAuthorLibraryService>((_, args) => Task.FromException<Author>(new AuthorNotFoundException((string)args[0])));
-                new ProcessPendingImportsCommandHandler(pending, library, h.Library.BookService, info, h.Library.Queue,
+                new ProcessPendingImportsCommandHandler(pending, library, h.Library.BookService, info, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Library.Queue,
                     h.Library.EventAggregator, LogManager.GetCurrentClassLogger(), h.Library.Aliases).Execute(new ProcessPendingImportsCommand());
                 var source = h.Library.Requests.Get(h.Request.Id);
                 Assert.Multiple(() =>
@@ -129,7 +129,7 @@ namespace Chaptarr.Core.Test.Books
                     }
                     return method.Invoke(h.Library.Pending, args);
                 });
-                new ProcessPendingImportsCommandHandler(pending, library, h.Library.BookService, info, h.Library.Queue,
+                new ProcessPendingImportsCommandHandler(pending, library, h.Library.BookService, info, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Library.Queue,
                     h.Library.EventAggregator, LogManager.GetCurrentClassLogger(), h.Library.Aliases).Execute(new ProcessPendingImportsCommand());
                 var saved = h.Library.Requests.Get(h.Request.Id);
                 Assert.That(saved.IsActive(), Is.True);
@@ -180,7 +180,7 @@ namespace Chaptarr.Core.Test.Books
                 var info = Proxy<IProvideBookInfo>((_, args) => Tuple.Create(h.Library.Author.HardcoverAuthorId,
                     new Book { HardcoverBookId = (string)args[0], MediaType = media, Author = h.Library.Author }, new List<Author> { h.Library.Author }));
                 h.Sql.Clear();
-                new ProcessPendingImportsCommandHandler(h.Library.Pending, library, h.Library.BookService, info, h.Library.Queue,
+                new ProcessPendingImportsCommandHandler(h.Library.Pending, library, h.Library.BookService, info, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Library.Queue,
                     h.Library.EventAggregator, LogManager.GetCurrentClassLogger(), h.Library.Aliases).Execute(new ProcessPendingImportsCommand());
                 var updates = h.Sql.Count(sql => sql.Contains("UPDATE \"PendingAuthorImport\"", StringComparison.Ordinal));
                 TestContext.Progress.WriteLine($"Works-only handoff ({(postgres ? "PostgreSQL" : "SQLite")}): {count} {media} targets, {h.Sql.Count} native SQL commands, {updates} source CAS updates, {imports} source imports.");
@@ -218,7 +218,7 @@ namespace Chaptarr.Core.Test.Books
                     }
                     return method.Invoke(h.Queue, args);
                 });
-                new ProcessPendingImportsCommandHandler(h.Pending, library, h.BookService, null, queue,
+                new ProcessPendingImportsCommandHandler(h.Pending, library, h.BookService, null, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  queue,
                     h.EventAggregator, LogManager.GetCurrentClassLogger(), h.Aliases).Execute(new ProcessPendingImportsCommand());
                 Assert.That(h.Requests.Get(request.Id).IsActive(), Is.True);
                 h.BookService.SetMonitoredForMediaType(new List<int> { first.Id }, "audiobook", false);
@@ -244,7 +244,7 @@ namespace Chaptarr.Core.Test.Books
                 var library = Proxy<IAuthorLibraryService>((_, args) => Task.FromException<Author>(new AuthorNotFoundException((string)args[0])));
                 var info = Proxy<IProvideBookInfo>((_, args) => Tuple.Create(h.Library.Author.HardcoverAuthorId,
                     new Book { HardcoverBookId = (string)args[0], MediaType = BookMediaType.Audiobook, Author = h.Library.Author }, new List<Author> { h.Library.Author }));
-                new ProcessPendingImportsCommandHandler(pending, library, h.Library.BookService, info, h.Library.Queue,
+                new ProcessPendingImportsCommandHandler(pending, library, h.Library.BookService, info, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Library.Queue,
                     h.Library.EventAggregator, LogManager.GetCurrentClassLogger(), h.Library.Aliases).Execute(new ProcessPendingImportsCommand());
                 var source = h.Library.Requests.Get(h.Request.Id);
                 Assert.That(source.IsActive(), Is.False);
@@ -314,7 +314,7 @@ namespace Chaptarr.Core.Test.Books
                 var exclusions = Proxy<IImportListExclusionService>((method, _) => method.Name == nameof(IImportListExclusionService.FindByForeignId)
                     ? new List<ImportListExclusion>() : throw new AssertionException(method.Name));
                 var add = new AddBookService(null, initialLibrary, initialBooks, null, initialInfo, exclusions,
-                    null, null, null, null, null, null, null, null, null, LogManager.GetCurrentClassLogger(), null);
+                    null, null, null, null, null, null, null, null, null, LogManager.GetCurrentClassLogger(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  null);
                 var request = new Book { Title = "Requested Work", HardcoverBookId = "hc:7000", MediaType = media,
                     Author = h.Source, AddOptions = new AddBookOptions { SearchForNewBook = true } };
                 var queued = Assert.ThrowsAsync<PendingBookRequestException>(() => add.AddBook(request));
@@ -457,7 +457,7 @@ namespace Chaptarr.Core.Test.Books
                 var h = new Harness(database);
                 var request = h.Request(new());
                 var library = Proxy<IAuthorLibraryService>((_, _) => Task.FromException<Author>(new InvalidProviderIdException(request.ProviderId, "Declared invalid original author")));
-                new ProcessPendingImportsCommandHandler(h.Pending, library, h.BookService, null, h.Queue,
+                new ProcessPendingImportsCommandHandler(h.Pending, library, h.BookService, null, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  h.Queue,
                     h.EventAggregator, LogManager.GetCurrentClassLogger(), h.Aliases).Execute(new ProcessPendingImportsCommand());
                 Assert.That(h.Requests.Get(request.Id).OverallStatus, Is.EqualTo(PendingImportStatus.Failed));
                 Assert.That(h.Requests.Get(request.Id).AttemptCount, Is.Zero);

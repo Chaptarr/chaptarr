@@ -17,6 +17,7 @@ using NLog;
 using NLog.Config;
 using NLog.Targets;
 using Npgsql;
+using Chaptarr.Core.Test.Common;
 using NUnit.Framework;
 using NzbDrone.Core.Books.Extensions;
 using NzbDrone.Core.Datastore;
@@ -187,10 +188,8 @@ namespace Chaptarr.Core.Test.Datastore
         [Test]
         public void migration_sources_should_use_the_registered_postgres_processor_guard()
         {
-            var root = new DirectoryInfo(TestContext.CurrentContext.TestDirectory);
-            while (root != null && !Directory.Exists(Path.Combine(root.FullName, "src", "NzbDrone.Core", "Datastore", "Migration"))) root = root.Parent;
-            Assert.That(root, Is.Not.Null, "Run this source contract test beneath a physical repository copy.");
-            var wrongGuards = Directory.EnumerateFiles(Path.Combine(root.FullName, "src", "NzbDrone.Core", "Datastore", "Migration"), "*.cs")
+            var root = RepositorySource.FindRoot();
+            var wrongGuards = Directory.EnumerateFiles(Path.Combine(root, "src", "NzbDrone.Core", "Datastore", "Migration"), "*.cs")
                 .Where(path => HasWrongPostgresGuard(File.ReadAllText(path)))
                 .Select(Path.GetFileName).ToArray();
             Assert.That(wrongGuards, Is.Empty);

@@ -23,6 +23,12 @@ namespace NzbDrone.Common.Instrumentation.Extensions
         }
 
         [MessageTemplateFormatMethod("message")]
+        public static void ProgressWarn(this Logger logger, string message, params object[] args)
+        {
+            LogProgressMessage(logger, LogLevel.Warn, message, args);
+        }
+
+        [MessageTemplateFormatMethod("message")]
         public static void ProgressError(this Logger logger, string message, params object[] args)
         {
             LogProgressMessage(logger, LogLevel.Error, message, args);

@@ -11,7 +11,7 @@ namespace Chaptarr.Core.Test.Http
     public class CacheHeaderMiddlewareFixture
     {
         // Exercise the resource policy without depending on the test runner's build mode.
-        private sealed class ResourceCacheSpecification : ICacheableSpecification
+        internal sealed class ResourceCacheSpecification : ICacheableSpecification
         {
             private static readonly MethodInfo ResourcePolicy = typeof(CacheableSpecification).GetMethod(
                 "IsCacheableResource", BindingFlags.NonPublic | BindingFlags.Static);

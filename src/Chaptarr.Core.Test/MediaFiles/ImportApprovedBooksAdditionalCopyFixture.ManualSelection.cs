@@ -301,10 +301,16 @@ namespace Chaptarr.Core.Test.MediaFiles
                         File.WriteAllText(Path.ChangeExtension(source, ".epub" == extension ? ".m4b" : ".epub"), "other media");
                     }
 
+                    var coverCommands = new List<NzbDrone.Core.MediaCover.Commands.DownloadBookMediaCommand>();
+                    var coverQueue = InterfaceProxy.Proxy<IManageCommandQueue>((method, args) =>
+                    {
+                        if (args[0] is NzbDrone.Core.MediaCover.Commands.DownloadBookMediaCommand cover) coverCommands.Add(cover);
+                        return null;
+                    });
                     var mover = new StubMoveBookFiles { DestinationPath = destination, TransferFilesOnDisk = true };
                     var importer = new ImportApprovedBooks(media, new StubMetadataTagService(), new StubMediaInfoExtractor(),
                         Proxy<IAuthorService>(), bookService, editionService, new StubRecycleBinProvider(), extras, mover,
-                        history, Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, Proxy<IManageCommandQueue>(),
+                        history, Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  coverQueue,
                         new SeriesBookLinkService(new SeriesBookLinkRepository(database, events)), Proxy<ISeriesService>(), Proxy<NzbDrone.Core.Profiles.Qualities.IQualityProfileService>(), Proxy<IM4bConversionService>(), logger);
                     var tracked = scenario == "queue-combine" || selectionFailure || alternative ? new TrackedDownload
                     {
@@ -383,6 +389,12 @@ namespace Chaptarr.Core.Test.MediaFiles
                     else
                     {
                         subject.Execute(command);
+                        if (scenario == "combine")
+                        {
+                            var covers = coverCommands;
+                            Assert.That(covers, Has.Count.EqualTo(1));
+                            Assert.That(covers[0].BookIds, Is.EqualTo(new[] { book.Id }), "Successful manual import notifies once after saving the selection");
+                        }
                         Assert.That(books.All(), Has.Count.EqualTo(1), "Explicit selection cannot create a duplicate book");
                         Assert.That(books.Get(book.Id).AnyEditionOk, Is.EqualTo(alternative || scenario == "combine-unpinned"));
                         Assert.That(editions.Get(selected.Id).Monitored, Is.EqualTo(!alternative));
@@ -452,7 +464,19 @@ namespace Chaptarr.Core.Test.MediaFiles
                         var moves = mover.MoveCalls;
                         var historyCount = history.FindByDownloadId(tracked.DownloadItem.DownloadId).Count;
                         var importedEvents = published.OfType<BookImportedEvent>().Count();
+                        coverCommands.Clear();
                         subject.Execute(command);
+                        if (scenario == "edition-save-failure")
+                        {
+                            Assert.That(coverCommands, Has.Count.EqualTo(1));
+                            book.Editions = editions.FindByBook(new[] { book.Id });
+                            oldEdition.Images = new() { new(NzbDrone.Core.MediaCover.MediaCoverTypes.Cover, "https://images.example/old.png") };
+                            foreach (var edition in book.Editions)
+                                edition.Images = new() { new(NzbDrone.Core.MediaCover.MediaCoverTypes.Cover, "https://images.example/new.png") };
+                            Chaptarr.Core.Test.MediaCover.AudioTagCoverLookupFixture.AssertSelectionCommandReachesDeferredWriter(coverCommands[0], book, oldEdition, expectReplaced: true);
+                        }
+                        else
+                            Assert.That(coverCommands, Is.Empty, "The edition was already selected before the book settings failed; retry must not queue an unchanged selection");
                         Assert.Multiple(() =>
                         {
                             Assert.That(editions.Get(selected.Id).Monitored, Is.True, "Retry must finish the requested edition selection");

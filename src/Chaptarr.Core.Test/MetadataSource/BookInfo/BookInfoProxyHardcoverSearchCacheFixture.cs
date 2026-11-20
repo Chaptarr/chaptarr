@@ -7,6 +7,7 @@ using NzbDrone.Common.Cache;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Exceptions;
+using NzbDrone.Core.Http;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.MetadataSource.BookInfo;
 using NzbDrone.Core.MetadataSource.Hardcover;
@@ -58,7 +59,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             var logger = LogManager.GetCurrentClassLogger();
             var healthGate = new MetadataServerHealthGate(
                 configService,
-                new MetadataServerHealthService(logger),
+                new HttpServiceHealth(logger),
                 logger);
 
             var proxy = new BookInfoProxy(

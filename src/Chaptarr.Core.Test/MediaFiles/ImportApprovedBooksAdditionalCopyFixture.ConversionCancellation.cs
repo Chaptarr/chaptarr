@@ -133,7 +133,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     MediaFiles, new StubMetadataTagService(), new StubMediaInfoExtractor(),
                     Proxy<IAuthorService>(), CreateBookService(new List<Book> { _book }).Service, CreateEditionService(new List<Edition> { _edition }),
                     new StubRecycleBinProvider(), Proxy<IExtraService>(), Mover, Proxy<IHistoryService>(),
-                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events,
+                    Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),
                     Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(),
                     Proxy<IQualityProfileService>(), Converter, LogManager.GetCurrentClassLogger(), Tracking,
                     conversionJobService: Jobs, customFormatCalculationService: enforceCustomFormats ? RecordingFormats() : null);

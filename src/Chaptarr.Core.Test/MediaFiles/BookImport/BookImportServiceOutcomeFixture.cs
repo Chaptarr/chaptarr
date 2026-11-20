@@ -27,6 +27,8 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
     {
         private sealed class StubMediaFileService : IMediaFileService
         {
+            public System.Collections.Generic.List<NzbDrone.Core.MediaFiles.BookFile> GetExisting(System.Collections.Generic.IEnumerable<int> ids) => throw new System.NotImplementedException();
+
             public void ValidateReplacementFiles(System.Collections.Generic.List<BookFile> replacedFiles,
                 System.Collections.Generic.IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> confirmedFiles)
                 => throw new System.NotSupportedException("This test adapter does not support replacement validation.");
@@ -267,6 +269,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
         private sealed class Context
         {
             public BookImportService Sut { get; init; }
+            public List<NzbDrone.Core.MediaCover.Commands.DownloadBookMediaCommand> CoverCommands { get; init; }
             public StubMediaFileService MediaFiles { get; init; }
             public DiskProviderProxy Disk { get; init; }
             public EditionServiceProxy Editions { get; init; }
@@ -329,6 +332,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             var mediaInfo = new StubMediaInfoExtractor();
             var cacheManager = new CacheManager();
 
+            var coverCommands = new List<NzbDrone.Core.MediaCover.Commands.DownloadBookMediaCommand>();
+            var coverQueue = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Core.Messaging.Commands.IManageCommandQueue>((_, args) =>
+            {
+                coverCommands.Add((NzbDrone.Core.MediaCover.Commands.DownloadBookMediaCommand)args[0]);
+                return new NzbDrone.Core.Messaging.Commands.CommandModel();
+            });
             var sut = new BookImportService(
                 bookService,
                 editionService,
@@ -338,12 +347,13 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 mediaInfo,
                 events,
                 Proxy<IConfigService>(),
-                Proxy<IAuthorService>(),
+                Proxy<IAuthorService>(), new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null), coverQueue,
                 LogManager.GetLogger("BookImportServiceOutcomeFixture"));
 
             return new Context
             {
                 Sut = sut,
+                CoverCommands = coverCommands,
                 MediaFiles = mediaFiles,
                 Disk = diskProxy,
                 Editions = editionProxy,
@@ -353,6 +363,30 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 MediaInfo = mediaInfo,
                 CacheManager = cacheManager
             };
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public async System.Threading.Tasks.Task scan_selection_reaches_cover_writer_before_import_finishes(bool batch)
+        {
+            var context = CreateContext();
+            var old = new Edition { Id = 19, BookId = context.Book.Id, Monitored = true, ForeignEditionId = "hc:edition:300",
+                Images = new() { new(NzbDrone.Core.MediaCover.MediaCoverTypes.Cover, "https://images.example/old.png") } };
+            context.Book.AnyEditionOk = true;
+            context.TargetEdition.Monitored = false;
+            context.TargetEdition.ForeignEditionId = "hc:edition:301";
+            context.TargetEdition.Images = new() { new(NzbDrone.Core.MediaCover.MediaCoverTypes.Cover, "https://images.example/new.png") };
+            context.Editions.Editions.Add(old);
+            context.Book.Editions = context.Editions.Editions;
+            var path = @"C:\library\book\new.epub".AsOsAgnostic();
+            context.Disk.Files[path] = (100, DateTime.UtcNow);
+            var result = batch
+                ? (await context.Sut.ImportFilesAsync(new List<(string, int?, Dictionary<string, List<string>>, int?)> { (path, context.TargetEdition.Id, new(), null) }, context.Book.Id)).Single()
+                : await context.Sut.ImportExistingFileAsync(path, context.Book.Id, context.TargetEdition.Id, null, new());
+            Assert.That(result.Outcome, Is.EqualTo(ImportOutcome.Imported), result.ReasonCode);
+            Assert.That(context.TargetEdition.Monitored, Is.True);
+            Assert.That(context.CoverCommands, Has.Count.EqualTo(1));
+            Chaptarr.Core.Test.MediaCover.AudioTagCoverLookupFixture.AssertSelectionCommandReachesDeferredWriter(context.CoverCommands[0], context.Book, old, expectReplaced: true);
         }
 
         [Test]

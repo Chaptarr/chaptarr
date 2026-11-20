@@ -837,6 +837,7 @@ namespace NzbDrone.Core.Configuration.SettingsBackups
                     AutoUnmonitorPreviouslyDownloadedBooks = _configService.AutoUnmonitorPreviouslyDownloadedBooks,
                     WriteAudioTags = _configService.WriteAudioTags,
                     ScrubAudioTags = _configService.ScrubAudioTags,
+                    EmbedCoverArt = _configService.EmbedCoverArt,
                     WriteBookTags = _configService.WriteBookTags,
                     UpdateCovers = _configService.UpdateCovers,
                     EmbedMetadata = _configService.EmbedMetadata,

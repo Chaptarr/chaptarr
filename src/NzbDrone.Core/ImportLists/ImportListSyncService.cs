@@ -21,6 +21,7 @@ using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.MetadataSource;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.RootFolders;
+using NzbDrone.Core.MediaCover;
 
 namespace NzbDrone.Core.ImportLists
 {
@@ -42,6 +43,7 @@ namespace NzbDrone.Core.ImportLists
         private readonly IRootFolderSettingsResolver _rootFolderSettingsResolver;
         private readonly IEventAggregator _eventAggregator;
         private readonly IManageCommandQueue _commandQueueManager;
+        private readonly IDeferredCoverService _deferredCoverService;
         private readonly Logger _logger;
 
         public ImportListSyncService(IImportListFactory importListFactory,
@@ -55,6 +57,7 @@ namespace NzbDrone.Core.ImportLists
                                      IRootFolderService rootFolderService,
                                      IRootFolderSettingsResolver rootFolderSettingsResolver,
                                      IEventAggregator eventAggregator,
+                                     IDeferredCoverService deferredCoverService,
                                      IManageCommandQueue commandQueueManager,
                                      Logger logger,
                                      IImportListBookIdentityCacheRepository bookIdentityCacheRepository)
@@ -72,6 +75,7 @@ namespace NzbDrone.Core.ImportLists
             _rootFolderSettingsResolver = rootFolderSettingsResolver;
             _eventAggregator = eventAggregator;
             _commandQueueManager = commandQueueManager;
+            _deferredCoverService = deferredCoverService;
             _logger = logger;
         }
 
@@ -1470,6 +1474,11 @@ namespace NzbDrone.Core.ImportLists
                 }
             }
 
+            if (changedEditionBookIds.Any())
+            {
+                DownloadBookMediaCommand.NotifyBookSelectionsChanged(changedEditionBookIds, _commandQueueManager, _deferredCoverService, _logger);
+            }
+
             var booksProcessed = 0;
             var totalBooksToProcess = booksToMonitor.Count;
             void ApplyListedBooks(ImportListDefinition list, Author author, IEnumerable<Book> candidates, ImportListItemInfo report)
@@ -1651,11 +1660,6 @@ namespace NzbDrone.Core.ImportLists
                     _bookService.SetAddOptions(searchBooks);
                     _logger.Info("Import list sync: queued {0} books in one automatic search batch", searchBooks.Count);
                 }
-            }
-
-            if (changedEditionBookIds.Any())
-            {
-                _commandQueueManager.Push(new DownloadBookMediaCommand { BookIds = changedEditionBookIds.ToList() });
             }
 
             foreach (var listItems in items.GroupBy(item => item.ImportListId))

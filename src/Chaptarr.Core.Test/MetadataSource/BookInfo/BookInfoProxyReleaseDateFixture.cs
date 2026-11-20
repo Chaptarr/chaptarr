@@ -46,7 +46,7 @@ namespace Chaptarr.Core.Test.MetadataSource.BookInfo
             var logger = LogManager.GetCurrentClassLogger();
             return new BookInfoProxy(http, cached, null, null, null, null, null, null, config,
                 new MetadataRequestBuilder(config), logger, new CacheManager(),
-                new MetadataServerHealthGate(config, new MetadataServerHealthService(logger), logger));
+                new MetadataServerHealthGate(config, new HttpServiceHealth(logger), logger));
         }
 
         [TestCase(300, true, false)]

@@ -195,7 +195,6 @@ namespace Chaptarr.Core.Test.MediaFiles
                 DispatchProxy.Create<IMediaFileAttributeService, ThrowingProxy<IMediaFileAttributeService>>(),
                 DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                 DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
-                DispatchProxy.Create<IFileMutationSafetyService, ThrowingProxy<IFileMutationSafetyService>>(),
                 LogManager.GetCurrentClassLogger());
         }
 
@@ -497,7 +496,6 @@ namespace Chaptarr.Core.Test.MediaFiles
                 DispatchProxy.Create<IMediaFileAttributeService, ThrowingProxy<IMediaFileAttributeService>>(),
                 DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                 DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
-                DispatchProxy.Create<IFileMutationSafetyService, ThrowingProxy<IFileMutationSafetyService>>(),
                 LogManager.GetCurrentClassLogger());
 
             var author = new Author
@@ -544,7 +542,6 @@ namespace Chaptarr.Core.Test.MediaFiles
                 DispatchProxy.Create<IMediaFileAttributeService, ThrowingProxy<IMediaFileAttributeService>>(),
                 DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                 DispatchProxy.Create<IConfigService, ThrowingProxy<IConfigService>>(),
-                DispatchProxy.Create<IFileMutationSafetyService, ThrowingProxy<IFileMutationSafetyService>>(),
                 LogManager.GetCurrentClassLogger());
 
             var author = new Author

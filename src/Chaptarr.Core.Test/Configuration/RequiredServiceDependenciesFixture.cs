@@ -82,6 +82,24 @@ namespace Chaptarr.Core.Test.Configuration
             Assert.That(queue, Is.SameAs(container.Resolve<IQueueService>()));
         }
 
+        [Test]
+        public void cover_download_and_retry_queue_resolve_the_same_health_service()
+        {
+            using var container = new Container(rules => rules.WithNzbDroneRules());
+            container.AutoAddServices(Bootstrap.ASSEMBLIES);
+            var type = typeof(NzbDrone.Core.MediaCover.MediaCoverService);
+            foreach (var dependency in type.GetConstructors().Single().GetParameters().Select(p => p.ParameterType)
+                .Where(t => t.IsInterface && t != typeof(NzbDrone.Core.Http.IHttpServiceHealth) && t != typeof(NzbDrone.Core.MediaCover.IDeferredCoverService)))
+                container.RegisterInstance(dependency, DispatchProxy.Create(dependency, typeof(UnusedDependency)), ifAlreadyRegistered: IfAlreadyRegistered.Replace);
+            container.RegisterInstance(Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Common.EnvironmentInfo.IAppFolderInfo>((_, _) => System.IO.Path.GetTempPath()), ifAlreadyRegistered: IfAlreadyRegistered.Replace);
+            container.RegisterInstance(NLog.LogManager.GetCurrentClassLogger(), ifAlreadyRegistered: IfAlreadyRegistered.Replace);
+            var cover = container.Resolve<NzbDrone.Core.MediaCover.IMapCoversToLocal>();
+            var queue = container.Resolve<NzbDrone.Core.MediaCover.IDeferredCoverService>();
+            var health = container.Resolve<NzbDrone.Core.Http.IHttpServiceHealth>();
+            Assert.That(type.GetField("_imageHostHealth", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(cover), Is.SameAs(health));
+            Assert.That(queue.GetType().GetField("_imageHostHealth", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(queue), Is.SameAs(health));
+        }
+
         public class UnusedDependency : DispatchProxy
         {
             protected override object Invoke(MethodInfo method, object[] args) => throw new AssertionException("Construction must not access external dependencies: " + method.Name);

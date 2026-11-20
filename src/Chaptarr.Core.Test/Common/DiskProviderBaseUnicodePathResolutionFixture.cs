@@ -48,6 +48,82 @@ namespace Chaptarr.Core.Test.Common
             }
         }
 
+        [TestCase(false)]
+        [TestCase(true)]
+        public void generated_file_stays_complete_until_replacement_and_survives_failed_write(bool fail)
+        {
+            var path = Path.Combine(_tempDir, "画像.png");
+            var oldBytes = new byte[] { 1, 2, 3, 4 };
+            var newBytes = new byte[] { 5, 6, 7, 8 };
+            File.WriteAllBytes(path, oldBytes);
+            // Windows refuses to replace a file that another handle has open.
+            using var reader = OperatingSystem.IsWindows() ? null : File.OpenRead(path);
+            byte[] duringWrite = null;
+            TestDelegate write = () => _diskProvider.WriteFileAtomically(path, temporaryPath =>
+            {
+                Assert.That(Path.GetDirectoryName(temporaryPath), Is.EqualTo(_tempDir));
+                Assert.That(Path.GetExtension(temporaryPath), Is.EqualTo(".png"));
+                using var stream = _diskProvider.OpenWriteStream(temporaryPath);
+                stream.Write(newBytes, 0, 2);
+                stream.Flush();
+                duringWrite = File.ReadAllBytes(path);
+                if (fail)
+                {
+                    throw new IOException("Interrupted image write");
+                }
+
+                stream.Write(newBytes, 2, 2);
+            });
+
+            if (fail)
+            {
+                Assert.That(write, Throws.TypeOf<IOException>().With.Message.EqualTo("Interrupted image write"));
+            }
+            else
+            {
+                Assert.DoesNotThrow(write);
+            }
+
+            Assert.That(duringWrite, Is.EqualTo(oldBytes), "Readers must never see an incomplete replacement");
+            Assert.That(File.ReadAllBytes(path), Is.EqualTo(fail ? oldBytes : newBytes));
+            if (reader != null)
+            {
+                using var readBytes = new MemoryStream();
+                reader.CopyTo(readBytes);
+                Assert.That(readBytes.ToArray(), Is.EqualTo(oldBytes), "An already-open reader keeps the complete old file");
+            }
+            Assert.That(Directory.GetFiles(_tempDir), Is.EquivalentTo(new[] { path }));
+        }
+
+        [Test]
+        public void refused_atomic_move_keeps_old_file_and_cleans_temporary_output()
+        {
+            var path = Path.Combine(_tempDir, "poster.png");
+            File.WriteAllText(path, "old image");
+            var real = new FileSystem();
+            var moves = 0;
+            var file = InterfaceProxy.Proxy<IFile>((method, args) =>
+            {
+                if (method.Name == nameof(IFile.Move))
+                {
+                    moves++;
+                    Assert.That(args[1], Is.EqualTo(path));
+                    Assert.That(args[2], Is.EqualTo(true));
+                    throw new IOException("Replacement refused");
+                }
+
+                return method.Invoke(real.File, args);
+            });
+            var fileSystem = InterfaceProxy.Proxy<IFileSystem>((_, _) => file);
+            var disk = new TestDiskProvider(fileSystem);
+
+            Assert.That(() => disk.WriteFileAtomically(path, temporaryPath => File.WriteAllText(temporaryPath, "new image")),
+                Throws.TypeOf<IOException>().With.Message.EqualTo("Replacement refused"));
+            Assert.That(moves, Is.EqualTo(1));
+            Assert.That(File.ReadAllText(path), Is.EqualTo("old image"));
+            Assert.That(Directory.GetFiles(_tempDir), Is.EquivalentTo(new[] { path }));
+        }
+
         [Test]
         public void should_resolve_replacement_character_in_file_name()
         {

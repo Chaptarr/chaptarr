@@ -18,13 +18,14 @@ using NzbDrone.Core.Books.Calibre;
 using NzbDrone.Core.Books.Commands;
 using NzbDrone.Core.IndexerSearch;
 using NzbDrone.Core.Messaging.Commands;
+using NzbDrone.Core.MediaCover;
+using NzbDrone.Core.MediaCover.Commands;
 
 namespace NzbDrone.Core.Books
 {
     public interface IAddBookService
     {
         Task<Book> AddBook(Book book, bool doRefresh = true);
-        Task<List<Book>> AddBooks(List<Book> books, bool doRefresh = true);
     }
 
     public class AddBookService : IAddBookService
@@ -46,6 +47,7 @@ namespace NzbDrone.Core.Books
         private readonly IEditionSelector _editionSelector;
         private readonly IEditionMetadataProfileFilter _editionMetadataProfileFilter;
         private readonly IManageCommandQueue _commandQueueManager;
+        private readonly IDeferredCoverService _deferredCoverService;
 
         public AddBookService(IAuthorService authorService,
                                IAuthorLibraryService authorLibraryService,
@@ -63,6 +65,7 @@ namespace NzbDrone.Core.Books
                                IEditionMetadataProfileFilter editionMetadataProfileFilter,
                                IMetadataProfileService metadataProfileService,
                                Logger logger,
+                               IDeferredCoverService deferredCoverService,
                                IManageCommandQueue commandQueueManager)
         {
             _authorService = authorService;
@@ -80,11 +83,25 @@ namespace NzbDrone.Core.Books
             _editionSelector = editionSelector;
             _editionMetadataProfileFilter = editionMetadataProfileFilter;
             _commandQueueManager = commandQueueManager;
+            _deferredCoverService = deferredCoverService;
             _metadataProfileService = metadataProfileService;
             _logger = logger;
         }
 
         public async Task<Book> AddBook(Book book, bool doRefresh = true)
+        {
+            var changedBookIds = new List<int>();
+            try
+            {
+                return await AddBook(book, doRefresh, changedBookIds);
+            }
+            finally
+            {
+                DownloadBookMediaCommand.NotifyBookSelectionsChanged(changedBookIds, _commandQueueManager, _deferredCoverService, _logger);
+            }
+        }
+
+        private async Task<Book> AddBook(Book book, bool doRefresh, ICollection<int> changedBookIds)
         {
             _logger.Debug("Adding book {0} with provider IDs - HC: {1}, GR-work: {2}, edition: {3}",
                 book.Title,
@@ -132,12 +149,12 @@ namespace NzbDrone.Core.Books
 
             if (dbBook == null)
             {
-                return await RequestBookThroughAuthorCatalog(book);
+                return await RequestBookThroughAuthorCatalog(book, changedBookIds);
             }
 
             if (GetRequestedNarration(book) != null)
             {
-                return CompleteRequestedNarration(book, dbBook) ?? await RequestBookThroughAuthorCatalog(book);
+                return CompleteRequestedNarration(book, dbBook, changedBookIds) ?? await RequestBookThroughAuthorCatalog(book, changedBookIds);
             }
 
             if (GetInitialBookPolicy(book).HasValue || book.Author?.AddOptions?.Monitor == MonitorTypes.None || book.AddOptions?.MonitorBook == false)
@@ -146,7 +163,7 @@ namespace NzbDrone.Core.Books
                 var configured = existing?.HasConfiguredMediaSettings(book.MediaType) == true;
                 if (!configured)
                 {
-                    return await RequestBookThroughAuthorCatalog(book);
+                    return await RequestBookThroughAuthorCatalog(book, changedBookIds);
                 }
 
                 return CompleteScopedBookRequest(dbBook, book.AddOptions?.SearchForNewBook == true,
@@ -200,7 +217,7 @@ namespace NzbDrone.Core.Books
 
             if (dbAuthor == null)
             {
-                return await RequestBookThroughAuthorCatalog(book);
+                return await RequestBookThroughAuthorCatalog(book, changedBookIds);
             }
 
                 // CRITICAL: Capture monitoring intent BEFORE replacing Author object
@@ -424,7 +441,7 @@ namespace NzbDrone.Core.Books
             return book;
         }
 
-        private async Task<Book> RequestBookThroughAuthorCatalog(Book requestedBook)
+        private async Task<Book> RequestBookThroughAuthorCatalog(Book requestedBook, ICollection<int> changedBookIds)
         {
             var workProviderId = ResolveRequestedWorkProviderId(requestedBook, out var metadata);
             if (string.IsNullOrWhiteSpace(workProviderId))
@@ -506,7 +523,7 @@ namespace NzbDrone.Core.Books
 
             if (GetRequestedNarration(requestedBook) != null)
             {
-                return CompleteRequestedNarration(requestedBook, localBook)
+                return CompleteRequestedNarration(requestedBook, localBook, changedBookIds)
                     ?? throw new ValidationException(new[] { new ValidationFailure("Edition", "The requested narration is missing from the authoritative audiobook catalog.") });
             }
 
@@ -617,7 +634,7 @@ namespace NzbDrone.Core.Books
             ? book.Editions?.SingleOrDefault(edition => edition.Monitored && edition.ManualAdd && BookEditionIdentity.IsNarratedAudiobookEdition(edition))
             : null;
 
-        private Book CompleteRequestedNarration(Book request, Book source)
+        private Book CompleteRequestedNarration(Book request, Book source, ICollection<int> changedBookIds)
         {
             var requested = GetRequestedNarration(request);
             var editionProviderId = BookEditionIdentity.GetTrustedForeignEditionId(requested);
@@ -649,6 +666,7 @@ namespace NzbDrone.Core.Books
             }
 
             var target = _bookService.AddWantedEditions(new List<Edition> { matches[0] })[matches[0].Id];
+            changedBookIds.Add(target.Id);
             return CompleteScopedBookRequest(target, request.AddOptions?.SearchForNewBook == true,
                 request.AddOptions?.MonitorBook ?? true);
         }
@@ -1140,33 +1158,6 @@ namespace NzbDrone.Core.Books
                 !e.ReadingFormatId.HasValue);
         }
 
-        public async Task<List<Book>> AddBooks(List<Book> books, bool doRefresh = true)
-        {
-            var added = DateTime.UtcNow;
-            var addedBooks = new List<Book>();
-
-            foreach (var a in books)
-            {
-                a.Added = added;
-                try
-                {
-                    addedBooks.Add(await AddBook(a, doRefresh));
-                }
-                catch (Exception ex)
-                {
-                    // Could be a bad id from an import list
-                    var bookIdentifier = a.HardcoverBookId ??
-                                         a.GoodreadsWorkId ??
-                                         BookEditionIdentity.GetCanonicalEditionProviderIds(a, _logger, "AddBookService.AddBooks").FirstOrDefault() ??
-                                         a.OpenLibraryWorkId ??
-                                         a.Id.ToString() ??
-                                         "Unknown";
-                    _logger.Error(ex, "Failed to import id: {0} - {1}", bookIdentifier, a.Title);
-                }
-            }
-
-            return addedBooks;
-        }
             private string GetBookProviderId(Book book)
             {
                 return BookEditionIdentity.GetCanonicalWorkProviderIds(book).FirstOrDefault()

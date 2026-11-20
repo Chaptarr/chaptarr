@@ -513,6 +513,7 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
             public List<IDirectoryInfo> GetDirectoryInfos(string path) => throw new NotImplementedException();
             public List<IFileInfo> GetFileInfos(string path, bool recursive = false) => throw new NotImplementedException();
             public void RemoveEmptySubfolders(string path) => throw new NotImplementedException();
+            public void WriteFileAtomically(string path, Action<string> write) => throw new NotSupportedException();
             public void SaveStream(Stream stream, string path) => throw new NotImplementedException();
             public bool IsValidFolderPermissionMask(string mask) => throw new NotImplementedException();
         }

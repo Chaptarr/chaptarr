@@ -20,6 +20,7 @@ using NzbDrone.Core.MediaFiles.Events;
 using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.MetadataSource;
+using NzbDrone.Core.MediaCover;
 
 namespace NzbDrone.Core.Books.Commands
 {
@@ -30,6 +31,7 @@ namespace NzbDrone.Core.Books.Commands
         private readonly IBookService _bookService;
         private readonly IProvideBookInfo _bookInfo;
         private readonly IManageCommandQueue _commandQueueManager;
+        private readonly IDeferredCoverService _deferredCoverService;
         private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
         private readonly IProviderAliasService _providerAliases;
@@ -39,6 +41,7 @@ namespace NzbDrone.Core.Books.Commands
             IAuthorLibraryService authorLibraryService,
             IBookService bookService,
             IProvideBookInfo bookInfo,
+            IDeferredCoverService deferredCoverService,
             IManageCommandQueue commandQueueManager,
             IEventAggregator eventAggregator,
             Logger logger,
@@ -49,6 +52,7 @@ namespace NzbDrone.Core.Books.Commands
             _bookService = bookService;
             _bookInfo = bookInfo;
             _commandQueueManager = commandQueueManager;
+            _deferredCoverService = deferredCoverService;
             _eventAggregator = eventAggregator;
             _logger = logger;
             _providerAliases = providerAliases;
@@ -1079,6 +1083,10 @@ namespace NzbDrone.Core.Books.Commands
             });
             var changedCovers = selected.Values.Where(book => previousSelections.GetValueOrDefault(book.Id) != BookEditionIdentity.GetMonitoredEdition(book)?.Id)
                 .Select(book => book.Id).Distinct().ToList();
+            if (changedCovers.Count > 0)
+            {
+                DownloadBookMediaCommand.NotifyBookSelectionsChanged(changedCovers, _commandQueueManager, _deferredCoverService, _logger);
+            }
             foreach (var target in targets)
             {
                 if (!selected.TryGetValue(target.Edition.Id, out var book))
@@ -1102,11 +1110,6 @@ namespace NzbDrone.Core.Books.Commands
                 book.AddOptions.SearchForNewBook = true;
             }
             if (held.Count > 0) _bookService.SetAddOptions(held);
-            if (changedCovers.Count > 0)
-            {
-                try { _commandQueueManager.Push(new DownloadBookMediaCommand(changedCovers)); }
-                catch (Exception ex) { failures.Add(ex); _logger.Warn(ex, "Requested narration media download was rejected"); }
-            }
             return failures;
         }
 

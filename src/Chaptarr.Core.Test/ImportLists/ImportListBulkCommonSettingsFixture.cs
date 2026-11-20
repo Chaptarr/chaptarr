@@ -464,7 +464,7 @@ namespace Chaptarr.Core.Test.ImportLists
             public MonitoringConfig Build(ImportListDefinition definition)
             {
                 var service = new ImportListSyncService(null, null, null, null, null, null, null, null,
-                    _roots, new RootFolderSettingsResolver(_roots), _events, null, LogManager.GetCurrentClassLogger(), null);
+                    _roots, new RootFolderSettingsResolver(_roots), _events, new NzbDrone.Core.MediaCover.DeferredCoverService(NLog.LogManager.GetCurrentClassLogger(), null),  null, LogManager.GetCurrentClassLogger(), null);
                 return (MonitoringConfig)typeof(ImportListSyncService).GetMethod("BuildConfigFromImportList", BindingFlags.Instance | BindingFlags.NonPublic)
                     .Invoke(service, new object[] { definition, "Bulk common fixture author", null });
             }

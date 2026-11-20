@@ -6,18 +6,22 @@ import * as commandNames from 'Commands/commandNames';
 import { executeCommand } from 'Store/Actions/commandActions';
 import { fetchRetagPreview } from 'Store/Actions/retagPreviewActions';
 import createAuthorSelector from 'Store/Selectors/createAuthorSelector';
+import createUISettingsSelector from 'Store/Selectors/createUISettingsSelector';
 import RetagPreviewModalContent from './RetagPreviewModalContent';
 
 function createMapStateToProps() {
   return createSelector(
     (state) => state.retagPreview,
     createAuthorSelector(),
-    (retagPreview, author) => {
+    createUISettingsSelector(),
+    (retagPreview, author, ui) => {
       const props = { ...retagPreview };
       props.isFetching = retagPreview.isFetching;
       props.isPopulated = retagPreview.isPopulated;
       props.error = retagPreview.error;
       props.path = author.path;
+      props.shortDateFormat = ui.shortDateFormat;
+      props.timeFormat = ui.timeFormat;
 
       return props;
     }
