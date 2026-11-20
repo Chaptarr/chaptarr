@@ -638,6 +638,10 @@ namespace Chaptarr.Core.Test.MediaFiles
         private sealed class RecordingConversionJobService : IConversionJobService
         {
             public int WorkerConcurrency => 1;
+            public ConversionJob GetLibraryJob(int editionId) => null;
+            public List<ConversionJob> GetLibraryJobs(IEnumerable<int> editionIds) => new();
+            public List<ConversionJob> GetActiveLibraryJobs() => new();
+            public ConversionJob EnqueueLibrary(ConversionJobRequest request) => throw new NotImplementedException();
             public ConversionJobRequest Request { get; private set; }
             public ConversionJob Job { get; private set; }
             public string CompletedDownloadId { get; private set; }

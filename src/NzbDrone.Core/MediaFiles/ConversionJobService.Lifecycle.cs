@@ -64,6 +64,13 @@ namespace NzbDrone.Core.MediaFiles
                 // History uppercases IDs; restore the client's exact ID before checking
                 // artifact receipts. Normal enqueue/lookups keep their exact identity.
                 var exact = Get(downloadId);
+                // Download events never reach a library job, whatever its key looks like.
+                if (exact?.IsLibrary == true)
+                {
+                    _logger.Debug("Ignoring download {0} event for library conversion job {1}", reason, exact.Id);
+                    return;
+                }
+
                 if (clientId > 0 && exact != null && exact.DownloadClientId > 0 && exact.DownloadClientId != clientId)
                 {
                     _logger.Warn("Conversion cleanup client mismatch: downloadId={0}, eventClient={1}, jobClient={2}; no workspace was changed", downloadId, clientId, exact.DownloadClientId);
@@ -213,6 +220,13 @@ namespace NzbDrone.Core.MediaFiles
                                 job.UpdatedAt = _repository.Get(job.Id).UpdatedAt;
                             }
                         })) continue;
+                        if (job.IsLibrary)
+                        {
+                            // No download stands behind a library job; settle it from its own row.
+                            PrepareArtifactRemoval(job.DownloadId, request.DiscardCurrentAttemptOnly, "workspace-removed",
+                                ConversionRemovalOrigin.Automatic, inventory, ExpectedAttempt(job))();
+                            continue;
+                        }
                         CleanupTerminalDownload(job.DownloadId, "workspace-removed", ConversionRemovalOrigin.Automatic,
                             expected: ExpectedAttempt(job), inventory: inventory, clientId: job.DownloadClientId, currentAttemptOnly: request.DiscardCurrentAttemptOnly);
                         continue;

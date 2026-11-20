@@ -13,6 +13,9 @@ namespace NzbDrone.Core.MediaFiles
     public interface IConversionJobRepository : IBasicRepository<ConversionJob>
     {
         ConversionJob FindByDownloadId(string downloadId);
+        ConversionJob FindLibraryJob(int editionId);
+        List<ConversionJob> LibraryJobs(IEnumerable<int> editionIds);
+        List<ConversionJob> LibraryJobsByStatus(ConversionJobStatus status);
         ConversionJob FindByHistoryDownloadId(string downloadId, int? downloadClientId = null);
         List<ConversionJob> NonCompleted();
         List<ConversionOrphanCandidate> OrphanArtifacts(int afterId, IReadOnlyCollection<int> retryIds);
@@ -39,13 +42,25 @@ namespace NzbDrone.Core.MediaFiles
         public ConversionJob FindByDownloadId(string downloadId) => string.IsNullOrWhiteSpace(downloadId)
             ? null : Query(job => job.DownloadId == downloadId).SingleOrDefault();
 
+        public ConversionJob FindLibraryJob(int editionId) => editionId <= 0
+            ? null : Query(job => job.Origin == ConversionJobOrigin.Library && job.EditionId == editionId).SingleOrDefault();
+
+        public List<ConversionJob> LibraryJobs(IEnumerable<int> editionIds)
+        {
+            var ids = editionIds?.Where(id => id > 0).Distinct().ToArray() ?? Array.Empty<int>();
+            return ids.Length == 0 ? new List<ConversionJob>() : Query(job => job.Origin == ConversionJobOrigin.Library && ids.Contains(job.EditionId));
+        }
+
+        public List<ConversionJob> LibraryJobsByStatus(ConversionJobStatus status) =>
+            Query(job => job.Origin == ConversionJobOrigin.Library && job.Status == status);
+
         public ConversionJob FindByHistoryDownloadId(string downloadId, int? downloadClientId = null)
         {
             if (string.IsNullOrWhiteSpace(downloadId)) return null;
 
             using var connection = _database.OpenConnection();
             var candidates = connection.Query<ConversionJob>(@"SELECT * FROM ""ConversionJobs""
-                WHERE ""DownloadIdKey"" = @key AND (@downloadClientId IS NULL OR ""DownloadClientId"" = @downloadClientId)
+                WHERE ""DownloadIdKey"" = @key AND ""Origin"" = 0 AND (@downloadClientId IS NULL OR ""DownloadClientId"" = @downloadClientId)
                 ORDER BY ""Id"" LIMIT 2", new { key = DownloadIdentity.Key(downloadId), downloadClientId }).ToList();
             if (candidates.Count > 1)
                 throw new InvalidOperationException($"Ambiguous conversion download identity '{downloadId}' for client {downloadClientId?.ToString() ?? "unknown"}: jobs {string.Join(", ", candidates.Select(job => $"{job.Id} ({job.DownloadId}, client {job.DownloadClientId})"))}. No workspace was removed.");
@@ -58,7 +73,7 @@ namespace NzbDrone.Core.MediaFiles
             var jobs = connection.Query<ConversionLifecycleCandidate>(@"SELECT j.""Id"", j.""DownloadId"", j.""DownloadClientId"", j.""Status"", j.""UpdatedAt"", j.""WorkRoot"",
                     (SELECT COUNT(*) FROM ""ConversionJobs"" other WHERE other.""DownloadIdKey"" = j.""DownloadIdKey""
                         AND other.""DownloadClientId"" = j.""DownloadClientId"") > 1 AS ""IdentityAmbiguous""
-                FROM ""ConversionJobs"" j WHERE j.""Id"" > @afterId ORDER BY j.""Id"" LIMIT @limit",
+                FROM ""ConversionJobs"" j WHERE j.""Id"" > @afterId AND j.""Origin"" = 0 ORDER BY j.""Id"" LIMIT @limit",
                 new { afterId, limit = CleanupBatchSize }).ToList();
             if (jobs.Count == 0) return jobs;
             var history = connection.Query<DownloadHistory>(DownloadHistoryRepository.BuildCurrentSignificantEventsCte(_database.DatabaseType, scoped: true, perClient: true) +

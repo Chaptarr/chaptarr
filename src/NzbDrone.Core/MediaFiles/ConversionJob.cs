@@ -160,9 +160,40 @@ namespace NzbDrone.Core.MediaFiles
         Cancelled = 6
     }
 
+    public enum ConversionJobOrigin
+    {
+        // Converted while importing a completed download. Owned by the download lifecycle.
+        Download = 0,
+
+        // Converts files that are already in the library. Owned by its book and edition;
+        // no download, download client or download history stands behind it.
+        Library = 1
+    }
+
+    public static class LibraryConversionJob
+    {
+        private const string KeyPrefix = "library-edition-";
+
+        // The job table identifies each job by one unique key, which the worker, workspace
+        // and artifact receipt all share. A library job's key is derived from its edition, so
+        // an edition has at most one library job and every attempt reuses one workspace root.
+        public static string Key(int editionId)
+        {
+            if (editionId <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(editionId), "A library conversion needs a persisted edition.");
+            }
+
+            return KeyPrefix + editionId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+    }
+
     public class ConversionJob : ModelBase
     {
         private string _downloadId;
+
+        // The job's unique key. For a download job this is the client's download ID; for a
+        // library job it is LibraryConversionJob.Key(EditionId) and is never a download ID.
         public string DownloadId
         {
             get => _downloadId;
@@ -171,6 +202,10 @@ namespace NzbDrone.Core.MediaFiles
 
         public string DownloadIdKey { get; set; }
         public int DownloadClientId { get; set; }
+        public ConversionJobOrigin Origin { get; set; }
+        public int BookId { get; set; }
+        public int EditionId { get; set; }
+        public bool IsLibrary => Origin == ConversionJobOrigin.Library;
         public ConversionJobStatus Status { get; set; }
         public string RequestJson { get; set; }
         public bool CleanupPending { get; set; }
@@ -233,6 +268,7 @@ namespace NzbDrone.Core.MediaFiles
     {
         public string DownloadId { get; set; }
         public int DownloadClientId { get; set; }
+        public ConversionJobOrigin Origin { get; set; }
         public string CleanupError { get; set; }
         public bool HistoryIdentityAmbiguous { get; set; }
         public bool DiscardRequested { get; set; }
