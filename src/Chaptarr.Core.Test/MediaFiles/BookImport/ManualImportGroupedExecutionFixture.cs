@@ -263,6 +263,12 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
 
         private sealed class ImportApprovedBooksStub : IImportApprovedBooks
         {
+            public LibraryConversionQueueResult QueueLibraryConversion(List<ImportDecision<LocalBook>> decisions, NzbDrone.Core.Books.Author author, NzbDrone.Core.Books.Book book) =>
+                throw new NotImplementedException();
+
+            public List<ImportResult> ImportLibraryConversion(ConversionJobRequest request, List<ImportDecision<LocalBook>> sourceDecisions) =>
+                throw new NotImplementedException();
+
             public List<ImportDecision<LocalBook>> Decisions { get; private set; } = new();
 
             public List<ImportResult> Import(

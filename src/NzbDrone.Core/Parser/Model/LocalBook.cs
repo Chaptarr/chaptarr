@@ -50,6 +50,12 @@ namespace NzbDrone.Core.Parser.Model
         public bool DisableReleaseSwitching { get; set; }
         public IReadOnlyCollection<NzbDrone.Core.MediaFiles.BookImport.Manual.ManualImportReplacementFile> ConfirmedReplacementFiles { get; set; }
         public List<string> PendingReplicaPaths { get; set; }
+
+        // Set when the file is being re-imported from the library purely so the configured
+        // conversion target can be applied to a book that is already on disk. It is an explicit
+        // user action, so it bypasses quality gating the same way a manual import does, but it
+        // must never widen file replacement to the whole book the way a manual import does.
+        public bool IsLibraryConversion { get; set; }
         public MatchProvenance MatchProvenance { get; set; }
         public Dictionary<int, int> AlternativeCopyIncompatibleEditionIds { get; set; }
         public DateTime? AlternativeCopyGrabDate { get; set; }

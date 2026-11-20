@@ -49,7 +49,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
     /// ImportApprovedBooks is responsible ONLY for importing approved files to existing library items.
     /// It does NOT create authors, books, or series. Files must be matched to existing items.
     /// </summary>
-    public class ImportApprovedBooks : IImportApprovedBooks
+    public partial class ImportApprovedBooks : IImportApprovedBooks
     {
         internal const string EbookAlternativeRejectionCategory = "EbookAlternative";
 
@@ -258,7 +258,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                         continue;
                     }
 
-                    if (local?.IsManualImport == true || downloadForced)
+                    if (local?.IsManualImport == true || local?.IsLibraryConversion == true || downloadForced)
                     {
                         _logger.Debug("[QUALITY-GATE] Skipping quality gating for explicit user import/grab: '{0}'", local.Path);
                         gatedMatched.Add(md);
@@ -503,6 +503,16 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 var qualityProfile = author.GetQualityProfileForQuality(localBook.Quality.Quality);
                 var manualImport = bookDecisions.All(d => d.Item.IsManualImport);
                 var manualReplaceExisting = replaceExisting && manualImport;
+
+                // A library conversion is the user converting a book that is already in the library:
+                // its converted file replaces exactly the files it was made from, and nothing else.
+                // An eBook or a second audiobook edition on the same book stays where it is. It is an
+                // explicit action, so the import's automatic quality, custom format, upgrade and
+                // pinned-edition policies do not apply.
+                var libraryConversion = replaceExisting && bookDecisions.All(d => d.Item.IsLibraryConversion && d.Item.IsGeneratedConversion);
+                var libraryConversionSources = libraryConversion
+                    ? bookDecisions.SelectMany(d => d.Item.GeneratedConversionSourcePaths ?? new List<string>()).ToHashSet(PathEqualityComparer.Instance)
+                    : null;
                 var acceptedConversion = bookDecisions.All(decision => acceptedConversionParts.Contains(decision.Item))
                     ? acceptedRequest : null;
                 var recordingPaths = bookDecisions.Select(decision => recordingSourcePaths.GetValueOrDefault(decision.Item)
@@ -527,7 +537,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                             ? file.MatchProvenance.ImportSourcePaths
                             : previouslyImportedFileSources?.GetValueOrDefault(file.Id) ?? new List<string>()))
                     .Distinct(PathEqualityComparer.Instance).ToArray();
-                var replacementCandidates = manualReplaceExisting
+                var replacementCandidates = libraryConversion
+                    ? existingFiles.Where(file => libraryConversionSources.Contains(file.Path)).ToList()
+                    : manualReplaceExisting
                     ? ManualImportReplacementFiles.Get(existingFiles, bookDecisions.Select(decision => decision.Item).ToList(), manualSources)
                     : existingFiles.Except(sameGrabFiles).ToList();
                 if (localBook.IsIncludedMedia && (replacementCandidates.Count > 0 ||
@@ -639,7 +651,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                     return input;
                 }).ToList();
-                var policyRejection = acceptedConversion == null
+                var policyRejection = acceptedConversion == null && !libraryConversion
                     ? GetBookGroupQualityRejection(sourcePolicyInputs, author, downloadForced) : null;
                 if (policyRejection != null)
                 {
@@ -652,7 +664,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     .Where(recording => recording.Any(currentItems.Contains))
                     .Select(recording => RecordingCustomFormatHelper.CreateInput(recording)).ToList();
                 var incomingFormats = new Dictionary<LocalBook, List<CustomFormat>>();
-                policyRejection = acceptedConversion == null
+                policyRejection = acceptedConversion == null && !libraryConversion
                     ? policyInputs.Select(input => GetCustomFormatImportRejectionReason(input, author,
                             author.GetQualityProfileForQuality(input.Quality.Quality), downloadForced, incomingFormats))
                         .FirstOrDefault(reason => reason != null)
@@ -663,7 +675,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     continue;
                 }
 
-                if (!manualImport && replaceExisting)
+                if (!manualImport && replaceExisting && !libraryConversion)
                 {
                     var replacementDecision = CheckReplacement(policyInputs,
                         replacementCandidates, qualityProfile, downloadForced, incomingFormats, existingFiles);
@@ -678,7 +690,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                 }
 
                 // Check before conversion or pin protection can create another physical copy.
-                var additionalCopy = qualityProfile?.UpgradeAllowed == false && replaceExisting && replacementCandidates.Count > 0 && !manualReplaceExisting;
+                var additionalCopy = qualityProfile?.UpgradeAllowed == false && replaceExisting && replacementCandidates.Count > 0 && !manualReplaceExisting && !libraryConversion;
                 if (additionalCopy)
                 {
                     var (duplicateReason, retryComparison) = GetAdditionalCopyDuplicateReason(bookDecisions, existingFiles, downloadClientItem?.DownloadId);
@@ -691,7 +703,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     }
                 }
 
-                var approvedReplacementIds = !manualImport && replaceExisting && qualityProfile?.UpgradeAllowed == true
+                var approvedReplacementIds = libraryConversion
+                    ? replacementCandidates.Select(file => file.Id).ToHashSet()
+                    : !manualImport && replaceExisting && qualityProfile?.UpgradeAllowed == true
                     ? replacementCandidates.Where(file => bookDecisions.Any(decision => decision.Item.Edition.Id == file.EditionId))
                         .Select(file => file.Id).ToHashSet()
                     : new HashSet<int>();
@@ -780,7 +794,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
                 // Automatic imports preserve pins by creating a separate copy when necessary.
                 // An explicit manual selection keeps its chosen destination in either import mode.
-                if (!manualImport && newBookInstance == null && !bookDecisions.All(decision => decision.Item.AlternativeCopyGrabDate.HasValue))
+                if (!manualImport && !libraryConversion && newBookInstance == null && !bookDecisions.All(decision => decision.Item.AlternativeCopyGrabDate.HasValue))
                 {
                     var allEditionsForBook = _editionService.GetEditionsByBook(book.Id);
                     var firstMismatch = bookDecisions.FirstOrDefault(decision =>
@@ -1533,6 +1547,8 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     var manualReplaceExisting = replaceExisting && localBook.IsManualImport;
                     var filesToReplace = localBook.IsManualImport && !replaceExisting
                         ? new List<BookFile>()
+                        : localBook.IsLibraryConversion && localBook.IsGeneratedConversion
+                        ? GetLibraryConversionReplacementFiles(existingFiles, localBook)
                         : GetReplacementFiles(existingFiles, localBook, edition.Id, manualReplaceExisting);
 
                     // Relocation is not an "upgrade/replacement"; do not block or stage/delete other files.
@@ -2861,6 +2877,7 @@ namespace NzbDrone.Core.MediaFiles.BookImport
                     Narrator = first.Narrator,
                     IsInitialImport = first.IsInitialImport,
                     IsManualImport = first.IsManualImport,
+                    IsLibraryConversion = first.IsLibraryConversion,
                     IsIncludedMedia = first.IsIncludedMedia,
                     DisableReleaseSwitching = first.DisableReleaseSwitching,
                     ConfirmedReplacementFiles = first.ConfirmedReplacementFiles,
@@ -3843,6 +3860,14 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
 
             return true;
+        }
+
+        // A library conversion supersedes the files it consumed and nothing else: not a same-edition
+        // eBook, not a part that was left out of the conversion, not another audiobook edition.
+        private static List<BookFile> GetLibraryConversionReplacementFiles(IEnumerable<BookFile> existingFiles, LocalBook incoming)
+        {
+            var sources = (incoming.GeneratedConversionSourcePaths ?? new List<string>()).ToHashSet(PathEqualityComparer.Instance);
+            return existingFiles.Where(file => !file.Path.PathEquals(incoming.Path) && sources.Contains(file.Path)).ToList();
         }
 
         private static List<BookFile> GetReplacementFiles(IEnumerable<BookFile> existingFiles, LocalBook incoming, int editionId, bool manualReplace) =>

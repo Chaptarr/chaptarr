@@ -1,0 +1,37 @@
+.previews {
+  margin-top: 20px;
+}
+
+.book {
+  margin-bottom: 20px;
+
+  &:last-of-type {
+    margin-bottom: 0;
+  }
+}
+
+.bookHeader {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.bookSelectedContainer {
+  margin-right: 10px;
+  margin-bottom: 0;
+}
+
+.bookTitle {
+  font-weight: bold;
+}
+
+.selectAllInputContainer {
+  margin-right: auto;
+  line-height: 30px;
+}
+
+.selectAllInput {
+  composes: input from '~Components/Form/CheckInput.css';
+
+  margin: 0;
+}
