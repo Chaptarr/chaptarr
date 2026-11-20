@@ -21,6 +21,11 @@ namespace NzbDrone.Core.Authentication
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
 
+        public static bool HasNoAccessRule(string emails, string domains, bool allowAnyVerifiedUser)
+        {
+            return !allowAnyVerifiedUser && Parse(emails).Count == 0 && Parse(domains).Count == 0;
+        }
+
         public static bool HasValidDomains(string raw)
         {
             return Parse(raw).All(domain => Uri.CheckHostName(domain) == UriHostNameType.Dns &&

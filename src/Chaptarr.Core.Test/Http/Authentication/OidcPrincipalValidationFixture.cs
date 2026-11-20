@@ -31,6 +31,7 @@ namespace Chaptarr.Core.Test.Http.Authentication
         [TestCase("alice@example.com", "true", "", "@example.com", true, false, "oidc_domain_not_allowed")]
         [TestCase("alice@example.com", null, "alice@example.com", "", false, false, null)]
         [TestCase("alice@example.com", "true", "", "", true, true, null)]
+        [TestCase("alice@example.com", "true", "", ",", true, false, null)]
         [TestCase("alice@example.com", null, "alice@example.com", "", true, false, "oidc_email_verified_missing")]
         [TestCase("alice@example.com", "false", "alice@example.com", "", false, false, "oidc_email_not_verified")]
         [TestCase("alice@example.com", "false", "", "", false, true, "oidc_email_not_verified")]
@@ -132,6 +133,14 @@ namespace Chaptarr.Core.Test.Http.Authentication
             Assert.That(signedOutScheme, Is.EqualTo(valid ? null : schemeName));
         }
 
+        [Test]
+        public async Task rejected_sign_in_with_a_nonlocal_return_url_returns_to_the_application_root()
+        {
+            var context = await ReceiveTicket("reader@example.org", "false", "", "example.org", true, false, "//other.example");
+            Assert.That(context.Response.Headers.Location.ToString(), Is.EqualTo(
+                "/chaptarr/login?ssoFailed=true&ssoError=oidc_email_not_verified&returnUrl=%2Fchaptarr%2F"));
+        }
+
         private static async Task<string[]> CaptureAuthLogs(LogLevel level, Func<Task> action)
         {
             var original = LogManager.Configuration;
@@ -150,7 +159,7 @@ namespace Chaptarr.Core.Test.Http.Authentication
             }
         }
 
-        private static async Task<TicketReceivedContext> ReceiveTicket(string email, string verified, string emails, string domains, bool requireVerified, bool allowAny)
+        private static async Task<TicketReceivedContext> ReceiveTicket(string email, string verified, string emails, string domains, bool requireVerified, bool allowAny, string returnUrl = "/chaptarr/books")
         {
             var config = InterfaceProxy.Proxy<IConfigFileProvider>((method, _) => method.Name switch
             {
@@ -182,7 +191,7 @@ namespace Chaptarr.Core.Test.Http.Authentication
             if (email != null) identity.AddClaim(new Claim(ClaimTypes.Email, email));
             if (verified != null) identity.AddClaim(new Claim("email_verified", verified));
             var ticket = new AuthenticationTicket(new ClaimsPrincipal(identity), scheme.Name);
-            var context = new TicketReceivedContext(new DefaultHttpContext(), scheme, options, ticket) { ReturnUri = "/chaptarr/books" };
+            var context = new TicketReceivedContext(new DefaultHttpContext(), scheme, options, ticket) { ReturnUri = returnUrl };
 
             await options.Events.OnTicketReceived(context);
 

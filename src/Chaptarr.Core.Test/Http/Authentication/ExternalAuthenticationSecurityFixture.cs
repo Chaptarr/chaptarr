@@ -197,6 +197,20 @@ namespace Chaptarr.Core.Test.Http.Authentication
             Assert.That(result.Type, Is.EqualTo(HealthCheckResult.Error));
         }
 
+        [Test]
+        public void oidc_health_warns_when_the_configured_list_has_no_entries()
+        {
+            var config = ConfigFileProviderProxy.Create();
+            var state = (ConfigFileProviderProxy)(object)config;
+            state.ConfiguredAuthenticationMethod = AuthenticationType.Oidc;
+            state.OidcAllowedEmailDomains = ",";
+
+            var result = new OidcSecurityCheck(config, null).Check();
+
+            Assert.That(result.Type, Is.EqualTo(HealthCheckResult.Warning));
+            Assert.That(result.Message, Does.Contain("without an email or domain allow-list"));
+        }
+
         [TestCase(AuthenticationType.Oidc, "family.org, @school.org", HealthCheckResult.Warning)]
         [TestCase(AuthenticationType.Oidc, "family.org.", HealthCheckResult.Warning)]
         [TestCase(AuthenticationType.Oidc, "भारत.in, ดี.th", HealthCheckResult.Ok)]

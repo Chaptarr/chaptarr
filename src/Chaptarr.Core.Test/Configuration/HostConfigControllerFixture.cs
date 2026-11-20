@@ -224,6 +224,58 @@ namespace Chaptarr.Core.Test.Configuration
             }
         }
 
+        [TestCase(",", ",", false, false)]
+        [TestCase("", "family.org,", false, true)]
+        [TestCase("\"billing@eu\"@family.org", "", false, true)]
+        [TestCase("", "", true, true)]
+        public async Task oidc_setup_requires_an_access_rule_before_saving(string emails, string domains, bool allowAny, bool accepted)
+        {
+            object DefaultValue(MethodInfo method) => method.ReturnType == typeof(string) ? string.Empty :
+                method.ReturnType == typeof(void) ? null : method.ReturnType.IsValueType ? Activator.CreateInstance(method.ReturnType) : null;
+            Dictionary<string, object> saved = null;
+            var config = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IConfigFileProvider>((method, args) =>
+            {
+                if (method.Name == nameof(IConfigFileProvider.SaveConfigDictionary) &&
+                    args[0] is Dictionary<string, object> values && values.ContainsKey(nameof(HostConfigResource.OidcAllowedEmails)))
+                {
+                    saved = values;
+                }
+
+                return DefaultValue(method);
+            });
+            var settings = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IConfigService>((method, _) => DefaultValue(method));
+            var users = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IUserService>((_, _) => null);
+            var proxies = Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IProxyService>((_, _) => new List<ProxyDefinition>());
+            var controller = new HostConfigController(config, settings, users, new StubProxyTestService(), proxies,
+                new FileExistsValidator(Throwing<IDiskProvider>()));
+            var resource = CreateResource();
+            resource.Id = 1;
+            resource.AuthenticationMethod = AuthenticationType.Oidc;
+            resource.OidcAuthority = "https://login.example.org";
+            resource.OidcClientId = resource.OidcClientSecret = "test";
+            resource.OidcAllowedEmails = emails;
+            resource.OidcAllowedEmailDomains = domains;
+            resource.OidcAllowAnyVerifiedUser = allowAny;
+
+            ValidateRequest(controller, nameof(HostConfigController.SaveHostConfig), resource);
+            if (accepted)
+            {
+                var response = await controller.SaveHostConfig(resource);
+                Assert.That(response.Result, Is.TypeOf<AcceptedResult>());
+                Assert.That(saved[nameof(resource.OidcAllowedEmails)], Is.EqualTo(emails));
+                Assert.That(saved[nameof(resource.OidcAllowedEmailDomains)], Is.EqualTo(domains));
+                Assert.That(saved[nameof(resource.OidcAllowAnyVerifiedUser)], Is.EqualTo(allowAny));
+            }
+            else
+            {
+                var error = Assert.ThrowsAsync<ValidationException>(async () => await controller.SaveHostConfig(resource));
+                Assert.That(error.Errors, Has.Some.Matches<FluentValidation.Results.ValidationFailure>(failure =>
+                    failure.PropertyName == nameof(resource.OidcAllowedEmails) &&
+                    failure.ErrorMessage.Contains("explicit allow-any-verified-user option")));
+                Assert.That(saved, Is.Null);
+            }
+        }
+
         [TestCase("", "@family.org", false)]
         [TestCase("family.org", "family.org, @school.org", false)]
         [TestCase("", "*.school.org", false)]

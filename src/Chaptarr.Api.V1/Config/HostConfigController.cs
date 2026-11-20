@@ -271,9 +271,7 @@ namespace Chaptarr.Api.V1.Config
                  !string.Equals(resource.Username.Trim().ToLowerInvariant(), currentUser.Username ?? string.Empty, StringComparison.Ordinal));
 
             if (resource.AuthenticationMethod == AuthenticationType.Oidc &&
-                resource.OidcAllowedEmails.IsNullOrWhiteSpace() &&
-                resource.OidcAllowedEmailDomains.IsNullOrWhiteSpace() &&
-                !resource.OidcAllowAnyVerifiedUser)
+                OidcAccessList.HasNoAccessRule(resource.OidcAllowedEmails, resource.OidcAllowedEmailDomains, resource.OidcAllowAnyVerifiedUser))
             {
                 throw new ValidationException(new[]
                 {

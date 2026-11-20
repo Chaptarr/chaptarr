@@ -1,4 +1,3 @@
-using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Authentication;
 using NzbDrone.Core.Configuration;
 using NzbDrone.Core.Configuration.Events;
@@ -33,9 +32,7 @@ namespace NzbDrone.Core.HealthCheck.Checks
                     "#oidc-configuration-incomplete");
             }
 
-            if (_configFileProvider.OidcAllowedEmails.IsNullOrWhiteSpace() &&
-                _configFileProvider.OidcAllowedEmailDomains.IsNullOrWhiteSpace() &&
-                !_configFileProvider.OidcAllowAnyVerifiedUser)
+            if (OidcAccessList.HasNoAccessRule(_configFileProvider.OidcAllowedEmails, _configFileProvider.OidcAllowedEmailDomains, _configFileProvider.OidcAllowAnyVerifiedUser))
             {
                 return new HealthCheck(
                     GetType(),

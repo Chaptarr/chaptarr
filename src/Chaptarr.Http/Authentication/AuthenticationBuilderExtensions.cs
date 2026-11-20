@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OAuth.Claims;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
@@ -474,7 +475,7 @@ namespace Chaptarr.Http.Authentication
         {
             var urlBase = configFileProvider.UrlBase ?? string.Empty;
 
-            if (string.IsNullOrWhiteSpace(returnUrl) || !returnUrl.StartsWith("/"))
+            if (!RedirectHttpResult.IsLocalUrl(returnUrl))
             {
                 returnUrl = urlBase + "/";
             }
