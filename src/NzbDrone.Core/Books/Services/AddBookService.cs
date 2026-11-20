@@ -100,6 +100,9 @@ namespace NzbDrone.Core.Books
 
             // we allow adding extra editions, so check if the book already exists
             Book dbBook = null;
+            var requestedAuthor = book?.Author;
+            var requestedMonitorMode = requestedAuthor?.AddOptions?.Monitor;
+            var materializingFormatSibling = false;
             var requestedEditionProviderIdsForAdd = GetRequestedEditionProviderIdsFromPayload(book?.Editions);
 
             // Canonicalize inbound provider IDs so legacy search/add payloads cannot recreate malformed rows.
@@ -132,15 +135,59 @@ namespace NzbDrone.Core.Books
 
             if (dbBook == null)
             {
-                return await RequestBookThroughAuthorCatalog(book);
+                // A different-format sibling can already carry authoritative
+                // edition metadata for this work even when the author catalog
+                // does not expose the requested format yet. Use that local
+                // edition only when provider identity, author identity, and
+                // format all agree; otherwise retain the normal queued import.
+                var sibling = FindExistingBookForSiblingAdd(book);
+                if (sibling != null && sibling.MediaType != book.MediaType && sibling.AuthorId > 0)
+                {
+                    var requestedAuthorRecord = FindExistingAuthorForAdd(book);
+                    Author siblingAuthor = null;
+                    try
+                    {
+                        siblingAuthor = _authorService.GetAuthor(sibling.AuthorId);
+                    }
+                    catch (ModelNotFoundException)
+                    {
+                        // A stale sibling reference must fall back to the normal
+                        // author-catalog import path, not fail the API request.
+                    }
+                    var requestedIsEbook = book.MediaType == BookMediaType.Ebook;
+                    var siblingEditions = _editionService.GetEditionsByBook(sibling.Id) ?? new List<Edition>();
+                    var matchingEditions = FilterSiblingEditionsForMediaType(siblingEditions, book.MediaType);
+
+                    if (requestedAuthorRecord != null &&
+                        siblingAuthor != null &&
+                        requestedAuthorRecord.Id == siblingAuthor.Id &&
+                        matchingEditions.Count > 0 &&
+                        GetRequestedNarration(book) == null)
+                    {
+                        PrepareAutomaticSiblingFormatAdd(book, sibling, siblingAuthor, matchingEditions);
+                        materializingFormatSibling = true;
+                        _logger.Info("Creating missing {0} record for existing work '{1}' from {2} matching local edition(s)",
+                            requestedIsEbook ? "ebook" : "audiobook", book.Title, matchingEditions.Count);
+                    }
+                }
+
+                if (!materializingFormatSibling)
+                {
+                    return await RequestBookThroughAuthorCatalog(book);
+                }
             }
 
-            if (GetRequestedNarration(book) != null)
+            // The scoped-request fast path assumes the format-specific row is
+            // already persisted. A sibling-derived row must go through the
+            // normal add path first, then its monitoring/search intent is
+            // applied below.
+            if (!materializingFormatSibling && GetRequestedNarration(book) != null)
             {
                 return CompleteRequestedNarration(book, dbBook) ?? await RequestBookThroughAuthorCatalog(book);
             }
 
-            if (GetInitialBookPolicy(book).HasValue || book.Author?.AddOptions?.Monitor == MonitorTypes.None || book.AddOptions?.MonitorBook == false)
+            if (!materializingFormatSibling &&
+                (GetInitialBookPolicy(book).HasValue || book.Author?.AddOptions?.Monitor == MonitorTypes.None || book.AddOptions?.MonitorBook == false))
             {
                 var existing = FindExistingAuthorForAdd(book);
                 var configured = existing?.HasConfiguredMediaSettings(book.MediaType) == true;
@@ -155,11 +202,14 @@ namespace NzbDrone.Core.Books
 
             var monitorRequested = book.AddOptions?.MonitorBook ?? book.IsMonitored();
             var searchRequested = book.AddOptions?.SearchForNewBook == true;
-            book.UseDbFieldsFrom(dbBook);
-            var storedEditions = dbBook.Editions ?? _editionService.GetEditionsByBook(dbBook.Id);
-            if (!EditionPinPolicy.CanAutomationSelectEdition(dbBook, storedEditions))
+            if (dbBook != null)
             {
-                book.Editions = storedEditions;
+                book.UseDbFieldsFrom(dbBook);
+                var storedEditions = dbBook.Editions ?? _editionService.GetEditionsByBook(dbBook.Id);
+                if (!EditionPinPolicy.CanAutomationSelectEdition(dbBook, storedEditions))
+                {
+                    book.Editions = storedEditions;
+                }
             }
 
             book.AddOptions ??= new AddBookOptions();
@@ -167,9 +217,9 @@ namespace NzbDrone.Core.Books
 
             // Some clients post IDs-only payloads even when the book already exists locally.
             // Ensure we never Upsert NULL Title/Edition titles.
-            book.Title ??= dbBook.Title;
+            book.Title ??= dbBook?.Title;
 
-            if (HasMissingOrEmptyEditionMetadata(book.Editions))
+            if (dbBook != null && HasMissingOrEmptyEditionMetadata(book.Editions))
             {
                 book.Editions = _editionService.GetEditionsByBook(dbBook.Id) ?? new List<Edition>();
 
@@ -204,7 +254,7 @@ namespace NzbDrone.Core.Books
             }
 
                 // CRITICAL: Capture monitoring intent BEFORE replacing Author object
-                var monitorMode = book.Author?.AddOptions?.Monitor;
+                var monitorMode = materializingFormatSibling ? requestedMonitorMode : book.Author?.AddOptions?.Monitor;
                 var bookMediaType = book.MediaType;
                 var isSpecificBookIntentForExistingAuthor =
                     monitorMode == MonitorTypes.SpecificBook;
@@ -216,7 +266,7 @@ namespace NzbDrone.Core.Books
 
                 // If the author already exists, progressively fill missing per-media-type settings (without overwriting).
                 // This is important for Seerr/Readarr clients that send a single profile/rootFolderPath.
-                var requestedAuthorSettings = book.Author;
+                var requestedAuthorSettings = materializingFormatSibling ? requestedAuthor : book.Author;
                 if (requestedAuthorSettings != null && dbAuthor != null)
                 {
                     // Fill audiobook settings (including its root folder path) if missing.
@@ -285,18 +335,27 @@ namespace NzbDrone.Core.Books
                 }
                 
                 if (monitorRequested || searchRequested ||
-                    isSpecificBookIntentForExistingAuthor ||
-                    isAllBooksIntentForExistingAuthor)
+                    (!materializingFormatSibling &&
+                     (isSpecificBookIntentForExistingAuthor || isAllBooksIntentForExistingAuthor)))
                 {
                     book.Author = dbAuthor;
                     book.AuthorId = dbAuthor.Id;
-                    book.SetMonitored(true);
-                    book.Monitored = true;
+                    if (!materializingFormatSibling || monitorRequested)
+                    {
+                        book.SetMonitored(true);
+                        book.Monitored = true;
+                    }
+                }
+
+                if (materializingFormatSibling && !monitorRequested)
+                {
+                    book.SetMonitored(false);
                 }
 
                 // Handle "None, except this one book" when author already exists
                 // Using CAPTURED monitorMode instead of book.Author.AddOptions which is now NULL
-                    if (isSpecificBookIntentForExistingAuthor)
+                    if (isSpecificBookIntentForExistingAuthor &&
+                        (!materializingFormatSibling || monitorRequested))
                     {
                     _logger.Debug("[SPECIFIC-BOOK-FIX] Setting monitoring for specific book '{0}' of media type {1} (existing author)",
                         book.Title, bookMediaType);
@@ -328,7 +387,8 @@ namespace NzbDrone.Core.Books
             _bookService.AddBook(book, doRefresh);
             RemoveMatchingImportListExclusions(book);
 
-            if (isAllBooksIntentForExistingAuthor)
+            if (isAllBooksIntentForExistingAuthor &&
+                (!materializingFormatSibling || monitorRequested))
             {
                 _bookMonitoredService.SetBookMonitoredStatus(dbAuthor, new MonitoringOptions
                 {
@@ -902,6 +962,74 @@ namespace NzbDrone.Core.Books
             }
 
             return FindExistingAuthorForAdd(book) ?? author;
+        }
+
+        private Book FindExistingBookForSiblingAdd(Book book)
+        {
+            if (book == null)
+            {
+                return null;
+            }
+
+            var siblingMediaType = book.MediaType == BookMediaType.Ebook
+                ? BookMediaType.Audiobook
+                : BookMediaType.Ebook;
+
+            var candidates = new List<Book>();
+            if (!string.IsNullOrWhiteSpace(book.HardcoverBookId))
+            {
+                candidates.Add(_bookService.FindByProviderId("hc", ProviderIdHelper.Canonicalize(book.HardcoverBookId, "hc"), siblingMediaType));
+            }
+            if (!string.IsNullOrWhiteSpace(book.GoodreadsWorkId))
+            {
+                candidates.Add(_bookService.FindByProviderId("gr", ProviderIdHelper.Canonicalize(book.GoodreadsWorkId, "gr"), siblingMediaType));
+            }
+            if (BookEditionIdentity.GetGoodreadsEditionProviderId(book, _logger, "AddBookService.SiblingLookup") is string goodreadsEditionId &&
+                !string.IsNullOrWhiteSpace(goodreadsEditionId))
+            {
+                candidates.Add(_bookService.FindByProviderId("gr", goodreadsEditionId, siblingMediaType));
+            }
+            if (!string.IsNullOrWhiteSpace(book.OpenLibraryWorkId))
+            {
+                candidates.Add(_bookService.FindByProviderId("ol", ProviderIdHelper.Canonicalize(book.OpenLibraryWorkId, "ol"), siblingMediaType));
+            }
+            if (BookEditionIdentity.GetGoogleBooksEditionId(book, _logger, "AddBookService.SiblingLookup") is string googleBooksEditionId &&
+                !string.IsNullOrWhiteSpace(googleBooksEditionId))
+            {
+                candidates.Add(_bookService.FindByProviderId("gb", googleBooksEditionId, siblingMediaType));
+            }
+
+            return candidates.FirstOrDefault(candidate => candidate != null && candidate.MediaType != book.MediaType);
+        }
+
+        internal static List<Edition> FilterSiblingEditionsForMediaType(IEnumerable<Edition> editions, BookMediaType mediaType)
+        {
+            var isEbook = mediaType == BookMediaType.Ebook;
+            return (editions ?? Enumerable.Empty<Edition>())
+                .Where(edition => edition != null && edition.IsEbook == isEbook)
+                .ToList();
+        }
+
+        internal static void PrepareAutomaticSiblingFormatAdd(Book book, Book sibling, Author siblingAuthor, List<Edition> editions)
+        {
+            book.Id = 0;
+            book.Author = siblingAuthor;
+            book.AuthorId = siblingAuthor.Id;
+            book.Title ??= sibling.Title;
+            book.TitleSlug = string.IsNullOrWhiteSpace(book.TitleSlug) ? sibling.TitleSlug : book.TitleSlug;
+            book.PageCount ??= sibling.PageCount;
+            book.AnyEditionOk = true;
+            book.Editions = editions;
+            foreach (var edition in book.Editions)
+            {
+                // These are detached editions from the sibling row.
+                // Reinsert them under the new format-specific book;
+                // never update or move the original edition records.
+                edition.Id = 0;
+                edition.BookId = 0;
+                edition.Monitored = false;
+                edition.ManualAdd = false;
+            }
         }
 
         private Author FindExistingAuthorForAdd(Book book)
