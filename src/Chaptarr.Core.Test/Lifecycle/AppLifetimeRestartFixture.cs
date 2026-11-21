@@ -49,9 +49,9 @@ namespace Chaptarr.Core.Test.Lifecycle
         [TestCase(false, 1, true)]
         [TestCase(true, 1, true)]
         [TestCase(false, 4242, false)]
-        public void restart_should_be_left_to_the_container_when_in_docker_or_running_as_pid_1(bool isDocker, int processId, bool expected)
+        public void restart_should_happen_in_process_when_in_docker_or_running_as_pid_1(bool isDocker, int processId, bool expected)
         {
-            Assert.That(AppLifetime.ShouldLeaveRestartToContainer(isDocker, processId), Is.EqualTo(expected));
+            Assert.That(AppLifetime.ShouldRestartInProcess(isDocker, processId), Is.EqualTo(expected));
         }
     }
 }
