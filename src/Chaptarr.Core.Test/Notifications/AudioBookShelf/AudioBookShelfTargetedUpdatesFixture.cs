@@ -218,7 +218,10 @@ namespace Chaptarr.Core.Test.Notifications.AudioBookShelf
 
             subject.PinFolders(settings, mappings, new List<string> { "/audiobooks/Blaise Corvin/Mitigating Risk" }, null);
 
-            Assert.That(pins.Calls, Is.EqualTo(new[] { ("/audiobooks/Blaise Corvin/Mitigating Risk", "audiobook", "B0AUDIBLE1") }));
+            Assert.That(pins.Calls, Is.EqualTo(new[]
+            {
+                (System.IO.Path.Combine("/audiobooks", "Blaise Corvin", "Mitigating Risk"), "audiobook", "B0AUDIBLE1")
+            }));
         }
 
         [Test]
