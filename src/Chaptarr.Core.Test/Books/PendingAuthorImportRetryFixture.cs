@@ -194,9 +194,85 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(item.OverallStatus, Is.EqualTo(PendingImportStatus.Retrying));
             Assert.That(item.AudiobookStatus, Is.EqualTo(PendingImportStatus.Pending));
             Assert.That(item.EbookStatus, Is.EqualTo(PendingImportStatus.NotRequested));
-            Assert.That(item.NextAttemptAt, Is.InRange(before.AddMinutes(3.9), DateTime.UtcNow.AddMinutes(6.1)));
+
+            // A long-running wait stays Retrying forever, but at the capped backoff rather than every five minutes.
+            Assert.That(item.NextAttemptAt, Is.InRange(before.AddHours(4.79), DateTime.UtcNow.AddHours(7.21)));
             Assert.That(repositoryProxy.Updated, Is.SameAs(item));
             Assert.That(events.Events, Has.None.InstanceOf<PendingAuthorImportFailedEvent>());
+        }
+
+        [Test]
+        public void schedule_retry_should_not_push_back_a_request_merged_in_after_the_worker_read_it()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var repositoryProxy = (RepositoryProxy)repository;
+            var subject = new PendingAuthorImportService(repository, DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(), new RecordingEventAggregator(), LogManager.GetCurrentClassLogger());
+
+            // The worker processed version 5 at attempt 99; meanwhile a new request was merged
+            // in (version 6) and made due straight away.
+            var processed = new PendingAuthorImport
+            {
+                Id = 42, ProviderId = "gr:42", AttemptCount = 99, Version = 5,
+                AudiobookStatus = PendingImportStatus.Pending, EbookStatus = PendingImportStatus.NotRequested,
+                OverallStatus = PendingImportStatus.Retrying
+            };
+            var dueNow = DateTime.UtcNow;
+            repositoryProxy.Active = new PendingAuthorImport
+            {
+                Id = 42, ProviderId = "gr:42", AttemptCount = 99, Version = 6, NextAttemptAt = dueNow,
+                AudiobookStatus = PendingImportStatus.Pending, EbookStatus = PendingImportStatus.NotRequested,
+                OverallStatus = PendingImportStatus.Pending
+            };
+
+            subject.ScheduleRetry(processed, PendingAuthorImportRetryReason.AuthorNotYetAvailable);
+
+            Assert.That(repositoryProxy.Updated.NextAttemptAt, Is.EqualTo(dueNow));
+        }
+
+        [Test]
+        public void schedule_retry_should_back_off_the_request_the_worker_processed()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var repositoryProxy = (RepositoryProxy)repository;
+            var subject = new PendingAuthorImportService(repository, DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(), new RecordingEventAggregator(), LogManager.GetCurrentClassLogger());
+            var item = new PendingAuthorImport
+            {
+                Id = 42, ProviderId = "gr:42", AttemptCount = 99, Version = 5, NextAttemptAt = DateTime.UtcNow,
+                AudiobookStatus = PendingImportStatus.Pending, EbookStatus = PendingImportStatus.NotRequested,
+                OverallStatus = PendingImportStatus.Retrying
+            };
+            repositoryProxy.Active = item;
+            var before = DateTime.UtcNow;
+
+            subject.ScheduleRetry(item, PendingAuthorImportRetryReason.AuthorNotYetAvailable);
+
+            Assert.That(repositoryProxy.Updated.NextAttemptAt, Is.GreaterThan(before.AddHours(4.79)));
+        }
+
+        [TestCase(1, 60)]
+        [TestCase(3, 60)]
+        [TestCase(4, 300)]
+        [TestCase(15, 300)]
+        [TestCase(16, 600)]
+        [TestCase(17, 1200)]
+        [TestCase(21, 19200)]
+        [TestCase(22, 21600)]
+        [TestCase(8727, 21600)]
+        [TestCase(int.MaxValue, 21600)]
+        public void pending_import_retry_should_keep_the_first_hour_fast_then_back_off_to_a_ceiling(int attemptCount, double expectedSeconds)
+        {
+            Assert.That(AuthorRetrySchedule.PendingImportDelaySeconds(attemptCount), Is.EqualTo(expectedSeconds));
+        }
+
+        [Test]
+        public void shared_author_retry_schedule_should_keep_its_five_minute_ceiling()
+        {
+            // Metadata sync and format sync share NextAttempt; only pending imports back off further.
+            var before = DateTime.UtcNow;
+
+            var next = AuthorRetrySchedule.NextAttempt(500);
+
+            Assert.That(next, Is.InRange(before.AddSeconds(239), DateTime.UtcNow.AddSeconds(361)));
         }
 
         [Test]
