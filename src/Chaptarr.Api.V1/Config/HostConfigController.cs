@@ -107,6 +107,13 @@ namespace Chaptarr.Api.V1.Config
                            .WithMessage("Must use https:// unless the provider is running on localhost")
                            .When(c => c.AuthenticationMethod == AuthenticationType.Oidc && c.OidcAuthority.IsNotNullOrWhiteSpace());
 
+            SharedValidator.RuleFor(c => c.OidcAllowedEmailDomains)
+                           .Must(OidcAccessList.HasValidDomains)
+                           .When(c => c.AuthenticationMethod == AuthenticationType.Oidc &&
+                                      (_configFileProvider.ConfiguredAuthenticationMethod != AuthenticationType.Oidc ||
+                                       c.OidcAllowedEmailDomains != _configFileProvider.OidcAllowedEmailDomains))
+                           .WithMessage("Enter exact email domains such as family.org. Omit URL prefixes, @ signs, wildcards and trailing dots.");
+
             SharedValidator.RuleFor(c => c.OidcClientId).NotEmpty().When(c => c.AuthenticationMethod == AuthenticationType.Oidc);
             SharedValidator.RuleFor(c => c.OidcClientSecret)
                            .NotEmpty()
@@ -264,9 +271,7 @@ namespace Chaptarr.Api.V1.Config
                  !string.Equals(resource.Username.Trim().ToLowerInvariant(), currentUser.Username ?? string.Empty, StringComparison.Ordinal));
 
             if (resource.AuthenticationMethod == AuthenticationType.Oidc &&
-                resource.OidcAllowedEmails.IsNullOrWhiteSpace() &&
-                resource.OidcAllowedEmailDomains.IsNullOrWhiteSpace() &&
-                !resource.OidcAllowAnyVerifiedUser)
+                OidcAccessList.HasNoAccessRule(resource.OidcAllowedEmails, resource.OidcAllowedEmailDomains, resource.OidcAllowAnyVerifiedUser))
             {
                 throw new ValidationException(new[]
                 {
