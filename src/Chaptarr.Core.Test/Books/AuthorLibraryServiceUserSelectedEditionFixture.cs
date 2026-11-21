@@ -99,6 +99,79 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(error.Message, Does.Contain("does not contain edition"));
         }
 
+        [Test]
+        public void suggested_work_without_edition_id_should_infer_the_only_edition_of_the_media_type()
+        {
+            var expectedEdition = new Edition { Title = "Nightfall", ForeignEditionId = "gr:111" };
+            var book = CreateAudiobookPocket("Nightfall");
+            book.Editions = new List<Edition> { expectedEdition };
+            var ebook = CreateAudiobookPocket("Nightfall");
+            ebook.MediaType = BookMediaType.Ebook;
+            ebook.Editions = new List<Edition> { new() { Title = "Nightfall", ForeignEditionId = "gr:222" } };
+            var author = new Author { Books = new List<Book> { book, ebook } };
+
+            var result = AuthorLibraryService.ResolveUniqueRemoteUserSelection(
+                author, "hc:1987747", null, BookMediaType.Audiobook);
+
+            Assert.That(result.Edition, Is.SameAs(expectedEdition));
+        }
+
+        [Test]
+        public void suggested_work_without_edition_id_should_use_the_suggested_edition_title_to_break_ties()
+        {
+            var wanted = new Edition { Title = "The Defenders", ForeignEditionId = "gr:1" };
+            var book = CreateAudiobookPocket("The Defenders");
+            book.Editions = new List<Edition>
+            {
+                new() { Title = "The Defenders (Unabridged)", ForeignEditionId = "gr:2" },
+                wanted
+            };
+            var author = new Author { Books = new List<Book> { book } };
+
+            var result = AuthorLibraryService.ResolveUniqueRemoteUserSelection(
+                author, "hc:1987747", "", BookMediaType.Audiobook, "the defenders");
+
+            Assert.That(result.Edition, Is.SameAs(wanted));
+        }
+
+        [Test]
+        public void suggested_work_without_edition_id_should_fail_closed_when_several_editions_remain()
+        {
+            var book = CreateAudiobookPocket("The Defenders");
+            book.Editions = new List<Edition>
+            {
+                new() { Title = "Edition A", ForeignEditionId = "gr:1" },
+                new() { Title = "Edition B", ForeignEditionId = "gr:2" }
+            };
+            var author = new Author { Books = new List<Book> { book } };
+
+            var error = Assert.Catch<InvalidOperationException>(() =>
+                AuthorLibraryService.ResolveUniqueRemoteUserSelection(
+                    author, "hc:1987747", null, BookMediaType.Audiobook, "Something Else"));
+
+            Assert.That(error.Message, Does.Contain("2 rows"));
+        }
+
+        [Test]
+        public void suggested_work_without_edition_id_should_fall_back_to_the_providers_default_edition()
+        {
+            var providerDefault = new Edition { Title = "Nightfall (Audible)", ForeignEditionId = "gr:2" };
+            var book = CreateAudiobookPocket("Nightfall");
+            book.ForeignEditionId = "gr:2";
+            book.Editions = new List<Edition>
+            {
+                new() { Title = "Nightfall (Other)", ForeignEditionId = "gr:1" },
+                providerDefault,
+                new() { Title = "Nightfall (Third)", ForeignEditionId = "gr:3" }
+            };
+            var author = new Author { Books = new List<Book> { book } };
+
+            var result = AuthorLibraryService.ResolveUniqueRemoteUserSelection(
+                author, "hc:1987747", null, BookMediaType.Audiobook, "No Such Title");
+
+            Assert.That(result.Edition, Is.SameAs(providerDefault));
+        }
+
         private static Book CreateAudiobookPocket(string title)
         {
             return new Book
