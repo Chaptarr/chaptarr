@@ -301,6 +301,13 @@ class AuthorIndex extends Component {
     }
   };
 
+  onSyncFromAudioBookShelfPress = () => {
+    const selectedIds = this.getSelectedIds();
+    const authorIds = this.state.isEditorActive && selectedIds.length > 0 ? selectedIds : [];
+
+    this.props.onSyncFromAudioBookShelfPress(authorIds);
+  };
+
   onRefreshAuthorPress = () => {
     const selectedIds = this.getSelectedIds();
     const refreshIds = this.state.isEditorActive && selectedIds.length > 0 ? selectedIds : [];
@@ -342,6 +349,8 @@ class AuthorIndex extends Component {
       view,
       isRefreshingAuthor,
       isRssSyncExecuting,
+      isSyncingFromAudioBookShelf,
+      audioBookShelfKeepsMetadata,
       isOrganizingAuthor,
       isRetaggingAuthor,
       isSaving,
@@ -408,6 +417,19 @@ class AuthorIndex extends Component {
               isDisabled={hasNoAuthor}
               onPress={onRssSyncPress}
             />
+
+            {
+              audioBookShelfKeepsMetadata ?
+                <PageToolbarButton
+                  label={isEditorActive && selectedAuthorIds.length > 0 ? translate('SyncSelectedFromAudioBookShelf') : translate('SyncFromAudioBookShelf')}
+                  title={translate('SyncFromAudioBookShelfHelpText')}
+                  iconName={icons.LINK}
+                  isSpinning={isSyncingFromAudioBookShelf}
+                  isDisabled={hasNoAuthor}
+                  onPress={this.onSyncFromAudioBookShelfPress}
+                /> :
+                null
+            }
 
             <PageToolbarSeparator />
 
@@ -652,6 +674,9 @@ AuthorIndex.propTypes = {
   onMediaTypeChange: PropTypes.func.isRequired,
   onViewSelect: PropTypes.func.isRequired,
   onRefreshAuthorPress: PropTypes.func.isRequired,
+  onSyncFromAudioBookShelfPress: PropTypes.func.isRequired,
+  isSyncingFromAudioBookShelf: PropTypes.bool,
+  audioBookShelfKeepsMetadata: PropTypes.bool,
   onRssSyncPress: PropTypes.func.isRequired,
   onScroll: PropTypes.func.isRequired,
   onSaveSelected: PropTypes.func.isRequired
