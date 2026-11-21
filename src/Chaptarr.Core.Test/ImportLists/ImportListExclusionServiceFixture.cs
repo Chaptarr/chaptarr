@@ -402,11 +402,21 @@ namespace Chaptarr.Core.Test.ImportLists
 
         private static (ImportListExclusionService Service, RepositoryProxy Repository) CreateServiceWithRemainingBooks(params Book[] remainingBooks)
         {
+            return CreateServiceWithRemainingBooks(LogManager.GetCurrentClassLogger(), lookupFails: false, remainingBooks);
+        }
+
+        private static (ImportListExclusionService Service, RepositoryProxy Repository) CreateServiceWithRemainingBooks(Logger logger, bool lookupFails, params Book[] remainingBooks)
+        {
             var repository = DispatchProxy.Create<IImportListExclusionRepository, RepositoryProxy>();
             var bookService = global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IBookService>((method, args) =>
             {
                 if (method.Name == nameof(IBookService.GetBooksByAuthor))
                 {
+                    if (lookupFails)
+                    {
+                        throw new InvalidOperationException("database is locked");
+                    }
+
                     var authorId = (int)args[0];
                     return remainingBooks.Where(book => book.AuthorId == authorId).ToList();
                 }
@@ -414,8 +424,55 @@ namespace Chaptarr.Core.Test.ImportLists
                 throw new NotImplementedException($"Test proxy does not implement IBookService.{method.Name}");
             });
 
-            var service = new ImportListExclusionService(repository, LogManager.GetCurrentClassLogger(), new Lazy<IBookService>(() => bookService));
+            var service = new ImportListExclusionService(repository, logger, new Lazy<IBookService>(() => bookService));
             return (service, (RepositoryProxy)(object)repository);
+        }
+
+        private static (LogFactory Factory, NLog.Targets.MemoryTarget Target) CaptureLogs()
+        {
+            var factory = new LogFactory();
+            var target = new NLog.Targets.MemoryTarget { Layout = "${level}|${message}" };
+            var logging = new NLog.Config.LoggingConfiguration();
+            logging.AddRule(LogLevel.Debug, LogLevel.Fatal, target);
+            factory.Configuration = logging;
+            return (factory, target);
+        }
+
+        [Test]
+        public void a_failed_remaining_book_lookup_should_add_no_exclusions()
+        {
+            var deleted = AuthorBook(2, "The Sixth Book", "hc:1000006", goodreadsId: "gr:1000006");
+            var (factory, logs) = CaptureLogs();
+            using (factory)
+            {
+                var (service, repository) = CreateServiceWithRemainingBooks(factory.GetLogger("exclusions"), lookupFails: true);
+
+                service.HandleAsync(new BookDeletedEvent(deleted, deleteFiles: false, addImportListExclusion: true));
+
+                Assert.That(repository.Inserted, Is.Empty);
+                Assert.That(logs.Logs, Has.Some.StartWith("Warn|Could not load the remaining books").And.Contains("Author A - The Sixth Book"));
+            }
+        }
+
+        [Test]
+        public void ids_shared_with_two_kept_books_should_be_reported_against_each_book()
+        {
+            var keptA = AuthorBook(1, "Copy A", "hc:10");
+            var keptB = AuthorBook(3, "Copy B", null, goodreadsId: "gr:20");
+            var deleted = AuthorBook(2, "Deleted Copy", "hc:10", goodreadsId: "gr:20");
+            var (factory, logs) = CaptureLogs();
+            using (factory)
+            {
+                var (service, repository) = CreateServiceWithRemainingBooks(factory.GetLogger("exclusions"), lookupFails: false, keptA, keptB);
+
+                service.HandleAsync(new BookDeletedEvent(deleted, deleteFiles: false, addImportListExclusion: true));
+
+                Assert.That(repository.Inserted, Is.Empty);
+                var warnings = logs.Logs.Where(line => line.StartsWith("Warn|Not adding")).ToList();
+                Assert.That(warnings, Has.Count.EqualTo(2));
+                Assert.That(warnings, Has.One.Contains("(hc:10) belong to 'Copy A'"));
+                Assert.That(warnings, Has.One.Contains("(gr:20) belong to 'Copy B'"));
+            }
         }
 
         private static Book AuthorBook(int id, string title, string hardcoverId, BookMediaType mediaType = BookMediaType.Audiobook, string goodreadsId = null)

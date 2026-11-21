@@ -180,8 +180,11 @@ namespace NzbDrone.Core.ImportLists.Exclusions
             }
             catch (Exception ex)
             {
-                _logger.Warn(ex, "Could not load remaining books to check shared provider IDs; excluding all IDs of the deleted book(s)");
-                return candidates;
+                // Without the check an exclusion could hit the copy the user kept, and an exclusion
+                // persists; a missing one only means an import list may offer the book again.
+                _logger.Warn(ex, "Could not load the remaining books to check for shared provider IDs; not adding import list exclusions for {0}. Add them manually if needed",
+                    string.Join(", ", candidates.Select(candidate => candidate.Name).Distinct()));
+                return new List<ImportListExclusion>();
             }
 
             var remainingIds = remainingBooks
@@ -210,12 +213,13 @@ namespace NzbDrone.Core.ImportLists.Exclusions
                 }
             }
 
-            foreach (var group in skipped.GroupBy(row => row.Exclusion.Name))
+            // One warning per deleted book and kept book, so each ID is reported against the book that uses it.
+            foreach (var group in skipped.GroupBy(row => (row.Exclusion.Name, row.SharedWith.Id)))
             {
                 var keptBook = group.First().SharedWith;
                 _logger.Warn("Not adding {0} import list exclusion(s) for deleted '{1}': the same provider IDs ({2}) belong to '{3}' (book {4}), which is still in the library",
                     group.Count(),
-                    group.Key,
+                    group.Key.Name,
                     string.Join(", ", group.Select(row => row.Exclusion.ForeignId)),
                     keptBook.Title,
                     keptBook.Id);
