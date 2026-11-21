@@ -65,7 +65,8 @@ namespace NzbDrone.Core.MediaFiles
                                              IExecute<ConvertAuthorCommand>,
                                              IExecute<ImportLibraryConversionCommand>,
                                              IExecute<LibraryConversionProgressCommand>,
-                                             IHandle<ApplicationShutdownRequested>
+                                             IHandle<ApplicationShutdownRequested>,
+                                             IHandle<CommandCancelledEvent>
     {
         private sealed class ConversionGroup
         {
@@ -260,6 +261,21 @@ namespace NzbDrone.Core.MediaFiles
         public void Handle(ApplicationShutdownRequested message)
         {
             _shutdown.Cancel();
+        }
+
+        // Cancelling the progress task while it is still waiting in the queue removes it before it runs,
+        // so it never reaches its own cancel handling. Cancel the conversions here instead, or they would
+        // carry on and replace the files after the user cancelled. A started task is cancelled through its
+        // token, which runs CancelActiveJobs itself.
+        public void Handle(CommandCancelledEvent message)
+        {
+            if (!message.WasQueued || message.Command?.Body is not LibraryConversionProgressCommand)
+            {
+                return;
+            }
+
+            _logger.Info("[CONVERSION] Library conversion progress was cancelled before it started; cancelling the library conversions it covers");
+            CancelActiveJobs(new Dictionary<int, (int Order, string Title)>());
         }
 
         private static string DescribeProgress(List<ConversionJob> active, Dictionary<int, (int Order, string Title)> seen)

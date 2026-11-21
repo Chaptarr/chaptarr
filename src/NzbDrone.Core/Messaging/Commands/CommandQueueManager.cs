@@ -50,6 +50,7 @@ namespace NzbDrone.Core.Messaging.Commands
         private static readonly int MaxManualQueueDepth = GetMaxManualQueueDepth();
 
         private readonly ICommandRepository _repo;
+        private readonly IServiceFactory _serviceFactory;
         private readonly KnownTypes _knownTypes;
         private readonly Logger _logger;
 
@@ -62,6 +63,7 @@ namespace NzbDrone.Core.Messaging.Commands
                                    Logger logger)
         {
             _repo = repo;
+            _serviceFactory = serviceFactory;
             _knownTypes = knownTypes;
             _logger = logger;
 
@@ -316,6 +318,7 @@ namespace NzbDrone.Core.Messaging.Commands
                 throw new NzbDroneClientException(HttpStatusCode.NotFound, "Command not found");
             }
 
+            bool wasQueued;
             lock (command)
             {
                 if (command.Status == CommandStatus.Completed ||
@@ -328,7 +331,8 @@ namespace NzbDrone.Core.Messaging.Commands
                     throw new NzbDroneClientException(HttpStatusCode.Conflict, "Cannot cancel a command that has already finished");
                 }
 
-                if (!_commandQueue.RemoveIfQueued(id))
+                wasQueued = _commandQueue.RemoveIfQueued(id);
+                if (!wasQueued)
                 {
                     if (onlyIfQueued) return false;
                     if (!command.Body.SupportsCancellation)
@@ -345,7 +349,24 @@ namespace NzbDrone.Core.Messaging.Commands
 
                 _commandQueue.PulseAllConsumers();
                 _logger.Info("Successfully cancelled command with ID: {0}", id);
-                return true;
+            }
+
+            PublishCancelled(command, wasQueued);
+            return true;
+        }
+
+        // A command removed from the queue never runs, so its handler cannot react to the cancel through
+        // its token. The event lets a service undo work it started on the command's behalf. It is
+        // published outside the command lock, and a failing handler never fails the cancel itself.
+        private void PublishCancelled(CommandModel command, bool wasQueued)
+        {
+            try
+            {
+                _serviceFactory?.Build<IEventAggregator>()?.PublishEvent(new CommandCancelledEvent(command, wasQueued));
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "Unable to publish cancellation of command {0}", command.Id);
             }
         }
 

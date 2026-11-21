@@ -253,6 +253,33 @@ namespace Chaptarr.Core.Test.MediaFiles
             Assert.That(_importApprovedBooks.Queued.Select(decisions => decisions.Single().Item.Edition.Id), Is.EqualTo(new[] { OtherEditionId }));
         }
 
+        // Cancelling the progress task while it waits in the queue removes it before it runs. The
+        // conversions it covers must still be cancelled, or they would import after the user cancelled.
+        [Test]
+        public void cancelling_the_queued_progress_task_cancels_conversions_that_have_not_finished()
+        {
+            _jobs.Add(new ConversionJob { Origin = ConversionJobOrigin.Library, EditionId = 1, DownloadId = LibraryConversionJob.Key(1), Status = ConversionJobStatus.Queued });
+            _jobs.Add(new ConversionJob { Origin = ConversionJobOrigin.Library, EditionId = 2, DownloadId = LibraryConversionJob.Key(2), Status = ConversionJobStatus.Converting });
+            _jobs.Add(new ConversionJob { Origin = ConversionJobOrigin.Library, EditionId = 3, DownloadId = LibraryConversionJob.Key(3), Status = ConversionJobStatus.ReadyToImport });
+
+            _service.Handle(new CommandCancelledEvent(new CommandModel { Body = new LibraryConversionProgressCommand() }, wasQueued: true));
+
+            Assert.That(_jobs.Cancelled, Is.EquivalentTo(new[] { LibraryConversionJob.Key(1), LibraryConversionJob.Key(2) }),
+                "a finished conversion that is importing is left to complete");
+        }
+
+        [Test]
+        public void a_started_or_unrelated_cancellation_is_left_to_its_own_handling()
+        {
+            _jobs.Add(new ConversionJob { Origin = ConversionJobOrigin.Library, EditionId = 1, DownloadId = LibraryConversionJob.Key(1), Status = ConversionJobStatus.Converting });
+
+            // A started progress task is cancelled through its token; another command's cancel is not ours.
+            _service.Handle(new CommandCancelledEvent(new CommandModel { Body = new LibraryConversionProgressCommand() }, wasQueued: false));
+            _service.Handle(new CommandCancelledEvent(new CommandModel { Body = new ConvertBookFilesCommand(AuthorId, new List<int> { 1 }) }, wasQueued: true));
+
+            Assert.That(_jobs.Cancelled, Is.Empty);
+        }
+
         [Test]
         public void progress_task_stops_on_shutdown_without_cancelling_conversions()
         {
