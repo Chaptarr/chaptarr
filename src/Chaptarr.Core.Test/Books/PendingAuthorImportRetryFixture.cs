@@ -201,6 +201,54 @@ namespace Chaptarr.Core.Test.Books
             Assert.That(events.Events, Has.None.InstanceOf<PendingAuthorImportFailedEvent>());
         }
 
+        [Test]
+        public void schedule_retry_should_not_push_back_a_request_merged_in_after_the_worker_read_it()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var repositoryProxy = (RepositoryProxy)repository;
+            var subject = new PendingAuthorImportService(repository, DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(), new RecordingEventAggregator(), LogManager.GetCurrentClassLogger());
+
+            // The worker processed version 5 at attempt 99; meanwhile a new request was merged
+            // in (version 6) and made due straight away.
+            var processed = new PendingAuthorImport
+            {
+                Id = 42, ProviderId = "gr:42", AttemptCount = 99, Version = 5,
+                AudiobookStatus = PendingImportStatus.Pending, EbookStatus = PendingImportStatus.NotRequested,
+                OverallStatus = PendingImportStatus.Retrying
+            };
+            var dueNow = DateTime.UtcNow;
+            repositoryProxy.Active = new PendingAuthorImport
+            {
+                Id = 42, ProviderId = "gr:42", AttemptCount = 99, Version = 6, NextAttemptAt = dueNow,
+                AudiobookStatus = PendingImportStatus.Pending, EbookStatus = PendingImportStatus.NotRequested,
+                OverallStatus = PendingImportStatus.Pending
+            };
+
+            subject.ScheduleRetry(processed, PendingAuthorImportRetryReason.AuthorNotYetAvailable);
+
+            Assert.That(repositoryProxy.Updated.NextAttemptAt, Is.EqualTo(dueNow));
+        }
+
+        [Test]
+        public void schedule_retry_should_back_off_the_request_the_worker_processed()
+        {
+            var repository = DispatchProxy.Create<IPendingAuthorImportRepository, RepositoryProxy>();
+            var repositoryProxy = (RepositoryProxy)repository;
+            var subject = new PendingAuthorImportService(repository, DispatchProxy.Create<IAuthorService, AuthorServiceProxy>(), new RecordingEventAggregator(), LogManager.GetCurrentClassLogger());
+            var item = new PendingAuthorImport
+            {
+                Id = 42, ProviderId = "gr:42", AttemptCount = 99, Version = 5, NextAttemptAt = DateTime.UtcNow,
+                AudiobookStatus = PendingImportStatus.Pending, EbookStatus = PendingImportStatus.NotRequested,
+                OverallStatus = PendingImportStatus.Retrying
+            };
+            repositoryProxy.Active = item;
+            var before = DateTime.UtcNow;
+
+            subject.ScheduleRetry(item, PendingAuthorImportRetryReason.AuthorNotYetAvailable);
+
+            Assert.That(repositoryProxy.Updated.NextAttemptAt, Is.GreaterThan(before.AddHours(4.79)));
+        }
+
         [TestCase(1, 60)]
         [TestCase(3, 60)]
         [TestCase(4, 300)]

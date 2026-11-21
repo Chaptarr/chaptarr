@@ -1025,7 +1025,13 @@ namespace NzbDrone.Core.Books.Services
                 current.MaxAttempts = 0;
                 current.LastAttemptAt = DateTime.UtcNow;
                 current.LastError = error;
-                current.NextAttemptAt = AuthorRetrySchedule.NextPendingImportAttempt(current.AttemptCount);
+                var backoff = AuthorRetrySchedule.NextPendingImportAttempt(current.AttemptCount);
+
+                // A request merged in after this worker read the row may be due sooner; the backoff
+                // is for the request this worker processed, so it must not push the newer one back.
+                current.NextAttemptAt = current.Version != item.Version && current.NextAttemptAt < backoff
+                    ? current.NextAttemptAt
+                    : backoff;
                 current.OverallStatus = PendingImportStatus.Retrying;
                 current.UpdatedAt = DateTime.UtcNow;
 
