@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
@@ -24,6 +26,7 @@ namespace NzbDrone.Host
         private readonly IEventAggregator _eventAggregator;
         private readonly Logger _logger;
         private readonly Lazy<IBackupService> _backupService;
+        private readonly IOsInfo _osInfo;
 
         public AppLifetime(IHostApplicationLifetime appLifetime,
             IConfigFileProvider configFileProvider,
@@ -33,7 +36,8 @@ namespace NzbDrone.Host
             IProcessProvider processProvider,
             IEventAggregator eventAggregator,
             Lazy<IBackupService> backupService,
-            Logger logger)
+            Logger logger,
+            IOsInfo osInfo = null)
         {
             _appLifetime = appLifetime;
             _configFileProvider = configFileProvider;
@@ -44,6 +48,7 @@ namespace NzbDrone.Host
             _eventAggregator = eventAggregator;
             _backupService = backupService;
             _logger = logger;
+            _osInfo = osInfo;
 
             appLifetime.ApplicationStarted.Register(OnAppStarted);
         }
@@ -79,15 +84,53 @@ namespace NzbDrone.Host
             _eventAggregator.PublishEvent(new ApplicationStartedEvent());
         }
 
+        // True when the host that just stopped asked to restart and has to do it inside this process
+        // (see ShouldRestartInProcess). Bootstrap then starts a new host here instead of calling RestartIfPending.
+        public bool RestartsInProcess =>
+            _runtimeInfo.RestartPending &&
+            !_runtimeInfo.IsWindowsService &&
+            ShouldRestartInProcess(_osInfo?.IsDocker == true, Environment.ProcessId);
+
         public void RestartIfPending()
         {
             if (_runtimeInfo.RestartPending && !_runtimeInfo.IsWindowsService)
             {
-                var restartArgs = GetRestartArgs();
+                if (ShouldRestartInProcess(_osInfo?.IsDocker == true, Environment.ProcessId))
+                {
+                    // Bootstrap restarts in-process before it gets here; a new process would die with this one.
+                    return;
+                }
+
+                var (path, restartArgs) = BuildRestartCommand(
+                    _runtimeInfo.ExecutingApplication,
+                    Assembly.GetEntryAssembly()?.Location,
+                    GetRestartArgs());
 
                 _logger.Info("Attempting restart with arguments: {0}", restartArgs);
-                _processProvider.SpawnNewProcess(_runtimeInfo.ExecutingApplication, restartArgs);
+                _processProvider.SpawnNewProcess(path, restartArgs);
             }
+        }
+
+        // A child spawned by a container's main process (PID 1) is killed as soon as that process
+        // exits, and exiting would leave the restart to the container's restart policy (none, or
+        // 'on-failure', leaves Chaptarr stopped). So in a container Chaptarr restarts in-process.
+        public static bool ShouldRestartInProcess(bool isDocker, int processId)
+        {
+            return isDocker || processId == 1;
+        }
+
+        // Under `dotnet Chaptarr.dll` (the Docker image's CMD) the executing module is the dotnet
+        // host, so the entry assembly has to come first or dotnet treats "/data=..." as the app.
+        public static (string Path, string Args) BuildRestartCommand(string executingApplication, string entryAssemblyPath, string args)
+        {
+            var hostName = Path.GetFileNameWithoutExtension(executingApplication ?? string.Empty);
+            if (string.Equals(hostName, "dotnet", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(entryAssemblyPath))
+            {
+                return (executingApplication, $"\"{entryAssemblyPath}\" {args}");
+            }
+
+            return (executingApplication, args);
         }
 
         private void Shutdown()
@@ -122,7 +165,12 @@ namespace NzbDrone.Host
                     _runtimeInfo.RestartPending = true;
                 }
 
-                LogManager.Configuration = null;
+                // An in-process restart keeps logging running: the next host logs through the same configuration.
+                if (!RestartsInProcess)
+                {
+                    LogManager.Configuration = null;
+                }
+
                 Shutdown();
             }
         }
