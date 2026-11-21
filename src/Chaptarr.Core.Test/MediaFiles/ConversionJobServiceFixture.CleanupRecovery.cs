@@ -34,7 +34,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         VALUES (1, 1, 1, 'ÉPISODE', 'Book', @now, 4), (1, 1, 1, 'AMBIGUOUS', 'Book', @now, 4), (1, 1, 1, 'AMBIGUOUS', 'Book', @now, 9)", new { now = DateTime.UtcNow });
                 }
                 new NzbDrone.Core.Datastore.Migration.Framework.MigrationController(NLog.LogManager.GetCurrentClassLogger(), null).Migrate(
-                    connectionString, new NzbDrone.Core.Datastore.Migration.Framework.MigrationContext(NzbDrone.Core.Datastore.Migration.Framework.MigrationType.Main, 128), database.DatabaseType);
+                    connectionString, new NzbDrone.Core.Datastore.Migration.Framework.MigrationContext(NzbDrone.Core.Datastore.Migration.Framework.MigrationType.Main, 130), database.DatabaseType);
                 var repository = new ConversionJobRepository(database, new StubEventAggregator());
                 Assert.That(repository.FindByHistoryDownloadId("ÉPISODE", 4).DownloadId, Is.EqualTo("épisode"));
                 Assert.That(repository.FindByHistoryDownloadId("AMBIGUOUS").DownloadClientId, Is.Zero);

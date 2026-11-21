@@ -29,6 +29,12 @@ namespace Chaptarr.Core.Test.MediaFiles
     {
         private sealed class RecordingImportApprovedBooks : IImportApprovedBooks
         {
+            public LibraryConversionQueueResult QueueLibraryConversion(List<ImportDecision<LocalBook>> decisions, NzbDrone.Core.Books.Author author, NzbDrone.Core.Books.Book book) =>
+                throw new NotImplementedException();
+
+            public List<ImportResult> ImportLibraryConversion(ConversionJobRequest request, List<ImportDecision<LocalBook>> sourceDecisions) =>
+                throw new NotImplementedException();
+
             public List<ImportDecision<LocalBook>> Decisions { get; private set; } = new();
 
             public List<ImportResult> Import(List<ImportDecision<LocalBook>> decisions, bool replaceExisting, DownloadClientItem downloadClientItem = null, ImportMode importMode = ImportMode.Auto, CancellationToken cancellationToken = default)
