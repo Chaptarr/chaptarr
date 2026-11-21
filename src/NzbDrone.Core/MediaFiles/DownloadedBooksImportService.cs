@@ -80,7 +80,7 @@ namespace NzbDrone.Core.MediaFiles
             Logger logger,
             NzbDrone.Core.Queue.IQueueService queueService,
             IConversionJobService conversionJobService,
-            IArchiveService archiveService = null)
+            IArchiveService archiveService)
         {
             _diskProvider = diskProvider;
             _diskScanService = diskScanService;
@@ -101,7 +101,7 @@ namespace NzbDrone.Core.MediaFiles
             _logger = logger;
             _queueService = queueService ?? throw new ArgumentNullException(nameof(queueService));
             _conversionJobService = conversionJobService ?? throw new ArgumentNullException(nameof(conversionJobService));
-            _archiveService = archiveService ?? new ArchiveService(logger);
+            _archiveService = archiveService;
         }
 
         public List<ImportResult> ProcessRootFolder(IDirectoryInfo directoryInfo)

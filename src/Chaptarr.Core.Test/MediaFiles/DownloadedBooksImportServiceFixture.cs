@@ -526,7 +526,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                         AlternativeCopies = alternative, AlternativeCopyGrabDate = grabbed, TargetEditionIds = captured };
                     if (extras == "disabled-unscoped") client.FilePaths = null;
                     var importer = new DownloadedBooksImportService(disk, scan, matching, new StubMetadataTagService(), writer, bookService, authorService,
-                        editionService, null, null, null, config, history, events, null, null, logger, queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                        editionService, null, null, null, config, history, events, null, null, logger, queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
                     var results = importer.ProcessPath(source, mode, author, client, remote);
                     TestContext.WriteLine(string.Join("; ", results.SelectMany(result => result.Errors)));
                     var expectedCount = media == BookMediaType.Audiobook ? 3 : 1;
@@ -649,7 +649,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                     DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 var results = service.ProcessPath(singleFile ? filePath : tempDir, ImportMode.Auto,
                     remoteBook: new RemoteBook { Books = new List<Book> { new Book { MediaType = BookMediaType.Audiobook } } });
@@ -710,7 +710,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IEventAggregator>((method, args) => null),
                     Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>((method, args) => false),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 RejectionType Classify(DownloadClientItem downloadClientItem, string path = null)
                 {
@@ -812,7 +812,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                     DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 var result = service.ProcessPath(tempDir, ImportMode.Auto, author: null, downloadClientItem: null).Single();
 
@@ -948,7 +948,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 _ = service.ProcessPath(filePath, ImportMode.Auto, author: null, downloadClientItem: null);
 
@@ -1059,7 +1059,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                     DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 _ = service.ProcessPath(tempDir, ImportMode.Auto, author: null, downloadClientItem: null);
 
@@ -1149,7 +1149,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                     DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 _ = service.ProcessPath(filePath, ImportMode.Auto, author: null, downloadClientItem: null, requireDefaultRootFolderForMissingAuthors: true);
 
@@ -1239,7 +1239,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                     DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 _ = service.ProcessPath(filePath, ImportMode.Auto, author: null, downloadClientItem: new DownloadClientItem { DownloadId = "external-grab" });
 
@@ -1365,7 +1365,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                     DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 _ = service.ProcessPath(filePath, ImportMode.Auto, author: null, downloadClientItem: new DownloadClientItem { DownloadId = "external-grab" });
 
@@ -1466,7 +1466,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                     DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 _ = service.ProcessPath(filePath, ImportMode.Auto, author: null, downloadClientItem: new DownloadClientItem { DownloadId = "external-grab" });
 
@@ -1598,7 +1598,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     DispatchProxy.Create<IEventAggregator, ThrowingProxy<IEventAggregator>>(),
                     DispatchProxy.Create<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo, ThrowingProxy<NzbDrone.Common.EnvironmentInfo.IRuntimeInfo>>(),
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 _ = service.ProcessPath(filePath, ImportMode.Auto, author: null, downloadClientItem: new DownloadClientItem { DownloadId = "external-grab" });
 
@@ -1687,7 +1687,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 _ = service.ProcessPath(filePath, ImportMode.Auto, author: null, downloadClientItem: null);
 
@@ -1785,7 +1785,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 _ = service.ProcessPath(
                     tempDir,
@@ -1896,7 +1896,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 var remoteBook = new RemoteBook
                 {
@@ -1993,7 +1993,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 var remoteBook = new RemoteBook
                 {
@@ -2129,7 +2129,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 var remoteBook = new RemoteBook
                 {
@@ -2240,7 +2240,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 var remoteBook = new RemoteBook
                 {
@@ -2345,7 +2345,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 var remoteBook = new RemoteBook
                 {
@@ -2456,7 +2456,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 var remoteBook = new RemoteBook
                 {
@@ -2566,7 +2566,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 var remoteBook = new RemoteBook
                 {
@@ -2676,7 +2676,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 var remoteBook = new RemoteBook
                 {
@@ -2783,7 +2783,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 var remoteBook = new RemoteBook
                 {
@@ -2894,7 +2894,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 var remoteBook = new RemoteBook
                 {
@@ -3005,7 +3005,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     eventAggregator,
                     runtimeInfo,
                     DispatchProxy.Create<IMediaInfoExtractor, ThrowingProxy<IMediaInfoExtractor>>(),
-                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                    LogManager.GetCurrentClassLogger(), queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
 
                 var remoteBook = new RemoteBook
                 {

@@ -92,7 +92,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                     InterfaceProxy.Proxy<IBookService>((method, _) => { Assert.That(method.Name, Is.EqualTo("GetBooksForLookup")); return new List<Book> { book }; }),
                     InterfaceProxy.Proxy<IAuthorService>((method, _) => { Assert.That(method.Name, Is.EqualTo("GetAuthor")); return author; }),
                     null, null, null, null, null, null, null, null, null, LogManager.GetCurrentClassLogger(),
-                    ImportLifecycleStubs.EmptyQueue(), jobs);
+                    ImportLifecycleStubs.EmptyQueue(), jobs, archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
                 var item = new DownloadClientItem { DownloadId = "bonus-boundary", FilePaths = paths.ToList() };
                 var remote = new RemoteBook { Author = author, Books = new() { new Book { Id = 4, MediaType = BookMediaType.Ebook, GoodreadsWorkId = "gr:123" } },
                     ParsedBookInfo = new ParsedBookInfo { Quality = new QualityModel(Quality.EPUB) } };

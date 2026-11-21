@@ -570,7 +570,7 @@ namespace Chaptarr.Core.Test.Download
                     var runtime = Proxy<IRuntimeInfo>((method, args) => method.Name == "get_IsWindowsService" ? false :
                         throw new InvalidOperationException("Missing-source check attempted " + method.Name));
                     var importer = new DownloadedBooksImportService(disk, null, null, null, null, null, null, null, null, null,
-                        null, null, history, events, runtime, null, logger, queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs());
+                        null, null, history, events, runtime, null, logger, queueService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.EmptyQueue(), conversionJobService: global::Chaptarr.Core.Test.Common.ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
                     var snapshots = new DownloadClientFileSnapshotService(new DownloadClientFileSnapshotRepository(database, events), disk, logger);
                     var item = new DownloadClientItem { DownloadId = "waiting", Title = "Dune", Status = DownloadItemStatus.Completed,
                         OutputPath = new OsPath(directory), FilePaths = paths, FileListConfidence = DownloadClientFileListConfidence.Authoritative,

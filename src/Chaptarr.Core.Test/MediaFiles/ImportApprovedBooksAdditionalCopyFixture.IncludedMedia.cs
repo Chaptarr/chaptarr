@@ -473,7 +473,7 @@ namespace Chaptarr.Core.Test.MediaFiles
                 return queued;
             });
             var importer = new DownloadedBooksImportService(disk, diskScan, matcher, tags, approved, bookService, authorService, editionService,
-                null, null, null, config, history, events, InterfaceProxy.Proxy<IRuntimeInfo>((_, _) => false), new StubMediaInfoExtractor(), logger, queueService: queue, conversionJobService: jobs ?? ImportLifecycleStubs.NoConversionJobs());
+                null, null, null, config, history, events, InterfaceProxy.Proxy<IRuntimeInfo>((_, _) => false), new StubMediaInfoExtractor(), logger, queueService: queue, conversionJobService: jobs ?? ImportLifecycleStubs.NoConversionJobs(), archiveService: new global::NzbDrone.Common.ArchiveService(global::NLog.LogManager.GetCurrentClassLogger()));
             var item = new DownloadClientItem { DownloadId = "MIXED-DOWNLOAD", Title = "Frank Herbert - Dune", OutputPath = new OsPath(source),
                 Status = DownloadItemStatus.Completed, FilePaths = new() { PathFor(requested), PathFor(other) }, DownloadForced = !requestedConversionOnly && !requestedSource,
                 FileListConfidence = DownloadClientFileListConfidence.Authoritative,
