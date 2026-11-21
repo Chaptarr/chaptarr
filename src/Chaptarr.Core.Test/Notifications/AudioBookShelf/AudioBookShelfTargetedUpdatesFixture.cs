@@ -754,6 +754,47 @@ namespace Chaptarr.Core.Test.Notifications.AudioBookShelf
         }
 
         [Test]
+        public void rename_rescan_should_keep_going_when_one_item_fails()
+        {
+            var proxy = new FakeAudioBookShelfProxy();
+            var first = Item("item-a", "Joe Abercrombie/The Blade Itself", "folder-audio");
+            first.Media.Metadata = new AudioBookShelfLibraryItemBookMetadata { Asin = "B0ASINAAA1" };
+            var failing = Item("item-b", "Joe Abercrombie/Before They Are Hanged", "folder-audio");
+            failing.Media.Metadata = new AudioBookShelfLibraryItemBookMetadata { Asin = "B0ASINBBB1" };
+            var last = Item("item-c", "Joe Abercrombie/Last Argument of Kings", "folder-audio");
+            last.Media.Metadata = new AudioBookShelfLibraryItemBookMetadata { Asin = "B0ASINCCC1" };
+            proxy.ItemsByLibrary["library-audio"] = new List<AudioBookShelfLibraryItemSummary> { first, failing, last };
+            proxy.ItemsByLibrary["library-ebook"] = new List<AudioBookShelfLibraryItemSummary>();
+
+            var scanned = new List<string>();
+            proxy.OnScanItem = id =>
+            {
+                scanned.Add(id);
+                if (id == "item-b")
+                {
+                    throw new Exception("scan failed");
+                }
+            };
+
+            var pins = new RecordingEditionPinService();
+            var subject = CreateSubject(proxy, AudioAndEbookRoots(), AudioAndEbookMappings(), pins);
+            ((AudioBookShelfSettings)subject.Definition.Settings).MetadataKeeper = (int)AudioBookShelfMetadataKeeper.AudioBookShelf;
+
+            subject.RescanRenamedFolders(
+                (AudioBookShelfSettings)subject.Definition.Settings,
+                AudioAndEbookMappings(),
+                new Dictionary<string, Book>
+                {
+                    ["/audiobooks/Joe Abercrombie/The Blade Itself"] = null,
+                    ["/audiobooks/Joe Abercrombie/Before They Are Hanged"] = null,
+                    ["/audiobooks/Joe Abercrombie/Last Argument of Kings"] = null
+                });
+
+            Assert.That(scanned, Is.EqualTo(new[] { "item-a", "item-b", "item-c" }));
+            Assert.That(pins.Calls.Select(call => call.Item3), Is.EqualTo(new[] { "B0ASINAAA1", "B0ASINCCC1" }));
+        }
+
+        [Test]
         public void cover_push_should_fail_when_a_library_cannot_be_read()
         {
             var proxy = BuildPushProxy();

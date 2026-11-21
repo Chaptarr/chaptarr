@@ -868,36 +868,49 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
         // Rescans the items of renamed folders (folder -> its book, when known), then pushes or pins.
         internal void RescanRenamedFolders(AudioBookShelfSettings settings, List<AudioBookShelfLibraryMapping> mappings, Dictionary<string, Book> folderBooks)
         {
-            try
+            var handledItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // Failures are handled per library and per item, so one failing item or library does not
+            // stop the others, and items already rescanned are still pinned.
+            foreach (var libraryId in MappedLibraryIds(mappings))
             {
-                var handledItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                ILookup<string, AudioBookShelfLibraryItemSummary> itemsByRelPath;
 
-                foreach (var libraryId in MappedLibraryIds(mappings))
+                try
                 {
-                    var itemsByRelPath = IndexByRelativePath(_proxy.GetLibraryItems(settings, libraryId));
-                    var toPin = new List<(string ItemId, string Folder, string MediaType)>();
+                    itemsByRelPath = IndexByRelativePath(_proxy.GetLibraryItems(settings, libraryId));
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "AudioBookShelf: item rescan after rename skipped library '{0}': unable to list its items", libraryId);
+                    continue;
+                }
 
-                    foreach (var pair in folderBooks)
+                var toPin = new List<(string ItemId, string Folder, string MediaType)>();
+
+                foreach (var pair in folderBooks)
+                {
+                    var resolved = ResolveLibraryRelativePath(pair.Key);
+
+                    if (resolved == null)
                     {
-                        var resolved = ResolveLibraryRelativePath(pair.Key);
+                        continue;
+                    }
 
-                        if (resolved == null)
-                        {
-                            continue;
-                        }
+                    // Multipart books are renamed per part folder (Author/Book/CD1, CD2) while the
+                    // item sits at Author/Book, so walk up to it and handle each item once.
+                    var (item, mapping) = FindMappedItem(itemsByRelPath, mappings, resolved.Value.RootFolder.Id, libraryId, resolved.Value.RelativePath, pair.Value == null ? null : GetMediaType(pair.Value, null), allowAncestor: true);
 
-                        // Multipart books are renamed per part folder (Author/Book/CD1, CD2) while the
-                        // item sits at Author/Book, so walk up to it and handle each item once.
-                        var (item, mapping) = FindMappedItem(itemsByRelPath, mappings, resolved.Value.RootFolder.Id, libraryId, resolved.Value.RelativePath, pair.Value == null ? null : GetMediaType(pair.Value, null), allowAncestor: true);
+                    if (item == null || !handledItems.Add(item.Id))
+                    {
+                        continue;
+                    }
 
-                        if (item == null || !handledItems.Add(item.Id))
-                        {
-                            continue;
-                        }
+                    var rel = item.RelPath.Trim('/');
+                    var itemFolder = Path.Combine(resolved.Value.RootFolder.Path, rel.Replace('/', Path.DirectorySeparatorChar));
 
-                        var rel = item.RelPath.Trim('/');
-                        var itemFolder = Path.Combine(resolved.Value.RootFolder.Path, rel.Replace('/', Path.DirectorySeparatorChar));
-
+                    try
+                    {
                         // Scan first; metadata pushed before it is overwritten from the files.
                         _proxy.ScanItem(settings, item.Id);
                         _logger.Debug("AudioBookShelf: requested item rescan for '{0}'", rel);
@@ -921,28 +934,47 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
 
                         PushItemCover(settings, mapping, item.Id, itemFolder, rel);
                     }
-
-                    if (toPin.Any())
+                    catch (Exception ex)
                     {
-                        // The rescans may have changed an item's ASIN, so pin from the items as they are now.
-                        var rescanned = _proxy.GetLibraryItems(settings, libraryId)
-                            .Where(i => i?.Id != null)
-                            .GroupBy(i => i.Id, StringComparer.OrdinalIgnoreCase)
-                            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
-
-                        foreach (var (itemId, folder, mediaType) in toPin)
-                        {
-                            if (rescanned.TryGetValue(itemId, out var current))
-                            {
-                                PinFromItem(folder, mediaType, current, Definition?.Tags);
-                            }
-                        }
+                        _logger.Warn(ex, "AudioBookShelf: item rescan after rename failed for '{0}'", rel);
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.Warn(ex, "AudioBookShelf: item rescan after rename failed");
+
+                if (!toPin.Any())
+                {
+                    continue;
+                }
+
+                Dictionary<string, AudioBookShelfLibraryItemSummary> rescanned;
+
+                try
+                {
+                    // The rescans may have changed an item's ASIN, so pin from the items as they are now.
+                    rescanned = _proxy.GetLibraryItems(settings, libraryId)
+                        .Where(i => i?.Id != null)
+                        .GroupBy(i => i.Id, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn(ex, "AudioBookShelf: unable to re-read library '{0}' after rename rescans; {1} item(s) not pinned", libraryId, toPin.Count);
+                    continue;
+                }
+
+                foreach (var (itemId, folder, mediaType) in toPin)
+                {
+                    try
+                    {
+                        if (rescanned.TryGetValue(itemId, out var current))
+                        {
+                            PinFromItem(folder, mediaType, current, Definition?.Tags);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warn(ex, "AudioBookShelf: pin after rename failed for '{0}'", folder);
+                    }
+                }
             }
         }
 
