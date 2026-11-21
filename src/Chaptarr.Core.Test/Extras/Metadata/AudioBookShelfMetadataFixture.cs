@@ -279,18 +279,53 @@ namespace Chaptarr.Core.Test.Extras.Metadata
         }
 
         [Test]
-        public void should_still_write_sidecars_for_the_other_media_type()
+        public void should_still_write_sidecars_for_the_other_media_type_in_its_own_folder()
         {
             var subject = CreateSubject(new List<RootFolder>
             {
                 BuildRoot(ebookCover: true)
-            }, new FakeKeeperLookup(rootFolderId: 1, "audiobook"));
+            }, new FakeKeeperLookup(rootFolderId: 1, "audiobook"), MediaFilesIn(new Dictionary<string, string>()));
 
             var author = BuildAuthor();
             var bookFile = BuildBookFile("ebook", "/library/Matt Dinniman/A Parade of Horribles/book.epub");
             bookFile.Edition.Images.Add(new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Cover, "https://images.example.test/edition.webp"));
 
             Assert.That(subject.BookImages(author, bookFile), Has.Count.EqualTo(1));
+        }
+
+        [Test]
+        public void should_not_write_sidecars_into_a_folder_shared_with_an_audiobookshelf_owned_audiobook()
+        {
+            var folder = System.IO.Path.GetDirectoryName("/library/Matt Dinniman/A Parade of Horribles/book.epub");
+            var subject = CreateSubject(new List<RootFolder>
+            {
+                BuildRoot(ebookMetadata: true, ebookCover: true)
+            }, new FakeKeeperLookup(rootFolderId: 1, "audiobook"), MediaFilesIn(new Dictionary<string, string> { [folder] = "audiobook" }));
+
+            var author = BuildAuthor();
+            var bookFile = BuildBookFile("ebook", "/library/Matt Dinniman/A Parade of Horribles/book.epub");
+            bookFile.Edition.Images.Add(new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Cover, "https://images.example.test/edition.webp"));
+
+            Assert.That(subject.BookImages(author, bookFile), Is.Empty);
+            Assert.That(subject.BookMetadata(author, bookFile), Is.Null);
+        }
+
+        // Media files by folder: GetFilesWithBasePath returns one file when the folder holds the media type.
+        private static IMediaFileService MediaFilesIn(Dictionary<string, string> mediaTypeByFolder)
+        {
+            return global::Chaptarr.Core.Test.Common.InterfaceProxy.Proxy<IMediaFileService>((method, args) =>
+            {
+                if (method.Name == nameof(IMediaFileService.GetFilesWithBasePath) && args.Length == 2)
+                {
+                    var folder = (string)args[0];
+                    var mediaType = (string)args[1];
+                    return mediaTypeByFolder.TryGetValue(folder, out var held) && held == mediaType
+                        ? new List<BookFile> { new BookFile { Path = System.IO.Path.Combine(folder, "part.m4b"), MediaType = mediaType } }
+                        : new List<BookFile>();
+                }
+
+                throw new NotImplementedException(method.Name);
+            });
         }
 
         private class FakeKeeperLookup : IAudioBookShelfKeeperLookup
@@ -313,9 +348,9 @@ namespace Chaptarr.Core.Test.Extras.Metadata
             }
         }
 
-        private static AudioBookShelfMetadata CreateSubject(List<RootFolder> rootFolders, IAudioBookShelfKeeperLookup keeperLookup = null)
+        private static AudioBookShelfMetadata CreateSubject(List<RootFolder> rootFolders, IAudioBookShelfKeeperLookup keeperLookup = null, IMediaFileService mediaFileService = null)
         {
-            var subject = new AudioBookShelfMetadata(new FakeRootFolderService(rootFolders), null, null, keeperLookup);
+            var subject = new AudioBookShelfMetadata(new FakeRootFolderService(rootFolders), null, null, keeperLookup, mediaFileService);
             subject.Definition = new MetadataDefinition
             {
                 Settings = new AudioBookShelfMetadataSettings()
