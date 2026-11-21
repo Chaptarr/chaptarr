@@ -18,6 +18,7 @@ using NzbDrone.Core.Download.TrackedDownloads;
 using NzbDrone.Core.MediaFiles;
 using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.MediaFiles.BookImport.Manual;
+using NzbDrone.Core.Messaging.Commands;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
 using NzbDrone.Core.RootFolders;
@@ -533,6 +534,78 @@ namespace Chaptarr.Core.Test.MediaFiles.BookImport
                 Assert.That(json, Does.Contain("\"selectionSource\": \"userMetadataSuggestion\""));
                 Assert.That(roundTripped.SelectionSource, Is.EqualTo(ManualImportSelectionSource.UserMetadataSuggestion));
             });
+        }
+
+        [Test]
+        public void explicit_local_selection_without_an_edition_id_should_fail_the_command_with_the_field_name()
+        {
+            var root = new RootFolder { Id = 1, Path = "/library" };
+            var author = new Author { Id = 42, Name = "Michael Connelly", Path = "/library/Michael Connelly" };
+            var edition = new Edition { Id = 22002, BookId = 2202, Title = "The Black Echo", ForeignEditionId = "gr:229391768" };
+            var book = new Book
+            {
+                Id = 2202,
+                AuthorId = author.Id,
+                Author = author,
+                Title = "The Black Echo",
+                MediaType = BookMediaType.Audiobook,
+                Editions = new List<Edition> { edition }
+            };
+
+            var rootFolders = DispatchProxy.Create<IRootFolderService, RootFolderServiceProxy>();
+            ((RootFolderServiceProxy)(object)rootFolders).Root = root;
+            var authors = DispatchProxy.Create<IAuthorService, AuthorServiceProxy>();
+            ((AuthorServiceProxy)(object)authors).Author = author;
+            var books = DispatchProxy.Create<IBookService, BookServiceProxy>();
+            ((BookServiceProxy)(object)books).Book = book;
+            var editions = DispatchProxy.Create<IEditionService, EditionServiceProxy>();
+            ((EditionServiceProxy)(object)editions).Edition = edition;
+
+            var service = new ManualImportService(
+                DispatchProxy.Create<IDiskProvider, DiskProviderProxy>(),
+                null,
+                rootFolders,
+                null,
+                null,
+                authors,
+                books,
+                editions,
+                DispatchProxy.Create<IAuthorLibraryService, AuthorLibraryServiceProxy>(),
+                DispatchProxy.Create<IRootFolderSettingsResolver, RootFolderSettingsProxy>(),
+                null,
+                new FileMatchingServiceStub(author, book, edition),
+                null,
+                DispatchProxy.Create<IMetadataTagService, MetadataTagServiceProxy>(),
+                new ImportApprovedBooksStub(),
+                null,
+                DispatchProxy.Create<ITrackedDownloadService, TrackedDownloadServiceProxy>(),
+                null,
+                null,
+                null,
+                null,
+                null,
+                LogManager.GetCurrentClassLogger(), new NzbDrone.Core.Download.TrackedDownloads.TrackedDownloadAlreadyImported(NLog.LogManager.GetCurrentClassLogger()));
+
+            // The command executor reports CommandFailedException's message to API callers; any
+            // other exception reaches them only as "Failed".
+            var ex = Assert.Throws<CommandFailedException>(() => service.Execute(new ManualImportCommand
+            {
+                Files = new List<ManualImportFile>
+                {
+                    new ManualImportFile
+                    {
+                        Path = "/library/Michael Connelly/The Black Echo/chapter-1.mp3",
+                        AuthorId = author.Id,
+                        BookId = book.Id,
+                        ForeignEditionId = edition.ForeignEditionId,
+                        Quality = new QualityModel(Quality.MP3)
+                    }
+                },
+                ImportMode = ImportMode.Move
+            }));
+
+            Assert.That(ex.Message, Does.Contain("editionId is missing"));
+            Assert.That(ex.Message, Does.Contain("foreignEditionId 'gr:229391768'"));
         }
 
         private static IFileInfo CreateFileInfo(string path)
