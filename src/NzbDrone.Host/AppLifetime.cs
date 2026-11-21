@@ -84,20 +84,24 @@ namespace NzbDrone.Host
             _eventAggregator.PublishEvent(new ApplicationStartedEvent());
         }
 
-        // True when the host that just stopped asked to restart and has to do it inside this process
-        // (see ShouldRestartInProcess). Bootstrap then starts a new host here instead of calling RestartIfPending.
-        public bool RestartsInProcess =>
-            _runtimeInfo.RestartPending &&
-            !_runtimeInfo.IsWindowsService &&
-            ShouldRestartInProcess(_osInfo?.IsDocker == true, Environment.ProcessId);
-
         public void RestartIfPending()
         {
             if (_runtimeInfo.RestartPending && !_runtimeInfo.IsWindowsService)
             {
-                if (ShouldRestartInProcess(_osInfo?.IsDocker == true, Environment.ProcessId))
+                // Logging is already shut down here, so container output goes straight to stdout for `docker logs`.
+                if (ShouldReplaceProcess(_osInfo?.IsDocker == true, Environment.ProcessId))
                 {
-                    // Bootstrap restarts in-process before it gets here; a new process would die with this one.
+                    var argv = BuildReplacementArguments(
+                        _runtimeInfo.ExecutingApplication,
+                        Assembly.GetEntryAssembly()?.Location,
+                        _startupContext.Args.TryGetValue(StartupContext.APPDATA, out var appData) ? appData : null);
+
+                    Console.WriteLine("Restart requested inside a container: starting Chaptarr again in place.");
+
+                    // Only returns when the replacement could not be started.
+                    var error = ProcessReplacement.Replace(argv);
+                    Console.WriteLine("Could not start Chaptarr again in place (error {0}); exiting so the container restart policy " +
+                                      "(e.g. 'restart: unless-stopped') can start it.", error);
                     return;
                 }
 
@@ -113,10 +117,35 @@ namespace NzbDrone.Host
 
         // A child spawned by a container's main process (PID 1) is killed as soon as that process
         // exits, and exiting would leave the restart to the container's restart policy (none, or
-        // 'on-failure', leaves Chaptarr stopped). So in a container Chaptarr restarts in-process.
-        public static bool ShouldRestartInProcess(bool isDocker, int processId)
+        // 'on-failure', leaves Chaptarr stopped). So in a container the stopped process is replaced
+        // in place by a new one (exec): same PID, no state carried over from the old host.
+        public static bool ShouldReplaceProcess(bool isDocker, int processId)
         {
             return isDocker || processId == 1;
+        }
+
+        // The argument vector for the replacement process. Under `dotnet Chaptarr.dll` (the Docker
+        // image's CMD) the executing module is the dotnet host, so the entry assembly comes first.
+        public static string[] BuildReplacementArguments(string executingApplication, string entryAssemblyPath, string appDataPath)
+        {
+            var argv = new System.Collections.Generic.List<string> { executingApplication };
+
+            var hostName = Path.GetFileNameWithoutExtension(executingApplication ?? string.Empty);
+            if (string.Equals(hostName, "dotnet", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(entryAssemblyPath))
+            {
+                argv.Add(entryAssemblyPath);
+            }
+
+            if (!string.IsNullOrWhiteSpace(appDataPath))
+            {
+                argv.Add("/" + StartupContext.APPDATA + "=" + appDataPath);
+            }
+
+            argv.Add("/" + StartupContext.NO_BROWSER);
+            argv.Add("/" + StartupContext.RESTART);
+
+            return argv.ToArray();
         }
 
         // Under `dotnet Chaptarr.dll` (the Docker image's CMD) the executing module is the dotnet
@@ -165,12 +194,7 @@ namespace NzbDrone.Host
                     _runtimeInfo.RestartPending = true;
                 }
 
-                // An in-process restart keeps logging running: the next host logs through the same configuration.
-                if (!RestartsInProcess)
-                {
-                    LogManager.Configuration = null;
-                }
-
+                LogManager.Configuration = null;
                 Shutdown();
             }
         }

@@ -78,7 +78,6 @@ namespace NzbDrone.Host
             FileStream appDataLock = null;
             Action restart = null;
             Action restartAfterRecovery = recoveryAttempt ? null : () => StartCore(args, trayCallback, true, configureLifetime, stoppingToken);
-            Action restartInProcess = () => StartCore(args, trayCallback, false, configureLifetime, stoppingToken);
             try
             {
                 Logger.Info("Starting Chaptarr - {0} - Version {1}",
@@ -116,7 +115,7 @@ namespace NzbDrone.Host
 
                             var builder = CreateConsoleHostBuilder(args, startupContext);
                             configureLifetime(builder);
-                            restart = RunHostWithRestart(builder.Build(), restartAfterRecovery, restartInProcess);
+                            restart = RunHost(builder.Build(), restartAfterRecovery);
                             break;
                         }
 
@@ -130,7 +129,7 @@ namespace NzbDrone.Host
                                 trayCallback(builder);
                             }
 
-                            restart = RunHostWithRestart(builder.Build(), restartAfterRecovery, restartInProcess);
+                            restart = RunHost(builder.Build(), restartAfterRecovery);
                             break;
                         }
 
@@ -220,13 +219,6 @@ namespace NzbDrone.Host
 
         private static Action RunHost(IHost host, Action restartAfterRecovery = null)
         {
-            return RunHostWithRestart(host, restartAfterRecovery, null);
-        }
-
-        // restartInProcess starts the next host in this process when the stopped one asked for an
-        // in-process restart (see AppLifetime.RestartsInProcess).
-        private static Action RunHostWithRestart(IHost host, Action restartAfterRecovery, Action restartInProcess)
-        {
             var restore = host.Services.GetRequiredService<IRestoreDatabase>();
             var applicationStopping = host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
             var lifetime = host.Services.GetServices<IHostedService>().OfType<AppLifetime>().SingleOrDefault();
@@ -264,20 +256,7 @@ namespace NzbDrone.Host
                 return restartAfterRecovery;
             }
 
-            if (lifetime == null)
-            {
-                return null;
-            }
-
-            // Inside a container a spawned process dies with this one, so start the next host here,
-            // once the stopped host has released the app-data lock (see StartCore's finally).
-            if (restartInProcess != null && lifetime.RestartsInProcess)
-            {
-                Logger.Info("Restarting Chaptarr in-process");
-                return restartInProcess;
-            }
-
-            return lifetime.RestartIfPending;
+            return lifetime == null ? null : lifetime.RestartIfPending;
         }
 
         public static IHostBuilder CreateConsoleHostBuilder(string[] args, StartupContext context)

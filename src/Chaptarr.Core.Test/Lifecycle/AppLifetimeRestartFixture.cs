@@ -49,9 +49,32 @@ namespace Chaptarr.Core.Test.Lifecycle
         [TestCase(false, 1, true)]
         [TestCase(true, 1, true)]
         [TestCase(false, 4242, false)]
-        public void restart_should_happen_in_process_when_in_docker_or_running_as_pid_1(bool isDocker, int processId, bool expected)
+        public void restart_should_replace_the_process_when_in_docker_or_running_as_pid_1(bool isDocker, int processId, bool expected)
         {
-            Assert.That(AppLifetime.ShouldRestartInProcess(isDocker, processId), Is.EqualTo(expected));
+            Assert.That(AppLifetime.ShouldReplaceProcess(isDocker, processId), Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void replacement_under_the_dotnet_host_should_run_the_entry_assembly_with_the_same_data_folder()
+        {
+            var argv = AppLifetime.BuildReplacementArguments("/usr/share/dotnet/dotnet", "/app/Chaptarr.dll", "/config dir");
+
+            Assert.That(argv, Is.EqualTo(new[] { "/usr/share/dotnet/dotnet", "/app/Chaptarr.dll", "/data=/config dir", "/nobrowser", "/restart" }));
+        }
+
+        [Test]
+        public void replacement_of_a_native_app_host_should_not_add_an_assembly()
+        {
+            var argv = AppLifetime.BuildReplacementArguments("/app/Chaptarr", "/app/Chaptarr.dll", null);
+
+            Assert.That(argv, Is.EqualTo(new[] { "/app/Chaptarr", "/nobrowser", "/restart" }));
+        }
+
+        [Test]
+        public void a_replacement_that_cannot_start_should_return_instead_of_throwing()
+        {
+            Assert.That(ProcessReplacement.Replace(new[] { "/nonexistent/chaptarr-test-binary" }), Is.Not.EqualTo(0));
+            Assert.That(ProcessReplacement.Replace(null), Is.EqualTo(-1));
         }
     }
 }
