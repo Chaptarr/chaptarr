@@ -48,7 +48,17 @@ namespace NzbDrone.Core.MediaFiles
         public List<ConversionJob> LibraryJobs(IEnumerable<int> editionIds)
         {
             var ids = editionIds?.Where(id => id > 0).Distinct().ToArray() ?? Array.Empty<int>();
-            return ids.Length == 0 ? new List<ConversionJob>() : Query(job => job.Origin == ConversionJobOrigin.Library && ids.Contains(job.EditionId));
+            if (ids.Length == 0) return new List<ConversionJob>();
+
+            // SQLite limits the number of bound parameters in one statement.
+            var batchSize = _database.DatabaseType == DatabaseType.SQLite ? SqliteVariableLimit.MaxParameters - 2 : ids.Length;
+            var jobs = new List<ConversionJob>();
+            foreach (var batch in ids.Chunk(batchSize))
+            {
+                jobs.AddRange(Query(job => job.Origin == ConversionJobOrigin.Library && batch.Contains(job.EditionId)));
+            }
+
+            return jobs;
         }
 
         public List<ConversionJob> LibraryJobsByStatus(ConversionJobStatus status) =>

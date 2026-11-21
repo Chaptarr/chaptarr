@@ -22,6 +22,7 @@
   "SearchAllIndexersFailed": "All indexers failed",
   "SearchNoResultsWithIndexerFailures": "No results ({failed} of {total} indexers failed)",
   "UnableToCancelTask": "Unable to cancel this task",
+  "UnableToStartConversion": "Unable to start the conversion",
   "DelugeLabelChangeWarning": "Preserved Deluge torrents have unfinished label changes and may be paused. {0}. Chaptarr retries on download checks (normally every minute) and resumes torrents it paused when the change finishes.",
   "DownloadCleanupCheckWarning": "Chaptarr cannot verify these downloads before cleanup: {0}. Files are kept and checks retry automatically.",
   "AddBookUsesExistingAuthorSettings": "Uses this author’s saved settings. Change them in Edit Author.",

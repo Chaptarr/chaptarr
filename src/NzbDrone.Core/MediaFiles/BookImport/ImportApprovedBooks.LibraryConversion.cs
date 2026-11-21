@@ -154,9 +154,12 @@ namespace NzbDrone.Core.MediaFiles.BookImport
             }
             catch (InvalidOperationException ex)
             {
-                // The job service refuses while a previous attempt's cleanup is pending.
+                // The job service refuses while a previous attempt's cleanup is pending. A download retries
+                // its import by itself, but nothing re-queues a library conversion that was refused, so the
+                // user is told to start it again rather than that it will resume.
                 _logger.Warn(ex, "[CONVERSION] Library conversion of '{0}' was not queued", book.Title);
-                return LibraryConversionQueueResult.Refused(ex.Message);
+                return LibraryConversionQueueResult.Refused(
+                    "The previous conversion of this book is still being cleaned up. Click Convert again once it has finished; System > Status shows any cleanup error.");
             }
         }
 

@@ -28,6 +28,10 @@ namespace Chaptarr.Core.Test.MediaFiles
         private const int EditionId = 84;
         private const int OtherEditionId = 85;
 
+        // Editions whose files were relinked after the convert window was opened.
+        private const int MovedToOtherBookEditionId = 86;
+        private const int MovedToOtherAuthorEditionId = 87;
+
         private IAuthorService _authorService;
         private AuthorServiceProxy _authorServiceProxy;
         private IMediaFileService _mediaFileService;
@@ -220,6 +224,51 @@ namespace Chaptarr.Core.Test.MediaFiles
             var decisions = _importApprovedBooks.Queued.Single();
             Assert.That(decisions.Count, Is.EqualTo(1));
             Assert.That(decisions[0].Item.Path, Does.EndWith("01.mp3"));
+        }
+
+        [Test]
+        public void should_not_queue_a_selected_file_that_now_belongs_to_another_book()
+        {
+            var moved = Mp3File(1, @"C:\books\author\book\01.mp3");
+            moved.EditionId = MovedToOtherBookEditionId;
+            GivenFiles(moved);
+
+            _service.Execute(new ConvertBookFilesCommand(AuthorId, new List<int> { 1 }, BookId));
+
+            Assert.That(_importApprovedBooks.Queued, Is.Empty, "the user chose the book on this page, not the one the file moved to");
+            Assert.That(_commands.Pushed, Is.Empty);
+        }
+
+        [Test]
+        public void should_not_queue_a_selected_file_that_now_belongs_to_another_author()
+        {
+            var moved = Mp3File(1, @"C:\books\author\book\01.mp3");
+            moved.EditionId = MovedToOtherAuthorEditionId;
+            var stays = Mp3File(2, @"C:\books\author\book2\01.mp3");
+            stays.EditionId = OtherEditionId;
+            GivenFiles(moved, stays);
+
+            _service.Execute(new ConvertBookFilesCommand(AuthorId, new List<int> { 1, 2 }));
+
+            Assert.That(_importApprovedBooks.Queued.Select(decisions => decisions.Single().Item.Edition.Id), Is.EqualTo(new[] { OtherEditionId }));
+        }
+
+        [Test]
+        public void progress_task_stops_on_shutdown_without_cancelling_conversions()
+        {
+            _jobs.Add(new ConversionJob { Origin = ConversionJobOrigin.Library, EditionId = EditionId, DownloadId = LibraryConversionJob.Key(EditionId), Status = ConversionJobStatus.Converting, Progress = 10m });
+            _jobs.OnActiveRead = reads =>
+            {
+                if (reads == 2)
+                {
+                    _service.Handle(new NzbDrone.Core.Lifecycle.ApplicationShutdownRequested());
+                }
+            };
+
+            Assert.DoesNotThrow(() => _service.Execute(new LibraryConversionProgressCommand(), CancellationToken.None));
+
+            Assert.That(_jobs.ActiveReads, Is.EqualTo(2), "polling stops once shutdown begins");
+            Assert.That(_jobs.Cancelled, Is.Empty, "shutting down is not a cancel; the worker resumes the job on the next start");
         }
 
         [Test]
@@ -437,7 +486,8 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 if (targetMethod?.Name == nameof(IBookService.GetBook))
                 {
-                    return new Book { Id = (int)args[0], AuthorId = AuthorId, Title = "Test Book" };
+                    var id = (int)args[0];
+                    return new Book { Id = id, AuthorId = id == 44 ? AuthorId + 1 : AuthorId, Title = id == BookId ? "Test Book" : $"Other Book {id}" };
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement IBookService.{targetMethod?.Name}");
@@ -450,7 +500,9 @@ namespace Chaptarr.Core.Test.MediaFiles
             {
                 if (targetMethod?.Name == nameof(IEditionService.GetEdition))
                 {
-                    return new Edition { Id = (int)args[0], BookId = BookId, Title = "Test Edition" };
+                    var id = (int)args[0];
+                    var bookId = id switch { MovedToOtherBookEditionId => 43, MovedToOtherAuthorEditionId => 44, _ => BookId };
+                    return new Edition { Id = id, BookId = bookId, Title = "Test Edition" };
                 }
 
                 throw new NotImplementedException($"Test proxy does not implement IEditionService.{targetMethod?.Name}");
@@ -630,8 +682,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                     case nameof(IConversionJobService.Fail):
                         Failed.Add(((string)args[0], (string)args[1]));
                         return null;
-                    case nameof(IConversionJobService.Cancel):
-                        Cancelled.Add((string)args[0]);
+                    case nameof(IConversionJobService.CancelLibrary):
+                        Cancelled.Add(LibraryConversionJob.Key((int)args[0]));
                         return true;
                 }
 

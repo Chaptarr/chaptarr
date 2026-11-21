@@ -642,6 +642,7 @@ namespace Chaptarr.Core.Test.MediaFiles
             public List<ConversionJob> GetLibraryJobs(IEnumerable<int> editionIds) => new();
             public List<ConversionJob> GetActiveLibraryJobs() => new();
             public ConversionJob EnqueueLibrary(ConversionJobRequest request) => throw new NotImplementedException();
+            public bool CancelLibrary(int editionId, ConversionRemovalOrigin origin) => false;
             public ConversionJobRequest Request { get; private set; }
             public ConversionJob Job { get; private set; }
             public string CompletedDownloadId { get; private set; }

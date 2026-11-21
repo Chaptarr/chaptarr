@@ -1950,6 +1950,10 @@ namespace NzbDrone.Core.MediaFiles.BookImport
 
         private static bool RequiresImportedEditionSelection(LocalBook localBook, Edition edition)
         {
+            // A library conversion only changes the format of files the edition already has. It is not
+            // a choice of edition, so it never changes which edition is monitored or pinned.
+            if (localBook.IsLibraryConversion) return false;
+
             var explicitMetadataSelection = localBook.IsManualImport && localBook.MatchProvenance?.SelectionSource == "user_metadata";
             return !localBook.AlternativeCopyGrabDate.HasValue &&
                 !(edition.Monitored && edition.Id == localBook.Edition.Id && (!explicitMetadataSelection || edition.ManualAdd));

@@ -11,10 +11,12 @@ using NzbDrone.Common.Extensions;
 using NzbDrone.Common.Instrumentation.Extensions;
 using NzbDrone.Core.Books;
 using NzbDrone.Core.DecisionEngine;
+using NzbDrone.Core.Lifecycle;
 using NzbDrone.Core.MediaFiles.BookImport;
 using NzbDrone.Core.MediaFiles.BookImport.Identification;
 using NzbDrone.Core.MediaFiles.Commands;
 using NzbDrone.Core.Messaging.Commands;
+using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.Qualities;
 
@@ -62,7 +64,8 @@ namespace NzbDrone.Core.MediaFiles
                                              IExecute<ConvertBookFilesCommand>,
                                              IExecute<ConvertAuthorCommand>,
                                              IExecute<ImportLibraryConversionCommand>,
-                                             IExecute<LibraryConversionProgressCommand>
+                                             IExecute<LibraryConversionProgressCommand>,
+                                             IHandle<ApplicationShutdownRequested>
     {
         private sealed class ConversionGroup
         {
@@ -84,6 +87,7 @@ namespace NzbDrone.Core.MediaFiles
         private readonly IDiskProvider _diskProvider;
         private readonly Logger _logger;
         private readonly TimeSpan _progressPollInterval;
+        private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
 
         public BookFileConversionService(IAuthorService authorService,
                                          IBookService bookService,
@@ -167,7 +171,7 @@ namespace NzbDrone.Core.MediaFiles
                 files = _mediaFileService.GetFilesByAuthor(author.Id);
             }
 
-            ReportQueued(new[] { QueueFiles(author, files) });
+            ReportQueued(new[] { QueueFiles(author, files, message.BookId) });
         }
 
         public void Execute(ConvertAuthorCommand message)
@@ -192,6 +196,7 @@ namespace NzbDrone.Core.MediaFiles
         {
             var seen = new Dictionary<int, (int Order, string Title)>();
             var lastMessage = string.Empty;
+            using var wake = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _shutdown.Token);
 
             while (true)
             {
@@ -199,6 +204,14 @@ namespace NzbDrone.Core.MediaFiles
                 {
                     CancelActiveJobs(seen);
                     cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                if (_shutdown.IsCancellationRequested)
+                {
+                    // Shutting down is not a cancel: the conversions keep their jobs and the worker resumes
+                    // them on the next start, which also brings this task back. Only the polling stops.
+                    _logger.Debug("[CONVERSION] Stopping library conversion progress for shutdown");
+                    return;
                 }
 
                 var active = _conversionJobService.GetActiveLibraryJobs();
@@ -220,7 +233,7 @@ namespace NzbDrone.Core.MediaFiles
                     _logger.ProgressInfo(status);
                 }
 
-                if (cancellationToken.WaitHandle.WaitOne(_progressPollInterval))
+                if (wake.Token.WaitHandle.WaitOne(_progressPollInterval))
                 {
                     continue;
                 }
@@ -242,6 +255,11 @@ namespace NzbDrone.Core.MediaFiles
                 seen.Count,
                 failed > 0 ? $"; {failed} failed (see log)" : string.Empty,
                 cancelled > 0 ? $"; {cancelled} cancelled" : string.Empty);
+        }
+
+        public void Handle(ApplicationShutdownRequested message)
+        {
+            _shutdown.Cancel();
         }
 
         private static string DescribeProgress(List<ConversionJob> active, Dictionary<int, (int Order, string Title)> seen)
@@ -286,7 +304,7 @@ namespace NzbDrone.Core.MediaFiles
 
                 try
                 {
-                    if (_conversionJobService.Cancel(job.DownloadId, ConversionRemovalOrigin.UserAction))
+                    if (_conversionJobService.CancelLibrary(job.EditionId, ConversionRemovalOrigin.UserAction))
                     {
                         _logger.Info("[CONVERSION] Cancelled library conversion of '{0}'; its original files were left as they were", seen.TryGetValue(job.EditionId, out var info) ? info.Title : GetTitle(job));
                     }
@@ -318,9 +336,9 @@ namespace NzbDrone.Core.MediaFiles
 
         private sealed record QueueOutcome(string AuthorName, int Eligible, int Queued, int Refused);
 
-        private QueueOutcome QueueFiles(Author author, List<BookFile> files)
+        private QueueOutcome QueueFiles(Author author, List<BookFile> files, int? bookId = null)
         {
-            var groups = BuildConversionGroups(author, files);
+            var groups = BuildConversionGroups(author, files, bookId);
             var queued = 0;
             var refused = 0;
 
@@ -532,7 +550,7 @@ namespace NzbDrone.Core.MediaFiles
             return expanded.Values.ToList();
         }
 
-        private List<ConversionGroup> BuildConversionGroups(Author author, List<BookFile> files)
+        private List<ConversionGroup> BuildConversionGroups(Author author, List<BookFile> files, int? bookId = null)
         {
             var groups = new List<ConversionGroup>();
 
@@ -547,6 +565,14 @@ namespace NzbDrone.Core.MediaFiles
                 var book = _bookService.GetBook(edition.BookId);
                 if (book == null)
                 {
+                    continue;
+                }
+
+                // The selection was made from the requested author's (and book's) page. A file linked
+                // to another book since then is skipped rather than converting a book the user did not choose.
+                if (book.AuthorId != author.Id || (bookId.HasValue && book.Id != bookId.Value))
+                {
+                    _logger.Warn("[CONVERSION] Skipping '{0}': its files now belong to a different {1} than the one selected", book.Title, book.AuthorId != author.Id ? "author" : "book");
                     continue;
                 }
 

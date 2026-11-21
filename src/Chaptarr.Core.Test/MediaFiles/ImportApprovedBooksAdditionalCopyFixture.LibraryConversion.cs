@@ -151,6 +151,88 @@ namespace Chaptarr.Core.Test.MediaFiles
             }
         }
 
+        // A library conversion changes the format of files an edition already has. Unlike a download of
+        // that edition, it must not select it: the book's monitored, pinned edition stays as it was.
+        [Test]
+        public void library_conversion_keeps_other_editions_monitoring_and_pins()
+        {
+            var root = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"library-conversion-pins-{Guid.NewGuid():N}");
+            var bookFolder = Path.Combine(root, "Jane Austen", "Persuasion");
+            var workFolder = Path.Combine(bookFolder, ".chaptarr-conversions", "library-edition-433", "attempt");
+            Directory.CreateDirectory(workFolder);
+
+            try
+            {
+                var (_, author, book, edition) = CreateAudiobookConversionGraph(33);
+                edition.Monitored = false;
+                edition.ManualAdd = false;
+                var pinned = new Edition { Id = 9433, BookId = book.Id, Book = book, Title = book.Title, Monitored = true, ManualAdd = true };
+                book.Editions = new List<Edition> { edition, pinned };
+
+                var part1 = Path.Combine(bookFolder, "Persuasion - 01.mp3");
+                var part2 = Path.Combine(bookFolder, "Persuasion - 02.mp3");
+                File.WriteAllText(part1, "part one");
+                File.WriteAllText(part2, "part two");
+                var output = Path.Combine(workFolder, "Persuasion.m4b");
+                File.WriteAllText(output, "converted m4b");
+                var sources = new[] { part1, part2 }.Select(path => new ConversionArtifactSource { Path = path, Size = new FileInfo(path).Length }).ToList();
+                File.WriteAllText(Path.Combine(workFolder, "conversion-artifact.json"), System.Text.Json.JsonSerializer.Serialize(new ConversionArtifactManifest
+                {
+                    DownloadId = LibraryConversionJob.Key(edition.Id),
+                    EncoderSucceeded = true,
+                    OutputSize = new FileInfo(output).Length,
+                    OutputPath = output,
+                    TargetQualityId = Quality.M4B.Id,
+                    Sources = sources
+                }));
+
+                var mediaFileService = new StubMediaFileService();
+                mediaFileService.FilesByBook.AddRange(new[] { AudiobookFile(3301, part1, edition, 1, 2), AudiobookFile(3302, part2, edition, 2, 2) });
+                var editionService = CreateEditionService(book.Editions);
+                var service = new ImportApprovedBooks(
+                    mediaFileService, new StubMetadataTagService(), new StubMediaInfoExtractor(), Proxy<IAuthorService>(),
+                    CreateBookService(new List<Book> { book }).Service, editionService, new StubRecycleBinProvider(), Proxy<IExtraService>(),
+                    new StubMoveBookFiles { DestinationPath = Path.Combine(bookFolder, "Persuasion.m4b"), TransferFilesOnDisk = true },
+                    Proxy<IHistoryService>(), Proxy<NzbDrone.Core.Download.History.IDownloadHistoryService>(), new NoOpEventAggregator(),
+                    Proxy<IManageCommandQueue>(), Proxy<ISeriesBookLinkService>(), Proxy<ISeriesService>(), Proxy<IQualityProfileService>(),
+                    Proxy<IM4bConversionService>(), LogManager.GetLogger("ImportApprovedBooksAdditionalCopyFixture"));
+
+                var request = new ConversionJobRequest
+                {
+                    Origin = ConversionJobOrigin.Library,
+                    DownloadId = LibraryConversionJob.Key(edition.Id),
+                    BookId = book.Id,
+                    EditionId = edition.Id,
+                    WorkRoot = Path.GetDirectoryName(workFolder),
+                    WorkFolder = workFolder,
+                    OutputPath = output,
+                    Sources = sources,
+                    TargetQualityId = Quality.M4B.Id,
+                    TargetQualityName = Quality.M4B.Name,
+                    TagOptions = new ConversionTagOptions()
+                };
+                var decisions = new[] { (part1, 1), (part2, 2) }.Select(source => new ImportDecision<LocalBook>(new LocalBook
+                {
+                    Path = source.Item1, Author = author, Book = book, Edition = edition, Part = source.Item2, PartCount = 2, ExistingFile = true,
+                    Quality = new QualityModel { Quality = Quality.MP3, Revision = new Revision() },
+                    Size = new FileInfo(source.Item1).Length, Modified = File.GetLastWriteTimeUtc(source.Item1)
+                })).ToList();
+
+                var results = service.ImportLibraryConversion(request, decisions);
+
+                Assert.That(results.Select(result => result.Result), Is.EqualTo(new[] { ImportResultType.Imported }),
+                    string.Join("; ", results.SelectMany(result => result.Errors)));
+                Assert.That(((EditionServiceProxy)(object)editionService).MonitoredEditionIds, Is.Empty, "the converted edition is not selected");
+                Assert.That((pinned.Monitored, pinned.ManualAdd), Is.EqualTo((true, true)), "the pinned edition keeps its monitoring and pin");
+                Assert.That((edition.Monitored, edition.ManualAdd), Is.EqualTo((false, false)), "the converted edition stays unselected");
+                Assert.That(mediaFileService.FilesByBook.Single(file => file.Quality.Quality == Quality.M4B).EditionId, Is.EqualTo(edition.Id));
+            }
+            finally
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+
         [Test]
         public void library_conversion_import_refuses_when_the_source_files_differ_from_the_job()
         {

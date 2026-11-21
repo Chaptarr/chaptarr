@@ -184,6 +184,97 @@ namespace Chaptarr.Core.Test.MediaFiles
         }
 
         [Test]
+        public void library_cancel_leaves_a_finished_conversion_for_its_import([Values(false, true)] bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var directory = Path.Combine(Path.GetTempPath(), "library-conversion-ready-cancel-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(directory);
+                var repository = new ConversionJobRepository(database, new StubEventAggregator());
+                var (service, _) = CreateLibraryService(repository, new RetainedResultConverter { Success = true }, NoDownloadHistory());
+                try
+                {
+                    var request = CreateLibraryRequest(directory, 47);
+                    service.EnqueueLibrary(request);
+                    Assert.That(DispatchWorkers(service).Wait(TimeSpan.FromSeconds(45)), Is.True);
+                    Assert.That(repository.FindLibraryJob(47).Status, Is.EqualTo(ConversionJobStatus.ReadyToImport));
+
+                    // The progress task saw the job converting, but the worker finished it before the cancel arrived.
+                    Assert.That(service.CancelLibrary(47, ConversionRemovalOrigin.UserAction), Is.False);
+
+                    Assert.That(repository.FindLibraryJob(47).Status, Is.EqualTo(ConversionJobStatus.ReadyToImport));
+                    Assert.That(File.Exists(request.OutputPath), Is.True, "the converted file stays for the import that is starting");
+                }
+                finally
+                {
+                    ShutdownAndWait(service);
+                    Directory.Delete(directory, true);
+                }
+            });
+        }
+
+        [TestCase(-5, false)]
+        [TestCase(5, true)]
+        public void library_import_proof_must_come_from_the_current_attempt(int addedSecondsAfterQueue, bool committed)
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "library-conversion-proof-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                var request = CreateLibraryRequest(directory, 48);
+                request.Origin = ConversionJobOrigin.Library;
+                request.DownloadId = LibraryConversionJob.Key(48);
+                request.QueuedAtUtc = new DateTime(2026, 11, 20, 12, 0, 0, 500, DateTimeKind.Utc);
+                var kept = Path.Combine(directory, "Kept From Earlier.m4b");
+                File.WriteAllText(kept, "m4b");
+                var file = new BookFile
+                {
+                    Path = kept,
+                    DateAdded = request.QueuedAtUtc.Value.AddSeconds(addedSecondsAfterQueue),
+                    Quality = new NzbDrone.Core.Qualities.QualityModel(NzbDrone.Core.Qualities.Quality.M4B),
+                    MatchProvenance = new MatchProvenance { ImportDownloadId = request.DownloadId, ImportSourcePaths = request.Sources.Select(source => source.Path).ToList() }
+                };
+                var media = InterfaceProxy.Proxy<IMediaFileService>((method, _) =>
+                    method.Name == nameof(IMediaFileService.GetFilesByBook) ? new List<BookFile> { file } : null);
+                var commands = DispatchProxy.Create<IManageCommandQueue, RecordingCommandQueueProxy>();
+                var service = new ConversionJobService(TestCleanupDisk(), TestRootFolders(), media, InterfaceProxy.Proxy<IConversionJobRepository>((_, _) => null),
+                    new UnusedConversionService(), new ConversionTrackingService(new StubEventAggregator()), commands, CreateConfig(),
+                    LogManager.GetCurrentClassLogger(), NoDownloadHistory());
+                var job = new ConversionJob { Origin = ConversionJobOrigin.Library, DownloadId = request.DownloadId, BookId = request.BookId, EditionId = 48 };
+
+                var proof = (bool)typeof(ConversionJobService).GetMethod("HasCommittedImport", BindingFlags.NonPublic | BindingFlags.Instance)
+                    .Invoke(service, new object[] { job, request });
+
+                Assert.That(proof, Is.EqualTo(committed), committed
+                    ? "a crash after this attempt's import still settles the job"
+                    : "an M4B kept from an earlier conversion of the same edition is not this attempt's import");
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
+        [Test]
+        public void library_jobs_lookup_handles_more_editions_than_sqlite_parameters([Values(false, true)] bool postgres)
+        {
+            DualDatabaseFixture.Run(postgres, database =>
+            {
+                var repository = new ConversionJobRepository(database, new StubEventAggregator());
+                repository.Insert(new ConversionJob
+                {
+                    DownloadId = LibraryConversionJob.Key(1500), Origin = ConversionJobOrigin.Library, BookId = 2500, EditionId = 1500,
+                    Status = ConversionJobStatus.Completed, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+                    WorkRoot = "/w", WorkFolder = "/w/a", OutputPath = "/w/a/o.m4b", RequestJson = "{}"
+                });
+
+                var found = repository.LibraryJobs(Enumerable.Range(1, 2000));
+
+                Assert.That(found.Select(job => job.EditionId), Is.EqualTo(new[] { 1500 }));
+            });
+        }
+
+        [Test]
         public void library_enqueue_requires_a_persisted_book_and_edition()
         {
             var (service, _) = CreateLibraryService(InterfaceProxy.Proxy<IConversionJobRepository>((_, _) => null), new UnusedConversionService());

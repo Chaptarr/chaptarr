@@ -34,6 +34,7 @@ namespace NzbDrone.Core.MediaFiles
         List<ConversionJob> GetLibraryJobs(IEnumerable<int> editionIds);
         List<ConversionJob> GetActiveLibraryJobs();
         ConversionJob EnqueueLibrary(ConversionJobRequest request);
+        bool CancelLibrary(int editionId, ConversionRemovalOrigin origin);
         bool IsActive(string downloadId);
         bool IsRunning(string downloadId);
         bool Cancel(string downloadId, ConversionRemovalOrigin origin);
@@ -164,6 +165,7 @@ namespace NzbDrone.Core.MediaFiles
             request.Origin = ConversionJobOrigin.Library;
             request.DownloadId = LibraryConversionJob.Key(request.EditionId);
             request.DownloadClientId = 0;
+            request.QueuedAtUtc = DateTime.UtcNow;
             return Enqueue(request);
         }
 
@@ -288,7 +290,15 @@ namespace NzbDrone.Core.MediaFiles
                 _ => true
             };
 
-        public bool Cancel(string downloadId, ConversionRemovalOrigin origin)
+        public bool Cancel(string downloadId, ConversionRemovalOrigin origin) => Cancel(downloadId, origin, onlyBeforeOutput: false);
+
+        // Cancels a library conversion only while it is still queued or encoding. The check runs under
+        // the same gate as the worker's ready transition, so a conversion that has just finished is left
+        // for its import instead of having its output removed while the import starts.
+        public bool CancelLibrary(int editionId, ConversionRemovalOrigin origin) =>
+            editionId > 0 && Cancel(LibraryConversionJob.Key(editionId), origin, onlyBeforeOutput: true);
+
+        private bool Cancel(string downloadId, ConversionRemovalOrigin origin, bool onlyBeforeOutput)
         {
             if (downloadId.IsNullOrWhiteSpace())
             {
@@ -302,6 +312,11 @@ namespace NzbDrone.Core.MediaFiles
             {
                 job = _repository.FindByDownloadId(downloadId);
                 if (job == null || !IsInFlight(job.Status))
+                {
+                    return false;
+                }
+
+                if (onlyBeforeOutput && job.Status is not (ConversionJobStatus.Queued or ConversionJobStatus.Converting))
                 {
                     return false;
                 }
@@ -1583,7 +1598,18 @@ namespace NzbDrone.Core.MediaFiles
             if (request.BookId > 0)
             {
                 var sources = request.Sources.Select(source => source.Path).ToHashSet(PathEqualityComparer.Instance);
+
+                // Every attempt for a library edition shares one key and usually the same source paths,
+                // so a file kept from an earlier conversion would otherwise pass for this attempt's import.
+                // Whole seconds, because a stored DateAdded may not keep sub-second precision.
+                var attemptQueued = job.IsLibrary ? request.QueuedAtUtc : null;
+                var notBefore = attemptQueued.HasValue
+                    ? new DateTime(attemptQueued.Value.Ticks - attemptQueued.Value.Ticks % TimeSpan.TicksPerSecond, DateTimeKind.Utc)
+                    : (DateTime?)null;
+                if (job.IsLibrary && !notBefore.HasValue) return false;
+
                 var imported = _mediaFileService.GetFilesByBook(request.BookId).Any(file =>
+                    (!notBefore.HasValue || file.DateAdded.ToUniversalTime() >= notBefore.Value) &&
                     file.Quality?.Quality == Qualities.Quality.M4B && File.Exists(file.Path) &&
                     string.Equals(file.MatchProvenance?.ImportDownloadId, job.DownloadId, StringComparison.OrdinalIgnoreCase) &&
                     file.MatchProvenance?.ImportSourcePaths?.Count > 0 &&
@@ -1806,10 +1832,11 @@ namespace NzbDrone.Core.MediaFiles
                     _commandQueue.Push(new Commands.ImportLibraryConversionCommand(job.EditionId), CommandPriority.High);
                 }
 
-                // After a restart nothing is showing library conversions that are still queued or
-                // running. One progress task covers them all; a duplicate push joins the running one.
+                // After a restart nothing is showing library conversions that are still queued, running
+                // or waiting to import. One progress task covers them all; a duplicate push joins the running one.
                 if (_repository.LibraryJobsByStatus(ConversionJobStatus.Queued).Count > 0 ||
-                    _repository.LibraryJobsByStatus(ConversionJobStatus.Converting).Count > 0)
+                    _repository.LibraryJobsByStatus(ConversionJobStatus.Converting).Count > 0 ||
+                    _repository.LibraryJobsByStatus(ConversionJobStatus.ReadyToImport).Count > 0)
                 {
                     _commandQueue.Push(new Commands.LibraryConversionProgressCommand());
                 }

@@ -269,6 +269,10 @@ namespace NzbDrone.Core.MediaFiles
         public string DownloadId { get; set; }
         public int DownloadClientId { get; set; }
         public ConversionJobOrigin Origin { get; set; }
+
+        // When this attempt was queued. A library job's key is reused by every attempt for its edition,
+        // so only a file imported after this time can prove that this attempt's import was committed.
+        public DateTime? QueuedAtUtc { get; set; }
         public string CleanupError { get; set; }
         public bool HistoryIdentityAmbiguous { get; set; }
         public bool DiscardRequested { get; set; }
