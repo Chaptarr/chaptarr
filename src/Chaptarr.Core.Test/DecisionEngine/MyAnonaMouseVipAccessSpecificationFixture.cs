@@ -101,9 +101,6 @@ namespace Chaptarr.Core.Test.DecisionEngine
         {
             public MamUnsatisfiedSlotAvailability Check(RemoteBook remoteBook) => MamUnsatisfiedSlotAvailability.Reject("MAM has no safely available unsatisfied slot");
             public MamUnsatisfiedSlotAvailability TryReserve(RemoteBook remoteBook) => Check(remoteBook);
-            public void Reconcile(MyAnonaMouse indexer, MyAnonaMouseAccountStatus status)
-            {
-            }
         }
 
         private sealed class StubIndexerFactory : IIndexerFactory

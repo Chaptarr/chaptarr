@@ -64,10 +64,6 @@ namespace Chaptarr.Core.Test.Download
                 _calls.Add("reserve");
                 return Availability;
             }
-
-            public void Reconcile(MyAnonaMouse indexer, MyAnonaMouseAccountStatus status)
-            {
-            }
         }
 
         private sealed class RecordingDownloadClient : IDownloadClient

@@ -1281,6 +1281,7 @@
   "MusicBrainzTrackID": "MusicBrainz Track ID",
   "MustContain": "Must Contain",
   "MustNotContain": "Must Not Contain",
+  "MyAnonaMouseAccountSummaryUnreadable": "Chaptarr can't read MyAnonaMouse's account reply for {0}, so its login isn't being renewed. With unsatisfied-slot protection on, grabs pause when the last valid summary expires. Please report this.",
   "MyAnonaMouseSeedTimeHelpText": "Seed-time goal in hours, where supported by the download client. Leave blank or enter 0 to use the client's defaults. MAM requires 72 hours within 30 days; positive values below 72 hours will warn. Preserve torrents takes priority; support for unlimited seeding depends on your download client.",
   "MyAnonaMouseStatus": "MyAnonaMouse {status}",
   "NETCore": ".NET Core",

@@ -99,6 +99,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         public bool NeverMoveOnImport { get; set; }
 
         // Persisted provider snapshot used by the grab guard. These are not user-editable.
+        public string UserId { get; set; }
         public int? UnsatisfiedCount { get; set; }
         public int? UnsatisfiedLimit { get; set; }
         public DateTime? UnsatisfiedSnapshotUtc { get; set; }

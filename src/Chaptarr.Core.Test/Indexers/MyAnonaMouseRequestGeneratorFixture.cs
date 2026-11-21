@@ -56,6 +56,41 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(GetRequestPayload(chain, 1), Does.Contain("\"text\":\"Godblight\""));
         }
 
+        [TestCase("'")]
+        [TestCase("’")]
+        public void should_preserve_apostrophes_in_search_terms(string apostrophe)
+        {
+            var criteria = CreateAudiobookCriteria("en");
+            criteria.BookTitle = $"It{apostrophe}s Beginning to Look a Lot Like Murder";
+            criteria.Author.Name = $"Morgan D{apostrophe}Arcy";
+            criteria.Books[0].AnyEditionOk = false;
+            criteria.Books[0].Editions = new List<Edition>
+            {
+                new Edition { ReadingFormatId = 2, Monitored = true, Narrator = $"Casey O{apostrophe}Connor" }
+            };
+
+            var chain = CreateGenerator().GetSearchRequests(criteria);
+            var titleAndAuthor = $"{criteria.BookTitle} {criteria.Author.Name}";
+
+            Assert.That(chain.Tiers, Is.EqualTo(3));
+            Assert.That(GetRequestPayloadObject(chain, 0)["tor"]?["text"]?.Value<string>(),
+                Is.EqualTo($"{titleAndAuthor} Casey O{apostrophe}Connor"));
+            Assert.That(GetRequestPayloadObject(chain, 1)["tor"]?["text"]?.Value<string>(), Is.EqualTo(titleAndAuthor));
+            Assert.That(GetRequestPayloadObject(chain, 2)["tor"]?["text"]?.Value<string>(), Is.EqualTo(criteria.BookTitle));
+        }
+
+        [Test]
+        public void should_normalize_spacing_when_the_shared_search_keeps_a_punctuation_only_title()
+        {
+            var criteria = CreateAudiobookCriteria("en");
+            criteria.BookTitle = "?!  …";
+
+            var chain = CreateGenerator().GetSearchRequests(criteria);
+
+            Assert.That(GetRequestPayloadObject(chain, 0)["tor"]?["text"]?.Value<string>(), Is.EqualTo("?! … Author"));
+            Assert.That(GetRequestPayloadObject(chain, 1)["tor"]?["text"]?.Value<string>(), Is.EqualTo("?! …"));
+        }
+
         [Test]
         public void should_add_book_number_fallback_as_last_tier_for_interactive_search()
         {

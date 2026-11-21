@@ -17,8 +17,6 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 {
     public class MyAnonaMouse : HttpIndexerBase<MyAnonaMouseSettings>
     {
-        private readonly IMamUnsatisfiedSlotReservationRepository _slotReservationRepository;
-
         public override string Name => "MyAnonaMouse";
 
         public override DownloadProtocol Protocol => DownloadProtocol.Torrent;
@@ -26,11 +24,9 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         public override bool SupportsSearch => true;
         public override int PageSize => 100;
 
-        public MyAnonaMouse(IIndexerHttpClientFactory httpClientFactory, IIndexerStatusService indexerStatusService, IConfigService configService, IParsingService parsingService,
-                            IMamUnsatisfiedSlotReservationRepository slotReservationRepository, Logger logger)
+        public MyAnonaMouse(IIndexerHttpClientFactory httpClientFactory, IIndexerStatusService indexerStatusService, IConfigService configService, IParsingService parsingService, Logger logger)
             : base(httpClientFactory, indexerStatusService, configService, parsingService, logger)
         {
-            _slotReservationRepository = slotReservationRepository;
         }
 
         public override IEnumerable<ProviderDefinition> DefaultDefinitions
@@ -140,7 +136,6 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             var response = await base.ExecuteDownloadRequestAsync(request);
             if (!HasFreeleechParameter(request?.Url?.FullUri) || IsTorrentResponse(response))
             {
-                ConfirmServedTorrent(request, response);
                 return response;
             }
 
@@ -151,9 +146,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             fallbackRequest.RequestTimeout = request.RequestTimeout;
             fallbackRequest.Headers.Accept = request.Headers.Accept;
 
-            var fallbackResponse = await base.ExecuteDownloadRequestAsync(fallbackRequest);
-            ConfirmServedTorrent(fallbackRequest, fallbackResponse);
-            return fallbackResponse;
+            return await base.ExecuteDownloadRequestAsync(fallbackRequest);
         }
 
         protected override async Task<ValidationFailure> TestConnection()
@@ -253,7 +246,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 return;
             }
 
-            _logger.Info("MAM issued a refreshed mam_id for indexer '{0}', persisting it", Definition?.Name);
+            _logger.Debug("MAM issued a refreshed mam_id for indexer '{0}'", Definition?.Name);
             Settings.MamId = refreshedMamId;
         }
 
@@ -264,6 +257,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 .SetHeader("User-Agent", $"{BuildInfo.AppName}/{BuildInfo.Version}")
                 .Build();
 
+            request.SuppressHttpErrorStatusCodes = new[] { HttpStatusCode.NotFound };
             request.RateLimitKey = Definition?.Id > 0 ? Definition.Id.ToString() : null;
             request.Cookies["mam_id"] = Settings.MamId;
             if (Settings.MamSsl)
@@ -273,26 +267,39 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
             var response = await _httpClient.ExecuteAsync(request);
 
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                throw new MyAnonaMouseAccountSummaryException("MAM account summary endpoint returned HTTP 404");
+            }
+
             if (response.StatusCode != HttpStatusCode.OK)
             {
                 throw new InvalidOperationException($"Failed to fetch MAM user data: HTTP {(int)response.StatusCode} {response.StatusCode}");
             }
 
-            PersistRefreshedMamId(response);
+            MyAnonaMouseUserDataResponse userData;
+            try
+            {
+                userData = JsonConvert.DeserializeObject<MyAnonaMouseUserDataResponse>(response.Content);
+            }
+            catch (JsonException)
+            {
+                throw new MyAnonaMouseAccountSummaryException("MAM user data response could not be decoded");
+            }
 
-            var userData = JsonConvert.DeserializeObject<MyAnonaMouseUserDataResponse>(response.Content);
             var className = userData?.ClassName;
 
             if (string.IsNullOrWhiteSpace(className))
             {
-                throw new InvalidOperationException("MAM user data response did not include a user class");
+                throw new MyAnonaMouseAccountSummaryException("MAM user data response did not include a user class");
             }
 
+            var userId = userData.UserId;
             userData = userData.SnatchSummary ?? userData;
 
             if (userData.Unsatisfied == null || userData.Unsatisfied.Count < 0 || userData.Unsatisfied.Limit <= 0 || userData.Created <= 0)
             {
-                throw new InvalidOperationException("MAM user data response did not include a valid unsatisfied-torrent summary");
+                throw new MyAnonaMouseAccountSummaryException("MAM user data response did not include a valid unsatisfied-torrent summary");
             }
 
             DateTime snapshotCreatedUtc;
@@ -300,19 +307,26 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
             {
                 snapshotCreatedUtc = DateTimeOffset.FromUnixTimeSeconds(userData.Created).UtcDateTime;
             }
-            catch (ArgumentOutOfRangeException ex)
+            catch (ArgumentOutOfRangeException)
             {
-                throw new InvalidOperationException("MAM user data response included an invalid summary timestamp", ex);
+                throw new MyAnonaMouseAccountSummaryException("MAM user data response included an invalid summary timestamp");
             }
 
             var refreshedUtc = DateTime.UtcNow;
             var isVip = IsVipClass(className);
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                _logger.Debug("MAM account response for indexer '{0}' had no user ID, so other MAM indexers' grabs count toward its limit", Definition?.Name);
+            }
+
+            Settings.UserId = userId;
             Settings.UserClass = className;
             Settings.IsVip = isVip;
             Settings.UnsatisfiedCount = userData.Unsatisfied.Count;
             Settings.UnsatisfiedLimit = userData.Unsatisfied.Limit;
             Settings.UnsatisfiedSnapshotUtc = snapshotCreatedUtc;
             Settings.UnsatisfiedStatusRefreshedUtc = refreshedUtc;
+            PersistRefreshedMamId(response);
 
             _logger.Debug("MAM account status detected: {0} (VIP: {1}), unsatisfied {2}/{3}", className, isVip, userData.Unsatisfied.Count, userData.Unsatisfied.Limit);
 
@@ -361,36 +375,6 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                    (string.IsNullOrWhiteSpace(queryString) ? string.Empty : "?" + queryString);
         }
 
-        private void ConfirmServedTorrent(HttpRequest request, HttpResponse response)
-        {
-            if (_slotReservationRepository == null ||
-                Definition?.Id <= 0 ||
-                !IsTorrentResponse(response) ||
-                !Uri.TryCreate(request?.Url?.FullUri, UriKind.Absolute, out var uri))
-            {
-                return;
-            }
-
-            var torrentId = System.Web.HttpUtility.ParseQueryString(uri.Query)["tid"];
-            if (string.IsNullOrWhiteSpace(torrentId))
-            {
-                return;
-            }
-
-            var reservation = _slotReservationRepository.Find(Definition.Id, torrentId);
-            if (reservation == null || reservation.ConfirmedUtc.HasValue)
-            {
-                return;
-            }
-
-            reservation.ConfirmedUtc = DateTime.UtcNow;
-            _slotReservationRepository.Update(reservation);
-            _logger.Debug(
-                "Confirmed MAM slot reservation for torrent {0} on indexer '{1}' when MAM returned a valid torrent payload",
-                torrentId,
-                Definition.Name);
-        }
-
         private static bool IsTorrentResponse(HttpResponse response)
         {
             if (response?.StatusCode != HttpStatusCode.OK || response.ResponseData?.Length == 0)
@@ -422,6 +406,9 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
     public class MyAnonaMouseUserDataResponse
     {
+        [JsonProperty("uid")]
+        public string UserId { get; set; }
+
         [JsonProperty("snatch_summary")]
         public MyAnonaMouseUserDataResponse SnatchSummary { get; set; }
 

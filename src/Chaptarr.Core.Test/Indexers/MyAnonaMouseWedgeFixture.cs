@@ -11,12 +11,21 @@ using NLog;
 using NLog.Config;
 using NLog.Targets;
 using NUnit.Framework;
+using NzbDrone.Common.Cache;
+using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Http;
+using NzbDrone.Core.Configuration;
+using NzbDrone.Core.HealthCheck;
+using NzbDrone.Core.HealthCheck.Checks;
 using NzbDrone.Core.Indexers;
 using NzbDrone.Core.Indexers.MyAnonaMouse;
+using NzbDrone.Core.Localization;
+using NzbDrone.Core.Messaging.Events;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Parser.Model;
 using NzbDrone.Core.ThingiProvider;
+using NzbDrone.Core.ThingiProvider.Events;
+using static Chaptarr.Core.Test.Common.InterfaceProxy;
 
 namespace Chaptarr.Core.Test.Indexers
 {
@@ -60,7 +69,7 @@ namespace Chaptarr.Core.Test.Indexers
         private sealed class TestableMyAnonaMouse : MyAnonaMouse
         {
             public TestableMyAnonaMouse(IIndexerHttpClientFactory httpClientFactory, Logger logger)
-                : base(httpClientFactory, null, null, null, null, logger)
+                : base(httpClientFactory, null, null, null, logger)
             {
             }
 
@@ -81,42 +90,11 @@ namespace Chaptarr.Core.Test.Indexers
                 {
                     case nameof(IIndexerFactory.GetAvailableProviders):
                         return new List<IIndexer> { Indexer };
+                    case nameof(IIndexerFactory.All):
+                        return new List<IndexerDefinition> { (IndexerDefinition)Indexer.Definition };
                     case nameof(IIndexerFactory.Update):
                         PersistedMamIds.Add(((MyAnonaMouseSettings)((IndexerDefinition)args[0]).Settings).MamId);
                         return null;
-                    default:
-                        throw new NotImplementedException(targetMethod?.Name);
-                }
-            }
-        }
-
-        private class SlotGuardProxy : DispatchProxy
-        {
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
-            {
-                if (targetMethod?.Name == nameof(IMamUnsatisfiedSlotGuard.Reconcile))
-                {
-                    return null;
-                }
-
-                throw new NotImplementedException(targetMethod?.Name);
-            }
-        }
-
-        private class ReservationRepositoryProxy : DispatchProxy
-        {
-            public List<MamUnsatisfiedSlotReservation> Rows { get; } = new List<MamUnsatisfiedSlotReservation>();
-            public int UpdateCount { get; private set; }
-
-            protected override object Invoke(MethodInfo targetMethod, object[] args)
-            {
-                switch (targetMethod?.Name)
-                {
-                    case nameof(IMamUnsatisfiedSlotReservationRepository.Find):
-                        return Rows.SingleOrDefault(row => row.IndexerId == (int)args[0] && row.TorrentId == (string)args[1]);
-                    case nameof(IMamUnsatisfiedSlotReservationRepository.Update):
-                        UpdateCount++;
-                        return args[0];
                     default:
                         throw new NotImplementedException(targetMethod?.Name);
                 }
@@ -217,18 +195,11 @@ namespace Chaptarr.Core.Test.Indexers
                 Encoding.ASCII.GetBytes(MinimalTorrent),
                 HttpStatusCode.OK));
 
-            var repository = DispatchProxy.Create<IMamUnsatisfiedSlotReservationRepository, ReservationRepositoryProxy>();
-            var repositoryState = (ReservationRepositoryProxy)(object)repository;
-            repositoryState.Rows.Add(new MamUnsatisfiedSlotReservation
-            {
-                Id = 1, IndexerId = 9, TorrentId = "42", ReservedUtc = DateTime.UtcNow
-            });
-
             var indexer = CreateIndexer(new MyAnonaMouseSettings
             {
                 UseFreeleechWedge = (int)MyAnonaMouseFreeleechWedgeAction.Preferred,
                 UseFreeleechOnlyForAudiobooks = true
-            }, client, repository);
+            }, client);
             var request = indexer.GetDownloadRequest(EligibleAudiobookUrl());
 
             var response = await indexer.ExecuteDownloadRequestAsync(request);
@@ -237,34 +208,6 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(clientState.Requests, Has.Count.EqualTo(2));
             Assert.That(clientState.Requests[0], Does.Contain("fl"));
             Assert.That(clientState.Requests[1], Does.Not.Contain("fl"));
-            Assert.That(repositoryState.Rows.Single().ConfirmedUtc, Is.Not.Null);
-            Assert.That(repositoryState.UpdateCount, Is.EqualTo(1));
-        }
-
-        [Test]
-        public async Task html_response_should_not_confirm_that_mam_served_a_torrent()
-        {
-            var client = DispatchProxy.Create<IIndexerHttpClient, IndexerHttpClientProxy>();
-            var clientState = (IndexerHttpClientProxy)(object)client;
-            clientState.Responses.Enqueue(request => new HttpResponse(
-                request,
-                new HttpHeader { ContentType = "text/html" },
-                "Not signed in",
-                HttpStatusCode.OK));
-
-            var repository = DispatchProxy.Create<IMamUnsatisfiedSlotReservationRepository, ReservationRepositoryProxy>();
-            var repositoryState = (ReservationRepositoryProxy)(object)repository;
-            repositoryState.Rows.Add(new MamUnsatisfiedSlotReservation
-            {
-                Id = 1, IndexerId = 9, TorrentId = "42", ReservedUtc = DateTime.UtcNow
-            });
-
-            var indexer = CreateIndexer(new MyAnonaMouseSettings(), client, repository);
-
-            await indexer.ExecuteDownloadRequestAsync(indexer.GetDownloadRequest(EligibleAudiobookUrl()));
-
-            Assert.That(repositoryState.Rows.Single().ConfirmedUtc, Is.Null);
-            Assert.That(repositoryState.UpdateCount, Is.Zero);
         }
 
         [Test]
@@ -298,8 +241,8 @@ namespace Chaptarr.Core.Test.Indexers
                 request,
                 new HttpHeader { ContentType = "application/json" },
                 nested
-                    ? "{\"classname\":\"Elite VIP\",\"snatch_summary\":{\"created\":1785171600,\"unsat\":{\"count\":196,\"limit\":200}}}"
-                    : "{\"classname\":\"Elite VIP\",\"created\":1785171600,\"unsat\":{\"count\":196,\"limit\":200}}",
+                    ? "{\"uid\":42,\"classname\":\"Elite VIP\",\"snatch_summary\":{\"created\":1785171600,\"unsat\":{\"count\":196,\"limit\":200}}}"
+                    : "{\"uid\":42,\"classname\":\"Elite VIP\",\"created\":1785171600,\"unsat\":{\"count\":196,\"limit\":200}}",
                 HttpStatusCode.OK));
 
             var settings = new MyAnonaMouseSettings { MamId = "secret" };
@@ -321,8 +264,8 @@ namespace Chaptarr.Core.Test.Indexers
             });
         }
 
-        [TestCase("{\"classname\":\"User\",\"created\":1785171600,\"unsat\":{\"limit\":200}}")]
-        [TestCase("{\"classname\":\"User\",\"created\":1785171600,\"unsat\":{\"count\":null,\"limit\":200}}")]
+        [TestCase("{\"uid\":42,\"classname\":\"User\",\"created\":1785171600,\"unsat\":{\"limit\":200}}")]
+        [TestCase("{\"uid\":42,\"classname\":\"User\",\"created\":1785171600,\"unsat\":{\"count\":null,\"limit\":200}}")]
         public void account_status_should_reject_missing_or_null_count_without_overwriting_cached_settings(string content)
         {
             var client = CreateClient(request => JsonResponse(request, content));
@@ -340,7 +283,7 @@ namespace Chaptarr.Core.Test.Indexers
             var priorRefresh = settings.UnsatisfiedStatusRefreshedUtc;
             var indexer = CreateIndexer(settings, client);
 
-            Assert.ThrowsAsync<JsonSerializationException>(async () => await indexer.RefreshAccountStatus());
+            Assert.ThrowsAsync<MyAnonaMouseAccountSummaryException>(async () => await indexer.RefreshAccountStatus());
 
             Assert.Multiple(() =>
             {
@@ -358,7 +301,7 @@ namespace Chaptarr.Core.Test.Indexers
         {
             var created = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds();
             var client = CreateClient(request => JsonResponse(request,
-                $"{{\"classname\":\"User\",\"created\":{created},\"unsat\":{{\"count\":0,\"limit\":50}}}}"));
+                $"{{\"uid\":42,\"classname\":\"User\",\"created\":{created},\"unsat\":{{\"count\":0,\"limit\":50}}}}"));
             var settings = new MyAnonaMouseSettings { MamId = "fixture-token" };
             var indexer = CreateIndexer(settings, client);
 
@@ -369,6 +312,34 @@ namespace Chaptarr.Core.Test.Indexers
                 Assert.That(status.UnsatisfiedCount, Is.Zero);
                 Assert.That(status.UnsatisfiedLimit, Is.EqualTo(50));
                 Assert.That(settings.UnsatisfiedCount, Is.Zero);
+            });
+        }
+
+        [TestCase("42")]
+        [TestCase("\"42\"")]
+        public async Task account_status_should_store_the_user_id_whether_mam_sends_text_or_a_number(string uid)
+        {
+            var created = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds();
+            var settings = new MyAnonaMouseSettings { MamId = "fixture-token" };
+            var indexer = CreateIndexer(settings, CreateClient(request => JsonResponse(request, $"{{\"uid\":{uid},\"classname\":\"User\",\"created\":{created},\"unsat\":{{\"count\":3,\"limit\":50}}}}")));
+
+            await indexer.RefreshAccountStatus();
+
+            Assert.That(settings.UserId, Is.EqualTo("42"));
+        }
+
+        [Test]
+        public async Task account_status_without_a_user_id_should_refresh_and_leave_the_account_unidentified()
+        {
+            var settings = new MyAnonaMouseSettings { MamId = "fixture-token", UserId = "42" };
+            var indexer = CreateIndexer(settings, CreateSummaryClient("missing-uid"));
+
+            await indexer.RefreshAccountStatus();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(settings.UnsatisfiedCount, Is.EqualTo(3));
+                Assert.That(settings.UserId, Is.Null);
             });
         }
 
@@ -404,13 +375,12 @@ namespace Chaptarr.Core.Test.Indexers
         [Test]
         public void account_status_refresh_should_persist_a_rotated_mam_id()
         {
-            var client = CreateClient(request => ValidSummaryResponse(request, "mam_id=rotated-token; path=/"));
-            var indexer = CreateIndexer(new MyAnonaMouseSettings { MamId = "original-token" }, client);
+            var indexer = CreateIndexerWithAccountSummary(new MyAnonaMouseSettings { MamId = "original-token" }, "mam_id=rotated-token; path=/");
             var factory = DispatchProxy.Create<IIndexerFactory, IndexerFactoryProxy>();
             var factoryState = (IndexerFactoryProxy)(object)factory;
             factoryState.Indexer = indexer;
 
-            new MyAnonaMouseAccountStatusService(factory, CreateSlotGuard(), LogManager.GetCurrentClassLogger())
+            new MyAnonaMouseAccountStatusService(factory, Proxy<IEventAggregator>((_, _) => null), LogManager.GetCurrentClassLogger())
                 .Execute(new RefreshMyAnonaMouseAccountStatusCommand());
 
             Assert.That(factoryState.PersistedMamIds, Is.EqualTo(new[] { "rotated-token" }));
@@ -439,7 +409,7 @@ namespace Chaptarr.Core.Test.Indexers
             {
                 var response = scenario == "http-failure"
                     ? new HttpResponse(request, new HttpHeader { ContentType = "application/json" }, "", HttpStatusCode.Forbidden)
-                    : JsonResponse(request, "{\"classname\":\"User\"}");
+                    : JsonResponse(request, "{\"uid\":42,\"classname\":\"User\"}");
                 response.Headers.Add("Set-Cookie", "mam_id=rotated-token; path=/");
                 return response;
             });
@@ -448,10 +418,11 @@ namespace Chaptarr.Core.Test.Indexers
             var factoryState = (IndexerFactoryProxy)(object)factory;
             factoryState.Indexer = indexer;
 
-            new MyAnonaMouseAccountStatusService(factory, CreateSlotGuard(), LogManager.GetCurrentClassLogger())
+            new MyAnonaMouseAccountStatusService(factory, Proxy<IEventAggregator>((_, _) => null), LogManager.GetCurrentClassLogger())
                 .Execute(new RefreshMyAnonaMouseAccountStatusCommand());
 
             Assert.That(factoryState.PersistedMamIds, Is.Empty);
+            Assert.That(((MyAnonaMouseSettings)indexer.Definition.Settings).MamId, Is.EqualTo("original-token"));
         }
 
         [TestCase("malformed")]
@@ -542,7 +513,7 @@ namespace Chaptarr.Core.Test.Indexers
             using var logs = new LogFactory { Configuration = configuration };
             var logger = logs.GetLogger("AccountStatusDiagnostic");
             var client = CreateClient(request => JsonResponse(request,
-                $"{{\"classname\":\"User\",\"created\":1785171600,\"unsat\":{{\"count\":\"{privateValue}\",\"limit\":200}}}}"));
+                $"{{\"uid\":42,\"classname\":\"User\",\"created\":1785171600,\"unsat\":{{\"count\":\"{privateValue}\",\"limit\":200}}}}"));
             var indexer = CreateTestIndexer(new MyAnonaMouseSettings { MamId = "fixture-token" }, client, logger);
             indexer.Definition.Name = "Fixture MAM";
 
@@ -550,7 +521,8 @@ namespace Chaptarr.Core.Test.Indexers
             {
                 var factory = DispatchProxy.Create<IIndexerFactory, IndexerFactoryProxy>();
                 ((IndexerFactoryProxy)(object)factory).Indexer = indexer;
-                new MyAnonaMouseAccountStatusService(factory, null, logger).Execute(new RefreshMyAnonaMouseAccountStatusCommand());
+                new MyAnonaMouseAccountStatusService(factory, Proxy<IEventAggregator>((_, _) => null), logger)
+                    .Execute(new RefreshMyAnonaMouseAccountStatusCommand());
             }
             else
             {
@@ -562,9 +534,129 @@ namespace Chaptarr.Core.Test.Indexers
             {
                 Assert.That(messages.Logs[0], Does.StartWith("Warn|"));
                 Assert.That(messages.Logs[0], Does.Contain("Fixture MAM"));
-                Assert.That(messages.Logs[0], Does.Contain(nameof(JsonReaderException)));
+                Assert.That(messages.Logs[0], Does.Contain(background ? "could not be decoded" : nameof(MyAnonaMouseAccountSummaryException)));
                 Assert.That(messages.Logs[0], Does.Not.Contain(privateValue));
                 Assert.That(messages.Logs[0], Does.Not.Contain("fixture-token"));
+            });
+        }
+
+        [TestCase("unreadable-private-content")]
+        [TestCase("{\"uid\":42,\"created\":1785171600,\"unsat\":{\"count\":1,\"limit\":50}}")]
+        [TestCase("{\"classname\":\"User\",\"created\":1785171600}")]
+        [TestCase("{\"classname\":\"User\",\"created\":9223372036854775807,\"unsat\":{\"count\":1,\"limit\":50}}")]
+        [TestCase(null)]
+        public void account_summary_health_warning_follows_refresh_results(string unreadableReply)
+        {
+            const string privateResponse = "fixture-private-response";
+            HttpResponse UnreadableResponse(HttpRequest request)
+            {
+                var statusCode = unreadableReply == null ? HttpStatusCode.NotFound : HttpStatusCode.OK;
+                Assert.That(request.SuppressHttpErrorStatusCodes, Is.EqualTo(new[] { HttpStatusCode.NotFound }));
+                var response = new HttpResponse(request, new HttpHeader(), unreadableReply ?? privateResponse, statusCode);
+                response.Headers.Add("Set-Cookie", "mam_id=unverified-token; path=/");
+                return response;
+            }
+
+            var client = CreateClient(request => new HttpResponse(request, new HttpHeader(), "", HttpStatusCode.Forbidden));
+            var clientState = (IndexerHttpClientProxy)(object)client;
+            clientState.Responses.Enqueue(UnreadableResponse);
+            clientState.Responses.Enqueue(UnreadableResponse);
+            clientState.Responses.Enqueue(_ => throw new TimeoutException());
+            clientState.Responses.Enqueue(request => ValidSummaryResponse(request, "mam_id=rotated-token; path=/"));
+
+            var indexer = CreateIndexer(new MyAnonaMouseSettings { MamId = "fixture-token" }, client);
+            var definition = (IndexerDefinition)indexer.Definition;
+            definition.Name = "Fixture MAM";
+            definition.EnableAutomaticSearch = true;
+            var factory = DispatchProxy.Create<IIndexerFactory, IndexerFactoryProxy>();
+            var factoryState = (IndexerFactoryProxy)(object)factory;
+            factoryState.Indexer = indexer;
+            var logger = LogManager.GetCurrentClassLogger();
+
+            HealthCheckService health = null;
+            MyAnonaMouseAccountStatusService refresh = null;
+            var summaryHealthChanges = 0;
+            var events = Proxy<IEventAggregator>((_, args) =>
+            {
+                switch (args[0])
+                {
+                    case MyAnonaMouseAccountSummaryHealthChangedEvent changed:
+                        summaryHealthChanges++;
+                        health.HandleAsync(changed);
+                        break;
+                    case HealthCheckCompleteEvent complete:
+                        refresh.Handle(complete);
+                        break;
+                    case ProviderUpdatedEvent<IIndexer> updated:
+                        health.HandleAsync(updated);
+                        break;
+                }
+
+                return null;
+            });
+
+            refresh = new MyAnonaMouseAccountStatusService(factory, events, logger);
+            var cache = new CacheManager();
+            var localization = new LocalizationService(
+                Proxy<IConfigService>((_, _) => (int)NzbDrone.Core.Languages.Language.English),
+                Proxy<IAppFolderInfo>((_, _) => TestContext.CurrentContext.TestDirectory), cache, logger);
+            var check = new MyAnonaMouseAccountSummaryCheck(factory, refresh, localization);
+            health = new HealthCheckService(new[] { check }, null, null, events, cache,
+                Proxy<IRuntimeInfo>((_, _) => DateTime.UtcNow), logger);
+            var lastAttempt = typeof(MyAnonaMouseAccountStatusService).GetField("_lastRefreshAttemptUtc", BindingFlags.Instance | BindingFlags.NonPublic);
+
+            void Refresh()
+            {
+                lastAttempt.SetValue(refresh, DateTime.MinValue);
+                refresh.Execute(new RefreshMyAnonaMouseAccountStatusCommand());
+            }
+
+            Refresh();
+            Assert.That(health.Results(), Is.Empty, "An HTTP 403 is not an unreadable account summary.");
+
+            Refresh();
+            var warning = health.Results().Single();
+            Assert.Multiple(() =>
+            {
+                Assert.That(warning.Type, Is.EqualTo(HealthCheckResult.Warning));
+                Assert.That(warning.Message, Does.Contain("Fixture MAM").And.Contain("Please report this"));
+                Assert.That(warning.Message, Does.Not.Contain("fixture-token").And.Not.Contain(unreadableReply ?? privateResponse));
+                Assert.That(summaryHealthChanges, Is.EqualTo(1));
+                Assert.That(clientState.Requests, Has.Count.EqualTo(2));
+                Assert.That(factoryState.PersistedMamIds, Is.Empty);
+                Assert.That(((MyAnonaMouseSettings)definition.Settings).MamId, Is.EqualTo("fixture-token"));
+            });
+
+            definition.EnableAutomaticSearch = false;
+            events.PublishEvent(new ProviderUpdatedEvent<IIndexer>(definition));
+            Assert.That(health.Results(), Is.Empty);
+            definition.EnableAutomaticSearch = true;
+            events.PublishEvent(new ProviderUpdatedEvent<IIndexer>(definition));
+            Assert.That(health.Results().Single().Message, Is.EqualTo(warning.Message));
+            Assert.That(clientState.Requests, Has.Count.EqualTo(2));
+
+            var testedSettings = new MyAnonaMouseSettings { MamId = "fixture-token" };
+            var testedIndexer = CreateTestIndexer(testedSettings, CreateSummaryClient("fresh"));
+            Assert.That(testedIndexer.Test().IsValid, Is.True);
+            Assert.That(health.Results().Single().Message, Is.EqualTo(warning.Message));
+
+            definition.Settings = testedSettings;
+            events.PublishEvent(new ProviderUpdatedEvent<IIndexer>(definition));
+            Assert.That(health.Results(), Is.Empty);
+
+            Refresh();
+            Assert.That(health.Results().Single().Message, Is.EqualTo(warning.Message));
+            Refresh();
+            Assert.That(summaryHealthChanges, Is.EqualTo(2), "The new unreadable reply raises the warning again, and the timeout leaves it in place.");
+            Assert.That(health.Results().Single().Message, Is.EqualTo(warning.Message));
+
+            Refresh();
+            Assert.Multiple(() =>
+            {
+                Assert.That(health.Results(), Is.Empty);
+                Assert.That(summaryHealthChanges, Is.EqualTo(3));
+                Assert.That(clientState.Requests, Has.Count.EqualTo(5));
+                Assert.That(factoryState.PersistedMamIds, Is.EqualTo(new[] { "rotated-token" }));
             });
         }
 
@@ -589,12 +681,17 @@ namespace Chaptarr.Core.Test.Indexers
             Assert.That(settings.ProtectUnsatisfiedSlots, Is.False);
         }
 
-        private static MyAnonaMouse CreateIndexer(MyAnonaMouseSettings settings, IIndexerHttpClient client = null, IMamUnsatisfiedSlotReservationRepository repository = null)
+        internal static MyAnonaMouse CreateIndexerWithAccountSummary(MyAnonaMouseSettings settings, string setCookie = null)
+        {
+            return CreateIndexer(settings, CreateClient(request => ValidSummaryResponse(request, setCookie)));
+        }
+
+        private static MyAnonaMouse CreateIndexer(MyAnonaMouseSettings settings, IIndexerHttpClient client = null)
         {
             var factory = DispatchProxy.Create<IIndexerHttpClientFactory, IndexerHttpClientFactoryProxy>();
             ((IndexerHttpClientFactoryProxy)(object)factory).Client = client;
 
-            return new MyAnonaMouse(factory, null, null, null, repository, LogManager.GetCurrentClassLogger())
+            return new MyAnonaMouse(factory, null, null, null, LogManager.GetCurrentClassLogger())
             {
                 Definition = new IndexerDefinition
                 {
@@ -631,9 +728,10 @@ namespace Chaptarr.Core.Test.Indexers
             ((IndexerHttpClientProxy)(object)client).Responses.Enqueue(request => scenario switch
             {
                 "malformed" => JsonResponse(request, "not-json"),
-                "missing-count" => JsonResponse(request, $"{{\"classname\":\"User\",\"created\":{created},\"unsat\":{{\"limit\":50}}}}"),
+                "missing-uid" => JsonResponse(request, $"{{\"classname\":\"User\",\"created\":{created},\"unsat\":{{\"count\":3,\"limit\":50}}}}"),
+                "missing-count" => JsonResponse(request, $"{{\"uid\":42,\"classname\":\"User\",\"created\":{created},\"unsat\":{{\"limit\":50}}}}"),
                 "http-failure" => new HttpResponse(request, new HttpHeader { ContentType = "application/json" }, "", HttpStatusCode.ServiceUnavailable),
-                _ => JsonResponse(request, $"{{\"classname\":\"User\",\"created\":{created},\"unsat\":{{\"count\":3,\"limit\":50}}}}")
+                _ => JsonResponse(request, $"{{\"uid\":42,\"classname\":\"User\",\"created\":{created},\"unsat\":{{\"count\":3,\"limit\":50}}}}")
             });
             return client;
         }
@@ -653,18 +751,13 @@ namespace Chaptarr.Core.Test.Indexers
         private static HttpResponse ValidSummaryResponse(HttpRequest request, string setCookie = null)
         {
             var created = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeSeconds();
-            var response = JsonResponse(request, $"{{\"classname\":\"User\",\"created\":{created},\"unsat\":{{\"count\":3,\"limit\":50}}}}");
+            var response = JsonResponse(request, $"{{\"uid\":42,\"classname\":\"User\",\"created\":{created},\"unsat\":{{\"count\":3,\"limit\":50}}}}");
             if (setCookie != null)
             {
                 response.Headers.Add("Set-Cookie", setCookie);
             }
 
             return response;
-        }
-
-        private static IMamUnsatisfiedSlotGuard CreateSlotGuard()
-        {
-            return DispatchProxy.Create<IMamUnsatisfiedSlotGuard, SlotGuardProxy>();
         }
 
         private static string EligibleAudiobookUrl()

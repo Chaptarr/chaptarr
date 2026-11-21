@@ -20,7 +20,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
         private const int RecentPageSize = 500;
         private const int SearchPageSize = 100;
         private const int SearchMaxPages = 10;
-        private static readonly Regex BookNumberSuffixRegex = new Regex(@"\s*,?\s*book\s+\d+\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        private static readonly Regex BookNumberSuffixRegex = new Regex(@"\s*book\s+\d+\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex MultiWhitespaceRegex = new Regex(@"\s{2,}", RegexOptions.Compiled);
 
         public MyAnonaMouseSettings Settings { get; set; }
@@ -78,7 +78,7 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
             void AddSearchTerm(string term, string logMessage)
             {
-                var normalized = term?.Trim() ?? string.Empty;
+                var normalized = MultiWhitespaceRegex.Replace(term ?? string.Empty, " ").Trim();
                 if (string.IsNullOrWhiteSpace(normalized))
                 {
                     return;
@@ -101,44 +101,12 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                 searchTerms.Add(normalized);
             }
 
-            // MAM expects raw text, not URL-encoded. Keep the primary behavior of including both title and author terms.
-            var decodedTitle = string.IsNullOrWhiteSpace(bookQuery) ?
-                string.Empty :
-                System.Web.HttpUtility.UrlDecode(bookQuery);
+            // MAM expects raw text, not URL-encoded.
+            var decodedTitle = System.Web.HttpUtility.UrlDecode(bookQuery);
+            var decodedAuthor = System.Web.HttpUtility.UrlDecode(authorQuery);
+            var decodedQuery = string.Join(" ", new[] { decodedTitle, decodedAuthor }.Where(term => !string.IsNullOrWhiteSpace(term)));
 
-            // AuthorQuery is normalized via SearchCriteriaBase.GetQueryTitle (handles punctuation like "J.K." -> "J K")
-            var decodedAuthor = string.IsNullOrWhiteSpace(authorQuery) ?
-                string.Empty :
-                System.Web.HttpUtility.UrlDecode(authorQuery);
-
-            // MAM search can be sensitive to different apostrophe characters. Normalize early so both the primary and
-            // fallback queries use the same representation without increasing request count.
-            var originalDecodedTitle = decodedTitle;
-            var originalDecodedAuthor = decodedAuthor;
-            decodedTitle = NormalizeApostrophes(decodedTitle);
-            decodedAuthor = NormalizeApostrophes(decodedAuthor);
-            if (!string.Equals(decodedTitle, originalDecodedTitle, StringComparison.Ordinal) ||
-                !string.Equals(decodedAuthor, originalDecodedAuthor, StringComparison.Ordinal))
-            {
-                Logger.Debug("MAM_SEARCH_APOSTROPHE_NORMALIZED: title '{0}' -> '{1}', author '{2}' -> '{3}'",
-                    originalDecodedTitle,
-                    decodedTitle,
-                    originalDecodedAuthor,
-                    decodedAuthor);
-            }
-
-            var decodedQuery = decodedTitle?.Trim() ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(decodedAuthor))
-            {
-                if (!string.IsNullOrWhiteSpace(decodedQuery))
-                {
-                    decodedQuery += " ";
-                }
-
-                decodedQuery += decodedAuthor.Trim();
-            }
-
-            var narratorQuery = NormalizeApostrophes(System.Web.HttpUtility.UrlDecode(searchCriteria.NarratorQuery));
+            var narratorQuery = System.Web.HttpUtility.UrlDecode(searchCriteria.NarratorQuery);
             if (!string.IsNullOrWhiteSpace(narratorQuery))
             {
                 AddSearchTerm($"{decodedQuery} {narratorQuery}", "MAM_SEARCH_TERM: '{0}' (pinned narrator)");
@@ -146,21 +114,12 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
 
             AddSearchTerm(decodedQuery, "MAM_SEARCH_TERM: '{0}' (title and author)");
 
-            if (!string.IsNullOrWhiteSpace(decodedTitle) &&
-                !string.Equals(decodedTitle.Trim(), decodedQuery, StringComparison.OrdinalIgnoreCase))
-            {
-                AddSearchTerm(decodedTitle, "MAM_SEARCH_FALLBACK_TERM: '{0}' (title-only fallback)");
-            }
+            AddSearchTerm(decodedTitle, "MAM_SEARCH_FALLBACK_TERM: '{0}' (title-only fallback)");
 
             // Interactive search: add a fallback query for verbose titles like "... , Book 3" that can hurt recall.
-            if (searchCriteria.InteractiveSearch && !string.IsNullOrWhiteSpace(decodedTitle))
+            if (searchCriteria.InteractiveSearch)
             {
-                var fallbackTitle = BookNumberSuffixRegex.Replace(decodedTitle, string.Empty).Trim();
-                if (!string.IsNullOrWhiteSpace(fallbackTitle) &&
-                    !string.Equals(fallbackTitle, decodedTitle.Trim(), StringComparison.OrdinalIgnoreCase))
-                {
-                    AddSearchTerm(fallbackTitle, "MAM_SEARCH_FALLBACK_TERM: '{0}' (book-number fallback)");
-                }
+                AddSearchTerm(BookNumberSuffixRegex.Replace(decodedTitle, string.Empty), "MAM_SEARCH_FALLBACK_TERM: '{0}' (book-number fallback)");
             }
 
             return searchTerms;
@@ -176,20 +135,6 @@ namespace NzbDrone.Core.Indexers.MyAnonaMouse
                     perPage: SearchPageSize,
                     searchCriteria: searchCriteria));
             }
-        }
-
-        private static string NormalizeApostrophes(string title)
-        {
-            if (string.IsNullOrWhiteSpace(title))
-            {
-                return title;
-            }
-
-            // Normalize both straight and curly apostrophes. Replace with whitespace to keep token boundaries stable
-            // (e.g., "Sorcerer's" -> "Sorcerer s") across different search implementations.
-            var normalized = title.Replace("’", " ").Replace("'", " ");
-            normalized = MultiWhitespaceRegex.Replace(normalized, " ").Trim();
-            return normalized;
         }
 
         private static string GetSafeBookQuery(BookSearchCriteria searchCriteria)
