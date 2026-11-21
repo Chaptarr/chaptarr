@@ -668,6 +668,96 @@ namespace Chaptarr.Core.Test.Notifications.AudioBookShelf
             Assert.That(proxy.GetLibrariesCallCount, Is.EqualTo(1));
         }
 
+        private static List<AudioBookShelfLibraryMapping> AudioAndEbookMappings() => new List<AudioBookShelfLibraryMapping>
+        {
+            new AudioBookShelfLibraryMapping { RootFolderId = 1, MediaType = "audiobook", LibraryId = "library-audio", LibraryFolderId = "folder-audio", LibraryFolderPath = "/abs/audio" },
+            new AudioBookShelfLibraryMapping { RootFolderId = 2, MediaType = "ebook", LibraryId = "library-ebook", LibraryFolderId = "folder-ebook", LibraryFolderPath = "/abs/ebook" }
+        };
+
+        private static List<RootFolder> AudioAndEbookRoots() => new List<RootFolder>
+        {
+            new RootFolder { Id = 1, Path = "/audiobooks", FolderType = FolderType.Audiobook },
+            new RootFolder { Id = 2, Path = "/ebooks", FolderType = FolderType.Ebook }
+        };
+
+        private static AudioBookShelfLibraryItemSummary Item(string id, string relPath, string folderId) =>
+            new AudioBookShelfLibraryItemSummary { Id = id, RelPath = relPath, FolderId = folderId, Media = new AudioBookShelfLibraryItemMedia() };
+
+        [Test]
+        public void push_should_only_update_the_item_in_the_library_the_folders_root_maps_to()
+        {
+            var proxy = new FakeAudioBookShelfProxy();
+            proxy.ItemsByLibrary["library-audio"] = new List<AudioBookShelfLibraryItemSummary> { Item("audio-item", "Joe Abercrombie/The Blade Itself", "folder-audio") };
+            proxy.ItemsByLibrary["library-ebook"] = new List<AudioBookShelfLibraryItemSummary> { Item("ebook-item", "Joe Abercrombie/The Blade Itself", "folder-ebook") };
+            var subject = CreateSubject(proxy, AudioAndEbookRoots(), AudioAndEbookMappings());
+            var (book, files) = BuildPushableBook().Single();
+
+            subject.PushBooksMetadata(BuildPushableBook());
+            subject.PushExternalLibraryEdit(book, files, new ExternalLibraryEditPayload { Description = "Edited", CoverUrl = "http://covers/cover.jpg" });
+
+            Assert.That(proxy.MetadataUpdates, Is.EqualTo(new[] { "audio-item", "audio-item" }));
+            Assert.That(proxy.CoverUpdates, Is.EqualTo(new[] { "audio-item" }));
+        }
+
+        [Test]
+        public void pin_should_use_the_item_from_the_mapped_folder_when_two_folders_share_a_rel_path()
+        {
+            var proxy = new FakeAudioBookShelfProxy();
+            proxy.ItemsByLibrary["library-audio"] = new List<AudioBookShelfLibraryItemSummary>
+            {
+                // Listed first, but in a library folder no Chaptarr root folder maps to.
+                Item("other-folder-item", "Blaise Corvin/Mitigating Risk", "folder-other"),
+                Item("audio-item", "Blaise Corvin/Mitigating Risk", "folder-audio")
+            };
+            proxy.ItemsByLibrary["library-audio"][1].Media.Metadata = new AudioBookShelfLibraryItemBookMetadata { Asin = "B0AUDIBLE1" };
+            var mappings = AudioAndEbookMappings();
+            var pins = new RecordingEditionPinService();
+            var subject = CreateSubject(proxy, AudioAndEbookRoots(), mappings, pins);
+            var settings = (AudioBookShelfSettings)subject.Definition.Settings;
+            settings.MetadataKeeper = (int)AudioBookShelfMetadataKeeper.AudioBookShelf;
+
+            subject.PinFolders(settings, mappings, new List<string> { "/audiobooks/Blaise Corvin/Mitigating Risk" }, null);
+
+            Assert.That(pins.Calls, Is.EqualTo(new[]
+            {
+                (System.IO.Path.Combine("/audiobooks", "Blaise Corvin", "Mitigating Risk"), "audiobook", "B0AUDIBLE1")
+            }));
+        }
+
+        [Test]
+        public void cover_push_should_fail_when_a_library_cannot_be_read()
+        {
+            var proxy = BuildPushProxy();
+            proxy.ItemListFailures.Add("library-audio");
+            var subject = CreatePushSubject(proxy);
+
+            Assert.Throws<AudioBookShelfException>(() => subject.PushBooksCovers(BuildPushableBook()));
+        }
+
+        [Test]
+        public void whole_book_delete_should_scan_the_mapped_library()
+        {
+            var proxy = new FakeAudioBookShelfProxy();
+            var subject = CreateSubject(proxy, AudioAndEbookRoots(), AudioAndEbookMappings());
+            var author = new Author { Name = "Joe Abercrombie", AudiobookRootFolderPath = "/audiobooks", EbookRootFolderPath = "/ebooks" };
+
+            subject.OnBookDelete(new BookDeleteMessage(new Book { Title = "The Blade Itself", MediaType = BookMediaType.Audiobook, Author = author }, deleteFiles: true));
+
+            Assert.That(proxy.ScanLibraryIds, Is.EqualTo(new[] { "library-audio" }));
+        }
+
+        [Test]
+        public void author_delete_should_scan_every_mapped_library_of_the_author()
+        {
+            var proxy = new FakeAudioBookShelfProxy();
+            var subject = CreateSubject(proxy, AudioAndEbookRoots(), AudioAndEbookMappings());
+            var author = new Author { Name = "Joe Abercrombie", AudiobookRootFolderPath = "/audiobooks", EbookRootFolderPath = "/ebooks" };
+
+            subject.OnAuthorDelete(new AuthorDeleteMessage(author, deleteFiles: true));
+
+            Assert.That(proxy.ScanLibraryIds, Is.EquivalentTo(new[] { "library-audio", "library-ebook" }));
+        }
+
         private static NzbDrone.Core.Notifications.AudioBookShelf.AudioBookShelf CreateSubject(FakeAudioBookShelfProxy proxy, List<RootFolder> rootFolders, List<AudioBookShelfLibraryMapping> mappings, IAudioBookShelfEditionPinService editionPinService = null)
         {
             var settings = new AudioBookShelfSettings
@@ -771,8 +861,12 @@ namespace Chaptarr.Core.Test.Notifications.AudioBookShelf
 
             public Dictionary<string, List<AudioBookShelfLibraryItemSummary>> ItemsByLibrary { get; } = new();
 
+            public HashSet<string> ItemListFailures { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             public List<AudioBookShelfLibraryItemSummary> GetLibraryItems(AudioBookShelfSettings settings, string libraryId) =>
-                ItemsByLibrary.TryGetValue(libraryId, out var items) ? items : Items;
+                ItemListFailures.Contains(libraryId)
+                    ? throw new Exception("library unavailable")
+                    : ItemsByLibrary.TryGetValue(libraryId, out var items) ? items : Items;
             public void ScanItem(AudioBookShelfSettings settings, string itemId) { }
             public void UpdateItemMetadata(AudioBookShelfSettings settings, string itemId, AudioBookShelfItemMetadata metadata)
             {
@@ -790,7 +884,7 @@ namespace Chaptarr.Core.Test.Notifications.AudioBookShelf
             }
 
             public void PurgeCoverCache(AudioBookShelfSettings settings) { }
-            public void RemoveItemsWithIssues(AudioBookShelfSettings settings, string libraryId) { }
+            public int RemoveMissingItems(AudioBookShelfSettings settings, string libraryId) => 0;
         }
 
         private class FakeRootFolderService : IRootFolderService

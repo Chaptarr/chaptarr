@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using FluentValidation.Results;
 using NLog;
@@ -14,7 +15,7 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
     {
         void ScanLibrary(AudioBookShelfSettings settings);
         void ScanLibrary(AudioBookShelfSettings settings, string libraryId);
-        void RemoveItemsWithIssues(AudioBookShelfSettings settings, string libraryId);
+        int RemoveMissingItems(AudioBookShelfSettings settings, string libraryId);
         List<AudioBookShelfLibraryItemSummary> GetLibraryItems(AudioBookShelfSettings settings, string libraryId);
         void ScanItem(AudioBookShelfSettings settings, string itemId);
         void UpdateItemMetadata(AudioBookShelfSettings settings, string itemId, AudioBookShelfItemMetadata metadata);
@@ -122,23 +123,35 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
             }
         }
 
-        public void RemoveItemsWithIssues(AudioBookShelfSettings settings, string libraryId)
+        // AudioBookShelf marks the items of deleted folders missing rather than removing them.
+        // DELETE /api/libraries/{id}/issues would also remove items that are only invalid (still on
+        // disk), so remove the missing items one at a time. Without hard=1 AudioBookShelf removes
+        // only its database entry and never touches files.
+        public int RemoveMissingItems(AudioBookShelfSettings settings, string libraryId)
         {
             if (libraryId.IsNullOrWhiteSpace())
             {
-                return;
+                return 0;
             }
 
-            // AudioBookShelf marks the items missing rather than removing them.
-            var request = BuildRequest(settings, $"/api/libraries/{libraryId}/issues");
-            request.Method = HttpMethod.Delete;
+            var removed = 0;
 
-            var response = _httpClient.Execute(request);
-
-            if (response.HasHttpError)
+            foreach (var item in GetLibraryItems(settings, libraryId).Where(i => i != null && i.IsMissing && i.Id.IsNotNullOrWhiteSpace()))
             {
-                throw new HttpException(response);
+                var request = BuildRequest(settings, $"/api/items/{item.Id}");
+                request.Method = HttpMethod.Delete;
+
+                var response = _httpClient.Execute(request);
+
+                if (response.HasHttpError)
+                {
+                    throw new HttpException(response);
+                }
+
+                removed++;
             }
+
+            return removed;
         }
 
         public void UpdateWatchedPath(AudioBookShelfSettings settings, string libraryId, string path, string type, string oldPath = null)
@@ -327,9 +340,20 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
             }
 
             var request = BuildRequest(settings, $"/api/items/{itemId}/cover");
-            request.Method = HttpMethod.Patch;
             request.Headers.ContentType = "application/json";
-            request.SetContent(Json.ToJson(new { cover = coverPath }));
+
+            if (Uri.TryCreate(coverPath, UriKind.Absolute, out var coverUri) &&
+                (coverUri.Scheme == Uri.UriSchemeHttp || coverUri.Scheme == Uri.UriSchemeHttps))
+            {
+                // A remote cover: AudioBookShelf downloads it. PATCH only accepts a path on its own server.
+                request.Method = HttpMethod.Post;
+                request.SetContent(Json.ToJson(new { url = coverPath }));
+            }
+            else
+            {
+                request.Method = HttpMethod.Patch;
+                request.SetContent(Json.ToJson(new { cover = coverPath }));
+            }
 
             var response = _httpClient.Execute(request);
 

@@ -182,7 +182,7 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
 
             if (Settings.HasConfiguredLibraryMappings())
             {
-                SendMappedDelete(author, null, mediaType, libraryScans);
+                AddMappedLibraryScans(author, mediaType, libraryScans);
             }
             else
             {
@@ -205,8 +205,8 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
 
             if (Settings.HasConfiguredLibraryMappings())
             {
-                SendMappedDelete(author, null, "audiobook", libraryScans);
-                SendMappedDelete(author, null, "ebook", libraryScans);
+                AddMappedLibraryScans(author, "audiobook", libraryScans);
+                AddMappedLibraryScans(author, "ebook", libraryScans);
             }
             else
             {
@@ -354,6 +354,8 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
                     continue;
                 }
 
+                var itemsByRelPath = IndexByRelativePath(items);
+
                 foreach (var folder in DistinctFolders(files))
                 {
                     var resolved = ResolveLibraryRelativePath(folder);
@@ -363,7 +365,7 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
                         continue;
                     }
 
-                    var item = items.FirstOrDefault(i => string.Equals(i.RelPath, resolved.Value.RelativePath, StringComparison.OrdinalIgnoreCase));
+                    var (item, _) = FindMappedItem(itemsByRelPath, mappings, resolved.Value.RootFolder.Id, libraryId, resolved.Value.RelativePath, GetMediaType(book, null), allowAncestor: false);
 
                     if (item == null || (!payload.Manual && IsIgnored(Settings, item, resolved.Value.RelativePath)))
                     {
@@ -419,6 +421,8 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
 
         private void PushBooks(List<(Book Book, List<BookFile> Files)> books, bool includeMetadata)
         {
+            var failures = 0;
+
             if (Settings.AudioBookShelfKeepsMetadata())
             {
                 _logger.Debug("AudioBookShelf: AudioBookShelf keeps the metadata, not pushing from Chaptarr");
@@ -451,8 +455,11 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
                 catch (Exception ex)
                 {
                     _logger.Debug(ex, "AudioBookShelf: unable to list items for library '{0}'", libraryId);
+                    failures++;
                     continue;
                 }
+
+                var itemsByRelPath = IndexByRelativePath(items);
 
                 foreach (var (book, files) in pushable)
                 {
@@ -465,7 +472,7 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
                             continue;
                         }
 
-                        var item = items.FirstOrDefault(i => string.Equals(i.RelPath, resolved.Value.RelativePath, StringComparison.OrdinalIgnoreCase));
+                        var (item, mapping) = FindMappedItem(itemsByRelPath, mappings, resolved.Value.RootFolder.Id, libraryId, resolved.Value.RelativePath, GetMediaType(book, null), allowAncestor: false);
 
                         if (item == null || IsIgnored(Settings, item, resolved.Value.RelativePath))
                         {
@@ -484,12 +491,23 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
                             catch (Exception ex)
                             {
                                 _logger.Debug(ex, "AudioBookShelf: metadata push failed for '{0}'", resolved.Value.RelativePath);
+                                failures++;
                             }
                         }
 
-                        PushItemCover(Settings, mappings, resolved.Value.RootFolder.Id, libraryId, item.Id, folder, resolved.Value.RelativePath);
+                        if (!PushItemCover(Settings, mapping, item.Id, folder, resolved.Value.RelativePath))
+                        {
+                            failures++;
+                        }
                     }
                 }
+            }
+
+            // Thrown after every book was tried, so the caller records the connection as failing
+            // instead of reporting success for pushes that never reached AudioBookShelf.
+            if (failures > 0)
+            {
+                throw new AudioBookShelfException("{0} AudioBookShelf push(es) failed; see the debug log for details", failures);
             }
         }
 
@@ -545,24 +563,15 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
             return (rootFolder, relativePath);
         }
 
-        private void PushItemCover(AudioBookShelfSettings settings, List<AudioBookShelfLibraryMapping> mappings, int rootFolderId, string libraryId, string itemId, string folder, string rel)
+        // Points the item at the cover.jpg in its own folder. Returns false only when the request failed;
+        // no local cover or no mapped library folder path is a skip, not a failure.
+        private bool PushItemCover(AudioBookShelfSettings settings, AudioBookShelfLibraryMapping mapping, string itemId, string folder, string rel)
         {
             var localCover = Path.Combine(folder, "cover.jpg");
 
-            if (!File.Exists(localCover))
+            if (!File.Exists(localCover) || mapping == null || mapping.LibraryFolderPath.IsNullOrWhiteSpace())
             {
-                return;
-            }
-
-            var mapping = mappings.FirstOrDefault(m =>
-                m != null &&
-                m.RootFolderId == rootFolderId &&
-                string.Equals(m.LibraryId, libraryId, StringComparison.OrdinalIgnoreCase) &&
-                m.LibraryFolderPath.IsNotNullOrWhiteSpace());
-
-            if (mapping == null)
-            {
-                return;
+                return true;
             }
 
             var remoteCover = mapping.LibraryFolderPath.TrimEnd('/') + "/" + rel + "/cover.jpg";
@@ -572,10 +581,12 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
                 _proxy.UpdateItemCover(settings, itemId, remoteCover);
                 _logger.Debug("AudioBookShelf: set item cover from '{0}'", remoteCover);
                 _proxy.PurgeCoverCache(settings);
+                return true;
             }
             catch (Exception ex)
             {
                 _logger.Debug(ex, "AudioBookShelf: cover update failed for '{0}'", rel);
+                return false;
             }
         }
 
@@ -655,12 +666,13 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
         // The mapping that ties this root folder to this library (and, when known, to the item's
         // library folder). Items of a library mapped to another root folder can share a relative
         // path with this folder and must not be used for it.
-        private static AudioBookShelfLibraryMapping FindMapping(List<AudioBookShelfLibraryMapping> mappings, int rootFolderId, string libraryId, AudioBookShelfLibraryItemSummary item)
+        private static AudioBookShelfLibraryMapping FindMapping(List<AudioBookShelfLibraryMapping> mappings, int rootFolderId, string libraryId, AudioBookShelfLibraryItemSummary item, string mediaType = null)
         {
             return mappings.FirstOrDefault(m =>
                 m != null &&
                 m.RootFolderId == rootFolderId &&
                 m.MediaType.IsNotNullOrWhiteSpace() &&
+                (mediaType.IsNullOrWhiteSpace() || MediaTypeMatches(m.MediaType, mediaType)) &&
                 string.Equals(m.LibraryId, libraryId, StringComparison.OrdinalIgnoreCase) &&
                 (m.LibraryFolderId.IsNullOrWhiteSpace() ||
                  item == null ||
@@ -706,10 +718,7 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
                     continue;
                 }
 
-                var itemsByRelPath = items
-                    .Where(i => i?.RelPath != null)
-                    .GroupBy(i => i.RelPath.Trim('/'), StringComparer.OrdinalIgnoreCase)
-                    .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+                var itemsByRelPath = IndexByRelativePath(items);
 
                 foreach (var folder in folders)
                 {
@@ -720,8 +729,7 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
                         continue;
                     }
 
-                    var item = FindItemForRelativePath(itemsByRelPath, resolved.Value.RelativePath);
-                    var mapping = item == null ? null : FindMapping(mappings, resolved.Value.RootFolder.Id, libraryId, item);
+                    var (item, mapping) = FindMappedItem(itemsByRelPath, mappings, resolved.Value.RootFolder.Id, libraryId, resolved.Value.RelativePath, null, allowAncestor: true);
 
                     if (mapping == null || !pinnedItems.Add(item.Id))
                     {
@@ -753,22 +761,51 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
             return PinFolders(Settings, Settings.GetLibraryMappings(), folders, Definition?.Tags);
         }
 
-        private static AudioBookShelfLibraryItemSummary FindItemForRelativePath(Dictionary<string, AudioBookShelfLibraryItemSummary> itemsByRelPath, string relativePath)
+        private static ILookup<string, AudioBookShelfLibraryItemSummary> IndexByRelativePath(IEnumerable<AudioBookShelfLibraryItemSummary> items)
+        {
+            return (items ?? Enumerable.Empty<AudioBookShelfLibraryItemSummary>())
+                .Where(i => i?.RelPath != null)
+                .ToLookup(i => i.RelPath.Trim('/'), StringComparer.OrdinalIgnoreCase);
+        }
+
+        // A RelPath alone does not identify an item: one library can hold the same RelPath under two
+        // folders, and another library can hold it too. This returns the item at relativePath that the
+        // local root folder's mapping covers (same library and library folder, and the media type when
+        // given). With allowAncestor it walks up to the nearest such item, for part folders such as
+        // Author/Book/CD1 whose item is Author/Book.
+        private static (AudioBookShelfLibraryItemSummary Item, AudioBookShelfLibraryMapping Mapping) FindMappedItem(
+            ILookup<string, AudioBookShelfLibraryItemSummary> itemsByRelPath,
+            List<AudioBookShelfLibraryMapping> mappings,
+            int rootFolderId,
+            string libraryId,
+            string relativePath,
+            string mediaType,
+            bool allowAncestor)
         {
             var rel = relativePath?.Trim('/');
 
             while (rel.IsNotNullOrWhiteSpace())
             {
-                if (itemsByRelPath.TryGetValue(rel, out var item))
+                foreach (var item in itemsByRelPath[rel])
                 {
-                    return item;
+                    var mapping = FindMapping(mappings, rootFolderId, libraryId, item, mediaType);
+
+                    if (mapping != null)
+                    {
+                        return (item, mapping);
+                    }
+                }
+
+                if (!allowAncestor)
+                {
+                    break;
                 }
 
                 var slash = rel.LastIndexOf('/');
                 rel = slash > 0 ? rel.Substring(0, slash) : null;
             }
 
-            return null;
+            return (null, null);
         }
 
         private void ScheduleItemRescans(List<RenamedBookFile> renamedFiles)
@@ -829,9 +866,11 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
             {
                 try
                 {
+                    var handledItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
                     foreach (var libraryId in MappedLibraryIds(mappings))
                     {
-                        var items = _proxy.GetLibraryItems(settings, libraryId);
+                        var itemsByRelPath = IndexByRelativePath(_proxy.GetLibraryItems(settings, libraryId));
 
                         foreach (var pair in folderBooks)
                         {
@@ -842,13 +881,17 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
                                 continue;
                             }
 
-                            var rel = resolved.Value.RelativePath;
-                            var item = items.FirstOrDefault(i => string.Equals(i.RelPath, rel, StringComparison.OrdinalIgnoreCase));
+                            // Multipart books are renamed per part folder (Author/Book/CD1, CD2) while the
+                            // item sits at Author/Book, so walk up to it and handle each item once.
+                            var (item, mapping) = FindMappedItem(itemsByRelPath, mappings, resolved.Value.RootFolder.Id, libraryId, resolved.Value.RelativePath, pair.Value == null ? null : GetMediaType(pair.Value, null), allowAncestor: true);
 
-                            if (item == null)
+                            if (item == null || !handledItems.Add(item.Id))
                             {
                                 continue;
                             }
+
+                            var rel = item.RelPath.Trim('/');
+                            var itemFolder = Path.Combine(resolved.Value.RootFolder.Path, rel.Replace('/', Path.DirectorySeparatorChar));
 
                             // Scan first; metadata pushed before it is overwritten from the files.
                             _proxy.ScanItem(settings, item.Id);
@@ -856,13 +899,7 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
 
                             if (settings.AudioBookShelfKeepsMetadata())
                             {
-                                var mapping = FindMapping(mappings, resolved.Value.RootFolder.Id, libraryId, item);
-
-                                if (mapping != null)
-                                {
-                                    PinFromItem(pair.Key, mapping.MediaType, item, Definition?.Tags);
-                                }
-
+                                PinFromItem(itemFolder, mapping.MediaType, item, Definition?.Tags);
                                 continue;
                             }
 
@@ -877,7 +914,7 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
                                 _logger.Debug("AudioBookShelf: set item metadata for '{0}'", rel);
                             }
 
-                            PushItemCover(settings, mappings, resolved.Value.RootFolder.Id, libraryId, item.Id, pair.Key, rel);
+                            PushItemCover(settings, mapping, item.Id, itemFolder, rel);
                         }
                     }
                 }
@@ -933,7 +970,8 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
 
                 try
                 {
-                    _proxy.RemoveItemsWithIssues(settings, libraryId);
+                    var removed = _proxy.RemoveMissingItems(settings, libraryId);
+                    _logger.Debug("AudioBookShelf: removed {0} missing item(s) from library '{1}'", removed, libraryId);
                 }
                 catch (Exception ex)
                 {
@@ -1339,6 +1377,28 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
             }
 
             SendWatcherUpdateOrFallback(target, "add", null, libraryScans);
+        }
+
+        // A whole book or author delete has no file path for a watcher update, so scan the libraries
+        // mapped to the author's root folder for that format; ABS then sees the folders are gone.
+        private void AddMappedLibraryScans(Author author, string mediaType, ISet<string> libraryScans)
+        {
+            var rootFolder = ResolveRootFolder(author, null, mediaType);
+
+            if (rootFolder == null)
+            {
+                _logger.Debug("AudioBookShelf: no root folder for author '{0}', mediaType '{1}'; no library to scan",
+                    author?.Name ?? "unknown",
+                    mediaType ?? "unknown");
+                return;
+            }
+
+            libraryScans.UnionWith(Settings.GetLibraryMappings()
+                .Where(m => m != null &&
+                            m.RootFolderId == rootFolder.Id &&
+                            m.LibraryId.IsNotNullOrWhiteSpace() &&
+                            (mediaType.IsNullOrWhiteSpace() || MediaTypeMatches(m.MediaType, mediaType)))
+                .Select(m => m.LibraryId));
         }
 
         private void SendMappedDelete(Author author, string filePath, string mediaType, ISet<string> libraryScans)
