@@ -3091,6 +3091,8 @@ namespace Chaptarr.Core.Test.MediaFiles
                 Extractions.Add((compressedFile, destination));
             }
 
+            public void ExtractZip(string compressedFile, string destination, long maximumBytes) => throw new NotImplementedException();
+
             public void CreateZip(string path, IEnumerable<string> files) => throw new NotImplementedException();
         }
 
