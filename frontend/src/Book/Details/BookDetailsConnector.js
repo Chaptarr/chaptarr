@@ -118,17 +118,19 @@ function createMapStateToProps() {
         isRenamingAuthorCommand.body.authorIds.indexOf(author.id) > -1
         );
 
-        const absSyncCommand = findCommand(commands, { name: commandNames.AUDIOBOOKSHELF_EDITION_SYNC });
-        const absSyncBody = absSyncCommand && absSyncCommand.body;
-        const isSyncingFromAudioBookShelf = !!(
-          absSyncBody &&
-          isCommandExecuting(absSyncCommand) &&
-          (
-            ((absSyncBody.authorIds || []).length === 0 && (absSyncBody.bookIds || []).length === 0) ||
-            (absSyncBody.bookIds || []).indexOf(book.id) > -1 ||
-            (absSyncBody.authorIds || []).indexOf(author.id) > -1
-          )
-        );
+        // Syncs for several books or authors can be queued at once, so check every running one.
+        const isSyncingFromAudioBookShelf = commands.some((command) => {
+          const body = command.body;
+
+          return command.name === commandNames.AUDIOBOOKSHELF_EDITION_SYNC &&
+            isCommandExecuting(command) &&
+            !!body &&
+            (
+              ((body.authorIds || []).length === 0 && (body.bookIds || []).length === 0) ||
+              (body.bookIds || []).indexOf(book.id) > -1 ||
+              (body.authorIds || []).indexOf(author.id) > -1
+            );
+        });
 
         const isFetching = isBookFilesFetching || editions.isFetching;
         const isPopulated = isBookFilesPopulated && editions.isPopulated;
