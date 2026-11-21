@@ -231,12 +231,26 @@ namespace NzbDrone.Core.Extras.Metadata.Consumers.AudioBookShelf
 
             try
             {
-                return _mediaFileService.GetFilesWithBasePath(folder, mediaType).Any();
+                return _mediaFileService.GetFilesWithBasePath(folder, mediaType).Any() ||
+                       FolderHoldsMediaTypeOnDisk(folder, mediaType);
             }
             catch (Exception)
             {
                 return true;
             }
+        }
+
+        // GetFilesWithBasePath matches a file's primary path only. A replica (a second copy of an
+        // ebook whose primary file is elsewhere) is in the folder too, so also look at what is on disk.
+        private static bool FolderHoldsMediaTypeOnDisk(string folder, string mediaType)
+        {
+            if (!Directory.Exists(folder))
+            {
+                return false;
+            }
+
+            var extensions = mediaType == "ebook" ? MediaFileExtensions.TextExtensions : MediaFileExtensions.AudioExtensions;
+            return Directory.EnumerateFiles(folder).Any(file => extensions.Contains(Path.GetExtension(file)));
         }
 
         private (Edition Edition, Book Book) ResolveBook(Author author, BookFile bookFile)

@@ -862,67 +862,88 @@ namespace NzbDrone.Core.Notifications.AudioBookShelf
 
             var settings = Settings;
 
-            Task.Delay(RescanDelay).ContinueWith(_ =>
+            Task.Delay(RescanDelay).ContinueWith(_ => RescanRenamedFolders(settings, mappings, folderBooks));
+        }
+
+        // Rescans the items of renamed folders (folder -> its book, when known), then pushes or pins.
+        internal void RescanRenamedFolders(AudioBookShelfSettings settings, List<AudioBookShelfLibraryMapping> mappings, Dictionary<string, Book> folderBooks)
+        {
+            try
             {
-                try
+                var handledItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var libraryId in MappedLibraryIds(mappings))
                 {
-                    var handledItems = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var itemsByRelPath = IndexByRelativePath(_proxy.GetLibraryItems(settings, libraryId));
+                    var toPin = new List<(string ItemId, string Folder, string MediaType)>();
 
-                    foreach (var libraryId in MappedLibraryIds(mappings))
+                    foreach (var pair in folderBooks)
                     {
-                        var itemsByRelPath = IndexByRelativePath(_proxy.GetLibraryItems(settings, libraryId));
+                        var resolved = ResolveLibraryRelativePath(pair.Key);
 
-                        foreach (var pair in folderBooks)
+                        if (resolved == null)
                         {
-                            var resolved = ResolveLibraryRelativePath(pair.Key);
+                            continue;
+                        }
 
-                            if (resolved == null)
+                        // Multipart books are renamed per part folder (Author/Book/CD1, CD2) while the
+                        // item sits at Author/Book, so walk up to it and handle each item once.
+                        var (item, mapping) = FindMappedItem(itemsByRelPath, mappings, resolved.Value.RootFolder.Id, libraryId, resolved.Value.RelativePath, pair.Value == null ? null : GetMediaType(pair.Value, null), allowAncestor: true);
+
+                        if (item == null || !handledItems.Add(item.Id))
+                        {
+                            continue;
+                        }
+
+                        var rel = item.RelPath.Trim('/');
+                        var itemFolder = Path.Combine(resolved.Value.RootFolder.Path, rel.Replace('/', Path.DirectorySeparatorChar));
+
+                        // Scan first; metadata pushed before it is overwritten from the files.
+                        _proxy.ScanItem(settings, item.Id);
+                        _logger.Debug("AudioBookShelf: requested item rescan for '{0}'", rel);
+
+                        if (settings.AudioBookShelfKeepsMetadata())
+                        {
+                            toPin.Add((item.Id, itemFolder, mapping.MediaType));
+                            continue;
+                        }
+
+                        if (IsIgnored(settings, item, rel))
+                        {
+                            continue;
+                        }
+
+                        if (pair.Value != null)
+                        {
+                            _proxy.UpdateItemMetadata(settings, item.Id, BuildItemMetadata(pair.Value));
+                            _logger.Debug("AudioBookShelf: set item metadata for '{0}'", rel);
+                        }
+
+                        PushItemCover(settings, mapping, item.Id, itemFolder, rel);
+                    }
+
+                    if (toPin.Any())
+                    {
+                        // The rescans may have changed an item's ASIN, so pin from the items as they are now.
+                        var rescanned = _proxy.GetLibraryItems(settings, libraryId)
+                            .Where(i => i?.Id != null)
+                            .GroupBy(i => i.Id, StringComparer.OrdinalIgnoreCase)
+                            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+                        foreach (var (itemId, folder, mediaType) in toPin)
+                        {
+                            if (rescanned.TryGetValue(itemId, out var current))
                             {
-                                continue;
+                                PinFromItem(folder, mediaType, current, Definition?.Tags);
                             }
-
-                            // Multipart books are renamed per part folder (Author/Book/CD1, CD2) while the
-                            // item sits at Author/Book, so walk up to it and handle each item once.
-                            var (item, mapping) = FindMappedItem(itemsByRelPath, mappings, resolved.Value.RootFolder.Id, libraryId, resolved.Value.RelativePath, pair.Value == null ? null : GetMediaType(pair.Value, null), allowAncestor: true);
-
-                            if (item == null || !handledItems.Add(item.Id))
-                            {
-                                continue;
-                            }
-
-                            var rel = item.RelPath.Trim('/');
-                            var itemFolder = Path.Combine(resolved.Value.RootFolder.Path, rel.Replace('/', Path.DirectorySeparatorChar));
-
-                            // Scan first; metadata pushed before it is overwritten from the files.
-                            _proxy.ScanItem(settings, item.Id);
-                            _logger.Debug("AudioBookShelf: requested item rescan for '{0}'", rel);
-
-                            if (settings.AudioBookShelfKeepsMetadata())
-                            {
-                                PinFromItem(itemFolder, mapping.MediaType, item, Definition?.Tags);
-                                continue;
-                            }
-
-                            if (IsIgnored(settings, item, rel))
-                            {
-                                continue;
-                            }
-
-                            if (pair.Value != null)
-                            {
-                                _proxy.UpdateItemMetadata(settings, item.Id, BuildItemMetadata(pair.Value));
-                                _logger.Debug("AudioBookShelf: set item metadata for '{0}'", rel);
-                            }
-
-                            PushItemCover(settings, mapping, item.Id, itemFolder, rel);
                         }
                     }
                 }
-                catch (Exception ex)
-                {
-                    _logger.Warn(ex, "AudioBookShelf: item rescan after rename failed");
-                }
-            });
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn(ex, "AudioBookShelf: item rescan after rename failed");
+            }
         }
 
         private void SchedulePurgeForDelete(ISet<string> libraryScans)

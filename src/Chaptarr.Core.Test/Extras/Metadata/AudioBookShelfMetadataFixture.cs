@@ -310,6 +310,38 @@ namespace Chaptarr.Core.Test.Extras.Metadata
             Assert.That(subject.BookMetadata(author, bookFile), Is.Null);
         }
 
+        [Test]
+        public void should_not_write_audiobook_sidecars_into_a_folder_that_holds_an_ebook_replica()
+        {
+            // A replica's primary path is elsewhere, so the media file lookup finds no ebook here.
+            var folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "chaptarr-abs-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(folder);
+
+            try
+            {
+                var root = BuildRoot(audiobookMetadata: true, audiobookCover: true);
+                root.Path = System.IO.Path.GetTempPath().TrimEnd(System.IO.Path.DirectorySeparatorChar);
+                var subject = CreateSubject(new List<RootFolder> { root }, new FakeKeeperLookup(rootFolderId: 1, "ebook"), MediaFilesIn(new Dictionary<string, string>()));
+
+                var author = BuildAuthor();
+                author.Path = root.Path;
+                var bookFile = BuildBookFile("audiobook", System.IO.Path.Combine(folder, "book.m4b"));
+                bookFile.Edition.Images.Add(new NzbDrone.Core.MediaCover.MediaCover(MediaCoverTypes.Cover, "https://images.example.test/edition.webp"));
+
+                // On its own in the folder the audiobook gets its sidecars.
+                Assert.That(subject.BookImages(author, bookFile), Has.Count.EqualTo(1));
+
+                System.IO.File.WriteAllText(System.IO.Path.Combine(folder, "book.epub"), "replica");
+
+                Assert.That(subject.BookImages(author, bookFile), Is.Empty);
+                Assert.That(subject.BookMetadata(author, bookFile), Is.Null);
+            }
+            finally
+            {
+                System.IO.Directory.Delete(folder, true);
+            }
+        }
+
         // Media files by folder: GetFilesWithBasePath returns one file when the folder holds the media type.
         private static IMediaFileService MediaFilesIn(Dictionary<string, string> mediaTypeByFolder)
         {

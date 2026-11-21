@@ -725,6 +725,35 @@ namespace Chaptarr.Core.Test.Notifications.AudioBookShelf
         }
 
         [Test]
+        public void rename_should_pin_from_the_item_as_it_is_after_the_rescan()
+        {
+            var proxy = new FakeAudioBookShelfProxy();
+            var item = Item("audio-item", "Joe Abercrombie/Before They Are Hanged", "folder-audio");
+            item.Media.Metadata = new AudioBookShelfLibraryItemBookMetadata { Asin = "B0OLDASIN1" };
+            proxy.ItemsByLibrary["library-audio"] = new List<AudioBookShelfLibraryItemSummary> { item };
+            proxy.ItemsByLibrary["library-ebook"] = new List<AudioBookShelfLibraryItemSummary>();
+
+            // The rescan re-matches the item: a later listing returns the new ASIN.
+            proxy.OnScanItem = id =>
+            {
+                var rescanned = Item("audio-item", "Joe Abercrombie/Before They Are Hanged", "folder-audio");
+                rescanned.Media.Metadata = new AudioBookShelfLibraryItemBookMetadata { Asin = "B0NEWASIN1" };
+                proxy.ItemsByLibrary["library-audio"] = new List<AudioBookShelfLibraryItemSummary> { rescanned };
+            };
+
+            var pins = new RecordingEditionPinService();
+            var subject = CreateSubject(proxy, AudioAndEbookRoots(), AudioAndEbookMappings(), pins);
+            ((AudioBookShelfSettings)subject.Definition.Settings).MetadataKeeper = (int)AudioBookShelfMetadataKeeper.AudioBookShelf;
+
+            subject.RescanRenamedFolders(
+                (AudioBookShelfSettings)subject.Definition.Settings,
+                AudioAndEbookMappings(),
+                new Dictionary<string, Book> { ["/audiobooks/Joe Abercrombie/Before They Are Hanged"] = null });
+
+            Assert.That(pins.Calls.Select(call => call.Item3), Is.EqualTo(new[] { "B0NEWASIN1" }));
+        }
+
+        [Test]
         public void cover_push_should_fail_when_a_library_cannot_be_read()
         {
             var proxy = BuildPushProxy();
@@ -867,7 +896,9 @@ namespace Chaptarr.Core.Test.Notifications.AudioBookShelf
                 ItemListFailures.Contains(libraryId)
                     ? throw new Exception("library unavailable")
                     : ItemsByLibrary.TryGetValue(libraryId, out var items) ? items : Items;
-            public void ScanItem(AudioBookShelfSettings settings, string itemId) { }
+            public Action<string> OnScanItem { get; set; }
+
+            public void ScanItem(AudioBookShelfSettings settings, string itemId) => OnScanItem?.Invoke(itemId);
             public void UpdateItemMetadata(AudioBookShelfSettings settings, string itemId, AudioBookShelfItemMetadata metadata)
             {
                 MetadataUpdates.Add(itemId);

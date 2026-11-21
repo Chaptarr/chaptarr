@@ -195,7 +195,8 @@ function createMapStateToProps() {
         isRenamingAuthorCommand.body.authorIds.indexOf(author.id) > -1
         );
 
-        // Syncs for several authors can be queued at once, so check every running one.
+        // Syncs for several authors can be queued at once, so check every running one. A sync
+        // started from one of this author's books lists only that book.
         const isSyncingFromAudioBookShelf = commands.some((command) => {
           const body = command.body;
 
@@ -204,7 +205,8 @@ function createMapStateToProps() {
             !!body &&
             (
               ((body.authorIds || []).length === 0 && (body.bookIds || []).length === 0) ||
-              (body.authorIds || []).indexOf(author.id) > -1
+              (body.authorIds || []).indexOf(author.id) > -1 ||
+              (Array.isArray(allBookItems) && allBookItems.some((book) => book && book.authorId === author.id && (body.bookIds || []).indexOf(book.id) > -1))
             );
         });
 
