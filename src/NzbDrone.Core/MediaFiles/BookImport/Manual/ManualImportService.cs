@@ -1288,7 +1288,9 @@ namespace NzbDrone.Core.MediaFiles.BookImport.Manual
                 if (isExplicitLocalSelection &&
                     !ManualEditionSelectionMatchesBook(edition, book, file.EditionId, out var manualEditionRejection, file.ForeignEditionId))
                 {
-                    throw new InvalidOperationException(manualEditionRejection);
+                    // CommandFailedException keeps this message as the command's result; any other
+                    // exception is reported to API callers only as "Failed".
+                    throw new CommandFailedException(manualEditionRejection);
                 }
 
                 if (!ManualSelectionMatchesAuthorBook(author, book, out var manualSelectionRejection))
